@@ -25,7 +25,7 @@ public sealed class ItemDetailPrefetchCache
     private long _clearedAt;
     private readonly Dictionary<string, long> _invalidatedAt = new(StringComparer.Ordinal);
     private const int MaxReadAttempts = 3;
-    private Task _pendingProgressSaves = Task.CompletedTask;
+    private readonly Dictionary<string, (Task Pending, long Revision)> _progressSaves = new(StringComparer.Ordinal);
     private long _progressSaveRevision;
     private readonly Func<ApiRequestContext>? _progressContext;
     private ApiRequestContext? _progressSaveContext;
@@ -42,13 +42,13 @@ public sealed class ItemDetailPrefetchCache
         if ((_progressSaveContext?.AuthenticationGeneration, _progressSaveContext?.BaseUrl, _progressSaveContext?.ProfileId)
             == (context?.AuthenticationGeneration, context?.BaseUrl, context?.ProfileId)) return;
         _progressSaveContext = context;
-        _pendingProgressSaves = Task.CompletedTask;
+        _progressSaves.Clear();
         ++_progressSaveRevision;
     }
 
     // Keep final saves alive independently of detail-page recipients. Scoped
     // loads also use this barrier even though they bypass the prefetch cache.
-    public void TrackProgressSave(Task persisted)
+    public void TrackProgressSave(Task persisted, string? contentId = null, string? seriesId = null)
     {
         lock (_sync)
         {
@@ -56,20 +56,53 @@ public sealed class ItemDetailPrefetchCache
             ++_progressSaveRevision;
             Clear();
             var settled = ClearAfterProgressSaveAsync(persisted);
-            _pendingProgressSaves = _pendingProgressSaves.IsCompleted
-                ? settled : Task.WhenAll(_pendingProgressSaves, settled);
+            // The empty key is reserved for writes whose entire scope is unknown.
+            foreach (var id in new[] { contentId, seriesId }.OfType<string>().Where(id => id.Length > 0)
+                .DefaultIfEmpty(string.Empty).Distinct(StringComparer.Ordinal))
+            {
+                var pending = _progressSaves.TryGetValue(id, out var previous) && !previous.Pending.IsCompleted
+                    ? Task.WhenAll(previous.Pending, settled) : settled;
+                _progressSaves[id] = (pending, _progressSaveRevision);
+            }
         }
     }
 
-    public async Task WaitForProgressSettlementAsync(CancellationToken cancellationToken)
+    private static bool ProgressScopeMatches(string id, string? contentId, string? seriesId) =>
+        contentId == null || id.Length == 0 || id == contentId || id == seriesId;
+
+    private long ProgressSaveRevisionLocked(string? contentId, string? seriesId) =>
+        _progressSaves.Where(pair => ProgressScopeMatches(pair.Key, contentId, seriesId))
+            .Select(pair => pair.Value.Revision).DefaultIfEmpty(0).Max();
+
+    public long GetProgressSaveRevision(string contentId, string? seriesId = null)
+    {
+        lock (_sync)
+        {
+            EnsureProgressContext();
+            return ProgressSaveRevisionLocked(contentId, seriesId);
+        }
+    }
+
+    public async Task WaitForProgressSettlementAsync(
+        CancellationToken cancellationToken, string? contentId = null, string? seriesId = null)
     {
         while (true)
         {
             Task pending;
-            lock (_sync) { EnsureProgressContext(); pending = _pendingProgressSaves; }
+            long revision;
+            lock (_sync)
+            {
+                EnsureProgressContext();
+                revision = ProgressSaveRevisionLocked(contentId, seriesId);
+                pending = Task.WhenAll(_progressSaves.Where(pair => ProgressScopeMatches(pair.Key, contentId, seriesId))
+                    .Select(pair => pair.Value.Pending));
+            }
             await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
             lock (_sync)
-                if (ReferenceEquals(pending, _pendingProgressSaves)) return;
+            {
+                EnsureProgressContext();
+                if (revision == ProgressSaveRevisionLocked(contentId, seriesId)) return;
+            }
         }
     }
 

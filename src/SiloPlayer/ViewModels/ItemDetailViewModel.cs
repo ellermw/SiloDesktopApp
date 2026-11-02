@@ -38,6 +38,8 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _remoteStateGeneration;
     private long _localStateGeneration;
     private Task _pendingLocalProgressSave = Task.CompletedTask;
+    private readonly List<(PlaybackProgressUpdated Message, Task Settled)> _initialProgressSaves = [];
+    private CancellationTokenSource? _progressSettlementCts;
     private CancellationTokenSource? _remoteStateReadCts;
     private ApiRequestContext? _remoteStateReadContext;
     public long WatchedStateRevision => Volatile.Read(ref _watchedStateGeneration);
@@ -137,10 +139,11 @@ public partial class ItemDetailViewModel : ObservableObject,
         new(message.Context ?? _catalogApi.CaptureContext(), new HashSet<string>([message.ContentId], StringComparer.Ordinal),
             string.IsNullOrEmpty(message.SeriesId) ? new HashSet<string>() : new HashSet<string>([message.SeriesId], StringComparer.Ordinal));
 
-    // Only containers have a complete retained-state refresh. Playable leaves
-    // need a remount to refresh /watch and their page-owned resume controls too.
+    // Only containers have a complete retained-state refresh. A targeted
+    // catch-up also lets an initial-load correction/retry reconcile leaf detail
+    // state; reconnect still remounts leaves for their page-owned /watch reads.
     private bool IsRelatedState(MediaStateInvalidated message, MediaItemDetail item) =>
-        (item.Type is "series" or "season") && (
+        ((item.Type is "series" or "season") || (message.CatchUp && message.ContentIds.Contains(item.ContentId))) && (
             message.CatchUp || message.ContentIds.Contains(item.ContentId)
             || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
             || message.SeriesIds.Contains(item.ContentId)
@@ -194,7 +197,8 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     [RelayCommand]
     private Task RetryRemoteStateAsync() => RefreshMediaStateAsync(new(
-        _catalogApi.CaptureContext(), new HashSet<string>(), new HashSet<string>(), CatchUp: true));
+        _catalogApi.CaptureContext(), new HashSet<string>(Item == null ? [] : [Item.ContentId]),
+        new HashSet<string>(), CatchUp: true));
 
     private void EnqueueStateRefresh(Action action)
     {
@@ -266,6 +270,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                     foreach (var command in new IAsyncRelayCommand[] { ToggleFavoriteCommand, ToggleWatchlistCommand, SetRatingCommand })
                         if (command is { IsRunning: true, ExecutionTask: { } viewerMutation })
                             await viewerMutation.WaitAsync(ct);
+                    await _detailPrefetchCache.WaitForProgressSettlementAsync(ct, item.ContentId, item.SeriesId);
                     await WaitForLocalProgressSettlementAsync(ct);
                     // A mutation can start while another write/save is pending.
                 } while (ToggleWatchedCommand.IsRunning || ToggleFavoriteCommand.IsRunning
@@ -484,6 +489,55 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
     }
 
+    private static bool ProgressAffectsDetail(PlaybackProgressUpdated message, string contentId, string? seriesId) =>
+        message.ContentId == contentId || message.SeriesId == contentId
+        || (!string.IsNullOrEmpty(seriesId) && (message.ContentId == seriesId || message.SeriesId == seriesId));
+
+    private async Task<bool> WaitForInitialProgressSettlementAsync(
+        string contentId, string? seriesId, CancellationToken barrierToken, CancellationToken ct)
+    {
+        try
+        {
+            while (true)
+            {
+                barrierToken.ThrowIfCancellationRequested();
+                Task[] pending;
+                lock (_remoteStateGate)
+                    pending = _initialProgressSaves.Where(save => ProgressAffectsDetail(save.Message, contentId, seriesId))
+                        .Select(save => save.Settled).ToArray();
+                await _detailPrefetchCache.WaitForProgressSettlementAsync(barrierToken, contentId, seriesId);
+                await Task.WhenAll(pending).WaitAsync(barrierToken);
+                lock (_remoteStateGate)
+                    if (pending.Length == _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, seriesId)))
+                        return true;
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Navigation owns ct; the separate five-second budget only bounds
+            // the loading skeleton, never the save itself or the trailing read.
+            return false;
+        }
+    }
+
+    private async Task RefreshAfterInitialProgressSettlementAsync(
+        MediaItemDetail item, int? libraryId, ApiRequestContext context, CancellationToken ct)
+    {
+        try
+        {
+            await _detailPrefetchCache.WaitForProgressSettlementAsync(ct, item.ContentId, item.SeriesId);
+            await WaitForLocalProgressSettlementAsync(ct);
+            EnqueueStateRefresh(() =>
+            {
+                if (!ct.IsCancellationRequested && _stateRefreshActive && ReferenceEquals(Item, item)
+                    && LibraryId == libraryId && _catalogApi.IsCurrentContext(context))
+                    _ = RefreshMediaStateAsync(new(context, new HashSet<string>([item.ContentId]),
+                        new HashSet<string>(), CatchUp: true));
+            });
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
     private static async Task ProgressSaveSettledAsync(Task persisted)
     {
         // The write owner reports failure. A read waits for settlement rather
@@ -592,14 +646,17 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void Receive(PlaybackProgressUpdated message)
     {
         _detailPrefetchCache.Invalidate(message.ContentId);
-        // While the initial snapshot is unknown, retain every final save: the
-        // changed leaf may belong to a container whose children are not loaded.
-        if ((Item == null && _loadCts is { IsCancellationRequested: false })
-            || (Item is { } item && (item.ContentId == message.ContentId
+        // Retain scope until the initial snapshot supplies its series ID. An
+        // unrelated save must not hold this page's loading state or retry.
+        if (Item == null && _loadCts is { IsCancellationRequested: false })
+        {
+            lock (_remoteStateGate) _initialProgressSaves.Add((message, ProgressSaveSettledAsync(message.Persisted)));
+        }
+        if (Item is { } item && (item.ContentId == message.ContentId
             || item.PlayContentId == message.ContentId
             || ((item.Type is "series" or "season") && !string.IsNullOrEmpty(message.SeriesId)
                 && (item.ContentId == message.SeriesId || item.SeriesId == message.SeriesId))
-            || Episodes.Any(e => e.ContentId == message.ContentId))))
+            || Episodes.Any(e => e.ContentId == message.ContentId)))
         {
             var settled = ProgressSaveSettledAsync(message.Persisted);
             lock (_remoteStateGate)
@@ -760,6 +817,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             _activeRemoteState = null;
             _initialRemoteState = null;
             _pendingLocalProgressSave = Task.CompletedTask;
+            _initialProgressSaves.Clear();
+            _progressSettlementCts?.Cancel();
+            _progressSettlementCts?.Dispose();
+            _progressSettlementCts = null;
             _remoteStateReadCts?.Cancel();
         }
         Interlocked.Increment(ref _watchedStateGeneration);
@@ -781,7 +842,8 @@ public partial class ItemDetailViewModel : ObservableObject,
         var loadContext = _catalogApi.CaptureContext();
         var initialRevision = _initialStateRevision;
         var localRevision = Volatile.Read(ref _localStateGeneration);
-        var progressRevision = _detailPrefetchCache.ProgressSaveRevision;
+        var progressRevision = _detailPrefetchCache.GetProgressSaveRevision(contentId);
+        var initialProgressRevision = 0;
         var libraryId = LibraryId;
         bool Current() => ReferenceEquals(_loadCts, loadCts) && !ct.IsCancellationRequested
             && LibraryId == libraryId && _catalogApi.IsCurrentContext(loadContext);
@@ -811,8 +873,9 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         try
         {
-            await _detailPrefetchCache.WaitForProgressSettlementAsync(ct);
-            await WaitForLocalProgressSettlementAsync(ct);
+            using var progressWait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            progressWait.CancelAfter(TimeSpan.FromSeconds(5));
+            var progressSettled = await WaitForInitialProgressSettlementAsync(contentId, null, progressWait.Token, ct);
             if (!Current()) return;
             MediaItemDetail item;
             try { item = await ReadDetailAsync(contentId, ct); }
@@ -840,21 +903,42 @@ public partial class ItemDetailViewModel : ObservableObject,
                 ct.ThrowIfCancellationRequested();
                 if (!Current()) return;
             }
-            while (true)
+            while (progressSettled)
             {
-                await _detailPrefetchCache.WaitForProgressSettlementAsync(ct);
-                await WaitForLocalProgressSettlementAsync(ct);
-                if (!Current()) return;
+                int nextInitialProgressRevision;
+                lock (_remoteStateGate)
+                    nextInitialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId));
+                var nextProgressRevision = _detailPrefetchCache.GetProgressSaveRevision(contentId, item.SeriesId);
                 if (localRevision == Volatile.Read(ref _localStateGeneration)
-                    && progressRevision == _detailPrefetchCache.ProgressSaveRevision) break;
+                    && progressRevision == nextProgressRevision && initialProgressRevision == nextInitialProgressRevision) break;
+                progressSettled = await WaitForInitialProgressSettlementAsync(contentId, item.SeriesId, progressWait.Token, ct);
+                if (!Current()) return;
+                if (!progressSettled) break;
                 localRevision = Volatile.Read(ref _localStateGeneration);
-                progressRevision = _detailPrefetchCache.ProgressSaveRevision;
+                progressRevision = _detailPrefetchCache.GetProgressSaveRevision(contentId, item.SeriesId);
+                lock (_remoteStateGate)
+                    initialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId));
                 // Own a fresh read after settlement, including for leaves and
                 // library-scoped pages. A new save during it requires another.
-                item = await ReadRemoteStateAsync(
-                    () => _catalogApi.GetItemDetailAsync(contentId, libraryId, ct), false, Current, ct);
+                try
+                {
+                    item = await ReadRemoteStateAsync(
+                        () => _catalogApi.GetItemDetailAsync(contentId, libraryId, ct), false, Current, ct);
+                }
+                catch (Exception ex) when (Current())
+                {
+                    LocalLog.AppendException("state_trace.txt", ex, "initial_final_progress_state_refresh");
+                    RemoteStateErrorMessage = "Silo couldn't refresh this item. Displayed information may be out of date.";
+                    break;
+                }
                 ct.ThrowIfCancellationRequested();
                 if (!Current()) return;
+            }
+            lock (_remoteStateGate)
+            {
+                _pendingLocalProgressSave = Task.WhenAll(_initialProgressSaves
+                    .Where(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId)).Select(save => save.Settled));
+                _initialProgressSaves.Clear();
             }
             Item = item;
 
@@ -887,6 +971,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             // the shared, ownership-guarded realtime loop to drain.
             if (initialRevision != _initialStateRevision && trailing != null)
                 _ = RefreshMediaStateAsync(trailing with { RefreshDetails = true });
+            if (!progressSettled)
+            {
+                _progressSettlementCts = new CancellationTokenSource();
+                _ = RefreshAfterInitialProgressSettlementAsync(item, libraryId, loadContext, _progressSettlementCts.Token);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

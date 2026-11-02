@@ -260,6 +260,129 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task UnrelatedNeverSettlingSaveDoesNotDelayDetailNavigation(bool scoped, bool duringRead)
+    {
+        using var f = new Fixture();
+        f.Wire.DetailType = "movie";
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var progress = new PlaybackProgressUpdated("episode:other", 99, 100, false)
+            { SeriesId = "series:other", Persisted = save.Task };
+        try
+        {
+            if (!duringRead) f.Messenger.Send(progress);
+            f.Wire.HoldDetails = duringRead;
+            var loading = f.Vm.LoadInLibraryAsync("movie:unrelated", scoped ? 9 : null);
+            if (duringRead)
+            {
+                var initial = await f.Wire.NextAsync();
+                f.Messenger.Send(progress);
+                f.Wire.HoldDetails = false;
+                initial.Release();
+            }
+            await loading.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(save.Task.IsCompleted);
+            Assert.False(f.Vm.IsLoading);
+            Assert.Equal("movie:unrelated", f.Vm.Item!.ContentId);
+            Assert.Null(f.Vm.ErrorMessage);
+            Assert.Null(f.Vm.RemoteStateErrorMessage);
+        }
+        finally { save.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData("movie", true)]
+    [InlineData("series", true)]
+    [InlineData("season", true)]
+    [InlineData("episode", false)]
+    public async Task SlowRelatedSaveHasABoundedLoadingBarrierAndAnOwnedPostSettlementRefresh(string type, bool beforeLoad)
+    {
+        using var f = new Fixture();
+        var id = type is "movie" or "episode" ? EpisodeA : type == "season" ? "series:review-S01" : Series;
+        f.Wire.DetailType = type;
+        f.Wire.DetailSeriesId = type is "episode" or "season" ? Series : null;
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var progress = new PlaybackProgressUpdated(EpisodeA, 999, 1000, true)
+            { SeriesId = Series, Persisted = save.Task };
+        try
+        {
+            if (beforeLoad) f.Messenger.Send(progress);
+            f.Wire.HoldDetails = !beforeLoad;
+            var loading = f.Vm.LoadInLibraryAsync(id, 9);
+            if (!beforeLoad)
+            {
+                var initial = await f.Wire.NextAsync();
+                // Exercise the VM-local barrier without the shared cache recipient.
+                f.Vm.Receive(progress);
+                f.Wire.HoldDetails = false;
+                initial.Release();
+            }
+            await loading.WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.False(save.Task.IsCompleted);
+            Assert.False(f.Vm.IsLoading);
+            Assert.Equal(0, f.Vm.Item!.UserData!.WatchedCount);
+            Assert.Null(f.Vm.ErrorMessage);
+            var mounted = f.Vm.Item;
+            f.Wire.Count = 2; f.Wire.DetailPosition = 999; f.Wire.Played = true;
+            save.SetResult();
+            await f.WaitCountAsync(2);
+            Assert.Same(mounted, f.Vm.Item);
+            Assert.Equal(999, mounted.UserData.PositionSeconds);
+            Assert.True(f.Vm.IsWatched);
+            Assert.Null(f.Vm.RemoteStateErrorMessage);
+            Assert.All(f.Wire.CatalogUris, uri => Assert.Equal("?library_id=9", uri.Query));
+        }
+        finally { save.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData("movie", false)]
+    [InlineData("episode", true)]
+    [InlineData("series", false)]
+    [InlineData("season", true)]
+    public async Task FailedPostFinalSaveInitialReadKeepsTheSnapshotAndInlineRetryAlsoRecoversLeaves(string type, bool sharedSave)
+    {
+        using var f = new Fixture();
+        var id = type is "movie" or "episode" ? EpisodeA : Series;
+        f.Wire.DetailType = type;
+        f.Wire.HoldDetails = true;
+        var loading = f.Vm.LoadInLibraryAsync(id, 9);
+        var initial = await f.Wire.NextAsync();
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var progress = new PlaybackProgressUpdated(EpisodeA, 999, 1000, true)
+            { SeriesId = Series, Persisted = save.Task };
+        if (sharedSave) f.Messenger.Send(progress);
+        else f.Vm.Receive(progress);
+        f.Wire.BeforeDetailResponse = () => throw new HttpRequestException("Synthetic post-save read failure.");
+        f.Wire.HoldDetails = false;
+        save.SetResult();
+        initial.Release();
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var mounted = f.Vm.Item;
+        Assert.NotNull(mounted);
+        Assert.Equal(0, mounted.UserData!.WatchedCount);
+        Assert.False(f.Vm.IsLoading);
+        Assert.Null(f.Vm.ErrorMessage);
+        Assert.Equal(DetailFailureKind.None, f.Vm.FailureKind);
+        Assert.NotNull(f.Vm.RemoteStateErrorMessage);
+        Assert.Equal(3, f.Wire.DetailReads);
+
+        f.Wire.BeforeDetailResponse = null;
+        f.Wire.Count = 2; f.Wire.DetailPosition = 999; f.Wire.Played = true;
+        await f.Vm.RetryRemoteStateCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Same(mounted, f.Vm.Item);
+        Assert.Equal(2, mounted.UserData.WatchedCount);
+        Assert.Equal(999, mounted.UserData.PositionSeconds);
+        Assert.True(f.Vm.IsWatched);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+        Assert.Null(f.Vm.ErrorMessage);
+    }
+
+    [Theory]
     [InlineData(1)]
     [InlineData(2)]
     public async Task CorrectiveInitialReadRetriesAndPreservesTheSuccessfulSnapshotOnExhaustion(int failures)
@@ -605,6 +728,7 @@ public sealed class RealtimeReadOwnershipTests
         internal double Position = 31;
         internal double DetailPosition;
         internal string DetailType = "series";
+        internal string? DetailSeriesId;
         internal bool Played;
         internal string? Target = EpisodeA;
         internal bool HoldDetails, HoldSeasons, HoldEpisodes;
@@ -660,7 +784,8 @@ public sealed class RealtimeReadOwnershipTests
                     Assert.StartsWith("/api/v2/catalog/items/", path);
                     DetailReads++; hold = HoldDetails;
                     BeforeDetailResponse?.Invoke();
-                    body = new { content_id = Uri.UnescapeDataString(path.Split('/').Last()), type = DetailType, episode_count = 8, play_content_id = Target,
+                    body = new { content_id = Uri.UnescapeDataString(path.Split('/').Last()), type = DetailType, series_id = DetailSeriesId,
+                        episode_count = 8, play_content_id = Target,
                         user_state = new { is_favorite = Favorite, in_watchlist = Watchlist, not_interested = NotInterested },
                         user_rating = Rating, user_data = new { watched_count = Count, played = Played, position_seconds = DetailPosition } };
                 }

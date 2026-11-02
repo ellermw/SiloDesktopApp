@@ -120,6 +120,47 @@ public sealed class DetailCacheInvalidationTests
     }
 
     [Fact]
+    public async Task DetailBarrierAndRevisionAreScopedToTheItemOrItsKnownSeries()
+    {
+        var (cache, _) = CreateCache();
+        var messenger = new WeakReferenceMessenger();
+        DetailCacheInvalidation.Attach(cache, messenger);
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var unrelatedRevision = cache.GetProgressSaveRevision("movie:other");
+            messenger.Send(new PlaybackProgressUpdated("episode:a", 90, 100, false)
+                { SeriesId = "series:show", Persisted = save.Task });
+            await cache.WaitForProgressSettlementAsync(cancellation.Token, "movie:other").WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(unrelatedRevision, cache.GetProgressSaveRevision("movie:other"));
+            var leaf = cache.WaitForProgressSettlementAsync(cancellation.Token, "episode:a");
+            var series = cache.WaitForProgressSettlementAsync(cancellation.Token, "series:show");
+            var season = cache.WaitForProgressSettlementAsync(cancellation.Token, "series:show-S02", "series:show");
+            Assert.False(leaf.IsCompleted);
+            Assert.False(series.IsCompleted);
+            Assert.False(season.IsCompleted);
+            var revision = cache.GetProgressSaveRevision("series:show-S02", "series:show");
+            messenger.Send(new PlaybackProgressUpdated("episode:b", 99, 100, true)
+                { SeriesId = "series:show", Persisted = newer.Task });
+            Assert.True(cache.GetProgressSaveRevision("series:show-S02", "series:show") > revision);
+            save.SetException(new HttpRequestException("Synthetic final-save failure."));
+            await leaf.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.False(series.IsCompleted);
+            Assert.False(season.IsCompleted);
+            newer.SetResult();
+            await Task.WhenAll(series, season).WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            cancellation.Cancel();
+            save.TrySetResult();
+            newer.TrySetResult();
+        }
+    }
+
+    [Fact]
     public void FinalSaveCompletingDuringTheFirstClearStillGetsTheSecondClear()
     {
         var finalSave = new TaskCompletionSource();
