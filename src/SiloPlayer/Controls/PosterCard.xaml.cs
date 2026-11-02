@@ -239,7 +239,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void PosterCard_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs args)
     {
-        if (MediaItem is not { } item) return;
+        if (MediaItem is not { } item || item.Type == "box_set") return;
         var flyout = MediaItemMenu.Build(
             item,
             MediaItemMenu.Surface.Default,
@@ -294,6 +294,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void ShowPlaceholder()
     {
+        if (_ordinaryCardContent != null) Content = _ordinaryCardContent;
+        IsTabStop = true;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -322,8 +324,23 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         OverlayBottomRight.Children.Clear();
     }
 
+    private UIElement? _ordinaryCardContent;
     private void UpdateContent(MediaItem item)
     {
+        _ordinaryCardContent ??= Content;
+        if (item.Type == "box_set")
+        {
+            _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+            CancelPlaybackPrefetch();
+            var aggregate = new BoxSetCard();
+            if (item.BoxSet is {} summary) aggregate.SetSummary(summary, item.PosterUrl, item.PosterThumbhash);
+            aggregate.Invoked += set => App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
+            IsTabStop = false;
+            Content = aggregate;
+            return;
+        }
+        Content = _ordinaryCardContent;
+        IsTabStop = true;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
@@ -807,6 +824,11 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     {
         if (MediaItem == null) return false;
 
+        if (MediaItem.Type == "box_set")
+        {
+            if (MediaItem.BoxSet is {} set) App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
+            return true;
+        }
         if (SelectionMode)
         {
             IsSelected = !IsSelected;
@@ -871,7 +893,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private async void QueuePlaybackPrefetch()
     {
         var item = MediaItem;
-        if (item == null || SelectionMode)
+        if (item == null || item.Type == "box_set" || SelectionMode)
             return;
 
         CancelPlaybackPrefetch();

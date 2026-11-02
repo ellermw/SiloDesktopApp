@@ -38,6 +38,7 @@ public static class MediaItemMenu
         FrameworkElement? owner = null)
     {
         var flyout = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
+        if (item.Type == "box_set") return flyout;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         var authService = App.Services.GetRequiredService<AuthService>();
