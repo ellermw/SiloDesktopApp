@@ -28,12 +28,13 @@ internal static class BoxSetNativeFixture
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         Type? routeType = null; object? routeArgs = null;
         var navigation = new NavigationService { Frame = new Frame(), NavigationRequestHandler = (type, args) => { routeType = type; routeArgs = args; return true; } };
-        servicesField.SetValue(null, new NavigationServices(originalServices, navigation));
+        var fixtureServices = new NavigationServices(originalServices, navigation);
+        servicesField.SetValue(null, fixtureServices);
         try
         {
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://boxsets-native.invalid"); api.SetProfile("fixture");
-        var catalog = new CatalogApi(api);
+        var catalog = new CatalogApi(api); fixtureServices.Catalog = catalog; fixtureServices.Client = api;
         var page = new BoxSetPage(catalog, api) { Width = 960, Height = 700 };
         parent.Children.Add(page);
         await page.ViewModel.LoadAsync("7", "2"); await Task.Delay(120); page.UpdateLayout();
@@ -105,6 +106,13 @@ internal static class BoxSetNativeFixture
         Check(routeType == typeof(BoxSetPage) && routeArgs is BoxSetNavigationArgs { Id: "7", LibraryId: "12" }, "actual aggregate destination");
         Check(MediaItemMenu.Build(card.MediaItem).Items.Count == 0, "aggregate menu boundary");
         Check(ItemMaintenanceActionPolicy.Resolve(true, "box_set") == default, "aggregate maintenance boundary");
+        // Exercise Frame activation and the production parameterless destination, beyond route interception.
+        var destinationFrame = navigation.Frame!; destinationFrame.Width = 540; destinationFrame.Height = 600;
+        parent.Children.Add(destinationFrame); navigation.NavigationRequestHandler = null;
+        Check(navigation.Navigate<BoxSetPage>(new BoxSetNavigationArgs("7", "12")), "actual Frame box-set navigation");
+        for (var i = 0; i < 100 && (destinationFrame.Content as BoxSetPage)?.ViewModel.Detail == null; i++) await Task.Delay(10);
+        Check(destinationFrame.Content is BoxSetPage opened && opened.ViewModel.Detail?.Id == "7" && opened.ViewModel.Detail.LibraryId == "12", "activated dedicated destination loads scoped data");
+        destinationFrame.Content = null; parent.Children.Remove(destinationFrame);
         card.MediaItem = new MediaItem { Type = "movie", ContentId = "ordinary", Title = "Ordinary film" }; await Task.Delay(80);
         Check(card.Content is not BoxSetCard && card.IsTabStop, "recycled aggregate restores ordinary card/focus");
         card.MediaItem = null; Check(card.Content is not BoxSetCard, "recycled empty card clears aggregate");
@@ -129,7 +137,8 @@ internal static class BoxSetNativeFixture
     }
     private sealed class NavigationServices(IServiceProvider original, NavigationService navigation) : IServiceProvider
     {
-        public object? GetService(Type type) => type == typeof(NavigationService) ? navigation : original.GetService(type);
+        internal CatalogApi? Catalog; internal SiloApiClient? Client;
+        public object? GetService(Type type) => type == typeof(NavigationService) ? navigation : type == typeof(CatalogApi) && Catalog != null ? Catalog : type == typeof(SiloApiClient) && Client != null ? Client : original.GetService(type);
     }
     private sealed class Wire : HttpMessageHandler
     {
@@ -140,7 +149,7 @@ internal static class BoxSetNativeFixture
         {
             var path=request.RequestUri!.AbsolutePath; if(path.Contains("box-sets/")) Reads++; object body;
             if(path.EndsWith("capabilities")) body=new { box_sets=true };
-            else if(path.EndsWith("libraries")) body=new { items=new[] { new { id=2,box_sets_enabled=true } } };
+            else if(path.EndsWith("libraries")) body=new { items=new[] { new { id=2,box_sets_enabled=true }, new { id=12,box_sets_enabled=true } } };
             else body=new { id="7",library_id="12",title=Title,overview="A synthetic release-ordered collection with missing artwork.",movie_count=Empty?0:3,played_count=Played,first_year=2001,last_year=2011,items=Empty?Array.Empty<object>():new object[] { new { content_id="first",type="movie",title="First",user_state=new { played=true } },new { content_id="second",type="movie",title="Second",user_state=new { played=Played==3 } },new { content_id="third",type="movie",title="Third",user_state=new { played=Played==3 } } } };
             return Task.FromResult(new HttpResponseMessage(path.Contains("box-sets/")?Status:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) });
         }
