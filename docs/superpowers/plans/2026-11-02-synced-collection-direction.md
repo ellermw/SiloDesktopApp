@@ -8,5 +8,5 @@
 
 - [x] Native regression against frozen exact544 Release reproduces a missing Direction control in the synced Order grid. Original broader fixture selection was corrected to query this specific grid and fails for the intended missing control.
 - [x] Build a shared field/direction refresh with event suppression and default-on-field-change. Retain unknown saved fields without mutation and disable direction when it cannot be safely edited.
-- [ ] Verify actual new/saved UI, direction contract, unknown config preservation, read-only/save guards and 1280/460px geometry. Run full unit suite, Release and native checks; fingerprint source/artifacts.
-- [ ] Commit locally to pin source, independent Standards/Spec review, recheck remote head and open same-repository beta PR. Pipeline owns merge/stamps/package/release.
+- [x] Verify actual new/saved UI, direction contract, unknown config preservation, read-only/save guards and 1280/460px geometry. Run full unit suite, Release and native checks; fingerprint source/artifacts.
+- [x] Commit locally to pin source, independent Standards/Spec review, recheck remote head and open same-repository beta PR. Pipeline owns merge/stamps/package/release.
