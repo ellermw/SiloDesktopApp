@@ -1,0 +1,40 @@
+# Episode quick-play implementation
+
+Execute inline using the approved report F/spec. Base `5a6555492801aa0172d2559257ef8711a8e0efe4`; source1.2.519. All .NET work uses the external mutex runner, pinned native hash and fresh outputs.
+
+- Reproduce missing Play action using a native fixture against a fresh unchanged app publish.
+- Add a sibling accessible button to the existing episode action layer; preserve still/card navigation and overlays. Capture operation ownership and reject retired actions.
+- Bind optional captured request context through the existing PlayerService gate, with no change to callers that omit it. Recheck across waits before replacement preparation.
+- Verify actual synthetic API/playback entry, resume default, library scope, keyboard action, unreadable/missing files, narrow/spoiler layouts and navigation/profile/account/queued retirement.
+- Run main suite, Release publish and relevant native regressions. Independent Standards/Spec review, fix grounded issues and record exact receipts.
+- Refresh/inspect Beta heads/threads, push reviewed branch and open separate non-draft Beta PR. Preserve all diagnostic evidence and worktrees.
+
+## Execution ledger
+
+- Baseline source/app receipt verified at `5a655549`, app SHA256 `2123DFA3F12906F1ADE9A865A49A52C4554926DCA492602DFCA53DFAEF0B0D7E`; official main independently confirmed `63ef34b236b88dc77acca1a9a3ed90235377691f` with `git ls-remote`.
+- RED: `quickplay/missing-overlay-red` mounts the actual card and fails because the separate accessible Resume action is absent.
+- RED: `quickplay/queued-owner-red-two` holds the actual authority semaphore and fails because a departed profile still cancels/prepares playback. Initial `queued-owner-red` was a fixture compile error (missing Helpers import), corrected before behavioral RED.
+- Implementation uses the existing sibling action layer, captured card/navigation cancellation and API context validation across playback authority waits. Ordinary callers keep their existing behavior; no resume/from-start overrides are introduced.
+- Ruling: parent owns independent review and all remote mutations — explicit dispatch contract; implementer commits and returns evidence only. No push/PR/release from this worktree task.
+- Ruling: retain all fresh baseline/failed/green artifacts and evidence — preservation contract overrides skill cleanup guidance; cost is disk use.
+- GREEN: main `SiloPlayer.Tests` suite 2,799/2,799 (`quickplay/full-green`); Release app publish `quickplay/overlay-green-app-two` passed with two existing nullable warnings.
+- GREEN: `quickplay/final-native` mounts all three actual builders, measures non-intersecting rectangles at 128/220/400px, invokes normal scoped/resume playback and omits zero, checks spoiler pixels/overview and stale queued owners, and runs existing room transport integration. Same app DLL SHA256 `6D088A603C6C798EDC2296CBEAEA63E2EC09819DBDB7C188B8AC34709C4C1470` as Release receipt.
+- Fixture corrections preserved in evidence: bounded page dimensions resolve the native layout cycle; pinned DLL resolver enables headless libmpv initialization; protocol file IDs serialize as strings. No product changes were made for those fixture failures.
+- Self-review: product diff and actual 128/220px captures inspected; `git diff --check` passed. Parent performs independent Standards/Spec review before remote delivery. Synthetic checks do not certify real media/accounts, phone interoperability or complete WebUI visual parity.
+
+## Review correction pass
+
+- Read both independent axes (`task-f-standards.md`, `task-f-spec.md`). The original context guard did not survive the transport drain, accepted cancellation left loading UI behind, room selection could be replaced locally, newer viewer clicks were serialized behind stale preparation, hover/focus visibility was independent, and the rewatch label contradicted normal resume.
+- Behavioral RED on preserved `6D088...` app: `review-lifecycle-red-three` exercises the actual transport gate, actual episode-builder resize/navigation, pending watch, newer card click, an actual manager-created room session attached by the coordinator, positive rewatch labels and action-layer focus ownership. Earlier fixture DI/resize setup failures are preserved and not counted as product evidence.
+- Carry the expected API owner through the normal core pipeline; drain transport before state mutations; bind watch/quality reads to that context; validate after each preparation wait and before native load. Scoped viewer intent supersedes earlier pending viewer preparation without canceling established playback merely by queuing.
+- Route active-room clicks through existing room transport or the detail Send-to-room policy (host/non-vote lobby staging, otherwise server suggestions). Keep the actual attached session and permission/pause boundary; no forced leave or local guest control.
+- Derive action visibility from hover OR focus in the real action-layer control; derive Play/Resume label from any positive position, matching the playback rule even for watched episodes or missing duration.
+- Native assertions on `E278...` passed in `review-fixed-native-two`, including clean teardown. Initial `review-fixed-native` completed its assertions but crashed during fixture teardown with WinUI `RO_E_CLOSED`; queued paint is now drained before closing the isolated shell/provider, matching the existing startup fixture. That run remains failed evidence.
+- `review-full-unit` found the inherited source-location assertion after extracting the action layer (2,798/2,799); its invariant now reads the control, while actual native interaction covers behavior. `review-full-unit-two` passed 2,799/2,799.
+- Additional RED `review-canceled-successor-red` on `E278...`: a canceled queued unscoped successor increments play generation without displaying new loading UI, so generation-only hiding strands the earlier surface. Use explicit loading/error surface ownership, retaining newer loading and error states.
+- Ruling: defer spec P3 click-timestamp/first-frame telemetry — parent explicitly permits deferral; normal authorization, room intent, resume and UI lifecycle are the required flow. Cost: quick-play first-frame timing remains unavailable.
+- Ruling: the room fixture's playing-to-lobby snapshot legitimately closes the attached session through the existing room controller. Correct its canceled-stage assertion to require no additional stop, preserving server authority; do not change product room behavior to satisfy an invalid zero-stop expectation.
+- Direct API RED `bound-start-red` observes both capability and start HTTP requests after the captured profile is replaced. Final request-layer `SendOwnedAsync` now constructs every capability/start/retry request with the captured context under the client's authentication lock; quality preferences pass that context through the manager into the API. No ambient-header recapture remains in this path.
+- Final GREEN on frozen source: `reviewed-final-unit` **2,800/2,800**; `reviewed-final-app` Release publish; `reviewed-final-native` combined actual-control/lifecycle/room suite with exit0 and completion sentinel. App DLL SHA256 `0BD4733B60C71F8BA631773FDF756C6761D422092D81CB55E2FD588CB2C61305`; the app compiles linked Core/Player source into that single assembly. Published payload hashes/native-reference equality are in `task-f-reviewed-artifacts.json`; exact product source hashes are in `task-f-frozen-product.json`.
+- Preserved unrelated failed run: `review-final-unit` hit `UpdateTransactionLifecycleTests.ConfirmedUpdateRetainsActivePreviousAndForeignFilesWhileCleanupCanDefer(inventory: "free")`, `InvalidDataException: Wrong parent identity`, in its untouched synthetic process guard. No updater source/test change was made; final full run passed.
+- Final self-review: frozen critical diff supplied to parent, source hash check, artifact/reference hash check, actual native screenshots and `git diff --check`. Parent reviews the affected source/tests; no new generic review loop or receipt-HEAD rebuild.

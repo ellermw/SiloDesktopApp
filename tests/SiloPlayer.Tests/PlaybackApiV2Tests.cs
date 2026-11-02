@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Tests;
 
@@ -16,6 +17,118 @@ public sealed class PlaybackApiV2Tests
         var starts = handler.Requests.Where(r => r.Path.EndsWith("/start")).ToArray();
         Assert.Equal(2, starts.Length);
         Assert.Equal(starts[0].Body.GetRawText(), starts[1].Body.GetRawText());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AccessRefreshDuringStartRetryRetainsTheInitiatingIdentity(bool scoped)
+    {
+        var handler = new FixtureHandler { InterruptFirstStart = true };
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test"); client.SetProfile("profile-1");
+        var owner = client.CaptureIdentityContext();
+        handler.FirstStartSent = () => client.InvalidateAccessContext();
+        var decision = await new PlaybackApi(client).StartPlaybackV3Async(new() { FileId = 42, ProfileId = "profile-1" },
+            expectedIdentityContext: scoped ? owner : null);
+        Assert.NotNull(decision.PlaybackPlan);
+        var starts = handler.Requests.Where(r => r.Path.EndsWith("/start")).ToArray();
+        Assert.Equal(2, starts.Length);
+        Assert.Equal(starts[0].Body.GetRawText(), starts[1].Body.GetRawText());
+        Assert.All(handler.StartProfiles, profile => Assert.Equal("profile-1", profile));
+    }
+
+    [Fact]
+    public async Task OrdinaryManagerStartSurvivesAccessRefreshDuringCapabilityPreparation()
+    {
+        var handler = new FixtureHandler();
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        using var auth = new AuthService(client, new AuthApi(client));
+        using var manager = new PlaybackManager(new PlaybackApi(client), new CatalogApi(client), auth, client);
+        var preferences = new PlaybackQualityPreferences(client.CaptureContext(), "auto", null);
+        handler.CapabilityReturned = () => client.InvalidateAccessContext();
+        await manager.StartSessionAsync(42, preferences: preferences);
+        Assert.NotNull(manager.CurrentSession);
+        Assert.Single(handler.Requests.Where(r => r.Path.EndsWith("/start")));
+        await manager.StopSessionAsync();
+    }
+
+    [Fact]
+    public async Task ScopedApiStartSurvivesAccessRefreshBeforeEntry()
+    {
+        var handler = new FixtureHandler();
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test"); client.SetProfile("profile-1");
+        client.SetAccessToken("fixture-before-refresh");
+        var owner = client.CaptureIdentityContext();
+        client.InvalidateAccessContext(); client.SetAccessToken("fixture-after-refresh");
+        var decision = await new PlaybackApi(client).StartPlaybackV3Async(new() { FileId = 42, ProfileId = "profile-1" },
+            expectedIdentityContext: owner);
+        Assert.NotNull(decision.PlaybackPlan);
+        Assert.Single(handler.Requests.Where(r => r.Path.EndsWith("/start")));
+        Assert.Equal("profile-1", Assert.Single(handler.StartProfiles));
+        Assert.Equal("fixture-after-refresh", Assert.Single(handler.StartTokens));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScopedManagerStartSurvivesAccessRefreshAtStartBoundary(bool afterPreparedReads)
+    {
+        var handler = new FixtureHandler();
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        using var auth = new AuthService(client, new AuthApi(client));
+        auth.SelectProfile("profile-1", profile: new() { Id = "profile-1" });
+        using var manager = new PlaybackManager(new PlaybackApi(client), new CatalogApi(client), auth, client);
+        var owner = client.CaptureIdentityContext();
+        var preferences = afterPreparedReads
+            ? await manager.ResolveQualityPreferencesAsync(expectedContext: client.CaptureContext())
+            : new PlaybackQualityPreferences(client.CaptureContext(), "auto", null);
+        void RefreshAccess()
+        {
+            client.InvalidateAccessContext(); client.SetAccessToken("fixture-after-refresh");
+        }
+        if (afterPreparedReads) RefreshAccess();
+        else handler.CapabilityReturned = RefreshAccess;
+        await manager.StartSessionAsync(42, preferences: preferences, expectedIdentityContext: owner);
+        Assert.NotNull(manager.CurrentSession);
+        Assert.Single(handler.Requests.Where(r => r.Path.EndsWith("/start")));
+        Assert.Single(handler.Requests.Where(r => r.Path.EndsWith("/capabilities")));
+        Assert.Equal("profile-1", Assert.Single(handler.StartProfiles));
+        Assert.Equal("fixture-after-refresh", Assert.Single(handler.StartTokens));
+        await manager.StopSessionAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScopedManagerStartRejectsProfileDepartureAfterPreparation(bool returnToOriginalProfile)
+    {
+        var handler = new FixtureHandler();
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        using var auth = new AuthService(client, new AuthApi(client));
+        auth.SelectProfile("profile-1", profile: new() { Id = "profile-1" });
+        using var manager = new PlaybackManager(new PlaybackApi(client), new CatalogApi(client), auth, client);
+        var owner = client.CaptureIdentityContext();
+        var preferences = await manager.ResolveQualityPreferencesAsync(expectedContext: client.CaptureContext());
+        client.SetProfile("replacement");
+        if (returnToOriginalProfile) client.SetProfile("profile-1");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => manager.StartSessionAsync(42,
+            preferences: preferences, expectedIdentityContext: owner));
+        Assert.DoesNotContain(handler.Requests, r => r.Path.EndsWith("/start"));
+        Assert.Single(handler.Requests.Where(r => r.Path.EndsWith("/capabilities")));
+        Assert.Null(manager.CurrentSession);
+    }
+
+    [Fact]
+    public async Task NonTransportCancellationIsNotRetriedAsAmbiguousDelivery()
+    {
+        var handler = new FixtureHandler { FirstStartSent = () => throw new OperationCanceledException("Owner changed.") };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CreateApi(handler).StartPlaybackV3Async(new() { FileId = 42 }));
+        Assert.Single(handler.Requests.Where(r => r.Path.EndsWith("/start")));
     }
 
     [Fact]
@@ -152,14 +265,23 @@ public sealed class PlaybackApiV2Tests
         public bool ChangeInstallationOnFirstStart { get; init; }
         public bool FixedSource { get; init; }
         public Action? CapabilityReturned { get; set; }
+        public Action? FirstStartSent { get; set; }
+        public List<string?> StartProfiles { get; } = [];
+        public List<string?> StartTokens { get; } = [];
         public List<(HttpMethod Method, string Path, JsonElement Body)> Requests { get; } = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
             var body = request.Content == null ? "{}" : await request.Content.ReadAsStringAsync(ct);
             Requests.Add((request.Method, path, JsonDocument.Parse(body).RootElement.Clone()));
+            if (path.EndsWith("/start"))
+            {
+                StartProfiles.Add(request.Headers.TryGetValues("X-Profile-Id", out var profiles) ? profiles.Single() : null);
+                StartTokens.Add(request.Headers.Authorization?.Parameter);
+            }
             if (path.EndsWith("/start") && Requests.Count(r => r.Path.EndsWith("/start")) == 1)
             {
+                FirstStartSent?.Invoke();
                 if (InterruptFirstStart) throw new HttpRequestException("Connection interrupted after dispatch");
                 if (ChangeInstallationOnFirstStart) return new(HttpStatusCode.Conflict)
                 {

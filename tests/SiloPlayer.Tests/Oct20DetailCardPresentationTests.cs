@@ -61,6 +61,18 @@ public sealed class Oct20DetailCardPresentationTests
     }
 
     [Fact]
+    public void NullEpisodeFilesDoNotPreventCaptionCreation()
+    {
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        var episode = JsonSerializer.Deserialize<Episode>("""{"title":"Pilot","files":null}""", options)!;
+
+        Assert.Null(episode.Files);
+        var caption = EpisodeCardPresentation.Caption(episode, null, false);
+        Assert.Equal("S00E00 · Pilot", caption.Title);
+        Assert.False(caption.ShowUnreadable);
+    }
+
+    [Fact]
     public void DamagedNoticeRequiresEveryAdvertisedFileToBeUnreadable()
     {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
