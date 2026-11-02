@@ -12,7 +12,7 @@ using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 namespace SiloPlayer.Views;
 
-public sealed class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, IRecipient<PlaybackProgressUpdated>
+public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, IRecipient<PlaybackProgressUpdated>
 {
     public BoxSetViewModel ViewModel { get; }
     public int? CurrentLibraryId => int.TryParse(ViewModel.Detail?.LibraryId, out var id) ? id : null;
@@ -24,6 +24,7 @@ public sealed class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, IRecipie
     public BoxSetPage() : this(App.Services.GetRequiredService<CatalogApi>(), App.Services.GetRequiredService<SiloApiClient>()) { }
     public BoxSetPage(CatalogApi catalog, SiloApiClient client)
     {
+        InitializeComponent();
         _catalog = catalog; _client = client; ViewModel = new(catalog);
         Content = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         ViewModel.PropertyChanged += (_, _) => Render();
