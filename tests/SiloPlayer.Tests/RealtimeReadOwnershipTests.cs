@@ -260,6 +260,75 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    [InlineData("episode", false)]
+    [InlineData("episode", true)]
+    public async Task SettledSeriesSaveDoesNotForceAnotherDetailReadWhenTheResponseRevealsItsSeries(string type, bool scoped)
+    {
+        using var f = new Fixture();
+        f.Messenger.UnregisterAll(f.Vm);
+        f.Messenger.Send(new PlaybackProgressUpdated(EpisodeB, 999, 1000, true)
+            { SeriesId = Series, Persisted = Task.CompletedTask });
+        await f.Cache.WaitForProgressSettlementAsync(CancellationToken.None);
+        var id = type == "season" ? "series:review-S01" : EpisodeA;
+        f.Wire.DetailType = type; f.Wire.DetailSeriesId = Series;
+        // A hover-prefetched snapshot should paint without another transport;
+        // scoped pages should likewise need only their one initial read.
+        if (!scoped) await f.Cache.PrefetchAsync(id);
+        f.Wire.BeforeDetailResponse = () => Assert.Equal(1, f.Wire.DetailReads);
+
+        await f.Vm.LoadInLibraryAsync(id, scoped ? 9 : null).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, f.Wire.DetailReads);
+        Assert.Equal(Series, f.Vm.Item!.SeriesId);
+        Assert.False(f.Vm.IsLoading);
+        Assert.Null(f.Vm.ErrorMessage);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    [InlineData("episode", false)]
+    [InlineData("episode", true)]
+    public async Task PreviouslyPendingSeriesSaveStillReconcilesWhenOnlyTheResponseRevealsItsScope(string type, bool settlesDuringRead)
+    {
+        using var f = new Fixture();
+        f.Messenger.UnregisterAll(f.Vm);
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Messenger.Send(new PlaybackProgressUpdated(EpisodeB, 999, 1000, true)
+            { SeriesId = Series, Persisted = save.Task });
+        var id = type == "season" ? "series:review-S01" : EpisodeA;
+        f.Wire.DetailType = type; f.Wire.DetailSeriesId = Series; f.Wire.HoldDetails = true;
+        var loading = f.Vm.LoadInLibraryAsync(id, 9);
+        var initial = await f.Wire.NextAsync();
+        try
+        {
+            f.Wire.Count = 2; f.Wire.Target = EpisodeB;
+            if (settlesDuringRead)
+            {
+                save.SetResult();
+                await f.Cache.WaitForProgressSettlementAsync(CancellationToken.None);
+            }
+            f.Wire.HoldDetails = false; initial.Release();
+            if (!settlesDuringRead)
+            {
+                await initial.Settled.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.False(loading.IsCompleted);
+                Assert.Null(f.Vm.Item);
+                save.SetResult();
+            }
+            await loading.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(2, f.Wire.DetailReads);
+            Assert.Equal(2, f.Vm.Item!.UserData!.WatchedCount);
+            Assert.Equal(EpisodeB, f.Vm.Item.PlayContentId);
+            Assert.Null(f.Vm.RemoteStateErrorMessage);
+        }
+        finally { save.TrySetResult(); }
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
@@ -682,6 +751,7 @@ public sealed class RealtimeReadOwnershipTests
         internal readonly ItemDetailViewModel Vm;
         internal readonly WeakReferenceMessenger Messenger = new();
         internal readonly UserStateRevision Revision;
+        internal readonly ItemDetailPrefetchCache Cache;
         internal readonly Clock Clock = new();
         private readonly RealtimeMediaStateRefresh _refresh;
         internal Fixture()
@@ -689,10 +759,10 @@ public sealed class RealtimeReadOwnershipTests
             _http = new(Wire); Client = new(_http); Client.SetBaseUrl("https://review-owned.invalid"); Client.SetProfile("profile");
             _auth = new(Client, new AuthApi(Client));
             var catalog = new CatalogApi(Client);
-            var cache = new ItemDetailPrefetchCache(catalog, _auth);
-            DetailCacheInvalidation.Attach(cache, Messenger);
+            Cache = new ItemDetailPrefetchCache(catalog, _auth);
+            DetailCacheInvalidation.Attach(Cache, Messenger);
             Revision = DetailCacheInvalidation.AttachUserStateRevision(Messenger);
-            Vm = new(catalog, cache);
+            Vm = new(catalog, Cache);
             Messenger.Register<ItemDetailViewModel, MediaStateInvalidated>(Vm, static (vm, message) => vm.Receive(message));
             Messenger.Register<ItemDetailViewModel, PlaybackProgressUpdated>(Vm, static (vm, message) => vm.Receive(message));
             _refresh = new(Client, action => action(), Messenger, Clock);

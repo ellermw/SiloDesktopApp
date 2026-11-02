@@ -83,6 +83,30 @@ public sealed class ItemDetailPrefetchCache
         }
     }
 
+    // Capture every scope before a read, since its series may only become
+    // known in the response. Pending saves are deliberately absent: even if
+    // they settle during the read, that snapshot still needs reconciliation.
+    public IReadOnlyDictionary<string, long> CaptureSettledProgressSaves()
+    {
+        lock (_sync)
+        {
+            EnsureProgressContext();
+            return _progressSaves.Where(pair => pair.Value.Pending.IsCompleted)
+                .ToDictionary(pair => pair.Key, pair => pair.Value.Revision, StringComparer.Ordinal);
+        }
+    }
+
+    public bool HasProgressSavesSince(
+        IReadOnlyDictionary<string, long> settled, string contentId, string? seriesId = null)
+    {
+        lock (_sync)
+        {
+            EnsureProgressContext();
+            return _progressSaves.Any(pair => ProgressScopeMatches(pair.Key, contentId, seriesId)
+                && (!settled.TryGetValue(pair.Key, out var revision) || revision != pair.Value.Revision));
+        }
+    }
+
     public async Task WaitForProgressSettlementAsync(
         CancellationToken cancellationToken, string? contentId = null, string? seriesId = null)
     {

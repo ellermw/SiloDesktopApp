@@ -37,6 +37,61 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("series", true, "next-episode")]
+    [InlineData("series", true, null)]
+    [InlineData("series", false, null)]
+    [InlineData("season", true, "next-episode")]
+    [InlineData("season", true, null)]
+    [InlineData("season", false, null)]
+    public async Task LocalFinalSaveRefreshesTheMountedPlayActionAndLoadedSeasonCounts(
+        string type, bool includeTarget, string? nextTarget)
+    {
+        using var scope = new Scope(type) { IncludeTarget = includeTarget, FreshTarget = nextTarget };
+        var item = scope.Vm.Item!;
+        item.PlayContentId = "finished-episode"; item.PlaySeasonNumber = 1;
+        item.UserData!.InProgressCount = 1;
+        scope.Vm.SelectedSeasonNumber = 1;
+        scope.OverrideDetail = () =>
+        {
+            var detail = scope.FreshDetail(item.ContentId, type);
+            detail.UserData!.InProgressCount = 0;
+            return Task.FromResult(detail);
+        };
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Vm.Receive(new PlaybackProgressUpdated("finished-episode", 999, 1000, true)
+            { SeriesId = "series", Persisted = save.Task });
+        var changes = new List<string?>();
+        SeriesPrimaryActionResolver.DetailAction? paintedAction = null;
+        scope.Vm.PropertyChanged += (_, e) =>
+        {
+            changes.Add(e.PropertyName);
+            if (e.PropertyName == nameof(scope.Vm.Item))
+                paintedAction = SeriesPrimaryActionResolver.ResolveDetail(scope.Vm.Item!);
+        };
+
+        var refresh = scope.Vm.RefreshWatchedStateAsync(save.Task, CancellationToken.None);
+        Assert.False(refresh.IsCompleted);
+        Assert.Equal(0, scope.DetailReads);
+        save.SetResult();
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal(includeTarget ? nextTarget : "finished-episode", item.PlayContentId);
+        Assert.Equal(includeTarget ? 2 : 1, item.PlaySeasonNumber);
+        Assert.Equal(1, scope.DetailReads);
+        Assert.Contains(nameof(scope.Vm.Item), changes);
+        if (type == "series")
+        {
+            Assert.NotNull(paintedAction);
+            Assert.Equal(item.PlayContentId, paintedAction.ContentId);
+            Assert.Equal(item.PlayContentId == null ? "Browse Series" : "Play Next", paintedAction.Label);
+            Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+            Assert.Contains(nameof(scope.Vm.Seasons), changes);
+        }
+        Assert.False(scope.Vm.IsLoading);
+    }
+
+    [Theory]
     [InlineData("series")]
     [InlineData("season")]
     public async Task TransientOwnedDetailFailureRetriesTheFullCatchUpScope(string type)

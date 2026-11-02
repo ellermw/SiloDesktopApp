@@ -336,23 +336,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                         var seasons = await ReadRemoteStateAsync(
                             () => _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct), message.CatchUp, Current, ct);
                         if (!Current()) continue;
-                        var retained = seasons.Seasons.Select(fresh =>
-                        {
-                            var loaded = Seasons.FirstOrDefault(s => s.ContentId == fresh.ContentId);
-                            if (loaded == null) return fresh;
-                            if (loaded.EpisodeCount != fresh.EpisodeCount)
-                            { loaded.EpisodeCount = fresh.EpisodeCount; seasonsChanged = true; }
-                            if (fresh.UserData != null && !SameUserData(loaded.UserData, fresh.UserData))
-                            { loaded.UserData = fresh.UserData; seasonsChanged = true; }
-                            return loaded;
-                        }).ToArray();
-                        if (!Seasons.SequenceEqual(retained))
-                        {
-                            Seasons.Clear();
-                            foreach (var season in retained) Seasons.Add(season);
-                            seasonsChanged = true;
-                        }
-                        _seasonsLoaded = true;
+                        seasonsChanged = ApplySeasonState(seasons);
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
@@ -460,6 +444,29 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (!current()) throw;
             }
         }
+    }
+
+    private bool ApplySeasonState(SeasonsResponse seasons)
+    {
+        var changed = false;
+        var retained = seasons.Seasons.Select(fresh =>
+        {
+            var loaded = Seasons.FirstOrDefault(s => s.ContentId == fresh.ContentId);
+            if (loaded == null) return fresh;
+            if (loaded.EpisodeCount != fresh.EpisodeCount)
+            { loaded.EpisodeCount = fresh.EpisodeCount; changed = true; }
+            if (fresh.UserData != null && !SameUserData(loaded.UserData, fresh.UserData))
+            { loaded.UserData = fresh.UserData; changed = true; }
+            return loaded;
+        }).ToArray();
+        if (!Seasons.SequenceEqual(retained))
+        {
+            Seasons.Clear();
+            foreach (var season in retained) Seasons.Add(season);
+            changed = true;
+        }
+        _seasonsLoaded = true;
+        return changed;
     }
 
     private static bool SameUserData(ItemDetailUserData? left, ItemDetailUserData right) => left != null
@@ -712,20 +719,42 @@ public partial class ItemDetailViewModel : ObservableObject,
         if (item?.Type is not ("movie" or "episode" or "series" or "season")) return;
         var generation = Volatile.Read(ref _watchedWriteGeneration);
         var context = _catalogApi.CaptureContext();
+        var libraryId = LibraryId;
+        var localRevision = Volatile.Read(ref _localStateGeneration);
+        bool Current() => _stateRefreshActive && !cancellationToken.IsCancellationRequested
+            && ReferenceEquals(Item, item) && LibraryId == libraryId && _catalogApi.IsCurrentContext(context)
+            && generation == Volatile.Read(ref _watchedWriteGeneration)
+            && localRevision == Volatile.Read(ref _localStateGeneration);
         try
         {
             await pendingProgressSave.WaitAsync(cancellationToken);
             await WaitForLocalProgressSettlementAsync(cancellationToken);
-            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)
-                || ToggleWatchedCommand.IsRunning || generation != Volatile.Read(ref _watchedWriteGeneration)) return;
-            var localRevision = Volatile.Read(ref _localStateGeneration);
+            // Progress arriving during settlement belongs to this refresh;
+            // watched commands and navigation still retire its authority.
+            localRevision = Volatile.Read(ref _localStateGeneration);
+            if (!Current() || ToggleWatchedCommand.IsRunning) return;
             _detailPrefetchCache.Invalidate(item.ContentId);
             var refreshed = await ReadDetailAsync(item.ContentId, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)
-                || generation != Volatile.Read(ref _watchedWriteGeneration) || localRevision != Volatile.Read(ref _localStateGeneration)) return;
+            if (!Current()) return;
             item.UserData = refreshed.UserData;
             IsWatched = item.UserData?.Played ?? false;
+            if (refreshed.EpisodeCount.HasValue) item.EpisodeCount = refreshed.EpisodeCount;
+            if (refreshed.SeasonCount.HasValue) item.SeasonCount = refreshed.SeasonCount;
+            // Omitted legacy targets preserve the known action; explicit null
+            // is authoritative and must clear it just like a remote refresh.
+            if (refreshed.HasAuthoritativePlayTarget)
+            {
+                item.PlayContentId = refreshed.PlayContentId;
+                item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
+            }
+            OnPropertyChanged(nameof(Item));
+            if (item.Type == "series" && (_seasonsLoaded || !IsSeasonsLoading && Seasons.Count > 0))
+            {
+                var seasons = await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, cancellationToken);
+                if (!Current()) return;
+                if (ApplySeasonState(seasons)) OnPropertyChanged(nameof(Seasons));
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
@@ -842,7 +871,6 @@ public partial class ItemDetailViewModel : ObservableObject,
         var loadContext = _catalogApi.CaptureContext();
         var initialRevision = _initialStateRevision;
         var localRevision = Volatile.Read(ref _localStateGeneration);
-        var progressRevision = _detailPrefetchCache.GetProgressSaveRevision(contentId);
         var initialProgressRevision = 0;
         var libraryId = LibraryId;
         bool Current() => ReferenceEquals(_loadCts, loadCts) && !ct.IsCancellationRequested
@@ -877,6 +905,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             progressWait.CancelAfter(TimeSpan.FromSeconds(5));
             var progressSettled = await WaitForInitialProgressSettlementAsync(contentId, null, progressWait.Token, ct);
             if (!Current()) return;
+            var settledProgressSaves = _detailPrefetchCache.CaptureSettledProgressSaves();
             MediaItemDetail item;
             try { item = await ReadDetailAsync(contentId, ct); }
             catch (UserStateChangedException) when (!ct.IsCancellationRequested)
@@ -908,14 +937,14 @@ public partial class ItemDetailViewModel : ObservableObject,
                 int nextInitialProgressRevision;
                 lock (_remoteStateGate)
                     nextInitialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId));
-                var nextProgressRevision = _detailPrefetchCache.GetProgressSaveRevision(contentId, item.SeriesId);
                 if (localRevision == Volatile.Read(ref _localStateGeneration)
-                    && progressRevision == nextProgressRevision && initialProgressRevision == nextInitialProgressRevision) break;
+                    && !_detailPrefetchCache.HasProgressSavesSince(settledProgressSaves, contentId, item.SeriesId)
+                    && initialProgressRevision == nextInitialProgressRevision) break;
                 progressSettled = await WaitForInitialProgressSettlementAsync(contentId, item.SeriesId, progressWait.Token, ct);
                 if (!Current()) return;
                 if (!progressSettled) break;
                 localRevision = Volatile.Read(ref _localStateGeneration);
-                progressRevision = _detailPrefetchCache.GetProgressSaveRevision(contentId, item.SeriesId);
+                settledProgressSaves = _detailPrefetchCache.CaptureSettledProgressSaves();
                 lock (_remoteStateGate)
                     initialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId));
                 // Own a fresh read after settlement, including for leaves and
