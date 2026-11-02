@@ -870,9 +870,9 @@ public sealed partial class ItemDetailPage : Page
                 ApplyEpisodeSpoilers();
                 ApplySeasonAction();
                 RefreshContainerCountBadges();
+                _ = ApplySeriesActionAsync();
                 if ((changes & 1) != 0)
                 {
-                    ApplyAuthoritativeSeriesAction();
                     BuildMoreFlyout();
                 }
             };
@@ -1216,7 +1216,7 @@ public sealed partial class ItemDetailPage : Page
                     EpisodesSection.Visibility = Visibility.Collapsed;
                 }
 
-                ApplyAuthoritativeSeriesAction();
+                await ApplySeriesActionAsync();
                 VersionDropdownButton.Visibility = Visibility.Collapsed;
                 VersionSeparator.Visibility = Visibility.Collapsed;
                 AudioTracksButton.Visibility = Visibility.Collapsed;
@@ -1810,7 +1810,7 @@ public sealed partial class ItemDetailPage : Page
         // watch controls. Apply them last so a companion /watch response cannot
         // reintroduce video-quality badges or hide the listening actions.
         ConfigureBookDetail(item);
-        ApplyAuthoritativeSeriesAction();
+        _ = ApplySeriesActionAsync();
         UpdateResponsiveLayout(ActualWidth);
     }
 
@@ -4751,20 +4751,7 @@ public sealed partial class ItemDetailPage : Page
             BuildSeasonCards();
         }
 
-        if (!ApplyAuthoritativeSeriesAction() && string.IsNullOrWhiteSpace(_playableContentId))
-        {
-            var primaryAction = SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons);
-            if (!string.IsNullOrWhiteSpace(primaryAction.TargetSeasonId))
-                await LoadSeriesPrimaryEpisodesAsync(primaryAction.TargetSeasonId);
-            var index = Math.Clamp(
-                (primaryAction.TargetEpisodeNumber ?? 1) - 1,
-                0,
-                Math.Max(ViewModel.Episodes.Count - 1, 0));
-            var episode = ViewModel.Episodes.Count > 0 ? ViewModel.Episodes[index] : null;
-            _playableContentId = episode?.ContentId;
-            PlayButtonText.Text = primaryAction.Label;
-            SplitPlayButton.Visibility = episode == null ? Visibility.Collapsed : Visibility.Visible;
-        }
+        await ApplySeriesActionAsync();
     }
 
     private async void RetryEpisodesButton_Click(object sender, RoutedEventArgs e)
@@ -4867,10 +4854,39 @@ public sealed partial class ItemDetailPage : Page
         SplitPlayButton.Opacity = playable ? 1 : .5;
     }
 
+    private async Task ApplySeriesActionAsync()
+    {
+        var item = ViewModel.Item;
+        if (item?.Type != "series" || ApplyAuthoritativeSeriesAction()) return;
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalog.CaptureContext();
+        var navigation = _navigationCts;
+        var libraryId = ViewModel.LibraryId;
+        var primaryAction = SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons);
+        var season = ViewModel.Seasons.FirstOrDefault(s => s.ContentId == primaryAction.TargetSeasonId);
+        if (season != null && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
+            && (ViewModel.Episodes.Count == 0 || ViewModel.Episodes.Any(e => e.SeasonNumber != season.SeasonNumber)))
+            await LoadSeriesPrimaryEpisodesAsync(season.ContentId);
+        if (!ReferenceEquals(ViewModel.Item, item) || !ReferenceEquals(_navigationCts, navigation)
+            || navigation?.IsCancellationRequested == true || ViewModel.LibraryId != libraryId
+            || !catalog.IsCurrentContext(context)) return;
+        // A remote response may have supplied an explicit target while the
+        // legacy companion was loading. It always takes precedence, even null.
+        if (ApplyAuthoritativeSeriesAction() || primaryAction != SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons)) return;
+        var episodes = ViewModel.Episodes.Where(e => season != null && e.SeasonNumber == season.SeasonNumber).ToArray();
+        var index = Math.Clamp((primaryAction.TargetEpisodeNumber ?? 1) - 1, 0, Math.Max(episodes.Length - 1, 0));
+        _playableContentId = episodes.Length > 0 ? episodes[index].ContentId : null;
+        PlayButtonText.Text = primaryAction.Label;
+        var playable = !string.IsNullOrWhiteSpace(_playableContentId);
+        SplitPlayButton.Visibility = playable ? Visibility.Visible : Visibility.Collapsed;
+        PrimaryPlayButton.IsEnabled = playable;
+        SplitPlayButton.Opacity = playable ? 1 : .5;
+    }
+
     private bool ApplyAuthoritativeSeriesAction()
     {
         var item = ViewModel.Item;
-        if (item?.Type != "series") return false;
+        if (item?.Type != "series" || !item.HasAuthoritativePlayTarget) return false;
         var action = SeriesPrimaryActionResolver.ResolveDetail(item);
         _playableContentId = action.ContentId;
         PlayButtonText.Text = action.Label;
@@ -4889,8 +4905,13 @@ public sealed partial class ItemDetailPage : Page
     {
         var item = ViewModel.Item;
         if (item == null) return null;
-        if (item.Type == "series" || item.Type == "season" && item.HasAuthoritativePlayTarget)
+        if ((item.Type is "series" or "season") && item.HasAuthoritativePlayTarget)
             return string.IsNullOrWhiteSpace(item.PlayContentId) ? null : item.PlayContentId;
+        if (item.Type == "series")
+        {
+            await ApplySeriesActionAsync();
+            return ReferenceEquals(ViewModel.Item, item) ? _playableContentId : null;
+        }
 
         if (!string.IsNullOrWhiteSpace(_playableContentId))
             return _playableContentId;
@@ -8403,6 +8424,7 @@ public sealed partial class ItemDetailPage : Page
                 if (!Current() || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return;
                 if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }
+            ViewModel.EpisodesSeasonContentId = seasonContentId;
             ViewModel.Episodes.Clear();
             foreach (var episode in response.Episodes)
                 ViewModel.Episodes.Add(episode);

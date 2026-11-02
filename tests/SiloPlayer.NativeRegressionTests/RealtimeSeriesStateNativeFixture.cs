@@ -71,6 +71,8 @@ internal static class RealtimeSeriesStateNativeFixture
                     var mountedCards = episodePanel.Children.ToArray();
                     var loadedButton = Descendants<Button>(episodePanel).Single(button => button.Tag as string == "loaded");
                     var mountedFlyout = loadedButton.ContextFlyout;
+                    var watchedAction = ((MenuFlyout)mountedFlyout).Items.OfType<MenuFlyoutItem>()
+                        .Single(action => action.Text == "Mark Watched");
                     var mountedCaption = Descendants<FrameworkElement>(loadedButton).Single(element => element.Name == "EpisodeCardCaption");
                     var seasonPanel = (Panel)page.FindName("SeasonsPanel");
                     var mountedSeasonCard = seasonPanel.Children[0];
@@ -135,6 +137,15 @@ internal static class RealtimeSeriesStateNativeFixture
                     Check(ReferenceEquals(mountedFlyout, loadedButton.ContextFlyout) &&
                         ReferenceEquals(mountedCaption, Descendants<FrameworkElement>(loadedButton).Single(element => element.Name == "EpisodeCardCaption")),
                         "Episode refresh replaced the mounted flyout or caption instead of patching state in place.");
+                    mountedFlyout.ShowAt(loadedButton);
+                    try
+                    {
+                        await UntilAsync(() => watchedAction.Text == "Mark Unwatched");
+                        Check(AutomationProperties.GetName(watchedAction) == "Mark Unwatched"
+                            && watchedAction.Icon is FontIcon { Glyph: "\uE711" },
+                            "The retained episode menu did not refresh its watched label, accessible name and icon on opening.");
+                    }
+                    finally { mountedFlyout.Hide(); }
                     if (type == "series")
                     {
                         vm.Seasons.Add(new() { ContentId = "second-season", SeasonNumber = 2 });
@@ -214,6 +225,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 }
                 finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
             }
+            await VerifyLegacySeriesActionAsync(parent, wire, client);
             foreach (var type in new[] { "movie", "episode" })
             {
                 var page = new ItemDetailPage();
@@ -239,6 +251,63 @@ internal static class RealtimeSeriesStateNativeFixture
             }
         }
         finally { slot.SetValue(null, original); }
+    }
+
+    private static async Task VerifyLegacySeriesActionAsync(StackPanel parent, Wire wire, SiloApiClient client)
+    {
+        wire.OmitTarget = true; wire.Count = 0; wire.Favorite = false;
+        var page = new ItemDetailPage { Width = 900, Height = 720 };
+        var vm = page.ViewModel;
+        using var navigation = new CancellationTokenSource();
+        vm.Item = JsonSerializer.Deserialize<MediaItemDetail>("""
+            {"content_id":"series","type":"series","title":"Legacy series","user_data":{"unplayed_count":6}}
+            """, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })!;
+        vm.IsSeries = true;
+        vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, EpisodeCount = 6,
+            UserData = new() { UnplayedCount = 6 } });
+        Set(page, "_currentContentId", "series"); Set(page, "_navigationCts", navigation);
+        var handler = (PropertyChangedEventHandler)typeof(ItemDetailPage).GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .CreateDelegate(typeof(PropertyChangedEventHandler), page);
+        vm.PropertyChanged += handler;
+        parent.Children.Add(page);
+        var apply = typeof(ItemDetailPage).GetMethod("ApplySeriesActionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var resolve = typeof(ItemDetailPage).GetMethod("ResolvePlayableContentIdForPlaybackAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        try
+        {
+            await (Task)apply.Invoke(page, null)!;
+            Check(!vm.Item.HasAuthoritativePlayTarget && vm.Episodes.Count == 2,
+                "The legacy action did not load its season episodes, or invented an authoritative target.");
+            Check(((TextBlock)page.FindName("PlayButtonText")).Text == "Start From Episode 1"
+                && ((Button)page.FindName("PrimaryPlayButton")).IsEnabled
+                && ((UIElement)page.FindName("SplitPlayButton")).Visibility == Visibility.Visible,
+                "An omitted legacy play target disabled the initial series fallback action.");
+            Check(await (Task<string?>)resolve.Invoke(page, null)! == "sibling",
+                "Legacy series playback did not resolve the fallback episode.");
+
+            wire.Count = 1;
+            await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(["loaded"]),
+                new HashSet<string>(["series"])));
+            await UntilAsync(() => ((TextBlock)page.FindName("PlayButtonText")).Text == "Play Latest");
+            Check(!vm.Item.HasAuthoritativePlayTarget && ((Button)page.FindName("PrimaryPlayButton")).IsEnabled,
+                "A legacy realtime response disabled the seasons-derived series action.");
+            Check(await (Task<string?>)resolve.Invoke(page, null)! == "loaded",
+                "The refreshed legacy action did not advance its fallback episode.");
+
+            wire.OmitTarget = false; wire.Target = null;
+            await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(),
+                new HashSet<string>(["series"])));
+            await UntilAsync(() => ((TextBlock)page.FindName("PlayButtonText")).Text == "Browse Series");
+            Check(!((Button)page.FindName("PrimaryPlayButton")).IsEnabled
+                && await (Task<string?>)resolve.Invoke(page, null)! == null,
+                "An explicit null target incorrectly reused the legacy fallback episode.");
+            Program.Log("PASS: omitted legacy series targets retain enabled initial/realtime fallback actions; explicit null still disables playback.");
+        }
+        finally
+        {
+            wire.OmitTarget = false;
+            vm.PropertyChanged -= handler; vm.CancelPendingLoads();
+            WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+        }
     }
 
     private static bool HasWatchedBadge(ItemDetailPage page, string contentId)
@@ -269,6 +338,7 @@ internal static class RealtimeSeriesStateNativeFixture
     {
         internal int Count = 2;
         internal string? Target = "new-target";
+        internal bool OmitTarget;
         internal bool FailEpisodes;
         internal bool Favorite;
         internal bool LoadedPlayed;
@@ -288,12 +358,14 @@ internal static class RealtimeSeriesStateNativeFixture
                     new { content_id = "sibling", season_number = 1, user_data = new { played = false, position_seconds = 31d, duration_seconds = 1200d } },
                     new { content_id = "loaded", season_number = 1, user_data = new { played = LoadedPlayed, position_seconds = LoadedPosition, duration_seconds = 1200d } } } } :
                 path.StartsWith("/api/v2/catalog/items/") ?
-                new { content_id = path.Split('/').Last(), type = path.Split('/').Last(),
-                    play_content_id = Target, play_season_number = 1, episode_count = 6, season_count = 1,
-                    user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 }, user_state = new { is_favorite = Favorite } } :
+                new Dictionary<string, object?> { ["content_id"] = path.Split('/').Last(), ["type"] = path.Split('/').Last(),
+                    ["play_content_id"] = Target, ["play_season_number"] = 1, ["episode_count"] = 6, ["season_count"] = 1,
+                    ["user_data"] = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 },
+                    ["user_state"] = new { is_favorite = Favorite } } :
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 6,
                     user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };
+            if (OmitTarget && body is Dictionary<string, object?> detail) detail.Remove("play_content_id");
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
             if (HeldCompanion is { } companion && path.EndsWith("/" + companion) && ReleaseCompanion is { } release)
             {

@@ -83,14 +83,20 @@ public static class MediaItemMenu
                     {
                         await MediaItemCardActions.ToggleWatchedAsync(item);
                         stateChanged?.Invoke();
-                        var nowWatched = item.UserState?.Played == true;
-                        watchedAction.Text = MediaItemCardActions.GetWatchedActionLabel(item.Type, nowWatched);
-                        watchedAction.Icon = new FontIcon { Glyph = nowWatched ? "\uE711" : "\uE73E" };
-                        AutomationProperties.SetName(watchedAction, watchedAction.Text);
+                        RefreshWatchedAction();
                     }
                     catch (Exception ex) { toast.Error(ex); }
                 });
+            void RefreshWatchedAction()
+            {
+                var nowWatched = item.UserState?.Played == true;
+                watchedAction.Text = MediaItemCardActions.GetWatchedActionLabel(item.Type, nowWatched);
+                watchedAction.Icon = new FontIcon { Glyph = nowWatched ? "\uE711" : "\uE73E" };
+                AutomationProperties.SetName(watchedAction, watchedAction.Text);
+            }
             flyout.Items.Add(watchedAction);
+            // Retained cards can change remotely without rebuilding their menu.
+            flyout.Opening += (_, _) => RefreshWatchedAction();
 
             if (showCollectionActions)
             {

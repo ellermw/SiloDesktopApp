@@ -37,6 +37,42 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("series")]
+    [InlineData("season")]
+    public async Task DelayedPostPlaybackReadCannotOverwriteANewerRealtimeSnapshot(string type)
+    {
+        using var scope = new Scope(type)
+        {
+            IncludeTarget = true, FreshTarget = "newer-episode",
+            BlockedRead = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        var mounted = scope.Vm.Item!;
+        var playback = scope.Vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
+        await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message()).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, mounted.UserData!.WatchedCount);
+        Assert.Equal("newer-episode", mounted.PlayContentId);
+        var newerData = mounted.UserData;
+        var newerSeasonData = scope.Vm.Seasons[0].UserData;
+
+        scope.BlockedRead.SetResult(new MediaItemDetail
+        {
+            ContentId = mounted.ContentId, Type = type, PlayContentId = "finished-episode",
+            PlaySeasonNumber = 1, UserData = new() { WatchedCount = 1, UnplayedCount = 3 }
+        });
+        await playback.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Same(newerData, mounted.UserData);
+        Assert.Same(newerSeasonData, scope.Vm.Seasons[0].UserData);
+        Assert.Equal(2, mounted.UserData.WatchedCount);
+        Assert.Equal("newer-episode", mounted.PlayContentId);
+        Assert.Equal(2, mounted.PlaySeasonNumber);
+        Assert.Equal(2, scope.DetailReads);
+    }
+
+    [Theory]
     [InlineData("series", true, "next-episode")]
     [InlineData("series", true, null)]
     [InlineData("series", false, null)]

@@ -723,10 +723,12 @@ public partial class ItemDetailViewModel : ObservableObject,
         var context = _catalogApi.CaptureContext();
         var libraryId = LibraryId;
         var localRevision = Volatile.Read(ref _localStateGeneration);
+        var remoteRevision = RemoteStateRevision;
         bool Current() => _stateRefreshActive && !cancellationToken.IsCancellationRequested
             && ReferenceEquals(Item, item) && LibraryId == libraryId && _catalogApi.IsCurrentContext(context)
             && generation == Volatile.Read(ref _watchedWriteGeneration)
-            && localRevision == Volatile.Read(ref _localStateGeneration);
+            && localRevision == Volatile.Read(ref _localStateGeneration)
+            && remoteRevision == RemoteStateRevision;
         try
         {
             await pendingProgressSave.WaitAsync(cancellationToken);
@@ -734,6 +736,9 @@ public partial class ItemDetailViewModel : ObservableObject,
             // Progress arriving during settlement belongs to this refresh;
             // watched commands and navigation still retire its authority.
             localRevision = Volatile.Read(ref _localStateGeneration);
+            // A sweep begun after this read owns the newer authoritative
+            // snapshot, even if this response (or its seasons) completes last.
+            remoteRevision = RemoteStateRevision;
             if (!Current() || ToggleWatchedCommand.IsRunning) return;
             _detailPrefetchCache.Invalidate(item.ContentId);
             // Mounted snapshots own their request; realtime cache invalidation
