@@ -107,6 +107,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 .AddSingleton(new SettingsService(Program.ResultDirectory))
                 .AddSingleton(imageService)
                 .AddSingleton(http)
+                .AddSingleton(api)
                 .AddSingleton(new CatalogApi(api))
                 .AddSingleton(new MediaMaintenanceApi(api))
                 .AddSingleton(new AuthService(api, new AuthApi(api)))
@@ -147,6 +148,24 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 await HomeRowWindowNativeFixture.RunAsync(parent);
                 await HomeCurrentNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay-review")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyReviewAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay-owner")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyQueuedOwnerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay")
+            {
+                await EpisodeQuickPlayNativeFixture.RunAsync(parent);
+                await EpisodeQuickPlayNativeFixture.VerifyQueuedOwnerAsync();
+                await WatchPartyNativeFixture.RunAsync();
+                await EpisodeQuickPlayNativeFixture.VerifyReviewAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-online")

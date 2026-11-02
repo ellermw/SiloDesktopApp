@@ -41,7 +41,7 @@ internal static class AutoAudioStartChecks
         // detail page. Hand-built snapshots are deliberately refetched.
         var detail = await service.GetOrFetchWatchDetailAsync("fixture-movie", fileId: requestedFile);
         var play = (Task)Call(service, "PlayCoreAsync", "fixture-movie", true, requestedFile,
-            scenario == "explicit" ? (int?)1 : scenario == "explicit-first" ? 0 : null, (int?)-1, null, null, detail, null, null, CancellationToken.None, null)!;
+            scenario == "explicit" ? (int?)1 : scenario == "explicit-first" ? 0 : null, (int?)-1, null, null, detail, null, null, CancellationToken.None, null, null)!;
         await play.WaitAsync(TimeSpan.FromSeconds(8));
         if (wire.Starts.Count != 1) throw new InvalidOperationException("Actual initial path did not issue one start: " + service.ErrorMessage);
         var body = wire.Starts[0];

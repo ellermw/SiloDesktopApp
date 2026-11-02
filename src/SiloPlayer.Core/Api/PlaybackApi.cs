@@ -7,9 +7,10 @@ public partial class PlaybackApi(SiloApiClient client)
     public Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, CancellationToken ct = default)
         => GetWatchDetailAsync(contentId, libraryId: null, fileId: null, ct);
 
-    public async Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, int? libraryId, int? fileId = null, CancellationToken ct = default)
+    public async Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, int? libraryId, int? fileId = null, CancellationToken ct = default,
+        ApiRequestContext? expectedContext = null)
     {
-        var context = client.CaptureContext();
+        var context = expectedContext ?? client.CaptureContext();
         var path = $"/api/v2/watch/{Uri.EscapeDataString(contentId)}";
         var query = new List<string>();
         if (libraryId.HasValue) query.Add("library_id=" + libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -21,8 +22,9 @@ public partial class PlaybackApi(SiloApiClient client)
         return detail;
     }
 
-    public Task<PlaybackDecisionResponseV3> StartPlaybackV3Async(PlaybackStartRequestV3 request, CancellationToken ct = default)
-        => StartV2Async(request, ct);
+    public Task<PlaybackDecisionResponseV3> StartPlaybackV3Async(PlaybackStartRequestV3 request, CancellationToken ct = default,
+        ApiIdentityContext? expectedIdentityContext = null)
+        => StartV2Async(request, ct, expectedIdentityContext);
 
     public Task<PlaybackCapabilityV3> GetPlaybackCapabilityAsync(CancellationToken ct = default)
         => client.GetAsync<PlaybackCapabilityV3>("/api/v2/playback/capabilities", ct);

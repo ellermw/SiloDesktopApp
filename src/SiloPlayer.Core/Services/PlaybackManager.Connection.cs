@@ -15,9 +15,10 @@ public partial class PlaybackManager
     public int? KeptBufferingEstimateKbps { get; set; }
     public PlaybackPlanV3? ConnectionPlan => _currentPlanV3;
     public bool SupportsBufferingQuality => _connectionFeatures.Contains("buffering_quality_v1") && !IgnoreConnectionMeasurements;
-    private async Task ConfigureConnectionStartAsync(PlaybackStartRequestV3 request, PlaybackQualityPreferences preferences, CancellationToken ct)
+    private async Task ConfigureConnectionStartAsync(PlaybackStartRequestV3 request, PlaybackQualityPreferences preferences, CancellationToken ct,
+        ApiIdentityContext owner)
     {
-        var owner = _apiClient.CaptureIdentityContext();
+        if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
         var capability = preferences.CapabilitySnapshot is { } snapshot && snapshot.Owner == owner
             ? snapshot.Capability : await _playbackApi.GetConnectionCapabilityAsync(owner, ct).ConfigureAwait(false);
         request.CapabilitySnapshot = (owner, capability);

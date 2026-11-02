@@ -444,6 +444,7 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        Interlocked.Exchange(ref _loadingOverlayOwner, null);
         if (!_updateSessionEnding)
             try { App.Services.GetService<IAppUpdateInstaller>()?.ConfirmNormalClose(); }
             catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "confirm_update_close"); }
@@ -2612,19 +2613,38 @@ public sealed partial class MainWindow : Window
         ApplyPendingAccessRefresh();
     }
 
-    public void ShowLoadingOverlay()
+    private object? _loadingOverlayOwner;
+    private readonly object _legacyLoadingOverlayOwner = new();
+
+    public void ShowLoadingOverlay(object? owner = null)
     {
+        var currentOwner = owner ?? _legacyLoadingOverlayOwner;
+        // Legacy callers may reuse their own surface, never take a request's
+        // loading surface (or replace a playback error).
+        if (owner == null)
+        {
+            var previousOwner = Interlocked.CompareExchange(ref _loadingOverlayOwner, currentOwner, null);
+            if (previousOwner != null && !ReferenceEquals(previousOwner, currentOwner)) return;
+        }
+        else
+            Interlocked.Exchange(ref _loadingOverlayOwner, currentOwner);
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Visible;
             ErrorState.Visibility = Visibility.Collapsed;
             LoadingOverlay.Visibility = Visibility.Visible;
         });
     }
 
-    public void HideLoadingOverlay()
+    public void HideLoadingOverlay(object? owner = null)
     {
-        DispatcherQueue.TryEnqueue(() => LoadingOverlay.Visibility = Visibility.Collapsed);
+        var currentOwner = owner ?? _legacyLoadingOverlayOwner;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
+            LoadingOverlay.Visibility = Visibility.Collapsed;
+        });
     }
 
     public void ShowPlaybackError(string message)
@@ -2632,8 +2652,11 @@ public sealed partial class MainWindow : Window
 
     public void ShowPlaybackError(string title, string detail)
     {
+        var currentOwner = new object();
+        Interlocked.Exchange(ref _loadingOverlayOwner, currentOwner);
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Collapsed;
             ErrorState.Visibility = Visibility.Visible;
             ErrorTitle.Text = title;
@@ -2644,6 +2667,7 @@ public sealed partial class MainWindow : Window
 
     private void ErrorDismiss_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
+        Interlocked.Exchange(ref _loadingOverlayOwner, null);
         LoadingOverlay.Visibility = Visibility.Collapsed;
     }
 

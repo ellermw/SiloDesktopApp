@@ -7884,6 +7884,31 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private FrameworkElement CreateEpisodeCard(Episode episode, bool isCurrent = false)
     {
+        var api = App.Services.GetRequiredService<SiloApiClient>();
+        var identity = api.CaptureIdentityContext();
+        var ownerItem = ViewModel.Item;
+        var libraryId = ViewModel.LibraryId;
+        var contentId = episode.ContentId;
+        var navigationToken = _navigationCts?.Token ?? CancellationToken.None;
+        var actionLifetime = CancellationTokenSource.CreateLinkedTokenSource(navigationToken);
+        var actionToken = actionLifetime.Token;
+        var retired = false;
+        bool IsCurrentPageOwner() => !navigationToken.IsCancellationRequested && IsLoaded &&
+            api.IsCurrentIdentityContext(identity) && ReferenceEquals(ViewModel.Item, ownerItem) && ViewModel.LibraryId == libraryId;
+        bool IsCurrentCardOwner() => !retired && !actionToken.IsCancellationRequested && IsCurrentPageOwner();
+        void RetireAction()
+        {
+            if (retired) return;
+            retired = true;
+            ViewModel.PropertyChanged -= OnOwnerChanged;
+            actionLifetime.Cancel();
+            actionLifetime.Dispose();
+        }
+        void OnOwnerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+        {
+            if (!ReferenceEquals(ViewModel.Item, ownerItem) || ViewModel.LibraryId != libraryId) RetireAction();
+        }
+        ViewModel.PropertyChanged += OnOwnerChanged;
         var presentation = EpisodeCardPresentation.Create(
             episode.UserData?.Played == true,
             episode.UserData?.PositionSeconds ?? 0,
@@ -8058,18 +8083,90 @@ public sealed partial class ItemDetailPage : Page
             stateChanged: RefreshActionState,
             owner: button);
 
-        var actionLayer = new Grid
+        var root = new Grid();
+        var actionLayer = new EpisodeCardActionLayer(root)
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Top,
             Opacity = 0,
             IsHitTestVisible = false,
         };
-        void SetActionLayerVisibility(bool reveal)
+        var quickPlayButton = new Button
         {
-            actionLayer.Opacity = reveal ? 1 : 0;
-            actionLayer.IsHitTestVisible = reveal;
-        }
+            Width = 36,
+            Height = 36,
+            MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            CornerRadius = new CornerRadius(18),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xDD, 0, 0, 0)),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x60, 0xFF, 0xFF, 0xFF)),
+            Content = new FontIcon { Glyph = "\uE768", FontSize = 15, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) },
+        };
+        quickPlayButton.Click += async (_, _) =>
+        {
+            if (!quickPlayButton.IsEnabled || !IsCurrentCardOwner() || episode.Files?.Any(file => file.Unreadable != true) != true) return;
+            quickPlayButton.IsEnabled = false;
+            // A rendered card may outlive an access revision, but not its
+            // account/profile. Preparation captures fresh read contexts under
+            // this original identity, including while the start is queued.
+            // Cosmetic grid rebuilds retire the old button, not an accepted
+            // start. Only navigation or a real page owner change cancels it.
+            using var acceptedLifetime = CancellationTokenSource.CreateLinkedTokenSource(navigationToken);
+            var acceptedToken = acceptedLifetime.Token;
+            bool IsCurrentOwner() => !acceptedToken.IsCancellationRequested && IsCurrentPageOwner();
+            void OnAcceptedOwnerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+            {
+                if (!IsCurrentPageOwner()) acceptedLifetime.Cancel();
+            }
+            ViewModel.PropertyChanged += OnAcceptedOwnerChanged;
+            try
+            {
+                var player = App.Services.GetRequiredService<Services.PlayerService>();
+                var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+                if (coordinator.ActiveRoom is { } room)
+                {
+                    // Keep viewer intent within the room's existing authority
+                    // path. An unrelated still must not replace its local media.
+                    if (room.Room?.Phase == "playing" && room.Room.SelectedContentId == contentId &&
+                        player.ContentId == contentId && room.AttachedSessionId == player.Manager?.SessionId)
+                    {
+                        coordinator.RequestTransport("play", player.UserSeekPosition, isPaused: false);
+                        return;
+                    }
+                    if (room.RoomId == null || room.RoomToken == null) return;
+                    var playback = App.Services.GetRequiredService<PlaybackApi>();
+                    if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
+                    {
+                        var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, contentId, libraryId: libraryId, ct: acceptedToken);
+                        if (!IsCurrentOwner() || !ReferenceEquals(coordinator.ActiveRoom, room)) return;
+                        room.Room = response.Room;
+                    }
+                    else
+                        await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, "episode", episode.Title,
+                            posterUrl: episode.StillUrl, ct: acceptedToken);
+                    if (IsCurrentOwner() && ReferenceEquals(coordinator.ActiveRoom, room))
+                        App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
+                        { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
+                    return;
+                }
+                await player.PlayAsync(
+                    contentId, libraryId: libraryId, cancellationToken: acceptedToken, expectedIdentityContext: identity);
+            }
+            catch (OperationCanceledException) when (!IsCurrentOwner()) { }
+            catch (Exception ex)
+            {
+                if (IsCurrentOwner()) App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+            }
+            finally
+            {
+                ViewModel.PropertyChanged -= OnAcceptedOwnerChanged;
+                quickPlayButton.IsEnabled = true;
+            }
+        };
         var quickWatchedIcon = new FontIcon { FontSize = 18, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
         var quickWatchedButton = new Button
         {
@@ -8119,6 +8216,9 @@ public sealed partial class ItemDetailPage : Page
             var label = current.WatchedActionLabel;
             AutomationProperties.SetName(quickWatchedButton, label);
             ToolTipService.SetToolTip(quickWatchedButton, label);
+            var playLabel = (mediaItem.PositionSeconds > 0 ? "Resume " : "Play ") + caption.Presentation.SpokenTitle;
+            AutomationProperties.SetName(quickPlayButton, playLabel);
+            ToolTipService.SetToolTip(quickPlayButton, playLabel);
             RefreshActionState();
         }
 
@@ -8156,15 +8256,16 @@ public sealed partial class ItemDetailPage : Page
             owner: moreButton).ShowAt(moreButton);
         actionLayer.Children.Add(quickWatchedButton);
         actionLayer.Children.Add(moreButton);
+        if (episode.Files?.Any(file => file.Unreadable != true) == true) actionLayer.Children.Add(quickPlayButton);
 
-        var root = new Grid();
         root.Children.Add(button);
         root.Children.Add(actionLayer);
-        root.SizeChanged += (_, args) => actionLayer.Height = args.NewSize.Width * 9d / 16d;
-        root.PointerEntered += (_, _) => SetActionLayerVisibility(true);
-        root.PointerExited += (_, _) => SetActionLayerVisibility(false);
-        root.GotFocus += (_, _) => SetActionLayerVisibility(true);
-        root.LostFocus += (_, _) => SetActionLayerVisibility(false);
+        root.SizeChanged += (_, args) =>
+        {
+            actionLayer.Height = args.NewSize.Width * 9d / 16d;
+            quickPlayButton.Width = quickPlayButton.Height = Math.Clamp(args.NewSize.Width - 104, 24, 36);
+        };
+        root.Unloaded += (_, _) => RetireAction();
         UpdateQuickAction();
 
         return root;
