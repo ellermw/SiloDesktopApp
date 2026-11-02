@@ -32,6 +32,78 @@ public partial class ItemDetailViewModel : ObservableObject,
     private Task<MediaItemDetail> ReadDetailAsync(string contentId, CancellationToken ct) => LibraryId.HasValue
         ? _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct) : _detailPrefetchCache.GetAsync(contentId, ct);
 
+    private long _overviewRevision;
+    private MediaItemDetail? _overviewEpisode, _seriesOverview;
+    private int? _overviewLibrary;
+    private ApiRequestContext? _overviewContext;
+    private long _overviewLanguage;
+
+    // Keep description ownership separate from episode identity and playback actions.
+    private bool IsOverviewScopeCurrent => LibraryId == _overviewLibrary &&
+        _overviewLanguage == _catalogApi.LocalizedReadGeneration && _overviewContext is { } context &&
+        _catalogApi.IsCurrentContext(context);
+    public MediaItemDetail? OverviewSource
+    {
+        get
+        {
+            if (Item is not { } item) return null;
+            if (ReferenceEquals(item, _overviewEpisode) && !IsOverviewScopeCurrent) return null;
+            if (item.Type != "episode" || !string.IsNullOrWhiteSpace(item.Overview)) return item;
+            return ReferenceEquals(item, _overviewEpisode) && IsOverviewScopeCurrent ? _seriesOverview : null;
+        }
+    }
+
+    public async Task<MediaItemDetail?> ResolveOverviewAsync(CancellationToken ct = default)
+    {
+        var revision = ++_overviewRevision;
+        var item = Item;
+        _seriesOverview = null;
+        _overviewEpisode = item;
+        _overviewLibrary = LibraryId;
+        _overviewContext = _catalogApi.CaptureContext();
+        _overviewLanguage = _catalogApi.LocalizedReadGeneration;
+        OnPropertyChanged(nameof(OverviewSource));
+        if (item == null || item.Type != "episode" || !string.IsNullOrWhiteSpace(item.Overview)) return item;
+        if (string.IsNullOrWhiteSpace(item.SeriesId)) return null;
+        var library = LibraryId;
+        var context = _overviewContext.Value;
+        var language = _overviewLanguage;
+        try
+        {
+            var series = await _catalogApi.GetItemDetailAsync(item.SeriesId, library, ct);
+            if (ct.IsCancellationRequested || revision != _overviewRevision || !ReferenceEquals(Item, item) ||
+                LibraryId != library || !_catalogApi.IsCurrentContext(context) || language != _catalogApi.LocalizedReadGeneration)
+                return null;
+            if (series.ContentId != item.SeriesId) return null;
+            _seriesOverview = series;
+            OnPropertyChanged(nameof(OverviewSource));
+            return OverviewSource;
+        }
+        catch (Exception)
+        {
+            // Optional companion content must not fail or delay the episode detail.
+            return null;
+        }
+    }
+
+    public async Task RefreshOverviewAsync(MediaItemDetail source, CancellationToken ct)
+    {
+        var item = Item;
+        var revision = _overviewRevision;
+        var library = LibraryId;
+        var context = _catalogApi.CaptureContext();
+        var language = _catalogApi.LocalizedReadGeneration;
+        if (!ReferenceEquals(OverviewSource, source)) return;
+        var refreshed = await _catalogApi.GetItemDetailAsync(source.ContentId, library, ct);
+        if (ct.IsCancellationRequested || revision != _overviewRevision || !ReferenceEquals(Item, item) ||
+            !ReferenceEquals(OverviewSource, source) || LibraryId != library || !_catalogApi.IsCurrentContext(context) ||
+            language != _catalogApi.LocalizedReadGeneration || refreshed.ContentId != source.ContentId) return;
+        source.Overview = refreshed.Overview;
+        source.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
+        source.MachineTranslatedFields = refreshed.MachineTranslatedFields;
+        OnPropertyChanged(nameof(OverviewSource));
+    }
+
     public ItemDetailViewModel(
         CatalogApi catalogApi,
         ItemDetailPrefetchCache detailPrefetchCache)
@@ -354,6 +426,9 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void CancelPendingLoads()
     {
+        ++_overviewRevision;
+        _seriesOverview = null;
+        _overviewEpisode = null;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
