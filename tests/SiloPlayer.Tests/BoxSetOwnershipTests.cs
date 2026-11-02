@@ -40,7 +40,7 @@ public sealed class BoxSetOwnershipTests
         movie.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("first", 100, 100, true) { Persisted = persisted.Task });
         wire.Hold = false; wire.Release.TrySetResult(); await refreshing;
         wire.AllPlayed = true; var reads = wire.DetailReads; persisted.TrySetResult();
-        for (var i = 0; i < 100 && wire.DetailReads == reads; i++) await Task.Delay(10);
+        for (var i = 0; i < 100 && (wire.DetailReads == reads || movie.BoxSet?.PlayedCount != 2); i++) await Task.Delay(10);
         Assert.True(wire.DetailReads > reads, "A playback message received while the public row is cleared still owns a post-write refresh.");
         Assert.Equal(2, movie.BoxSet!.PlayedCount); movie.CancelPendingLoads();
     }

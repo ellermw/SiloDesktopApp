@@ -1,4 +1,5 @@
 using System.Net;
+using CommunityToolkit.Mvvm.Messaging;
 using System.Reflection;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,7 +23,7 @@ using SiloPlayer.Views;
 
 internal static class BoxSetNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent)
+    internal static async Task RunAsync(StackPanel parent, bool invalidMemberChecks = true)
     {
         var originalServices = SiloPlayer.App.Services;
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -79,8 +80,11 @@ internal static class BoxSetNativeFixture
         var detail = new ItemDetailPage { Width = 960, Height = 700 }; parent.Children.Add(detail); await Task.Delay(80);
         detail.ViewModel.Item = new MediaItemDetail { ContentId = "second", Type = "movie", Title = "Current film" };
         var set = new BoxSetDetail { Id = "7", LibraryId = "12", Title = wire.Title, MovieCount = 3, Items = [new() { ContentId = "first", Type = "movie", Title = "First" }, new() { ContentId = "second", Type = "movie", Title = "Second" }, new() { ContentId = "third", Type = "movie", Title = "Third" }] };
-        set.Items.Add(new MediaItem { Type = "movie", ContentId = "", Title = "Invalid empty movie" });
-        set.Items.Add(new MediaItem { Type = "box_set", ContentId = "box_set:invalid", Title = "Aggregate is not a member" });
+        if (invalidMemberChecks)
+        {
+            set.Items.Add(new MediaItem { Type = "movie", ContentId = "", Title = "Invalid empty movie" });
+            set.Items.Add(new MediaItem { Type = "box_set", ContentId = "box_set:invalid", Title = "Aggregate is not a member" });
+        }
         for (var i = 3; i < 9; i++) set.Items.Add(new MediaItem { ContentId = "later-" + i, Type = "movie", Title = "Later " + i });
         typeof(ItemDetailViewModel).GetProperty("BoxSet")!.SetValue(detail.ViewModel, set);
         typeof(ItemDetailPage).GetMethod("BuildBoxSetRow", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detail, null);
@@ -113,18 +117,19 @@ internal static class BoxSetNativeFixture
         parent.Children.Add(destinationFrame); navigation.NavigationRequestHandler = null; wire.Empty = false; wire.Played = 1;
         Program.Log("TRACE: before actual Frame box-set activation.");
         Check(navigation.Navigate<BoxSetPage>(new BoxSetNavigationArgs("7", "12")), "actual Frame box-set navigation");
-        for (var i = 0; i < 100 && (destinationFrame.Content as BoxSetPage)?.ViewModel.Detail == null; i++) await Task.Delay(10);
+        for (var i = 0; i < 100 && (destinationFrame.Content is not BoxSetPage arriving || !arriving.IsLoaded || arriving.ViewModel.Detail == null); i++) await Task.Delay(10);
         Check(destinationFrame.Content is BoxSetPage opened && opened.ViewModel.Detail is { Id: "7", LibraryId: "12" }, "activated dedicated destination loads scoped data");
         Program.Log("TRACE: actual Frame box-set activation succeeded.");
         var activated = (BoxSetPage)destinationFrame.Content;
+        Check(activated.IsLoaded && activated.ViewModel.IsCurrent, "activated destination is loaded and owns the playback notification");
         wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var heldRefresh = activated.ViewModel.RefreshAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Check(activated.ViewModel.Detail == null, "held read clears public detail");
         var duringReadPersisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        activated.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("first", 100, 100, true) { Persisted = duringReadPersisted.Task });
+        WeakReferenceMessenger.Default.Send(new SiloPlayer.Messaging.PlaybackProgressUpdated("first", 100, 100, true) { Persisted = duringReadPersisted.Task });
         wire.Hold = false; wire.Release.TrySetResult(); await heldRefresh;
         var duringReadCount = wire.Reads; wire.Played = 3; duringReadPersisted.TrySetResult();
-        for (var i = 0; i < 100 && wire.Reads == duringReadCount; i++) await Task.Delay(10);
+        for (var i = 0; i < 100 && (wire.Reads == duringReadCount || activated.ViewModel.Detail?.PlayedCount != 3); i++) await Task.Delay(10);
         Check(wire.Reads > duringReadCount && activated.ViewModel.Detail?.PlayedCount == 3, "message during held read must requery after final playback write");
         destinationFrame.Content = null; parent.Children.Remove(destinationFrame);
         card.MediaItem = new MediaItem { Type = "movie", ContentId = "ordinary", Title = "Ordinary film" }; await Task.Delay(80);

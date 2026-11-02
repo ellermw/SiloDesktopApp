@@ -39,7 +39,7 @@ internal static class BoxSetRoomNativeFixture
                 coordinator.SetActiveRoom(room); var stages = wire.Stages; var suggestions = wire.Suggestions; var currentContent = player.ContentId;
                 var button = Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay");
                 ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
-                for (var i = 0; i < 100 && wire.Stages == stages && wire.Suggestions == suggestions; i++) await Task.Delay(10);
+                for (var i = 0; i < 100 && (wire.Stages == stages && wire.Suggestions == suggestions || !button.IsEnabled); i++) await Task.Delay(10);
                 Check(mode == "host-lobby" ? wire.Stages == stages + 1 && wire.Suggestions == suggestions : wire.Suggestions == suggestions + 1 && wire.Stages == stages, mode + " enters the room stage/suggestion route");
                 Check(ReferenceEquals(coordinator.ActiveRoom, room) && player.ContentId == currentContent && wire.LocalStarts == 0, mode + " preserves active room and local playback authority");
                 Check(routeType == typeof(WatchTogetherRoomPage), mode + " returns to the room destination");
@@ -48,10 +48,12 @@ internal static class BoxSetRoomNativeFixture
             var pendingRoom = new WatchTogetherRoomViewModel(playback, client) { RoomId = "fixture-room", RoomToken = "fixture-proof", Room = new() { RoomId = "fixture-room", Phase = "lobby", SelectedContentId = "before-pending", SelfCanManageRoom = true } };
             coordinator.SetActiveRoom(pendingRoom); var originalSnapshot = pendingRoom.Room; routeType = null;
             wire.HoldStage = true; wire.StageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.ReleaseStage = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            ((IInvokeProvider)new ButtonAutomationPeer(Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay")).GetPattern(PatternInterface.Invoke)).Invoke();
+            var pendingButton = Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay");
+            ((IInvokeProvider)new ButtonAutomationPeer(pendingButton).GetPattern(PatternInterface.Invoke)).Invoke();
             await wire.StageStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             var replacement = new WatchTogetherRoomViewModel(playback, client) { RoomId = "replacement", RoomToken = "replacement-proof", Room = new() { RoomId = "replacement", Phase = "lobby", SelectedContentId = "replacement-selection", SelfCanManageRoom = true } };
-            coordinator.SetActiveRoom(replacement); wire.HoldStage = false; wire.ReleaseStage.TrySetResult(); await Task.Delay(100);
+            coordinator.SetActiveRoom(replacement); wire.HoldStage = false; wire.ReleaseStage.TrySetResult();
+            for (var i = 0; i < 100 && !pendingButton.IsEnabled; i++) await Task.Delay(10);
             Check(ReferenceEquals(coordinator.ActiveRoom, replacement) && ReferenceEquals(pendingRoom.Room, originalSnapshot) && routeType == null, "late stage cannot mutate/navigate a replaced room");
             coordinator.ClearActiveRoom();
             var helper = typeof(BoxSetPage).Assembly.GetType("SiloPlayer.Services.MoviePlaybackEntry")!.GetMethod("PlayAsync")!;
