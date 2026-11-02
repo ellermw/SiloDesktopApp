@@ -18,6 +18,8 @@ internal static class HomeRowWindowNativeFixture
         await CompletionTemplateChangeAsync(parent);
         await DemandAfterInvalidationAsync(parent, localized: false);
         await DemandAfterInvalidationAsync(parent, localized: true);
+        await DemandAfterReconnectAsync(parent, failLayout: false);
+        await DemandAfterReconnectAsync(parent, failLayout: true);
         await AuthoritativeRefreshAsync(legacy: true, count: 3);
         await AuthoritativeRefreshAsync(legacy: true, count: 35);
         await AuthoritativeRefreshAsync(legacy: false, count: 35);
@@ -153,6 +155,67 @@ internal static class HomeRowWindowNativeFixture
                 "Invalidation must not consume near-end demand without recovering the tail.");
         }
         finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task DemandAfterReconnectAsync(StackPanel parent, bool failLayout)
+    {
+        using var wire = new Wire { HoldWhole = true }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        SectionRow? row = null;
+        Task? catchUp = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+            var surfaceGeneration = vm.SurfaceGeneration;
+            wire.HoldLayout = true; wire.FailLayout = failLayout;
+            catchUp = vm.CatchUpAfterReconnectAsync(client.InvalidateAccessContext());
+            await wire.LayoutStarted.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            Require(!catchUp.IsCompleted && vm.Sections[0].Items.Count == 20 && vm.SurfaceGeneration == surfaceGeneration,
+                "Same-owner transport catch-up must retain the mounted partial row while layout is pending.");
+            if (failLayout)
+            {
+                wire.LayoutRelease.TrySetResult(); await catchUp;
+                Require(vm.Sections[0].Items.Count == 20 && vm.ErrorMessage == null,
+                    "A failed catch-up layout must preserve the mounted content.");
+            }
+            // Both a pending layout and a failed one must leave retry usable,
+            // rather than switching the mounted row to a permanent skeleton.
+            await vm.RetrySectionAsync("row");
+            Require(wire.Capped == 2 && vm.Sections[0].LoadCompleted && !vm.Sections[0].LoadFailed
+                && vm.Sections[0].Items.Count == 20,
+                "Retry during or after transport catch-up must use a live section token.");
+            row = new SectionRow { Width = 900, Section = vm.Sections[0],
+                OnNearEnd = section => _ = vm.CompleteSectionAsync(section.Id) };
+            parent.Children.Add(row); await Task.Delay(120); row.UpdateLayout();
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            Require(scroll.ScrollableWidth > 0, "Reconnect fixture must have a scrollable partial row.");
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true);
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            Require(wire.Whole == 1 && (failLayout || !catchUp.IsCompleted),
+                "Near-end demand must start a whole read without a successful replacement layout.");
+            wire.Release.TrySetResult();
+            await Until(() => vm.Sections[0].Items.Count == 35);
+            Require(!vm.Sections[0].CanComplete && vm.Sections[0].Items.Last().ContentId == "alpha-35",
+                "Transport catch-up must not discard the consumed near-end gesture or strand the tail.");
+            if (!failLayout)
+            {
+                wire.Title = "Catch-up refresh";
+                wire.LayoutRelease.TrySetResult(); await catchUp;
+                await Until(() => vm.Sections[0].Title == wire.Title);
+                Require(wire.Capped == 2 && wire.Whole == 2 && vm.Sections[0].Items.Count == 35,
+                    "The resumed catch-up must refresh the completed row whole without shrinking it.");
+            }
+        }
+        finally
+        {
+            wire.Release.TrySetResult(); wire.LayoutRelease.TrySetResult();
+            if (catchUp != null) await catchUp;
+            if (row != null) parent.Children.Remove(row);
+            Retire(vm);
+        }
     }
 
     private static async Task AuthoritativeRefreshAsync(bool legacy, int count)
@@ -663,6 +726,7 @@ internal static class HomeRowWindowNativeFixture
     {
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst, MixedTail;
         public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, NullWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
+        public bool HoldLayout, FailLayout;
         public int CardCount = 35, RowItemLimit = 50, HiddenRows = 1, PartialWholeCount = 25;
         public string Capabilities = """{"row_item_limit_max":100,"section_item_limit_max":100}""";
         public string? LastWholeQuery;
@@ -672,6 +736,8 @@ internal static class HomeRowWindowNativeFixture
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource RefreshStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource RefreshRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource LayoutStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource LayoutRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -679,10 +745,15 @@ internal static class HomeRowWindowNativeFixture
             if (path.EndsWith("/capabilities")) return UnsupportedCapabilities
                 ? new(HttpStatusCode.NotFound) { Content = new StringContent("{}") }
                 : Json(Capabilities);
-            if (path.EndsWith("/layout")) return Json(DuplicateFirst
-                ? JsonSerializer.Serialize(new { sections = new[] { new { id = "anchor", title = "First", section_type = "plain", item_limit = 20 } }
-                    .Concat(Enumerable.Range(1, HiddenRows).Select(i => new { id = i == 1 ? "row" : $"row{i}", title = "More", section_type = "hidden_gems", item_limit = 50 })) })
-                : JsonSerializer.Serialize(new { sections = new[] { new { id = "row", title = "Progress", section_type = "continue_watching", item_limit = RowItemLimit } } }));
+            if (path.EndsWith("/layout"))
+            {
+                if (HoldLayout) { LayoutStarted.TrySetResult(); await LayoutRelease.Task.WaitAsync(ct); }
+                if (FailLayout) return new(HttpStatusCode.BadRequest) { Content = new StringContent("""{"status":400,"detail":"fixture layout failure"}""") };
+                return Json(DuplicateFirst
+                    ? JsonSerializer.Serialize(new { sections = new[] { new { id = "anchor", title = "First", section_type = "plain", item_limit = 20 } }
+                        .Concat(Enumerable.Range(1, HiddenRows).Select(i => new { id = i == 1 ? "row" : $"row{i}", title = "More", section_type = "hidden_gems", item_limit = 50 })) })
+                    : JsonSerializer.Serialize(new { sections = new[] { new { id = "row", title = "Progress", section_type = "continue_watching", item_limit = RowItemLimit } } }));
+            }
             if (path.EndsWith("/recipes")) return Json("""{"categories":[{"category":"one","recipes":[{"type":"hidden_gems","avoid_duplicates":true}]}]}""");
             var profile = request.Headers.TryGetValues("X-Profile-ID", out var ids) ? ids.Single() : "alpha";
             var capped = request.RequestUri.Query.StartsWith("?item_limit=", StringComparison.Ordinal);

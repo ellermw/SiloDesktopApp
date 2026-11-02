@@ -368,6 +368,8 @@ public partial class HomeViewModel : ObservableObject,
         if (_loadedIdentityContext is { } identity && _homeApi.IsCurrentIdentityContext(identity))
         {
             _sectionLoadCts?.Cancel();
+            _sectionLoadCts?.Dispose();
+            _sectionLoadCts = new CancellationTokenSource();
             ++_sectionLoadGeneration;
             _loadedContext = context;
             InvalidateCache();
