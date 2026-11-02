@@ -168,6 +168,67 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
+    [InlineData("series", false)]
+    [InlineData("series", true)]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    public async Task PostPlaybackRefreshWaitsForAllSavesToSettleEvenWhenOneFailsOrIsCanceled(string type, bool canceledSave)
+    {
+        using var f = new Fixture(); f.Seed();
+        if (type == "season")
+        {
+            f.Vm.Item!.Type = "season";
+            f.Vm.Item.ContentId = "series:review-S01";
+            f.Vm.Item.SeriesId = Series;
+            f.Wire.DetailType = type; f.Wire.DetailSeriesId = Series;
+        }
+        f.Vm.Item!.EpisodeCount = 4;
+        var mounted = f.Vm.Item;
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refresh = f.Vm.RefreshWatchedStateAsync(Task.WhenAll(failed.Task, closing.Task), CancellationToken.None);
+        if (canceledSave) failed.SetCanceled();
+        else failed.SetException(new HttpRequestException("Synthetic retired-session save failure."));
+        Assert.False(refresh.IsCompleted);
+        Assert.Equal(0, f.Wire.DetailReads);
+        Assert.Equal(0, f.Wire.SeasonReads);
+
+        f.Wire.Count = 2; f.Wire.Played = true;
+        f.Wire.DetailPosition = 999; f.Wire.Target = EpisodeB;
+        closing.SetResult();
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, f.Vm.Item);
+        Assert.Equal(1, f.Wire.DetailReads);
+        Assert.Equal(8, mounted!.EpisodeCount);
+        Assert.Equal(2, mounted.UserData!.WatchedCount);
+        Assert.Equal(999, mounted.UserData.PositionSeconds);
+        Assert.Equal(EpisodeB, mounted.PlayContentId);
+        Assert.True(f.Vm.IsWatched);
+        Assert.Equal(type == "series" ? 1 : 0, f.Wire.SeasonReads);
+        if (type == "series") Assert.Equal(2, f.Vm.Seasons[0].UserData!.WatchedCount);
+        Assert.Equal(31, f.Vm.Episodes[0].UserData!.PositionSeconds);
+    }
+
+    [Fact]
+    public async Task CallerCancellationAbortsPostPlaybackRefreshWithoutWaitingForTheSave()
+    {
+        using var f = new Fixture(); f.Seed();
+        using var cancellation = new CancellationTokenSource();
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refresh = f.Vm.RefreshWatchedStateAsync(save.Task, cancellation.Token);
+        try
+        {
+            cancellation.Cancel();
+            await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(save.Task.IsCompleted);
+            Assert.Equal(0, f.Wire.DetailReads);
+            Assert.Equal(0, f.Wire.SeasonReads);
+        }
+        finally { save.TrySetResult(); }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task SlowMountedSnapshotsSettleDuringRawAndCoalescedTrafficWithProductionCacheRegistration(bool scoped)

@@ -133,6 +133,14 @@ internal static class RealtimeSeriesStateNativeFixture
                     await VerifyProgressActionsAsync((MenuFlyout)mountedFlyout, loadedButton, restart: true, reset: true);
                     Check(ReferenceEquals(mountedFlyout, loadedButton.ContextFlyout) && mountedCards.SequenceEqual(episodePanel.Children),
                         "Gaining partial progress replaced the retained card or context flyout.");
+                    var beforeReconnect = client.CaptureContext();
+                    var reconnectContext = client.InvalidateAccessContext();
+                    Check(!client.IsCurrentContext(beforeReconnect), "Reconnect did not retire the menu's original request context.");
+                    await vm.RefreshMediaStateAsync(new(reconnectContext, new HashSet<string>(), new HashSet<string>(), CatchUp: true));
+                    await VerifyProgressActionsAsync((MenuFlyout)mountedFlyout, loadedButton, restart: true, reset: true);
+                    Check(ReferenceEquals(mounted, vm.Item) && ReferenceEquals(mountedFlyout, loadedButton.ContextFlyout)
+                        && mountedCards.SequenceEqual(episodePanel.Children),
+                        "Reconnect must keep Reset Progress available without replacing the mounted detail, episode cards or flyout.");
                     wire.LoadedPlayed = true; wire.LoadedPosition = 0;
                     using var loadedData = JsonDocument.Parse("""
                         {"profile_id":"fixture-profile","content_id":"loaded","series_id":"series","change":"watched","played":true}

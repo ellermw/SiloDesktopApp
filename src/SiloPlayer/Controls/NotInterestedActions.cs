@@ -53,15 +53,15 @@ public static class NotInterestedActions
     public static MenuFlyoutItem CreateMenuItem(MediaItem item, Action? stateChanged = null)
     {
         var catalog = App.Services.GetRequiredService<CatalogApi>();
-        var context = catalog.CaptureContext();
         var action = new MenuFlyoutItem { Visibility = Visibility.Collapsed, Icon = new SymbolIcon(Symbol.Dislike) };
         void Update() { action.Text = item.UserState?.NotInterested == true ? "Show in Recommendations" : "Not Interested"; Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(action, action.Text); }
         Update();
         action.Click += async (_, _) =>
         {
-            if (!catalog.IsCurrentContext(context) || !action.IsEnabled) return;
+            if (!action.IsEnabled) return;
+            var context = catalog.CaptureContext();
             action.IsEnabled = false;
-            try { if (await ToggleAsync(item)) { stateChanged?.Invoke(); Update(); } }
+            try { if (await ToggleAsync(item) && catalog.IsCurrentContext(context)) { stateChanged?.Invoke(); Update(); } }
             finally { action.IsEnabled = true; }
         };
         return action;
@@ -79,6 +79,6 @@ public static class NotInterestedActions
                 action.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
             }
         }
-        catch { action.Visibility = Visibility.Collapsed; }
+        catch { if (catalog.IsCurrentContext(context)) action.Visibility = Visibility.Collapsed; }
     }
 }

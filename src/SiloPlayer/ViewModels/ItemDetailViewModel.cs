@@ -731,7 +731,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             && remoteRevision == RemoteStateRevision;
         try
         {
-            await pendingProgressSave.WaitAsync(cancellationToken);
+            await ProgressSaveSettledAsync(pendingProgressSave).WaitAsync(cancellationToken);
             await WaitForLocalProgressSettlementAsync(cancellationToken);
             // Progress arriving during settlement belongs to this refresh;
             // watched commands and navigation still retire its authority.

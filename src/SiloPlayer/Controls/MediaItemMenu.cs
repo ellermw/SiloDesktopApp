@@ -169,29 +169,29 @@ public static class MediaItemMenu
 
         if (item.Type is "movie" or "series" && item.UserState != null)
         {
-            var interestContext = catalog.CaptureContext();
             var interest = NotInterestedActions.CreateMenuItem(item, stateChanged);
             flyout.Items.Add(interest);
-            flyout.Opening += async (_, _) => await NotInterestedActions.RefreshMenuItemAsync(interest, item, interestContext);
+            flyout.Opening += async (_, _) => await NotInterestedActions.RefreshMenuItemAsync(interest, item, catalog.CaptureContext());
         }
 
         // Retained menus must also support a leaf gaining progress after construction.
         if (item.Type is "movie" or "episode")
         {
-            var context = catalog.CaptureContext();
             var reset = BuildItem("Reset Progress", "\uE777", async () =>
             {
-                if (!catalog.IsCurrentContext(context)) return;
+                var context = catalog.CaptureContext();
                 await MediaItemCardActions.ResetProgressAsync(item);
+                if (!catalog.IsCurrentContext(context)) return;
                 stateChanged?.Invoke();
             });
             reset.Visibility = Visibility.Collapsed;
             flyout.Items.Insert(Math.Min(2, flyout.Items.Count), reset);
             flyout.Opening += async (_, _) =>
             {
+                // A reconnect retires reads, not this retained menu's lifetime.
+                var context = catalog.CaptureContext();
                 reset.Visibility = Visibility.Collapsed;
-                if (!catalog.IsCurrentContext(context)
-                    || !MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true)) return;
+                if (!MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true)) return;
                 try
                 {
                     var capabilities = await catalog.GetProgressCapabilitiesAsync();
@@ -199,7 +199,7 @@ public static class MediaItemMenu
                     reset.Visibility = MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, capabilities.ClearResumePosition)
                         ? Visibility.Visible : Visibility.Collapsed;
                 }
-                catch { reset.Visibility = Visibility.Collapsed; }
+                catch { if (catalog.IsCurrentContext(context)) reset.Visibility = Visibility.Collapsed; }
             };
         }
 
