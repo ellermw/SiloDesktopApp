@@ -709,6 +709,10 @@ internal static class CollectionsAcceptanceNativeFixture
                 "Date direction labels differ from the WebUI.");
             sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "year:desc")); await Layout();
             Check(page.ViewModel.DefaultSortValue == "year:desc" && direction.Items.OfType<ComboBoxItem>()
+                .Select(item => item.Content as string).SequenceEqual(new[] { "Oldest first", "Newest first" }),
+                "Year must use the WebUI's date direction labels.");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "runtime:desc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "runtime:desc" && direction.Items.OfType<ComboBoxItem>()
                 .Select(item => item.Content as string).SequenceEqual(new[] { "Lowest first", "Highest first" }),
                 "Numeric field must use default direction and numeric labels.");
             page.ViewModel.IsSaving = true; await Layout();

@@ -158,7 +158,7 @@ public sealed partial class CollectionEditorPage
                 return;
             }
             var alphabetical = field is "title" or "author" or "narrator" or "series";
-            var date = field is "added_at" or "release_date" or "last_air_date" or "latest_episode_added" or "last_watched_at";
+            var date = field is "year" or "added_at" or "release_date" or "last_air_date" or "latest_episode_added" or "last_watched_at";
             var order = selected.Split(':', 2).ElementAtOrDefault(1);
             foreach (var direction in new[] { "asc", "desc" })
             {
