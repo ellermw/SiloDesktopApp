@@ -69,6 +69,8 @@ public sealed partial class CollectionEditorPage : Page
             DispatcherQueue.TryEnqueue(() => { UpdateEditorSummary(); UpdateDirtyDock(); UpdateRecoveryShell(); });
         ViewModel.PropertyChanged += (_, args) =>
         {
+            if (args.PropertyName is nameof(ViewModel.DefaultSortValue) or nameof(ViewModel.IsSaving) or nameof(ViewModel.IsReadOnly))
+                DispatcherQueue.TryEnqueue(RefreshImportedSortControls);
             if (args.PropertyName == nameof(ViewModel.LoadedCollection)) DispatcherQueue.TryEnqueue(() => { if (_editorActive) BuildSavedSyncedContents(false); });
             if (args.PropertyName is nameof(ViewModel.IsPreviewing) or nameof(ViewModel.HasPreview) or nameof(ViewModel.PreviewError) or nameof(ViewModel.PreviewTotal)) QueueSmartPreviewPresentation();
             if (args.PropertyName == nameof(ViewModel.CollectionId) && _creationRoute != null && ViewModel.CollectionId != null)
@@ -406,16 +408,7 @@ public sealed partial class CollectionEditorPage : Page
 
         SelectByTag(WatchFilterCombo, ViewModel.WatchFilter);
         SelectByTag(MediaFilterCombo, ViewModel.MediaFilter);
-        _suppressImportedSortEvents = true;
-        try
-        {
-            SiloPlayer.Controls.CatalogSortChoices.Apply(ImportedDefaultSortCombo, _importedSortChoices,
-                _shownRatingSources, null, ViewModel.DefaultSortValue, keepSavedEditorSort: true);
-            if (ViewModel.IsImportedCollection && ImportedDefaultSortCombo.Items.OfType<ComboBoxItem>()
-                .FirstOrDefault(item => Equals(item.Tag, "")) is { } listOrder)
-                listOrder.Content = "List order";
-        }
-        finally { _suppressImportedSortEvents = false; }
+        RefreshImportedSortControls();
         LastSyncSummaryText.Text = ViewModel.LastSyncSummary ?? "Not synced yet";
         RemovePosterButton.Visibility = string.IsNullOrWhiteSpace(ViewModel.CurrentPosterUrl)
             ? Visibility.Collapsed
@@ -586,7 +579,7 @@ public sealed partial class CollectionEditorPage : Page
 
     private void ImportedDefaultSort_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressImportedSortEvents) return;
+        if (_suppressImportedSortEvents || ViewModel.IsReadOnly || ViewModel.IsSaving) return;
         if (ImportedDefaultSortCombo.SelectedItem is ComboBoxItem { Tag: string value })
             ViewModel.DefaultSortValue = value;
     }

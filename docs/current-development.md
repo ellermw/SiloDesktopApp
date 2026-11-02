@@ -1,3 +1,11 @@
+# Current development — synced collection direction Beta candidate
+
+This candidate starts from freshly fetched Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af` (source1.2.544-beta.1), with official server/WebUI reference `bf53b65450244751013a2965b39da4111d9a0f72`. Version stamps remain unchanged and pipeline-owned. Native new/saved synced editors now separate Sort, Direction and Max titles, retain stored reverse/unknown fields, use current alphabetical/date/numeric labels, and disable source-order or unsafe future-field direction changes. Field changes use normal defaults; existing API serialization and untouched legacy config behavior remain.
+
+Actual native RED against exact544 bytes reproduces the missing Direction control. Initial D Release/native and3,058 full tests pass, then strengthened real keyboard-focus checks reproduce order controls hidden by the floating actions. A scoped queued focus-centering handler fixes keyboard visibility without moving pointer focus. Final D Release/native uses DLL `20BF97ADB63489E340965F6D77D0DA9A79BBAA851449AE9072236B996C24BC1A`; four actual new/saved1280/460px configurations pass field/direction/default/source-order, unknown-field retention, save guards and keyboard/footer bounds. Screenshots were inspected and the Order section fits in both layouts. Final full re-verification is pending in `collection-direction/d-full-focus-final` before submission. Source hashes in `focus-inputs.json` remain exact.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-align-nov02/collection-direction`, including scoped original red and focus red, preserved first/final publishes, native receipts and screenshots. Every .NET command holds SiloOct18Build after pinned engine verification. New source/builds stay below D:/SiloPlayer as requested; C originals/frozen evidence were preserved and copied input hashes verified. All accounts/APIs/data are synthetic; no setup, installed player, user credentials or production were controlled. This is local candidate verification, not a published release or full visual-parity certification. Independent reviews and the Beta PR receipt are recorded before final delivery. Original handoffs below preserve their historical context.
+
 # Current development — 1.2.519
 
 ## November 1 desktop follow-up

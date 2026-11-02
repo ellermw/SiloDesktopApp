@@ -55,6 +55,12 @@ internal static class CollectionsAcceptanceNativeFixture
         {
             window.AppWindow.Move(new(-20000, -20000)); window.AppWindow.ResizeClient(new(1280, 900)); window.AppWindow.Show(false);
             await Task.Delay(160);
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
+            {
+                await SyncedSortDirectionAsync(frame, window);
+                Program.Log("PASS: synced collection field/direction controls and responsive layout.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_RETIREMENT") == "1")
             {
                 await LockedSourcesAsync(frame, window);
@@ -665,6 +671,76 @@ internal static class CollectionsAcceptanceNativeFixture
         Check(((Image)page.FindName("ImportedPosterPreview")).Source == null && wire.PosterCalls == 2, "Discard retained selected artwork or wrote another poster");
         frame.Content = null;
     }
+    private static async Task SyncedSortDirectionAsync(Frame frame, Window window)
+    {
+        foreach (var create in new[] { false, true })
+        foreach (var width in new[] { 1280, 460 })
+        {
+            CollectionEditorPage page;
+            if (create)
+            {
+                await Viewport(frame, window, width);
+                page = new CollectionEditorPage(); frame.Content = page;
+                Set(page, "_editorActive", true);
+                await page.ViewModel.LoadReferenceDataCommand.ExecuteAsync(null);
+                await (Task)Call(page, "ConfigureSyncedCreationAsync")!;
+                await Layout();
+            }
+            else page = await Editor(frame, window, "imported");
+            await Viewport(frame, window, width);
+            var sort = (ComboBox)page.FindName("ImportedDefaultSortCombo");
+            var order = (Grid)Read(page, "_syncedOrderGrid")!;
+            var direction = All<ComboBox>(order).FirstOrDefault(combo => AutomationProperties.GetName(combo) == "Direction");
+            Check(direction != null, "Synced collections must expose a separate Direction control.");
+            order.StartBringIntoView(); await Layout();
+            Check(!direction!.IsEnabled && ((ComboBoxItem)direction.SelectedItem).Content as string == "As listed",
+                "Source order must disable direction as As listed.");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "title:asc")); await Layout();
+            Check(direction.IsEnabled && page.ViewModel.DefaultSortValue == "title:asc", "Title must default to ascending.");
+            Check(direction.Items.OfType<ComboBoxItem>().Select(item => item.Content as string).SequenceEqual(new[] { "A–Z", "Z–A" }),
+                "Alphabetical direction labels differ from the WebUI.");
+            direction.SelectedItem = direction.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "desc"));
+            Check(page.ViewModel.DefaultSortValue == "title:desc" && (string)page.ViewModel.CaptureSortConfig()["order"] == "desc",
+                "Direction must update the saved field/order contract.");
+            page.ViewModel.DefaultSortValue = "release_date:asc"; await Layout();
+            Check((string)((ComboBoxItem)sort.SelectedItem).Tag == "release_date:desc" &&
+                (string)((ComboBoxItem)direction.SelectedItem).Tag == "asc", "A stored reverse direction must keep its field and direction visible.");
+            Check(direction.Items.OfType<ComboBoxItem>().Select(item => item.Content as string).SequenceEqual(new[] { "Oldest first", "Newest first" }),
+                "Date direction labels differ from the WebUI.");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "year:desc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "year:desc" && direction.Items.OfType<ComboBoxItem>()
+                .Select(item => item.Content as string).SequenceEqual(new[] { "Lowest first", "Highest first" }),
+                "Numeric field must use default direction and numeric labels.");
+            page.ViewModel.IsSaving = true; await Layout();
+            Check(!direction.IsEnabled && !sort.IsEnabled, "Pending saves must disable both order controls.");
+            page.ViewModel.IsSaving = false; await Layout();
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "")); await Layout();
+            Check(page.ViewModel.CaptureSortConfig().Count == 0 && !direction.IsEnabled,
+                "Source order must explicitly clear the saved default sort.");
+            page.ViewModel.DefaultSortValue = "future_sort:desc"; await Layout();
+            Check(page.ViewModel.DefaultSortValue == "future_sort:desc" && !direction.IsEnabled &&
+                (string)((ComboBoxItem)sort.SelectedItem).Tag == "future_sort:desc",
+                "Refreshing controls must preserve an unknown saved field and refuse unsafe direction edits.");
+            page.ViewModel.DefaultSortValue = "title:desc"; await Layout();
+            var footer = (Border)Read(page, "_editorFooter")!;
+            foreach (var control in new FrameworkElement[] { sort, direction })
+            {
+                Check(((Control)control).Focus(FocusState.Keyboard), "Order control must accept keyboard focus.");
+                await Layout();
+                var bounds = control.TransformToVisual(order).TransformBounds(new(0, 0, control.ActualWidth, control.ActualHeight));
+                Check(bounds.Left >= -1 && bounds.Right <= order.ActualWidth + 1 && bounds.Top >= -1 && bounds.Bottom <= order.ActualHeight + 1,
+                    $"Order controls must remain inside the grid at {width}px.");
+                var visible = control.TransformToVisual(frame).TransformBounds(new(0, 0, control.ActualWidth, control.ActualHeight));
+                var footerTop = footer.TransformToVisual(frame).TransformPoint(new(0, 0)).Y;
+                Check(visible.Top >= 0 && visible.Bottom <= footerTop,
+                    $"Keyboard-focused order control is hidden behind the actions at {width}px.");
+            }
+            order.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = .5 }); await Layout();
+            await Capture(frame, $"synced-direction-{(create ? "new" : "saved")}-{width}.png");
+            frame.Content = null;
+        }
+    }
+
     private static async Task Viewport(Frame frame, Window window, int width)
     { window.AppWindow.ResizeClient(new(width, 900)); frame.Width = width; await Layout(); var actual = window.AppWindow.ClientSize; Check(actual.Width == width && actual.Height == 900 && Math.Abs(frame.XamlRoot.Size.Width - width) < 1, "collection fixture viewport is clamped or mislabeled"); }
     private static async Task Layout() { await Task.Delay(250); }
