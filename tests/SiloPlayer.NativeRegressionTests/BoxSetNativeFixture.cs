@@ -79,6 +79,8 @@ internal static class BoxSetNativeFixture
         var detail = new ItemDetailPage { Width = 960, Height = 700 }; parent.Children.Add(detail); await Task.Delay(80);
         detail.ViewModel.Item = new MediaItemDetail { ContentId = "second", Type = "movie", Title = "Current film" };
         var set = new BoxSetDetail { Id = "7", LibraryId = "12", Title = wire.Title, MovieCount = 3, Items = [new() { ContentId = "first", Type = "movie", Title = "First" }, new() { ContentId = "second", Type = "movie", Title = "Second" }, new() { ContentId = "third", Type = "movie", Title = "Third" }] };
+        set.Items.Add(new MediaItem { Type = "movie", ContentId = "", Title = "Invalid empty movie" });
+        set.Items.Add(new MediaItem { Type = "box_set", ContentId = "box_set:invalid", Title = "Aggregate is not a member" });
         for (var i = 3; i < 9; i++) set.Items.Add(new MediaItem { ContentId = "later-" + i, Type = "movie", Title = "Later " + i });
         typeof(ItemDetailViewModel).GetProperty("BoxSet")!.SetValue(detail.ViewModel, set);
         typeof(ItemDetailPage).GetMethod("BuildBoxSetRow", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detail, null);

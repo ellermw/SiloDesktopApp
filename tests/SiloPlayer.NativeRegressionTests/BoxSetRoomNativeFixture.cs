@@ -45,6 +45,15 @@ internal static class BoxSetRoomNativeFixture
                 Check(routeType == typeof(WatchTogetherRoomPage), mode + " returns to the room destination");
             }
             coordinator.ClearActiveRoom();
+            var pendingRoom = new WatchTogetherRoomViewModel(playback, client) { RoomId = "fixture-room", RoomToken = "fixture-proof", Room = new() { RoomId = "fixture-room", Phase = "lobby", SelectedContentId = "before-pending", SelfCanManageRoom = true } };
+            coordinator.SetActiveRoom(pendingRoom); var originalSnapshot = pendingRoom.Room; routeType = null;
+            wire.HoldStage = true; wire.StageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.ReleaseStage = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            ((IInvokeProvider)new ButtonAutomationPeer(Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay")).GetPattern(PatternInterface.Invoke)).Invoke();
+            await wire.StageStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var replacement = new WatchTogetherRoomViewModel(playback, client) { RoomId = "replacement", RoomToken = "replacement-proof", Room = new() { RoomId = "replacement", Phase = "lobby", SelectedContentId = "replacement-selection", SelfCanManageRoom = true } };
+            coordinator.SetActiveRoom(replacement); wire.HoldStage = false; wire.ReleaseStage.TrySetResult(); await Task.Delay(100);
+            Check(ReferenceEquals(coordinator.ActiveRoom, replacement) && ReferenceEquals(pendingRoom.Room, originalSnapshot) && routeType == null, "late stage cannot mutate/navigate a replaced room");
+            coordinator.ClearActiveRoom();
             var helper = typeof(BoxSetPage).Assembly.GetType("SiloPlayer.Services.MoviePlaybackEntry")!.GetMethod("PlayAsync")!;
             var calls = 0; Func<string, int, ApiRequestContext, CancellationToken, Task> local = (id, library, owner, ct) => { calls++; Check(id == "second" && library == 12 && client.IsCurrentContext(owner) && !ct.IsCancellationRequested, "standalone normal movie owner/library"); return Task.CompletedTask; };
             var movie = new MediaItem { ContentId = "second", Type = "movie", Title = "Second" };
@@ -52,7 +61,7 @@ internal static class BoxSetRoomNativeFixture
             Check(calls == 1, "standalone delegates to ordinary movie playback");
             await (Task)helper.Invoke(null, [movie, 12, client.CaptureContext(), CancellationToken.None, (Func<bool>)(() => false), local])!;
             Check(calls == 1, "retired movie entry cannot start standalone playback");
-            Program.Log("PASS: actual box-set primary action stages host lobby, suggests guest/playing/vote intents, retains room/local authority, and standalone entry preserves movie/library/owner.");
+            Program.Log("PASS: actual box-set primary action stages host lobby, suggests guest/playing/vote intents, retains room/local authority, and standalone entry preserves movie/library/owner; late stage preserves replaced room.");
         }
         finally { coordinator.ClearActiveRoom(); parent.Children.Clear(); await Task.Delay(100); slot.SetValue(null, original); }
     }
@@ -65,6 +74,8 @@ internal static class BoxSetRoomNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int Stages, Suggestions, LocalStarts;
+        internal bool HoldStage;
+        internal TaskCompletionSource StageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseStage = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var path=request.RequestUri!.AbsolutePath; object body=new { items=Array.Empty<object>() };
@@ -75,6 +86,7 @@ internal static class BoxSetRoomNativeFixture
             {
                 Stages++; var data=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement;
                 Check(data.GetProperty("content_id").GetString()=="second" && data.GetProperty("library_id").GetString()=="12", "stage normal movie with response library");
+                StageStarted.TrySetResult(); if(HoldStage) await ReleaseStage.Task;
                 body=new { room=new { room_id="fixture-room",phase="lobby",selected_content_id="second",self_can_manage_room=true } };
             }
             else if(path.EndsWith("/suggestions") && request.Method==HttpMethod.Post)
