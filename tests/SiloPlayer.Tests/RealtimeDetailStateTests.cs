@@ -128,6 +128,81 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("series", false, null)]
+    [InlineData("series", true, null)]
+    [InlineData("series", true, "new-target")]
+    [InlineData("season", false, null)]
+    [InlineData("season", true, null)]
+    [InlineData("season", true, "new-target")]
+    public async Task PostPlaybackParentRemapRetiresOldRowsAndTargetAndNotifiesThePage(
+        string type, bool includeTarget, string? target)
+    {
+        using var scope = new Scope(type);
+        var vm = scope.Vm;
+        var item = vm.Item!;
+        item.SeriesId = "old-series"; item.SeriesTitle = "Old series";
+        item.PlayContentId = "old-target"; item.PlaySeasonNumber = 9;
+        var parentRevision = vm.ParentPlaybackRevision;
+        vm.EpisodesSeasonContentId = "old-season";
+        scope.OverrideDetail = () =>
+        {
+            var refreshed = new MediaItemDetail
+            {
+                ContentId = item.ContentId, Type = type, SeriesId = "new-series", SeriesTitle = "New series",
+                UserData = new() { WatchedCount = 1, UnplayedCount = 1 }
+            };
+            if (includeTarget) { refreshed.PlayContentId = target; refreshed.PlaySeasonNumber = 2; }
+            return Task.FromResult(refreshed);
+        };
+        var reloadNotified = false;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(vm.Episodes)) reloadNotified = true;
+        };
+
+        await vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
+
+        Assert.True(reloadNotified);
+        Assert.NotEqual(parentRevision, vm.ParentPlaybackRevision);
+        Assert.Same(item, vm.Item);
+        Assert.Equal("new-series", item.SeriesId);
+        Assert.Equal("New series", item.SeriesTitle);
+        Assert.Equal(includeTarget, item.HasAuthoritativePlayTarget);
+        Assert.Equal(target, item.PlayContentId);
+        Assert.Equal(includeTarget ? (int?)2 : null, item.PlaySeasonNumber);
+        Assert.Null(vm.EpisodesSeasonContentId);
+        Assert.Empty(vm.Episodes);
+        Assert.Equal(1, item.UserData!.WatchedCount);
+    }
+
+    [Theory]
+    [InlineData("series")]
+    [InlineData("season")]
+    public async Task PostPlaybackLegacyResponsePreservesKnownParentRowsAndTarget(string type)
+    {
+        using var scope = new Scope(type);
+        var vm = scope.Vm;
+        var item = vm.Item!;
+        item.SeriesId = "known-series"; item.SeriesTitle = "Known series";
+        item.PlayContentId = "known-target"; item.PlaySeasonNumber = 1;
+        vm.EpisodesSeasonContentId = "known-season";
+        var parentRevision = vm.ParentPlaybackRevision;
+        var row = Assert.Single(vm.Episodes);
+
+        await vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
+
+        Assert.Same(item, vm.Item);
+        Assert.Equal("known-series", item.SeriesId);
+        Assert.Equal("Known series", item.SeriesTitle);
+        Assert.True(item.HasAuthoritativePlayTarget);
+        Assert.Equal("known-target", item.PlayContentId);
+        Assert.Equal(1, item.PlaySeasonNumber);
+        Assert.Equal("known-season", vm.EpisodesSeasonContentId);
+        Assert.Equal(parentRevision, vm.ParentPlaybackRevision);
+        Assert.Same(row, Assert.Single(vm.Episodes));
+    }
+
+    [Theory]
     [InlineData("series")]
     [InlineData("season")]
     public async Task TransientOwnedDetailFailureRetriesTheFullCatchUpScope(string type)

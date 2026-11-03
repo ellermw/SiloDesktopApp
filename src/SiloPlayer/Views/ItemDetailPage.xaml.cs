@@ -45,6 +45,7 @@ public sealed partial class ItemDetailPage : Page
     private CancellationTokenSource? _singleSeasonEpisodesCts;
     private Task<bool>? _singleSeasonEpisodesTask;
     private string? _singleSeasonEpisodesContentId;
+    private long _seasonParentPlaybackRevision;
     private CancellationTokenSource? _translationCts;
     private CancellationTokenSource? _episodesTranslationCts;
     private string? _episodesTranslationKey;
@@ -127,6 +128,7 @@ public sealed partial class ItemDetailPage : Page
     public ItemDetailPage()
     {
         ViewModel = App.Services.GetRequiredService<ItemDetailViewModel>();
+        _seasonParentPlaybackRevision = ViewModel.ParentPlaybackRevision;
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         SimilarCarouselHost.Children.Remove(SimilarScroller);
@@ -913,7 +915,20 @@ public sealed partial class ItemDetailPage : Page
                 if (!Current()) return;
                 if ((changes & 4) != 0 && item is { Type: "series" } && navigation != null)
                     _ = UpdateSeriesLayoutAsync(item.ContentId, navigation.Token);
-                if ((changes & 2) != 0 && ViewModel.Episodes.Count == 0) BuildEpisodeRows();
+                if ((changes & 2) != 0 && ViewModel.Episodes.Count == 0)
+                {
+                    BuildEpisodeRows();
+                    // A parent remap retires the season's canonical rows. An
+                    // explicit play target does not remove the need to reload
+                    // its grid, and a legacy fallback cannot wait for a click.
+                    if (item is { Type: "season" } && navigation != null
+                        && ViewModel.ParentPlaybackRevision != _seasonParentPlaybackRevision
+                        && ViewModel.EpisodesSeasonContentId == null && !ViewModel.IsEpisodesLoading)
+                    {
+                        _seasonParentPlaybackRevision = ViewModel.ParentPlaybackRevision;
+                        _ = ReloadRemappedSeasonEpisodesAsync(item, navigation);
+                    }
+                }
                 ApplyEpisodeSpoilers();
                 ApplySeasonAction();
                 RefreshContainerCountBadges();
@@ -4824,6 +4839,7 @@ public sealed partial class ItemDetailPage : Page
         EpisodesLoadError.Visibility = loaded ? Visibility.Collapsed : Visibility.Visible;
         EpisodesPanel.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
         if (loaded) BuildEpisodeRows();
+        ApplySeasonAction();
     }
 
     private void RetrySimilarButton_Click(object sender, RoutedEventArgs e)
@@ -6969,6 +6985,40 @@ public sealed partial class ItemDetailPage : Page
         return loaded;
     }
 
+    private async Task ReloadRemappedSeasonEpisodesAsync(MediaItemDetail item, CancellationTokenSource navigation)
+    {
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalog.CaptureContext();
+        var parentId = item.SeriesId;
+        var parentRevision = ViewModel.ParentPlaybackRevision;
+        var libraryId = ViewModel.LibraryId;
+        bool Current() => !navigation.IsCancellationRequested && ReferenceEquals(_navigationCts, navigation)
+            && ReferenceEquals(ViewModel.Item, item) && item.SeriesId == parentId
+            && ViewModel.ParentPlaybackRevision == parentRevision
+            && ViewModel.LibraryId == libraryId && catalog.IsCurrentContext(context);
+        ViewModel.IsEpisodesLoading = true;
+        EpisodesSection.Visibility = Visibility.Visible;
+        EpisodesLoadingSkeleton.Visibility = Visibility.Visible;
+        EpisodesEmptyState.Visibility = Visibility.Collapsed;
+        EpisodesLoadError.Visibility = Visibility.Collapsed;
+        EpisodesPanel.Visibility = Visibility.Collapsed;
+        try
+        {
+            var loaded = await LoadSeasonEpisodesAsync(item.ContentId, item.SeasonNumber ?? 0, navigation.Token);
+            if (!Current()) return;
+            EpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
+            EpisodesLoadError.Visibility = loaded ? Visibility.Collapsed : Visibility.Visible;
+            EpisodesPanel.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
+            if (loaded) BuildEpisodeRows();
+            ApplySeasonAction();
+        }
+        finally
+        {
+            // A newer remap or navigation owns its own loading indicator.
+            if (Current()) ViewModel.IsEpisodesLoading = false;
+        }
+    }
+
     private async Task<bool> LoadSeasonEpisodesAsync(
         string seasonContentId,
         int seasonNumber,
@@ -6982,6 +7032,7 @@ public sealed partial class ItemDetailPage : Page
             var libraryId = ViewModel.LibraryId;
             var item = ViewModel.Item;
             var parentId = item?.SeriesId;
+            var parentRevision = ViewModel.ParentPlaybackRevision;
             var context = catalogApi.CaptureContext();
             EpisodesResponse response;
             var attempt = 0;
@@ -6992,6 +7043,7 @@ public sealed partial class ItemDetailPage : Page
                 response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, ct);
                 if (ct.IsCancellationRequested || _currentContentId != ownerContentId || ViewModel.LibraryId != libraryId
                     || !ReferenceEquals(ViewModel.Item, item) || item?.SeriesId != parentId
+                    || ViewModel.ParentPlaybackRevision != parentRevision
                     || !catalogApi.IsCurrentContext(context)) return false;
                 if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }

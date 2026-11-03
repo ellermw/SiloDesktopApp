@@ -25,6 +25,9 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _similarLoadGeneration;
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
+    // Distinguish remapped rows from an empty or still-pending initial list.
+    private long _parentPlaybackRevision;
+    public long ParentPlaybackRevision => Volatile.Read(ref _parentPlaybackRevision);
     private long _watchedStateGeneration;
     // Write authority is independent of progress/read invalidation revisions.
     private long _watchedWriteGeneration;
@@ -794,6 +797,13 @@ public partial class ItemDetailViewModel : ObservableObject,
             var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!Current()) return;
+            var parentChanged = refreshed.HasAuthoritativeSeriesId && item.SeriesId != refreshed.SeriesId;
+            if (parentChanged)
+            {
+                item.SeriesId = refreshed.SeriesId;
+                ResetParentPlaybackState(item);
+            }
+            if (refreshed.SeriesTitle != null) item.SeriesTitle = refreshed.SeriesTitle;
             if (refreshed.UserData is { } userData)
             {
                 item.UserData = userData;
@@ -809,6 +819,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                 item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
             }
             OnPropertyChanged(nameof(Item));
+            // The mounted page owns canonical rows and their fallback action.
+            // A remapped season needs the same reload signal as a remote sweep.
+            if (parentChanged) OnPropertyChanged(nameof(Episodes));
             if (item.Type == "series" && (_seasonsLoaded || !IsSeasonsLoading && Seasons.Count > 0))
             {
                 var seasons = await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, cancellationToken);
@@ -1129,6 +1142,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private void ResetParentPlaybackState(MediaItemDetail item)
     {
         item.ResetPlayTarget();
+        Interlocked.Increment(ref _parentPlaybackRevision);
         // Retained rows and in-flight selections still belong to the old parent.
         Interlocked.Increment(ref _episodesLoadGeneration);
         IsEpisodesLoading = false;

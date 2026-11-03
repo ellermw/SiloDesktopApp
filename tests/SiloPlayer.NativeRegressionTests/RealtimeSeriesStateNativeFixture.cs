@@ -286,6 +286,7 @@ internal static class RealtimeSeriesStateNativeFixture
             await VerifyLegacySeriesActionAsync(parent, wire, client);
             await VerifyCardArtworkRecoveryAsync(parent, wire, client);
             await VerifyMatchedParentBreadcrumbAsync(parent, wire, client);
+            await VerifyRemappedSeasonRowsAsync(parent, wire, client);
             foreach (var type in new[] { "series", "season" })
             {
                 await VerifyTranslationReconnectAsync(parent, wire, client, type);
@@ -539,6 +540,76 @@ internal static class RealtimeSeriesStateNativeFixture
             wire.ParentSeries = null; wire.OmitTarget = false; wire.EmptyEpisodes = false;
             vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm);
             parent.Children.Remove(page);
+        }
+    }
+
+    private static async Task VerifyRemappedSeasonRowsAsync(StackPanel parent, Wire wire, SiloApiClient client)
+    {
+        foreach (var source in new[] { "match", "realtime", "catch-up", "post-playback" })
+        foreach (var omitTarget in new[] { true, false })
+        {
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            var vm = page.ViewModel;
+            using var navigation = new CancellationTokenSource();
+            var mounted = new MediaItemDetail
+            {
+                ContentId = "season", Type = "season", Title = "Season 1", SeasonNumber = 1,
+                SeriesId = "old-series", SeriesTitle = "Old series", PlayContentId = "old-parent-episode"
+            };
+            vm.Item = mounted;
+            vm.EpisodesSeasonContentId = "season";
+            vm.Episodes.Add(new() { ContentId = "old-parent-episode", SeasonNumber = 1 });
+            Set(page, "_currentContentId", "season"); Set(page, "_navigationCts", navigation);
+            var handler = (PropertyChangedEventHandler)typeof(ItemDetailPage).GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .CreateDelegate(typeof(PropertyChangedEventHandler), page);
+            vm.PropertyChanged += handler;
+            parent.Children.Add(page);
+            try
+            {
+                Call(page, "BuildEpisodeRows"); Call(page, "ApplySeasonAction");
+                wire.ParentSeries = "matched-series"; wire.OmitTarget = omitTarget; wire.Target = "loaded";
+                wire.EmptyEpisodes = false; wire.HeldCompanion = "episodes";
+                wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var refresh = source switch
+                {
+                    "match" => vm.ReloadAfterMatchAsync("season"),
+                    "post-playback" => vm.RefreshWatchedStateAsync(Task.CompletedTask, navigation.Token),
+                    _ => vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(["season"]),
+                        new HashSet<string>(), CatchUp: source == "catch-up"))
+                };
+                await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+                if (source == "match") Call(page, "UpdateUI");
+                // No playback click or navigation should be necessary to start
+                // the new parent's canonical row read, even with a server target.
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(vm.IsEpisodesLoading && ((UIElement)page.FindName("EpisodesLoadingSkeleton")).Visibility == Visibility.Visible
+                    && ((UIElement)page.FindName("EpisodesEmptyState")).Visibility == Visibility.Collapsed,
+                    "A remapped season did not show loading state while its canonical rows were pending.");
+                wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult();
+                var panel = (Panel)page.FindName("EpisodesPanel");
+                await UntilAsync(() => !vm.IsEpisodesLoading && vm.EpisodesSeasonContentId == "season"
+                    && vm.Episodes.Count == 2 && Descendants<Button>(panel).Any(button => button.Tag as string == "loaded")
+                    && ((Button)page.FindName("PrimaryPlayButton")).IsEnabled
+                    && ((UIElement)page.FindName("SplitPlayButton")).Visibility == Visibility.Visible);
+                Check(ReferenceEquals(mounted, vm.Item) && mounted.SeriesId == "matched-series"
+                    && mounted.SeriesTitle == "Matched series", "A remapped season lost its mounted identity or fresh parent.");
+                Check(!vm.Episodes.Any(episode => episode.ContentId == "old-parent-episode")
+                    && ((UIElement)page.FindName("EpisodesPanel")).Visibility == Visibility.Visible
+                    && ((UIElement)page.FindName("EpisodesLoadingSkeleton")).Visibility == Visibility.Collapsed,
+                    "The remapped season did not replace its retired rows with the canonical grid.");
+                var resolve = typeof(ItemDetailPage).GetMethod("ResolvePlayableContentIdForPlaybackAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                Check(await (Task<string?>)resolve.Invoke(page, null)! == (omitTarget ? "sibling" : "loaded"),
+                    "The remapped season did not restore the fresh fallback or authoritative Play action.");
+                Program.Log($"PASS: {source} parent remap reloads mounted season rows and restores {(omitTarget ? "legacy" : "explicit")} Play without navigation.");
+            }
+            finally
+            {
+                wire.ParentSeries = null; wire.OmitTarget = false; wire.Target = "new-target";
+                wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult(); navigation.Cancel();
+                vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm);
+                parent.Children.Remove(page);
+            }
         }
     }
 
