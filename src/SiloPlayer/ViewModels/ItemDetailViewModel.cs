@@ -37,6 +37,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private int? _overviewLibrary;
     private ApiRequestContext? _overviewContext;
     private long _overviewLanguage;
+    public bool OverviewResolutionFailed { get; private set; }
 
     // Keep description ownership separate from episode identity and playback actions.
     private bool IsOverviewScopeCurrent => LibraryId == _overviewLibrary &&
@@ -57,31 +58,49 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         var revision = ++_overviewRevision;
         var item = Item;
+        var refreshItem = ReferenceEquals(item, _overviewEpisode) && !IsOverviewScopeCurrent &&
+            item != null && (item.Type != "episode" || !string.IsNullOrWhiteSpace(item.Overview));
         _seriesOverview = null;
         _overviewEpisode = item;
-        _overviewLibrary = LibraryId;
-        _overviewContext = _catalogApi.CaptureContext();
-        _overviewLanguage = _catalogApi.LocalizedReadGeneration;
-        OnPropertyChanged(nameof(OverviewSource));
-        if (item == null || item.Type != "episode" || !string.IsNullOrWhiteSpace(item.Overview)) return item;
-        if (string.IsNullOrWhiteSpace(item.SeriesId)) return null;
+        OverviewResolutionFailed = false;
         var library = LibraryId;
-        var context = _overviewContext.Value;
-        var language = _overviewLanguage;
+        var context = _catalogApi.CaptureContext();
+        var language = _catalogApi.LocalizedReadGeneration;
+        // Do not revalidate a retired source until its new-scope read has succeeded.
+        OnPropertyChanged(nameof(OverviewSource));
+        if (item == null) return null;
+        bool Current() => !ct.IsCancellationRequested && revision == _overviewRevision && ReferenceEquals(Item, item) &&
+            LibraryId == library && _catalogApi.IsCurrentContext(context) && language == _catalogApi.LocalizedReadGeneration;
         try
         {
-            var series = await _catalogApi.GetItemDetailAsync(item.SeriesId, library, ct);
-            if (ct.IsCancellationRequested || revision != _overviewRevision || !ReferenceEquals(Item, item) ||
-                LibraryId != library || !_catalogApi.IsCurrentContext(context) || language != _catalogApi.LocalizedReadGeneration)
-                return null;
-            if (series.ContentId != item.SeriesId) return null;
-            _seriesOverview = series;
+            if (refreshItem)
+            {
+                var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, library, ct);
+                if (!Current()) return null;
+                if (refreshed.ContentId != item.ContentId) { OverviewResolutionFailed = true; return null; }
+                item.Overview = refreshed.Overview;
+                item.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
+                item.MachineTranslatedFields = refreshed.MachineTranslatedFields;
+            }
+            if (!Current()) return null;
+            if (item.Type == "episode" && string.IsNullOrWhiteSpace(item.Overview))
+            {
+                if (string.IsNullOrWhiteSpace(item.SeriesId)) return null;
+                var series = await _catalogApi.GetItemDetailAsync(item.SeriesId, library, ct);
+                if (!Current()) return null;
+                if (series.ContentId != item.SeriesId) { OverviewResolutionFailed = true; return null; }
+                _seriesOverview = series;
+            }
+            _overviewLibrary = library;
+            _overviewContext = context;
+            _overviewLanguage = language;
             OnPropertyChanged(nameof(OverviewSource));
             return OverviewSource;
         }
         catch (Exception)
         {
-            // Optional companion content must not fail or delay the episode detail.
+            // Optional description reads must not fail the detail page; allow a bounded retry.
+            if (Current()) OverviewResolutionFailed = true;
             return null;
         }
     }
@@ -428,7 +447,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         ++_overviewRevision;
         _seriesOverview = null;
-        _overviewEpisode = null;
+        _overviewContext = null;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;

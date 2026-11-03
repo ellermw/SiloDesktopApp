@@ -18,6 +18,7 @@ public sealed class EpisodeOverviewTests
         Assert.Same(scope.Vm.Item, source);
         Assert.Equal("Episode plot", source!.Overview);
         Assert.DoesNotContain(scope.Paths, path => path.Contains("/series"));
+        Assert.Single(scope.Paths);
     }
 
     [Theory]
@@ -47,6 +48,104 @@ public sealed class EpisodeOverviewTests
         if (change == "profile") scope.Client.SetProfile("new-profile");
         else scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
         Assert.Null(scope.Vm.OverviewSource);
+    }
+
+    [Theory]
+    [InlineData("movie", "language")] [InlineData("episode", "language")]
+    [InlineData("movie", "profile")] [InlineData("episode", "profile")]
+    [InlineData("movie", "access")] [InlineData("episode", "access")]
+    public async Task OwnOverviewIsRereadBeforePublishingNewScope(string type, string change)
+    {
+        using var scope = new Scope { ItemType = type, Own = "Old plot" };
+        await scope.Vm.LoadInLibraryAsync(type, 42);
+        var item = await scope.Vm.ResolveOverviewAsync();
+        if (change == "profile") scope.Client.SetProfile("new-profile");
+        else if (change == "access") scope.Client.InvalidateAccessContext();
+        else scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        scope.Own = "New-language plot";
+        scope.TargetLanguage = "de";
+        scope.OwnMachineTranslatedFields = ["overview"];
+        scope.HoldItem = true;
+        var pending = scope.Vm.ResolveOverviewAsync();
+        await scope.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(scope.Vm.OverviewSource);
+        Assert.Equal("Old plot", item!.Overview);
+        scope.Release.TrySetResult();
+        Assert.Same(item, await pending);
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Same(item, scope.Vm.OverviewSource);
+        Assert.Equal("New-language plot", item.Overview);
+        Assert.Equal("de", item.PendingTranslationLanguage);
+        Assert.Equal(new[] { "overview" }, item.MachineTranslatedFields);
+        Assert.Same(item, await scope.Vm.ResolveOverviewAsync());
+        Assert.Equal(2, scope.Paths.Count(path => path == $"/api/v2/catalog/items/{type}?library_id=42"));
+    }
+
+    [Theory]
+    [InlineData("movie", "item")] [InlineData("episode", "item")]
+    [InlineData("movie", "library")] [InlineData("episode", "library")]
+    [InlineData("movie", "profile")] [InlineData("episode", "profile")]
+    [InlineData("movie", "language")] [InlineData("episode", "language")]
+    [InlineData("movie", "page")] [InlineData("episode", "page")]
+    [InlineData("movie", "cancellation")] [InlineData("episode", "cancellation")]
+    public async Task DelayedOwnOverviewCannotRevalidateRetiredSource(string type, string change)
+    {
+        using var scope = new Scope { ItemType = type, Own = "Old plot" };
+        await scope.Vm.LoadInLibraryAsync(type, 42);
+        var item = await scope.Vm.ResolveOverviewAsync();
+        scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        scope.Own = "Retired read"; scope.TargetLanguage = "de"; scope.HoldItem = true;
+        using var ct = new CancellationTokenSource();
+        var pending = scope.Vm.ResolveOverviewAsync(ct.Token);
+        await scope.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (change == "item") scope.Vm.Item = new() { ContentId = "other", Type = "episode" };
+        else if (change == "library") { scope.HoldItem = false; await scope.Vm.LoadInLibraryAsync(type, 99); }
+        else if (change == "profile") scope.Client.SetProfile("other-profile");
+        else if (change == "language") scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        else if (change == "page") scope.Vm.CancelPendingLoads();
+        else ct.Cancel();
+        scope.Release.TrySetResult();
+        Assert.Null(await pending);
+        Assert.Equal("Old plot", item!.Overview);
+        Assert.Equal("fr", item.PendingTranslationLanguage);
+        if (change != "library") Assert.Null(scope.Vm.OverviewSource);
+    }
+
+    [Theory]
+    [InlineData("movie")] [InlineData("episode")]
+    public async Task FailedOwnReadRemainsRetiredUntilSuccessfulRetry(string type)
+    {
+        using var scope = new Scope { ItemType = type, Own = "Old plot" };
+        await scope.Vm.LoadInLibraryAsync(type, 42);
+        var item = await scope.Vm.ResolveOverviewAsync();
+        scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        scope.Own = "New plot"; scope.TargetLanguage = "de"; scope.FailItem = true;
+        Assert.Null(await scope.Vm.ResolveOverviewAsync());
+        Assert.True(scope.Vm.OverviewResolutionFailed);
+        Assert.Null(scope.Vm.OverviewSource);
+        Assert.Equal("Old plot", item!.Overview);
+        scope.FailItem = false;
+        Assert.Same(item, await scope.Vm.ResolveOverviewAsync());
+        Assert.False(scope.Vm.OverviewResolutionFailed);
+        Assert.Equal("New plot", item.Overview);
+        Assert.Equal("de", item.PendingTranslationLanguage);
+    }
+
+    [Fact]
+    public async Task TransientSeriesReadFailureCanBeRetriedInTheSameScope()
+    {
+        using var scope = new Scope { FailSeries = true };
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var episode = scope.Vm.Item;
+        Assert.Null(await scope.Vm.ResolveOverviewAsync());
+        Assert.True(scope.Vm.OverviewResolutionFailed);
+        scope.FailSeries = false;
+        var source = await scope.Vm.ResolveOverviewAsync();
+        Assert.False(scope.Vm.OverviewResolutionFailed);
+        Assert.Same(episode, scope.Vm.Item);
+        Assert.Equal("Series summary", source!.Overview);
+        Assert.Equal("fr", source.PendingTranslationLanguage);
+        Assert.Null(scope.Vm.ErrorMessage);
     }
 
     [Theory]
@@ -125,7 +224,9 @@ public sealed class EpisodeOverviewTests
     {
         private readonly HttpClient _http;
         internal string? Own = "", SeriesId = "series";
-        internal bool HoldSeries, FailSeries, Translated;
+        internal string ItemType = "episode", TargetLanguage = "fr";
+        internal string[] OwnMachineTranslatedFields = [];
+        internal bool HoldSeries, FailSeries, Translated, HoldItem, FailItem;
         internal readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<string> Paths = [];
@@ -143,11 +244,16 @@ public sealed class EpisodeOverviewTests
             if (request.RequestUri.AbsolutePath.EndsWith("/series"))
             {
                 if (HoldSeries) { Entered.TrySetResult(); await Release.Task; }
-                if (FailSeries) return new(HttpStatusCode.NotFound);
+                if (FailSeries) return new(HttpStatusCode.InternalServerError);
                 return Json(new { content_id = "series", type = "series", overview = Translated ? "Résumé traduit" : "Series summary",
                     pending_translation_language = Translated ? null : "fr", machine_translated_fields = new[] { "overview" } });
             }
-            return Json(new { content_id = "episode", type = "episode", overview = Own, series_id = SeriesId, user_state = new { } });
+            var value = new { content_id = request.RequestUri.AbsolutePath.Split('/').Last(), type = ItemType,
+                overview = Own, series_id = SeriesId, pending_translation_language = TargetLanguage,
+                machine_translated_fields = OwnMachineTranslatedFields, user_state = new { } };
+            if (HoldItem) { Entered.TrySetResult(); await Release.Task; }
+            if (FailItem) return new(HttpStatusCode.InternalServerError);
+            return Json(value);
         }
         private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value)) };
         protected override void Dispose(bool disposing)

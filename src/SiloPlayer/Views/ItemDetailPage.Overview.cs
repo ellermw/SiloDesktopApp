@@ -11,6 +11,8 @@ public sealed partial class ItemDetailPage
     private sealed record OverviewConfigurationOwner(MediaItemDetail Item, int? Library, ApiRequestContext Context,
         long Language, CancellationTokenSource? Navigation);
     private OverviewConfigurationOwner? _overviewConfiguredOwner;
+    private DateTimeOffset? _overviewRetryAt;
+    private bool _overviewRetryAttempted;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _overviewScopeTimer;
 
     private void StartOverviewScopeWatch()
@@ -32,7 +34,16 @@ public sealed partial class ItemDetailPage
             !ReferenceEquals(owner.Item, ViewModel.Item) || !ReferenceEquals(owner.Navigation, _navigationCts) ||
             owner.Library != ViewModel.LibraryId || !IsCurrentDetail(owner.Item.ContentId)) return;
         var api = App.Services.GetRequiredService<CatalogApi>();
-        if (api.IsCurrentContext(owner.Context) && api.LocalizedReadGeneration == owner.Language) return;
+        if (api.IsCurrentContext(owner.Context) && api.LocalizedReadGeneration == owner.Language)
+        {
+            if (_overviewRetryAt is { } retryAt && DateTimeOffset.UtcNow >= retryAt)
+            {
+                _overviewRetryAt = null;
+                _overviewRetryAttempted = true;
+                _ = ConfigureOnViewTranslationAsync(owner.Item);
+            }
+            return;
+        }
         RenderOverview();
         ConfigureOverviewIfNeeded();
     }
@@ -85,7 +96,10 @@ public sealed partial class ItemDetailPage
         var language = api.LocalizedReadGeneration;
         var library = ViewModel.LibraryId;
         var navigation = _navigationCts;
-        _overviewConfiguredOwner = new(item, library, context, language, navigation);
+        var owner = new OverviewConfigurationOwner(item, library, context, language, navigation);
+        if (owner != _overviewConfiguredOwner) _overviewRetryAttempted = false;
+        _overviewRetryAt = null;
+        _overviewConfiguredOwner = owner;
         bool Current() => revision == _overviewConfigurationRevision && ReferenceEquals(navigation, _navigationCts) &&
             ReferenceEquals(item, ViewModel.Item) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library &&
             api.IsCurrentContext(context) && api.LocalizedReadGeneration == language;
@@ -94,6 +108,9 @@ public sealed partial class ItemDetailPage
             var source = await ViewModel.ResolveOverviewAsync(navigation?.Token ?? default);
             if (!Current()) return;
             RenderOverview();
+            // One backoff retry per owner recovers transient optional reads without a request loop.
+            if (ViewModel.OverviewResolutionFailed && !_overviewRetryAttempted)
+                _overviewRetryAt = DateTimeOffset.UtcNow.AddSeconds(1);
             if (source == null || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) || IsOverviewHidden(item)) return;
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
             if (!Current() || !ReferenceEquals(source, ViewModel.OverviewSource) || !status.Enabled || IsOverviewHidden(item)) return;
