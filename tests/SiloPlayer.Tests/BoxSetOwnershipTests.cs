@@ -175,13 +175,68 @@ public sealed class BoxSetOwnershipTests
         await vm.PlayAsync((_, _, _, ct) => { accepted = ct; return Task.CompletedTask; });
         client.SetProfile("other"); await vm.RefreshAsync(); Assert.True(accepted.IsCancellationRequested); vm.Cancel();
     }
-    [Theory] [InlineData(null)] [InlineData(12)]
-    public async Task UnscopedOrDisabledMovieCannotBorrowAnotherLibraryFlag(int? library)
+    [Theory] [InlineData(null, 1)] [InlineData(12, 0)]
+    public async Task UnscopedOrDisabledMovieCannotBorrowAnotherLibraryFlag(int? library, int expectedReads)
     {
         using var wire = new Wire { Enabled = false }; using var http = new HttpClient(wire);
         var movie = new ItemDetailViewModel(new CatalogApi(Client(http)), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
         SetMovie(movie, library); await movie.RefreshBoxSetAsync();
+        Assert.Null(movie.BoxSet); Assert.Equal(expectedReads, wire.DetailReads); movie.CancelPendingLoads();
+    }
+    [Fact] public async Task UnscopedMovieLoadDiscoversMembershipWithoutInventingALibraryScope()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
+        var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((id, ct) => api.GetItemDetailAsync(id, ct)));
+        await movie.LoadInLibraryAsync("film", null);
+        await movie.RefreshBoxSetAsync();
+        Assert.Equal("film", movie.Item!.ContentId); Assert.Null(movie.LibraryId);
+        Assert.Equal("12", movie.BoxSet?.LibraryId);
+        Assert.Equal("", wire.LastMembershipQuery); Assert.Equal("?include_hidden=true", wire.LastLibraryQuery);
+        movie.CancelPendingLoads();
+    }
+    [Theory] [InlineData("2", true)] [InlineData("12", true)] [InlineData("99", false)] [InlineData("invalid", false)] [InlineData("0", false)]
+    public async Task UnscopedResponseMustBelongToAnEligibleViewerLibrary(string returnedLibrary, bool visible)
+    {
+        using var wire = new Wire { ReturnedLibrary = returnedLibrary }; using var http = new HttpClient(wire);
+        var movie = new ItemDetailViewModel(new CatalogApi(Client(http)), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie, null); await movie.RefreshBoxSetAsync();
+        Assert.Equal(visible, movie.BoxSet != null); Assert.Equal(1, wire.DetailReads);
+        movie.CancelPendingLoads();
+    }
+    [Fact] public async Task UnscopedMovieSkipsMembershipWhenNoViewerLibraryIsEligible()
+    {
+        using var wire = new Wire { Enabled = false, OtherEnabled = false }; using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
+        Assert.False(await api.BoxSetsEnabledAsync(null));
+        var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie, null); await movie.RefreshBoxSetAsync();
         Assert.Null(movie.BoxSet); Assert.Equal(0, wire.DetailReads); movie.CancelPendingLoads();
+    }
+    [Theory] [InlineData(null, true)] [InlineData(12, true)] [InlineData(99, false)] [InlineData(0, false)]
+    public async Task EligibilitySupportsUnscopedDiscoveryButScopedChecksRemainExact(int? library, bool expected)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        Assert.Equal(expected, await new CatalogApi(Client(http)).BoxSetsEnabledAsync(library));
+    }
+    [Theory] [InlineData("profile")] [InlineData("access")] [InlineData("language")] [InlineData("departure")] [InlineData("library")]
+    public async Task UnscopedMembershipCannotAdoptAfterItsOwnerChanges(string change)
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
+        var movie = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie, null); var pending = movie.RefreshBoxSetAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        if (change == "departure") movie.CancelPendingLoads();
+        if (change == "library") typeof(ItemDetailViewModel).GetProperty(nameof(movie.LibraryId))!.SetValue(movie, 12);
+        wire.Release.TrySetResult(); await pending;
+        Assert.Null(movie.BoxSet); movie.CancelPendingLoads();
+    }
+    [Fact] public async Task ScopedMembershipCannotUseAnotherEligibleLibrary()
+    {
+        using var wire = new Wire { ReturnedLibrary = "2" }; using var http = new HttpClient(wire);
+        var movie = new ItemDetailViewModel(new CatalogApi(Client(http)), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie); await movie.RefreshBoxSetAsync();
+        Assert.Null(movie.BoxSet); Assert.Equal("?library_id=12", wire.LastMembershipQuery); movie.CancelPendingLoads();
     }
     [Fact] public async Task MembershipUsesExactLibraryAndIncludesAuthorizedHiddenLibraries()
     {
@@ -218,7 +273,8 @@ public sealed class BoxSetOwnershipTests
     private sealed class Wire : HttpMessageHandler
     {
         internal bool? Supported = true;
-        internal bool Hold, AllPlayed, Enabled = true; internal int DetailReads;
+        internal bool Hold, AllPlayed, Enabled = true, OtherEnabled = true; internal int DetailReads;
+        internal string ReturnedLibrary = "12";
         internal HttpStatusCode DetailStatus = HttpStatusCode.OK, CapabilityStatus = HttpStatusCode.OK;
         internal bool TimeoutDetail, TimeoutCapability, NoMembership;
         internal string? LastLibraryQuery, LastMembershipQuery;
@@ -235,7 +291,7 @@ public sealed class BoxSetOwnershipTests
             else if (path.EndsWith("/user/libraries"))
             {
                 LastLibraryQuery = request.RequestUri.Query;
-                json = "{\"items\":[{\"id\":2,\"box_sets_enabled\":true},{\"id\":12,\"box_sets_enabled\":" + Enabled.ToString().ToLowerInvariant() + "}]}";
+                json = "{\"items\":[{\"id\":2,\"box_sets_enabled\":" + OtherEnabled.ToString().ToLowerInvariant() + "},{\"id\":12,\"box_sets_enabled\":" + Enabled.ToString().ToLowerInvariant() + "}]}";
             }
             else if (path.EndsWith("/items/film")) json = "{\"content_id\":\"film\",\"type\":\"movie\",\"user_state\":{}}";
             else
@@ -244,7 +300,7 @@ public sealed class BoxSetOwnershipTests
                 if (TimeoutDetail) throw new TaskCanceledException("Synthetic transport timeout without caller cancellation.");
                 if (path.EndsWith("/box-set")) LastMembershipQuery = request.RequestUri.Query;
                 status = DetailStatus;
-                var detail = "{\"id\":\"7\",\"library_id\":\"12\",\"movie_count\":2,\"played_count\":" + (AllPlayed ? "2" : "1") + ",\"items\":[{\"type\":\"movie\",\"content_id\":\"first\",\"user_state\":{\"played\":true}},{\"type\":\"movie\",\"content_id\":\"second\",\"user_state\":{\"played\":" + AllPlayed.ToString().ToLowerInvariant() + "}}]}";
+                var detail = "{\"id\":\"7\",\"library_id\":\"" + ReturnedLibrary + "\",\"movie_count\":2,\"played_count\":" + (AllPlayed ? "2" : "1") + ",\"items\":[{\"type\":\"movie\",\"content_id\":\"first\",\"user_state\":{\"played\":true}},{\"type\":\"movie\",\"content_id\":\"second\",\"user_state\":{\"played\":" + AllPlayed.ToString().ToLowerInvariant() + "}}]}";
                 json = path.EndsWith("/box-set") ? NoMembership ? "{\"box_set\":null}" : "{\"box_set\":" + detail + "}" : detail;
             }
             return new(status) { Content = new StringContent(json) };

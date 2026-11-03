@@ -34,7 +34,7 @@ public partial class ItemDetailViewModel
     public async Task RefreshBoxSetAsync()
     {
         CancelBoxSetRead();
-        if (_boxSetRetired || Item is not { Type: "movie" } item || LibraryId is not > 0)
+        if (_boxSetRetired || Item is not { Type: "movie" } item || LibraryId is <= 0)
         { _boxSetMembership = null; BoxSet = null; return; }
         if (!CanPreserveBoxSet(item.ContentId)) { _boxSetMembership = null; BoxSet = null; }
         var library = LibraryId; var context = _catalogApi.CaptureContext(); var language = _catalogApi.MetadataLanguageGeneration;
@@ -44,14 +44,17 @@ public partial class ItemDetailViewModel
             && LibraryId == library && _catalogApi.IsCurrentContext(context) && _catalogApi.MetadataLanguageGeneration == language;
         try
         {
-            if (!await _catalogApi.BoxSetsEnabledAsync(library, ct, throwOnCapabilityFailure: true) || !Current())
+            var eligibleLibraries = await _catalogApi.GetBoxSetLibraryIdsAsync(ct, throwOnCapabilityFailure: true);
+            if (!Current() || (library.HasValue ? !eligibleLibraries.Contains(library.Value) : eligibleLibraries.Count == 0))
             { if (Current()) { _boxSetMembership = null; BoxSet = null; } return; }
             var response = await _catalogApi.GetItemBoxSetAsync(item.ContentId, library, ct);
             if (Current())
             {
-                // A scoped membership response must not borrow another library's flag.
+                // Unscoped routes let the server choose membership, but its returned
+                // library must have its own flag. Explicit routes also require a match.
                 var detail = response.BoxSet;
-                if (detail != null && (!int.TryParse(detail.LibraryId, out var returnedLibrary) || returnedLibrary != library)) detail = null;
+                if (detail != null && (!int.TryParse(detail.LibraryId, out var returnedLibrary)
+                    || !eligibleLibraries.Contains(returnedLibrary) || (library.HasValue && returnedLibrary != library.Value))) detail = null;
                 _boxSetMembership = detail;
                 BoxSet = detail is { Items.Count: > 0 } ? detail : null;
             }
