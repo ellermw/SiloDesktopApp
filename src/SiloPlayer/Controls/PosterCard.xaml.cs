@@ -758,6 +758,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private void SpoilersChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(RefreshSpoilerArtwork);
     private void RefreshSpoilerArtwork()
     {
+        if (SuppressImageLoading || DeferImageLoading) return;
         if (!IsLoaded || MediaItem is not { Type: "episode" } item) return;
         var hidden = HideEpisodeArtwork(item);
         if (_spoilerArtworkHidden == hidden) return;
