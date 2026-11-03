@@ -34,6 +34,7 @@ public sealed partial class ItemDetailPage : Page
     private EpisodeSpoilerPreferences? _episodeSpoilerPreferences;
     private string? _revealedEpisodeOverviewId;
     private int _episodeSpoilerRevision;
+    private (MediaItemDetail Item, int? Library, long WatchedRevision, bool HideImages, bool HideOverviews)? _episodeCardSpoilerOwner;
     private bool _translateButtonMode;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
@@ -850,6 +851,8 @@ public sealed partial class ItemDetailPage : Page
                     if (ViewModel.Item is { Type: "episode" })
                         BuildSiblingEpisodeCards();
                 }
+                else if (ViewModel.Item?.Type is "series" or "season")
+                    LayoutEpisodeGrid();
             });
     }
 
@@ -912,6 +915,7 @@ public sealed partial class ItemDetailPage : Page
         if (TrailerOverlay.Visibility == Visibility.Visible)
             CloseTrailerModal();
         base.OnNavigatedFrom(e);
+        _revealedEpisodeOverviewId = null;
 
         SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged;
         ++_titleArtRevision;
@@ -970,6 +974,8 @@ public sealed partial class ItemDetailPage : Page
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
         _navigationCts = new CancellationTokenSource();
+        _revealedEpisodeOverviewId = null;
+        _episodeCardSpoilerOwner = null;
         ++_overviewConfigurationRevision;
         _translationCts?.Cancel();
         _translationCts?.Dispose();
@@ -2733,11 +2739,16 @@ public sealed partial class ItemDetailPage : Page
     private void ApplyEpisodeSpoilers()
     {
         if (!IsLoaded || ViewModel.Item is not { } item) return;
-        ++_episodeSpoilerRevision;
         ApplyOverviewSpoilers();
         if ((_overviewPendingOwner ?? _overviewConfiguredOwner) is { } overviewOwner &&
             overviewOwner.Hidden != IsOverviewHidden(item))
             ConfigureOverviewIfNeeded();
+        var cardOwner = (item, ViewModel.LibraryId, ViewModel.WatchedStateRevision,
+            _episodeSpoilerPreferences?.HideImages == true, _episodeSpoilerPreferences?.HideOverviews == true);
+        // Overview loading/reveal changes do not retire unchanged card actions or still loads.
+        if (_episodeCardSpoilerOwner == cardOwner) return;
+        _episodeCardSpoilerOwner = cardOwner;
+        ++_episodeSpoilerRevision;
         if (ViewModel.Episodes.Count > 0 && item.Type is "series" or "season") LayoutEpisodeGrid();
         if (item.Type == "episode") BuildSiblingEpisodeCards();
     }

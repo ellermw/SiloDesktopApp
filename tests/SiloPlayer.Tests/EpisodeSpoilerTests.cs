@@ -102,7 +102,7 @@ public class EpisodeSpoilerTests
 
         clock.Advance(TimeSpan.FromSeconds(1)); wire.Failure = null; wire.Hold = true;
         var recovery = prefs.EnsureLoadedAsync();
-        Assert.True(prefs.ShouldHideOverviews); // Retry is in flight, not failed.
+        Assert.False(prefs.ShouldHideOverviews); // A retry keeps the failed optional read's visible default.
         var consumers = Enumerable.Range(0, 20).Select(_ => prefs.EnsureLoadedAsync()).ToArray();
         wire.Release.TrySetResult();
         await Task.WhenAll(consumers.Append(recovery));
@@ -151,12 +151,16 @@ public class EpisodeSpoilerTests
         else { client.SetBaseUrl("https://other.test"); client.SetProfile("one"); }
         wire.Failure = "503";
         Assert.True(prefs.ShouldHideOverviews);
+        Assert.Equal(expected, prefs.HideImages);
+        Assert.Equal(expected, prefs.HideOverviews);
         await prefs.EnsureLoadedAsync();
         Assert.Equal(expected, prefs.ShouldHideOverviews);
+        Assert.Equal(expected, prefs.HideImages);
+        Assert.Equal(expected, prefs.HideOverviews);
     }
 
     [Fact]
-    public async Task PersistentFailuresUseCappedBackoffAndNotifyEachAttempt()
+    public async Task PersistentFailuresUseCappedBackoffWithoutRepeatedNotifications()
     {
         using var wire = new Wire { Failure = "503" }; using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
@@ -173,9 +177,32 @@ public class EpisodeSpoilerTests
             clock.Advance(TimeSpan.FromMilliseconds(1));
             await prefs.EnsureLoadedAsync();
             Assert.Equal(reads + 1, wire.CapabilityReads);
-            Assert.Equal(wire.CapabilityReads, changes);
+            Assert.Equal(1, changes);
             Assert.False(prefs.ShouldHideOverviews);
         }
+    }
+
+    [Fact]
+    public async Task HeldFailingRetryKeepsVisibleStateAndDoesNotNotify()
+    {
+        using var wire = new Wire { Failure = "503", FailEffective = true };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        var clock = new Clock();
+        using var prefs = new EpisodeSpoilerPreferences(new SettingsApi(client), clock);
+        var changes = 0; prefs.Changed += (_, _) => changes++;
+        await prefs.EnsureLoadedAsync();
+        Assert.False(prefs.ShouldHideOverviews);
+        Assert.Equal(1, changes);
+        clock.Advance(TimeSpan.FromSeconds(1)); wire.Hold = true;
+        var retry = prefs.EnsureLoadedAsync();
+        Assert.False(retry.IsCompleted);
+        Assert.False(prefs.ShouldHideOverviews);
+        Assert.Equal(1, changes);
+        wire.Release.TrySetResult(); await retry;
+        Assert.False(prefs.ShouldHideOverviews);
+        Assert.Equal(1, changes);
+        Assert.Equal(2, wire.EffectiveReads);
     }
 
     private sealed class Clock : TimeProvider
@@ -203,8 +230,8 @@ public class EpisodeSpoilerTests
             else
             {
                 EffectiveReads++;
-                if (FailEffective && Failure != null) return FailedResponse();
                 Started.TrySetResult(); if (Hold) await Release.Task;
+                if (FailEffective && Failure != null) return FailedResponse();
                 var value = Hide ? "true" : "false";
                 json = "{\"items\":[{\"key\":\"catalog.hide_unwatched_episode_images\",\"value\":" + value + "},{\"key\":\"catalog.hide_unwatched_episode_overviews\",\"value\":" + value + "}]}";
             }

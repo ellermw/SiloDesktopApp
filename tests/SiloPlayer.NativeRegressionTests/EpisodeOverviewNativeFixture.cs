@@ -1,8 +1,11 @@
 using System.Net;
 using System.Reflection;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using SiloPlayer.Controls;
@@ -27,7 +30,8 @@ internal static class EpisodeOverviewNativeFixture
         await spoilers.EnsureLoadedAsync();
         Check(spoilers.HideOverviews, "Fixture must enable actual episode spoiler preferences");
         var vm = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException("Unexpected unscoped read")));
-        slot.SetValue(null, new Services(original, client, api, vm, spoilers));
+        using var images = new ImageService(Path.Combine(Program.ResultDirectory, "episode-overview-images"));
+        slot.SetValue(null, new Services(original, client, api, vm, spoilers, http, images));
         ItemDetailPage? page = null;
         using var navigation = new CancellationTokenSource();
         try
@@ -151,8 +155,8 @@ internal static class EpisodeOverviewNativeFixture
                 else client.SetProfile("fixture");
                 Call(page, "RefreshRetiredOverviewScope");
                 await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                Check(!spoilers.IsLoadedForCurrentContext && !spoilers.HideOverviews,
-                    "The held replacement preference is unknown in the new access context");
+                Check(!spoilers.IsLoadedForCurrentContext && spoilers.HideOverviews && spoilers.HideImages,
+                    "An access-only refresh retains both last-known card spoiler preferences");
                 for (var attempt = 0; attempt < 2; attempt++)
                 {
                     Call(page, "RefreshRetiredOverviewScope"); Call(page, "ApplyOverviewSpoilers");
@@ -174,6 +178,40 @@ internal static class EpisodeOverviewNativeFixture
             }
             Program.Log("PASS: access and same-profile retirement preserve unrevealed own-overview spoilers during and after preference reload.");
 
+            foreach (var change in new[] { "access", "same-profile" })
+            {
+                wire.Reset(); wire.OwnOverview = "Protected own plot.";
+                await Load();
+                page.Width = 1280; Call(page, "UpdateResponsiveLayout", 1280d);
+                var protectedSiblings = Field<List<Episode>>(page, "_siblingEpisodes");
+                protectedSiblings.Clear(); protectedSiblings.Add(new Episode { ContentId = $"protected-{change}", Title = "Unwatched sibling",
+                    Overview = "An unwatched sibling plot", StillUrl = "https://episode-overview.fixture.invalid/still.png", StillIsEpisodeStill = true });
+                Call(page, "ApplyEpisodeSpoilers"); Call(page, "BuildSiblingEpisodeCards");
+                ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
+                ((ScrollViewer)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
+                var protectedRail = (StackPanel)page.FindName("SiblingEpisodesPanel");
+                Image? Still() => Descendants(protectedRail).OfType<Image>().FirstOrDefault(image => image.Source is BitmapImage { PixelWidth: > 0 });
+                await Until(() => Still() != null); page.UpdateLayout();
+                var protectedPixels = await Pixels(Still()!);
+                wire.SpoilerFailure = "503"; wire.FailSpoilerEffective = true;
+                if (change == "access") client.InvalidateAccessContext(); else client.SetProfile("fixture");
+                Call(page, "RefreshRetiredOverviewScope");
+                await spoilers.EnsureLoadedAsync(); await (Task)Call(page, "EnsureEpisodeSpoilersAsync")!;
+                Check(!spoilers.IsLoadedForCurrentContext && spoilers.HideImages && spoilers.HideOverviews &&
+                    Descendants(protectedRail).OfType<EpisodeCardCaption>().All(caption => caption.Presentation.Overview == ""),
+                    "A failed access-only reload preserves sibling captions and both protection preferences");
+                // Also exercise a fresh card/still created after the replacement read has failed.
+                Call(page, "BuildSiblingEpisodeCards");
+                await Until(() => Still() != null); page.UpdateLayout();
+                Check(Descendants(protectedRail).OfType<EpisodeCardCaption>().Single().OverviewText.Visibility == Visibility.Collapsed &&
+                    protectedPixels.SequenceEqual(await Pixels(Still()!)),
+                    "Sibling captions remain hidden and freshly loaded still pixels retain the same spoiler blur after a failed reload");
+                wire.SpoilerFailure = null; Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                await spoilers.EnsureLoadedAsync();
+            }
+            Field<List<Episode>>(page, "_siblingEpisodes").Clear(); Call(page, "BuildSiblingEpisodeCards");
+            Program.Log("PASS: failed access-only reloads preserve sibling captions and actual blurred stills, including freshly rebuilt cards.");
+
             foreach (var failure in new[] { "404", "503", "timeout", "network", "malformed", "null" })
             foreach (var effective in new[] { false, true })
             foreach (var hide in new[] { false, true })
@@ -194,8 +232,8 @@ internal static class EpisodeOverviewNativeFixture
                 Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
                 Call(page, "RefreshRetiredOverviewScope");
                 await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed,
-                    "A retry in flight protects an unknown own-episode preference");
+                Check(overview.Visibility == Visibility.Visible && button.Visibility == Visibility.Visible,
+                    "A retry in flight preserves the visible default and its translation action");
                 wire.HoldSpoilers = false; wire.ReleaseSpoilers.TrySetResult();
                 await Until(() => spoilers.IsLoadedForCurrentContext && spoilers.HideOverviews == hide &&
                     overview.Visibility == (hide ? Visibility.Collapsed : Visibility.Visible) &&
@@ -205,9 +243,57 @@ internal static class EpisodeOverviewNativeFixture
             }
             Program.Log("PASS: failed capability/effective reads (404, 503, timeout, network, malformed and null bodies) retain the visible default and recover both hide values with backoff.");
 
+            foreach (var state in new[] { "active", "manual-recovery" })
+            {
+                wire.Reset(); wire.OwnOverview = "A visible episode plot."; wire.OnView = "auto";
+                wire.SpoilerFailure = "503"; wire.FailSpoilerEffective = true;
+                wire.HoldPost = state == "active"; wire.PostFailuresRemaining = state == "manual-recovery" ? 1 : 0;
+                client.SetProfile($"retry-{state}");
+                await spoilers.EnsureLoadedAsync();
+                await vm.LoadInLibraryAsync("episode", 42);
+                var configuration = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
+                Call(page, "UpdateUI");
+                await Until(() => wire.Posts.Count == 1 && (state == "active" ? overview.Opacity == 0.55 :
+                    button.Visibility == Visibility.Visible && button.IsEnabled && Field<bool>(page, "_translateButtonMode")));
+                var translation = Field<CancellationTokenSource?>(page, "_translationCts");
+                var configurationRevision = Field<long>(page, "_overviewConfigurationRevision");
+                var retrySiblings = Field<List<Episode>>(page, "_siblingEpisodes");
+                retrySiblings.Clear(); retrySiblings.Add(new Episode { ContentId = "retry-sibling", Title = "Sibling", Overview = "Sibling plot" });
+                Call(page, "ApplyEpisodeSpoilers"); Call(page, "BuildSiblingEpisodeCards");
+                var retryCards = ((StackPanel)page.FindName("SiblingEpisodesPanel")).Children.ToArray();
+                var spoilerRevision = Field<int>(page, "_episodeSpoilerRevision");
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    wire.HoldSpoilers = true;
+                    wire.SpoilersEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.ReleaseSpoilers = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                    Call(page, "RefreshRetiredOverviewScope");
+                    await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    Check(overview.Visibility == Visibility.Visible &&
+                        ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed &&
+                        Field<long>(page, "_overviewConfigurationRevision") == configurationRevision &&
+                        (translation == null || !translation.IsCancellationRequested),
+                        "A held failing preference retry neither hides the plot nor cancels/reconfigures translation");
+                    wire.HoldSpoilers = false; wire.ReleaseSpoilers.TrySetResult();
+                    await spoilers.EnsureLoadedAsync(); await (Task)Call(page, "EnsureEpisodeSpoilersAsync")!;
+                    await Task.Delay(550);
+                    Check(wire.Posts.Count == 1 && retryCards.SequenceEqual(((StackPanel)page.FindName("SiblingEpisodesPanel")).Children) &&
+                        Field<int>(page, "_episodeSpoilerRevision") == spoilerRevision &&
+                        Field<long>(page, "_overviewConfigurationRevision") == configurationRevision &&
+                        (translation == null ? Field<bool>(page, "_translateButtonMode") && button.IsEnabled :
+                            ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts")) && !translation.IsCancellationRequested),
+                        "Failed retries preserve cards, still-load revision, the active translation or manual recovery, and never repeat POSTs");
+                }
+                translation?.Cancel(); wire.ReleasePost.TrySetResult(); await configuration;
+            }
+            Field<List<Episode>>(page, "_siblingEpisodes").Clear(); Call(page, "BuildSiblingEpisodeCards");
+            wire.Reset(); client.SetProfile("fixture"); await spoilers.EnsureLoadedAsync();
+            Program.Log("PASS: failing preference retries preserve visible plot, active/manual-recovery translation, sibling instances and still-load ownership without repeated POSTs.");
+
             // A failed reload after disabling hiding keeps known protection only until recovery.
             wire.Reset(); wire.OwnOverview = "An episode-specific plot.";
-            await spoilers.EnsureLoadedAsync(); // Last case recovered with hiding enabled.
+            await spoilers.EnsureLoadedAsync(); // The fixture's known preference enables hiding.
             wire.HideOverviews = false; wire.SpoilerFailure = "503"; spoilers.Invalidate();
             await spoilers.EnsureLoadedAsync(); Call(page, "ApplyEpisodeSpoilers");
             Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed,
@@ -298,6 +384,40 @@ internal static class EpisodeOverviewNativeFixture
             }
             Program.Log("PASS: automatic translation POST/poll failures expose a working manual recovery action.");
 
+            wire.Reset(); wire.OnView = "auto"; wire.HoldPost = wire.KeepPending = true;
+            await vm.LoadInLibraryAsync("episode", 42);
+            var timedTranslation = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
+            Call(page, "UpdateUI");
+            await wire.PostEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var deadline = Field<CancellationTokenSource>(page, "_translationCts");
+            // Shorten the real CancelAfter deadline; do not cancel navigation or change ownership.
+            deadline.CancelAfter(TimeSpan.FromMilliseconds(1));
+            await Until(() => deadline.IsCancellationRequested);
+            wire.HoldPost = false; wire.ReleasePost.TrySetResult(); await timedTranslation;
+            Check(Field<bool>(page, "_translateButtonMode") && button.Visibility == Visibility.Visible && button.IsEnabled &&
+                overview.Opacity == 1 && (string)button.Content == "Translate description",
+                "An automatic translation deadline restores an enabled manual recovery action and undims the description");
+            await Task.Delay(600);
+            Check(wire.Posts.Count == 1, "The deadline recovery action does not repeat automatic POSTs");
+            wire.KeepPending = false;
+            ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Until(() => wire.Posts.Count == 2 && overview.Text == Wire.TranslatedText && button.Visibility == Visibility.Collapsed);
+
+            using (var departed = new CancellationTokenSource())
+            {
+                Set(page, "_navigationCts", departed);
+                wire.Reset(); wire.OnView = "auto"; wire.HoldPost = wire.KeepPending = true;
+                await vm.LoadInLibraryAsync("episode", 42);
+                var retired = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
+                await wire.PostEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                departed.Cancel(); wire.ReleasePost.TrySetResult(); await retired;
+                Check(!Field<bool>(page, "_translateButtonMode") && !button.IsEnabled &&
+                    Field<CancellationTokenSource?>(page, "_translationCts") == null,
+                    "Navigation cancellation silently retires automatic translation without exposing deadline recovery");
+                Set(page, "_navigationCts", navigation);
+            }
+            Program.Log("PASS: automatic translation deadlines expose a working manual retry; navigation cancellation remains retired.");
+
             foreach (var mode in new[] { "button", "auto" })
             {
                 wire.Reset(); wire.SeriesFailuresRemaining = 1; wire.OnView = mode;
@@ -324,7 +444,40 @@ internal static class EpisodeOverviewNativeFixture
                 Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
             Check(overview.Text == "" && button.Visibility == Visibility.Collapsed && vm.ErrorMessage == null,
                 "A later failed optional retry still leaves the episode usable");
-            Program.Log("PASS: transient series reads recover text and translation on the same page; persistent failures retain capped backoff retries.");
+            foreach (var stage in new[] { "series", "status" })
+            {
+                wire.Reset(); wire.FailSeries = stage == "series";
+                wire.StatusFailuresRemaining = stage == "status" ? 100 : 0;
+                await Load();
+                var path = stage == "series" ? "/api/v2/catalog/items/series?library_id=42" : "/api/v2/capabilities/metadata-ai";
+                for (var attempt = 1; attempt <= 8; attempt++)
+                {
+                    var expected = attempt;
+                    await Until(() => wire.Paths.Count(value => value == path) == expected &&
+                        (expected == 8 ? Field<DateTimeOffset?>(page, "_overviewRetryAt") == null :
+                            Field<DateTimeOffset?>(page, "_overviewRetryAt") != null));
+                    if (attempt < 8)
+                    {
+                        Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                        Call(page, "RefreshRetiredOverviewScope");
+                    }
+                }
+                var reads = wire.Paths.Count;
+                for (var tick = 0; tick < 3; tick++)
+                {
+                    Call(page, "RefreshRetiredOverviewScope"); Call(page, "ConfigureOverviewIfNeeded");
+                    await Task.Delay(550);
+                }
+                Check(wire.Paths.Count == reads && wire.Posts.Count == 0 && vm.ErrorMessage == null,
+                    "Exhausted optional reads stop for this owner without blocking the page or writing translations");
+                wire.FailSeries = false; wire.StatusFailuresRemaining = 0;
+                client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => overview.Text == Wire.SeriesText && button.Visibility == Visibility.Visible && button.IsEnabled);
+                Check(Field<int>(page, "_overviewConfigurationAttempts") == 1,
+                    "A new metadata scope gets a fresh optional-read budget");
+            }
+            Program.Log("PASS: transient optional reads recover; permanent series/capability failures exhaust a bounded budget until scope changes.");
 
             foreach (var change in new[] { "language", "access" })
             {
@@ -556,6 +709,39 @@ internal static class EpisodeOverviewNativeFixture
             Field<CancellationTokenSource>(page, "_translationCts").Cancel();
             await polling;
             Program.Log("PASS: repeated pending translation polls do not rebuild the sibling rail or collapse expanded unchanged text.");
+
+            wire.Reset(); wire.OwnOverview = "An unrevealed episode plot.";
+            client.SetProfile("fixture"); await spoilers.EnsureLoadedAsync();
+            Microsoft.UI.Xaml.Navigation.NavigationEventArgs? routeEvent = null;
+            var eventSource = new Frame();
+            eventSource.Navigated += (_, e) => routeEvent = e;
+            eventSource.Navigate(typeof(Page));
+            Check(routeEvent != null, "Fixture needs real navigation event arguments");
+            // Exercise route departure on the same page instance without starting unrelated watch/enrichment reads.
+            Set(page, "_navigationCts", new CancellationTokenSource());
+            Call(page, "OnNavigatedFrom", routeEvent!);
+            Set(page, "_navigationCts", new CancellationTokenSource());
+            var firstRoute = true;
+            foreach (var id in new[] { "episode", "episode-b", "episode" })
+            {
+                Set(page, "_currentContentId", id);
+                await vm.LoadInLibraryAsync(id, 42); Call(page, "UpdateUI");
+                await Until(() => overview.Visibility == Visibility.Collapsed &&
+                    ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible);
+                Check(Field<string?>(page, "_revealedEpisodeOverviewId") == null && button.Visibility == Visibility.Collapsed,
+                    "Every newly entered episode route, including a return to A, requires a fresh Reveal");
+                if (firstRoute)
+                {
+                    Call(page, "RevealEpisodeOverviewButton_Click", button, new RoutedEventArgs());
+                    await Until(() => overview.Visibility == Visibility.Visible && button.Visibility == Visibility.Visible);
+                    firstRoute = false;
+                }
+                Call(page, "OnNavigatedFrom", routeEvent!);
+                Set(page, "_navigationCts", new CancellationTokenSource());
+            }
+            Field<CancellationTokenSource>(page, "_navigationCts").Dispose();
+            Set(page, "_navigationCts", navigation);
+            Program.Log("PASS: revealing A, departing to B and returning to A on the same page does not retain the reveal.");
         }
         finally
         {
@@ -565,15 +751,34 @@ internal static class EpisodeOverviewNativeFixture
             CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(vm);
         }
     }
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            yield return child;
+            foreach (var nested in Descendants(child)) yield return nested;
+        }
+    }
+    private static async Task<byte[]> Pixels(FrameworkElement element)
+    {
+        var bitmap = new RenderTargetBitmap();
+        await bitmap.RenderAsync(element);
+        var pixels = (await bitmap.GetPixelsAsync()).ToArray();
+        Check(pixels.Length > 0 && pixels.Any(value => value != 0), "Spoiler still must actually render before comparing pixels");
+        return pixels;
+    }
     private static object? Call(object owner, string method, params object[] args) => owner.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(owner, args);
     private static void Set(object owner, string field, object? value) => owner.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(owner, value);
     private static T Field<T>(object owner, string field) => (T)owner.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(owner)!;
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready) { for (var n = 0; n < 240 && !ready(); n++) await Task.Delay(25); Check(ready(), "Native overview state did not settle"); }
-    private sealed class Services(IServiceProvider original, SiloApiClient client, CatalogApi api, ItemDetailViewModel vm, EpisodeSpoilerPreferences spoilers) : IServiceProvider
+    private sealed class Services(IServiceProvider original, SiloApiClient client, CatalogApi api, ItemDetailViewModel vm,
+        EpisodeSpoilerPreferences spoilers, HttpClient http, ImageService images) : IServiceProvider
     {
         public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(CatalogApi) ? api :
             type == typeof(ItemDetailViewModel) ? vm : type == typeof(EpisodeSpoilerPreferences) ? spoilers :
+            type == typeof(HttpClient) ? http : type == typeof(ImageService) ? images :
             type == typeof(UICustomizationService) ? new UICustomizationService(new SettingsApi(client)) : original.GetService(type);
     }
     private sealed class Wire : HttpMessageHandler
@@ -588,7 +793,7 @@ internal static class EpisodeOverviewNativeFixture
         internal string[] OwnMachineTranslatedFields = [];
         internal string SeriesOverview = SeriesText;
         internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem, HoldSpoilers;
-        internal bool HideOverviews = true, FailSpoilerEffective;
+        internal bool HideOverviews = true, HideImages = true, FailSpoilerEffective;
         internal string? SpoilerFailure;
         internal int PollReads, SeriesFailuresRemaining, StatusFailuresRemaining, PostFailuresRemaining, PollFailuresRemaining;
         internal TaskCompletionSource StatusEntered = NewGate(), ReleaseStatus = NewGate(), PostEntered = NewGate(), ReleasePost = NewGate(),
@@ -600,7 +805,7 @@ internal static class EpisodeOverviewNativeFixture
             Paths.Clear(); Posts.Clear(); OwnOverview = " \t "; SeriesId = "series"; OnView = "button";
             SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = StatusFailuresRemaining = PostFailuresRemaining = PollFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
             FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = HoldSpoilers = false;
-            HideOverviews = true; FailSpoilerEffective = false; SpoilerFailure = null;
+            HideOverviews = HideImages = true; FailSpoilerEffective = false; SpoilerFailure = null;
             StatusEntered = NewGate(); ReleaseStatus = NewGate(); PostEntered = NewGate(); ReleasePost = NewGate();
             PollEntered = NewGate(); ReleasePoll = NewGate(); ItemReadEntered = NewGate(); ReleaseItemRead = NewGate();
             SpoilersEntered = NewGate(); ReleaseSpoilers = NewGate();
@@ -609,6 +814,9 @@ internal static class EpisodeOverviewNativeFixture
         {
             if (request.RequestUri!.Host != "episode-overview.fixture.invalid") throw new InvalidOperationException("Unexpected external request");
             var path = request.RequestUri!.PathAndQuery; Paths.Add(path);
+            if (request.RequestUri.AbsolutePath == "/still.png")
+                return new(HttpStatusCode.OK) { Content = new ByteArrayContent(await File.ReadAllBytesAsync(
+                    Path.Combine(Program.AppDirectory, "Assets", "silo-icon-1024.png"), ct)) };
             var onView = OnView;
             var translated = Translated;
             var ownOverview = OwnOverview;
@@ -654,11 +862,14 @@ internal static class EpisodeOverviewNativeFixture
             object value = request.RequestUri.AbsolutePath switch
             {
                 "/api/v2/catalog/items/episode" => new { content_id = "episode", type = "episode", title = "Episode", series_id = SeriesId, overview = ownOverview, pending_translation_language = translated ? null : targetLanguage, machine_translated_fields = ownFields, user_state = new { }, user_data = new { played = false } },
+                "/api/v2/catalog/items/episode-b" => new { content_id = "episode-b", type = "episode", title = "Episode B", overview = ownOverview, pending_translation_language = targetLanguage, user_state = new { }, user_data = new { played = false } },
                 "/api/v2/catalog/items/movie" => new { content_id = "movie", type = "movie", title = "Movie", overview = ownOverview, pending_translation_language = translated ? null : targetLanguage, machine_translated_fields = ownFields, user_state = new { } },
                 "/api/v2/catalog/items/series" => new { content_id = "series", type = "series", overview = translated ? TranslatedText : SeriesOverview, machine_translated_fields = new[] { "overview" }, pending_translation_language = translated ? null : "fr" },
                 "/api/v2/capabilities/metadata-ai" => new { state = "available", allowed = true, on_view = onView },
                 "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 17, supports_batched_effective = true },
-                _ when path.Contains("effective") => new { items = new[] { new { key = "catalog.hide_unwatched_episode_overviews", value = HideOverviews } } },
+                _ when path.Contains("effective") => new { items = new[] {
+                    new { key = "catalog.hide_unwatched_episode_overviews", value = HideOverviews },
+                    new { key = "catalog.hide_unwatched_episode_images", value = HideImages } } },
                 _ => new { }
             };
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value)) };

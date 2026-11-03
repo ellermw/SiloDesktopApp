@@ -27,8 +27,13 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
     private bool _disposed;
     public event EventHandler? Changed;
     public bool IsLoadedForCurrentContext => _context is { } context && _settings.IsCurrentContext(context) && _loaded;
-    public bool HideImages => _context is { } context && _settings.IsCurrentContext(context) && _hideImages;
-    public bool HideOverviews => _context is { } context && _settings.IsCurrentContext(context) && _hideOverviews;
+    public bool HideImages => HasCurrentIdentity && _hideImages;
+    public bool HideOverviews => HasCurrentIdentity && _hideOverviews;
+
+    private bool HasCurrentIdentity => _context is { } context && SameIdentity(context, _settings.CaptureContext());
+    private static bool SameIdentity(ApiRequestContext previous, ApiRequestContext current) =>
+        previous.AuthenticationGeneration == current.AuthenticationGeneration &&
+        previous.BaseUrl == current.BaseUrl && previous.ProfileId == current.ProfileId;
 
     // Protect unknown/in-flight reads, but not a failed optional read without a known hide value.
     public bool ShouldHideOverviews
@@ -62,14 +67,14 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
             {
                 _scope?.Cancel(); _scope?.Dispose();
                 _scope = new();
-                _loaded = _loadFailed = false;
+                _loaded = false;
+                // A same-scope retry must not turn a failed optional read back into an unknown value.
+                if (_context != context || _load == null) _loadFailed = false;
                 if (_context != context)
                 {
-                    // Access refreshes may retire reads without changing the viewer's identity.
-                    if (_context is not { } previous || previous.AuthenticationGeneration != context.AuthenticationGeneration ||
-                        previous.BaseUrl != context.BaseUrl || previous.ProfileId != context.ProfileId)
-                        _knownHideOverviews = false;
-                    _hideImages = _hideOverviews = false;
+                    // Access refreshes retire reads, not the same viewer's last-known protection.
+                    if (_context is not { } previous || !SameIdentity(previous, context))
+                        _hideImages = _hideOverviews = _knownHideOverviews = false;
                     _retryDelay = TimeSpan.FromSeconds(1);
                 }
                 _context = context;
@@ -103,6 +108,7 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
                     if (ct.IsCancellationRequested || _context != context || !_settings.IsCurrentContext(context)) return;
                     _hideImages = _hideOverviews = _knownHideOverviews = false;
                     _loaded = true;
+                    _loadFailed = false;
                     _retryDelay = TimeSpan.FromSeconds(1);
                 }
                 Changed?.Invoke(this, EventArgs.Empty);
@@ -115,21 +121,25 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
                 bool Read(string key) => values.Settings.FirstOrDefault(entry => entry.Key == key)?.Value.ValueKind == System.Text.Json.JsonValueKind.True;
                 _hideImages = Read(Keys[0]); _hideOverviews = _knownHideOverviews = Read(Keys[1]);
                 _loaded = true;
+                _loadFailed = false;
                 _retryDelay = TimeSpan.FromSeconds(1);
             }
             Changed?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
         {
+            bool changed;
             lock (_sync)
             {
                 if (ct.IsCancellationRequested || _context != context || !_settings.IsCurrentContext(context)) return;
+                var hidden = ShouldHideOverviews;
                 // Keep the completed task through the backoff, including synchronous failures.
                 _loadFailed = true;
                 _retryAt = _time.GetUtcNow().Add(_retryDelay);
                 _retryDelay = TimeSpan.FromSeconds(Math.Min(30, _retryDelay.TotalSeconds * 2));
+                changed = hidden != ShouldHideOverviews;
             }
-            Changed?.Invoke(this, EventArgs.Empty);
+            if (changed) Changed?.Invoke(this, EventArgs.Empty);
         }
     }
 

@@ -14,6 +14,8 @@ public sealed partial class ItemDetailPage
     private OverviewConfigurationOwner? _overviewConfiguredOwner, _overviewPendingOwner;
     private DateTimeOffset? _overviewRetryAt;
     private TimeSpan _overviewRetryDelay = TimeSpan.FromSeconds(1);
+    private const int MaxOverviewConfigurationAttempts = 8;
+    private int _overviewConfigurationAttempts;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _overviewScopeTimer;
 
     private void StartOverviewScopeWatch()
@@ -35,7 +37,7 @@ public sealed partial class ItemDetailPage
         if (ViewModel.Item?.Type == "episode")
         {
             _episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
-            // The shared service coalesces reads and bounds retries after optional-read failures.
+            // The shared service coalesces reads and backs off after optional-read failures.
             if (_episodeSpoilerPreferences?.IsLoadedForCurrentContext == false)
                 _ = _episodeSpoilerPreferences.EnsureLoadedAsync();
         }
@@ -100,7 +102,12 @@ public sealed partial class ItemDetailPage
         var library = ViewModel.LibraryId;
         var navigation = _navigationCts;
         var owner = new OverviewConfigurationOwner(item, library, context, language, navigation, IsOverviewHidden(item));
-        if (owner != _overviewPendingOwner) _overviewRetryDelay = TimeSpan.FromSeconds(1);
+        if (owner != _overviewPendingOwner)
+        {
+            _overviewRetryDelay = TimeSpan.FromSeconds(1);
+            _overviewConfigurationAttempts = 0;
+        }
+        ++_overviewConfigurationAttempts;
         _overviewRetryAt = null;
         _overviewPendingOwner = owner;
         bool Current() => revision == _overviewConfigurationRevision && navigation?.IsCancellationRequested != true && ReferenceEquals(navigation, _navigationCts) &&
@@ -118,9 +125,7 @@ public sealed partial class ItemDetailPage
             RenderOverview();
             if (ViewModel.OverviewResolutionFailed)
             {
-                // Keep retrying while loaded, with a capped backoff and no overlapping reads.
-                _overviewRetryAt = DateTimeOffset.UtcNow.Add(_overviewRetryDelay);
-                _overviewRetryDelay = TimeSpan.FromSeconds(Math.Min(30, _overviewRetryDelay.TotalSeconds * 2));
+                ScheduleOverviewRetry(owner);
                 return;
             }
             _overviewConfiguredOwner = owner;
@@ -143,12 +148,23 @@ public sealed partial class ItemDetailPage
             if (Current())
             {
                 TranslateOverviewButton.Visibility = Visibility.Collapsed;
-                // Capability failures must also retry, even after the source was configured.
-                _overviewPendingOwner = owner;
-                _overviewRetryAt = DateTimeOffset.UtcNow.Add(_overviewRetryDelay);
-                _overviewRetryDelay = TimeSpan.FromSeconds(Math.Min(30, _overviewRetryDelay.TotalSeconds * 2));
+                ScheduleOverviewRetry(owner);
             }
         }
+    }
+
+    private void ScheduleOverviewRetry(OverviewConfigurationOwner owner)
+    {
+        _overviewPendingOwner = owner;
+        // A null retry time leaves this owner terminal until navigation or its scope changes.
+        if (_overviewConfigurationAttempts >= MaxOverviewConfigurationAttempts)
+        {
+            App.Services.GetRequiredService<Services.ToastService>().Error(
+                "Description or translation options could not be loaded. Reopen this page to try again.");
+            return;
+        }
+        _overviewRetryAt = DateTimeOffset.UtcNow.Add(_overviewRetryDelay);
+        _overviewRetryDelay = TimeSpan.FromSeconds(Math.Min(30, _overviewRetryDelay.TotalSeconds * 2));
     }
 
     private async void TranslateOverviewButton_Click(object sender, RoutedEventArgs e)
@@ -217,6 +233,14 @@ public sealed partial class ItemDetailPage
         }
         finally
         {
+            // Navigation and replacement configurations retire their owner before cancelling.
+            // Cancellation of a still-current owner is the translation deadline, even if a read ignored it.
+            if (ct.IsCancellationRequested && navigation?.IsCancellationRequested != true && OwnerCurrent() &&
+                !string.IsNullOrWhiteSpace(source.PendingTranslationLanguage))
+            {
+                _translateButtonMode = true;
+                App.Services.GetRequiredService<Services.ToastService>().Error("Description translation timed out. Try again.");
+            }
             // Retired results cannot publish, but must release controls unless a newer owner took them.
             var restoreControls = ControlsCurrent();
             if (restoreControls)
