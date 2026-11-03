@@ -255,12 +255,12 @@ public sealed class PlaybackManagerTests
         {
             var replacementTask = manager.StartReplacementSessionAsync(
                 456, 120, audioTrackIndex: 2, previousFinalPosition: 120, qualityPreference: "720p");
-            await handler.PreviousDeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await handler.PreviousDeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.False(replacementTask.IsCompleted);
             Assert.Equal(2, handler.StartBodies.Count);
 
             handler.ReleasePreviousDelete.TrySetResult();
-            var replacement = await replacementTask.WaitAsync(TimeSpan.FromSeconds(2));
+            var replacement = await replacementTask.WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.Same(replacement, manager.CurrentSession);
             Assert.Equal("session-3", replacement.SessionId);
@@ -295,13 +295,31 @@ public sealed class PlaybackManagerTests
         using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
         await manager.StartSessionAsync(123, forceStartPosition: true);
 
-        var error = await Record.ExceptionAsync(() => manager.StartReplacementSessionAsync(456, 120));
+        var error = await Record.ExceptionAsync(() => manager.StartReplacementSessionAsync(
+            456, 120, audioTrackIndex: 2, qualityPreference: "720p"));
 
         if (transport) Assert.IsType<ApiException>(error);
         else Assert.IsType<PlaybackPlanTerminalException>(error);
         Assert.Equal(3, handler.StartBodies.Count);
         Assert.Equal(1, handler.PreviousDeleteCount);
         Assert.Null(manager.CurrentSession);
+
+        // The other device stops. A viewer retry must be able to reopen from
+        // retained restart intent even though the retired session is gone.
+        handler.RejectionReason = null;
+        var reopened = await manager.StartReplacementSessionAsync(
+            456, 120, audioTrackIndex: 2, qualityPreference: "720p");
+        Assert.Same(reopened, manager.CurrentSession);
+        Assert.NotNull(manager.StreamUrl);
+        Assert.Equal(4, handler.StartBodies.Count);
+        Assert.Equal(1, handler.PreviousDeleteCount);
+        using var refused = JsonDocument.Parse(handler.StartBodies[2]);
+        using var retry = JsonDocument.Parse(handler.StartBodies[3]);
+        Assert.NotEqual(refused.RootElement.GetProperty("playback_attempt_id").GetString(),
+            retry.RootElement.GetProperty("playback_attempt_id").GetString());
+        foreach (var property in new[] { "file_id", "start_position", "audio_track_index", "quality_preference" })
+            Assert.Equal(refused.RootElement.GetProperty(property).GetRawText(), retry.RootElement.GetProperty(property).GetRawText());
+        await manager.StopSessionAsync();
     }
 
     [Theory]
@@ -344,7 +362,7 @@ public sealed class PlaybackManagerTests
         api.SetBaseUrl("https://example.test");
         using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
         using var cts = new CancellationTokenSource();
-        await manager.StartSessionAsync(123, forceStartPosition: true);
+        var original = await manager.StartSessionAsync(123, forceStartPosition: true);
         var replacementTask = manager.StartReplacementSessionAsync(456, 120, ct: cts.Token);
         await handler.PreviousDeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         if (changeIdentity) api.SetBaseUrl("https://other.example.test");
@@ -354,7 +372,130 @@ public sealed class PlaybackManagerTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => replacementTask);
         Assert.Equal(2, handler.StartBodies.Count);
         Assert.Equal(1, handler.PreviousDeleteCount);
+        // An unconfirmed stop retains the outgoing identity, not a false
+        // confirmation that its account slot has been released.
+        Assert.Same(original, manager.CurrentSession);
+        Assert.True(manager.SessionRetirementPending);
+    }
+
+    [Theory]
+    [InlineData("stream_limit_reached", false)]
+    [InlineData("too_many_streams", false)]
+    [InlineData("transcode_limit_reached", true)]
+    [InlineData("too_many_transcodes", true)]
+    public async Task NonRetryableAccountTerminalDoesNotRetireOrRetry(string reason, bool transcode)
+    {
+        var handler = new ReplacementPlaybackHandler
+        {
+            RejectionReason = reason,
+            TerminalRetryable = false,
+            Delivery = transcode ? "server_transcode_hls" : "original_http",
+        };
+        var api = new SiloApiClient(new HttpClient(handler));
+        api.SetBaseUrl("https://example.test");
+        using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
+        var original = await manager.StartSessionAsync(123, forceStartPosition: true);
+        try
+        {
+            var terminal = await Assert.ThrowsAsync<PlaybackPlanTerminalException>(
+                () => manager.StartReplacementSessionAsync(456, 120));
+
+            Assert.False(terminal.Retryable);
+            Assert.Same(original, manager.CurrentSession);
+            Assert.False(manager.SessionRetirementPending);
+            Assert.Equal(2, handler.StartBodies.Count);
+            Assert.Equal(0, handler.PreviousDeleteCount);
+        }
+        finally
+        {
+            handler.ReleasePreviousDelete.TrySetResult();
+            await manager.StopSessionAsync();
+        }
+    }
+
+    [Fact]
+    public async Task UnconfirmedRetirementPropagatesOriginalLimitAndRetainsIdentityForAnotherStop()
+    {
+        var handler = new ReplacementPlaybackHandler
+        {
+            RejectionReason = "stream_limit_reached",
+            PreviousDeleteStatus = HttpStatusCode.InternalServerError,
+        };
+        handler.ReleasePreviousDelete.TrySetResult();
+        var api = new SiloApiClient(new HttpClient(handler));
+        api.SetBaseUrl("https://example.test");
+        using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
+        var original = await manager.StartSessionAsync(123, forceStartPosition: true);
+
+        var terminal = await Assert.ThrowsAsync<PlaybackPlanTerminalException>(
+            () => manager.StartReplacementSessionAsync(456, 120));
+
+        Assert.Equal("stream_limit_reached", terminal.Reason);
+        Assert.Equal(2, handler.StartBodies.Count);
+        Assert.Equal(1, handler.PreviousDeleteCount);
+        Assert.Same(original, manager.CurrentSession);
+        Assert.Equal(original.SessionId, manager.SessionId);
+        Assert.NotNull(manager.StreamUrl);
+        Assert.True(manager.SessionRetirementPending);
+
+        handler.PreviousDeleteStatus = HttpStatusCode.OK;
+        var replacement = await manager.StartReplacementSessionAsync(456, 120);
+        Assert.Same(replacement, manager.CurrentSession);
+        Assert.False(manager.SessionRetirementPending);
+        Assert.Equal(4, handler.StartBodies.Count);
+        Assert.Equal(2, handler.PreviousDeleteCount);
+        await manager.StopSessionAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetirementResultReportsServerAcknowledgementEvenWhenAlreadyCompleted(bool confirmed)
+    {
+        var handler = new ReplacementPlaybackHandler
+        {
+            PreviousDeleteStatus = confirmed ? HttpStatusCode.OK : HttpStatusCode.InternalServerError,
+        };
+        handler.ReleasePreviousDelete.TrySetResult();
+        var api = new SiloApiClient(new HttpClient(handler));
+        api.SetBaseUrl("https://example.test");
+        using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
+        var original = await manager.StartSessionAsync(123, forceStartPosition: true);
+
+        var retiring = manager.TryRetireSessionAsync(120);
+        Assert.Equal(confirmed, await retiring);
+        Assert.True(retiring.IsCompletedSuccessfully);
+        Assert.Equal(!confirmed, manager.SessionRetirementPending);
+        if (confirmed) Assert.Null(manager.CurrentSession);
+        else Assert.Same(original, manager.CurrentSession);
+        handler.PreviousDeleteStatus = HttpStatusCode.OK;
+        await manager.StopSessionAsync();
+    }
+
+    [Fact]
+    public async Task ReplacementPropagatesDifferentSecondFailureAfterRetiringTheOriginalSession()
+    {
+        var handler = new ReplacementPlaybackHandler
+        {
+            RejectionReason = "stream_limit_reached",
+            RejectAfterRetirement = true,
+            SecondRejectionReason = "transcode_limit_reached",
+        };
+        handler.ReleasePreviousDelete.TrySetResult();
+        var api = new SiloApiClient(new HttpClient(handler));
+        api.SetBaseUrl("https://example.test");
+        using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
+        await manager.StartSessionAsync(123, forceStartPosition: true);
+
+        var terminal = await Assert.ThrowsAsync<PlaybackPlanTerminalException>(
+            () => manager.StartReplacementSessionAsync(456, 120));
+
+        Assert.Equal("transcode_limit_reached", terminal.Reason);
+        Assert.Equal(3, handler.StartBodies.Count);
+        Assert.Equal(1, handler.PreviousDeleteCount);
         Assert.Null(manager.CurrentSession);
+        Assert.Null(manager.SessionId);
+        Assert.Null(manager.StreamUrl);
     }
 
     private static async Task<bool> WaitForSignalAsync(Task task, TimeSpan timeout)
@@ -485,6 +626,9 @@ public sealed class PlaybackManagerTests
         public string? RejectionReason { get; set; }
         public bool TransportRejection { get; set; }
         public bool RejectAfterRetirement { get; set; }
+        public bool TerminalRetryable { get; set; } = true;
+        public string? SecondRejectionReason { get; set; }
+        public HttpStatusCode PreviousDeleteStatus { get; set; } = HttpStatusCode.OK;
         public HttpStatusCode RejectionStatus { get; set; } = HttpStatusCode.TooManyRequests;
         public string Delivery { get; set; } = "original_http";
         public List<string> StartBodies { get; } = [];
@@ -503,10 +647,11 @@ public sealed class PlaybackManagerTests
                 var number = Interlocked.Increment(ref _startCount);
                 if (number > 1 && RejectionReason != null && (!_previousRetired || RejectAfterRetirement))
                 {
+                    var reason = _previousRetired ? SecondRejectionReason ?? RejectionReason : RejectionReason;
                     var refusal = TransportRejection
-                        ? JsonResponse(JsonSerializer.Serialize(new { code = RejectionReason, detail = "Stop another session." }))
+                        ? JsonResponse(JsonSerializer.Serialize(new { code = reason, detail = "Stop another session." }))
                         : JsonResponse(JsonSerializer.Serialize(new { protocol_version = 3, outcome = "terminal",
-                            terminal = new { reason = RejectionReason, message = (string?)null, retryable = true } }));
+                            terminal = new { reason, message = (string?)null, retryable = TerminalRetryable } }));
                     if (TransportRejection) refusal.StatusCode = RejectionStatus;
                     return refusal;
                 }
@@ -546,11 +691,17 @@ public sealed class PlaybackManagerTests
                 PreviousDeleteCount++;
                 PreviousDeleteStarted.TrySetResult();
                 await ReleasePreviousDelete.Task.WaitAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (PreviousDeleteStatus != HttpStatusCode.OK)
+                    return new HttpResponseMessage(PreviousDeleteStatus)
+                    {
+                        Content = new StringContent("{\"code\":\"stop_failed\",\"detail\":\"Stop was not confirmed.\"}"),
+                    };
                 _previousRetired = true;
-                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
+                return JsonResponse("{\"outcome\":\"stopped\"}");
             }
 
-            if (request.Method == HttpMethod.Delete && path is "/api/v2/playback/session-2" or "/api/v2/playback/session-3")
+            if (request.Method == HttpMethod.Delete && path is "/api/v2/playback/session-2" or "/api/v2/playback/session-3" or "/api/v2/playback/session-4")
                 return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
 
             if (request.Method == HttpMethod.Post && path == "/api/v2/sync/progress")

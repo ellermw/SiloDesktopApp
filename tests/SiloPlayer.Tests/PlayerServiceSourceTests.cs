@@ -727,7 +727,7 @@ public sealed class PlayerServiceSourceTests
         Assert.True(start >= 0 && end > start);
         var method = source[start..end];
 
-        Assert.Contains("retiringSessionTask = retiringManager.StopSessionAsync", method);
+        Assert.Contains("retiringSessionTask = retiringManager.TryRetireSessionAsync", method);
         Assert.Contains("_ = FinishClosingSessionAsync(retiringManager, retiringSessionTask)", method);
         Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)", method);
         Assert.Contains("await retiringSessionTask.WaitAsync(requestToken)", method);
@@ -749,21 +749,24 @@ public sealed class PlayerServiceSourceTests
         var method = source[start..end];
 
         var transcodeSnapshot = method.IndexOf("var retiringTranscode = _playbackManager?.CurrentSession?.PlayMethod == \"transcode\";", StringComparison.Ordinal);
-        var stop = method.IndexOf("retiringSessionTask = retiringManager.StopSessionAsync", StringComparison.Ordinal);
+        var stop = method.IndexOf("retiringSessionTask = retiringManager.TryRetireSessionAsync", StringComparison.Ordinal);
         Assert.True(transcodeSnapshot >= 0 && stop > transcodeSnapshot);
 
         var firstStart = method.IndexOf("session = await _playbackManager.StartSessionAsync(", StringComparison.Ordinal);
         var guard = method.IndexOf("catch (Exception ex) when (", firstStart, StringComparison.Ordinal);
-        var wait = method.IndexOf("await retiringSessionTask.WaitAsync(requestToken);", guard, StringComparison.Ordinal);
+        var wait = method.IndexOf("var retired = await retiringSessionTask.WaitAsync(requestToken);", guard, StringComparison.Ordinal);
         var ownerCheck = method.IndexOf("EnsureCurrentOwner();", wait, StringComparison.Ordinal);
         var retry = method.IndexOf("session = await _playbackManager.StartSessionAsync(", ownerCheck, StringComparison.Ordinal);
         Assert.True(firstStart >= 0 && guard > firstStart && wait > guard && ownerCheck > wait && retry > ownerCheck);
 
         var filter = method[guard..wait];
-        Assert.Contains("!retiringSessionTask.IsCompleted &&", filter);
+        Assert.DoesNotContain("retiringSessionTask.IsCompleted", filter);
+        var confirmed = method.IndexOf("if (!retired)", ownerCheck, StringComparison.Ordinal);
+        Assert.True(confirmed > ownerCheck && retry > confirmed);
+        Assert.Contains("throw;", method[confirmed..retry]);
         Assert.Contains("ex is ApiException api && api.StatusCode == 429", filter);
         Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)", filter);
-        Assert.Contains("ex is PlaybackPlanTerminalException terminal", filter);
+        Assert.Contains("ex is PlaybackPlanTerminalException terminal && terminal.Retryable", filter);
         Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason, includeTranscode: retiringTranscode)", filter);
         Assert.Equal(2, method.Split("session = await _playbackManager.StartSessionAsync(", StringSplitOptions.None).Length - 1);
         Assert.DoesNotContain("while (", method[firstStart..retry]);
@@ -1238,10 +1241,85 @@ public sealed class PlayerServiceSourceTests
         var retry = source[retryStart..retryEnd];
 
         Assert.Contains(
-            "RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger)",
+            "RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger, terminal.RestartSession)",
             retry,
             StringComparison.Ordinal);
         Assert.DoesNotContain("user-retry:", retry, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TerminalRetryCarriesRestartIntentWhenRetirementRemovedTheCurrentSession()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task RecoverInterruptedStreamCoreAsync", StringComparison.Ordinal);
+        var end = source.IndexOf("private void EnterPlaybackTerminalState", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var recovery = source[start..end];
+
+        Assert.Contains("var session = manager?.CurrentSession ?? restartSession;", recovery);
+        Assert.Contains("throw new PlaybackPlanTerminalException(\"session_expired\"", recovery);
+        Assert.Contains("retryable: false", recovery);
+        Assert.DoesNotContain("Stream recovery skipped", recovery);
+        Assert.Equal(2, recovery.Split("manager.CurrentSession != null && !manager.SessionRetirementPending", StringSplitOptions.None).Length - 1);
+        Assert.Contains("manager.StartReplacementSessionAsync(", recovery);
+        Assert.Contains("audioTrackIndex: audioTrackIndex", recovery);
+        Assert.Contains("qualityPreference: manager.QualityPreference", recovery);
+        Assert.Contains("EnterPlaybackTerminalState(ex, resumePosition, reason, restorePaused, manager.CurrentSession ?? session)", recovery);
+
+        var terminalEnd = source.IndexOf("private void ShowStartupPlaybackFailure", end, StringComparison.Ordinal);
+        var terminal = source[end..terminalEnd];
+        Assert.Contains("_playbackManager?.CurrentSession ?? restartSession", terminal);
+        Assert.Contains("_mpv?.Pause();", terminal);
+        Assert.Contains("StopPlaybackStallWatchdog();", terminal);
+        Assert.Contains("RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger, terminal.RestartSession)", source);
+        Assert.Contains("queuedOwner != null || restartSession != null", source);
+        Assert.Contains("!ReferenceEquals(retryTerminal, _playbackTerminalState)", source);
+        Assert.Contains("description = description with { CanRetry = false };", terminal);
+
+        var failureStart = source.IndexOf("private void HandleMpvFailure", StringComparison.Ordinal);
+        var failureEnd = source.IndexOf("public async Task SwitchVersionAsync", failureStart, StringComparison.Ordinal);
+        Assert.Contains("_closing || State == PlayerState.Idle || _playbackTerminalState != null", source[failureStart..failureEnd]);
+        var endStart = source.IndexOf("private void HandleMpvEndSignal", StringComparison.Ordinal);
+        var endGuard = source.IndexOf("var pos = CurrentMediaPosition;", endStart, StringComparison.Ordinal);
+        Assert.Contains("_playbackTerminalState != null", source[endStart..endGuard]);
+    }
+
+    [Fact]
+    public void FailedVersionSwitchCannotContinueOnARetiredOrUnconfirmedSession()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("public async Task SwitchVersionAsync", StringComparison.Ordinal);
+        var end = source.IndexOf("public async Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+        Assert.Contains("var previousSession = manager.CurrentSession;", method);
+        var retired = method.IndexOf("manager.CurrentSession == null || manager.SessionRetirementPending", StringComparison.Ordinal);
+        var terminal = method.IndexOf("EnterPlaybackTerminalState(ex, currentPos, \"version-switch-failed\", wasPaused, previousSession)", retired, StringComparison.Ordinal);
+        var accepted = method.IndexOf("else if (replacementAccepted", terminal, StringComparison.Ordinal);
+        var notice = method.IndexOf("ShowNotice(title, detail, \"error\")", accepted, StringComparison.Ordinal);
+        Assert.True(retired >= 0 && terminal > retired && accepted > terminal && notice > accepted);
+    }
+
+    [Fact]
+    public void SeekAccountLimitsKeepActionableGuidanceOnThePersistentFailureSurface()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task RestartTransportForSeekAsync", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task ReportSeekProgressAsync", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+        var terminalCatch = method.IndexOf("catch (PlaybackPlanTerminalException terminal) when (PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason))", StringComparison.Ordinal);
+        var genericCatch = method.IndexOf("catch (Exception ex)", terminalCatch, StringComparison.Ordinal);
+        Assert.True(terminalCatch >= 0 && genericCatch > terminalCatch);
+        var refusal = method[terminalCatch..genericCatch];
+        Assert.Contains("generation == Volatile.Read(ref _seekRestartGeneration)", refusal);
+        Assert.Contains("EnterPlaybackTerminalState(terminal, CurrentMediaPosition, \"seek-refused\", CaptureUserPausedState())", refusal);
+        Assert.DoesNotContain("StopSession", refusal);
+        Assert.DoesNotContain("Seek failed", refusal);
+        Assert.DoesNotContain("RecoverInterruptedStreamAsync", refusal);
     }
 
     [Fact]
