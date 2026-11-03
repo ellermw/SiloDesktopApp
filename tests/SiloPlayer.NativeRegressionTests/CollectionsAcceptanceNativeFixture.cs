@@ -58,7 +58,8 @@ internal static class CollectionsAcceptanceNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
             {
                 await SyncedSortDirectionAsync(frame, window);
-                Program.Log("PASS: synced collection field/direction controls and responsive layout.");
+                await SyncedSortCapabilitiesAsync(frame, window, wire);
+                Program.Log("PASS: synced collection field/direction controls, capabilities and responsive layout.");
                 return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_RETIREMENT") == "1")
@@ -176,6 +177,7 @@ internal static class CollectionsAcceptanceNativeFixture
             await Case("locked Discover presentation", () => LockedSourcesAsync(frame, window));
             await Case("converted manual collection retains title and items", () => ConvertedManualAsync(frame, window, wire));
             await Case("synced sort direction and discard", () => SyncedSortDirectionAsync(frame, window));
+            await Case("synced default sort capability guards", () => SyncedSortCapabilitiesAsync(frame, window, wire));
             await Case("artwork draft preview and Delete Cancel", () => ArtworkAsync(frame, window, wire));
             if (Failures.Count != 0) throw new InvalidOperationException(string.Join("; ", Failures));
             Program.Log("PASS: finite collection template, discovery, mutation, imported Save and artwork acceptance.");
@@ -881,6 +883,65 @@ internal static class CollectionsAcceptanceNativeFixture
         }
     }
 
+    private static async Task SyncedSortCapabilitiesAsync(Frame frame, Window window, Wire wire)
+    {
+        try
+        {
+            wire.RejectSortWrites = true;
+            foreach (var supported in new bool?[] { true, false, null })
+            foreach (var create in new[] { false, true })
+            {
+                wire.CollectionDefaultSort = supported;
+                CollectionEditorPage page;
+                if (create)
+                {
+                    await Viewport(frame, window, 460);
+                    page = new CollectionEditorPage(); frame.Content = page; Set(page, "_editorActive", true);
+                    await (Task)Call(page, "InitializeNewEditorAsync", "synced")!;
+                    await Layout();
+                    All<RadioButton>(page).Single(button => Equals(button.Content, "MDBList")).IsChecked = true;
+                    ((TextBox)Read(page, "_syncedLink")!).Text = "https://mdblist.com/lists/fixture/sort/";
+                    await Layout();
+                    page.ViewModel.Name = "Sort capability fixture";
+                }
+                else page = await Editor(frame, window, "imported");
+                var sort = (ComboBox)page.FindName("ImportedDefaultSortCombo");
+                var direction = (ComboBox)Read(page, "_syncedDirection")!;
+                page.ViewModel.DefaultSortValue = "title:asc"; await Layout();
+                Check(sort.IsEnabled == (supported == true) && direction.IsEnabled == (supported == true),
+                    "New and saved synced order controls must require collection_default_sort, including when omitted.");
+                Check(Equals(((ComboBoxItem)sort.SelectedItem).Tag, "title:asc") &&
+                    Equals(((ComboBoxItem)direction.SelectedItem).Tag, "asc"),
+                    "An unsupported default sort must remain visible without being rewritten.");
+                page.ViewModel.IsSaving = true; await Layout();
+                Check(!sort.IsEnabled && !direction.IsEnabled, "Saving must disable capability-supported order controls too.");
+                page.ViewModel.IsSaving = false; await Layout();
+                Check(sort.IsEnabled == (supported == true) && direction.IsEnabled == (supported == true),
+                    "Finishing a save must not enable unsupported order controls.");
+                if (supported == true)
+                {
+                    direction.SelectedItem = direction.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "desc"));
+                    await Layout();
+                    Check(page.ViewModel.DefaultSortValue == "title:desc", "A supported direction edit must retain the sort field.");
+                }
+                else page.ViewModel.DefaultSortValue = "title:desc"; // Independently exercise the write guard.
+                wire.SortWriteBody = null;
+                if (create) await (Task)Call(page, "SaveSyncedCreationAsync")!;
+                else await page.ViewModel.SaveCommand.ExecuteAsync(null);
+                await Layout();
+                Check(wire.SortWriteBody.HasValue, "The capability check must not prevent other collection fields from being saved.");
+                var body = wire.SortWriteBody!.Value;
+                Check(body.TryGetProperty("sort_config", out var config) == (supported == true),
+                    "PATCH and import bodies must omit sort_config unless collection_default_sort is enabled.");
+                if (supported == true)
+                    Check(config.GetProperty("field").GetString() == "title" && config.GetProperty("order").GetString() == "desc",
+                        "Supported writes must include the independently selected direction.");
+                frame.Content = null;
+            }
+        }
+        finally { wire.CollectionDefaultSort = true; wire.RejectSortWrites = false; frame.Content = null; }
+    }
+
     private static void CheckClosedDirection(ComboBox direction, string expected)
     {
         var presenter = All<ContentPresenter>(direction).Single(item => item.Name == "ContentPresenter");
@@ -1002,6 +1063,7 @@ internal static class CollectionsAcceptanceNativeFixture
         internal static string PosterUrl = ""; internal static int MutationCalls;
         internal static readonly CollectionTemplate Template = new() { Id = "fixture", Title = "A current collection template with a long title", Description = "Collection template description", Source = "tmdb", MediaKind = "movie", Icon = "🎬", RequiresProfile = true, DefaultSyncSchedule = "0 0 * * *", DefaultLimit = 100, PosterPath = "/artwork/template.png" };
         internal string[] ImportSources = ["tmdb", "mdblist", "tmdb_list"]; internal bool RejectCapabilities;
+        internal bool? CollectionDefaultSort = true; internal bool RejectSortWrites; internal JsonElement? SortWriteBody;
         internal int PreviewCalls; internal string? PreviewBody; internal bool RejectPreview;
         internal string SmartSortField = "added_at", SmartSortOrder = "desc";
         internal TaskCompletionSource<HttpResponseMessage>? PreviewGate;
@@ -1016,6 +1078,12 @@ internal static class CollectionsAcceptanceNativeFixture
         {
             if (request.Method != HttpMethod.Get && request.RequestUri?.AbsolutePath != "/api/v2/collections/preview") MutationCalls++;
             Check(request.RequestUri?.Host == "collections-acceptance.invalid", "collection fixture attempted external network"); var path = request.RequestUri!.AbsolutePath; Program.Log($"TRACE collection wire {request.Method} {path}");
+            if (RejectSortWrites && (request.Method == HttpMethod.Patch || request.Method == HttpMethod.Post && path.StartsWith("/api/v2/collections/import/")))
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); SortWriteBody = body.RootElement.Clone();
+                // Keep the draft open; these cases inspect writes, not creation/navigation.
+                return Reply(new { message = "Fixture sort write rejected" }, HttpStatusCode.UnprocessableEntity);
+            }
             if (path == "/api/v2/collections/imported/poster")
             {
                 PosterCalls++; Check(request.Method == HttpMethod.Put && request.Content is MultipartFormDataContent, "artwork save is not the canonical multipart PUT");
@@ -1028,7 +1096,14 @@ internal static class CollectionsAcceptanceNativeFixture
             if (path == "/api/v2/collections/preview") { PreviewCalls++; PreviewBody = await request.Content!.ReadAsStringAsync(ct); if (PreviewGate != null) return await PreviewGate.Task; return RejectPreview ? Reply(new { message = "Fixture preview rejected" }, HttpStatusCode.ServiceUnavailable) : Reply(new { total = 80, items = Enumerable.Range(0, 24).Select(i => new { content_id = "preview-" + i, title = "Preview " + i, type = "movie", poster_url = PosterUrl }).ToArray() }); }
             if (path.EndsWith("/mdblist/top")) { TopCalls++; return Reply(new { configured = true, items = new[] { List("top", "Top list") } }); }
             if (path == "/api/v2/capabilities/ratings") return Reply(new { state = "available", sources = new[] { new { source = "rt_critic" }, new { source = "rt_audience" } } });
-            if (path == "/api/v2/collections/capabilities") return RejectCapabilities ? Reply(new { message = "Fixture capabilities rejected" }, HttpStatusCode.ServiceUnavailable) : Reply(new { item_reorder = false, imports = true, import_sources = ImportSources, mdblist_search = true, artwork = true, sync_schedule_editable = true });
+            if (path == "/api/v2/collections/capabilities")
+            {
+                if (RejectCapabilities) return Reply(new { message = "Fixture capabilities rejected" }, HttpStatusCode.ServiceUnavailable);
+                var capabilities = new Dictionary<string, object> { ["item_reorder"] = false, ["imports"] = true,
+                    ["import_sources"] = ImportSources, ["mdblist_search"] = true, ["artwork"] = true, ["sync_schedule_editable"] = true };
+                if (CollectionDefaultSort is { } supported) capabilities["collection_default_sort"] = supported;
+                return Reply(capabilities);
+            }
             if (path == "/api/v2/collections/templates") return Reply(new { categories = new[] { new { category = "featured", label = "Featured", templates = new[] { new { id = Template.Id, title = Template.Title, description = Template.Description, source = "tmdb", media_kind = "movie", icon = Template.Icon, requires_profile = true, default_sync_schedule = Template.DefaultSyncSchedule, default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "" } }, new { id = "popular", title = "Popular pick", description = "Source pick", source = "mdblist", media_kind = "movie", icon = Template.Icon, requires_profile = false, default_sync_schedule = "0 0 * * *", default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "https://mdblist.com/lists/fixture/popular/" } } } } } });
             if (path == "/api/v2/collections") return Reply(new { items = new[] { Collection("manual"), Collection("imported") }, groups = Array.Empty<object>() });
             if (path is "/api/v2/collections/manual/items" or "/api/v2/collections/converted/items") return Reply(new { items = new[] { new { media_item_id = "one", content_id = "one", title = "Retained title", type = "movie", position = 0 } }, page = new { has_more = false } });

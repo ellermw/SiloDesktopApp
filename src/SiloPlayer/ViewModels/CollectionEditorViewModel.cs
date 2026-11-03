@@ -385,7 +385,7 @@ public partial class CollectionEditorViewModel : ObservableObject
                     request.IncludeInServerCollections = IncludeInServerCollections;
                     if (WatchFilter != _initialWatchFilter || MediaFilter != _initialMediaFilter)
                         request.DisplayQueryDefinition = BuildDisplayQueryDefinition();
-                    if (!string.Equals(DefaultSortValue, _initialDefaultSortValue, StringComparison.Ordinal))
+                    if (Capabilities?.CollectionDefaultSort == true && !string.Equals(DefaultSortValue, _initialDefaultSortValue, StringComparison.Ordinal))
                         request.SortConfig = CaptureSortConfig();
                 }
 

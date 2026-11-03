@@ -147,7 +147,8 @@ public sealed partial class CollectionEditorPage
                 null, synced ? choice?.Value ?? selected : selected, keepSavedEditorSort: true, preserveItems: true);
             if (synced && ImportedDefaultSortCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, "")) is { } source)
                 source.Content = "List order";
-            ImportedDefaultSortCombo.IsEnabled = !ViewModel.IsReadOnly && !ViewModel.IsSaving;
+            var canEditDefaultSort = (_newSynced ? _creationCapabilities : ViewModel.Capabilities)?.CollectionDefaultSort == true;
+            ImportedDefaultSortCombo.IsEnabled = canEditDefaultSort && !ViewModel.IsReadOnly && !ViewModel.IsSaving;
             var directions = field.Length == 0 ? new[] { "" } : new[] { "asc", "desc" };
             if (!_syncedDirection.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string).SequenceEqual(directions))
             {
@@ -171,7 +172,7 @@ public sealed partial class CollectionEditorPage
                 item.Content = label;
             }
             _syncedDirection.SelectedItem = _syncedDirection.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, order));
-            _syncedDirection.IsEnabled = synced && field.Length > 0 && choice != null && !ViewModel.IsReadOnly && !ViewModel.IsSaving;
+            _syncedDirection.IsEnabled = canEditDefaultSort && synced && field.Length > 0 && choice != null && !ViewModel.IsReadOnly && !ViewModel.IsSaving;
         }
         finally { _suppressImportedSortEvents = suppressed; }
     }

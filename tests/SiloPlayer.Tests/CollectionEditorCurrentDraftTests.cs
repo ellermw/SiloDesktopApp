@@ -61,6 +61,47 @@ public sealed class CollectionEditorCurrentDraftTests
         Assert.Equal("Rename only", wire.LastPatch.Value.GetProperty("name").GetString());
     }
 
+    [Theory]
+    [InlineData(true, "title:desc")]
+    [InlineData(true, "year:asc")]
+    [InlineData(true, "")]
+    [InlineData(false, "title:desc")]
+    [InlineData(false, "year:asc")]
+    [InlineData(false, "")]
+    [InlineData(null, "title:desc")]
+    [InlineData(null, "year:asc")]
+    [InlineData(null, "")]
+    public async Task ImportedSortWritesRequireDefaultSortCapability(bool? supported, string editedSort)
+    {
+        using var wire = new Wire { Kind = "mdblist", CollectionDefaultSort = supported };
+        var client = wire.Client(); using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("mine");
+        var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth);
+        await vm.LoadExistingCommand.ExecuteAsync("created");
+        Assert.Null(vm.ErrorMessage); Assert.Equal("title:asc", vm.DefaultSortValue);
+        Assert.Equal(supported == true, vm.Capabilities!.CollectionDefaultSort);
+        // Bypass the disabled UI to verify the write boundary independently.
+        vm.DefaultSortValue = editedSort; vm.Name = "Renamed";
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Null(vm.ErrorMessage); Assert.Equal(1, wire.PatchCount);
+        var patch = wire.LastPatch!.Value;
+        Assert.Equal("Renamed", patch.GetProperty("name").GetString());
+        Assert.Equal(supported == true, patch.TryGetProperty("sort_config", out var sort));
+        if (supported == true)
+        {
+            Assert.Equal("manual_pins", sort.GetProperty("mode").GetString());
+            if (editedSort.Length == 0)
+            {
+                Assert.False(sort.TryGetProperty("field", out _)); Assert.False(sort.TryGetProperty("order", out _));
+            }
+            else
+            {
+                var parts = editedSort.Split(':', 2);
+                Assert.Equal(parts[0], sort.GetProperty("field").GetString());
+                Assert.Equal(parts[1], sort.GetProperty("order").GetString());
+            }
+        }
+    }
+
     [Fact]
     public async Task UndoUsesStoredPositionRatherThanAppendPosition()
     {
@@ -78,6 +119,7 @@ public sealed class CollectionEditorCurrentDraftTests
     private sealed class Wire : HttpMessageHandler
     {
         public bool FailFirstPatch; public string Kind = "smart"; public int CreateCount, PatchCount, DeletePosterCount; public JsonElement? LastPatch; public int? RestoredPosition;
+        public bool? CollectionDefaultSort = true;
         public SiloApiClient Client() { var client = new SiloApiClient(new HttpClient(this)); client.SetBaseUrl("https://collection-draft.invalid"); return client; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -90,7 +132,9 @@ public sealed class CollectionEditorCurrentDraftTests
                 PatchCount++; LastPatch = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement.Clone();
                 if (FailFirstPatch && PatchCount == 1) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"metadata unavailable\"}") };
             }
-            var json = path == "/api/v2/collections" || path == "/api/v2/collections/created" ? JsonSerializer.Serialize(new { id = "created", creator_profile_id = "mine", name = "Draft", collection_type = Kind, poster_url = "https://artwork.invalid/poster.jpg", sync_schedule = "0 0 * * *", sync_cadence = "daily", sort_config = new { field = "title", order = "asc", mode = "manual_pins" } }) : "{}";
+            var json = path == "/api/v2/collections" || path == "/api/v2/collections/created" ? JsonSerializer.Serialize(new { id = "created", creator_profile_id = "mine", name = "Draft", collection_type = Kind, source_url = "https://mdblist.com/lists/fixture/saved/", poster_url = "https://artwork.invalid/poster.jpg", sync_schedule = "0 0 * * *", sync_cadence = "daily", sort_config = new { field = "title", order = "asc", mode = "manual_pins" } }) : "{}";
+            if (path == "/api/v2/collections/capabilities")
+                json = CollectionDefaultSort is { } supported ? JsonSerializer.Serialize(new { collection_default_sort = supported }) : "{}";
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) }; response.Headers.ETag = new("\"draft-revision\""); return response;
         }
     }
