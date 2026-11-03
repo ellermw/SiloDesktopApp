@@ -206,6 +206,7 @@ internal static class LibraryLettersNativeFixture
                 wire.FailIndex = false;
                 if (grouped)
                 {
+                    await VerifyGroupedRefreshViewportAsync(page, wire, client);
                     wire.Grouped = false; catalog.InvalidateLibraryCache();
                     await Until(() => page.ViewModel.Library is { BoxSetsEnabled: false } && page.ViewModel.GetWindowItem(0)?.Type == "movie");
                     await Until(() => !Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().Any());
@@ -220,10 +221,74 @@ internal static class LibraryLettersNativeFixture
         finally
         {
             wire.LetterIndexGate?.TrySetResult();
+            wire.CatalogWindowGate?.TrySetResult(); wire.CountGate?.TrySetResult();
             frame?.Navigate(typeof(Page)); if (frame is not null) parent.Children.Remove(frame);
             await Task.Delay(150); navigation.Frame = null; field.SetValue(null, previous);
         }
     }
+    private static async Task VerifyGroupedRefreshViewportAsync(LibraryPage page, Wire wire, SiloApiClient client)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var model = page.ViewModel;
+        var scroll = (ScrollViewer)page.FindName("LibraryScroller");
+        wire.OmitWindowTotals = true;
+        model.SelectedSort = "year"; // No alphabet index can repair a collapsed estimate.
+        scroll.ChangeView(null, 0, null, true);
+        await model.LoadCommand.ExecuteAsync(null);
+        await Until(() => model.DisplayTotalCount == 1000 && !model.IsLoading && scroll.VerticalOffset < 1);
+        // Build the same contiguous window as successive nearby viewport requests.
+        for (var start = 60; start <= 780; start += 60)
+            await model.EnsureRangeLoadedAsync(start, start + 59);
+        if (model.WindowStartIndex != 0 || model.WindowEndIndex < 839)
+            throw new InvalidOperationException("Grouped refresh regression requires a merged window starting behind the viewport.");
+        var layout = typeof(LibraryPage).GetMethod("GetGridLayout", flags)!.Invoke(page, null)!;
+        var columns = (int)layout.GetType().GetProperty("Columns")!.GetValue(layout)!;
+        var rowHeight = (double)layout.GetType().GetProperty("RowHeight")!.GetValue(layout)!;
+        for (var index = 60; index <= 720; index += 60)
+        {
+            var offset = (index / columns) * rowHeight;
+            scroll.ChangeView(null, offset, null, true);
+            await Until(() => Math.Abs(scroll.VerticalOffset - offset) < 1);
+        }
+        var range = ((int StartIndex, int EndIndex))typeof(LibraryPage).GetMethod("GetVisibleItemRange", flags)!.Invoke(page, [layout])!;
+        range = ((int, int))typeof(LibraryPage).GetMethod("ClampRealizedRange", flags)!.Invoke(page, [range, layout])!;
+        var cards = (Dictionary<int, SiloPlayer.Controls.LibraryGridCard>)typeof(LibraryPage).GetField("_visibleLibraryCards", flags)!.GetValue(page)!;
+        var indices = Enumerable.Range(range.StartIndex, range.EndIndex - range.StartIndex + 1).ToArray();
+        await Until(() => indices.All(index => cards.TryGetValue(index, out var card) &&
+            card.MediaItem is not null && ReferenceEquals(card.MediaItem, model.GetWindowItem(index)) && card.IsHitTestVisible));
+        if (model.WindowStartIndex != 0 || range.StartIndex < 600)
+            throw new InvalidOperationException("Grouped viewport must remain far below the merged window start.");
+        var oldCards = indices.ToDictionary(index => index, index => cards[index]);
+        var oldItems = indices.ToDictionary(index => index, index => cards[index].MediaItem);
+        var savedOffset = scroll.VerticalOffset;
+        wire.PlayedCount = 2;
+        wire.CatalogWindowStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.CatalogWindowGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.CountGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedMarked, "member", context: client.CaptureContext()));
+            await wire.CatalogWindowStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(150); // Let the reset's queued native render run while the response is held.
+            if (model.TotalCount != 1000 || model.DisplayTotalCount != 1000 || Math.Abs(scroll.VerticalOffset - savedOffset) >= 1 ||
+                indices.Any(index => !ReferenceEquals(cards[index], oldCards[index]) ||
+                    !ReferenceEquals(cards[index].MediaItem, oldItems[index]) || !cards[index].IsHitTestVisible))
+                throw new InvalidOperationException("Grouped refresh unmounted visible cards or changed the extent/offset before replacement.");
+            wire.CatalogWindowGate.TrySetResult();
+            await Until(() => !model.IsLoading && indices.All(index => model.GetWindowItem(index) is { } item &&
+                !ReferenceEquals(item, oldItems[index]) && cards.TryGetValue(index, out var card) &&
+                ReferenceEquals(card.MediaItem, item) && card.IsHitTestVisible && (item.BoxSet is null || item.BoxSet.PlayedCount == 2)));
+            if (model.TotalCount != 1000 || model.DisplayTotalCount != 1000 || Math.Abs(scroll.VerticalOffset - savedOffset) >= 1)
+                throw new InvalidOperationException("A no-total grouped refresh shrank the canvas or lost the viewport before the exact count.");
+            Program.Log("PASS: merged grouped window refresh repopulates the visible range in place, keeps mounted cards while held, and preserves extent/offset without index or count assistance.");
+        }
+        finally
+        {
+            wire.CatalogWindowGate.TrySetResult(); wire.CountGate.TrySetResult();
+            wire.CatalogWindowGate = null; wire.CountGate = null; wire.OmitWindowTotals = false;
+        }
+    }
+
     private static async Task InvokeLetterAsync(Button button, LibraryViewModel model)
     {
         var jump = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -252,8 +317,8 @@ internal static class LibraryLettersNativeFixture
         internal int CurrentLibraryId, PlayedCount = 1;
         internal string CurrentType = "movie";
         internal string? LastOrder, LastGenre, LastIndexOrder;
-        internal bool FailIndex;
-        internal TaskCompletionSource? LetterIndexGate;
+        internal bool FailIndex, OmitWindowTotals;
+        internal TaskCompletionSource? LetterIndexGate, CatalogWindowGate, CountGate, CatalogWindowStarted;
         internal List<int> Seeks { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -295,13 +360,25 @@ internal static class LibraryLettersNativeFixture
                     if (!query.ContainsKey("seek")) offset = int.Parse(scope[2]);
                 }
                 var count = Math.Min(limit, 1000 - offset);
-                return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = Grouped && index % 2 == 0 ? "box_set" : "movie", box_set = Grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
-                    total = 1000, total_exact = !query.ContainsKey("skip_total"), window_cursor = query["library_id"] + ":" + limit + ":0:" + query.GetValueOrDefault("group", ""),
-                    page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) + ":" + query.GetValueOrDefault("group", "") } });
+                var skipTotal = query.ContainsKey("skip_total");
+                return CompleteCatalogAsync(Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = Grouped && index % 2 == 0 ? "box_set" : "movie", box_set = Grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
+                    total = OmitWindowTotals && skipTotal ? 0 : 1000, total_exact = !skipTotal, window_cursor = query["library_id"] + ":" + limit + ":0:" + query.GetValueOrDefault("group", ""),
+                    page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) + ":" + query.GetValueOrDefault("group", "") } }), skipTotal, ct);
             }
             if (path.EndsWith("/layout") || path.EndsWith("/sections")) return Reply(new { sections = Array.Empty<object>() });
             if (path.EndsWith("/filters")) return Reply(new { genres = Array.Empty<string>() });
             return Reply(new { status = 404, detail = "No isolated fixture value" }, HttpStatusCode.NotFound);
+        }
+        private async Task<HttpResponseMessage> CompleteCatalogAsync(Task<HttpResponseMessage> reply, bool skipTotal, CancellationToken ct)
+        {
+            if (skipTotal && CatalogWindowGate is { } windowGate)
+            {
+                CatalogWindowStarted?.TrySetResult();
+                await windowGate.Task.WaitAsync(ct);
+            }
+            else if (!skipTotal && CountGate is { } countGate)
+                await countGate.Task.WaitAsync(ct);
+            return await reply;
         }
         private async Task<HttpResponseMessage> CompleteLetterIndexAsync(Task<HttpResponseMessage> reply, CancellationToken ct)
         {

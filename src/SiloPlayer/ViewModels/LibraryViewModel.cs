@@ -500,13 +500,14 @@ public partial class LibraryViewModel : ObservableObject
         catch (OperationCanceledException) { return false; }
     }
 
-    public async Task RefreshGroupedCatalogAsync()
+    public async Task RefreshGroupedCatalogAsync(int startIndex, int itemCount)
     {
-        if (Library is null || !await EnsureGroupingAsync() || !IsGroupedCatalog) return;
-        var start = Math.Max(0, WindowStartIndex);
-        var extent = TotalCount;
-        StartNewCatalogQuery(); TotalCount = extent; Items.Reset(extent);
-        var cards = LoadWindowAsync(start, PageSize, force: true);
+        if (Library is null || itemCount <= 0 || !await EnsureGroupingAsync() || !IsGroupedCatalog) return;
+        // The active window may include many contiguous pages behind the viewport.
+        // Retire its cursors, but keep the scroll extent until fresh totals arrive.
+        StartNewCatalogQuery(preserveExtent: true);
+        Items.Reset(TotalCount);
+        var cards = LoadWindowAsync(startIndex, itemCount, force: true);
         _ = EnsureLetterIndexAsync();
         await cards;
     }
@@ -707,7 +708,7 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private int StartNewCatalogQuery()
+    private int StartNewCatalogQuery(bool preserveExtent = false)
     {
         ResetLetterIndex();
         _catalogGroup = null; _groupingTask = null; _catalogLibraryScope = LibraryGroupingScope(Library);
@@ -721,13 +722,16 @@ public partial class LibraryViewModel : ObservableObject
         _pageResponses.Clear();
         _recentWindows.Clear();
         _snapshot = null;
-        _estimatedTotalItems = 0;
+        _estimatedTotalItems = preserveExtent ? TotalCount : 0;
         _observedCatalogEnd = 0;
         _catalogEndTotal = null;
         _hasExactTotal = false;
         _lastVisibleEndIndex = PageSize - 1;
-        TotalCount = 0;
-        DisplayTotalCount = 0;
+        if (!preserveExtent)
+        {
+            TotalCount = 0;
+            DisplayTotalCount = 0;
+        }
         HasMore = false;
         ErrorMessage = null;
         ClearActiveWindow(notify: true);

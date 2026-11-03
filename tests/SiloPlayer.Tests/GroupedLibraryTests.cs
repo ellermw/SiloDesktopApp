@@ -74,10 +74,48 @@ public sealed class GroupedLibraryTests
         using var wire = new Wire(); var model = wire.Create(); await model.LoadCommand.ExecuteAsync(null);
         await model.LoadWindowAsync(800, 60); var old = model.GetWindowItem(800);
         wire.PlayedCount = 3;
-        var refresh = typeof(LibraryViewModel).GetMethod("RefreshGroupedCatalogAsync"); Assert.NotNull(refresh);
-        await (Task)refresh.Invoke(model, null)!;
+        await model.RefreshGroupedCatalogAsync(800, 60);
         Assert.NotSame(old, model.GetWindowItem(800)); Assert.Equal(3, model.GetWindowItem(800)!.BoxSet!.PlayedCount);
         Assert.Equal("box_set", wire.Catalog.Last().Group); model.CancelCatalogLoads();
+    }
+
+    [Theory]
+    [InlineData("title")]
+    [InlineData("year")]
+    public async Task GroupedRefreshReloadsViewportInsideMergedWindowWithoutShrinkingExtent(string sort)
+    {
+        using var wire = new Wire { OmitWindowTotals = true };
+        var model = wire.Create(); model.SelectedSort = sort;
+        await model.LoadCommand.ExecuteAsync(null);
+        for (var start = 60; start <= 780; start += 60)
+            await model.EnsureRangeLoadedAsync(start, start + 59);
+        Assert.Equal(0, model.WindowStartIndex);
+        Assert.True(model.WindowEndIndex >= 839);
+        Assert.Equal(1000, model.TotalCount);
+        var old = model.GetWindowItem(700);
+        var totals = new List<int>();
+        var displayedTotals = new List<int>();
+        model.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(model.TotalCount)) totals.Add(model.TotalCount);
+            if (args.PropertyName == nameof(model.DisplayTotalCount)) displayedTotals.Add(model.DisplayTotalCount);
+        };
+        var before = wire.CatalogRanges.Count;
+        wire.PlayedCount = 3; wire.HoldCatalog = true;
+        var refresh = model.RefreshGroupedCatalogAsync(660, 180);
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(1000, model.TotalCount);
+        Assert.Equal(1000, model.DisplayTotalCount);
+        Assert.Equal(1000, model.Items.Count);
+        wire.Release.TrySetResult(); await refresh;
+        Assert.All(Enumerable.Range(660, 180), index => Assert.Equal(3, model.GetWindowItem(index)!.BoxSet!.PlayedCount));
+        Assert.NotSame(old, model.GetWindowItem(700));
+        var firstWindow = wire.CatalogRanges.Skip(before).First(request => !request.IncludeTotal);
+        Assert.Equal(660, firstWindow.Start); Assert.Null(firstWindow.Cursor);
+        Assert.All(totals, total => Assert.Equal(1000, total));
+        Assert.All(displayedTotals, total => Assert.Equal(1000, total));
+        Assert.Equal(1000, model.TotalCount);
+        model.CancelCatalogLoads();
     }
 
     [Theory]
@@ -110,13 +148,14 @@ public sealed class GroupedLibraryTests
 
     internal sealed class Wire : HttpMessageHandler
     {
-        public bool Supported = true, LetterSupport = true, HoldCatalog;
+        public bool Supported = true, LetterSupport = true, HoldCatalog, OmitWindowTotals;
         public int PlayedCount = 1;
         public bool HoldCapabilities;
         public readonly TaskCompletionSource CapabilitiesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseCapabilities = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient? Client;
         public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly List<(string? Group, string Method, string? Order)> Catalog = [];
+        public readonly List<(int Start, string? Cursor, bool IncludeTotal)> CatalogRanges = [];
         public readonly List<JsonElement> Letters = [];
         public LibraryViewModel Create(string type = "movie", bool enabled = true)
         {
@@ -145,9 +184,11 @@ public sealed class GroupedLibraryTests
                 var start = int.TryParse(Value("seek"), out var seek) ? seek : int.TryParse(Value("cursor")?.Replace("next-", ""), out var next) ? next : 0;
                 var limit = int.TryParse(Value("limit"), out var size) ? size : 100;
                 Catalog.Add((Value("group"), request.Method.Method, Value("order") ?? (Value("sort")?.StartsWith('-') == true ? "desc" : "asc")));
+                var includeTotal = Value("skip_total") != "true" && Value("skip_total") != "True";
+                CatalogRanges.Add((start, Value("cursor"), includeTotal));
                 if (HoldCatalog) { Started.TrySetResult(); await Release.Task; }
                 var items = Enumerable.Range(start, Math.Min(limit, 1000 - start)).Select(i => new { content_id = Value("group") == "box_set" ? "box_set:9:" + i : "movie-" + i, type = Value("group") == "box_set" ? "box_set" : "movie", title = "Set " + i, box_set = Value("group") == "box_set" ? new { id = i.ToString(), library_id = "9", title = "Set " + i, movie_count = 3, played_count = PlayedCount } : null });
-                return Json(JsonSerializer.Serialize(new { items, total = 1000, total_exact = Value("skip_total") != "true" && Value("skip_total") != "True", window_cursor = "root", page = new { has_more = start + limit < 1000, next_cursor = "next-" + (start + limit) } }));
+                return Json(JsonSerializer.Serialize(new { items, total = OmitWindowTotals && !includeTotal ? 0 : 1000, total_exact = includeTotal, window_cursor = "root", page = new { has_more = start + limit < 1000, next_cursor = "next-" + (start + limit) } }));
             }
             return Json("{}");
         }

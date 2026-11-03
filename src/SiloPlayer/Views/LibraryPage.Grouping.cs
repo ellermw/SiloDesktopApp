@@ -44,9 +44,16 @@ public sealed partial class LibraryPage
                 await Task.Delay(200, owner.Token);
                 if (!_isNavigated || visit != _groupedLibraryVisit || !ReferenceEquals(library, ViewModel.Library)
                     || !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(context)) return;
-                await ViewModel.RefreshGroupedCatalogAsync();
+                var layout = GetGridLayout();
+                var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
+                await ViewModel.RefreshGroupedCatalogAsync(range.StartIndex, Math.Max(1, range.EndIndex - range.StartIndex + 1));
                 if (_isNavigated && visit == _groupedLibraryVisit && !owner.IsCancellationRequested)
+                {
                     QueueRenderVirtualGrid(force: true);
+                    // The viewport may have moved during the read. Bypass the
+                    // last-requested-range shortcut even if no ViewChanged fires.
+                    ScheduleVisibleRangeLoad(force: true);
+                }
             }
             catch (OperationCanceledException) { }
             finally { if (ReferenceEquals(_groupedRefreshCts, owner)) { _groupedRefreshCts = null; owner.Dispose(); } }

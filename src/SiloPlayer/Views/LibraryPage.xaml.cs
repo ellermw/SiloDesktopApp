@@ -1683,7 +1683,8 @@ public sealed partial class LibraryPage : Page,
         foreach (var (index, card) in assignments)
         {
             _visibleLibraryCards[index] = card;
-            if (card.Tag is not int previousIndex || previousIndex != index)
+            var sameIndex = card.Tag is int previousIndex && previousIndex == index;
+            if (!sameIndex)
                 card.BindPlaceholder();
             card.Tag = index;
             PositionVirtualCardSlot(card, index, layout);
@@ -1693,7 +1694,11 @@ public sealed partial class LibraryPage : Page,
             var item = ViewModel.GetWindowItem(index);
             if (item == null)
             {
-                card.BindPlaceholder();
+                // A same-scope grouped refresh retires data/cursors before the
+                // replacement read. Keep an already-mounted card in its slot
+                // during that read, never when recycling to a different index.
+                if (!sameIndex || _groupedRefreshCts is not { IsCancellationRequested: false })
+                    card.BindPlaceholder();
                 continue;
             }
 
