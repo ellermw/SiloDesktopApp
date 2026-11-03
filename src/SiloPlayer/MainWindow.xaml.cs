@@ -169,6 +169,7 @@ public sealed partial class MainWindow : Window
         };
         _authService.LoggedOut += OnAuthLoggedOut;
         _authService.UserChanged += OnAccountAuthorityChanged;
+        _authService.ProfileChanged += OnAccountAuthorityChanged;
         _authService.ProfileVerificationRequired += OnProfileVerificationRequired;
         _authService.CredentialStoreFailed += OnCredentialStoreFailed;
         _eventChannel.SnapshotReceived += OnShellEventSnapshot;
@@ -465,6 +466,7 @@ public sealed partial class MainWindow : Window
         _uiCustomizationService.Changed -= OnUICustomizationChanged;
         _authService.LoggedOut -= OnAuthLoggedOut;
         _authService.UserChanged -= OnAccountAuthorityChanged;
+        _authService.ProfileChanged -= OnAccountAuthorityChanged;
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;

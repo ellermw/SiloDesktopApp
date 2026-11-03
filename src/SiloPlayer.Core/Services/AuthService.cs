@@ -60,6 +60,12 @@ public class AuthService : IDisposable
     /// </summary>
     public event Action? UserChanged;
 
+    /// <summary>
+    /// Fires synchronously after profile authority is selected, including a
+    /// same-ID selection that replaces its metadata or PIN grant.
+    /// </summary>
+    public event Action? ProfileChanged;
+
     public void ConfigureServer(string serverUrl)
     {
         var normalized = ServerUrlIdentity.Normalize(serverUrl);
@@ -185,6 +191,8 @@ public class AuthService : IDisposable
             serverUrl = _sessionServerUrl;
             generation = _sessionGeneration;
         }
+
+        RaiseSafely(ProfileChanged);
 
         if (string.IsNullOrWhiteSpace(serverUrl))
             return;

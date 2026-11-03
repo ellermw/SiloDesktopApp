@@ -6,8 +6,10 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Core.Services;
@@ -25,6 +27,10 @@ internal static class SidebarReviewNativeFixture
     private static string MenuLabel = "Current menu";
     private static TaskCompletionSource<object>? HeldPins, HeldLibraries, HeldMenuRead, HeldMenuWrite;
     private static int PinReads, PinWrites, LibraryReads, MenuReads, MenuWrites;
+    private static Profile FirstProfile = new() { Id = "first", Name = "First", IsPrimary = true };
+    private static readonly Profile SecondProfile = new() { Id = "second", Name = "Second", IsChild = true, LibraryRestrictionsEnabled = true, AllowedLibraryIds = [1] };
+    private static object? ProfileLibraries;
+    private static bool IsSettingsProfileRoute => Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "sidebar-review-profile-use" or "sidebar-review-profile-edit";
     private static object PinMap(string label, bool duplicate = false) => new Dictionary<string, object> { ["1"] = duplicate
         ? new[] { new { type = "collection", id = "pin", label }, new { type = "collection", id = "pin", label = "Later duplicate label" } }
         : new[] { new { type = "collection", id = "pin", label } } };
@@ -57,7 +63,11 @@ internal static class SidebarReviewNativeFixture
         window.ShowMainNavigation();
         await Until(() => LibraryRows(nav).Length == 2);
         if (HeldMenuRead == null && !mode.EndsWith("duplicates", StringComparison.Ordinal)) await Until(() => PrimaryRows(nav).Length == 2);
-        if (mode.EndsWith("save", StringComparison.Ordinal) || mode.EndsWith("reset", StringComparison.Ordinal) || mode.EndsWith("clear", StringComparison.Ordinal))
+        if (IsSettingsProfileRoute)
+        {
+            await CheckSettingsProfileChangeAsync(window, provider, nav, mode.EndsWith("edit", StringComparison.Ordinal));
+        }
+        else if (mode.EndsWith("save", StringComparison.Ordinal) || mode.EndsWith("reset", StringComparison.Ordinal) || mode.EndsWith("clear", StringComparison.Ordinal))
         {
             navigation.Navigate<SettingsPage>();
             await Until(() => navigation.Frame!.Content is SettingsPage page && page.IsLoaded);
@@ -183,6 +193,109 @@ internal static class SidebarReviewNativeFixture
         }
         if (Failures.Count > 0) throw new InvalidOperationException("Sidebar review failures: " + string.Join("; ", Failures));
     }
+    private static async Task CheckSettingsProfileChangeAsync(MainWindow window, IServiceProvider provider, NavigationView nav, bool edit)
+    {
+        var root = (FrameworkElement)window.Content;
+        var navigation = provider.GetRequiredService<NavigationService>();
+        var auth = provider.GetRequiredService<AuthService>();
+        var vm = provider.GetRequiredService<MainViewModel>();
+        await Until(() => LibraryRows(nav)[0].MenuItems.Count == 1);
+        var oldLibrary = LibraryRows(nav)[0]; var oldUnpin = Unpin(oldLibrary);
+        var oldPrimary = PrimaryRows(nav).Last();
+        navigation.Navigate<SettingsPage>();
+        await Until(() => navigation.Frame!.Content is SettingsPage page && page.IsLoaded && !page.ViewModel.IsLoading);
+        var page = (SettingsPage)navigation.Frame!.Content;
+        page.SelectSettingsSection("Profiles");
+        var cards = (StackPanel)page.FindName("ProfileCardsPanel");
+        var detached = typeof(MainWindow).GetField("_appSidebarItems", Instance)!;
+        await Until(() => cards.Children.Count == 2 && detached.GetValue(window) is object[]);
+        var card = cards.Children.OfType<Border>().Single(row => All<TextBlock>(row).Any(text => text.Text == (edit ? "First" : "Second")));
+        var action = All<Button>(card).Single(button => All<TextBlock>(button).Any(text => text.Text == (edit ? "Edit" : "Use")));
+        var authorityEvents = 0; var retiredSynchronously = false;
+        void ObserveAuthority()
+        {
+            authorityEvents++;
+            var saved = (object[]?)detached.GetValue(window) ?? nav.MenuItems.ToArray();
+            retiredSynchronously = vm.Libraries.Count == 0 && window.GetSidebarPins(1, "collection").Count == 0 &&
+                !saved.OfType<NavigationViewItem>().Any(row => row.Tag is Library || row.Tag?.GetType().Name == "PrimaryMenuNavTag");
+        }
+        auth.ProfileChanged += ObserveAuthority;
+        try
+        {
+            MenuLabel = "Current profile shortcut";
+            Pins = PinMap("Current profile pin");
+            if (edit)
+            {
+                Invoke(action);
+                await Until(() => Dialogs(root).Any(dialog => All<TextBox>(dialog).Any(box => box.PlaceholderText == "Alex")));
+                var dialog = Dialogs(root).Single();
+                All<TextBox>(dialog).Single(box => box.PlaceholderText == "Alex").Text = "Edited first";
+                foreach (var toggle in All<ToggleSwitch>(dialog))
+                {
+                    var labels = All<TextBlock>(VisualTreeHelper.GetParent(toggle)).Select(text => text.Text).ToArray();
+                    if (labels.Contains("Restrict libraries") || labels.Contains("One")) toggle.IsOn = true;
+                    else if (labels.Contains("Two")) toggle.IsOn = false;
+                }
+                HeldLibraries = Hold();
+                Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+            }
+            else
+            {
+                HeldLibraries = Hold();
+                Invoke(action);
+            }
+            await Until(() => authorityEvents == 1);
+            Check(retiredSynchronously, "real Settings " + (edit ? "Edit" : "Use") + " synchronously retires detached library, pin and custom primary ownership");
+            Check(auth.SelectedProfileId == (edit ? "first" : "second") && auth.SelectedProfile?.LibraryRestrictionsEnabled == true,
+                "Settings flow selects the saved restricted profile without a fixture shell refresh");
+            if (edit) Check(ReferenceEquals(navigation.Frame!.Content, page) && auth.SelectedProfile?.Name == "Edited first", "active-profile Edit stays on Settings with current metadata");
+            else await Until(() => navigation.Frame!.Content is HomePage home && home.IsLoaded);
+            var reads = PinReads; var writes = PinWrites;
+            Invoke(oldUnpin); await Drain();
+            Check(PinReads == reads && PinWrites == writes, "outgoing Settings profile's retained unpin cannot read or write replacement pins");
+            Check(vm.Libraries.Count == 0, "outgoing libraries stay retired while replacement hydration is held");
+
+            ProfileLibraries = new { items = new[] { new Library { Id = 1, Name = "Current profile library", Type = "movies" } } };
+            HeldLibraries.SetResult(ProfileLibraries);
+            HeldLibraries = null;
+            await Until(() => vm.HasCurrentLibrarySnapshot && vm.Libraries.Count == 1 && window.GetSidebarPins(1, "collection").Count == 1);
+            if (edit) navigation.Navigate<Page>();
+            await Until(() => LibraryRows(nav).Length == 1 && LibraryRows(nav)[0].MenuItems.Count == 1 && PrimaryRows(nav).Any(row => Equals(row.Content, MenuLabel)));
+            var current = LibraryRows(nav)[0];
+            Check(!ReferenceEquals(current, oldLibrary) && !PrimaryRows(nav).Contains(oldPrimary) && Equals(current.Content, "Current profile library"),
+                "Settings return publishes fresh native nodes and current profile data");
+            Check(window.GetSidebarPins(1, "collection").Single().Label == "Current profile pin", "Settings profile hydration accepts only the current pin data");
+            writes = PinWrites; Invoke(Unpin(current));
+            await Until(() => PinWrites == writes + 1 && current.MenuItems.Count == 0);
+            Check(current.MenuItems.Count == 0, "fresh Settings profile's actual unpin publishes successfully");
+            Check(await window.ToggleSidebarPinAsync(1, "collection", "new-pin", "New pin"), "pin toggle remains usable after Settings profile change");
+            await window.RefreshSidebarPinsAsync(); await Drain();
+            Check(current.MenuItems.Count == 1 && window.GetSidebarPins(1, "collection").Any(pin => pin.Id == "new-pin"), "current profile pin refresh can publish after Settings profile change");
+
+            navigation.Navigate<SettingsPage>();
+            await Until(() => navigation.Frame!.Content is SettingsPage settingsPage && settingsPage.IsLoaded && !settingsPage.ViewModel.IsLoading && settingsPage.ViewModel.LibraryCards.Count == 1);
+            var librariesPage = (SettingsPage)navigation.Frame!.Content;
+            librariesPage.SelectSettingsSection("Libraries"); await Drain();
+            var visibility = All<ToggleSwitch>((DependencyObject)librariesPage.FindName("LibraryCardsContainer")).Single();
+            visibility.IsOn = false;
+            await Until(() => provider.GetRequiredService<SettingsService>().Load().HiddenLibraryIds.Contains(1));
+            navigation.Navigate<Page>(); await Drain();
+            Check(LibraryRows(nav).Length == 0, "real Settings hide-library save still publishes after profile change");
+        }
+        finally
+        {
+            auth.ProfileChanged -= ObserveAuthority;
+            HeldLibraries?.TrySetResult(Libraries()); HeldLibraries = null;
+            foreach (var dialog in Dialogs(root).ToArray()) dialog.Hide();
+        }
+    }
+    private static IEnumerable<ContentDialog> Dialogs(FrameworkElement owner) => VisualTreeHelper.GetOpenPopupsForXamlRoot(owner.XamlRoot).SelectMany(popup => All<ContentDialog>(popup.Child));
+    private static IEnumerable<T> All<T>(DependencyObject root) where T : DependencyObject
+    {
+        if (root is T match) yield return match;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            foreach (var child in All<T>(VisualTreeHelper.GetChild(root, i))) yield return child;
+    }
     private static void LogFocus(NavigationView nav, string stage)
     {
         var focus = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(nav.XamlRoot) as FrameworkElement;
@@ -193,11 +306,26 @@ internal static class SidebarReviewNativeFixture
     {
         var path = request.RequestUri!.AbsolutePath;
         if (path == "/api/v2/auth/me") return Json(new { id = "fixture", username = "Fixture", role = "user" });
-        if (path == "/api/v2/user/libraries") { LibraryReads++; return Json(HeldLibraries == null ? Libraries() : await HeldLibraries.Task); }
+        if (IsSettingsProfileRoute && path == "/api/v2/profiles") return Json(new { items = new[] { FirstProfile, SecondProfile } });
+        if (IsSettingsProfileRoute && path == "/api/v2/profiles/first" && request.Method == HttpMethod.Patch)
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            FirstProfile = new() { Id = "first", Name = body.RootElement.GetProperty("name").GetString()!, IsPrimary = true,
+                LibraryRestrictionsEnabled = body.RootElement.GetProperty("library_restrictions_enabled").GetBoolean(),
+                AllowedLibraryIds = body.RootElement.GetProperty("allowed_library_ids").EnumerateArray().Select(id => int.Parse(id.GetString()!)).ToList() };
+            return Json(FirstProfile);
+        }
+        if (path == "/api/v2/user/libraries") { LibraryReads++; return Json(HeldLibraries == null ? ProfileLibraries ?? Libraries() : await HeldLibraries.Task); }
         if (path.Contains("sidebar_pins"))
         {
             if (request.Method == HttpMethod.Get) { PinReads++; return Json(HeldPins == null ? new { value = Pins } : await HeldPins.Task); }
-            PinWrites++; return Json(new { });
+            PinWrites++;
+            if (IsSettingsProfileRoute)
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                Pins = body.RootElement.GetProperty("value").Clone();
+            }
+            return Json(new { });
         }
         if (path.Contains("nav.primary_menu") && request.Method != HttpMethod.Get)
         { MenuWrites++; return Json(HeldMenuWrite == null ? new { } : await HeldMenuWrite.Task); }
