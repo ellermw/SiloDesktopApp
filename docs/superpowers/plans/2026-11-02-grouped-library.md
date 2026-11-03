@@ -54,5 +54,5 @@ Parent dispatched reviewed product37cc69ef46c60bdd5fd166e4c50575a81e1db97f onto 
 
 - [x] Merge both docs/native dispatch intents; preserve all PR7 grouping/recovery/lifecycle files and incoming ordinary/scoped/room playback semantics. Freeze new source inputs and rehash native engine.
 - [x] Run focused/full and fresh Release through the mutex runner; report any source-inspection fixture failure before editing duplicates. Scoped538/full3,146 pass; publish433429F5... succeeds without fixture edits.
-- [ ] Verify grouped, admission/lifecycle and existing scope/owner menus, foundation/unscoped, full quick-play and box-set room controls against identical new published bytes. Earlier room evidence cannot substitute after PlayerService changes.
-- [ ] Record exact source/artifact/fixture bindings, commit clean locally and return for parent independent integration/final-dependency review.
+- [x] Verify grouped, admission/lifecycle and existing scope/owner menus, foundation/unscoped, full quick-play and box-set room controls against identical new published bytes. All eight routes pass on4334; no earlier room evidence substitutes after PlayerService changes. Central fixture-onlyabc34b8b replaces five stale nonpublic-reflection setup calls with publicSetState; corrected full quick-play passes on the unchanged publish. No assertions changed.
+- [x] Record exact source/artifact/fixture bindings, commit clean locally and return for parent independent integration/final-dependency review.
