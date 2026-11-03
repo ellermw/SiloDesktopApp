@@ -35,13 +35,15 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     }
     private async Task ReadAsync(string id, string library)
     {
-        if (_playLifetime == null || !catalog.IsCurrentContext(_owner))
+        // Access revisions replace read ownership, not this viewer's accepted
+        // playback lifetime or the last successfully mounted detail.
+        if (_playLifetime == null || !catalog.IsCurrentIdentityContext(_identity))
         {
             Cancel();
-            _owner = catalog.CaptureContext();
             _identity = catalog.CaptureIdentityContext();
             _playLifetime = new();
         }
+        _owner = catalog.CaptureContext();
         _pending?.Cancel(); _pending?.Dispose();
         _id = id; _library = library;
         var pending = _pending = new(); var ct = pending.Token;

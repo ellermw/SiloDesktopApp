@@ -161,8 +161,10 @@ public sealed class CurrentCatalogParitySourceTests
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
 
         Assert.DoesNotContain("if (_libraryCatalogLoaded) return;\n        _libraryCatalogLoaded = true;", code.ReplaceLineEndings("\n"));
-        Assert.Contains("_libraryCatalogLoaded = _isNavigated && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);", code);
-        Assert.Contains("if (tag == \"Library\" && !_libraryCatalogLoaded)", code);
+        Assert.Contains("_libraryCatalogLoaded = _isNavigated && ViewModel.Library is not null && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);", code);
+        // Even a cached catalog must let the current tab retry dirty library flags.
+        Assert.Contains("if (tag == _currentTab)\n        {\n            if (tag == \"Library\")\n            {\n                await EnsureLibraryCatalogLoadedAsync();\n                await FillViewportAsync();", code.ReplaceLineEndings("\n"));
+        Assert.Contains("if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();\n        if (!_isNavigated || ViewModel.Library is null) return;\n        if (_libraryCatalogLoaded)", code.ReplaceLineEndings("\n"));
         Assert.Contains("await EnsureLibraryCatalogLoadedAsync();", code);
         Assert.Contains("await FillViewportAsync();", code);
     }

@@ -200,6 +200,34 @@ public sealed class BoxSetOwnershipTests
         release.TrySetResult(); await start; Assert.True(completed);
         vm.Cancel(); Assert.True(accepted.IsCancellationRequested);
     }
+    [Theory] [InlineData(200)] [InlineData(503)]
+    public async Task AccessRevisionDuringAcceptedStartKeepsItsTokenAndMountedDetail(int status)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var visible = vm.Detail; Assert.NotNull(visible);
+        var detailCleared = false;
+        vm.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(vm.Detail) && vm.Detail is null) detailCleared = true;
+        };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken accepted = default; var completed = false;
+        var start = vm.PlayAsync(async (_, _, _, ct) => { accepted = ct; await release.Task.WaitAsync(ct); completed = true; });
+        client.InvalidateAccessContext();
+        wire.Hold = true; wire.DetailStatus = (HttpStatusCode)status;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshing = vm.RefreshAsync();
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(accepted.IsCancellationRequested); Assert.Same(visible, vm.Detail); Assert.True(vm.IsLoading);
+        wire.Release.TrySetResult(); await refreshing;
+        Assert.False(accepted.IsCancellationRequested); Assert.False(detailCleared); Assert.NotNull(vm.Detail);
+        Assert.True(vm.IsCurrent); Assert.True(vm.CanPlay); Assert.False(vm.IsLoading);
+        Assert.Equal(status == 200 ? DetailFailureKind.None : DetailFailureKind.Transient, vm.Failure);
+        if (status != 200) Assert.Same(visible, vm.Detail);
+        release.TrySetResult(); await start.WaitAsync(TimeSpan.FromSeconds(2)); Assert.True(completed);
+        vm.Cancel(); Assert.True(accepted.IsCancellationRequested);
+    }
     [Fact] public async Task AuthorityChangeRetiresAcceptedStart()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
