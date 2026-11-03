@@ -338,6 +338,14 @@ public sealed partial class MpvOscRuntimeTests
                 native_handlers['osc-mouse-down'](tostring(audio.cx), tostring(audio.cy))
             end
             local request = assert(native_requests[1])
+            -- The opening press still has an up event on the captured video
+            -- HWND. Pending button messages must not reclaim its pointer.
+            local play = s.layout.btn_play
+            native_handlers['osc-mouse-up'](tostring(play.cx), tostring(play.cy))
+            native_handlers['osc-mouse-down'](tostring(play.cx), tostring(play.cy))
+            native_handlers['osc-mouse-down-right'](tostring(play.cx), tostring(play.cy))
+            native_keys['silo-osc-mouse-move']()
+            native_keys['silo-osc-mouse-enter']()
             local transferred = s.mouse_x == -1 and s.mouse_y == -1 and not s.mouse_in_window
                 and not s.mouse_in_bar and s.controller_focus_name == nil
             osc_test_tick()
@@ -355,4 +363,41 @@ public sealed partial class MpvOscRuntimeTests
             """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe);
         Assert.Equal("true:true:true", output);
     }
+
+    [Fact]
+    public void NativeAudioPendingTimersRetainOwnershipAndMatchingCloseRestartsNormalIdle()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            native_probe_time = 10
+            local s = osc_test_state
+            s.osc_disabled, s.pause, s.playback_loading = false, false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.mouse_in_window, s.mouse_in_bar = false, false
+            s.audio_tracks = {{index=0,title='English'}, {index=1,title='Japanese'}}
+            native_handlers['osc-native-audio-scope']('11111111111111111111111111111111')
+            osc_test_layout(); s.controller_focus_name = 'btn_audio'; osc_test_activate()
+            local request = assert(native_requests[1])
+            assert(s.controller_focus_name == nil, 'Native Audio must own focus before timer checks')
+            local idle = assert(native_timers[#native_timers])
+            assert(idle.delay == 3, 'Expected normal idle deadline')
+            idle.callback()
+            local kept_idle = s.native_menu_request ~= nil and s.visible and s.target_alpha == 1
+            native_handlers['osc-mouse-leave']()
+            local leave = assert(native_timers[#native_timers])
+            assert(leave.delay == .5, 'Expected pointer-leave deadline')
+            leave.callback()
+            local kept_leave = s.native_menu_request ~= nil and s.visible and s.target_alpha == 1
+            local timer_count = #native_timers
+            native_handlers['osc-native-menu-closed'](request[3], request[4], 'false')
+            local restarted = #native_timers > timer_count and native_timers[#native_timers].delay == 3
+            s.controller_focus_name, s.mouse_in_window, s.mouse_in_bar = nil, false, false
+            native_timers[#native_timers].callback()
+            local hidden = s.native_menu_request == nil and not s.visible and s.target_alpha == 0
+            native_probe_time = 11
+            native_handlers['osc-video-click']('100','100')
+            mp.set_property('user-data/native-audio-result', tostring(kept_idle)..':'..tostring(kept_leave)..':'..tostring(restarted)..':'..tostring(hidden)..':'..tostring(#native_intents == 1))
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe);
+        Assert.Equal("true:true:true:true:true", output);
+    }
+
 }

@@ -5300,6 +5300,7 @@ local function handle_mouse_leave()
 end
 
 local function handle_mouse_enter()
+    if state.native_menu_request then return end
     state.mouse_in_window = true
 end
 
@@ -6270,18 +6271,21 @@ local function setup_script_messages()
 
     -- Host app can send mouse button events
     mp.register_script_message("osc-mouse-down", function(x, y)
+        if state.native_menu_request then return end
         state.mouse_x = tonumber(x) or state.mouse_x
         state.mouse_y = tonumber(y) or state.mouse_y
         handle_mouse_down()
     end)
 
     mp.register_script_message("osc-mouse-down-right", function(x, y)
+        if state.native_menu_request then return end
         state.mouse_x = tonumber(x) or state.mouse_x
         state.mouse_y = tonumber(y) or state.mouse_y
         handle_mouse_down_right()
     end)
 
     mp.register_script_message("osc-mouse-up", function(x, y)
+        if state.native_menu_request then return end
         if x and y then
             state.mouse_x = tonumber(x) or state.mouse_x
             state.mouse_y = tonumber(y) or state.mouse_y
