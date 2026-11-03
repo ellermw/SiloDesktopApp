@@ -95,6 +95,14 @@ internal static class EpisodeOverviewNativeFixture
             Check(overview.Visibility == Visibility.Collapsed && ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible &&
                 button.Visibility == Visibility.Collapsed && !wire.Paths.Any(path => path.StartsWith("/api/v2/catalog/items/series")),
                 "Own episode overview wins, avoids fallback and retains spoiler reveal");
+            client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+            Call(page, "ApplyEpisodeSpoilers");
+            Check(vm.OverviewSource == null && overview.Text == "" && overview.Visibility == Visibility.Collapsed &&
+                ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible,
+                "A retired language scope clears stale plot text without removing spoiler protection");
+            await Until(() => vm.OverviewSource != null && overview.Text == "An episode-specific plot.");
+            Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed,
+                "Re-resolving the same episode after language retirement keeps its own plot hidden");
             ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("RevealEpisodeOverviewButton")).GetPattern(PatternInterface.Invoke)).Invoke();
             await Until(() => button.Visibility == Visibility.Visible);
             Check(overview.Visibility == Visibility.Visible && overview.Text == "An episode-specific plot.", "Reveal displays own overview");
@@ -119,6 +127,8 @@ internal static class EpisodeOverviewNativeFixture
                 await vm.LoadInLibraryAsync("episode", 42); Call(page, "UpdateUI");
                 var stale = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
                 await wire.StatusEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                // Replacement configurations may read status, but only the held old response says auto.
+                wire.OnView = "off";
                 if (change == "profile") client.SetProfile("new-profile");
                 else if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
                 else if (change == "library") await vm.LoadInLibraryAsync("episode", 99);
@@ -152,6 +162,69 @@ internal static class EpisodeOverviewNativeFixture
             Check(overview.Opacity == 1 && button.Visibility == Visibility.Visible && button.IsEnabled,
                 "Expired/canceled translation restores its still-current source controls");
             Program.Log("PASS: stale item/library/profile/language/page status and old translation completion cannot alter current native controls.");
+
+            foreach (var stage in new[] { "post", "poll", "idle" })
+            foreach (var change in new[] { "language", "access" })
+            {
+                wire.Reset(); wire.HoldPost = stage == "post"; wire.HoldPoll = stage == "poll";
+                await Load();
+                var episode = vm.Item;
+                var oldSource = vm.OverviewSource!;
+                var retiredTranslation = stage == "idle" ? Task.CompletedTask : (Task)Call(page, "TranslateOverviewAsync", oldSource)!;
+                if (stage != "idle")
+                {
+                    await (stage == "post" ? wire.PostEntered.Task : wire.PollEntered.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                    Check(overview.Opacity == 0.55 && !button.IsEnabled && (string)button.Content == "Translating…",
+                        "Held translation must own the dimmed controls before scope retirement");
+                }
+                // The new scope still needs translation; a held old read may contain translated text.
+                wire.Translated = false;
+                if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+                else client.InvalidateAccessContext();
+                if (stage == "idle") Call(page, "TranslateOverviewButton_Click", button, new RoutedEventArgs());
+                await Until(() => vm.OverviewSource is { } current && !ReferenceEquals(current, oldSource) &&
+                    overview.Opacity == 1 && button.Visibility == Visibility.Visible && button.IsEnabled &&
+                    (string)button.Content == "Translate description");
+                var currentSource = vm.OverviewSource;
+                Check(ReferenceEquals(vm.Item, episode) && (stage != "idle" || wire.Posts.Count == 0),
+                    "Scope retirement keeps the displayed episode and idle clicks reconfigure before translating");
+                wire.ReleasePost.TrySetResult(); wire.ReleasePoll.TrySetResult();
+                await retiredTranslation;
+                Check(ReferenceEquals(vm.OverviewSource, currentSource) && overview.Text == Wire.SeriesText && overview.Opacity == 1 &&
+                    button.IsEnabled && (string)button.Content == "Translate description" && oldSource.Overview == Wire.SeriesText,
+                    $"Retired {change} {stage} cannot publish old results or leave same-item controls stuck");
+            }
+            Program.Log("PASS: language/access retirement during POST, polling and idle button mode re-resolves the same item's overview and restores controls.");
+
+            wire.Reset(); wire.KeepPending = true;
+            wire.SeriesOverview = string.Concat(Enumerable.Repeat(Wire.SeriesText + " ", 30));
+            await Load();
+            page.Width = 460; Call(page, "UpdateResponsiveLayout", 460d);
+            var siblings = Field<List<Episode>>(page, "_siblingEpisodes");
+            siblings.Clear();
+            for (var index = 0; index < 8; index++)
+                siblings.Add(new Episode { ContentId = index == 4 ? "episode" : $"sibling-{index}", Title = $"Episode {index + 1}", EpisodeNumber = index + 1 });
+            Call(page, "BuildSiblingEpisodeCards");
+            ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
+            ((FrameworkElement)page.FindName("SiblingEpisodesLoadingSkeleton")).Visibility = Visibility.Collapsed;
+            var rail = (ScrollViewer)page.FindName("SiblingEpisodesScrollViewer");
+            rail.Visibility = Visibility.Visible;
+            page.UpdateLayout();
+            await Until(() => rail.ScrollableWidth > 160);
+            rail.ChangeView(160, null, null, true);
+            await Until(() => rail.HorizontalOffset > 0);
+            var offset = rail.HorizontalOffset;
+            var cards = ((StackPanel)page.FindName("SiblingEpisodesPanel")).Children.ToArray();
+            ((IInvokeProvider)new ButtonAutomationPeer((Button)overview.Children[1]).GetPattern(PatternInterface.Invoke)).Invoke();
+            Check(((TextBlock)overview.Children[0]).MaxLines == 0, "Long description must be expanded before polling");
+            var polling = (Task)Call(page, "TranslateOverviewAsync", vm.OverviewSource!)!;
+            await Until(() => wire.PollReads >= 2);
+            Check(cards.SequenceEqual(((StackPanel)page.FindName("SiblingEpisodesPanel")).Children) &&
+                Math.Abs(rail.HorizontalOffset - offset) < 1 && ((TextBlock)overview.Children[0]).MaxLines == 0,
+                "Unchanged translation polls preserve sibling card instances, rail offset and expanded description");
+            Field<CancellationTokenSource>(page, "_translationCts").Cancel();
+            await polling;
+            Program.Log("PASS: repeated pending translation polls do not rebuild the sibling rail or collapse expanded unchanged text.");
         }
         finally
         {
@@ -163,6 +236,7 @@ internal static class EpisodeOverviewNativeFixture
     }
     private static object? Call(object owner, string method, params object[] args) => owner.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(owner, args);
     private static void Set(object owner, string field, object? value) => owner.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(owner, value);
+    private static T Field<T>(object owner, string field) => (T)owner.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(owner)!;
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready) { for (var n = 0; n < 240 && !ready(); n++) await Task.Delay(25); Check(ready(), "Native overview state did not settle"); }
     private sealed class Services(IServiceProvider original, SiloApiClient client, CatalogApi api, ItemDetailViewModel vm, EpisodeSpoilerPreferences spoilers) : IServiceProvider
@@ -180,34 +254,46 @@ internal static class EpisodeOverviewNativeFixture
         internal string OwnOverview = " \t ";
         internal string? SeriesId = "series";
         internal string OnView = "button";
-        internal bool FailSeries, Translated, HoldStatus, HoldPost;
-        internal TaskCompletionSource StatusEntered = NewGate(), ReleaseStatus = NewGate(), PostEntered = NewGate(), ReleasePost = NewGate();
+        internal string SeriesOverview = SeriesText;
+        internal bool FailSeries, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending;
+        internal int PollReads;
+        internal TaskCompletionSource StatusEntered = NewGate(), ReleaseStatus = NewGate(), PostEntered = NewGate(), ReleasePost = NewGate(),
+            PollEntered = NewGate(), ReleasePoll = NewGate();
         private static TaskCompletionSource NewGate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void Reset()
         {
             Paths.Clear(); Posts.Clear(); OwnOverview = " \t "; SeriesId = "series"; OnView = "button";
-            FailSeries = Translated = HoldStatus = HoldPost = false;
+            SeriesOverview = SeriesText; PollReads = 0;
+            FailSeries = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = false;
             StatusEntered = NewGate(); ReleaseStatus = NewGate(); PostEntered = NewGate(); ReleasePost = NewGate();
+            PollEntered = NewGate(); ReleasePoll = NewGate();
         }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "episode-overview.fixture.invalid") throw new InvalidOperationException("Unexpected external request");
             var path = request.RequestUri!.PathAndQuery; Paths.Add(path);
+            var onView = OnView;
+            var translated = Translated;
             if (request.Method == HttpMethod.Post && request.RequestUri.AbsolutePath.EndsWith("/translate-description"))
             {
                 using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 Posts.Add(path + "|" + payload.RootElement.GetProperty("target_language").GetString());
                 if (HoldPost) { PostEntered.TrySetResult(); await ReleasePost.Task; }
-                Translated = true; return new(HttpStatusCode.NoContent);
+                Translated = !KeepPending; return new(HttpStatusCode.NoContent);
+            }
+            if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && Posts.Count > 0)
+            {
+                Interlocked.Increment(ref PollReads);
+                if (HoldPoll) { HoldPoll = false; PollEntered.TrySetResult(); await ReleasePoll.Task; }
             }
             if (request.RequestUri.AbsolutePath == "/api/v2/capabilities/metadata-ai" && HoldStatus)
             { StatusEntered.TrySetResult(); await ReleaseStatus.Task; }
             if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && FailSeries) return new(HttpStatusCode.NotFound);
             object value = request.RequestUri.AbsolutePath switch
             {
-                "/api/v2/catalog/items/episode" => new { content_id = "episode", type = "episode", title = "Episode", series_id = SeriesId, overview = OwnOverview, pending_translation_language = Translated ? null : "fr", user_state = new { }, user_data = new { played = false } },
-                "/api/v2/catalog/items/series" => new { content_id = "series", type = "series", overview = Translated ? TranslatedText : SeriesText, machine_translated_fields = new[] { "overview" }, pending_translation_language = Translated ? null : "fr" },
-                "/api/v2/capabilities/metadata-ai" => new { state = "available", allowed = true, on_view = OnView },
+                "/api/v2/catalog/items/episode" => new { content_id = "episode", type = "episode", title = "Episode", series_id = SeriesId, overview = OwnOverview, pending_translation_language = translated ? null : "fr", user_state = new { }, user_data = new { played = false } },
+                "/api/v2/catalog/items/series" => new { content_id = "series", type = "series", overview = translated ? TranslatedText : SeriesOverview, machine_translated_fields = new[] { "overview" }, pending_translation_language = translated ? null : "fr" },
+                "/api/v2/capabilities/metadata-ai" => new { state = "available", allowed = true, on_view = onView },
                 "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 17, supports_batched_effective = true },
                 _ when path.Contains("effective") => new { items = new[] { new { key = "catalog.hide_unwatched_episode_overviews", value = true } } },
                 _ => new { }

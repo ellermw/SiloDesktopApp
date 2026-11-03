@@ -105,6 +105,8 @@ public sealed partial class ItemDetailPage : Page
         UpdateThemeGradientColors();
 
         this.Loaded += OnPageLoaded;
+        Loaded += (_, _) => StartOverviewScopeWatch();
+        Unloaded += (_, _) => _overviewScopeTimer?.Stop();
         Loaded += (_, _) => ViewModel.SimilarItems.CollectionChanged += OnSimilarItemsChanged;
         Unloaded += (_, _) => ViewModel.SimilarItems.CollectionChanged -= OnSimilarItemsChanged;
         Loaded += (_, _) =>
@@ -2732,12 +2734,7 @@ public sealed partial class ItemDetailPage : Page
     {
         if (!IsLoaded || ViewModel.Item is not { } item) return;
         ++_episodeSpoilerRevision;
-        var source = ViewModel.OverviewSource;
-        var hidden = IsOverviewHidden(item, source);
-        OverviewText.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
-        RevealEpisodeOverviewButton.Visibility = hidden && !string.IsNullOrWhiteSpace(item.Overview) ? Visibility.Visible : Visibility.Collapsed;
-        OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(source?.Overview) && MachineTranslationPresentation.HasField(source?.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
-        if (hidden) TranslateOverviewButton.Visibility = Visibility.Collapsed;
+        ApplyOverviewSpoilers();
         if (ViewModel.Episodes.Count > 0 && item.Type is "series" or "season") LayoutEpisodeGrid();
         if (item.Type == "episode") BuildSiblingEpisodeCards();
     }

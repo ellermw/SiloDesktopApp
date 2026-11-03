@@ -11,6 +11,31 @@ public sealed partial class ItemDetailPage
     private sealed record OverviewConfigurationOwner(MediaItemDetail Item, int? Library, ApiRequestContext Context,
         long Language, CancellationTokenSource? Navigation);
     private OverviewConfigurationOwner? _overviewConfiguredOwner;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _overviewScopeTimer;
+
+    private void StartOverviewScopeWatch()
+    {
+        if (_overviewScopeTimer == null)
+        {
+            // Access-context retirement has no notification. Watch only while this page is loaded.
+            _overviewScopeTimer = DispatcherQueue.CreateTimer();
+            _overviewScopeTimer.Interval = TimeSpan.FromMilliseconds(500);
+            _overviewScopeTimer.Tick += (_, _) => RefreshRetiredOverviewScope();
+        }
+        _overviewScopeTimer.Start();
+        RefreshRetiredOverviewScope();
+    }
+
+    private void RefreshRetiredOverviewScope()
+    {
+        if (!IsLoaded || _overviewConfiguredOwner is not { } owner ||
+            !ReferenceEquals(owner.Item, ViewModel.Item) || !ReferenceEquals(owner.Navigation, _navigationCts) ||
+            owner.Library != ViewModel.LibraryId || !IsCurrentDetail(owner.Item.ContentId)) return;
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        if (api.IsCurrentContext(owner.Context) && api.LocalizedReadGeneration == owner.Language) return;
+        RenderOverview();
+        ConfigureOverviewIfNeeded();
+    }
 
     private void ConfigureOverviewIfNeeded()
     {
@@ -22,12 +47,26 @@ public sealed partial class ItemDetailPage
 
     private void RenderOverview()
     {
-        OverviewText.Text = ViewModel.OverviewSource?.Overview ?? "";
-        ApplyEpisodeSpoilers();
+        var text = ViewModel.OverviewSource?.Overview ?? "";
+        if (OverviewText.Text != text) OverviewText.Text = text;
+        ApplyOverviewSpoilers();
     }
 
-    private bool IsOverviewHidden(MediaItemDetail owner, MediaItemDetail? source) =>
-        ReferenceEquals(owner, source) && owner.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true &&
+    private void ApplyOverviewSpoilers()
+    {
+        if (ViewModel.Item is not { } item) return;
+        var source = ViewModel.OverviewSource;
+        if (source == null && OverviewText.Text != "") OverviewText.Text = "";
+        var hidden = IsOverviewHidden(item);
+        OverviewText.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        RevealEpisodeOverviewButton.Visibility = hidden ? Visibility.Visible : Visibility.Collapsed;
+        OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(source?.Overview) &&
+            MachineTranslationPresentation.HasField(source?.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
+        if (hidden || source == null) TranslateOverviewButton.Visibility = Visibility.Collapsed;
+    }
+
+    private bool IsOverviewHidden(MediaItemDetail owner) =>
+        owner.Type == "episode" && !string.IsNullOrWhiteSpace(owner.Overview) && _episodeSpoilerPreferences?.HideOverviews == true &&
         EpisodeSpoilerPolicy.IsUnwatched(owner.UserData?.Played, owner.UserData?.IsInProgress, owner.UserData?.PositionSeconds) &&
         _revealedEpisodeOverviewId != owner.ContentId;
 
@@ -38,6 +77,8 @@ public sealed partial class ItemDetailPage
         _translationCts?.Cancel();
         _translateButtonMode = false;
         TranslateOverviewButton.Visibility = Visibility.Collapsed;
+        TranslateOverviewButton.IsEnabled = true;
+        TranslateOverviewButton.Content = "Translate description";
         OverviewText.Opacity = 1;
         var api = App.Services.GetRequiredService<CatalogApi>();
         var context = api.CaptureContext();
@@ -53,9 +94,9 @@ public sealed partial class ItemDetailPage
             var source = await ViewModel.ResolveOverviewAsync(navigation?.Token ?? default);
             if (!Current()) return;
             RenderOverview();
-            if (source == null || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) || IsOverviewHidden(item, source)) return;
+            if (source == null || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) || IsOverviewHidden(item)) return;
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
-            if (!Current() || !ReferenceEquals(source, ViewModel.OverviewSource) || !status.Enabled || IsOverviewHidden(item, source)) return;
+            if (!Current() || !ReferenceEquals(source, ViewModel.OverviewSource) || !status.Enabled || IsOverviewHidden(item)) return;
             if (status.OnView.Equals("button", StringComparison.OrdinalIgnoreCase))
             {
                 _translateButtonMode = true;
@@ -75,6 +116,11 @@ public sealed partial class ItemDetailPage
     private async void TranslateOverviewButton_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.OverviewSource is { } source) await TranslateOverviewAsync(source);
+        else
+        {
+            RenderOverview();
+            ConfigureOverviewIfNeeded();
+        }
     }
 
     private async Task TranslateOverviewAsync(MediaItemDetail source)
@@ -82,7 +128,7 @@ public sealed partial class ItemDetailPage
         if (_translationCts is { IsCancellationRequested: false }) return;
         var item = ViewModel.Item;
         if (item == null || !ReferenceEquals(source, ViewModel.OverviewSource) || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) ||
-            !IsCurrentDetail(item.ContentId) || IsOverviewHidden(item, source)) return;
+            !IsCurrentDetail(item.ContentId) || IsOverviewHidden(item)) return;
         var api = App.Services.GetRequiredService<CatalogApi>();
         var context = api.CaptureContext();
         var language = api.LocalizedReadGeneration;
@@ -96,11 +142,12 @@ public sealed partial class ItemDetailPage
         cts.CancelAfter(TimeSpan.FromSeconds(45));
         var ct = cts.Token;
         var targetLanguage = source.PendingTranslationLanguage;
-        bool OwnerCurrent() => ReferenceEquals(_translationCts, cts) &&
+        bool ControlsCurrent() => ReferenceEquals(_translationCts, cts) &&
             revision == _overviewConfigurationRevision && ReferenceEquals(navigation, _navigationCts) &&
-            ReferenceEquals(item, ViewModel.Item) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library &&
+            ReferenceEquals(item, ViewModel.Item) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library;
+        bool OwnerCurrent() => ControlsCurrent() &&
             ReferenceEquals(source, ViewModel.OverviewSource) && api.IsCurrentContext(context) &&
-            api.LocalizedReadGeneration == language && !IsOverviewHidden(item, source);
+            api.LocalizedReadGeneration == language && !IsOverviewHidden(item);
         bool Current() => !ct.IsCancellationRequested && OwnerCurrent();
         TranslateOverviewButton.Visibility = Visibility.Visible;
         TranslateOverviewButton.IsEnabled = false;
@@ -127,16 +174,23 @@ public sealed partial class ItemDetailPage
         }
         finally
         {
-            // An old completion must never restore a newer item's action or opacity.
-            if (OwnerCurrent())
+            // Retired results cannot publish, but must release controls unless a newer owner took them.
+            var restoreControls = ControlsCurrent();
+            if (restoreControls)
             {
                 OverviewText.Opacity = 1;
-                TranslateOverviewButton.Visibility = _translateButtonMode && !string.IsNullOrWhiteSpace(source.PendingTranslationLanguage)
+                TranslateOverviewButton.Visibility = _translateButtonMode && !IsOverviewHidden(item) &&
+                    !string.IsNullOrWhiteSpace(ViewModel.OverviewSource?.PendingTranslationLanguage)
                     ? Visibility.Visible : Visibility.Collapsed;
                 TranslateOverviewButton.IsEnabled = true;
                 TranslateOverviewButton.Content = "Translate description";
             }
             if (ReferenceEquals(_translationCts, cts)) _translationCts = null;
+            if (restoreControls)
+            {
+                RenderOverview();
+                ConfigureOverviewIfNeeded();
+            }
         }
     }
 }
