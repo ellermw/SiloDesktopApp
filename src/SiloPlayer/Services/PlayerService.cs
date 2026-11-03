@@ -527,6 +527,8 @@ public partial class PlayerService : IDisposable
         if (!active) _offeredRoomQuality = _offeredFromQuality = null;
         UpdateRoomInputBindings();
         UpdateRoomSeekDisplay();
+        if (!active) RestoreVideoPlaybackRate();
+        else PublishVideoPlaybackRateStatus();
     }
 
     private void UpdateRoomInputBindings()
@@ -2191,6 +2193,7 @@ public partial class PlayerService : IDisposable
         // preparation so fresh launches render the first subtitle correctly
         // without adding another serial request to startup time.
         ResetSubtitlePreferenceSession();
+        ResetVideoPlaybackRateSession();
         var subtitleAppearanceTask = EnsureSubtitleAppearanceLoadedAsync(requestToken);
         _pendingSubtitleSelection = subtitleSelection;
         _pendingInitialServerSubtitleIndex = null;
@@ -2442,6 +2445,7 @@ public partial class PlayerService : IDisposable
             EnsureCurrentOwner();
             var bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? throw new InvalidOperationException("The accepted playback source is missing from the version inventory.");
+            EnsureVideoPlaybackRateSession();
             Resolution = bestVersion.Resolution;
             ResolveInitialSubtitleSelection(
                 watchDetail,
@@ -2479,7 +2483,8 @@ public partial class PlayerService : IDisposable
 
             _mpv?.SetProperty(
                 "speed",
-                (IsAudiobook ? _settingsService.GetAudiobookPlaybackRate(ContentId) : 1)
+                (IsAudiobook ? _settingsService.GetAudiobookPlaybackRate(ContentId) :
+                    IsWatchTogetherPlayback ? 1 : DesiredVideoPlaybackRate)
                     .ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (subtitleAppearanceTask.IsCompletedSuccessfully)
             {
@@ -2645,6 +2650,7 @@ public partial class PlayerService : IDisposable
         var fileOwner = Interlocked.Increment(ref _playbackFileGeneration);
         acceptLoad?.Invoke(fileOwner);
         RetireNativeMenus();
+        EnsureVideoPlaybackRateSession();
         AdoptBufferingQualityPlan();
         StartPlaybackStallWatchdog();
         _idleRemuxResume.ResetPauseClock();
@@ -4586,6 +4592,7 @@ public partial class PlayerService : IDisposable
             SetSwitchingContent(false); // Safe to receive PlaybackEnded now
             IsLoading = false;
             SynchronizeConnectionMediaActivity(restorePaused);
+            RestoreVideoPlaybackRate();
             StartPlaybackStallWatchdog();
             InvokeSubscribersSafely(ContentLoaded, nameof(ContentLoaded));
 
@@ -6535,6 +6542,7 @@ public partial class PlayerService : IDisposable
         var closingAuthority = _activeAuthority;
         await Task.WhenAny(FlushSubtitleOffsetAsync(), Task.Delay(2000));
         ResetSubtitlePreferenceSession();
+        ResetVideoPlaybackRateSession();
         _authorityLifetimeCts.Cancel();
         _shuffleController?.Leave();
         ActiveLibraryId = null;
@@ -6694,6 +6702,7 @@ public partial class PlayerService : IDisposable
     public void Dispose()
     {
         RetireNativeMenus();
+        ResetVideoPlaybackRateSession();
         _volumePersistenceDisposed = true;
         try { _volumeSaveTimer?.Stop(); } catch { /* Dispatcher may be shutting down. */ }
         EndBufferingQuality();

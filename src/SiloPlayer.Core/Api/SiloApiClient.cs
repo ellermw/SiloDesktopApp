@@ -67,6 +67,7 @@ public partial class SiloApiClient
         lock (_authStateGate) return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
     }
     public bool IsCurrentContext(ApiRequestContext context) => CaptureContext() == context;
+    public string? DeviceId { get { lock (_authStateGate) return _deviceId; } }
 
     public ApiIdentityContext CaptureIdentityContext()
     {
@@ -373,6 +374,8 @@ public partial class SiloApiClient
     {
         lock (_authStateGate)
         {
+            if (!string.Equals(_deviceId, deviceId, StringComparison.Ordinal))
+                _requestContextGeneration++;
             _deviceId = deviceId;
             _deviceName = deviceName;
             _devicePlatform = devicePlatform;
