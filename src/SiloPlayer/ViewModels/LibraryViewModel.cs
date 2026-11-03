@@ -679,6 +679,10 @@ public partial class LibraryViewModel : ObservableObject
             _pendingWindowStart = startIndex;
             _pendingWindowEnd = startIndex + itemCount - 1;
             var recoveryQueryVersion = _queryVersion;
+            // Recovery starts a new query, so restore its grouping before the
+            // direct core retry. Retired preflight owners cannot dispatch it.
+            IsLoading = false;
+            if (!await EnsureGroupingAsync() || recoveryQueryVersion != _queryVersion) return;
             await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
             // Only restore the optional rail after fresh cards succeed. A
             // failed cursor recovery must not trigger another capability read.

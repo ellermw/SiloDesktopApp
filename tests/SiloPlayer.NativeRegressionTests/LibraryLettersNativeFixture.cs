@@ -74,9 +74,18 @@ internal static class LibraryLettersNativeFixture
                     throw new InvalidOperationException("Letter availability or single tab stop is incorrect.");
                 if (Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(Letter("Z")) != "Z, 1 title")
                     throw new InvalidOperationException("Letter title count is missing from its accessible name.");
+                if (grouped)
+                {
+                    wire.RejectNextCursor = true;
+                    await page.ViewModel.LoadWindowAsync(300, 60, force: true);
+                    await page.ViewModel.EnsureLetterIndexAsync();
+                    if (wire.MissingGroup != 0 || wire.InvalidCursors != wire.ExpectedRetiredCursors || page.ViewModel.GetWindowItem(300)?.BoxSet is null)
+                        throw new InvalidOperationException("Grouped invalid-cursor recovery lost its aggregate/count/index scope.");
+                    Program.Log("PASS: actual grouped cursor retirement keeps recovery/count/index and following letter scopes.");
+                }
                 ((IInvokeProvider)new ButtonAutomationPeer(Letter("M")).GetPattern(PatternInterface.Invoke)).Invoke();
                 await Until(() => scroll.VerticalOffset > 10000 && page.ViewModel.GetWindowItem(600) is not null);
-                if (!wire.Seeks.Contains(600) || wire.InvalidCursors != 0 || page.ViewModel.ErrorMessage is not null)
+                if (!wire.Seeks.Contains(600) || wire.InvalidCursors != wire.ExpectedRetiredCursors || page.ViewModel.ErrorMessage is not null)
                     throw new InvalidOperationException("Letter activation did not seek to its exact catalog position.");
                 if (grouped)
                 {
@@ -237,7 +246,8 @@ internal static class LibraryLettersNativeFixture
     { public object? GetService(Type type) => type == typeof(LibraryViewModel) ? model() : values.TryGetValue(type, out var value) ? value : fallback.GetService(type); }
     private sealed class Wire : HttpMessageHandler
     {
-        internal int InvalidCursors, MissingGroup, LibraryId = 11;
+        internal int InvalidCursors, ExpectedRetiredCursors, MissingGroup, LibraryId = 11;
+        internal bool RejectNextCursor;
         internal bool Grouped;
         internal int CurrentLibraryId, PlayedCount = 1;
         internal string CurrentType = "movie";
@@ -271,18 +281,23 @@ internal static class LibraryLettersNativeFixture
                 if (query.ContainsKey("seek")) Seeks.Add(offset);
                 if (query.TryGetValue("cursor", out var cursor))
                 {
+                    if (RejectNextCursor)
+                    {
+                        RejectNextCursor = false; InvalidCursors++; ExpectedRetiredCursors++;
+                        return Reply(new { status = 400, type = "https://fixture.invalid/docs/api/v2/problems/invalid_cursor", detail = "Synthetic policy retired this cursor." }, HttpStatusCode.BadRequest);
+                    }
                     var scope = cursor.Split(':');
-                    if (scope[0] != query["library_id"] || scope[1] != query["limit"])
+                    if (scope.Length != 4 || scope[0] != query["library_id"] || scope[1] != query["limit"] || scope[3] != query.GetValueOrDefault("group", ""))
                     {
                         InvalidCursors++;
-                        return Reply(new { status = 400, type = "https://fixture.invalid/problems/invalid_cursor", detail = "The cursor is malformed, tampered with, or belongs to a different query." }, HttpStatusCode.BadRequest);
+                        return Reply(new { status = 400, type = "https://fixture.invalid/docs/api/v2/problems/invalid_cursor", detail = "The cursor is malformed, tampered with, or belongs to a different query." }, HttpStatusCode.BadRequest);
                     }
                     if (!query.ContainsKey("seek")) offset = int.Parse(scope[2]);
                 }
                 var count = Math.Min(limit, 1000 - offset);
                 return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = Grouped && index % 2 == 0 ? "box_set" : "movie", box_set = Grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
-                    total = 1000, total_exact = !query.ContainsKey("skip_total"), window_cursor = query["library_id"] + ":" + limit + ":0",
-                    page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) } });
+                    total = 1000, total_exact = !query.ContainsKey("skip_total"), window_cursor = query["library_id"] + ":" + limit + ":0:" + query.GetValueOrDefault("group", ""),
+                    page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) + ":" + query.GetValueOrDefault("group", "") } });
             }
             if (path.EndsWith("/layout") || path.EndsWith("/sections")) return Reply(new { sections = Array.Empty<object>() });
             if (path.EndsWith("/filters")) return Reply(new { genres = Array.Empty<string>() });
