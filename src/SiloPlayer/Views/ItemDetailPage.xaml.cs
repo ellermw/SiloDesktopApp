@@ -921,7 +921,11 @@ public sealed partial class ItemDetailPage : Page
                 {
                     BuildMoreFlyout();
                     if (item is { Type: "season" })
-                        BuildSeasonBreadcrumb(item, SeasonLabel(item));
+                    {
+                        var seasonLabel = SeasonLabel(item);
+                        BuildSeasonBreadcrumb(item, seasonLabel);
+                        TitleText.Text = string.IsNullOrWhiteSpace(item.SeriesTitle) ? seasonLabel : item.SeriesTitle;
+                    }
                 }
             };
             if (!queued && !DispatcherQueue.TryEnqueue(() =>
