@@ -3,7 +3,12 @@ namespace SiloPlayer.Tests;
 public sealed partial class MpvOscRuntimeTests
 {
     private const string NativeMoreProbe = """
-        more_handlers, more_requests, more_intents = {}, {}, {}
+        more_handlers, more_requests, more_intents, more_keys = {}, {}, {}, {}
+        local forced_key = mp.add_forced_key_binding
+        mp.add_forced_key_binding = function(binding, name, callback, flags)
+            more_keys[name] = callback
+            return forced_key(binding, name, callback, flags)
+        end
         local register = mp.register_script_message
         mp.register_script_message = function(name, callback)
             more_handlers[name] = callback
@@ -16,7 +21,9 @@ public sealed partial class MpvOscRuntimeTests
                 table.insert(more_requests, args); return
             end
             if args[1] == 'script-message' and (args[2] == 'silo-volume-changed' or args[2] == 'silo-pause-toggle'
-                or args[2] == 'silo-pip-toggle' or args[2] == 'silo-seek-absolute') then
+                or args[2] == 'silo-pip-toggle' or args[2] == 'silo-seek-absolute'
+                or args[2] == 'silo-buffering-lower' or args[2] == 'silo-buffering-restore'
+                or args[2] == 'silo-buffering-keep' or args[2] == 'silo-playback-retry' or args[2] == 'silo-exit') then
                 table.insert(more_intents, args); return
             end
             return command(...)
