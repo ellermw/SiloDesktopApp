@@ -120,8 +120,58 @@ internal static class PlaybackAudioMenuNativeFixture
                 && menuRect.Top >= videoRect.Top && menuRect.Bottom <= videoRect.Bottom,
                 "Native audio menu escaped its offscreen video bounds.");
             var current = (ListViewItem)list.Items[37];
-            Require(AutomationProperties.GetName(current).Contains("Current track", StringComparison.Ordinal)
+            Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
+            var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (menuProbe == "geometry")
+            {
+                var originals = ((System.Collections.IEnumerable)Get(menu, "_choices")!).Cast<object>().ToArray();
+                var choiceType = originals[0].GetType();
+                var one = Array.CreateInstance(choiceType, 1);
+                one.SetValue(Activator.CreateInstance(choiceType, ["pending", "Loading choices…", "", Array.Empty<string>(), false, false, "Loading", false, true]), 0);
+                Require(GetWindowRect(hwnd, out var initial), "Menu bounds missing.");
+                Call(menu, "UpdateChoices", one);
+                await Until(() => GetWindowRect(hwnd, out var small) && small.Bottom - small.Top < initial.Bottom - initial.Top - 80,
+                    "Native menu did not shrink after its live inventory became one placeholder.");
+                Require(((FrameworkElement)((ListViewItem)list.Items[0]).Content).Opacity < .8 &&
+                    Descendants<TextBlock>((DependencyObject)((ListViewItem)list.Items[0]).Content).Any(text => text.Text == "Loading"),
+                    "Disabled native choice lost its muted appearance or visible explanation.");
+                var restored = Array.CreateInstance(choiceType, originals.Length);
+                for (var i = 0; i < originals.Length; i++) restored.SetValue(originals[i], i);
+                Call(menu, "UpdateChoices", restored);
+                await Until(() => GetWindowRect(hwnd, out var grown) && grown.Bottom - grown.Top >= initial.Bottom - initial.Top,
+                    "Native menu did not grow after its live inventory expanded.");
+                Require(GetWindowRect(video.Hwnd, out var surface) && GetWindowRect(hwnd, out var bounds) && bounds.Left >= surface.Left && bounds.Right <= surface.Right && bounds.Top >= surface.Top && bounds.Bottom <= surface.Bottom,
+                    "Live inventory growth escaped the playback owner.");
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native common menu re-evaluates one/many choice geometry within its owner.");
+                return;
+            }
+            if (menuProbe == "resize")
+            {
+                Call(menu, "Input", "end");
+                await Until(() => SelectedRowFits(list), "Initial keyboard row did not enter view.");
+                await Task.Delay(100);
+                var viewport = Descendants<ScrollViewer>(list).OrderByDescending(view => view.ScrollableHeight).First();
+                // Model the stale native offset observed during footer reflow;
+                // selection stays last and no wheel intent has been received.
+                list.ScrollIntoView(list.Items[0], ScrollIntoViewAlignment.Leading); list.UpdateLayout();
+                await Until(() => viewport.VerticalOffset < 1, "Resize probe could not establish its stale offset.");
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 460, 300)); video.SynchronizePosition();
+                await Task.Delay(100);
+                await Until(() => SelectedRowFits(list), "Native selected row escaped the resized list viewport.");
+                // Actual handler + native viewport; no system input injection.
+                Call(menu, "OnListPointerWheel", list, null);
+                list.ScrollIntoView(list.Items[0], ScrollIntoViewAlignment.Leading); list.UpdateLayout();
+                await Until(() => viewport.VerticalOffset < 1, "Wheel probe did not reach its native view.");
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 500, 340)); video.SynchronizePosition();
+                await Task.Delay(150);
+                Require(viewport.VerticalOffset < 1, "Resize reset deliberate wheel view.");
+                Call(menu, "Input", "end"); await Until(() => SelectedRowFits(list), "Keyboard navigation did not resume selected-row visibility.");
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native common menu repairs keyboard viewport alignment after resize and preserves modeled wheel intent.");
+                return;
+            }
             foreach (var size in new[] { (900, 540), (460, 700), (1920, 1080) })
             {
                 owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, size.Item1, size.Item2));
@@ -449,6 +499,12 @@ internal static class PlaybackAudioMenuNativeFixture
     }
 
     private static object? Menu(PlayerService service) => typeof(PlayerService).GetField("_nativeMenu", Private)?.GetValue(service);
+    private static bool SelectedRowFits(ListView list)
+    {
+        if (list.SelectedItem is not FrameworkElement row || row.ActualHeight <= 0 || list.ActualHeight <= 0) return false;
+        var bounds = row.TransformToVisual(list).TransformBounds(new Windows.Foundation.Rect(0, 0, row.ActualWidth, row.ActualHeight));
+        return bounds.Top >= -1 && bounds.Bottom <= list.ActualHeight + 1;
+    }
     private static SemaphoreSlim Gate(PlayerService service) => (SemaphoreSlim)Get(service, "_playbackDialogGate")!;
     private static IntPtr MenuHwnd(object menu)
     {
@@ -465,7 +521,11 @@ internal static class PlaybackAudioMenuNativeFixture
     private static void Set(object target, string field, object? value) => target.GetType().GetField(field, Private)!.SetValue(target, value);
     private static void Property(object target, string name, object value) => target.GetType().GetProperty(name)!.SetValue(target, value);
     private static object? Call(object target, string method, params object?[] args)
-        => target.GetType().GetMethod(method, Private)!.Invoke(target, args);
+    {
+        for (var type = target.GetType(); type != null; type = type.BaseType)
+            if (type.GetMethod(method, Private | BindingFlags.DeclaredOnly) is { } member) return member.Invoke(target, args);
+        throw new MissingMethodException(target.GetType().FullName, method);
+    }
     private static void Command(MpvPlayer player, params string[] args) => Require(Call(player, "Command", (object)args) is true, "Native Audio fixture command failed: " + args[0]);
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready, string message)
