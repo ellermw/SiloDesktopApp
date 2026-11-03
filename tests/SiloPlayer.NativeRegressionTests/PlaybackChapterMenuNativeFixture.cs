@@ -33,6 +33,7 @@ internal static class PlaybackChapterMenuNativeFixture
         var appServices = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var oldServices = appServices.GetValue(null);
         using var wire = new ChapterWire();
+        wire.PreviewBytes = await PreviewBytes();
         using var http = new HttpClient(wire);
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "chapter-images"));
         using var services = new ServiceCollection().AddSingleton(images).AddSingleton(http).BuildServiceProvider();
@@ -100,7 +101,7 @@ internal static class PlaybackChapterMenuNativeFixture
             service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Synthetic video did not settle.");
             Call(service, "SendChapterListToOsc");
-            CallIfPresent(service, "PublishNativeMenuScope");
+            CallIfPresent(service, "PublishNativeMenuScopes");
             mpv.SendScriptMessage("osc-show");
             await Task.Delay(150);
 
@@ -113,6 +114,11 @@ internal static class PlaybackChapterMenuNativeFixture
                     "audio,chapters,stats,pip,fill,volume-down,volume-up,mute", "Native More changed existing action order or omitted controls.");
                 Require(!((ListViewItem)list.Items[0]).IsEnabled && ((ListViewItem)list.Items[1]).IsEnabled,
                     "More audio/chapter availability differs from current source inventory.");
+                Require(list.SelectedIndex == 1, "More initially focuses an unavailable row instead of its first available action.");
+                var disabledAudio = (ListViewItem)list.Items[0];
+                Require(((FrameworkElement)disabledAudio.Content).Opacity < .8 &&
+                    Descendants<TextBlock>(disabledAudio).Any(text => text.Text == "No alternate audio tracks."),
+                    "Unavailable More choices lack visible disabled treatment or reason.");
                 Require(mpv.IsPaused, "Opening More changed genuine pause.");
                 await Capture(menu, "more-compact.png");
                 async Task Choose(int index)
@@ -177,6 +183,12 @@ internal static class PlaybackChapterMenuNativeFixture
                 Call(service, "ApplyRealtimeChapterThumbnail", patch.RootElement);
             await Until(() => Descendants<Image>(list).Any(i => i.Source is BitmapImage { PixelWidth: > 0 }), "Ready thumbnail did not decode from the existing cache.");
             Require(ReferenceEquals(Menu(service), menu) && list.SelectedIndex == 0 && mpv.IsPaused, "Ready patch replaced the menu, lost focus or changed pause.");
+            var retainedImage = Descendants<Image>((DependencyObject)list.Items[0]).Single().Source;
+            using (var patch = JsonDocument.Parse("""{"file_id":42,"chapter_index":17,"thumbnail_url":"https://native-chapters.fixture.invalid/another.png"}"""))
+                Call(service, "ApplyRealtimeChapterThumbnail", patch.RootElement);
+            await Task.Delay(100);
+            Require(ReferenceEquals(Descendants<Image>((DependencyObject)list.Items[0]).Single().Source, retainedImage),
+                "A different chapter's ready patch discarded an accepted preview.");
             await Capture(menu, "chapters-ready.png");
             Call(menu, "Input", "cancel");
             await Until(() => Menu(service) == null, "Chapter dismissal stranded menu input.");
@@ -203,7 +215,7 @@ internal static class PlaybackChapterMenuNativeFixture
             Require(Math.Abs(mpv.Position - before) < .1 && mpv.IsPaused, "Retired chapter callback issued seek or resume.");
 
             // Late image work must not revive a retired presentation.
-            CallIfPresent(service, "PublishNativeMenuScope");
+            CallIfPresent(service, "PublishNativeMenuScopes");
             version.Chapters[0].ThumbnailUrl = "https://native-chapters.fixture.invalid/delayed.png";
             menu = await Open();
             await wire.PreviewStarted.Task.WaitAsync(TimeSpan.FromSeconds(8));
@@ -214,7 +226,7 @@ internal static class PlaybackChapterMenuNativeFixture
 
             // Guests get explicit unavailability; room seek authority stays downstream.
             service.SetWatchTogetherPlayback(true);
-            CallIfPresent(service, "PublishNativeMenuScope");
+            CallIfPresent(service, "PublishNativeMenuScopes");
             menu = await Open();
             list = (ListView)Get(menu, "_list")!;
             Require(list.Items.OfType<ListViewItem>().All(row => !row.IsEnabled), "Guest chapter rows grant room seek authority.");
@@ -228,7 +240,7 @@ internal static class PlaybackChapterMenuNativeFixture
         finally
         {
             wire.PreviewReleased.TrySetResult();
-            CallIfPresent(service, "RetireNativeMenu");
+            CallIfPresent(service, "RetireNativeMenus");
             CallIfPresent(service, "RetireNativeAudioMenu");
             Call(service, "StopPlaybackStallWatchdog");
             mpv.ScriptMessageReceived -= Message;
@@ -252,7 +264,7 @@ internal static class PlaybackChapterMenuNativeFixture
             mpv.SendScriptMessage("osc-mouse-up", state.GetProperty("x").ToString(), state.GetProperty("y").ToString());
             mpv.SendScriptMessage("osc-video-click", state.GetProperty("x").ToString(), state.GetProperty("y").ToString());
             await Until(() => Menu(service) is { } m && ((ListView)Get(m, "_list")!).XamlRoot != null,
-                "Actual OSC Chapters opener produced no native chapter menu.");
+                "Actual OSC " + (more ? "More" : "Chapters") + " opener produced no native menu.");
             return Menu(service)!;
         }
     }
@@ -308,8 +320,21 @@ internal static class PlaybackChapterMenuNativeFixture
         }
         return clip.ToArray();
     }
+    private static async Task<byte[]> PreviewBytes()
+    {
+        using var stream = new InMemoryRandomAccessStream();
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        var pixels = Enumerable.Range(0, 160 * 96).SelectMany(_ => new byte[] { 40, 140, 240, 255 }).ToArray();
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, 160, 96, 96, 96, pixels);
+        await encoder.FlushAsync();
+        using var reader = new DataReader(stream.GetInputStreamAt(0));
+        await reader.LoadAsync((uint)stream.Size);
+        var bytes = new byte[stream.Size]; reader.ReadBytes(bytes);
+        return bytes;
+    }
     private sealed class ChapterWire : HttpMessageHandler
     {
+        internal byte[] PreviewBytes = [];
         internal readonly TaskCompletionSource PreviewStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource PreviewReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -319,8 +344,7 @@ internal static class PlaybackChapterMenuNativeFixture
             if (path.EndsWith(".png"))
             {
                 if (path.EndsWith("delayed.png")) { PreviewStarted.TrySetResult(); await PreviewReleased.Task; }
-                var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFz8AAAAASUVORK5CYII=");
-                return new(HttpStatusCode.OK) { Content = new ByteArrayContent(png) };
+                return new(HttpStatusCode.OK) { Content = new ByteArrayContent(PreviewBytes) };
             }
             if (path.Contains("/settings/")) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
