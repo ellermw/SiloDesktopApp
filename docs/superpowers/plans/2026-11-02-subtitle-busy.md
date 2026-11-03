@@ -23,7 +23,7 @@ Ruling: use this scoped ledger and shared Windows verification wrapper rather th
 
 ## Candidate verification and correction ledger
 
-- Reader red: single-read baseline failed 12/14 cases; reader-green passed14/14. Expanded final transport16 cases and source checks passed in full-candidate3074/3074.
+- Reader red: single-read baseline failed 12/14 cases; reader-green passed 14/14. Expanded final transport16 cases and source checks passed in full-candidate 3074/3074.
 - Native corrected-red: frozen baseline replaced the accepted server selection after503. Initial native-red hung because remote sub-add also blocked the fixture's dispatcher-based listener; preserved as diagnostic only, listener moved to independent background acceptance.
 - Busy candidate:13/13 native cases passed, including exact4attempt budget, retained actualSID/manager/prefs, pause/resume/seek and operation retirement/ABA.
 - Candidate native ownership: early OSC publication during accepted pending loads is a real regression. Gate native feedback until the actual file owner is ready.
@@ -35,14 +35,14 @@ Ruling: use this scoped ledger and shared Windows verification wrapper rather th
 
 Product commit: 9e05c6a2fa2b1ae5e19fb21eaa57757a51ef4e4e. Frozen Release DLL: 04512FDFB136C2B138506E1725662F206F011C9D8229179DF32F9E3085E4D5E8.
 
-Focused95/95 and full3075/3075 passed. Final native groups passed: busy13, ownership29, accepted-reload4, burn-readiness/changed-grant4, plus the existing multi-step subtitle-adoption fixture. All target the same published bytes. See the external subtitle-busy-report.md for exact run receipts, fixture-control corrections and historical candidates.
+Focused95/95 and full 3075/3075 passed. Final native groups passed: busy 13, ownership 29, accepted-reload 4, burn-readiness/changed-grant 4, plus the existing multi-step subtitle-adoption fixture. All target the same published bytes. See the external subtitle-busy-report.md for exact run receipts, fixture-control corrections and historical candidates.
 
-Ruling: server replacement commits before response and may close/revoke the predecessor (official playback_v3.go5415–5494,3288–3338,4457–4490). Track-change can change file on a terminal refusal (planReplanV3 and replanAllowsAlternateFileV3). Preserve the valid new server revision and its existing recovery; do not invent rollback/lease guarantees. Cross-file busy leaves actual native captions Off with actionable retry guidance and no false preference success. Same-file carry is strictly scoped and consumed once.
+Ruling: server replacement commits before response and may close/revoke the predecessor (official playback_v3.go:5415–5494,3288–3338,4457–4490). Track-change can change file on a terminal refusal (planReplanV3 and replanAllowsAlternateFileV3). Preserve the valid new server revision and its existing recovery; do not invent rollback/lease guarantees. Cross-file busy leaves actual native captions Off with actionable retry guidance and no false preference success. Same-file carry is strictly scoped and consumed once.
 
-The controlled newer-choice cross-file regression failed with invalid-index recovery and old-file preference1. ReplanRecordedSubtitleSelectionAsync submits the existing mapped intent without replacing its original source identity; the corrected path requests0→8 directly and persists only applied8. A Core regression also verifies that submitting an already recorded choice preserves its original exact variant on return from a reordered version.
+The controlled newer-choice cross-file regression failed with invalid-index recovery and old-file preference 1. ReplanRecordedSubtitleSelectionAsync submits the existing mapped intent without replacing its original source identity; the corrected path requests 0→8 directly and persists only applied 8. A Core regression also verifies that submitting an already recorded choice preserves its original exact variant on return from a reordered version.
 
 Fixture controls now release held replacement media before awaiting application/persistence completion. The retired bitmap case issues newer Off before awaiting the retired task and asserts only applied Off persists; the old bitmap is absent from the replacement inventory. HeldContinuation preserves its synchronization context through the added preflight await, so the accepted-preference race remains deterministic.
 
-Upstream drift observed after the bf53b65450244751013a2965b39da4111d9a0f72 playback pass:90f88f2d6076daefb8b5ae77893a41e9de6e20d9, calendar changes; playback/subtitle contracts unchanged per preserved root refresh receipt. Original playback references stay pinned.
+Upstream drift observed after the bf53b65450244751013a2965b39da4111d9a0f72 playback pass: 90f88f2d6076daefb8b5ae77893a41e9de6e20d9, calendar changes; playback/subtitle contracts unchanged per preserved root refresh receipt. Original playback references stay pinned.
 
-Independent Standards/Spec review and reconciliation with the identity source that actually reaches Beta remain parent/pipeline gates. Assigned identity refs803cf6ab2f9ad94bd2ea4956fe59f50a73db395d/31abdab were reviewed read-only; observed pipeline head09572257348eb6237eca6e78e0fe48894f1c6683 is not imported. This branch is independently verified on original Beta6d3ac20, not a combined identity/busy readiness claim.
+Independent Standards/Spec review and reconciliation with the identity source that actually reaches Beta remain parent/pipeline gates. Assigned identity refs 803cf6ab2f9ad94bd2ea4956fe59f50a73db395d/31abdab were reviewed read-only; observed pipeline head 09572257348eb6237eca6e78e0fe48894f1c6683 is not imported. This branch is independently verified on original Beta 6d3ac20, not a combined identity/busy readiness claim.
