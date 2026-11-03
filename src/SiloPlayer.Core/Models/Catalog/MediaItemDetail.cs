@@ -16,6 +16,16 @@ public class MediaItemDetail
     public int? PlaySeasonNumber { get; set; }
     [JsonIgnore]
     public bool HasAuthoritativePlayTarget { get; private set; }
+
+    // A target from a previous parent is neither a current target nor an
+    // authoritative null. Allow legacy resolution to establish a new action.
+    public void ResetPlayTarget()
+    {
+        _playContentId = null;
+        PlaySeasonNumber = null;
+        HasAuthoritativePlayTarget = false;
+    }
+
     public string Type { get; set; } = "";
     public string Status { get; set; } = "";
     public string Title { get; set; } = "";

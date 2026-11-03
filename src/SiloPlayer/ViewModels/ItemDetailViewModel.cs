@@ -308,7 +308,11 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (!viewerOnlyLeaf)
                 {
                     if (refreshed.HasAuthoritativeSeriesId && item.SeriesId != refreshed.SeriesId)
-                    { item.SeriesId = refreshed.SeriesId; itemChanged = true; }
+                    {
+                        item.SeriesId = refreshed.SeriesId;
+                        item.ResetPlayTarget();
+                        itemChanged = true;
+                    }
                     if (refreshed.SeriesTitle != null && item.SeriesTitle != refreshed.SeriesTitle)
                     { item.SeriesTitle = refreshed.SeriesTitle; itemChanged = true; }
                     // Keep aggregate feedback and later local watched deltas on the
@@ -1185,6 +1189,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 Interlocked.Increment(ref _localStateGeneration);
                 item.SeriesId = fresh.SeriesId;
+                item.ResetPlayTarget();
             }
             // Omitted legacy identity fields must not erase the mounted breadcrumb
             // or numbering. Explicit zero/false values are still supplied metadata.

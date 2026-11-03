@@ -1095,6 +1095,50 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("series", true)]
+    [InlineData("season", true)]
+    [InlineData("series", false)]
+    [InlineData("season", false)]
+    public async Task ParentRemapWithoutAPlayTargetDiscardsThePreviousParentsEpisode(string type, bool afterMatch)
+    {
+        using var scope = new Scope(type);
+        var mounted = scope.Vm.Item!;
+        mounted.SeriesId = "old-series";
+        mounted.PlayContentId = "old-target";
+        mounted.PlaySeasonNumber = 9;
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
+        {
+            // Legacy response deliberately omits play_content_id.
+            ContentId = mounted.ContentId, Type = type, SeriesId = "matched-series",
+            UserData = new() { WatchedCount = 2, UnplayedCount = 2 }
+        });
+
+        if (afterMatch) await scope.Vm.ReloadAfterMatchAsync(mounted.ContentId).WaitAsync(TimeSpan.FromSeconds(5));
+        else await scope.Vm.RefreshMediaStateAsync(scope.Message(mounted.ContentId)).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Equal("matched-series", mounted.SeriesId);
+        Assert.Null(mounted.PlayContentId);
+        Assert.Null(mounted.PlaySeasonNumber);
+        Assert.False(mounted.HasAuthoritativePlayTarget);
+        Assert.Null(SeriesPrimaryActionResolver.ResolveDetail(mounted).ContentId);
+        Assert.Null(scope.Vm.MetadataRefreshErrorMessage);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
+
+        // A later explicit target still restores server authority normally.
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
+        {
+            ContentId = mounted.ContentId, Type = type, SeriesId = "matched-series",
+            PlayContentId = "matched-episode", PlaySeasonNumber = 2,
+            UserData = new() { WatchedCount = 2, UnplayedCount = 2 }
+        });
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(mounted.ContentId)).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(mounted.HasAuthoritativePlayTarget);
+        Assert.Equal("matched-episode", mounted.PlayContentId);
+        Assert.Equal(2, mounted.PlaySeasonNumber);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RetainedSweepAdoptsParentIdentityAndPreservesItWhenLegacyResponsesOmitIt(bool clearParent)
