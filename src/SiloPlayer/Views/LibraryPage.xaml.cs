@@ -296,6 +296,7 @@ public sealed partial class LibraryPage : Page,
     {
         base.OnNavigatedTo(e);
         _isNavigated = true;
+        AttachGroupedLibraryEvents();
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
@@ -494,6 +495,7 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        DetachGroupedLibraryEvents();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         DetachRecommendedRealtimeEvents();
@@ -586,7 +588,7 @@ public sealed partial class LibraryPage : Page,
     {
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+            DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(); });
             return;
         }
 
@@ -603,7 +605,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+        DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(); });
     }
 
     private void QueueRecommendedRefresh()
@@ -663,7 +665,8 @@ public sealed partial class LibraryPage : Page,
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated) return;
+            if (!_isNavigated || (message.Context is {} owner && !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(owner))) return;
+            if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.ItemMetadataRefreshed) QueueGroupedCatalogRefresh();
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item => message.Kind switch
             {
                 MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
@@ -681,6 +684,7 @@ public sealed partial class LibraryPage : Page,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        _ = RefreshGroupedAfterPlaybackAsync(message);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_isNavigated) return;
@@ -1575,7 +1579,9 @@ public sealed partial class LibraryPage : Page,
             if (!_isNavigated || _pendingLibraryOffset != offset) return;
             _pendingLibraryOffset = null;
             LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true);
-            UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+            // ChangeView may settle asynchronously even with animation disabled.
+            // The requested offset is already published; ViewChanged supplies the
+            // accepted position. Reading the old position here loses a final-letter jump.
         });
     }
 

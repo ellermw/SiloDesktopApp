@@ -26,6 +26,10 @@ public partial class LibraryViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly HashSet<int> _loadingPages = [];
     private readonly Dictionary<int, CatalogResponse> _pageResponses = [];
+    private string? _catalogGroup;
+    private string? _catalogLibraryScope;
+    private Task<bool>? _groupingTask;
+    public bool IsGroupedCatalog => _catalogGroup == "box_set";
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
@@ -309,7 +313,7 @@ public partial class LibraryViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadMoreAsync()
     {
-        if (!HasMore || Library == null || TotalCount <= 0) return;
+        if (!HasMore || Library == null || TotalCount <= 0 || !await EnsureGroupingAsync()) return;
 
         var pageCount = (TotalCount + PageSize - 1) / PageSize;
         for (int page = 0; page < pageCount; page++)
@@ -373,7 +377,7 @@ public partial class LibraryViewModel : ObservableObject
         int startIndex, int endIndex, bool forward, CancellationToken ct = default)
     {
         if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex
-            || _catalogContext != _catalogApi.CaptureContext())
+            || !await EnsureGroupingAsync() || _catalogContext != _catalogApi.CaptureContext())
             return [];
 
         var screen = Math.Clamp(endIndex - startIndex + 1, 1, 100);
@@ -456,7 +460,64 @@ public partial class LibraryViewModel : ObservableObject
         return changed;
     }
 
-    public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
+    private static string LibraryGroupingScope(Library? library) => library is null ? "none"
+        : $"{library.Id}:{library.Type}:{library.Enabled}:{library.BoxSetsEnabled}";
+
+    partial void OnLibraryChanged(Library? oldValue, Library? newValue)
+    {
+        if (oldValue is not null && LibraryGroupingScope(oldValue) != LibraryGroupingScope(newValue))
+        {
+            var extent = TotalCount;
+            StartNewCatalogQuery();
+            // Keep a provisional viewport extent while replacing every cached card/cursor.
+            // The new scope's catalog count will establish the authoritative total.
+            TotalCount = extent; Items.Reset(extent);
+        }
+    }
+
+    private Task<bool> EnsureGroupingAsync()
+    {
+        if (_catalogContext is null && _catalogLibraryScope is null)
+        {
+            _catalogContext = _catalogApi.CaptureContext(); _catalogLibraryScope = LibraryGroupingScope(Library);
+        }
+        else if (_catalogContext != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryGroupingScope(Library))
+            StartNewCatalogQuery();
+        return _groupingTask ??= ResolveGroupingAsync(Library, _queryVersion, _catalogQueryCts.Token);
+    }
+
+    private async Task<bool> ResolveGroupingAsync(Library? library, int version, CancellationToken ct)
+    {
+        try
+        {
+            var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "mixed" };
+            var supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
+            if (ct.IsCancellationRequested || version != _queryVersion || _catalogContext != _catalogApi.CaptureContext()
+                || _catalogLibraryScope != LibraryGroupingScope(Library)) return false;
+            _catalogGroup = supported ? "box_set" : null;
+            return true;
+        }
+        catch (OperationCanceledException) { return false; }
+    }
+
+    public async Task RefreshGroupedCatalogAsync()
+    {
+        if (Library is null || !await EnsureGroupingAsync() || !IsGroupedCatalog) return;
+        var start = Math.Max(0, WindowStartIndex);
+        var extent = TotalCount;
+        StartNewCatalogQuery(); TotalCount = extent; Items.Reset(extent);
+        var cards = LoadWindowAsync(start, PageSize, force: true);
+        _ = EnsureLetterIndexAsync();
+        await cards;
+    }
+
+    public async Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
+    {
+        if (Library is null || !await EnsureGroupingAsync()) return;
+        await LoadPreparedWindowAsync(startIndex, itemCount, force);
+    }
+
+    private Task LoadPreparedWindowAsync(int startIndex, int itemCount, bool force = false)
     {
         if (Library == null || itemCount <= 0) return Task.CompletedTask;
         var context = _catalogApi.CaptureContext();
@@ -645,6 +706,7 @@ public partial class LibraryViewModel : ObservableObject
     private int StartNewCatalogQuery()
     {
         ResetLetterIndex();
+        _catalogGroup = null; _groupingTask = null; _catalogLibraryScope = LibraryGroupingScope(Library);
         _catalogContext = _catalogApi.CaptureContext();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -674,6 +736,7 @@ public partial class LibraryViewModel : ObservableObject
 
     public void CancelCatalogLoads()
     {
+        _groupingTask = null;
         ResetLetterIndex();
         _loadedFiltersLibraryId = null;
         CancelWindowLoad();
@@ -695,6 +758,7 @@ public partial class LibraryViewModel : ObservableObject
     /// </summary>
     public void SuspendCatalogLoads()
     {
+        _groupingTask = null;
         ResetLetterIndex();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -859,7 +923,7 @@ public partial class LibraryViewModel : ObservableObject
         var version = _queryVersion;
         var queryKey = System.Text.Json.JsonSerializer.Serialize(new
         {
-            library = Library!.Id, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
+            library = Library!.Id, group = _catalogGroup, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
             SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution, SelectedAudioLanguage,
             SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
             groups = BuildAdvancedGroups(), AdvancedRulesMatch,
@@ -900,7 +964,7 @@ public partial class LibraryViewModel : ObservableObject
             includeTotal: includeTotal,
             snapshot: snapshot,
             ct: ct,
-            nextCursor: nextCursor);
+            nextCursor: nextCursor, group: _catalogGroup);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -910,7 +974,7 @@ public partial class LibraryViewModel : ObservableObject
             throw;
         }
         ct.ThrowIfCancellationRequested();
-        if (version != _queryVersion || context != _catalogApi.CaptureContext())
+        if (version != _queryVersion || context != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryGroupingScope(Library))
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
         SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_queries.txt",
             $"action={SiloPlayer.Core.Services.LocalLog.CurrentOperationId} start={startIndex} limit={CatalogWindowPageSize} query_version={version} read_generation={context.RequestContextGeneration} query_fingerprint={queryFingerprint} input_cursor={cursorFingerprint} window_cursor={Fingerprint(response.Snapshot)} next_cursor={Fingerprint(response.Page?.NextCursor)} items={response.Items.Count} totals={includeTotal}");

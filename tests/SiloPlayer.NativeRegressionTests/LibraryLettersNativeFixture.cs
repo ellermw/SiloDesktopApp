@@ -15,11 +15,11 @@ using SiloPlayer.Views;
 
 internal static class LibraryLettersNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent, Window window)
+    internal static async Task RunAsync(StackPanel parent, Window window, bool grouped = false)
     {
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = (IServiceProvider)field.GetValue(null)!;
-        using var wire = new Wire(); using var http = new HttpClient(wire);
+        using var wire = new Wire { Grouped = grouped }; using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://library-letters.invalid");
         using var auth = new AuthService(client, new AuthApi(client));
         auth.SetCurrentUser(new() { Id = "fixture", Role = "user" }); auth.SelectProfile("fixture");
@@ -39,12 +39,13 @@ internal static class LibraryLettersNativeFixture
         Frame? frame = null;
         try
         {
-            foreach (var (type, width, height) in new[] { ("movie", 1280, 1000), ("audiobook", 960, 550) })
+            foreach (var (type, width, height) in (grouped ? new[] { ("movie", 1280, 1000), ("mixed", 960, 550) } : new[] { ("movie", 1280, 1000), ("audiobook", 960, 550) }))
             {
+                wire.Grouped = grouped; wire.CurrentType = type; wire.CurrentLibraryId = wire.LibraryId;
                 wire.LetterIndexGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 window.AppWindow.ResizeClient(new(width, height));
                 frame = new Frame { Width = width, Height = height }; parent.Children.Add(frame); navigation.Frame = frame;
-                frame.Navigate(typeof(LibraryPage), new Library { Id = wire.LibraryId++, Name = "Fixture library", Type = type });
+                frame.Navigate(typeof(LibraryPage), new Library { Id = wire.LibraryId++, Name = "Fixture library", Type = type, BoxSetsEnabled = grouped });
                 var page = (LibraryPage)frame.Content;
                 await Until(() => page.IsLoaded && page.ViewModel.Library is not null);
                 ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("LibraryTab")).GetPattern(PatternInterface.Invoke)).Invoke();
@@ -77,14 +78,66 @@ internal static class LibraryLettersNativeFixture
                 await Until(() => scroll.VerticalOffset > 10000 && page.ViewModel.GetWindowItem(600) is not null);
                 if (!wire.Seeks.Contains(600) || wire.InvalidCursors != 0 || page.ViewModel.ErrorMessage is not null)
                     throw new InvalidOperationException("Letter activation did not seek to its exact catalog position.");
+                if (grouped)
+                {
+                    if (wire.MissingGroup != 0) throw new InvalidOperationException("Grouped browse/index omitted group=box_set.");
+                    await Until(() => Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().Any());
+                    var aggregate = Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().First();
+                    if (!aggregate.Focus(FocusState.Keyboard)) throw new InvalidOperationException("Grouped library aggregate is not keyboard accessible.");
+                    if (Descendants(page).OfType<SiloPlayer.Controls.LibraryGridCard>().Count() > 200) throw new InvalidOperationException("Grouped virtual slots grew without bound.");
+                    wire.PlayedCount = 2;
+                    page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedMarked, "member", context: client.CaptureContext()));
+                    await Until(() => page.ViewModel.GetWindowItem(600)?.BoxSet?.PlayedCount == 2);
+                    var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    page.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("member", 100, 100, true) { Persisted = persisted.Task });
+                    wire.PlayedCount = 3; persisted.TrySetResult();
+                    await Until(() => page.ViewModel.GetWindowItem(600)?.BoxSet?.PlayedCount == 3);
+                    page.ViewModel.SelectedGenre = "Drama";
+                    var orderControl = (ComboBox)page.FindName("OrderComboBox"); orderControl.SelectedIndex = 0;
+                    await Until(() => page.ViewModel.SelectedOrder == "desc" && !page.ViewModel.IsLoading && page.ViewModel.LetterIndex is not null);
+                    await page.ViewModel.EnsureLetterIndexAsync(); Letter("M").Focus(FocusState.Keyboard);
+                    await InvokeLetterAsync(Letter("M"), page.ViewModel);
+                    await Until(() => scroll.VerticalOffset > 10000 && page.ViewModel.GetWindowItem(600) is not null && !page.ViewModel.IsLetterJumpInProgress);
+                    if (wire.LastOrder != "-title" || wire.LastGenre != "Drama" || wire.LastIndexOrder != "desc") throw new InvalidOperationException("Grouped filtered reverse jump changed query scope.");
+                    try { await Until(() => ((Queue<int>)typeof(LibraryPage).GetField("_pendingCardBinds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).Count == 0 &&
+                        Descendants(page).OfType<SiloPlayer.Controls.LibraryGridCard>().All(card => card.MediaItem is null || card.Tag is not int index || ReferenceEquals(card.MediaItem, page.ViewModel.GetWindowItem(index))) &&
+                        Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().Any() &&
+                        Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().All(card => card.Summary?.PlayedCount == 3) &&
+                        Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("M")) == "Current letter"); }
+                    catch
+                    {
+                        var pending = (Queue<int>)typeof(LibraryPage).GetField("_pendingCardBinds", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+                        var stale = Descendants(page).OfType<SiloPlayer.Controls.LibraryGridCard>().Count(card => card.MediaItem is not null && card.Tag is int index && !ReferenceEquals(card.MediaItem, page.ViewModel.GetWindowItem(index)));
+                        var counts = string.Join(",", Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().Select(card => card.Summary?.PlayedCount));
+                        Program.Log($"TRACE settled width={width} pending={pending.Count} stale={stale} counts={counts} M={Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("M"))} offset={scroll.VerticalOffset} internal={typeof(LibraryPage).GetField("_libraryVerticalOffset", BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(page)} row={typeof(LibraryPage).GetField("_currentFirstRow", BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(page)} window={page.ViewModel.WindowStartIndex}..{page.ViewModel.WindowEndIndex}");
+                        await GroupedLibraryCardsNativeFixture.CaptureAsync(page, $"settled-diagnostic-{width}.png");
+                        throw;
+                    }
+                    await GroupedLibraryCardsNativeFixture.CaptureAsync(page, $"grouped-library-{width}x{height}.png");
+                    orderControl.SelectedIndex = 1;
+                    await Until(() => page.ViewModel.SelectedOrder == "asc" && !page.ViewModel.IsLoading && page.ViewModel.LetterIndex is not null);
+                    await page.ViewModel.EnsureLetterIndexAsync(); Letter("M").Focus(FocusState.Keyboard);
+                    await InvokeLetterAsync(Letter("M"), page.ViewModel);
+                    await Until(() => scroll.VerticalOffset > 10000 && page.ViewModel.GetWindowItem(600) is not null && !page.ViewModel.IsLetterJumpInProgress);
+                    Program.Log("PASS: grouped far-letter jump uses aggregate native cards, exact scoped requests, reverse filters, watched/final-write refresh and keyboard focus.");
+                }
                 var layout = typeof(LibraryPage).GetMethod("GetGridLayout", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
                 var columns = (int)layout.GetType().GetProperty("Columns")!.GetValue(layout)!;
                 var rowHeight = (double)layout.GetType().GetProperty("RowHeight")!.GetValue(layout)!;
                 scroll.ChangeView(null, (900 / columns) * rowHeight, null, true);
                 await Until(() => Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("A")) == "Current letter");
                 ((IInvokeProvider)new ButtonAutomationPeer(Letter("Z")).GetPattern(PatternInterface.Invoke)).Invoke();
-                await Until(() => Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 2 &&
-                    Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("Z")) == "Current letter");
+                try
+                {
+                    await Until(() => Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 2 &&
+                        Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("Z")) == "Current letter");
+                }
+                catch
+                {
+                    Program.Log($"TRACE bottom group={grouped} offset={scroll.VerticalOffset} extent={scroll.ScrollableHeight} viewport={scroll.ViewportHeight} Z={Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("Z"))} total={page.ViewModel.TotalCount} window={page.ViewModel.WindowStartIndex}..{page.ViewModel.WindowEndIndex} jump={page.ViewModel.IsLetterJumpInProgress} error={page.ViewModel.ErrorMessage}");
+                    await GroupedLibraryCardsNativeFixture.CaptureAsync(page, $"bottom-diagnostic-{grouped}-{width}.png");
+                    throw;
+                }
                 await Task.Delay(150);
                 if (Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("Z")) != "Current letter")
                     throw new InvalidOperationException("The final letter was lost at the clamped bottom row.");
@@ -142,6 +195,13 @@ internal static class LibraryLettersNativeFixture
                 if (Math.Abs(scroll.ViewportWidth - beforeFailureWidth - reservedWidth) > .1)
                     throw new InvalidOperationException("A failed index left an empty gutter instead of restoring the full viewport.");
                 wire.FailIndex = false;
+                if (grouped)
+                {
+                    wire.Grouped = false; catalog.InvalidateLibraryCache();
+                    await Until(() => page.ViewModel.Library is { BoxSetsEnabled: false } && page.ViewModel.GetWindowItem(0)?.Type == "movie");
+                    await Until(() => !Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().Any());
+                    Program.Log("PASS: library disable retires grouped windows/cards/index and reloads ordinary catalog.");
+                }
                 ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("RecommendedTab")).GetPattern(PatternInterface.Invoke)).Invoke();
                 await Until(() => rail.Visibility == Visibility.Collapsed);
                 Program.Log($"PASS: actual {type} Library alphabet rail, exact distant jump, bottom selection, availability, accessible counts, visibility, failed-index gutter recovery and bounds at {width}x{height}.");
@@ -155,30 +215,58 @@ internal static class LibraryLettersNativeFixture
             await Task.Delay(150); navigation.Frame = null; field.SetValue(null, previous);
         }
     }
+    private static async Task InvokeLetterAsync(Button button, LibraryViewModel model)
+    {
+        var jump = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Jumped(int _) => jump.TrySetResult();
+        model.LetterJumpRequested += Jumped;
+        try
+        {
+            ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+            await jump.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            // The page applies that model event on its dispatcher, then WinUI settles ChangeView.
+            await Task.Delay(150);
+        }
+        finally { model.LetterJumpRequested -= Jumped; }
+    }
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    { for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++) { var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i); yield return child; foreach (var next in Descendants(child)) yield return next; } }
     private static async Task Until(Func<bool> ready)
     { for (var i = 0; i < 300; i++) { if (ready()) return; await Task.Delay(20); } throw new TimeoutException("Library letter native state did not settle."); }
     private sealed class Services(IServiceProvider fallback, Dictionary<Type, object> values, Func<LibraryViewModel> model) : IServiceProvider
     { public object? GetService(Type type) => type == typeof(LibraryViewModel) ? model() : values.TryGetValue(type, out var value) ? value : fallback.GetService(type); }
     private sealed class Wire : HttpMessageHandler
     {
-        internal int InvalidCursors, LibraryId = 11;
+        internal int InvalidCursors, MissingGroup, LibraryId = 11;
+        internal bool Grouped;
+        internal int CurrentLibraryId, PlayedCount = 1;
+        internal string CurrentType = "movie";
+        internal string? LastOrder, LastGenre, LastIndexOrder;
         internal bool FailIndex;
         internal TaskCompletionSource? LetterIndexGate;
         internal List<int> Seeks { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
-            if (path == "/api/v2/catalog/search/capabilities") return Reply(new { letter_index = true });
-            if (path == "/api/v2/catalog/letters") return CompleteLetterIndexAsync(Reply(new
+            if (path == "/api/v2/user/libraries") return Reply(new { items = new[] { new { id = CurrentLibraryId, type = CurrentType, enabled = true, box_sets_enabled = Grouped } } });
+            if (path == "/api/v2/catalog/search/capabilities") return Reply(new { letter_index = true, box_sets = Grouped });
+            if (path == "/api/v2/catalog/letters")
+            {
+                if (Grouped) { using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync(ct).GetAwaiter().GetResult()); LastIndexOrder = body.RootElement.GetProperty("order").GetString(); }
+                if (Grouped && !request.Content!.ReadAsStringAsync(ct).GetAwaiter().GetResult().Contains("\"group\":\"box_set\"")) MissingGroup++;
+                return CompleteLetterIndexAsync(Reply(new
             {
                 total = 1000,
                 letters = new[] { new { letter = "#", count = 20, position = 0 }, new { letter = "A", count = 679, position = 20 }, new { letter = "M", count = 300, position = 600 }, new { letter = "Z", count = 1, position = 999 } },
                 runs = new[] { new { letter = "#", position = 0 }, new { letter = "A", position = 20 }, new { letter = "M", position = 600 }, new { letter = "A", position = 900 }, new { letter = "Z", position = 999 } },
             }), ct);
+            }
             if (path == "/api/v2/catalog")
             {
                 var query = request.RequestUri.Query.TrimStart('?').Split('&').Select(pair => pair.Split('=', 2))
                     .ToDictionary(pair => Uri.UnescapeDataString(pair[0]), pair => Uri.UnescapeDataString(pair[1]));
+                LastOrder = query.GetValueOrDefault("sort"); LastGenre = query.GetValueOrDefault("genre");
+                if (Grouped && query.GetValueOrDefault("group") != "box_set") MissingGroup++;
                 var limit = int.Parse(query["limit"]); var offset = query.TryGetValue("seek", out var seek) ? int.Parse(seek) : 0;
                 if (query.ContainsKey("seek")) Seeks.Add(offset);
                 if (query.TryGetValue("cursor", out var cursor))
@@ -192,7 +280,7 @@ internal static class LibraryLettersNativeFixture
                     if (!query.ContainsKey("seek")) offset = int.Parse(scope[2]);
                 }
                 var count = Math.Min(limit, 1000 - offset);
-                return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = "movie" }),
+                return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = Grouped && index % 2 == 0 ? "box_set" : "movie", box_set = Grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
                     total = 1000, total_exact = !query.ContainsKey("skip_total"), window_cursor = query["library_id"] + ":" + limit + ":0",
                     page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) } });
             }

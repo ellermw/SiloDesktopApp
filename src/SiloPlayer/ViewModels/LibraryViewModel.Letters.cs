@@ -22,25 +22,26 @@ public partial class LibraryViewModel
     private string LetterQueryKey() => JsonSerializer.Serialize(new
     {
         _queryVersion, context = _catalogApi.CaptureContext(), language = _catalogApi.FilterCacheGeneration,
-        library = Library?.Id, SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
+        library = Library?.Id, grouping = LibraryGroupingScope(Library), group = _catalogGroup, SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
         SelectedGenre, SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution,
         SelectedAudioLanguage, SelectedYearMin, SelectedYearMax,
         rules = BuildExtraRules(), groups = BuildAdvancedGroups(), AdvancedRulesMatch,
     });
 
-    public Task EnsureLetterIndexAsync()
+    public async Task EnsureLetterIndexAsync()
     {
+        if (Library is not null && !await EnsureGroupingAsync()) return;
         if (Library is null || SelectedSort != "title")
         {
             ResetLetterIndex();
-            return Task.CompletedTask;
+            return;
         }
         var key = LetterQueryKey();
-        if (_letterIndexKey == key) return _letterIndexTask ?? Task.CompletedTask;
+        if (_letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
         LetterIndex = null;
         _letterIndexKey = key;
         IsLetterIndexLoading = true;
-        return _letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token);
+        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token));
     }
 
     private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
@@ -63,7 +64,7 @@ public partial class LibraryViewModel
                 yearMin: UseAdvancedRules ? null : SelectedYearMin,
                 yearMax: UseAdvancedRules ? null : SelectedYearMax, type: type,
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
-                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct);
+                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct, group: _catalogGroup);
             if (ct.IsCancellationRequested || key != LetterQueryKey()) return;
             LetterIndex = index;
             if (index is not null)
