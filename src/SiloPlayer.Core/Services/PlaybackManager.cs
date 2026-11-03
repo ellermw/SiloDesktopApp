@@ -204,7 +204,7 @@ public partial class PlaybackManager : IDisposable
         _bandwidthCapKbpsV3 = request.BandwidthCapKbps;
         _sessionId = response.SessionId;
         CurrentSession = response;
-        AcknowledgeSubtitleIntent(subtitleRevision);
+        AcknowledgeGrantedSubtitleIntent(subtitleRevision);
         AcknowledgeAudioIntent(audioRevision);
         _lastReportedPosition = Math.Max(0, response.Position);
         _isPaused = response.IsPaused;
@@ -612,7 +612,7 @@ public partial class PlaybackManager : IDisposable
         _qualityPreferenceV3 = qualityPreference;
         _sessionId = response.SessionId;
         CurrentSession = response;
-        AcknowledgeSubtitleIntent(subtitleRevision);
+        AcknowledgeGrantedSubtitleIntent(subtitleRevision);
         AcknowledgeAudioIntent(audioRevision);
         _lastReportedPosition = Math.Max(0, response.Position);
         ApplyStreamUrl(response);
@@ -644,7 +644,7 @@ public partial class PlaybackManager : IDisposable
         CancellationToken ct = default)
     {
         var previousSessionId = _sessionId;
-        var subtitleIndex = ReplacementSubtitleIndex(fileId);
+        CaptureReplacementSubtitleIntent();
         audioTrackIndex ??= ReplacementAudioIndex(fileId);
         var response = await StartSessionAsync(
             fileId,
@@ -654,7 +654,6 @@ public partial class PlaybackManager : IDisposable
             forceDirectAudioSelection,
             qualityPreference: qualityPreference,
             ct: ct,
-            subtitleTrackIndex: subtitleIndex,
             preserveTrackIntent: true).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(previousSessionId) &&
@@ -664,6 +663,14 @@ public partial class PlaybackManager : IDisposable
                 previousSessionId,
                 Math.Max(0, previousFinalPosition ?? startPosition));
         }
+
+        // Start omission means Auto, not Off. Reconcile any different grant
+        // through the established track_change contract before loading video
+        // (including burned-in subtitles). Only this plan's inventory supplies
+        // positional indices; watch-detail indices never go on the wire here.
+        if (HasPendingSubtitleSelection())
+            response = await ReplanAsync("track_change", response.Position, _qualityPreferenceV3,
+                selectedTracks => { }, failure: null, ct).ConfigureAwait(false);
 
         return response;
     }

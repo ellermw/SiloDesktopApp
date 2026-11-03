@@ -116,7 +116,8 @@ public sealed class PlaybackTrackIntentTests
         Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
         Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
         await scope.Manager.StartReplacementSessionAsync(42, 23);
-        Assert.Equal(1, scope.Wire.Starts[2].GetProperty("subtitle_track_index").GetInt32());
+        Assert.False(scope.Wire.Starts[2].TryGetProperty("subtitle_track_index", out _));
+        Assert.Equal(1, scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
     }
 
@@ -128,7 +129,9 @@ public sealed class PlaybackTrackIntentTests
         scope.Manager.RecordLocalAudioSelection(1);
         await scope.Manager.StartReplacementSessionAsync(44, 14);
         var body = scope.Wire.Starts[1];
-        Assert.Equal(0, body.GetProperty("subtitle_track_index").GetInt32());
+        Assert.False(body.TryGetProperty("subtitle_track_index", out _));
+        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal("spa", scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == scope.Manager.SubtitleSelectionForLoad).Language);
         Assert.Equal(0, body.GetProperty("audio_track_index").GetInt32());
     }
 
@@ -150,7 +153,9 @@ public sealed class PlaybackTrackIntentTests
             new() { Index = 1, Language = matching, Codec = "srt", Title = "Same title" },
         ];
         await scope.Manager.StartReplacementSessionAsync(44, 14);
-        Assert.Equal(1, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
+        Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+        Assert.Equal(1, scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
     }
 
     [Fact]
@@ -160,6 +165,10 @@ public sealed class PlaybackTrackIntentTests
         scope.Manager.RecordLocalSubtitleSelection(null);
         await scope.Manager.StartReplacementSessionAsync(44, 14);
         Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+        var change = Assert.Single(scope.Wire.Replans);
+        Assert.Equal("track_change", change.GetProperty("operation").GetString());
+        Assert.False(change.GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        Assert.Equal("off", scope.Manager.CurrentSession!.SubtitleMode);
         Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
         Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
     }
@@ -206,8 +215,35 @@ public sealed class PlaybackTrackIntentTests
         await scope.Manager.ReplanAudioAsync(1, 13);
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
         await scope.Manager.StartReplacementSessionAsync(44, 14);
-        Assert.Equal(0, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
+        Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
         Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplacementResolvesCombinedIdentityOnlyAfterInventoryIsAccepted(bool omitTrackIds)
+    {
+        using var scope = new Fixture();
+        scope.Wire.OmitTrackIds = omitTrackIds;
+        foreach (var version in scope.Manager.WatchDetail!.Versions.Where(v => v.FileId is 42 or 44))
+            version.SubtitleTracks =
+            [
+                new() { Index = 22, Language = "eng", Codec = "srt", Title = "English" },
+                new() { Language = "spa", Codec = "srt", Title = "Spanish", External = true },
+            ];
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(1); // external=0, embedded=1; stream=22
+        foreach (var file in new[] { 42, 44 })
+        {
+            await scope.Manager.StartReplacementSessionAsync(file, 14);
+            Assert.False(scope.Wire.Starts[^1].TryGetProperty("subtitle_track_index", out _));
+            var subtitle = scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle");
+            Assert.Equal(1, subtitle.GetProperty("index").GetInt32());
+            Assert.Equal(omitTrackIds ? "" : $"sub:{file}:1", subtitle.GetProperty("id").GetString());
+            Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+            Assert.Equal("eng", scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1).Language);
+        }
     }
 
     private sealed class Fixture : IDisposable
@@ -225,6 +261,7 @@ public sealed class PlaybackTrackIntentTests
                 ContentId = "episode", SeriesId = "series",
                 Versions = [Version(42, false, false), Version(43, false, true), Version(44, true, false)],
             });
+            Wire.Versions = Manager.WatchDetail!.Versions;
         }
         public void Dispose() { Manager.Dispose(); _auth.Dispose(); }
     }
@@ -247,6 +284,7 @@ public sealed class PlaybackTrackIntentTests
         public bool OmitTrackIds;
         public int InitialSubtitleSelection;
         public string? UnlabelledSubtitleLanguage;
+        public List<FileVersion>? Versions;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _file = 42, _selected = 0;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -260,7 +298,7 @@ public sealed class PlaybackTrackIntentTests
             if (path.EndsWith("/start"))
             {
                 Starts.Add(body); _file = int.Parse(body.GetProperty("file_id").GetString()!);
-                _selected = body.TryGetProperty("subtitle_track_index", out var startSub) ? startSub.GetInt32() : Starts.Count == 1 ? InitialSubtitleSelection : -1;
+                _selected = body.TryGetProperty("subtitle_track_index", out var startSub) ? startSub.GetInt32() : InitialSubtitleSelection;
             }
             else
             {
@@ -274,14 +312,15 @@ public sealed class PlaybackTrackIntentTests
                 else if (body.GetProperty("operation").GetString() == "track_change") _selected = -1;
                 if (BlockNext) { BlockNext = false; Entered.SetResult(); await Release.Task.WaitAsync(ct); }
             }
-            var version = Version(_file, _file == 44, _file == 43);
+            var version = Versions?.FirstOrDefault(v => v.FileId == _file) ?? Version(_file, _file == 44, _file == 43);
             if (UnlabelledSubtitleLanguage is { } language)
                 foreach (var track in version.SubtitleTracks!.Where(t => t.Language == "spa"))
                 {
                     track.Language = language;
                     track.Title = null;
                 }
-            var inventory = (version.SubtitleTracks ?? []).Select(t => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, label = t.Title, source = "embedded", delivery = "native" })
+            var inventory = (version.SubtitleTracks ?? []).OrderByDescending(t => t.External == true)
+                .Select((t, index) => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{index}", combined_index = (int?)index, language = t.Language, codec = t.Codec, label = t.Title, source = t.External == true ? "external" : "embedded", delivery = "native" })
                 .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : "sub:42:2", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
             var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}", index = _selected };
             return Json(JsonSerializer.Serialize(new

@@ -70,6 +70,22 @@ public partial class PlaybackManager
         }
     }
     private long CaptureSubtitleRevision() { lock (_trackIntentGate) return _subtitleRevision; }
+    private void AcknowledgeGrantedSubtitleIntent(long revision)
+    {
+        lock (_trackIntentGate)
+        {
+            if (!_hasViewerSubtitle)
+            {
+                AcknowledgeSubtitleIntent(revision);
+                return;
+            }
+            var desired = MatchCurrentSubtitle();
+            var granted = GrantedSubtitleSelection();
+            if (ReferenceEquals(desired, granted) &&
+                (desired != null || string.Equals(CurrentSession?.SubtitleMode, "off", StringComparison.OrdinalIgnoreCase)))
+                AcknowledgeSubtitleIntent(revision);
+        }
+    }
     private bool HasPendingSubtitleSelection()
     {
         lock (_trackIntentGate)
@@ -130,7 +146,7 @@ public partial class PlaybackManager
                     CurrentSession?.MediaFileId == _viewerSubtitleFile && t.Index == _viewerSubtitle.Index)
                 .ThenByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).FirstOrDefault();
     }
-    private int? ReplacementSubtitleIndex(int fileId)
+    private void CaptureReplacementSubtitleIntent()
     {
         lock (_trackIntentGate)
         {
@@ -141,18 +157,10 @@ public partial class PlaybackManager
                 _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
                 _hasViewerSubtitle = true;
             }
-            if (_viewerSubtitle == null) return null;
-            if (fileId == _viewerSubtitleFile)
-                return CurrentSession?.MediaFileId == fileId ? MatchCurrentSubtitle()?.Index : _viewerSubtitle.Index;
-            var tracks = WatchDetail?.Versions.FirstOrDefault(v => v.FileId == fileId)?.SubtitleTracks ?? [];
-            return tracks.Select((track, i) => (Track: track, Index: track.Index ?? i))
-                .Where(t => MatchesSubtitleLanguage(t.Track.Language, t.Track.External == true ? "external" : "embedded",
-                    t.Track.Codec, t.Track.Title ?? t.Track.EmbeddedTitle, _viewerSubtitle) &&
-                    (t.Track.Forced == true) == _viewerSubtitle.Forced &&
-                    (t.Track.HearingImpaired == true) == _viewerSubtitle.HearingImpaired)
-                .OrderByDescending(t => SubtitleScore(t.Track.Language, t.Track.External == true ? "external" : "embedded",
-                    t.Track.Codec, t.Track.Title ?? t.Track.EmbeddedTitle, _viewerSubtitle))
-                .Select(t => (int?)t.Index).FirstOrDefault();
+            // A replacement start has no accepted inventory yet. Retain the
+            // identity (including Off), then resolve it against the returned
+            // plan rather than sending a watch-detail stream/list ordinal.
+            ++_subtitleRevision;
         }
     }
     private int? ReplacementAudioIndex(int fileId)

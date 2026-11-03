@@ -147,6 +147,36 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             await Until(() => service.ActiveSubtitleServerIndex == Spanish && NativeSidMatches(service, mpv, Spanish));
             Require(media.SubtitleRequests > 0, "Native player never fetched the served subtitle bytes.");
             Program.Log("PASS: actual PlayerService replans a burned-in DVD subtitle away for Off and for a text track, and the text pick survives a quality reload with a matching native sid.");
+
+            // Pre-play choices must change the composited video plan before
+            // its first load, without saving an automatic/startup preference.
+            await Until(() => Get(service, "_pendingSubtitlePreferenceIndex") == null);
+            foreach (var prePlaySelection in new[] { -1, Spanish })
+            {
+                var initial = await manager.StartSessionAsync(42, subtitleTrackIndex: Dvd);
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                Require(initial.IsSubtitleBurnedIn, "Pre-play fixture did not establish the automatic burn-in plan.");
+                Call(service, "ResolveInitialSubtitleSelection", manager.WatchDetail!, Version(), initial, null, prePlaySelection, null);
+                var reconciled = await (Task<PlaybackStartResponse>)Call(service, "ReconcileInitialSubtitlePlanAsync", initial, CancellationToken.None)!;
+                Require(!reconciled.IsSubtitleBurnedIn && wire.Replans.Count == replans + 1 &&
+                    SelectedSubtitle(wire.Replans[^1]) == prePlaySelection && manager.SubtitleSelectionForLoad == prePlaySelection,
+                    "Pre-play Off/text failed to remove the server-composited subtitle before loading video.");
+                await Loaded(async () =>
+                {
+                    var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", reconciled, Version(), manager.StreamUrl!, 0d, CancellationToken.None)!;
+                    await prepare;
+                    var prepared = prepare.GetType().GetProperty("Result")!.GetValue(prepare)!;
+                    Call(service, "ApplyPreparedTransport", prepared);
+                    Call(service, "BeginMpvLoad", prepared, true);
+                });
+                await Until(() => service.ActiveSubtitleServerIndex == prePlaySelection &&
+                    (prePlaySelection < 0 ? mpv.GetPropertyDouble("sid") <= 0 : NativeSidMatches(service, mpv, Spanish)) &&
+                    Get(service, "_loadedMediaInitCts") == null);
+                Require(wire.PreferenceWrites == writes && mpv.IsPaused,
+                    "Pre-play subtitle reconciliation persisted an automatic choice or resumed paused playback.");
+            }
+            Program.Log("PASS: pre-play Off and text remove an automatic burn-in plan before native loading, execute the requested route and do not save preferences.");
         }
         finally
         {
@@ -249,12 +279,13 @@ internal static class BurnedInSubtitleSwitchNativeFixture
     {
         private int _subtitle = -1;
         public bool FailNextTrackChange;
+        public int PreferenceWrites;
         public List<JsonElement> Replans = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "burn-in.invalid") throw new InvalidOperationException("Burn-in fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
-            if (path.Contains("-prefs/", StringComparison.Ordinal)) return Json("{}");
+            if (path.Contains("-prefs/", StringComparison.Ordinal)) { PreferenceWrites++; return Json("{}"); }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
