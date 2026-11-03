@@ -100,15 +100,16 @@ try
     // These assertions model viewer retries after output. Startup errors before
     // output require a real shell and are covered by the native startup fixture.
     SetField("_transportHasFirstOutput", true);
-    enterTerminal.Invoke(service, [new PlaybackPlanTerminalException("direct_recovery_exhausted", "fixture", true), 687.3, "buffering-stalled", false]);
+    enterTerminal.Invoke(service, [new PlaybackPlanTerminalException("direct_recovery_exhausted", "fixture", true), 687.3, "buffering-stalled", false, null]);
     Require((string)Get(terminalState.GetValue(service)!, "Trigger") == "viewer-retry", "Exhausted direct recovery cannot start a fresh attempt.");
-    enterTerminal.Invoke(service, [new PlaybackPlanTerminalException("transcode_start_failed", "fixture", true), 687.3, "playback-error", false]);
+    enterTerminal.Invoke(service, [new PlaybackPlanTerminalException("transcode_start_failed", "fixture", true), 687.3, "playback-error", false, null]);
     Require((string)Get(terminalState.GetValue(service)!, "Trigger") == "playback-error", "Non-direct retry lost its original replan/quality path.");
     Console.WriteLine("PASS published PlayerService: only exhausted direct recovery starts a fresh attempt; other retry routes are preserved.");
 
     var failure = typeof(PlayerService).GetMethod("HandleMpvFailure", BindingFlags.Instance | BindingFlags.NonPublic)!;
     foreach (var loading in new[] { true, false })
     {
+        typeof(PlayerService).GetMethod("ClearPlaybackTerminalState", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(service, null);
         typeof(PlayerService).GetProperty("State")!.SetValue(service, PlayerState.Expanded);
         typeof(PlayerService).GetProperty("IsAudiobook")!.SetValue(service, true);
         typeof(PlayerService).GetProperty("IsPaused")!.SetValue(service, false);
@@ -116,23 +117,36 @@ try
         SetField("_prematureEofRecoveryActive", false);
         SetField("_consecutiveFileLoadTimeouts", 0);
         failure.Invoke(service, ["fixture direct read failure", true]);
-        Require((bool)GetField("_prematureEofRecoveryActive"), "Direct failure did not begin recovery.");
+        // This fixture deliberately has no native player/current session.
+        // Recovery now exposes that loss as a non-retryable terminal instead
+        // of silently returning with recovery/loading flags left active.
+        for (var i = 0; terminalState.GetValue(service) == null && i < 100; i++)
+            await Task.Delay(20);
+        var unavailable = terminalState.GetValue(service);
+        Require(unavailable != null, "Missing-session recovery did not present a terminal failure.");
+        Require((string)Get(unavailable!, "Trigger") == "direct-transport-error", "Direct failure lost its recovery classification.");
+        Require(!(bool)Get(unavailable!, "CanRetry"), "Missing-session recovery offered an unusable Retry.");
+        Require(!(bool)GetField("_prematureEofRecoveryActive") && !service.IsLoading, "Missing-session failure left recovery/loading active.");
         Require(!service.IsPaused, "Failed audiobook stream was marked completed/paused.");
         Require(service.State == PlayerState.Expanded, "Transport failure closed the listening surface.");
     }
     typeof(PlayerService).GetMethod("FlushLogs", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null);
     var trace = File.ReadAllText(Path.Combine(results, "state_trace.txt"));
-    Require(trace.Contains("Stream recovery skipped (direct-transport-error): player/session unavailable"), "Direct stream failure lost its recovery classification.");
+    var recoveryErrors = File.ReadAllText(Path.Combine(results, "player_recovery_error.txt"));
+    Require(recoveryErrors.Contains("Recovery setup failed (direct-transport-error)") &&
+        recoveryErrors.Contains("The playback session is no longer available"), "Missing-session failure lost its classified error surface.");
     Require(!trace.Contains("Audiobook complete") && !trace.Contains("continuing file"), "Transport failure advanced an audiobook.");
-    Console.WriteLine("PASS published PlayerService: direct transport failures recover during startup and audiobook playback without completing/advancing content.");
+    Console.WriteLine("PASS published PlayerService: missing-session direct failures become non-retryable terminals during startup and audiobook playback without completing/advancing content.");
 
+    typeof(PlayerService).GetMethod("ClearPlaybackTerminalState", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(service, null);
     SetField("_switchingContent", true);
     SetField("_consecutiveFileLoadTimeouts", 1);
     failure.Invoke(service, ["fixture repeated startup transport failure", true]);
     Require((string)Get(terminalState.GetValue(service)!, "Trigger") == "direct-transport-error", "Viewer retry of a startup transport failure could escalate direct play to remux.");
     Require(PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(PlaybackTransportKind.DirectProgressive,
         (string)Get(terminalState.GetValue(service)!, "Trigger")), "Startup terminal retry lost direct recovery policy.");
-    Console.WriteLine("PASS published PlayerService: repeated startup transport failure preserves direct recovery when the viewer retries.");
+    Require(!(bool)Get(terminalState.GetValue(service)!, "CanRetry"), "Repeated startup failure offered Retry without a player/session.");
+    Console.WriteLine("PASS published PlayerService: repeated startup transport failure retains direct recovery classification and disables Retry without a player/session.");
 
     foreach (var closeCode in new[] { 1013, 4001 })
     {

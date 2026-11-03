@@ -18,6 +18,83 @@ internal static class IdleRemuxResumeChecks
         await CheckAsync(results, remote: true, pauseDuringReplan: true);
         await CheckAsync(results, remote: true, pauseDuringReplan: true, toggleDuringReplan: true);
         Console.WriteLine("PASS published PlayerService: actual SiloCast play/pause/toggle preserve held-replan intent and a second idle resume; local/remote canonical reanchor and paused reload clocks survive FileLoaded.");
+        foreach (var delivery in new[] { "server_remux_progressive", "server_remux_hls" })
+        foreach (var paused in new[] { false, true })
+        foreach (var refusal in new[] { "retryable-terminal", "nonretryable-terminal", "transport" })
+            await CheckRefusedSeekAsync(results, delivery, paused, refusal);
+        await CheckRefusedSeekAsync(results, "server_remux_progressive", true, "retryable-terminal", idleResume: true);
+        await CheckRefusedSeekAsync(results, "server_remux_progressive", true, "transport", idleResume: true);
+        Console.WriteLine("PASS published PlayerService: account-limit seek refusals preserve playing/paused remux and HLS sessions; repeated seeks retain the original target without reporting a failed plan; idle remux refusals retain explicit Retry.");
+    }
+
+    private static async Task CheckRefusedSeekAsync(string results, string delivery, bool paused, string refusal, bool idleResume = false)
+    {
+        await using var origin = new WaveOrigin();
+        var conversionLimit = delivery == "server_remux_hls";
+        using var wire = new Wire(origin.Url)
+        {
+            Delivery = delivery,
+            RejectionReason = refusal == "transport"
+                ? conversionLimit ? "too_many_transcodes" : "too_many_streams"
+                : conversionLimit ? "transcode_limit_reached" : "stream_limit_reached",
+            TransportRejection = refusal == "transport",
+            Retryable = refusal != "nonretryable-terminal",
+        };
+        using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://seek-limit.fixture.invalid");
+        using var auth = new AuthService(api, new AuthApi(api), credentialStore: null);
+        using var service = new PlayerService(new PlaybackApi(api), new CatalogApi(api), auth, api,
+            new SettingsService(Path.Combine(results, "seek-limit-" + delivery + paused + refusal)), new SettingsApi(api));
+        var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), auth, api);
+        var session = await manager.StartSessionAsync(42, forceStartPosition: true);
+        var player = new MpvPlayer(); player.Initialize(16, 16);
+        player.SetProperty("ao", "null"); player.SetProperty("video", "no"); player.SetProperty("loop-file", "inf");
+        Field(service, "_mpv", player); Field(service, "_playbackManager", manager);
+        Field(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan(session));
+        Field(service, "_canSeekAnywhere", false); Field(service, "_transportDurationSeconds", (double?)3600d);
+        Field(service, "_transportHasFirstOutput", true);
+        Property(service, "Versions", new List<FileVersion> { new() { FileId = 42, Duration = 3600 } });
+        Property(service, "State", PlayerState.Expanded); Property(service, "IsPaused", paused);
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        player.FileLoaded += () => loaded.TrySetResult();
+        player.LoadFile(origin.Url, null, 0);
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (paused) player.Pause(); else player.Play();
+        await WaitUntil(() => player.IsPaused == paused);
+
+        const double target = 431.25;
+        wire.ReplanRelease.TrySetResult();
+        if (idleResume)
+        {
+            var idle = (ProgressiveRemuxIdleResume)GetField(service, "_idleRemuxResume")!;
+            idle.ObservePause(true, false, DateTimeOffset.UtcNow.AddSeconds(-65));
+            service.SetPaused(false);
+            await WaitUntil(() => wire.Replans == 1 && GetField(service, "_seekRestartCts") == null);
+            var terminal = GetField(service, "_playbackTerminalState");
+            if (terminal == null || !(bool)terminal.GetType().GetProperty("CanRetry")!.GetValue(terminal)! ||
+                (string)terminal.GetType().GetProperty("Trigger")!.GetValue(terminal)! != "idle-remux-resume" ||
+                !player.GetPropertyFlag("pause") || service.IsLoading)
+                throw new InvalidOperationException("An unusable idle remux response lost its explicit retry surface.");
+            return;
+        }
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            service.SeekTo(target);
+            await WaitUntil(() => wire.Replans == attempt + 1 && GetField(service, "_seekRestartCts") == null);
+            using var request = JsonDocument.Parse(wire.ReplanBody!);
+            var body = request.RootElement;
+            if (body.GetProperty("operation").GetString() != "seek_reanchor" ||
+                body.GetProperty("position_seconds").GetDouble() != target ||
+                (body.TryGetProperty("failure", out var failure) && failure.ValueKind != JsonValueKind.Null) ||
+                (body.TryGetProperty("attempted_plan_keys", out var attempted) && attempted.GetArrayLength() != 0))
+                throw new InvalidOperationException("A refused seek retry reported a healthy plan as failed or changed its target.");
+            if (!ReferenceEquals(manager.CurrentSession, session) || manager.SessionRetirementPending ||
+                GetField(service, "_playbackTerminalState") != null || service.IsLoading ||
+                (bool)GetField(service, "_switchingContent")! || player.IsPaused != paused ||
+                player.GetPropertyFlag("pause") != paused ||
+                service.ErrorMessage != "Stop anything else playing or paused on your account, then try again.")
+                throw new InvalidOperationException("An account-limit seek refusal stopped the healthy transport or lost its guidance.");
+        }
     }
 
     private static async Task CheckAsync(string results, bool remote, bool pauseDuringReplan, bool toggleDuringReplan = false)
@@ -120,6 +197,10 @@ internal static class IdleRemuxResumeChecks
         internal readonly TaskCompletionSource ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReplanRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string? ReplanBody; internal int Replans;
+        internal string Delivery = "server_remux_progressive";
+        internal string? RejectionReason;
+        internal bool TransportRejection;
+        internal bool Retryable = true;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var path=request.RequestUri!.AbsolutePath;
@@ -128,19 +209,32 @@ internal static class IdleRemuxResumeChecks
             {
                 ReplanBody=await request.Content!.ReadAsStringAsync(ct); Interlocked.Increment(ref Replans);
                 ReplanEntered.TrySetResult(); await ReplanRelease.Task.WaitAsync(ct);
+                if (RejectionReason != null)
+                {
+                    if (TransportRejection)
+                        return new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                        {
+                            Content = new StringContent(JsonSerializer.Serialize(new { code = RejectionReason, detail = "Stop anything else playing or paused on your account, then try again." }), Encoding.UTF8, "application/json"),
+                        };
+                    return Json(JsonSerializer.Serialize(new
+                    {
+                        protocol_version = 3, outcome = "terminal",
+                        terminal = new { reason = RejectionReason, message = "", retryable = Retryable },
+                    }));
+                }
                 using var replan = JsonDocument.Parse(ReplanBody);
                 var position = replan.RootElement.GetProperty("position_seconds").GetDouble();
-                return Json(Decision(streamUrl + "?start=" + position.ToString(System.Globalization.CultureInfo.InvariantCulture),position,2));
+                return Json(Decision(streamUrl + "?start=" + position.ToString(System.Globalization.CultureInfo.InvariantCulture),position,2,Delivery));
             }
-            if(path.EndsWith("/start"))return Json(Decision(streamUrl,0,1));
+            if(path.EndsWith("/start"))return Json(Decision(streamUrl,0,1,Delivery));
             if(path.EndsWith("/progress"))return Json("""{"outcome":"applied"}""");
             return Json("""{"outcome":"stopped"}""");
         }
         private static HttpResponseMessage Json(string body)=>new(HttpStatusCode.OK){Content=new StringContent(body,Encoding.UTF8,"application/json")};
-        private static string Decision(string url,double position,int number)=>$$$"""
+        private static string Decision(string url,double position,int number,string delivery)=>$$$"""
             {"protocol_version":3,"outcome":"playable","session_id":"idle-session","playback_plan":{
             "protocol_version":3,"plan_id":"plan:{{{number:x32}}}","plan_attempt_key":"v3:{{{number:x16}}}","session_id":"idle-session",
-            "delivery":"server_remux_progressive","stream":{"url":"{{{url}}}","protocol":"http_progressive","headers":{}},
+            "delivery":"{{{delivery}}}","stream":{"url":"{{{url}}}","protocol":"{{{(delivery.EndsWith("_hls", StringComparison.Ordinal) ? "hls" : "http_progressive")}}}","headers":{}},
             "timeline":{"source_start_seconds":{{{position.ToString(System.Globalization.CultureInfo.InvariantCulture)}}},"stream_origin_seconds":0,"player_start_seconds":0,"timeline_offset_seconds":{{{position.ToString(System.Globalization.CultureInfo.InvariantCulture)}}},"can_seek_anywhere":false},
             "selected_tracks":{"audio":{"id":"file:42:audio:0","index":0}},"effective_recipe":{"video_codec":"copy","audio_codec":"mp3"},
             "subtitle":{"mode":"off","inventory":[]},"available_qualities":[{"label":"original","preserves_source":true}],"degradation_warnings":[],
