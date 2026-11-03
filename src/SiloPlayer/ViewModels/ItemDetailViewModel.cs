@@ -75,15 +75,6 @@ public partial class ItemDetailViewModel : ObservableObject,
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
     }
 
-    // F4: Helper to publish media-surface changes via the shared messenger.
-    // Subscribers (HomeViewModel, FavoritesViewModel, WatchlistViewModel,
-    // HistoryViewModel) react by invalidating / adjusting their own state.
-    private static void Publish(MediaSurfaceChangeKind kind, string contentId, string? seriesId, int? rating, ApiRequestContext context)
-    {
-        WeakReferenceMessenger.Default.Send(
-            new MediaSurfaceChanged(kind, contentId, seriesId, rating, context));
-    }
-
     public void Receive(NotInterestedChange message)
     {
         if (!_catalogApi.IsCurrentContext(message.Context)) return;
@@ -1270,8 +1261,13 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.SetRatingAsync(contentId, nextRating.Value);
 
-            if (!Current()) return;
-            Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, context);
+            if (!_catalogApi.IsCurrentContext(context)) return;
+            var message = new MediaSurfaceChanged(
+                MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, context);
+            // Accepted writes still invalidate app-lifetime state after this viewer departs.
+            if (!Current()) _suppressedViewerFeedback = message;
+            try { WeakReferenceMessenger.Default.Send(message); }
+            finally { _suppressedViewerFeedback = null; }
         }
         catch
         {

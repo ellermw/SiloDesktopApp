@@ -153,14 +153,16 @@ public sealed class RealtimeReadOwnershipTests
             Assert.Equal(fail, f.Vm.InWatchlist);
             Assert.Equal(currentRating, f.Vm.UserRating);
             Assert.Equal(currentRating, mounted!.UserRating);
-            if (!fail && mutation != "rating" && departure is ("cancel" or "navigation" or "same-id"))
+            if (!fail && departure is ("cancel" or "navigation" or "same-id"))
             {
-                // Accepted list writes still notify app-lifetime recipients,
+                // Accepted viewer writes still notify app-lifetime recipients,
                 // without applying their old feedback to this replacement viewer.
                 var message = Assert.Single(messages);
                 Assert.Equal(Series, message.ContentId);
                 Assert.Equal(context, message.Context);
-                Assert.Equal(mutation == "favorite" ? MediaSurfaceChangeKind.FavoriteAdded : MediaSurfaceChangeKind.WatchlistAdded, message.Kind);
+                Assert.Equal(mutation == "rating" ? MediaSurfaceChangeKind.RatingChanged
+                    : mutation == "favorite" ? MediaSurfaceChangeKind.FavoriteAdded : MediaSurfaceChangeKind.WatchlistAdded, message.Kind);
+                if (mutation == "rating") Assert.Equal(4, message.Rating);
             }
             else Assert.Empty(messages);
         }
@@ -234,22 +236,28 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    public async Task DepartedViewerWriteStillUpdatesCollectionsAndClearsPrefetchCache(bool favorite, bool initiallySet)
+    [InlineData("favorite", false)]
+    [InlineData("favorite", true)]
+    [InlineData("watchlist", false)]
+    [InlineData("watchlist", true)]
+    [InlineData("rating", false)]
+    [InlineData("rating", true)]
+    public async Task DepartedViewerWriteStillUpdatesCollectionsAndClearsPrefetchCache(string mutation, bool initiallySet)
     {
         using var f = new Fixture(); f.Seed();
         var catalog = new CatalogApi(f.Client);
         var favorites = new FavoritesViewModel(catalog);
         var watchlist = new WatchlistViewModel(catalog, new RequestsApi(f.Client));
         DetailCacheInvalidation.Attach(f.Cache);
+        var revision = DetailCacheInvalidation.AttachUserStateRevision();
         try
         {
-            var items = favorite ? favorites.Items : watchlist.Items;
-            if (initiallySet) items.Add(new() { ContentId = Series, Type = "series" });
-            f.Vm.Item!.SeriesId = "parent-series";
+            var items = mutation == "favorite" ? favorites.Items : watchlist.Items;
+            if (initiallySet && mutation != "rating") items.Add(new() { ContentId = Series, Type = "series" });
+            f.Wire.DetailSeriesId = "parent-series";
+            f.Vm.UserRating = f.Wire.Rating = initiallySet ? 4 : null;
+            var cachedDetail = await f.Cache.GetAsync(Series, CancellationToken.None);
+            f.Vm.Item = cachedDetail;
             f.Vm.IsFavorite = initiallySet; f.Vm.InWatchlist = initiallySet;
             f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
             f.Wire.PendingWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -260,28 +268,50 @@ public sealed class RealtimeReadOwnershipTests
             var prefetched = await f.Cache.GetAsync(EpisodeB, CancellationToken.None);
             Assert.Same(prefetched, await f.Cache.GetAsync(EpisodeB, CancellationToken.None));
             var reads = f.Wire.DetailReads;
-            var operation = favorite ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null) : f.Vm.ToggleWatchlistCommand.ExecuteAsync(null);
+            var stamp = revision.Current;
+            var operation = mutation == "favorite" ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null)
+                : mutation == "watchlist" ? f.Vm.ToggleWatchlistCommand.ExecuteAsync(null)
+                : f.Vm.SetRatingCommand.ExecuteAsync(4);
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             f.Vm.CancelPendingLoads();
+            if (mutation == "rating") f.Wire.Rating = initiallySet ? null : 4;
             f.Wire.PendingWrite.SetResult();
             await operation.WaitAsync(TimeSpan.FromSeconds(5));
 
             // Additions reload the retained collection; removals drop the item.
-            for (var n = 0; n < 50 && (items.Count != (initiallySet ? 0 : 1)
-                || favorites.IsLoading || watchlist.IsLoading); n++) await Task.Delay(10);
+            if (mutation != "rating")
+            {
+                for (var n = 0; n < 50 && (items.Count != (initiallySet ? 0 : 1)
+                    || favorites.IsLoading || watchlist.IsLoading); n++) await Task.Delay(10);
+                if (initiallySet) Assert.Empty(items);
+                else Assert.Equal(Series, Assert.Single(items).ContentId);
+            }
+            else
+            {
+                Assert.Empty(favorites.Items);
+                Assert.Empty(watchlist.Items);
+            }
             Assert.Null(favorites.ErrorMessage);
             Assert.Null(watchlist.ErrorMessage);
-            if (initiallySet) Assert.Empty(items);
-            else Assert.Equal(Series, Assert.Single(items).ContentId);
-            Assert.Equal(initiallySet ? 0 : 1, f.Wire.CollectionReads);
+            Assert.Equal(initiallySet || mutation == "rating" ? 0 : 1, f.Wire.CollectionReads);
+            Assert.True(revision.Current > stamp);
+            Assert.False(revision.IsCurrent(stamp, Series, "parent-series"));
             Assert.NotSame(prefetched, await f.Cache.GetAsync(EpisodeB, CancellationToken.None));
-            Assert.Equal(reads + 1, f.Wire.DetailReads);
+            var freshDetail = await f.Cache.GetAsync(Series, CancellationToken.None);
+            Assert.NotSame(cachedDetail, freshDetail);
+            Assert.Equal(reads + 2, f.Wire.DetailReads);
+            if (mutation == "rating")
+            {
+                Assert.Equal(initiallySet ? (int?)4 : null, cachedDetail.UserRating);
+                Assert.Equal(initiallySet ? null : (int?)4, freshDetail.UserRating);
+            }
         }
         finally
         {
             WeakReferenceMessenger.Default.UnregisterAll(favorites);
             WeakReferenceMessenger.Default.UnregisterAll(watchlist);
             WeakReferenceMessenger.Default.UnregisterAll(f.Cache);
+            WeakReferenceMessenger.Default.UnregisterAll(revision);
         }
     }
 
