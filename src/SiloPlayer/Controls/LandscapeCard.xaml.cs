@@ -18,6 +18,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     private EpisodeSpoilerPreferences? _spoilerPreferences;
     private bool? _spoilerArtworkHidden;
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _overlayLoadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
     private bool _isPointerOver;
     private bool _isKeyboardFocusWithin;
@@ -76,6 +77,8 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             if (_spoilerPreferences != null) { _spoilerPreferences.Changed -= SpoilersChanged; _spoilerPreferences.Changed += SpoilersChanged; }
 
             ObserveArtwork(MediaItem);
+            if (MediaItem is { } overlayItem)
+                RefreshOverlayPreferences(overlayItem);
             // HomePage is navigation-cached. Unloaded releases decoded artwork,
             // but the existing card and its MediaItem are reused when Home is
             // revisited, so the dependency property does not change again.
@@ -91,6 +94,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             // been reattached and received Loaded (detail-section reordering).
             // That stale event must not cancel the current artwork load.
             if (IsLoaded) return;
+            CancelOverlayLoad();
             _artworkActivity?.Dispose(); _artworkActivity = null;
             SetArtworkActive(false);
             if (_spoilerPreferences != null) _spoilerPreferences.Changed -= SpoilersChanged;
@@ -137,6 +141,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         if (!ReferenceEquals(e.OldValue, e.NewValue)) card.MediaItemChanged?.Invoke();
         card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
         if (e.NewValue is MediaItem item) card.UpdateContent(item);
+        else card.CancelOverlayLoad();
     }
 
     private void ObserveArtwork(MediaItem? item)
@@ -168,6 +173,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
 
     private void UpdateContent(MediaItem item)
     {
+        CancelOverlayLoad();
         SetCardWidth(_cardWidth, _minimumCardWidth);
         _loadCts?.Cancel();
         _loadCts = new CancellationTokenSource();
@@ -293,10 +299,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SubtitleButton, $"Open {SubtitleText.Text}");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(TimeLeftButton, $"Open {TimeLeftText.Text}");
 
-        UpdateBadges(item);
-        var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
-        if (!overlayService.IsLoaded)
-            _ = EnsureBadgesLoadedAsync(item, ct);
+        RefreshOverlayPreferences(item);
 
         BackdropImage.Source = null;
         ArtworkFallback.Reset(item.Type, !UsePosterAspect && !string.IsNullOrEmpty(item.BackdropUrl) ? item.BackdropThumbhash : item.PosterThumbhash ?? item.BackdropThumbhash);
@@ -388,13 +391,32 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         ProgressContainer.Visibility = Visibility.Visible;
     }
 
+    private void CancelOverlayLoad()
+    {
+        _overlayLoadCts?.Cancel();
+        _overlayLoadCts?.Dispose();
+        _overlayLoadCts = null;
+    }
+
+    private void RefreshOverlayPreferences(MediaItem item)
+    {
+        if (_artworkOwner?.IsCurrent == false) return;
+        UpdateBadges(item);
+        var service = App.Services.GetRequiredService<Services.CardOverlayService>();
+        if (service.IsLoaded || _overlayLoadCts != null) return;
+        // Overlay waits belong to the bind, not artwork retries or activity changes.
+        _overlayLoadCts = new CancellationTokenSource();
+        _ = EnsureBadgesLoadedAsync(item, _overlayLoadCts.Token);
+    }
+
     private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
     {
         try
         {
             var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-            await service.EnsureLoadedAsync(ct);
-            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+            // Retiring one card must not cancel the shared service initialization.
+            await service.EnsureLoadedAsync().WaitAsync(ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item) && _artworkOwner?.IsCurrent != false)
                 UpdateBadges(item);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }

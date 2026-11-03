@@ -80,6 +80,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     }
 
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _overlayLoadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
     private MediaItem? _deferredPosterItem;
     private MediaItem? _deferredOverlayItem;
@@ -178,6 +179,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             if (_spoilerPreferences != null) { _spoilerPreferences.Changed -= SpoilersChanged; _spoilerPreferences.Changed += SpoilersChanged; }
 
             ObserveArtwork(MediaItem);
+            if (MediaItem is { } overlayItem)
+                RefreshOverlayPreferences(overlayItem);
             if (!_observingOverlayPreferences) { _observingOverlayPreferences = true; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; }
             if (!_observingUICustomization)
             {
@@ -205,6 +208,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         this.Unloaded += (_, _) =>
         {
             if (IsLoaded) return;
+            CancelOverlayLoad();
             _artworkActivity?.Dispose(); _artworkActivity = null;
             SetArtworkActive(false);
             if (_spoilerPreferences != null) _spoilerPreferences.Changed -= SpoilersChanged;
@@ -309,6 +313,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void ShowPlaceholder()
     {
+        CancelOverlayLoad();
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -339,6 +344,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void UpdateContent(MediaItem item)
     {
+        CancelOverlayLoad();
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
@@ -388,10 +394,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         else
         {
             _deferredOverlayItem = null;
-            UpdateBadges(item);
-            var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
-            if (!overlayService.IsLoaded)
-                _ = EnsureBadgesLoadedAsync(item, ct);
+            RefreshOverlayPreferences(item);
         }
 
         if (SuppressImageLoading)
@@ -410,14 +413,38 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         _ = LoadPosterAsync(item, ct);
     }
 
+    private void CancelOverlayLoad()
+    {
+        _overlayLoadCts?.Cancel();
+        _overlayLoadCts?.Dispose();
+        _overlayLoadCts = null;
+    }
+
+    private void RefreshOverlayPreferences(MediaItem item)
+    {
+        if (DeferOverlayLoading || _artworkOwner?.IsCurrent == false) return;
+        UpdateQuickActionState(item);
+        UpdateBadges(item);
+        var service = App.Services.GetRequiredService<CardOverlayService>();
+        if (service.IsLoaded || _overlayLoadCts != null) return;
+        // Overlay waits belong to the bind, not artwork retries or activity changes.
+        _overlayLoadCts = new CancellationTokenSource();
+        _ = EnsureBadgesLoadedAsync(item, _overlayLoadCts.Token);
+    }
+
     private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
     {
         try
         {
-            var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-            await service.EnsureLoadedAsync(ct);
-            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+            var service = App.Services.GetRequiredService<CardOverlayService>();
+            // Retiring one card must not cancel the shared service initialization.
+            await service.EnsureLoadedAsync().WaitAsync(ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item) &&
+                !DeferOverlayLoading && _artworkOwner?.IsCurrent != false)
+            {
+                UpdateQuickActionState(item);
                 UpdateBadges(item);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch { }

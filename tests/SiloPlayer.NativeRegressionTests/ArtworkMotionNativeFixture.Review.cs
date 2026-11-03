@@ -65,6 +65,7 @@ internal static partial class ArtworkMotionNativeFixture
 
     private static async Task FirstMountCasesAsync(StackPanel parent, Wire wire, SiloApiClient client, EpisodeSpoilerPreferences spoilers)
     {
+        await OverlayFirstMountCasesAsync(parent);
         await spoilers.EnsureLoadedAsync();
         foreach (var kind in new[] { "poster", "landscape" })
         foreach (var variant in new[] { "movie", "blur", "cached" })
