@@ -123,6 +123,11 @@ internal static class PlaybackChapterMenuNativeFixture
                     Descendants<TextBlock>(disabledAudio).Any(text => text.Text == "No alternate audio tracks."),
                     "Unavailable More choices lack visible disabled treatment or reason.");
                 Require(mpv.IsPaused, "Opening More changed genuine pause.");
+                Call(menu, "Input", "end");
+                Call(menu, "Input", "up");
+                Require(list.SelectedIndex == 5, "More stopped skipping its unavailable maximum-volume action.");
+                Call(menu, "Input", "home");
+                Require(list.SelectedIndex == 1, "More stopped skipping unavailable Audio at Home.");
                 await Capture(menu, "more-compact.png");
                 async Task Choose(int index)
                 {
@@ -235,8 +240,34 @@ internal static class PlaybackChapterMenuNativeFixture
             Require(list.Items.OfType<ListViewItem>().All(row => !row.IsEnabled), "Guest chapter rows grant room seek authority.");
             var roomRequests = 0;
             service.RoomTransportRequested += (_, _, _) => roomRequests++;
-            Call(menu, "Input", "activate");
-            Require(roomRequests == 0 && mpv.IsPaused, "Disabled guest chapter dispatched transport.");
+            var guestPosition = mpv.Position;
+            var guestForeground = GetForegroundWindow();
+            Call(menu, "Input", "end");
+            await Task.Delay(80);
+            var guestEnd = list.SelectedIndex;
+            var endVisible = SelectedRowVisible(list);
+            var endOffset = Descendants<ScrollViewer>(list).First(view => view.ViewportHeight > 0).VerticalOffset;
+            Call(menu, "Input", "home");
+            await Task.Delay(80);
+            var guestHome = list.SelectedIndex;
+            var homeVisible = SelectedRowVisible(list);
+            mpv.SendScriptMessage("osc-controller-nav", "down");
+            await Task.Delay(100);
+            var guestDown = list.SelectedIndex;
+            var downVisible = SelectedRowVisible(list);
+            mpv.SendScriptMessage("osc-controller-activate");
+            await Task.Delay(80);
+            var guestInert = roomRequests == 0 && mpv.IsPaused && Math.Abs(mpv.Position - guestPosition) < .1;
+            Program.Log($"Guest Chapters navigation: End={guestEnd}, visible={endVisible}, scroll={endOffset:0.#}; Home={guestHome}, visible={homeVisible}; controller Down={guestDown}, visible={downVisible}; inert={guestInert}.");
+            Require(guestEnd == 71 && endVisible && endOffset > 0, "Guest End cannot browse the disabled chapter inventory endpoint.");
+            Require(guestHome == 0 && homeVisible, "Guest Home cannot return to the first disabled chapter.");
+            Require(guestDown == 1 && downVisible, "Guest controller Down cannot browse disabled chapters.");
+            Require(guestInert && list.Items.OfType<ListViewItem>().All(row => !row.IsEnabled),
+                "Guest browsing granted seek activation or changed real playback.");
+            Require(list.IsEnabled && list.IsTabStop, "Read-only Chapters has no enabled keyboard receiver.");
+            Require(GetForegroundWindow() != Hwnd(menu) || guestForeground == Hwnd(menu),
+                "Guest inventory navigation acquired foreground from another application.");
+            await Capture(menu, "chapters-guest-browsing.png");
             Call(menu, "Input", "cancel");
             Program.Log("PASS: actual native Chapters sparse identity, long list, compact bounds, ready images, pause/playing seek, stale owner and guest permissions.");
         }
@@ -306,6 +337,13 @@ internal static class PlaybackChapterMenuNativeFixture
     {
         var watch = Stopwatch.StartNew();
         while (!ready()) { if (watch.Elapsed > TimeSpan.FromSeconds(8)) throw new InvalidOperationException(message); await Task.Delay(20); }
+    }
+    private static bool SelectedRowVisible(ListView list)
+    {
+        if (list.SelectedItem is not FrameworkElement row || row.ActualHeight <= 0) return false;
+        var viewport = Descendants<ScrollViewer>(list).First(view => view.ViewportHeight > 0);
+        var origin = row.TransformToVisual(viewport).TransformPoint(new Windows.Foundation.Point(0, 0));
+        return origin.Y >= -1 && origin.Y + row.ActualHeight <= viewport.ActualHeight + 1;
     }
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
@@ -385,5 +423,6 @@ internal static class PlaybackChapterMenuNativeFixture
     }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { internal int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
 }
 

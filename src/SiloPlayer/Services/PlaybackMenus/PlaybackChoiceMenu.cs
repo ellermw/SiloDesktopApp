@@ -31,6 +31,7 @@ internal class PlaybackChoiceMenu
     private IReadOnlyList<PlaybackMenuChoice> _choices;
     private readonly FrameworkElement? _footer;
     private readonly Func<PlaybackMenuChoice, FrameworkElement?>? _leadingContent;
+    private readonly bool _allowDisabledTraversal;
     private int _footerIndex = -1;
     private bool _keepSelectionVisible = true;
     private bool _layoutQueued;
@@ -47,7 +48,7 @@ internal class PlaybackChoiceMenu
     internal PlaybackChoiceMenu(MpvVideoWindow owner, PlaybackMenuAnchor anchor, string title,
         IReadOnlyList<PlaybackMenuChoice> choices, Func<bool> isCurrent,
         Action<string> selected, Action<PlaybackMenuCloseReason> closed, Action<DependencyObject>? applyTypography = null, FrameworkElement? footer = null,
-        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null)
+        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null, bool allowDisabledTraversal = false)
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(choices);
@@ -55,6 +56,7 @@ internal class PlaybackChoiceMenu
         _owner = owner; _anchor = anchor; _choices = choices;
         _isCurrent = isCurrent; _selected = selected; _closed = closed;
         _applyTypography = applyTypography; _footer = footer; _leadingContent = leadingContent;
+        _allowDisabledTraversal = allowDisabledTraversal;
         _dismiss = () => Close(PlaybackMenuCloseReason.OutsidePointer);
         _list = new ListView
         {
@@ -62,6 +64,7 @@ internal class PlaybackChoiceMenu
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             ItemContainerTransitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection(),
         };
+        if (_allowDisabledTraversal) _list.IsTabStop = true;
         AutomationProperties.SetName(_list, title + " choices");
         BuildChoices();
         var heading = new TextBlock { Text = title, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(12, 10, 12, 8) };
@@ -217,13 +220,12 @@ internal class PlaybackChoiceMenu
     {
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         _applyTypography?.Invoke(_root);
-        var selected = _choices.ToList().FindIndex(c => c.IsCurrent && c.IsEnabled);
-        if (selected < 0) selected = _choices.ToList().FindIndex(c => c.IsEnabled);
+        var selected = _choices.ToList().FindIndex(c => c.IsCurrent && (c.IsEnabled || _allowDisabledTraversal));
+        if (selected < 0) selected = _choices.ToList().FindIndex(c => c.IsEnabled || _allowDisabledTraversal);
         selected = Math.Max(0, selected);
         _list.SelectedIndex = selected;
         ScrollSelectionIntoView();
-        if (_focusOnLoad && GetForegroundWindow() == Hwnd && _list.Items[selected] is ListViewItem item)
-            item.Focus(FocusState.Programmatic);
+        if (_focusOnLoad) FocusSelection(FocusState.Programmatic);
         _loaded.TrySetResult();
     }
 
@@ -369,10 +371,19 @@ internal class PlaybackChoiceMenu
             "down" or "right" => Math.Min(_list.Items.Count - 1, current + 1), _ => current,
         };
         var step = action is "end" or "up" or "left" ? -1 : 1;
-        while (next >= 0 && next < _choices.Count && !_choices[next].IsEnabled) next += step;
+        while (!_allowDisabledTraversal && next >= 0 && next < _choices.Count && !_choices[next].IsEnabled) next += step;
         if (next >= 0 && next < _choices.Count) _list.SelectedIndex = next;
         ScrollSelectionIntoView();
-        if (GetForegroundWindow() == Hwnd && _list.SelectedItem is ListViewItem item) item.Focus(FocusState.Keyboard);
+        FocusSelection(FocusState.Keyboard);
+    }
+
+    private void FocusSelection(FocusState state)
+    {
+        if (GetForegroundWindow() != Hwnd) return;
+        if (_list.SelectedItem is ListViewItem { IsEnabled: true } item) item.Focus(state);
+        // A read-only inventory still needs a keyboard receiver while its
+        // selected row cannot receive focus or be activated.
+        else if (_allowDisabledTraversal) _list.Focus(state);
     }
 
     private bool IsInFooter(DependencyObject? source)

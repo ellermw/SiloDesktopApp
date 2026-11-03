@@ -189,7 +189,7 @@ public partial class PlayerService
         {
             menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, "Chapters", Choices(), Current,
                 Invoke, Closed, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root),
-                leadingContent: Preview);
+                leadingContent: Preview, allowDisabledTraversal: true);
             ChaptersChanged += Refresh;
             PositionChanged += PositionUpdated;
             return menu;
