@@ -282,6 +282,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 }
                 finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
             }
+            await VerifySeriesLayoutRefreshAsync(parent, wire, client);
             await VerifyLegacySeriesActionAsync(parent, wire, client);
             await VerifyCardArtworkRecoveryAsync(parent, wire, client);
             await VerifyMatchedParentBreadcrumbAsync(parent, wire, client);
@@ -317,6 +318,79 @@ internal static class RealtimeSeriesStateNativeFixture
             }
         }
         finally { slot.SetValue(null, original); }
+    }
+
+    private static async Task VerifySeriesLayoutRefreshAsync(StackPanel parent, Wire wire, SiloApiClient client)
+    {
+        var page = new ItemDetailPage { Width = 900, Height = 720 };
+        var vm = page.ViewModel;
+        using var navigation = new CancellationTokenSource();
+        vm.Item = new() { ContentId = "series", Type = "series", Title = "Changing seasons", PlayContentId = "new-target" };
+        vm.IsSeries = true;
+        vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1 });
+        Set(page, "_currentContentId", "series"); Set(page, "_navigationCts", navigation);
+        var handler = (PropertyChangedEventHandler)typeof(ItemDetailPage).GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .CreateDelegate(typeof(PropertyChangedEventHandler), page);
+        vm.PropertyChanged += handler;
+        parent.Children.Add(page);
+        Visibility Visible(string name) => ((UIElement)page.FindName(name)).Visibility;
+        Task Refresh() => vm.RefreshMediaStateAsync(new(client.CaptureContext(),
+            new HashSet<string>(["never-loaded"]), new HashSet<string>(["series"])));
+        async Task MultiSeason()
+        {
+            wire.SeasonCount = 2;
+            await Refresh();
+            await UntilAsync(() => Visible("SeasonsSection") == Visibility.Visible
+                && Visible("SeasonsScrollViewer") == Visibility.Visible && Visible("EpisodesSection") == Visibility.Collapsed);
+            Check(((Panel)page.FindName("SeasonsPanel")).Children.OfType<Button>().Any(card => card.Tag as string == "second-season"),
+                "The added season is not reachable from the mounted series.");
+        }
+        try
+        {
+            wire.SeasonCount = 1;
+            await (Task)typeof(ItemDetailPage).GetMethod("UpdateSeriesLayoutAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(page, ["series", navigation.Token, true])!;
+            var mounted = vm.Item;
+            Check(Visible("EpisodesSection") == Visibility.Visible && Visible("SeasonsSection") == Visibility.Collapsed,
+                "Initial single-season navigation did not show the episode grid.");
+            await MultiSeason();
+            wire.SeasonCount = 1;
+            await Refresh();
+            await UntilAsync(() => Visible("EpisodesSection") == Visibility.Visible && Visible("EpisodesPanel") == Visibility.Visible
+                && Visible("SeasonsSection") == Visibility.Collapsed && Visible("SeasonsScrollViewer") == Visibility.Collapsed);
+            Check(vm.EpisodesSeasonContentId == "season" && ((Panel)page.FindName("EpisodesPanel")).Children.Count > 0,
+                "Returning to one season did not load and mount canonical episode rows.");
+            Check(ReferenceEquals(mounted, vm.Item), "Changing season layouts remounted the detail.");
+
+            await MultiSeason();
+            var retainedEpisodes = vm.Episodes.ToArray();
+            wire.HeldCompanion = "episodes";
+            wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.SeasonCount = 1;
+            await Refresh();
+            await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await MultiSeason();
+            wire.HeldCompanion = null;
+            wire.ReleaseCompanion.TrySetResult();
+            await UntilAsync(() => page.CanPreserveOnReconnect);
+            Check(Visible("EpisodesSection") == Visibility.Collapsed && retainedEpisodes.SequenceEqual(vm.Episodes),
+                "A retired single-season read repopulated or revealed the multi-season grid.");
+
+            wire.EmptyEpisodes = true; wire.SeasonCount = 1;
+            await Refresh();
+            await UntilAsync(() => vm.Episodes.Count == 0 && ((Panel)page.FindName("EpisodesPanel")).Children.Count == 0);
+            Check(Visible("SeasonsSection") == Visibility.Collapsed, "An empty single season left the old season rail visible.");
+            wire.SeasonCount = 0;
+            await Refresh();
+            await UntilAsync(() => Visible("SeasonsSection") == Visibility.Collapsed && Visible("EpisodesSection") == Visibility.Collapsed);
+        }
+        finally
+        {
+            wire.SeasonCount = 1; wire.EmptyEpisodes = false; wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult();
+            navigation.Cancel(); vm.PropertyChanged -= handler; vm.CancelPendingLoads();
+            WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+        }
     }
 
     private static async Task VerifyCardArtworkRecoveryAsync(StackPanel parent, Wire wire, SiloApiClient client)
@@ -807,6 +881,8 @@ internal static class RealtimeSeriesStateNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int Count = 2;
+        internal int SeasonCount = 1;
+        internal bool EmptyEpisodes;
         internal string? Target = "new-target";
         internal bool OmitTarget;
         internal bool FailEpisodes;
@@ -870,17 +946,19 @@ internal static class RealtimeSeriesStateNativeFixture
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
             object body = path == "/api/v2/capabilities/metadata-ai" ? new { state = "available", allowed = true, on_view = TranslationOnView } :
+                path.EndsWith("/episodes") && EmptyEpisodes ? new { items = Array.Empty<object>() } :
                 path.EndsWith("/episodes") ? new { items = new[] {
                     new { content_id = "sibling", season_number = 1, user_data = new { played = false, position_seconds = 31d, duration_seconds = 1200d } },
                     new { content_id = "loaded", season_number = 1, user_data = new { played = LoadedPlayed, position_seconds = LoadedPosition, duration_seconds = 1200d } } } } :
                 path.StartsWith("/api/v2/catalog/items/") ?
                 new Dictionary<string, object?> { ["content_id"] = path.Split('/').Last(), ["type"] = path.Split('/').Last(),
-                    ["play_content_id"] = Target, ["play_season_number"] = 1, ["episode_count"] = 6, ["season_count"] = 1,
+                    ["play_content_id"] = Target, ["play_season_number"] = 1, ["episode_count"] = 6, ["season_count"] = SeasonCount,
                     ["title"] = "Edited title", ["overview"] = "Refreshed metadata", ["season_number"] = 1,
                     ["user_data"] = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 },
                     ["user_state"] = new { is_favorite = Favorite } } :
-                path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 6,
-                    user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false } } } } :
+                path.EndsWith("/seasons") ? new { items = Enumerable.Range(1, SeasonCount).Select(number => new {
+                    content_id = number == 1 ? "season" : "second-season", season_number = number, episode_count = 6,
+                    user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false } }).ToArray() } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = true } : new { items = Array.Empty<object>() };
             if (OmitTarget && body is Dictionary<string, object?> detail) detail.Remove("play_content_id");
             if (ParentSeries != null && body is Dictionary<string, object?> parentDetail)

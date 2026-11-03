@@ -42,6 +42,9 @@ public sealed partial class ItemDetailPage : Page
         && SeasonEpisodesFatalError.Visibility != Visibility.Visible;
     private CancellationTokenSource? _imageCts;
     private CancellationTokenSource? _navigationCts;
+    private CancellationTokenSource? _singleSeasonEpisodesCts;
+    private Task<bool>? _singleSeasonEpisodesTask;
+    private string? _singleSeasonEpisodesContentId;
     private CancellationTokenSource? _translationCts;
     private CancellationTokenSource? _episodesTranslationCts;
     private string? _episodesTranslationKey;
@@ -908,7 +911,8 @@ public sealed partial class ItemDetailPage : Page
                 var changes = _pendingDetailChanges;
                 _pendingDetailChanges = 0;
                 if (!Current()) return;
-                if ((changes & 4) != 0) BuildSeasonCards();
+                if ((changes & 4) != 0 && item is { Type: "series" } && navigation != null)
+                    _ = UpdateSeriesLayoutAsync(item.ContentId, navigation.Token);
                 ApplyEpisodeSpoilers();
                 ApplySeasonAction();
                 RefreshContainerCountBadges();
@@ -1022,6 +1026,11 @@ public sealed partial class ItemDetailPage : Page
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
         _navigationCts = null;
+        _singleSeasonEpisodesCts?.Cancel();
+        _singleSeasonEpisodesCts?.Dispose();
+        _singleSeasonEpisodesCts = null;
+        _singleSeasonEpisodesTask = null;
+        _singleSeasonEpisodesContentId = null;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         if (_rootElement != null)
         {
@@ -1235,37 +1244,8 @@ public sealed partial class ItemDetailPage : Page
                 // Paint the season result as soon as that request completes.
                 // Continue-watching lookup is independent and can take several
                 // seconds; awaiting it first left a visibly blank section.
-                if (ViewModel.SeasonsLoadFailed)
-                {
-                    SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
-                    SeasonsScrollViewer.Visibility = Visibility.Collapsed;
-                    SeasonsSection.Visibility = Visibility.Collapsed;
-                }
-                else if (ViewModel.Seasons.Count == 1)
-                {
-                    await ShowSingleSeasonEpisodesAsync(
-                        ViewModel.Seasons[0],
-                        contentId,
-                        navigationToken);
-                    if (_currentContentId != contentId || ViewModel.Item?.ContentId != contentId)
-                        return;
-                    if (navigationToken.IsCancellationRequested)
-                        return;
-                }
-                else if (ViewModel.Seasons.Count == 0)
-                {
-                    SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
-                    SeasonsScrollViewer.Visibility = Visibility.Collapsed;
-                    SeasonsSection.Visibility = Visibility.Collapsed;
-                    EpisodesSection.Visibility = Visibility.Collapsed;
-                }
-                else
-                {
-                    BuildSeasonCards();
-                    SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
-                    SeasonsScrollViewer.Visibility = Visibility.Visible;
-                    EpisodesSection.Visibility = Visibility.Collapsed;
-                }
+                await UpdateSeriesLayoutAsync(contentId, navigationToken, reloadEpisodes: true);
+                if (!IsActiveDetail(contentId, navigationToken)) return;
 
                 await ApplySeriesActionAsync();
                 VersionDropdownButton.Visibility = Visibility.Collapsed;
@@ -4814,25 +4794,8 @@ public sealed partial class ItemDetailPage : Page
         if (ViewModel.SeasonsLoadFailed) return;
         UpdateSeriesCountsFromLoadedSeasons();
 
-        if (ViewModel.Seasons.Count == 1)
-        {
-            await ShowSingleSeasonEpisodesAsync(
-                ViewModel.Seasons[0],
-                ViewModel.Item.ContentId,
-                _navigationCts?.Token ?? CancellationToken.None);
-        }
-        else if (ViewModel.Seasons.Count == 0)
-        {
-            SeasonsSection.Visibility = Visibility.Collapsed;
-            SeasonsScrollViewer.Visibility = Visibility.Collapsed;
-            EpisodesSection.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            SeasonsSection.Visibility = Visibility.Visible;
-            SeasonsScrollViewer.Visibility = Visibility.Visible;
-            BuildSeasonCards();
-        }
+        await UpdateSeriesLayoutAsync(ViewModel.Item.ContentId,
+            _navigationCts?.Token ?? CancellationToken.None, reloadEpisodes: true);
 
         await ApplySeriesActionAsync();
     }
@@ -6905,11 +6868,57 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Season Episode Loading =====
 
+    private Task UpdateSeriesLayoutAsync(string seriesContentId, CancellationToken ct, bool reloadEpisodes = false)
+    {
+        if (!IsActiveDetail(seriesContentId, ct) || ViewModel.Item?.Type != "series")
+            return Task.CompletedTask;
+
+        SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
+        if (!ViewModel.SeasonsLoadFailed) BuildSeasonCards();
+        if (!ViewModel.SeasonsLoadFailed && ViewModel.Seasons.Count == 1)
+        {
+            var season = ViewModel.Seasons[0];
+            SeasonsSection.Visibility = Visibility.Collapsed;
+            SeasonsScrollViewer.Visibility = Visibility.Collapsed;
+            if (_singleSeasonEpisodesCts is { IsCancellationRequested: false }
+                && _singleSeasonEpisodesContentId == season.ContentId
+                && _singleSeasonEpisodesTask is { IsCompleted: false })
+                return _singleSeasonEpisodesTask;
+
+            // State-only notifications must keep the mounted rows and their focus.
+            if (!reloadEpisodes && EpisodesSection.Visibility == Visibility.Visible && EpisodesLoadError.Visibility != Visibility.Visible
+                && (ViewModel.EpisodesSeasonContentId == season.ContentId
+                    || ViewModel.EpisodesSeasonContentId == null && ViewModel.SelectedSeasonNumber == season.SeasonNumber
+                        && ViewModel.Episodes.Count > 0))
+                return Task.CompletedTask;
+
+            _singleSeasonEpisodesCts?.Cancel();
+            _singleSeasonEpisodesCts?.Dispose();
+            _singleSeasonEpisodesCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            _singleSeasonEpisodesContentId = season.ContentId;
+            return _singleSeasonEpisodesTask = ShowSingleSeasonEpisodesAsync(season, seriesContentId, _singleSeasonEpisodesCts.Token);
+        }
+
+        // Retire a single-season query before it can repopulate a now-hidden grid.
+        _singleSeasonEpisodesCts?.Cancel();
+        _singleSeasonEpisodesCts?.Dispose();
+        _singleSeasonEpisodesCts = null;
+        _singleSeasonEpisodesTask = null;
+        _singleSeasonEpisodesContentId = null;
+        var showSeasons = !ViewModel.SeasonsLoadFailed && ViewModel.Seasons.Count > 1;
+        SeasonsSection.Visibility = showSeasons ? Visibility.Visible : Visibility.Collapsed;
+        SeasonsScrollViewer.Visibility = showSeasons ? Visibility.Visible : Visibility.Collapsed;
+        EpisodesSection.Visibility = Visibility.Collapsed;
+        return Task.CompletedTask;
+    }
+
     private async Task<bool> ShowSingleSeasonEpisodesAsync(
         Season singleSeason,
         string seriesContentId,
         CancellationToken ct = default)
     {
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalog.CaptureContext();
         SeasonsLoadingSkeleton.Visibility = Visibility.Collapsed;
         SeasonsScrollViewer.Visibility = Visibility.Collapsed;
         SeasonsSection.Visibility = Visibility.Collapsed;
@@ -6931,7 +6940,8 @@ public sealed partial class ItemDetailPage : Page
 
         if (_currentContentId != seriesContentId || ViewModel.Item?.ContentId != seriesContentId)
             return false;
-        if (ct.IsCancellationRequested)
+        if (ct.IsCancellationRequested || !catalog.IsCurrentContext(context)
+            || ViewModel.Seasons.Count != 1 || ViewModel.Seasons[0].ContentId != singleSeason.ContentId)
             return false;
 
         EpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
@@ -6966,7 +6976,7 @@ public sealed partial class ItemDetailPage : Page
                     || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return false;
                 if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }
-            if (response?.Episodes != null && response.Episodes.Count > 0)
+            if (response?.Episodes != null)
             {
                 ViewModel.SelectedSeasonNumber = seasonNumber;
                 ViewModel.EpisodesSeasonContentId = seasonContentId;
