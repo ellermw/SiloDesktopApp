@@ -17,4 +17,4 @@ Pull requests into `beta` go through an automated pipeline that runs on the Open
 
 The pipeline assigns all version numbers, so pull requests should not change them.
 
-Promoting a beta to stable needs the owner's approval. The pipeline then stamps and rebuilds it, publishes the stable release, and moves `main` to it.
+Stable releases and promotion of `main` to stable are outside this pipeline. Promoting a beta to stable needs the owner's approval and follows the release-delivery requirements in [AGENTS.md](../AGENTS.md).
