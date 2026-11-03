@@ -169,6 +169,8 @@ internal static class CollectionsAcceptanceNativeFixture
             await Case("manual draft visible responsive actions", () => ManualDraftAsync(frame, window));
             await Case("manual title search keyboard/recovery", () => ManualSearchAsync(frame, window, wire));
             await Case("smart current rules and live preview", () => SmartDraftAsync(frame, window, wire));
+            await Case("saved smart discard restores controls and preview", () => SmartDiscardAsync(frame, window, wire));
+            await Case("saved smart legacy sort orders", () => SmartSavedSortAsync(frame, window, wire));
             await Case("manual actual failed add/remove retention", () => ManualAsync(frame, window, wire));
             await Case("imported successful Save stays clean", () => ImportedSaveAsync(frame, window, wire, navigation));
             await Case("locked Discover presentation", () => LockedSourcesAsync(frame, window));
@@ -524,6 +526,83 @@ internal static class CollectionsAcceptanceNativeFixture
             frame.Content = null; page.ViewModel.InvalidateEditorLoads();
         }
     }
+    private static async Task SmartDiscardAsync(Frame frame, Window window, Wire wire)
+    {
+        foreach (var width in new[] { 1280, 460 })
+        {
+            var page = await Editor(frame, window, "smart"); await Viewport(frame, window, width);
+            var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+            // As in the synced regression, add a draft-only library choice;
+            // the fixture's reference endpoint has no libraries on reload.
+            page.ViewModel.AvailableLibraries.Add(new() { Id = 987, Name = "Draft library", Type = "movies" });
+            Call(page, "PopulateSmartFields");
+            var limit = (TextBox)Read(page, "_smartLimit")!;
+            var scope = (ComboBox)Read(page, "_smartScope")!;
+            var libraries = (StackPanel)Read(page, "_smartLibraries")!;
+            var previews = wire.PreviewCalls;
+            Check(limit.Focus(FocusState.Keyboard), "Smart Max titles must accept focus for editing.");
+            limit.Text = "12";
+            Check(scope.Focus(FocusState.Keyboard), "Leaving Smart Max titles must move focus to Kind.");
+            scope.SelectedItem = scope.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "series"));
+            libraries.Children.OfType<CheckBox>().Single(box => Equals(box.Content, "Draft library")).IsChecked = true;
+            await Until(() => wire.PreviewCalls > previews && !page.ViewModel.IsPreviewing); await Layout();
+            Check(page.ViewModel.RuleDefinition.Limit == 12 && page.ViewModel.RuleDefinition.MediaScope == "series"
+                && page.ViewModel.RuleDefinition.LibraryIds.SequenceEqual(new[] { 987 })
+                && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Visible && !DraftMatches(page, saved),
+                "Editing Smart Max titles, Kind and Libraries must dirty the saved draft.");
+            previews = wire.PreviewCalls;
+            Call(page, "Discard_Click", page, new RoutedEventArgs());
+            await Until(() => !page.ViewModel.IsLoading); await Layout();
+            Check(page.ViewModel.ErrorMessage == null && limit.Text == "" && Equals(((ComboBoxItem)scope.SelectedItem).Tag, "all")
+                && libraries.Children.OfType<CheckBox>().Count() == 1 && libraries.Children.OfType<CheckBox>().Single().IsChecked == true
+                && AutomationProperties.GetName((Button)Read(page, "_smartLibraryPicker")!) == "Libraries: all my libraries",
+                "Discard must restore Smart Max titles, Kind, library choices and the library label.");
+            await Until(() => wire.PreviewCalls > previews && !page.ViewModel.IsPreviewing);
+            using var preview = JsonDocument.Parse(wire.PreviewBody!);
+            var query = preview.RootElement.GetProperty("query_definition");
+            Check(!query.TryGetProperty("limit", out var previewLimit) || previewLimit.ValueKind == JsonValueKind.Null,
+                "Discard preview still uses the discarded Smart title limit.");
+            Check((!query.TryGetProperty("media_scope", out var previewScope) || previewScope.ValueKind == JsonValueKind.Null)
+                && query.GetProperty("library_ids").GetArrayLength() == 0,
+                "Discard must refresh the preview with the saved Kind and Libraries.");
+            Check(limit.Focus(FocusState.Keyboard), "Restored Smart Max titles must accept focus."); await Layout();
+            Check(scope.Focus(FocusState.Keyboard), "Restored Smart Max titles must allow focus to leave."); await Layout();
+            Check(page.ViewModel.RuleDefinition.Limit == null && page.ViewModel.RuleDefinition.MediaScope == null
+                && page.ViewModel.RuleDefinition.LibraryIds.Count == 0 && page.ViewModel.SelectedLibraryIds.Count == 0
+                && DraftMatches(page, saved) && DraftMatches(page, (Dictionary<string, string>)Read(page, "_draftBaseline")!)
+                && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Collapsed,
+                "Moving focus through Smart Max titles after Discard must not recommit discarded values or dirty the draft.");
+            frame.Content = null;
+        }
+    }
+
+    private static async Task SmartSavedSortAsync(Frame frame, Window window, Wire wire)
+    {
+        try
+        {
+            foreach (var (field, order, label) in new[] { ("added_at", "", "Saved order ()"), ("title", "ASC", "Saved order (ASC)"),
+                ("future_sort", "ascending", "Saved order (ascending)"), ("title", "asc", "A–Z"), ("release_date", "desc", "Newest first") })
+            {
+                wire.SmartSortField = field; wire.SmartSortOrder = order;
+                var page = await Editor(frame, window, "smart");
+                var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+                Check(page.ViewModel.RuleDefinition.Sort?.Field == field && page.ViewModel.RuleDefinition.Sort?.Order == order,
+                    "Loading a saved Smart sort must retain its field and legacy/future order.");
+                Call(page, "BuildRulesUI"); await Layout();
+                var editor = (DependencyObject)Read(page, "_rulesEditor")!;
+                var direction = All<ComboBox>(editor).Single(combo => AutomationProperties.GetName(combo) == "Direction");
+                Check(direction.SelectedItem?.ToString() == label && DraftMatches(page, saved),
+                    "Rebuilding the Smart editor must display the saved direction without throwing or coercing the query.");
+                direction.SelectedItem = direction.Items.Cast<object>().Single(item => item.ToString() == (field == "title" ? "Z–A" : field == "added_at" || field == "release_date" ? "Newest first" : "Highest first"));
+                await Layout();
+                Check(page.ViewModel.RuleDefinition.Sort?.Field == field && page.ViewModel.RuleDefinition.Sort?.Order == "desc",
+                    "An explicit Smart direction edit must retain the saved field and write the selected canonical order.");
+                frame.Content = null;
+            }
+        }
+        finally { wire.SmartSortField = "added_at"; wire.SmartSortOrder = "desc"; frame.Content = null; }
+    }
+
     private static async Task<CollectionEditorPage> Editor(Frame frame, Window window, string id)
     {
         await Viewport(frame, window, 460); var page = new CollectionEditorPage(); frame.Content = page;
@@ -924,10 +1003,13 @@ internal static class CollectionsAcceptanceNativeFixture
         internal static readonly CollectionTemplate Template = new() { Id = "fixture", Title = "A current collection template with a long title", Description = "Collection template description", Source = "tmdb", MediaKind = "movie", Icon = "🎬", RequiresProfile = true, DefaultSyncSchedule = "0 0 * * *", DefaultLimit = 100, PosterPath = "/artwork/template.png" };
         internal string[] ImportSources = ["tmdb", "mdblist", "tmdb_list"]; internal bool RejectCapabilities;
         internal int PreviewCalls; internal string? PreviewBody; internal bool RejectPreview;
+        internal string SmartSortField = "added_at", SmartSortOrder = "desc";
         internal TaskCompletionSource<HttpResponseMessage>? PreviewGate;
         internal TaskCompletionSource<HttpResponseMessage>? SearchGate, PosterGate, TitleSearchGate; internal int SearchCalls, TopCalls, AddCalls, RemoveCalls, SaveCalls, Deletes, PosterCalls; internal string? SearchQuery; internal bool RejectManual, SearchSecond, RejectTitleSearch, EmptyTitleSearch; internal string ImportedName = "Imported fixture";
         internal static object List(string id, string name) => new { id = id == "top" ? 2 : 1, name, user_name = "Fixture", mediatype = "movie", items = 12, likes = 3, url = "https://mdblist.com/lists/fixture/" + id };
-        private object Collection(string id) => id == "converted"
+        private object Collection(string id) => id == "smart"
+            ? new { id, name = "Smart fixture", collection_type = "smart", creator_profile_id = "fixture", query_definition = new { library_ids = Array.Empty<int>(), groups = Array.Empty<object>(), sort = new { field = SmartSortField, order = SmartSortOrder } } }
+            : id == "converted"
             ? new { id, name = ImportedName, collection_type = "manual", creator_profile_id = "fixture", source_url = "", source_config = new { }, sync_schedule = (string?)null }
             : new { id, name = id == "manual" ? "Manual fixture" : ImportedName, collection_type = id == "manual" ? "manual" : id == "discover" ? "tmdb" : "mdblist", creator_profile_id = "fixture", source_url = "https://mdblist.com/lists/fixture/top/", source_config = new { limit = 100, mode = id == "discover" ? "tmdb_discover" : "mdblist", media_type = "movie", preset = "trending", discover = new { sort_by = "popularity.desc" } }, sync_cadence = "daily", updated_at = "2026-10-01T00:00:00Z" };
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -951,7 +1033,7 @@ internal static class CollectionsAcceptanceNativeFixture
             if (path == "/api/v2/collections") return Reply(new { items = new[] { Collection("manual"), Collection("imported") }, groups = Array.Empty<object>() });
             if (path is "/api/v2/collections/manual/items" or "/api/v2/collections/converted/items") return Reply(new { items = new[] { new { media_item_id = "one", content_id = "one", title = "Retained title", type = "movie", position = 0 } }, page = new { has_more = false } });
             if (path.StartsWith("/api/v2/collections/manual/items/")) { if (request.Method == HttpMethod.Put) AddCalls++; else if (request.Method == HttpMethod.Delete) RemoveCalls++; return Reply(new { message = "Fixture manual write rejected" }, RejectManual ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.OK); }
-            if (path is "/api/v2/collections/manual" or "/api/v2/collections/imported" or "/api/v2/collections/discover" or "/api/v2/collections/converted")
+            if (path is "/api/v2/collections/manual" or "/api/v2/collections/imported" or "/api/v2/collections/discover" or "/api/v2/collections/converted" or "/api/v2/collections/smart")
             {
                 if (request.Method == HttpMethod.Delete) Deletes++;
                 if (request.Method == HttpMethod.Patch) { SaveCalls++; using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); if (body.RootElement.TryGetProperty("name", out var name)) ImportedName = name.GetString()!; }

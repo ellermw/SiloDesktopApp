@@ -272,9 +272,14 @@ public sealed partial class CollectionEditorPage : Page
         BuildImportedOptionsUI();
         BuildSavedSyncedContents();
         ApplyReadOnlyState();
+        // Restore the shared input before rehosting it, so LostFocus cannot
+        // commit the discarded limit into the reloaded query.
+        PopulateSmartFields();
+        BuildRulesUI();
         UpdateSourceBanner();
         UpdateEditorSummary();
         _draftBaseline = CaptureDraft(); UpdateDirtyDock();
+        ScheduleSmartPreview();
     }
 
     private Dictionary<string, string> CaptureDraft() => new()

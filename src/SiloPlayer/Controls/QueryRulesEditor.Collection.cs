@@ -87,8 +87,13 @@ public sealed partial class QueryRulesEditor
             var field = Query.Sort?.Field ?? "added_at";
             var alphabetical = field is "title" or "author" or "narrator" or "series" or "content_rating";
             var date = field is "added_at" or "release_date" or "last_air_date" or "latest_episode_added" or "year" or "date_viewed";
-            direction.ItemsSource = new[] { new Option(alphabetical ? "A–Z" : date ? "Oldest first" : "Lowest first", "asc"), new Option(alphabetical ? "Z–A" : date ? "Newest first" : "Highest first", "desc") };
-            direction.SelectedItem = direction.Items.Cast<Option>().First(o => o.Value == (Query.Sort?.Order ?? "desc")); updating = false;
+            var order = Query.Sort?.Order ?? "desc";
+            var options = new List<Option> { new(alphabetical ? "A–Z" : date ? "Oldest first" : "Lowest first", "asc"), new(alphabetical ? "Z–A" : date ? "Newest first" : "Highest first", "desc") };
+            // Keep legacy/future orders visible without rewriting an untouched
+            // saved query; asc/desc remain available for an explicit edit.
+            if (order is not ("asc" or "desc")) options.Add(new($"Saved order ({order})", order));
+            direction.ItemsSource = options;
+            direction.SelectedItem = options.FirstOrDefault(o => o.Value == order); updating = false;
         }
         Directions();
         sort.SelectionChanged += (_, _) => { if (_refreshingChoices) return; var field = Selected(sort); Query.Sort = new() { Field = field, Order = field is "title" or "author" or "narrator" or "series" or "content_rating" ? "asc" : "desc" }; Directions(); SortChanged?.Invoke(); Changed?.Invoke(); };
