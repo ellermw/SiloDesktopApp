@@ -16,7 +16,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "newer-off", "newer-track", "reload-gap", "manual-reload-gap", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
+        foreach (var scenario in new[] { "newer-off", "newer-track", "reload-gap", "manual-reload-gap", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-retired-with-prior", "load-start-retired-newer-off", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
         {
             try
             {
@@ -28,6 +28,290 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: " + scenario + ": " + ex); }
         }
         if (failures.Count != 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
+
+    internal static async Task RunBusyAsync(StackPanel parent)
+    {
+        foreach (var scenario in new[] { "exhausted", "recovered", "recovered-playing", "viewer-pauses", "viewer-resumes", "viewer-seeks", "newer-off", "newer-track", "superseded-exhausted", "aba", "load", "profile", "close" })
+        {
+            await CheckBusyAsync(parent, scenario);
+            Program.Log("PASS: busy sidecar " + scenario);
+        }
+    }
+
+    private static async Task CheckBusyAsync(StackPanel parent, string scenario)
+    {
+        var recovers = scenario.StartsWith("recovered", StringComparison.Ordinal) || scenario.StartsWith("viewer-", StringComparison.Ordinal);
+        using var subtitles = new HeldSubtitleServer(false) { BusyResponses = recovers ? 2 : 100 };
+        using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
+        using var service = new PlayerService(playback, catalog, auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "busy-" + scenario)), new SettingsApi(api));
+        using var manager = new PlaybackManager(playback, catalog, auth, api);
+        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [Version()] }); await manager.StartSessionAsync(42);
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+        Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "movie");
+        var wave = Path.Combine(Program.ResultDirectory, "busy-" + scenario + ".wav"); WriteWave(wave);
+        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", wave));
+        mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0);
+        var startsPaused = scenario is not ("recovered-playing" or "viewer-pauses");
+        service.SetPaused(startsPaused); await Until(() => mpv.IsPaused == startsPaused);
+        subtitles.Release.TrySetResult();
+        try
+        {
+            await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!;
+            var priorSid = mpv.GetPropertyDouble("sid");
+            Require(priorSid > 0 && wire.RequestedPreferences.Last() == 1, "Prior subtitle was not actually applied and persisted.");
+            var pending = (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+            await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await Task.Delay(150);
+            Require(clock.Elapsed < TimeSpan.FromMilliseconds(900), "Busy read blocked the native dispatcher.");
+            Require(!pending.IsCompleted, "Busy selection did not wait for Retry-After.");
+            var responsive = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            parent.DispatcherQueue.TryEnqueue(() => responsive.TrySetResult());
+            await responsive.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            if (scenario == "newer-off" || scenario == "aba") await (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!;
+            if (scenario == "newer-track") await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!;
+            if (scenario == "viewer-pauses") service.SetPaused(true);
+            if (scenario == "viewer-resumes") service.SetPaused(false);
+            if (scenario == "viewer-seeks") { mpv.Seek(15); await Until(() => mpv.GetPropertyDouble("time-pos") >= 14); }
+            if (scenario == "superseded-exhausted") await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+            if (scenario == "load") Call(service, "LoadSubtitles");
+            if (scenario == "profile") api.SetProfile("replacement");
+            if (scenario == "close") await service.CloseAsync();
+            if (scenario == "aba")
+            {
+                subtitles.BusyResponses = 0;
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+            }
+            await pending.WaitAsync(TimeSpan.FromSeconds(12));
+            if (scenario is "exhausted" or "profile" or "superseded-exhausted")
+            {
+                Require(service.ActiveSubtitleServerIndex == 1, "Busy failure replaced the accepted server subtitle selection.");
+                Require(mpv.GetPropertyDouble("sid") == priorSid, "Busy failure changed the accepted native SID.");
+                Require(wire.RequestedPreferences.ToArray().SequenceEqual(new[] { 1 }), "Busy failure persisted an unapplied choice.");
+                Require(manager.SubtitleSelectionForLoad == 1, "Busy failure replaced the accepted manager intent.");
+            }
+            if (recovers)
+            {
+                Require(subtitles.EngRequests == 3, "Busy read did not retry twice asynchronously.");
+                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") != priorSid, "Recovered read did not apply the requested native subtitle.");
+                Require(wire.RequestedPreferences.ToArray().SequenceEqual(new[] { 1, 0 }), "Recovered read did not persist its accepted choice once.");
+            }
+            if (scenario == "newer-off") Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0, "Off lost to a pending busy selection.");
+            if (scenario == "newer-track") Require(service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") == priorSid, "New track lost to a pending busy selection.");
+            if (scenario == "aba") Require(wire.RequestedPreferences.ToArray().SequenceEqual(new[] { 1, -1, 0 }), "Retired same-track A persisted after the newer A.");
+            if (scenario == "exhausted") Require(subtitles.EngRequests == 4, "Exhausted busy read exceeded its attempt budget.");
+            if (scenario is "newer-off" or "newer-track" or "load" or "profile" or "close") Require(subtitles.EngRequests == 1, "Retired busy read continued requesting.");
+            using var logReader = new StreamReader(new FileStream(Path.Combine(Program.ResultDirectory, "mpv_log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+            var nativeLog = logReader.ReadToEnd();
+            Require(!nativeLog.Split('\n').Any(line => line.Contains("Run command: sub-add", StringComparison.Ordinal) && line.Contains(subtitles.Origin + "/eng.srt", StringComparison.Ordinal)), "Busy selection issued a remote native sub-add.");
+            Require(subtitles.SyncRequests == 0, "Busy prefetch fell through to a synchronous remote mpv sub-add.");
+            if (scenario == "viewer-seeks") Require(mpv.GetPropertyDouble("time-pos") >= 14, "Busy completion undid the viewer's seek.");
+            var expectedPaused = scenario is not ("recovered-playing" or "viewer-resumes");
+            if (scenario != "close") Require(mpv.IsPaused == expectedPaused, "Busy recovery changed viewer pause intent.");
+        }
+        finally
+        {
+            Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+            Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+        }
+    }
+
+    internal static async Task RunAcceptedReloadAsync(StackPanel parent)
+    {
+        foreach (var choice in new[] { "bitmap", "off", "text", "newer-manual" })
+        {
+            await CheckAcceptedReloadAsync(parent, choice);
+            Program.Log("PASS: accepted subtitle reload " + choice);
+        }
+    }
+
+    internal static async Task RunBurnReadinessAsync(StackPanel parent)
+    {
+        var failures = new List<string>();
+        foreach (var choice in new[] { "busy-text", "ready-then-busy", "changed-file-busy", "changed-file-newer" })
+        {
+            try
+            {
+                await CheckAcceptedReloadAsync(parent, choice);
+                Program.Log("PASS: burned subtitle readiness " + choice);
+            }
+            catch (Exception ex) { failures.Add(choice + ": " + ex.Message); Program.Log("CASE FAIL: burned readiness " + choice + ": " + ex); }
+        }
+        if (failures.Count > 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
+
+    private static async Task CheckAcceptedReloadAsync(StackPanel parent, string choice)
+    {
+        using var subtitles = new HeldSubtitleServer(false);
+        using var wire = new Wire(subtitles.Origin) { SupportBurnInReplan = true, StartsBurned = choice != "bitmap", HoldNextReplan = true };
+        using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
+        using var service = new PlayerService(playback, catalog, auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "accepted-" + choice)), new SettingsApi(api));
+        using var manager = new PlaybackManager(playback, catalog, auth, api);
+        var version = Version(); version.SubtitleTracks!.Add(new() { Index = 2, Language = "eng", Codec = "dvd_subtitle" });
+        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [version] }); await manager.StartSessionAsync(42);
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+        Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "movie"); Property(service, "Versions", manager.WatchDetail!.Versions);
+        var wave = Path.Combine(Program.ResultDirectory, "accepted-" + choice + ".wav"); WriteWave(wave);
+        subtitles.ReplacementMedia = await File.ReadAllBytesAsync(wave); subtitles.Release.TrySetResult();
+        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", wave));
+        mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0);
+        service.SetPaused(true); Call(service, "SendSubtitleListToOsc"); Call(service, "WireMpvEvents");
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Loaded() => loaded.TrySetResult(); service.ContentLoaded += Loaded;
+        var selected = choice == "bitmap" ? 2 : choice == "off" ? -1 : 0;
+        var track = selected < 0 ? null : manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == selected);
+        if (choice is "busy-text" or "ready-then-busy" or "changed-file-busy" or "changed-file-newer")
+        {
+            wire.HoldNextReplan = false;
+            wire.SidecarReadCount = () => subtitles.EngRequests;
+            subtitles.BusyResponses = choice == "busy-text" ? 100 : 0;
+            subtitles.BusyAfter = choice == "ready-then-busy" ? 1 : int.MaxValue;
+            wire.ChangeFileOnReplan = choice.StartsWith("changed-file-", StringComparison.Ordinal);
+            wire.HoldNextReplan = choice == "changed-file-newer";
+            subtitles.BusyChangedFile = choice == "changed-file-busy";
+            subtitles.MediaRelease.TrySetResult();
+            Set(service, "_activeSubtitleServerIndex", 2); manager.RecordLocalSubtitleSelection(2);
+            var noticeLogStart = new FileInfo(Path.Combine(Program.ResultDirectory, "mpv_log.txt")).Length;
+            try
+            {
+                var originalChoice = service.SetSubtitleTrackAndPersistAsync(1, track!.Language, track);
+                Task? newerChoice = null;
+                if (choice == "changed-file-newer")
+                {
+                    await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    var spanish = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+                    newerChoice = service.SetSubtitleTrackAndPersistAsync(2, spanish.Language, spanish);
+                    wire.ReplanRelease.TrySetResult();
+                }
+                await originalChoice.WaitAsync(TimeSpan.FromSeconds(12));
+                if (newerChoice != null) await newerChoice.WaitAsync(TimeSpan.FromSeconds(12));
+                await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
+                if (choice == "busy-text")
+                {
+                    Require(wire.Replans == 0 && manager.CurrentSession!.IsSubtitleBurnedIn && service.ActiveSubtitleServerIndex == 2 &&
+                        manager.SubtitleSelectionForLoad == 2 && wire.PreferenceWrites == 0,
+                        "A busy text read committed a replacement over the applied burned subtitle or persisted an unapplied choice.");
+                }
+                else if (choice == "ready-then-busy")
+                {
+                    Require(wire.ReadsAtReplan.SequenceEqual(new[] { 1 }), "The burned transport was replanned before the advertised text sidecar was ready.");
+                    var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                    Require(subtitles.EngRequests == 1 && map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid &&
+                        service.ActiveSubtitleServerIndex == 0 && wire.RequestedPreferences.SequenceEqual(new[] { 0 }),
+                        "A ready same-file subtitle was discarded and requested again after committing the replacement.");
+                }
+                else if (choice == "changed-file-busy")
+                {
+                    Require(manager.CurrentSession!.MediaFileId == 43 && manager.CurrentSession.SelectedSubtitleTrackId == "sub:43:7",
+                        "A new-file grant was rolled back to an obsolete server plan.");
+                    Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
+                        "A busy new-file read highlighted an obsolete index or persisted an unapplied preference.");
+                    using var logStream = new FileStream(Path.Combine(Program.ResultDirectory, "mpv_log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    logStream.Seek(noticeLogStart, SeekOrigin.Begin);
+                    using var logReader = new StreamReader(logStream);
+                    var log = logReader.ReadToEnd();
+                    Require(log.Contains("Subtitle still preparing", StringComparison.Ordinal), "A busy new-file read had no actionable native notice.");
+                }
+                else
+                {
+                    using var recoveryLog = new FileStream(Path.Combine(Program.ResultDirectory, "mpv_log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    recoveryLog.Seek(noticeLogStart, SeekOrigin.Begin);
+                    using var recoveryReader = new StreamReader(recoveryLog);
+                    Require(!recoveryReader.ReadToEnd().Contains("Reconnecting playback", StringComparison.Ordinal),
+                        "A stale old-file combined index forced recovery instead of direct latest-choice convergence.");
+                    Require(wire.ReplanSelections.SequenceEqual(new[] { 0, 8 }) && wire.Replans == 2,
+                        "The latest old-file choice did not converge directly using its remapped new-file identity.");
+                    Require(!File.Exists(Path.Combine(Program.ResultDirectory, "player_subtitle_error.txt")),
+                        "A stale old-file combined index triggered subtitle-switch recovery.");
+                    Require(manager.CurrentSession!.MediaFileId == 43 && service.ActiveSubtitleServerIndex == 8 &&
+                        manager.SubtitleSelectionForLoad == 8 && wire.RequestedPreferences.SequenceEqual(new[] { 8 }) && mpv.GetPropertyDouble("sid") > 0,
+                        $"A newer manual choice was lost or persisted in the obsolete file's index space: file={manager.CurrentSession!.MediaFileId}, active={service.ActiveSubtitleServerIndex}, next={manager.SubtitleSelectionForLoad}, prefs={string.Join(',', wire.RequestedPreferences)}, sid={mpv.GetPropertyDouble("sid")}.");
+                }
+                Require(mpv.IsPaused, "Burned-to-text readiness changed viewer pause intent.");
+            }
+            finally
+            {
+                service.ContentLoaded -= Loaded;
+                wire.ReplanRelease.TrySetResult();
+                Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
+                Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+                Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+            }
+            return;
+        }
+        var loadGeneration = (long)Get(service, "_fileLoadGeneration")!;
+        var held = new HeldContinuation(parent.DispatcherQueue, () => (long)Get(service, "_fileLoadGeneration")! > loadGeneration);
+        Task pending;
+        var previous = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(held);
+            pending = service.SetSubtitleTrackAndPersistAsync(selected + 1, track?.Language, track);
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        try
+        {
+            await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4)); wire.ReplanRelease.TrySetResult();
+            await held.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // The transport has been accepted, but its caller's persistence
+            // continuation stays held until the real FILE_LOADED initializer.
+            subtitles.MediaRelease.TrySetResult();
+            await loaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
+            await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading);
+            if (choice == "newer-manual") await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+            held.Release(); await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            var expected = choice == "newer-manual" ? -1 : selected;
+            Require(wire.RequestedPreferences.ToArray().SequenceEqual(new[] { expected }),
+                "FILE_LOADED retired an accepted manual preference or revived a superseded choice: " + string.Join(',', wire.RequestedPreferences));
+        }
+        finally
+        {
+            held.Release(); wire.ReplanRelease.TrySetResult(); subtitles.MediaRelease.TrySetResult(); service.ContentLoaded -= Loaded;
+            Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout"); Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+            Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+        }
+    }
+
+    private sealed class HeldContinuation(Microsoft.UI.Dispatching.DispatcherQueue dispatcher, Func<bool> shouldHold) : SynchronizationContext
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> callbacks = new();
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool released;
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            lock (callbacks)
+            {
+                if (!released && shouldHold()) { callbacks.Enqueue((callback, state)); Entered.TrySetResult(); return; }
+                Dispatch(callback, state);
+            }
+        }
+        public void Release()
+        {
+            lock (callbacks)
+            {
+                released = true;
+                while (callbacks.TryDequeue(out var item)) Dispatch(item.Callback, item.State);
+            }
+        }
+        private void Dispatch(SendOrPostCallback callback, object? state)
+            => dispatcher.TryEnqueue(() =>
+            {
+                var previous = Current;
+                SetSynchronizationContext(this);
+                try { callback(state); }
+                finally { SetSynchronizationContext(previous); }
+            });
     }
 
     private static async Task CheckBurnInLoadIntentAsync(string scenario)
@@ -62,6 +346,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void Loaded() => loaded.TrySetResult(); service.ContentLoaded += Loaded;
         Task? queuedChoice = null;
+        Task? appliedChoice = null;
         try
         {
             var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", manager.CurrentSession!, version,
@@ -82,11 +367,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 var dvd = manager.CurrentSession!.SubtitleUrls.Single(item => item.Index == 2);
                 queuedChoice = service.SetSubtitleTrackAndPersistAsync(3, dvd.Language, dvd);
                 await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                await service.SetSubtitleTrackAndPersistAsync(selected + 1, track?.Language, track);
+                appliedChoice = service.SetSubtitleTrackAndPersistAsync(selected + 1, track?.Language, track);
                 wire.ReplanRelease.TrySetResult();
                 await queuedChoice.WaitAsync(TimeSpan.FromSeconds(5));
             }
-            else await service.SetSubtitleTrackAndPersistAsync(selected + 1, track?.Language, track).WaitAsync(TimeSpan.FromSeconds(5));
+            else appliedChoice = service.SetSubtitleTrackAndPersistAsync(selected + 1, track?.Language, track);
+            await Until(() => wire.Replans > 0);
             Require(!loaded.Task.IsCompleted && service.IsLoading && wire.Replans > 0,
                 "Fixture did not replan while replacement media stayed held.");
             await Until(() => Volatile.Read(ref subtitles.MediaRequests) >= 2);
@@ -95,6 +381,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
             await Until(() => (long)Get(service, "_subtitleSidecarGeneration")! > generationBeforeLoad &&
                 Get(service, "_loadedMediaInitCts") == null);
+            await appliedChoice!.WaitAsync(TimeSpan.FromSeconds(5));
             Call(service, "StopPlaybackStallWatchdog");
             var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
             var selectedNative = selected < 0 ? mpv.GetPropertyDouble("sid") <= 0 : selected == 2 ? manager.CurrentSession!.IsSubtitleBurnedIn :
@@ -112,6 +399,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         {
             subtitles.MediaRelease.TrySetResult(); wire.ReplanRelease.TrySetResult(); service.ContentLoaded -= Loaded;
             if (queuedChoice != null) try { await queuedChoice.WaitAsync(TimeSpan.FromSeconds(5)); } catch (Exception) { }
+            if (appliedChoice != null) try { await appliedChoice.WaitAsync(TimeSpan.FromSeconds(5)); } catch (Exception) { }
             Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
             Set(service, "_mpv", null); Set(service, "_playbackManager", null);
@@ -164,7 +452,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         SemaphoreSlim? heldRestart = null;
         try
         {
-            var retired = scenario == "load-start-retired";
+            var retired = scenario is "load-start-retired" or "load-start-retired-with-prior" or "load-start-retired-newer-off";
             var supersededBitmap = scenario.StartsWith("load-start-superseded-bitmap-", StringComparison.Ordinal);
             var retiredBitmap = scenario == "load-start-retired-bitmap" || supersededBitmap;
             var afterFileLoaded = scenario.StartsWith("loaded-settings-", StringComparison.Ordinal);
@@ -184,6 +472,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             else if (retired)
             {
+                if (scenario == "load-start-retired-with-prior")
+                {
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!;
+                    Require(service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") > 0 && wire.RequestedPreferences.Last() == 1,
+                        "The reload did not start with a genuinely accepted prior choice.");
+                }
                 // Run off the fixture dispatcher so a broken synchronous
                 // sub-add cannot prevent releasing the held media response.
                 pending = Task.Run(() => (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!);
@@ -223,18 +517,27 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             if (retiredBitmap)
             {
+                Task? newerChoice = null;
                 if (supersededBitmap)
                 {
                     subtitles.Release.TrySetResult();
                     var newer = selectOff ? null : manager.CurrentSession!.SubtitleUrls.Single(track => track.Index == 0);
-                    await service.SetSubtitleTrackAndPersistAsync(selectOff ? 0 : 1, newer?.Language, newer);
+                    newerChoice = service.SetSubtitleTrackAndPersistAsync(selectOff ? 0 : 1, newer?.Language, newer);
                 }
                 heldRestart!.Release(); heldRestart = null;
-                await pending!.WaitAsync(TimeSpan.FromSeconds(4));
+                var retiredChoice = pending!;
+                if (!supersededBitmap)
+                    newerChoice = (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!;
+                await retiredChoice.WaitAsync(TimeSpan.FromSeconds(4));
                 await Task.Delay(100);
-                pending = supersededBitmap ? Task.CompletedTask : (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!;
+                pending = newerChoice!;
             }
-            else if (retired) subtitles.Release.TrySetResult();
+            else if (retired)
+            {
+                subtitles.Release.TrySetResult();
+                if (scenario == "load-start-retired-newer-off")
+                    await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+            }
             else if (!selectOff)
             {
                 var english = manager.CurrentSession!.SubtitleUrls!.Single(track => track.Index == 0);
@@ -243,7 +546,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             else pending = Task.Run(() => (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!);
             await Task.WhenAny(pending!, Task.Delay(400));
             if (wire.Replans > 0) await Until(() => Volatile.Read(ref subtitles.MediaRequests) >= 2);
-            var earlyRegistered = retired && ((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).Count != 0;
+            var earlyRegistered = retired && ((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(0);
             var earlyPublication = seen.ToArray();
             var pausedWhileLoading = mpv.IsPaused;
             subtitles.MediaRelease.TrySetResult();
@@ -267,8 +570,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             Require(service.ActiveSubtitleServerIndex == selected && manager.SubtitleSelectionForLoad == selected && selectedNative,
                 "The replacement FILE_LOADED overwrote the latest viewer track/Off selection.");
-            Require(wire.PreferenceWrites - preferencesBefore == (retiredBitmap && !supersededBitmap ? 2 : 1) &&
+            Require(wire.PreferenceWrites - preferencesBefore == 1 &&
                 wire.RequestedPreferences.LastOrDefault() == selected, "The current viewer preference was lost or overwritten by a superseded choice.");
+            Require(!retiredBitmap || supersededBitmap || !wire.RequestedPreferences.Contains(2),
+                "A retired bitmap absent from the replacement inventory persisted despite never applying.");
             Require(!supersededBitmap || wire.Replans == 0, "A superseded bitmap request replanned after the newer viewer choice.");
             await Until(() => !mpv.IsPaused);
         }
@@ -381,6 +686,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             var pauseBeforeCompletion = mpv.IsPaused;
             subtitles.Release.TrySetResult();
+            if (scenario == "manual-reload-gap")
+            {
+                await Task.Delay(150);
+                Require(!seen.Contains("0") && wire.PreferenceWrites == 0,
+                    "A pending manual choice was applied or persisted before replacement initialization finished.");
+                wire.SettingsRelease.TrySetResult();
+            }
             await pending.WaitAsync(TimeSpan.FromSeconds(5));
             await Task.Delay(200); // Drain real libmpv client/Lua message delivery.
             var observations = seen.ToArray();
@@ -395,13 +707,20 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "Native SID differs from the latest viewer selection.");
                 Require(wire.PreferenceWrites == 1, "Superseded A persisted a stale subtitle preference.");
             }
-            else if (scenario is "reload-gap" or "manual-reload-gap" or "reload-cleanup" or "close")
+            else if (scenario == "manual-reload-gap")
+            {
+                var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                Require(service.ActiveSubtitleServerIndex == 0 && map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid,
+                    "The latest pending manual choice was not adopted after compatible replacement initialization.");
+                Require(wire.RequestedPreferences.ToArray().SequenceEqual(new[] { 0 }),
+                    "The adopted manual preference was not persisted exactly once after application.");
+            }
+            else if (scenario is "reload-gap" or "reload-cleanup" or "close")
             {
                 Require(!observations.Contains("0"), "A retired file initializer published an OSC selection: " + string.Join(",", observations));
                 Require(((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).Count == 0, "A retired file initializer added a native subtitle.");
                 Require(((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).Count == 0, "A retired prefetch registered a temporary file after cleanup.");
-                Require(wire.PreferenceWrites == (scenario == "manual-reload-gap" ? 1 : 0),
-                    "Retiring a loaded initializer must retain a still-current manual preference only.");
+                Require(wire.PreferenceWrites == 0, "A retired initializer persisted a subtitle preference.");
             }
             else if (scenario == "oversized-chunked")
             {
@@ -468,11 +787,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         public TaskCompletionSource MediaRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public byte[] ReplacementMedia { get; set; } = [];
         public int MediaRequests;
+        public int BusyResponses, EngRequests, SyncRequests;
+        public int BusyAfter = int.MaxValue;
+        public bool BusyChangedFile;
         public HeldSubtitleServer(bool oversized)
         {
             this.oversized = oversized;
             var reserve = new TcpListener(IPAddress.Loopback, 0); reserve.Start(); var port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
-            Origin = $"http://127.0.0.1:{port}"; listener.Prefixes.Add(Origin + "/"); listener.Start(); _ = ListenAsync();
+            Origin = $"http://127.0.0.1:{port}"; listener.Prefixes.Add(Origin + "/"); listener.Start(); _ = Task.Run(ListenAsync);
         }
         private async Task ListenAsync()
         {
@@ -502,7 +824,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                             if (request.Request.HttpMethod != "HEAD") await request.Response.OutputStream.WriteAsync(ReplacementMedia.AsMemory(from, to - from + 1));
                             request.Response.Close(); return;
                         }
-                        if (request.Request.Url!.AbsolutePath == "/eng.srt") { Entered.TrySetResult(); await Release.Task; }
+                        if (request.Request.Url!.AbsolutePath is "/eng.srt" or "/changed-eng.srt")
+                        {
+                            var count = Interlocked.Increment(ref EngRequests);
+                            if (request.Request.UserAgent?.Contains("mpv", StringComparison.OrdinalIgnoreCase) == true || request.Request.UserAgent?.Contains("Lavf", StringComparison.OrdinalIgnoreCase) == true) Interlocked.Increment(ref SyncRequests);
+                            Entered.TrySetResult(); await Release.Task;
+                            if (count <= BusyResponses || count > BusyAfter || BusyChangedFile && request.Request.Url.AbsolutePath == "/changed-eng.srt") { request.Response.StatusCode = 503; request.Response.Headers["Retry-After"] = "1"; request.Response.Close(); return; }
+                        }
                         if (oversized)
                         {
                             request.Response.ContentType = "application/x-subrip"; request.Response.SendChunked = true;
@@ -527,7 +855,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         public bool HoldSettings;
         public bool SupportBurnInReplan;
         public bool StartsBurned;
+        public bool ChangeFileOnReplan;
         public int Replans;
+        public Func<int>? SidecarReadCount;
+        public List<int> ReadsAtReplan = [];
+        public List<int> ReplanSelections = [];
         public bool HoldNextReplan;
         public TaskCompletionSource ReplanEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReplanRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -552,9 +884,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (SupportBurnInReplan && path.EndsWith("/replan"))
             {
+                if (SidecarReadCount != null) ReadsAtReplan.Add(SidecarReadCount());
                 using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 selectedSubtitle = document.RootElement.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selected) &&
                     selected.ValueKind == JsonValueKind.Object ? selected.GetProperty("index").GetInt32() : -1;
+                ReplanSelections.Add(selectedSubtitle);
+                if (ChangeFileOnReplan && Replans > 0 && selectedSubtitle >= 7) selectedSubtitle -= 7;
                 Replans++;
                 if (HoldNextReplan)
                 {
@@ -563,17 +898,20 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             else if (path.EndsWith("/start")) selectedSubtitle = StartsBurned ? 2 : -1;
             else return Json("""{"outcome":"applied"}""");
-            var inventory = Version().SubtitleTracks!.Select(t => (object)new { track_id = $"sub:42:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, source = "external", url = origin + $"/{t.Language}.srt", label = t.Language }).ToList();
-            if (SupportBurnInReplan) inventory.Add(new { track_id = "sub:42:2", combined_index = 2, language = "eng", codec = "dvd_subtitle", source = "embedded", delivery = "burn_in_only", label = "English (DVD)" });
+            var file = ChangeFileOnReplan && Replans > 0 ? 43 : 42;
+            var offset = file == 43 ? 7 : 0;
+            var appliedSubtitle = selectedSubtitle < 0 ? -1 : selectedSubtitle + offset;
+            var inventory = Version().SubtitleTracks!.Select(t => (object)new { track_id = $"sub:{file}:{t.Index + offset}", combined_index = t.Index + offset, language = t.Language, codec = t.Codec, source = "external", url = origin + $"/{(file == 43 ? "changed-" : "")}{t.Language}.srt", label = t.Language }).ToList();
+            if (SupportBurnInReplan) inventory.Add(new { track_id = $"sub:{file}:{2 + offset}", combined_index = 2 + offset, language = "eng", codec = "dvd_subtitle", source = "embedded", delivery = "burn_in_only", label = "English (DVD)" });
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "fixture",
                 playback_plan = new
                 {
-                    plan_id = SupportBurnInReplan ? $"plan-{Replans}" : "plan", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = 42,
+                    plan_id = SupportBurnInReplan ? $"plan-{Replans}" : "plan", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = file,
                     delivery = "original_http", stream = new { url = origin + (SupportBurnInReplan ? "/stream/direct/replacement.wav" : "/media.wav") }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = "file:42:audio:0", index = 0 }, subtitle = selectedSubtitle < 0 ? null : new { id = $"sub:42:{selectedSubtitle}", index = selectedSubtitle } },
-                    subtitle = new { mode = selectedSubtitle == 2 ? "burn_in" : selectedSubtitle < 0 ? "off" : "render", track_id = selectedSubtitle < 0 ? null : $"sub:42:{selectedSubtitle}", inventory },
+                    selected_tracks = new { audio = new { id = $"file:{file}:audio:0", index = 0 }, subtitle = appliedSubtitle < 0 ? null : new { id = $"sub:{file}:{appliedSubtitle}", index = appliedSubtitle } },
+                    subtitle = new { mode = selectedSubtitle == 2 ? "burn_in" : selectedSubtitle < 0 ? "off" : "render", track_id = appliedSubtitle < 0 ? null : $"sub:{file}:{appliedSubtitle}", inventory },
                 },
             }));
         }

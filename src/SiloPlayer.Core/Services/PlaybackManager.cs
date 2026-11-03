@@ -388,14 +388,21 @@ public partial class PlaybackManager : IDisposable
         CancellationToken ct = default)
     {
         RecordLocalSubtitleSelection(subtitleTrackIndex);
-        return ReplanAsync(
+        return ReplanRecordedSubtitleSelectionAsync(positionSeconds, ct);
+    }
+
+    /// <summary>
+    /// Submits the already recorded viewer intent after another grant has
+    /// changed inventories, preserving its original file/track identity.
+    /// </summary>
+    public Task<PlaybackStartResponse> ReplanRecordedSubtitleSelectionAsync(double positionSeconds, CancellationToken ct = default)
+        => ReplanAsync(
             "track_change",
             positionSeconds,
             _qualityPreferenceV3,
             selectedTracks => { },
             failure: null,
             ct);
-    }
 
     public Task<PlaybackStartResponse> ReplanSeekAsync(
         double positionSeconds,

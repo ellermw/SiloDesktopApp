@@ -143,6 +143,23 @@ public sealed class PlaybackTrackIntentTests
         Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task SubmittingRecordedChoicePreservesItsOriginalVariantAcrossAReorderedGrant()
+    {
+        using var scope = new Fixture(); scope.Wire.SubtitleVariants = true;
+        var source = scope.Manager.WatchDetail!.Versions.Single(v => v.FileId == 42).SubtitleTracks!;
+        source[0].Language = "spa"; source[0].Title = "Generic"; source[1].Title = "Specific variant";
+        scope.Manager.WatchDetail.Versions.Single(v => v.FileId == 44).SubtitleTracks![0].Title = "Generic";
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        await scope.Manager.StartReplacementSessionAsync(44, 12);
+        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.ReplanRecordedSubtitleSelectionAsync(12);
+        Assert.Equal("sub:44:0", scope.Wire.Replans.Single().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString());
+        await scope.Manager.StartReplacementSessionAsync(42, 14);
+        Assert.Equal(1, scope.Wire.Starts.Last().GetProperty("subtitle_track_index").GetInt32());
+    }
+
     private sealed class Fixture : IDisposable
     {
         public readonly Wire Wire = new();
@@ -177,6 +194,7 @@ public sealed class PlaybackTrackIntentTests
         public List<string> Paths = [];
         public bool BlockNext;
         public bool FailNextReplan;
+        public bool SubtitleVariants;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _file = 42, _selected = 0;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -205,6 +223,12 @@ public sealed class PlaybackTrackIntentTests
                 if (BlockNext) { BlockNext = false; Entered.SetResult(); await Release.Task.WaitAsync(ct); }
             }
             var version = Version(_file, _file == 44, _file == 43);
+            if (SubtitleVariants && _file == 42)
+            {
+                version.SubtitleTracks![0].Language = "spa"; version.SubtitleTracks[0].Title = "Generic";
+                version.SubtitleTracks[1].Title = "Specific variant";
+            }
+            if (SubtitleVariants && _file == 44) version.SubtitleTracks![0].Title = "Generic";
             var inventory = (version.SubtitleTracks ?? []).Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, label = t.Title, source = "embedded", delivery = "native" })
                 .Concat(_file == 42 ? new[] { new { track_id = "sub:42:2", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
             var subtitleIdentity = _selected < 0 ? null : new { id = $"sub:{_file}:{_selected}", index = _selected };

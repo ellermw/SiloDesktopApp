@@ -310,6 +310,21 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await Oct24SubtitleAdoptionNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-burn-readiness")
+            {
+                await SubtitleSidecarOwnershipNativeFixture.RunBurnReadinessAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-accepted-reload")
+            {
+                await SubtitleSidecarOwnershipNativeFixture.RunAcceptedReloadAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-sidecar-busy")
+            {
+                await SubtitleSidecarOwnershipNativeFixture.RunBusyAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-sidecar-ownership")
             {
                 await SubtitleSidecarOwnershipNativeFixture.RunAsync(parent);
