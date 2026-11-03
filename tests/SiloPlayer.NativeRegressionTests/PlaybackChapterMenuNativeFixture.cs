@@ -82,7 +82,10 @@ internal static class PlaybackChapterMenuNativeFixture
                     compute_layout()
                     local r = kind == 'more' and state.layout.btn_more or state.layout.btn_chapters or state.layout.btn_more or {}
                     mp.commandv('script-message','silo-chapters-fixture-state',id,require('mp.utils').format_json({
-                        x=r.cx or 0,y=r.cy or 0,scope=state.native_chapters_scope or '',
+                        x=r.cx or 0,y=r.cy or 0,width=state.osd_width,height=state.osd_height,
+                        more_available=state.layout.btn_more ~= nil,
+                        scope_present=state['native_' .. kind .. '_scope'] ~= nil,
+                        scope=state.native_chapters_scope or '',
                         sequence=state.native_menu_request and state.native_menu_request.sequence or 0,
                         legacy=state.chapter_menu_visible or false}))
                 end)
@@ -259,12 +262,33 @@ internal static class PlaybackChapterMenuNativeFixture
         {
             mpv.SendScriptMessage("osc-show");
             var state = await Query();
+            // Native owner resize and mpv's published OSD dimensions settle
+            // on separate pumps. Drive the visible compact opener only after
+            // it exists; never issue/replay a click at the previous layout.
+            var geometryWait = Stopwatch.StartNew();
+            while (more && (!state.GetProperty("more_available").GetBoolean() || !state.GetProperty("scope_present").GetBoolean()))
+            {
+                if (geometryWait.Elapsed > TimeSpan.FromSeconds(8))
+                    throw new InvalidOperationException("The compact More opener did not become available after owner resize.");
+                await Task.Delay(20);
+                state = await Query();
+            }
+            Program.Log($"Native {(more ? "More" : "Chapters")} opener: {state.GetProperty("width")}x{state.GetProperty("height")}, x={state.GetProperty("x")}, y={state.GetProperty("y")}, More={state.GetProperty("more_available")}, scope={state.GetProperty("scope_present")}.");
             mpv.SendScriptMessage("osc-mouse-move", state.GetProperty("x").ToString(), state.GetProperty("y").ToString());
             mpv.SendScriptMessage("osc-mouse-down", state.GetProperty("x").ToString(), state.GetProperty("y").ToString());
             mpv.SendScriptMessage("osc-mouse-up", state.GetProperty("x").ToString(), state.GetProperty("y").ToString());
             mpv.SendScriptMessage("osc-video-click", state.GetProperty("x").ToString(), state.GetProperty("y").ToString());
-            await Until(() => Menu(service) is { } m && ((ListView)Get(m, "_list")!).XamlRoot != null,
-                "Actual OSC " + (more ? "More" : "Chapters") + " opener produced no native menu.");
+            try
+            {
+                await Until(() => Menu(service) is { } m && ((ListView)Get(m, "_list")!).XamlRoot != null,
+                    "Actual OSC " + (more ? "More" : "Chapters") + " opener produced no native menu.");
+            }
+            catch
+            {
+                var after = await Query();
+                Program.Log($"Native opener after failure: {after.GetProperty("width")}x{after.GetProperty("height")}, x={after.GetProperty("x")}, y={after.GetProperty("y")}, More={after.GetProperty("more_available")}, scope={after.GetProperty("scope_present")}.");
+                throw;
+            }
             return Menu(service)!;
         }
     }
