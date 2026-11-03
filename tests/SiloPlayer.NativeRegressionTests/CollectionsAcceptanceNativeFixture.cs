@@ -55,6 +55,13 @@ internal static class CollectionsAcceptanceNativeFixture
         {
             window.AppWindow.Move(new(-20000, -20000)); window.AppWindow.ResizeClient(new(1280, 900)); window.AppWindow.Show(false);
             await Task.Delay(160);
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
+            {
+                await SyncedSortDirectionAsync(frame, window);
+                await SyncedSortCapabilitiesAsync(frame, window, wire);
+                Program.Log("PASS: synced collection field/direction controls, capabilities and responsive layout.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_RETIREMENT") == "1")
             {
                 await LockedSourcesAsync(frame, window);
@@ -163,10 +170,15 @@ internal static class CollectionsAcceptanceNativeFixture
             await Case("manual draft visible responsive actions", () => ManualDraftAsync(frame, window));
             await Case("manual title search keyboard/recovery", () => ManualSearchAsync(frame, window, wire));
             await Case("smart current rules and live preview", () => SmartDraftAsync(frame, window, wire));
+            await Case("saved smart discard restores controls and preview", () => SmartDiscardAsync(frame, window, wire));
+            await Case("saved smart legacy sort orders", () => SmartSavedSortAsync(frame, window, wire));
+            await Case("saved smart legacy group matches", () => SmartSavedMatchAsync(frame, window, wire));
             await Case("manual actual failed add/remove retention", () => ManualAsync(frame, window, wire));
             await Case("imported successful Save stays clean", () => ImportedSaveAsync(frame, window, wire, navigation));
             await Case("locked Discover presentation", () => LockedSourcesAsync(frame, window));
             await Case("converted manual collection retains title and items", () => ConvertedManualAsync(frame, window, wire));
+            await Case("synced sort direction and discard", () => SyncedSortDirectionAsync(frame, window));
+            await Case("synced default sort capability guards", () => SyncedSortCapabilitiesAsync(frame, window, wire));
             await Case("artwork draft preview and Delete Cancel", () => ArtworkAsync(frame, window, wire));
             if (Failures.Count != 0) throw new InvalidOperationException(string.Join("; ", Failures));
             Program.Log("PASS: finite collection template, discovery, mutation, imported Save and artwork acceptance.");
@@ -279,7 +291,7 @@ internal static class CollectionsAcceptanceNativeFixture
             "Synced editor uses the retired section heading and caption");
         Probe(All<ScrollViewer>(page).Any(s => s.MaxHeight == 420 && ReferenceEquals(s.Content, Read(page, "_syncedChoices"))),
             "Synced popular picks have no bounded420px scroll surface");
-        Probe(All<TextBlock>(page).Any(t => t.Text == "Or paste any MDBList link") && All<TextBlock>(page).Any(t => t.Text.StartsWith("Blank takes the whole list, up to 500.")),
+        Probe(All<TextBlock>(page).Any(t => t.Text == "Or paste any MDBList link") && All<TextBlock>(page).Any(t => t.Text.StartsWith("Blank takes up to 10,000 titles")),
             "Synced link and Order omit current visible labels/help");
         var pristine = (Dictionary<string, string>)Call(page, "CaptureDraft")!;
         All<RadioButton>(page).Single(button => Equals(button.Content, "TMDB chart")).IsChecked = true;
@@ -476,6 +488,19 @@ internal static class CollectionsAcceptanceNativeFixture
                 All<TextBlock>(page).Any(t => t.Text == "The preview didn't load. You can still save."),
                 "a failed preview discards healthy matches or blocks the collection draft");
             wire.RejectPreview = false;
+            var rules = (DependencyObject)Read(page, "_rulesEditor")!;
+            var sort = All<ComboBox>(rules).Single(combo => AutomationProperties.GetName(combo) == "Sort by");
+            var direction = All<ComboBox>(rules).Single(combo => AutomationProperties.GetName(combo) == "Direction");
+            sort.SelectedItem = sort.Items.Cast<object>().Single(item => item.ToString() == "Content Rating"); await Layout();
+            Check(page.ViewModel.RuleDefinition.Sort?.Field == "content_rating" && page.ViewModel.RuleDefinition.Sort?.Order == "asc"
+                && direction.Items.Cast<object>().Select(item => item.ToString()).SequenceEqual(new[] { "A–Z", "Z–A" })
+                && direction.SelectedItem?.ToString() == "A–Z",
+                "Smart Content Rating must default to ascending and offer alphabetical directions in the synced editor's order.");
+            direction.SelectedItem = direction.Items.Cast<object>().Single(item => item.ToString() == "Z–A"); await Layout();
+            Check(page.ViewModel.RuleDefinition.Sort?.Field == "content_rating" && page.ViewModel.RuleDefinition.Sort?.Order == "desc"
+                && direction.SelectedItem?.ToString() == "Z–A",
+                "Smart Content Rating's Z–A direction must preserve the field and store descending order.");
+            sort.SelectedItem = sort.Items.Cast<object>().Single(item => item.ToString() == "Date Added"); await Layout();
             if (width == 1280)
             {
                 var limit = (TextBox)Read(page, "_smartLimit")!; limit.Text = "12"; Call(page, "CommitSmartLimit");
@@ -504,6 +529,118 @@ internal static class CollectionsAcceptanceNativeFixture
             frame.Content = null; page.ViewModel.InvalidateEditorLoads();
         }
     }
+    private static async Task SmartDiscardAsync(Frame frame, Window window, Wire wire)
+    {
+        foreach (var width in new[] { 1280, 460 })
+        {
+            var page = await Editor(frame, window, "smart"); await Viewport(frame, window, width);
+            var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+            // As in the synced regression, add a draft-only library choice;
+            // the fixture's reference endpoint has no libraries on reload.
+            page.ViewModel.AvailableLibraries.Add(new() { Id = 987, Name = "Draft library", Type = "movies" });
+            Call(page, "PopulateSmartFields");
+            var limit = (TextBox)Read(page, "_smartLimit")!;
+            var scope = (ComboBox)Read(page, "_smartScope")!;
+            var libraries = (StackPanel)Read(page, "_smartLibraries")!;
+            var previews = wire.PreviewCalls;
+            Check(limit.Focus(FocusState.Keyboard), "Smart Max titles must accept focus for editing.");
+            limit.Text = "12";
+            Check(scope.Focus(FocusState.Keyboard), "Leaving Smart Max titles must move focus to Kind.");
+            scope.SelectedItem = scope.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "series"));
+            libraries.Children.OfType<CheckBox>().Single(box => Equals(box.Content, "Draft library")).IsChecked = true;
+            await Until(() => wire.PreviewCalls > previews && !page.ViewModel.IsPreviewing); await Layout();
+            Check(page.ViewModel.RuleDefinition.Limit == 12 && page.ViewModel.RuleDefinition.MediaScope == "series"
+                && page.ViewModel.RuleDefinition.LibraryIds.SequenceEqual(new[] { 987 })
+                && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Visible && !DraftMatches(page, saved),
+                "Editing Smart Max titles, Kind and Libraries must dirty the saved draft.");
+            previews = wire.PreviewCalls;
+            Call(page, "Discard_Click", page, new RoutedEventArgs());
+            await Until(() => !page.ViewModel.IsLoading); await Layout();
+            Check(page.ViewModel.ErrorMessage == null && limit.Text == "" && Equals(((ComboBoxItem)scope.SelectedItem).Tag, "all")
+                && libraries.Children.OfType<CheckBox>().Count() == 1 && libraries.Children.OfType<CheckBox>().Single().IsChecked == true
+                && AutomationProperties.GetName((Button)Read(page, "_smartLibraryPicker")!) == "Libraries: all my libraries",
+                "Discard must restore Smart Max titles, Kind, library choices and the library label.");
+            await Until(() => wire.PreviewCalls > previews && !page.ViewModel.IsPreviewing);
+            using var preview = JsonDocument.Parse(wire.PreviewBody!);
+            var query = preview.RootElement.GetProperty("query_definition");
+            Check(!query.TryGetProperty("limit", out var previewLimit) || previewLimit.ValueKind == JsonValueKind.Null,
+                "Discard preview still uses the discarded Smart title limit.");
+            Check((!query.TryGetProperty("media_scope", out var previewScope) || previewScope.ValueKind == JsonValueKind.Null)
+                && query.GetProperty("library_ids").GetArrayLength() == 0,
+                "Discard must refresh the preview with the saved Kind and Libraries.");
+            Check(limit.Focus(FocusState.Keyboard), "Restored Smart Max titles must accept focus."); await Layout();
+            Check(scope.Focus(FocusState.Keyboard), "Restored Smart Max titles must allow focus to leave."); await Layout();
+            Check(page.ViewModel.RuleDefinition.Limit == null && page.ViewModel.RuleDefinition.MediaScope == null
+                && page.ViewModel.RuleDefinition.LibraryIds.Count == 0 && page.ViewModel.SelectedLibraryIds.Count == 0
+                && DraftMatches(page, saved) && DraftMatches(page, (Dictionary<string, string>)Read(page, "_draftBaseline")!)
+                && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Collapsed,
+                "Moving focus through Smart Max titles after Discard must not recommit discarded values or dirty the draft.");
+            frame.Content = null;
+        }
+    }
+
+    private static async Task SmartSavedSortAsync(Frame frame, Window window, Wire wire)
+    {
+        try
+        {
+            foreach (var (field, order, label) in new[] { ("added_at", "", "Saved order ()"), ("title", "ASC", "Saved order (ASC)"),
+                ("future_sort", "ascending", "Saved order (ascending)"), ("title", "asc", "A–Z"), ("release_date", "desc", "Newest first") })
+            {
+                wire.SmartSortField = field; wire.SmartSortOrder = order;
+                var page = await Editor(frame, window, "smart");
+                var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+                Check(page.ViewModel.RuleDefinition.Sort?.Field == field && page.ViewModel.RuleDefinition.Sort?.Order == order,
+                    "Loading a saved Smart sort must retain its field and legacy/future order.");
+                Call(page, "BuildRulesUI"); await Layout();
+                var editor = (DependencyObject)Read(page, "_rulesEditor")!;
+                var direction = All<ComboBox>(editor).Single(combo => AutomationProperties.GetName(combo) == "Direction");
+                Check(direction.SelectedItem?.ToString() == label && DraftMatches(page, saved),
+                    "Rebuilding the Smart editor must display the saved direction without throwing or coercing the query.");
+                direction.SelectedItem = direction.Items.Cast<object>().Single(item => item.ToString() == (field == "title" ? "Z–A" : field == "added_at" || field == "release_date" ? "Newest first" : "Highest first"));
+                await Layout();
+                Check(page.ViewModel.RuleDefinition.Sort?.Field == field && page.ViewModel.RuleDefinition.Sort?.Order == "desc",
+                    "An explicit Smart direction edit must retain the saved field and write the selected canonical order.");
+                frame.Content = null;
+            }
+        }
+        finally { wire.SmartSortField = "added_at"; wire.SmartSortOrder = "desc"; frame.Content = null; }
+    }
+
+    private static async Task SmartSavedMatchAsync(Frame frame, Window window, Wire wire)
+    {
+        try
+        {
+            wire.SmartQueryGroups = [new(), new()];
+            foreach (var match in new[] { "all", "any", "future_match", "ALL", "", " " })
+            {
+                wire.SmartQueryMatch = match;
+                var page = await Editor(frame, window, "smart");
+                var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+                var label = match == "all" ? "and" : match == "any" ? "or" : $"Saved match ({match})";
+                Check(page.ViewModel.RuleDefinition.Match == match && page.ViewModel.RuleDefinition.Groups.Count == 2,
+                    "Loading a saved Smart query must retain its group match and groups.");
+                Call(page, "BuildRulesUI"); await Layout();
+                var editor = (DependencyObject)Read(page, "_rulesEditor")!;
+                var combine = All<ComboBox>(editor).Single(combo => AutomationProperties.GetName(combo) == "How the groups combine");
+                Check(combine.SelectedItem?.ToString() == label && page.ViewModel.RuleDefinition.Match == match && DraftMatches(page, saved),
+                    "Rebuilding the Smart editor must display the saved group match without throwing or rewriting the query.");
+                Call(page, "Discard_Click", page, new RoutedEventArgs());
+                await Until(() => !page.ViewModel.IsLoading); await Layout();
+                editor = (DependencyObject)Read(page, "_rulesEditor")!;
+                combine = All<ComboBox>(editor).Single(combo => AutomationProperties.GetName(combo) == "How the groups combine");
+                Check(combine.SelectedItem?.ToString() == label && page.ViewModel.RuleDefinition.Match == match
+                    && page.ViewModel.RuleDefinition.Groups.Count == 2 && DraftMatches(page, saved),
+                    "Discard must reload the saved group match and groups without coercion.");
+                combine.SelectedItem = combine.Items.Cast<object>().Single(item => item.ToString() == (match == "any" ? "and" : "or"));
+                await Layout();
+                Check(page.ViewModel.RuleDefinition.Match == (match == "any" ? "all" : "any"),
+                    "An explicit group-join edit must write the selected canonical match.");
+                frame.Content = null;
+            }
+        }
+        finally { wire.SmartQueryMatch = "all"; wire.SmartQueryGroups = []; frame.Content = null; }
+    }
+
     private static async Task<CollectionEditorPage> Editor(Frame frame, Window window, string id)
     {
         await Viewport(frame, window, 460); var page = new CollectionEditorPage(); frame.Content = page;
@@ -658,13 +795,240 @@ internal static class CollectionsAcceptanceNativeFixture
         Check(page.ViewModel.ErrorMessage != null && ReferenceEquals(frame.Content, page) && page.ViewModel.PosterFileBytes?.SequenceEqual(bytes) == true && preview.Source != null,
             "rejected poster write lost the editor or selected preview");
         wire.PosterGate = null; Click(save); await Until(() => wire.PosterCalls == 2 && !page.ViewModel.IsSaving && !page.ViewModel.IsLoading); await Layout();
-        Check(page.ViewModel.ErrorMessage == null && page.ViewModel.PosterFileBytes == null && ((FrameworkElement)page.FindName("CollectionDirtyDock")).Visibility == Visibility.Collapsed,
+        Check(page.ViewModel.ErrorMessage == null && page.ViewModel.PosterFileBytes == null
+            && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Collapsed
+            && DraftMatches(page, (Dictionary<string, string>)Read(page, "_draftBaseline")!),
             "successful artwork retry did not establish a clean saved editor");
         await (Task)Call(page, "ApplyPosterDropAsync", drop.GetView())!; await Layout();
         Call(page, "Discard_Click", page, new RoutedEventArgs()); await Until(() => !page.ViewModel.IsLoading && page.ViewModel.PosterFileBytes == null); await Layout();
         Check(((Image)page.FindName("ImportedPosterPreview")).Source == null && wire.PosterCalls == 2, "Discard retained selected artwork or wrote another poster");
         frame.Content = null;
     }
+    private static async Task SyncedSortDirectionAsync(Frame frame, Window window)
+    {
+        foreach (var create in new[] { false, true })
+        foreach (var width in new[] { 1280, 460 })
+        {
+            CollectionEditorPage page;
+            if (create)
+            {
+                await Viewport(frame, window, width);
+                page = new CollectionEditorPage(); frame.Content = page;
+                Set(page, "_editorActive", true);
+                await (Task)Call(page, "InitializeNewEditorAsync", "synced")!;
+                await Layout();
+            }
+            else page = await Editor(frame, window, "imported");
+            await Viewport(frame, window, width);
+            var sort = (ComboBox)page.FindName("ImportedDefaultSortCombo");
+            var order = (Grid)Read(page, "_syncedOrderGrid")!;
+            var direction = All<ComboBox>(order).FirstOrDefault(combo => AutomationProperties.GetName(combo) == "Direction");
+            Check(direction != null, "Synced collections must expose a separate Direction control.");
+            order.StartBringIntoView(); await Layout();
+            Check(!direction!.IsEnabled && ((ComboBoxItem)direction.SelectedItem).Content as string == "As listed",
+                "Source order must disable direction as As listed.");
+            var sortItems = sort.Items.OfType<ComboBoxItem>().ToArray();
+            Check(new[] { "rating_rt_critic:desc", "rating_rt_audience:desc" }.All(value => sortItems.Any(item => Equals(item.Tag, value))),
+                "New and saved synced editors must offer the server's available RT rating sorts.");
+            Check(sort.Focus(FocusState.Keyboard), "Sort must accept keyboard focus before opening its popup.");
+            sort.IsDropDownOpen = true; await Layout();
+            try
+            {
+                foreach (var value in new[] { "title:asc", "year:desc", "title:asc" })
+                {
+                    var item = sortItems.Single(item => Equals(item.Tag, value));
+                    sort.SelectedIndex = Array.IndexOf(sortItems, item); await Layout();
+                    Check(sort.Items.OfType<ComboBoxItem>().SequenceEqual(sortItems) && ReferenceEquals(sort.SelectedItem, item)
+                        && page.ViewModel.DefaultSortValue == value,
+                        "Sort navigation must retain its rows and highlighted selection across queued refreshes.");
+                }
+            }
+            finally { sort.IsDropDownOpen = false; }
+            Check(direction.IsEnabled && page.ViewModel.DefaultSortValue == "title:asc", "Title must default to ascending.");
+            Check(direction.Items.OfType<ComboBoxItem>().Select(item => item.Content as string).SequenceEqual(new[] { "A–Z", "Z–A" }),
+                "Alphabetical direction labels differ from the WebUI.");
+            var directionItems = direction.Items.OfType<ComboBoxItem>().ToArray();
+            Check(direction.Focus(FocusState.Keyboard), "Direction must accept keyboard focus before opening its popup.");
+            direction.IsDropDownOpen = true; await Layout();
+            try
+            {
+                foreach (var index in new[] { 1, 0, 1 })
+                {
+                    direction.SelectedIndex = index; await Layout();
+                    Check(direction.Items.OfType<ComboBoxItem>().SequenceEqual(directionItems)
+                        && ReferenceEquals(direction.SelectedItem, directionItems[index]),
+                        "Direction navigation must retain its rows and highlighted selection across queued refreshes.");
+                }
+            }
+            finally { direction.IsDropDownOpen = false; }
+            Check(page.ViewModel.DefaultSortValue == "title:desc" && (string)page.ViewModel.CaptureSortConfig()["order"] == "desc",
+                "Direction must update the saved field/order contract.");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "content_rating:asc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "content_rating:asc" && direction.Items.OfType<ComboBoxItem>()
+                .Select(item => item.Content as string).SequenceEqual(new[] { "A–Z", "Z–A" }),
+                "Content Rating must use alphabetical direction labels and default to ascending.");
+            page.ViewModel.DefaultSortValue = "release_date:asc"; await Layout();
+            Check((string)((ComboBoxItem)sort.SelectedItem).Tag == "release_date:desc" &&
+                (string)((ComboBoxItem)direction.SelectedItem).Tag == "asc", "A stored reverse direction must keep its field and direction visible.");
+            Check(direction.Items.OfType<ComboBoxItem>().Select(item => item.Content as string).SequenceEqual(new[] { "Oldest first", "Newest first" }),
+                "Date direction labels differ from the WebUI.");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "year:desc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "year:desc" && direction.Items.OfType<ComboBoxItem>()
+                .Select(item => item.Content as string).SequenceEqual(new[] { "Oldest first", "Newest first" }),
+                "Year must use the WebUI's date direction labels.");
+            CheckClosedDirection(direction, "Newest first");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "runtime:desc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "runtime:desc" && direction.Items.OfType<ComboBoxItem>()
+                .Select(item => item.Content as string).SequenceEqual(new[] { "Lowest first", "Highest first" }),
+                "Numeric field must use default direction and numeric labels.");
+            CheckClosedDirection(direction, "Highest first");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "year:desc")); await Layout();
+            direction.SelectedItem = direction.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "asc")); await Layout();
+            CheckClosedDirection(direction, "Oldest first");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "title:asc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "title:asc", "Changing fields must retain Title's ascending default.");
+            CheckClosedDirection(direction, "A–Z");
+            page.ViewModel.IsSaving = true; await Layout();
+            Check(!direction.IsEnabled && !sort.IsEnabled, "Pending saves must disable both order controls.");
+            page.ViewModel.IsSaving = false; await Layout();
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "")); await Layout();
+            Check(page.ViewModel.CaptureSortConfig().Count == 0 && !direction.IsEnabled,
+                "Source order must explicitly clear the saved default sort.");
+            page.ViewModel.DefaultSortValue = "future_sort:desc"; await Layout();
+            Check(page.ViewModel.DefaultSortValue == "future_sort:desc" && !direction.IsEnabled &&
+                (string)((ComboBoxItem)sort.SelectedItem).Tag == "future_sort:desc",
+                "Refreshing controls must preserve an unknown saved field and refuse unsafe direction edits.");
+            page.ViewModel.DefaultSortValue = "title:desc"; await Layout();
+            var footer = (Border)Read(page, "_editorFooter")!;
+            foreach (var control in new FrameworkElement[] { sort, direction })
+            {
+                Check(((Control)control).Focus(FocusState.Keyboard), "Order control must accept keyboard focus.");
+                await Layout();
+                var bounds = control.TransformToVisual(order).TransformBounds(new(0, 0, control.ActualWidth, control.ActualHeight));
+                Check(bounds.Left >= -1 && bounds.Right <= order.ActualWidth + 1 && bounds.Top >= -1 && bounds.Bottom <= order.ActualHeight + 1,
+                    $"Order controls must remain inside the grid at {width}px.");
+                var visible = control.TransformToVisual(frame).TransformBounds(new(0, 0, control.ActualWidth, control.ActualHeight));
+                var footerTop = footer.TransformToVisual(frame).TransformPoint(new(0, 0)).Y;
+                Check(visible.Top >= 0 && visible.Bottom <= footerTop,
+                    $"Keyboard-focused order control is hidden behind the actions at {width}px.");
+            }
+            order.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = .5 }); await Layout();
+            await Capture(frame, $"synced-direction-{(create ? "new" : "saved")}-{width}.png");
+            if (!create) await SyncedDiscardAsync(page);
+            frame.Content = null;
+        }
+    }
+
+    private static async Task SyncedSortCapabilitiesAsync(Frame frame, Window window, Wire wire)
+    {
+        try
+        {
+            wire.RejectSortWrites = true;
+            foreach (var supported in new bool?[] { true, false, null })
+            foreach (var create in new[] { false, true })
+            {
+                wire.CollectionDefaultSort = supported;
+                CollectionEditorPage page;
+                if (create)
+                {
+                    await Viewport(frame, window, 460);
+                    page = new CollectionEditorPage(); frame.Content = page; Set(page, "_editorActive", true);
+                    await (Task)Call(page, "InitializeNewEditorAsync", "synced")!;
+                    await Layout();
+                    All<RadioButton>(page).Single(button => Equals(button.Content, "MDBList")).IsChecked = true;
+                    ((TextBox)Read(page, "_syncedLink")!).Text = "https://mdblist.com/lists/fixture/sort/";
+                    await Layout();
+                    page.ViewModel.Name = "Sort capability fixture";
+                }
+                else page = await Editor(frame, window, "imported");
+                var sort = (ComboBox)page.FindName("ImportedDefaultSortCombo");
+                var direction = (ComboBox)Read(page, "_syncedDirection")!;
+                page.ViewModel.DefaultSortValue = "title:asc"; await Layout();
+                Check(sort.IsEnabled == (supported == true) && direction.IsEnabled == (supported == true),
+                    "New and saved synced order controls must require collection_default_sort, including when omitted.");
+                Check(Equals(((ComboBoxItem)sort.SelectedItem).Tag, "title:asc") &&
+                    Equals(((ComboBoxItem)direction.SelectedItem).Tag, "asc"),
+                    "An unsupported default sort must remain visible without being rewritten.");
+                page.ViewModel.IsSaving = true; await Layout();
+                Check(!sort.IsEnabled && !direction.IsEnabled, "Saving must disable capability-supported order controls too.");
+                page.ViewModel.IsSaving = false; await Layout();
+                Check(sort.IsEnabled == (supported == true) && direction.IsEnabled == (supported == true),
+                    "Finishing a save must not enable unsupported order controls.");
+                if (supported == true)
+                {
+                    direction.SelectedItem = direction.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "desc"));
+                    await Layout();
+                    Check(page.ViewModel.DefaultSortValue == "title:desc", "A supported direction edit must retain the sort field.");
+                }
+                else page.ViewModel.DefaultSortValue = "title:desc"; // Independently exercise the write guard.
+                wire.SortWriteBody = null;
+                if (create) await (Task)Call(page, "SaveSyncedCreationAsync")!;
+                else await page.ViewModel.SaveCommand.ExecuteAsync(null);
+                await Layout();
+                Check(wire.SortWriteBody.HasValue, "The capability check must not prevent other collection fields from being saved.");
+                var body = wire.SortWriteBody!.Value;
+                Check(body.TryGetProperty("sort_config", out var config) == (supported == true),
+                    "PATCH and import bodies must omit sort_config unless collection_default_sort is enabled.");
+                if (supported == true)
+                    Check(config.GetProperty("field").GetString() == "title" && config.GetProperty("order").GetString() == "desc",
+                        "Supported writes must include the independently selected direction.");
+                frame.Content = null;
+            }
+        }
+        finally { wire.CollectionDefaultSort = true; wire.RejectSortWrites = false; frame.Content = null; }
+    }
+
+    private static void CheckClosedDirection(ComboBox direction, string expected)
+    {
+        var presenter = All<ContentPresenter>(direction).Single(item => item.Name == "ContentPresenter");
+        Check(!direction.IsDropDownOpen && presenter.Content as string == expected &&
+            All<TextBlock>(presenter).Any(text => text.Text == expected && text.ActualWidth > 0 && text.ActualHeight > 0),
+            $"Closed Direction box must display {expected} after changing fields without changing direction.");
+    }
+
+    private static async Task SyncedDiscardAsync(CollectionEditorPage page)
+    {
+        var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+        Click(All<Button>((Border)page.FindName("ImportedSourceSection")).Single(button => Equals(button.Content, "Change link")));
+        await Layout();
+        Check((bool)Read(page, "_savedSourceChanging")!, "Change link must open the saved source editor.");
+        page.ViewModel.SourceUrl = "https://mdblist.com/lists/fixture/discarded/";
+        // The fixture's server has no libraries. Add a local choice to verify
+        // that Discard rebuilds the flyout from the reloaded reference data.
+        page.ViewModel.AvailableLibraries.Add(new() { Id = 987, Name = "Draft library", Type = "movies" });
+        Call(page, "RefreshSyncedLibraries");
+        var choices = (StackPanel)Read(page, "_syncedLibraryChoices")!;
+        choices.Children.OfType<CheckBox>().Single().IsChecked = true;
+        var limit = (TextBox)Read(page, "_titleLimit")!;
+        var sort = (ComboBox)page.FindName("ImportedDefaultSortCombo");
+        Check(limit.Focus(FocusState.Keyboard), "Max titles must accept focus for editing.");
+        limit.Text = "5";
+        Check(sort.Focus(FocusState.Keyboard), "Leaving Max titles must move focus to Sort.");
+        await Layout();
+        Check(page.ViewModel.MaxItemsText == "5" && page.ViewModel.SelectedLibraryIds.Contains(987)
+            && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Visible && !DraftMatches(page, saved),
+            "Editing Max titles and libraries must dirty the synced draft.");
+        Call(page, "Discard_Click", page, new RoutedEventArgs());
+        await Until(() => !page.ViewModel.IsLoading); await Layout();
+        Check(page.ViewModel.ErrorMessage == null && limit.Text == saved["limit"] && !(bool)Read(page, "_savedSourceChanging")!
+            && choices.Children.OfType<CheckBox>().Count() == page.ViewModel.AvailableLibraries.Count
+            && AutomationProperties.GetName((Button)Read(page, "_syncedMatchButton")!) == "Match into: All my libraries",
+            "Discard must restore Max titles, library choices, the Match into label and the closed source editor.");
+        Check(limit.Focus(FocusState.Keyboard), "Restored Max titles must accept focus.");
+        await Layout();
+        Check(sort.Focus(FocusState.Keyboard), "Restored Max titles must allow focus to leave.");
+        await Layout();
+        Check(DraftMatches(page, saved) && DraftMatches(page, (Dictionary<string, string>)Read(page, "_draftBaseline")!)
+            && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Collapsed,
+            "Moving focus through Max titles after Discard must not recommit discarded values or dirty the draft.");
+    }
+
+    private static bool DraftMatches(CollectionEditorPage page, Dictionary<string, string> baseline)
+    {
+        var draft = (Dictionary<string, string>)Call(page, "CaptureDraft")!;
+        return draft.Count == baseline.Count && draft.All(pair => baseline.TryGetValue(pair.Key, out var value) && value == pair.Value);
+    }
+
     private static async Task Viewport(Frame frame, Window window, int width)
     { window.AppWindow.ResizeClient(new(width, 900)); frame.Width = width; await Layout(); var actual = window.AppWindow.ClientSize; Check(actual.Width == width && actual.Height == 900 && Math.Abs(frame.XamlRoot.Size.Width - width) < 1, "collection fixture viewport is clamped or mislabeled"); }
     private static async Task Layout() { await Task.Delay(250); }
@@ -735,17 +1099,28 @@ internal static class CollectionsAcceptanceNativeFixture
         internal static string PosterUrl = ""; internal static int MutationCalls;
         internal static readonly CollectionTemplate Template = new() { Id = "fixture", Title = "A current collection template with a long title", Description = "Collection template description", Source = "tmdb", MediaKind = "movie", Icon = "🎬", RequiresProfile = true, DefaultSyncSchedule = "0 0 * * *", DefaultLimit = 100, PosterPath = "/artwork/template.png" };
         internal string[] ImportSources = ["tmdb", "mdblist", "tmdb_list"]; internal bool RejectCapabilities;
+        internal bool? CollectionDefaultSort = true; internal bool RejectSortWrites; internal JsonElement? SortWriteBody;
         internal int PreviewCalls; internal string? PreviewBody; internal bool RejectPreview;
+        internal string SmartSortField = "added_at", SmartSortOrder = "desc";
+        internal string SmartQueryMatch = "all"; internal QueryGroup[] SmartQueryGroups = [];
         internal TaskCompletionSource<HttpResponseMessage>? PreviewGate;
         internal TaskCompletionSource<HttpResponseMessage>? SearchGate, PosterGate, TitleSearchGate; internal int SearchCalls, TopCalls, AddCalls, RemoveCalls, SaveCalls, Deletes, PosterCalls; internal string? SearchQuery; internal bool RejectManual, SearchSecond, RejectTitleSearch, EmptyTitleSearch; internal string ImportedName = "Imported fixture";
         internal static object List(string id, string name) => new { id = id == "top" ? 2 : 1, name, user_name = "Fixture", mediatype = "movie", items = 12, likes = 3, url = "https://mdblist.com/lists/fixture/" + id };
-        private object Collection(string id) => id == "converted"
+        private object Collection(string id) => id == "smart"
+            ? new { id, name = "Smart fixture", collection_type = "smart", creator_profile_id = "fixture", query_definition = new { library_ids = Array.Empty<int>(), match = SmartQueryMatch, groups = SmartQueryGroups, sort = new { field = SmartSortField, order = SmartSortOrder } } }
+            : id == "converted"
             ? new { id, name = ImportedName, collection_type = "manual", creator_profile_id = "fixture", source_url = "", source_config = new { }, sync_schedule = (string?)null }
             : new { id, name = id == "manual" ? "Manual fixture" : ImportedName, collection_type = id == "manual" ? "manual" : id == "discover" ? "tmdb" : "mdblist", creator_profile_id = "fixture", source_url = "https://mdblist.com/lists/fixture/top/", source_config = new { limit = 100, mode = id == "discover" ? "tmdb_discover" : "mdblist", media_type = "movie", preset = "trending", discover = new { sort_by = "popularity.desc" } }, sync_cadence = "daily", updated_at = "2026-10-01T00:00:00Z" };
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.Method != HttpMethod.Get && request.RequestUri?.AbsolutePath != "/api/v2/collections/preview") MutationCalls++;
             Check(request.RequestUri?.Host == "collections-acceptance.invalid", "collection fixture attempted external network"); var path = request.RequestUri!.AbsolutePath; Program.Log($"TRACE collection wire {request.Method} {path}");
+            if (RejectSortWrites && (request.Method == HttpMethod.Patch || request.Method == HttpMethod.Post && path.StartsWith("/api/v2/collections/import/")))
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); SortWriteBody = body.RootElement.Clone();
+                // Keep the draft open; these cases inspect writes, not creation/navigation.
+                return Reply(new { message = "Fixture sort write rejected" }, HttpStatusCode.UnprocessableEntity);
+            }
             if (path == "/api/v2/collections/imported/poster")
             {
                 PosterCalls++; Check(request.Method == HttpMethod.Put && request.Content is MultipartFormDataContent, "artwork save is not the canonical multipart PUT");
@@ -757,12 +1132,20 @@ internal static class CollectionsAcceptanceNativeFixture
             if (path.EndsWith("/mdblist/search")) { SearchCalls++; SearchQuery = request.RequestUri.Query; return await SearchGate!.Task.WaitAsync(ct); }
             if (path == "/api/v2/collections/preview") { PreviewCalls++; PreviewBody = await request.Content!.ReadAsStringAsync(ct); if (PreviewGate != null) return await PreviewGate.Task; return RejectPreview ? Reply(new { message = "Fixture preview rejected" }, HttpStatusCode.ServiceUnavailable) : Reply(new { total = 80, items = Enumerable.Range(0, 24).Select(i => new { content_id = "preview-" + i, title = "Preview " + i, type = "movie", poster_url = PosterUrl }).ToArray() }); }
             if (path.EndsWith("/mdblist/top")) { TopCalls++; return Reply(new { configured = true, items = new[] { List("top", "Top list") } }); }
-            if (path == "/api/v2/collections/capabilities") return RejectCapabilities ? Reply(new { message = "Fixture capabilities rejected" }, HttpStatusCode.ServiceUnavailable) : Reply(new { item_reorder = false, imports = true, import_sources = ImportSources, mdblist_search = true, artwork = true, sync_schedule_editable = true });
+            if (path == "/api/v2/capabilities/ratings") return Reply(new { state = "available", sources = new[] { new { source = "rt_critic" }, new { source = "rt_audience" } } });
+            if (path == "/api/v2/collections/capabilities")
+            {
+                if (RejectCapabilities) return Reply(new { message = "Fixture capabilities rejected" }, HttpStatusCode.ServiceUnavailable);
+                var capabilities = new Dictionary<string, object> { ["item_reorder"] = false, ["imports"] = true,
+                    ["import_sources"] = ImportSources, ["mdblist_search"] = true, ["artwork"] = true, ["sync_schedule_editable"] = true };
+                if (CollectionDefaultSort is { } supported) capabilities["collection_default_sort"] = supported;
+                return Reply(capabilities);
+            }
             if (path == "/api/v2/collections/templates") return Reply(new { categories = new[] { new { category = "featured", label = "Featured", templates = new[] { new { id = Template.Id, title = Template.Title, description = Template.Description, source = "tmdb", media_kind = "movie", icon = Template.Icon, requires_profile = true, default_sync_schedule = Template.DefaultSyncSchedule, default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "" } }, new { id = "popular", title = "Popular pick", description = "Source pick", source = "mdblist", media_kind = "movie", icon = Template.Icon, requires_profile = false, default_sync_schedule = "0 0 * * *", default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "https://mdblist.com/lists/fixture/popular/" } } } } } });
             if (path == "/api/v2/collections") return Reply(new { items = new[] { Collection("manual"), Collection("imported") }, groups = Array.Empty<object>() });
             if (path is "/api/v2/collections/manual/items" or "/api/v2/collections/converted/items") return Reply(new { items = new[] { new { media_item_id = "one", content_id = "one", title = "Retained title", type = "movie", position = 0 } }, page = new { has_more = false } });
             if (path.StartsWith("/api/v2/collections/manual/items/")) { if (request.Method == HttpMethod.Put) AddCalls++; else if (request.Method == HttpMethod.Delete) RemoveCalls++; return Reply(new { message = "Fixture manual write rejected" }, RejectManual ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.OK); }
-            if (path is "/api/v2/collections/manual" or "/api/v2/collections/imported" or "/api/v2/collections/discover" or "/api/v2/collections/converted")
+            if (path is "/api/v2/collections/manual" or "/api/v2/collections/imported" or "/api/v2/collections/discover" or "/api/v2/collections/converted" or "/api/v2/collections/smart")
             {
                 if (request.Method == HttpMethod.Delete) Deletes++;
                 if (request.Method == HttpMethod.Patch) { SaveCalls++; using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); if (body.RootElement.TryGetProperty("name", out var name)) ImportedName = name.GetString()!; }
