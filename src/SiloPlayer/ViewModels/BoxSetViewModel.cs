@@ -65,7 +65,9 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
                 Failure = failure;
             }
         }
-        finally { if (Current()) IsLoading = false; }
+        // Authority/language retirement must settle this read's loading state,
+        // but an older read must never clear a successor's loading indicator.
+        finally { if (ReferenceEquals(_pending, pending)) IsLoading = false; }
     }
     public async Task PlayAsync(Func<string, int, ApiRequestContext, CancellationToken, Task> play)
     {

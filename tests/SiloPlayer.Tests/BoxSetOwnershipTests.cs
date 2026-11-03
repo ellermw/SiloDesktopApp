@@ -21,6 +21,34 @@ public sealed class BoxSetOwnershipTests
         var set = new BoxSetViewModel(api); await set.LoadAsync("7", "2"); set.Cancel();
         var reads = wire.DetailReads; await set.RefreshAsync(); Assert.Equal(reads, wire.DetailReads); Assert.Null(set.Detail);
     }
+    [Theory] [InlineData("language")] [InlineData("profile")] [InlineData("access")]
+    public async Task RetiredInitialReadSettlesLoadingWithoutASuccessor(string change)
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
+        var set = new BoxSetViewModel(new CatalogApi(client));
+        var pending = set.LoadAsync("7", "2"); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(set.IsLoading);
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        wire.Hold = false; wire.Release.TrySetResult(); await pending;
+        Assert.False(set.IsLoading); Assert.Null(set.Detail); Assert.False(set.IsCurrent);
+        await set.RefreshAsync(); Assert.NotNull(set.Detail); Assert.False(set.IsLoading); set.Cancel();
+    }
+    [Fact] public async Task RetiredInitialReadCannotClearSuccessorLoading()
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
+        var set = new BoxSetViewModel(new CatalogApi(client));
+        var retired = set.LoadAsync("7", "2"); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var retiredRelease = wire.Release;
+        client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var successor = set.RefreshAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        retiredRelease.TrySetResult(); await retired;
+        Assert.True(set.IsLoading); Assert.Null(set.Detail);
+        wire.Hold = false; wire.Release.TrySetResult(); await successor;
+        Assert.False(set.IsLoading); Assert.NotNull(set.Detail); Assert.True(set.IsCurrent); set.Cancel();
+    }
     [Fact] public async Task DepartureCannotBeRevivedByQueuedRefreshForMovie()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
@@ -109,6 +137,7 @@ public sealed class BoxSetOwnershipTests
         using var wire = new Wire { DetailStatus = HttpStatusCode.ServiceUnavailable }; using var http = new HttpClient(wire);
         var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "2"); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
         wire.DetailStatus = HttpStatusCode.NotFound; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.NotFound, vm.Failure);
+        wire.DetailStatus = HttpStatusCode.Forbidden; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.AccessDenied, vm.Failure); Assert.Null(vm.Detail); Assert.False(vm.IsLoading);
         wire.DetailStatus = HttpStatusCode.OK; await vm.RefreshAsync(); Assert.NotNull(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
     }
     [Fact] public async Task CapabilityFaultIsRetryableOnDedicatedDestination()

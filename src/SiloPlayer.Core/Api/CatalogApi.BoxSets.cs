@@ -2,11 +2,20 @@ using SiloPlayer.Core.Models.Catalog;
 namespace SiloPlayer.Core.Api;
 public partial class CatalogApi
 {
+    private sealed class BoxSetCapabilities { public bool BoxSets { get; set; } }
+    private async Task<bool> ReadBoxSetPolicyAsync(ApiRequestContext context, CancellationToken ct)
+    {
+        // Unlike static query features, this viewer policy can change at any time.
+        var response = await client.SendRequestAsync<BoxSetCapabilities>(context, HttpMethod.Get, "/api/v2/catalog/search/capabilities", null, ct);
+        ct.ThrowIfCancellationRequested();
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Box-set policy context changed.", ct);
+        return response.BoxSets;
+    }
     public long MetadataLanguageGeneration => client.LocalizedReads.Generation;
     public async Task<bool> SupportsBoxSetsAsync(CancellationToken ct = default)
     {
         var context = client.CaptureContext();
-        try { return (await GetSearchRuleCapabilitiesAsync(context, ct)).BoxSets; }
+        try { return await ReadBoxSetPolicyAsync(context, ct); }
         catch (OperationCanceledException) { throw; }
         catch { return false; }
     }
@@ -20,7 +29,7 @@ public partial class CatalogApi
     {
         var context = client.CaptureContext();
         bool supported;
-        try { supported = (await GetSearchRuleCapabilitiesAsync(context, ct)).BoxSets; }
+        try { supported = await ReadBoxSetPolicyAsync(context, ct); }
         catch (OperationCanceledException) { throw; }
         catch (ApiException ex) when (ex.StatusCode == 404) { return new HashSet<int>(); }
         catch when (!throwOnCapabilityFailure) { return new HashSet<int>(); }
@@ -35,7 +44,7 @@ public partial class CatalogApi
     {
         var context = client.CaptureContext();
         bool supported;
-        try { supported = (await GetSearchRuleCapabilitiesAsync(context, ct)).BoxSets; }
+        try { supported = await ReadBoxSetPolicyAsync(context, ct); }
         catch (ApiException ex) when (ex.StatusCode == 404) { return []; }
         if (!supported) return [];
         var libraries = await client.SendRequestAsync<BrowseCollection<Library>>(context, HttpMethod.Get, "/api/v2/user/libraries", null, ct);

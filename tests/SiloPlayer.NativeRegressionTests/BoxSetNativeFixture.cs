@@ -99,6 +99,8 @@ internal static class BoxSetNativeFixture
         page.Width = 540; page.Height = 600; page.UpdateLayout(); await Task.Delay(100);
         Check(Descendants(page).OfType<TextBlock>().Where(x => x.Text == wire.Title).All(x => x.ActualWidth <= 540), "compact wrapped hero");
         await Capture(page, "boxset-compact.png");
+        await CheckMemberScrollAsync(page, 960, 480);
+        await CheckMemberScrollAsync(page, 540, 600);
         wire.Played = 3; await page.ViewModel.RefreshAsync(); await Task.Delay(80);
         Check(((TextBlock)Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay").Content).Text == "Play First", "all-played action wording");
         sent = ""; await page.ViewModel.PlayAsync((id, library, owner, ct) => { sent = id; return Task.CompletedTask; }); Check(sent == "first", "all-played first movie");
@@ -106,6 +108,12 @@ internal static class BoxSetNativeFixture
         wire.Status = HttpStatusCode.ServiceUnavailable; await page.ViewModel.RefreshAsync();
         Check(ReferenceEquals(page.ViewModel.Detail, lastSuccessfulDetail) && Descendants(page).OfType<PosterCard>().SequenceEqual(members), "background failure preserves loaded content and cards");
         Check(Descendants(page).OfType<Button>().Any(x => (x.Content as string) == "Try again" && x.Visibility == Visibility.Visible), "transient retry control");
+        wire.Status = HttpStatusCode.Forbidden; await page.ViewModel.RefreshAsync(); page.UpdateLayout();
+        Check(page.ViewModel.Failure == DetailFailureKind.AccessDenied && page.ViewModel.Detail == null
+            && Descendants(page).OfType<TextBlock>().Any(x => x.Text == "Box set unavailable")
+            && Descendants(page).OfType<TextBlock>().Any(x => x.Text == DetailFailurePolicy.Message(DetailFailureKind.AccessDenied))
+            && !Descendants(page).OfType<Button>().Any(x => (x.Content as string) == "Try again")
+            && Descendants(page).OfType<Button>().Contains(back), "403 is terminal unavailable with profile guidance and back, not retry");
         wire.Status = HttpStatusCode.NotFound; await page.ViewModel.RefreshAsync();
         Check(Descendants(page).OfType<TextBlock>().Any(x => x.Text == "Box set unavailable") && !Descendants(page).OfType<Button>().Any(x => (x.Content as string) == "Try again"), "unavailable distinct from retry");
         Check(Descendants(page).OfType<Button>().Contains(back), "unavailable state retains the back control");
@@ -192,11 +200,20 @@ internal static class BoxSetNativeFixture
         Check(card.Visibility == Visibility.Visible && card.Content is BoxSetCard, "recycled suppressed aggregate restores a valid card");
         // Exercise Frame activation and the production parameterless destination, beyond route interception.
         var destinationFrame = navigation.Frame!; destinationFrame.Width = 540; destinationFrame.Height = 600;
-        parent.Children.Add(destinationFrame); navigation.NavigationRequestHandler = null; wire.Empty = false; wire.Played = 1;
+        navigation.NavigationRequestHandler = null; wire.Empty = false; wire.Played = 1;
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Program.Log("TRACE: before actual Frame box-set activation.");
         Check(navigation.Navigate<BoxSetPage>(new BoxSetNavigationArgs("7", "12")), "actual Frame box-set navigation");
-        for (var i = 0; i < 100 && (destinationFrame.Content is not BoxSetPage arriving || !arriving.IsLoaded || arriving.ViewModel.Detail == null); i++) await Task.Delay(10);
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var initial = (BoxSetPage)destinationFrame.Content;
+        Check(!initial.IsLoaded && initial.ViewModel.IsLoading, "initial scoped read is held before Loaded");
+        var initialReads = wire.Reads;
+        wire.Hold = false; api.LocalizedReads.NotifySettingChanged("catalog.metadata_language"); wire.Release.TrySetResult();
+        parent.Children.Add(destinationFrame);
+        for (var i = 0; i < 100 && (destinationFrame.Content is not BoxSetPage arriving || !arriving.IsLoaded || arriving.ViewModel.Detail == null || arriving.ViewModel.IsLoading); i++) await Task.Delay(10);
         Check(destinationFrame.Content is BoxSetPage opened && opened.ViewModel.Detail is { Id: "7", LibraryId: "12" }, "activated dedicated destination loads scoped data");
+        Check(wire.Reads > initialReads && !initial.ViewModel.IsLoading && initial.ViewModel.IsCurrent,
+            "language change during initial pre-Loaded read starts a current successor and clears loading");
         Program.Log("TRACE: actual Frame box-set activation succeeded.");
         var activated = (BoxSetPage)destinationFrame.Content;
         Check(activated.IsLoaded && activated.ViewModel.IsCurrent, "activated destination is loaded and owns the playback notification");
@@ -219,6 +236,24 @@ internal static class BoxSetNativeFixture
         Program.Log("PASS: box-set hero/primary action, response library, progress/fallback, keyboard/automation, compact/wide captures, failure/retry/unavailable/empty/departure, actual movie row/order/marker/member/View all destinations and recycled card.");
         }
         finally { parent.Children.Clear(); await Task.Delay(100); servicesField.SetValue(null, originalServices); }
+    }
+    private static async Task CheckMemberScrollAsync(BoxSetPage page, double width, double height)
+    {
+        page.Width = width; page.Height = height; page.UpdateLayout(); await Task.Delay(100);
+        var scroll = ((Grid)page.Content).Children.OfType<ScrollViewer>().Single();
+        Check(scroll.ViewportHeight > 0 && scroll.ViewportHeight < height && scroll.ScrollableHeight > 0,
+            $"multi-film detail has a constrained vertical viewport at {width}x{height}");
+        Check(scroll.VerticalScrollBarVisibility == ScrollBarVisibility.Auto && scroll.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled,
+            "dedicated detail enables vertical scrolling only");
+        scroll.ChangeView(null, scroll.ScrollableHeight, null, disableAnimation: true);
+        for (var i = 0; i < 100 && Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) > 1; i++) await Task.Delay(10);
+        page.UpdateLayout();
+        var last = Descendants(page).OfType<PosterCard>().Last();
+        var bounds = last.TransformToVisual(scroll).TransformBounds(new Windows.Foundation.Rect(0, 0, last.ActualWidth, last.ActualHeight));
+        Check(scroll.VerticalOffset > 0 && bounds.Top >= -1 && bounds.Bottom <= scroll.ViewportHeight + 1 && last.ActualHeight > 0,
+            $"last movie can be scrolled fully into view at {width}x{height}");
+        Check(last.Focus(FocusState.Keyboard), "last scrolled movie accepts keyboard focus");
+        scroll.ChangeView(null, 0, null, disableAnimation: true); await Task.Delay(50);
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
