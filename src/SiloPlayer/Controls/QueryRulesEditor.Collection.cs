@@ -44,7 +44,11 @@ public sealed partial class QueryRulesEditor
             {
                 var join = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
                 var combine = new ComboBox { MinWidth = 0, MinHeight = 0, Height = 36, FontSize = 14 };
-                combine.Items.Add(new Option("and", "all")); combine.Items.Add(new Option("or", "any")); combine.SelectedItem = combine.Items.Cast<Option>().First(o => o.Value == Query.Match);
+                combine.Items.Add(new Option("and", "all")); combine.Items.Add(new Option("or", "any"));
+                var savedMatch = combine.Items.Cast<Option>().FirstOrDefault(o => o.Value == Query.Match);
+                // Keep unknown saved matches visible without coercing the query on load.
+                if (savedMatch == null) combine.Items.Add(savedMatch = new Option($"Saved match ({Query.Match})", Query.Match));
+                combine.SelectedItem = savedMatch;
                 AutomationProperties.SetName(combine, "How the groups combine"); combine.SelectionChanged += (_, _) => { Query.Match = Selected(combine); Changed?.Invoke(); };
                 join.Children.Add(combine); join.Children.Add(new TextBlock { Text = "titles that match", FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
                 var match = Choice(["all", "any"], group.Match, $"How group {index + 1}'s rules combine"); match.Height = 36; match.FontSize = 14;

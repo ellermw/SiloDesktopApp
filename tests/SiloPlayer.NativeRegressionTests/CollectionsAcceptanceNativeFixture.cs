@@ -172,6 +172,7 @@ internal static class CollectionsAcceptanceNativeFixture
             await Case("smart current rules and live preview", () => SmartDraftAsync(frame, window, wire));
             await Case("saved smart discard restores controls and preview", () => SmartDiscardAsync(frame, window, wire));
             await Case("saved smart legacy sort orders", () => SmartSavedSortAsync(frame, window, wire));
+            await Case("saved smart legacy group matches", () => SmartSavedMatchAsync(frame, window, wire));
             await Case("manual actual failed add/remove retention", () => ManualAsync(frame, window, wire));
             await Case("imported successful Save stays clean", () => ImportedSaveAsync(frame, window, wire, navigation));
             await Case("locked Discover presentation", () => LockedSourcesAsync(frame, window));
@@ -603,6 +604,41 @@ internal static class CollectionsAcceptanceNativeFixture
             }
         }
         finally { wire.SmartSortField = "added_at"; wire.SmartSortOrder = "desc"; frame.Content = null; }
+    }
+
+    private static async Task SmartSavedMatchAsync(Frame frame, Window window, Wire wire)
+    {
+        try
+        {
+            wire.SmartQueryGroups = [new(), new()];
+            foreach (var match in new[] { "all", "any", "future_match", "ALL", "", " " })
+            {
+                wire.SmartQueryMatch = match;
+                var page = await Editor(frame, window, "smart");
+                var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+                var label = match == "all" ? "and" : match == "any" ? "or" : $"Saved match ({match})";
+                Check(page.ViewModel.RuleDefinition.Match == match && page.ViewModel.RuleDefinition.Groups.Count == 2,
+                    "Loading a saved Smart query must retain its group match and groups.");
+                Call(page, "BuildRulesUI"); await Layout();
+                var editor = (DependencyObject)Read(page, "_rulesEditor")!;
+                var combine = All<ComboBox>(editor).Single(combo => AutomationProperties.GetName(combo) == "How the groups combine");
+                Check(combine.SelectedItem?.ToString() == label && page.ViewModel.RuleDefinition.Match == match && DraftMatches(page, saved),
+                    "Rebuilding the Smart editor must display the saved group match without throwing or rewriting the query.");
+                Call(page, "Discard_Click", page, new RoutedEventArgs());
+                await Until(() => !page.ViewModel.IsLoading); await Layout();
+                editor = (DependencyObject)Read(page, "_rulesEditor")!;
+                combine = All<ComboBox>(editor).Single(combo => AutomationProperties.GetName(combo) == "How the groups combine");
+                Check(combine.SelectedItem?.ToString() == label && page.ViewModel.RuleDefinition.Match == match
+                    && page.ViewModel.RuleDefinition.Groups.Count == 2 && DraftMatches(page, saved),
+                    "Discard must reload the saved group match and groups without coercion.");
+                combine.SelectedItem = combine.Items.Cast<object>().Single(item => item.ToString() == (match == "any" ? "and" : "or"));
+                await Layout();
+                Check(page.ViewModel.RuleDefinition.Match == (match == "any" ? "all" : "any"),
+                    "An explicit group-join edit must write the selected canonical match.");
+                frame.Content = null;
+            }
+        }
+        finally { wire.SmartQueryMatch = "all"; wire.SmartQueryGroups = []; frame.Content = null; }
     }
 
     private static async Task<CollectionEditorPage> Editor(Frame frame, Window window, string id)
@@ -1066,11 +1102,12 @@ internal static class CollectionsAcceptanceNativeFixture
         internal bool? CollectionDefaultSort = true; internal bool RejectSortWrites; internal JsonElement? SortWriteBody;
         internal int PreviewCalls; internal string? PreviewBody; internal bool RejectPreview;
         internal string SmartSortField = "added_at", SmartSortOrder = "desc";
+        internal string SmartQueryMatch = "all"; internal QueryGroup[] SmartQueryGroups = [];
         internal TaskCompletionSource<HttpResponseMessage>? PreviewGate;
         internal TaskCompletionSource<HttpResponseMessage>? SearchGate, PosterGate, TitleSearchGate; internal int SearchCalls, TopCalls, AddCalls, RemoveCalls, SaveCalls, Deletes, PosterCalls; internal string? SearchQuery; internal bool RejectManual, SearchSecond, RejectTitleSearch, EmptyTitleSearch; internal string ImportedName = "Imported fixture";
         internal static object List(string id, string name) => new { id = id == "top" ? 2 : 1, name, user_name = "Fixture", mediatype = "movie", items = 12, likes = 3, url = "https://mdblist.com/lists/fixture/" + id };
         private object Collection(string id) => id == "smart"
-            ? new { id, name = "Smart fixture", collection_type = "smart", creator_profile_id = "fixture", query_definition = new { library_ids = Array.Empty<int>(), groups = Array.Empty<object>(), sort = new { field = SmartSortField, order = SmartSortOrder } } }
+            ? new { id, name = "Smart fixture", collection_type = "smart", creator_profile_id = "fixture", query_definition = new { library_ids = Array.Empty<int>(), match = SmartQueryMatch, groups = SmartQueryGroups, sort = new { field = SmartSortField, order = SmartSortOrder } } }
             : id == "converted"
             ? new { id, name = ImportedName, collection_type = "manual", creator_profile_id = "fixture", source_url = "", source_config = new { }, sync_schedule = (string?)null }
             : new { id, name = id == "manual" ? "Manual fixture" : ImportedName, collection_type = id == "manual" ? "manual" : id == "discover" ? "tmdb" : "mdblist", creator_profile_id = "fixture", source_url = "https://mdblist.com/lists/fixture/top/", source_config = new { limit = 100, mode = id == "discover" ? "tmdb_discover" : "mdblist", media_type = "movie", preset = "trending", discover = new { sort_by = "popularity.desc" } }, sync_cadence = "daily", updated_at = "2026-10-01T00:00:00Z" };
