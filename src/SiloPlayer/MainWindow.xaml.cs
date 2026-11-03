@@ -1438,16 +1438,20 @@ public sealed partial class MainWindow : Window
 
     private void OnAccessChanged(ApiRequestContext context)
     {
-        DispatcherQueue.TryEnqueue(() =>
+        void Refresh()
         {
             if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();
             App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
+            CancelShellHydration();
+            RetireSidebarNavigation(retireCustomization: false);
             _pendingAccessRefresh = true;
             ApplyPendingAccessRefresh();
-        });
+        }
+        if (DispatcherQueue.HasThreadAccess) Refresh();
+        else DispatcherQueue.TryEnqueue(Refresh);
     }
 
     private void OnReadCatchUpRequested(ApiRequestContext context)
@@ -1510,6 +1514,7 @@ public sealed partial class MainWindow : Window
         _hydratedShellKey = shellKey;
         var token = _shellHydrationCts.Token;
         RetireSidebarNavigation(retireCustomization: false);
+        _ = RunShellWorkAsync("access_ui_customization", () => LoadSidebarCustomizationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
         // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
@@ -1565,21 +1570,7 @@ public sealed partial class MainWindow : Window
             _ = RunShellWorkAsync(
                 "card_overlay_settings",
                 () => cardOverlayService.EnsureLoadedAsync(shellToken));
-            _ = RunShellWorkAsync(
-                "ui_customization",
-                async () =>
-                {
-                    await _uiCustomizationService.EnsureLoadedAsync(shellToken);
-                    if (!IsCurrentShellHydration(shellKey, shellToken)) return;
-                    DispatcherQueue.TryEnqueue(() =>
-                    {
-                        if (IsCurrentShellHydration(shellKey, shellToken))
-                        {
-                            _sidebarCustomizationReady = true;
-                            ApplyPrimaryMenuCustomization();
-                        }
-                    });
-                });
+            _ = RunShellWorkAsync("ui_customization", () => LoadSidebarCustomizationAsync(shellKey, shellToken));
             _ = RunShellWorkAsync("profile_display", () => UpdateProfileDisplayAsync(shellKey, shellToken));
             _ = RunShellWorkAsync("server_branding", () => LoadShellBrandingAsync(shellKey, shellToken));
             _ = RunShellWorkAsync(
@@ -1626,6 +1617,19 @@ public sealed partial class MainWindow : Window
                 () => LoadShellNavigationAsync(shellKey, shellToken));
         }
         ApplyPendingAccessRefresh();
+    }
+
+    private async Task LoadSidebarCustomizationAsync(string shellKey, CancellationToken token)
+    {
+        var context = _apiClient.CaptureContext();
+        await _uiCustomizationService.EnsureLoadedAsync(token);
+        if (!_apiClient.IsCurrentContext(context) || !IsCurrentShellHydration(shellKey, token)) return;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_apiClient.IsCurrentContext(context) || !IsCurrentShellHydration(shellKey, token)) return;
+            _sidebarCustomizationReady = true;
+            ApplyPrimaryMenuCustomization();
+        });
     }
 
     private bool IsCurrentShellHydration(string shellKey, CancellationToken cancellationToken) =>
@@ -2938,6 +2942,7 @@ public sealed partial class MainWindow : Window
         SidebarPinNavTag pin)
     {
         var ownerKey = _hydratedShellKey;
+        var retirement = _sidebarRetirementGeneration;
         var ownerContext = _apiClient.CaptureIdentityContext();
         var content = new Grid { MinWidth = 144 };
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -2985,7 +2990,7 @@ public sealed partial class MainWindow : Window
         unpinButton.LostFocus += (_, _) => HideUnpin();
         unpinButton.Click += async (_, _) =>
         {
-            if (ownerKey == null || !_apiClient.IsCurrentIdentityContext(ownerContext) ||
+            if (retirement != _sidebarRetirementGeneration || ownerKey == null || !_apiClient.IsCurrentIdentityContext(ownerContext) ||
                 !IsCurrentShellHydration(ownerKey, CancellationToken.None)) return;
             pinItem.IsEnabled = false;
             try
@@ -2997,11 +3002,17 @@ public sealed partial class MainWindow : Window
             }
             catch
             {
-                if (ownerKey == null || !_apiClient.IsCurrentIdentityContext(ownerContext) ||
+                if (retirement != _sidebarRetirementGeneration || ownerKey == null || !_apiClient.IsCurrentIdentityContext(ownerContext) ||
                     !IsCurrentShellHydration(ownerKey, CancellationToken.None)) return;
                 pinItem.IsEnabled = true;
                 App.Services.GetRequiredService<ToastService>().Error(
                     $"Silo could not unpin {pin.Label}.");
+            }
+            finally
+            {
+                if (retirement == _sidebarRetirementGeneration && ownerKey != null &&
+                    _apiClient.IsCurrentIdentityContext(ownerContext) && ContainsSidebarItem(pinItem))
+                    pinItem.IsEnabled = true;
             }
         };
 
@@ -3279,15 +3290,17 @@ public sealed partial class MainWindow : Window
             {
                 if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Array) continue;
                 var entries = new List<SidebarPinRow>();
+                var seen = new HashSet<(string Type, string Id)>();
                 foreach (var el in prop.Value.EnumerateArray())
                 {
                     if (el.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
-                    entries.Add(new SidebarPinRow
+                    var row = new SidebarPinRow
                     {
                         Type = el.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "",
                         Id = el.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
                         Label = el.TryGetProperty("label", out var lb) ? lb.GetString() ?? "" : "",
-                    });
+                    };
+                    if (seen.Add((row.Type.ToLowerInvariant(), row.Id))) entries.Add(row);
                 }
                 if (entries.Count > 0) map[prop.Name] = entries;
             }

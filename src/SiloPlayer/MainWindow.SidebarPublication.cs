@@ -10,6 +10,8 @@ public sealed partial class MainWindow
 {
     private int _sidebarPublicationQueued;
     private bool _sidebarCustomizationReady;
+    private long _sidebarRetirementGeneration;
+    private long _sidebarFocusRestoreGeneration;
 
     private void QueueSidebarPublication()
     {
@@ -23,6 +25,8 @@ public sealed partial class MainWindow
 
     private void RetireSidebarNavigation(bool retireCustomization = true)
     {
+        Interlocked.Increment(ref _sidebarRetirementGeneration);
+        Interlocked.Increment(ref _sidebarFocusRestoreGeneration);
         if (retireCustomization)
         {
             _sidebarCustomizationReady = false;
@@ -33,7 +37,7 @@ public sealed partial class MainWindow
         _viewModel.RetireLibraries();
         RemoveDynamicLibraryNavItems();
         foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>()
-                     .Where(item => item.Tag is PrimaryMenuNavTag).ToArray())
+                     .Where(item => item.Tag is PrimaryMenuNavTag tag && (retireCustomization || tag.Item.Type != "builtin")).ToArray())
             NavView.MenuItems.Remove(item);
         // Settings temporarily detaches the app tree. Retire that copy too.
         if (_appSidebarItems != null)
@@ -43,8 +47,8 @@ public sealed partial class MainWindow
                 var apps = Array.IndexOf(_appSidebarItems, AppsHeader);
                 if (apps >= 0) _appSidebarItems = _appSidebarItems.Take(apps + 1).ToArray();
             }
-            _appSidebarItems = _appSidebarItems.Where(item => item is not NavigationViewItem
-                { Tag: Library or PrimaryMenuNavTag }).ToArray();
+            _appSidebarItems = _appSidebarItems.Where(item => item is not NavigationViewItem { Tag: Library } &&
+                (item is not NavigationViewItem { Tag: PrimaryMenuNavTag tag } || (!retireCustomization && tag.Item.Type == "builtin"))).ToArray();
         }
     }
 
@@ -55,6 +59,8 @@ public sealed partial class MainWindow
             !IsCurrentShellHydration(key, _shellHydrationCts?.Token ?? CancellationToken.None)) return;
 
         var focused = NavView.XamlRoot == null ? null : FocusManager.GetFocusedElement(NavView.XamlRoot) as FrameworkElement;
+        var focusedOwner = FindSidebarFocusOwner(focused);
+        var focusState = focused?.FocusState ?? FocusState.Unfocused;
         var selected = NavView.SelectedItem;
         var hidden = _settingsService.Load().HiddenLibraryIds.ToHashSet();
         var oldLibraries = NavView.MenuItems.OfType<NavigationViewItem>()
@@ -81,9 +87,27 @@ public sealed partial class MainWindow
             if (!ReferenceEquals(NavView.SelectedItem, selectedItem)) NavView.SelectedItem = selectedItem;
         }
         else ResynchronizeSelectedNavigationItem();
-        if (focused is { IsLoaded: true } && focused.XamlRoot == NavView.XamlRoot &&
-            !ReferenceEquals(FocusManager.GetFocusedElement(NavView.XamlRoot), focused))
-            focused.Focus(FocusState.Keyboard);
+        if (focused != null && focusedOwner != null && ContainsSidebarItem(focusedOwner))
+        {
+            var fallback = FocusManager.GetFocusedElement(NavView.XamlRoot);
+            var retirement = _sidebarRetirementGeneration;
+            var restore = Interlocked.Increment(ref _sidebarFocusRestoreGeneration);
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (restore != _sidebarFocusRestoreGeneration || retirement != _sidebarRetirementGeneration ||
+                    !ContainsSidebarItem(focusedOwner) || !focused.IsLoaded || focused.XamlRoot != NavView.XamlRoot ||
+                    !IsCurrentShellHydration(key, _shellHydrationCts?.Token ?? CancellationToken.None)) return;
+                // A newer explicit focus choice wins over layout restoration.
+                if (ReferenceEquals(FocusManager.GetFocusedElement(NavView.XamlRoot), fallback)) focused.Focus(focusState);
+            });
+        }
+    }
+
+    private static NavigationViewItem? FindSidebarFocusOwner(DependencyObject? focused)
+    {
+        for (var node = focused; node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+            if (node is NavigationViewItem item) return item;
+        return null;
     }
 
     private bool ContainsSidebarItem(NavigationViewItem item) =>
@@ -94,7 +118,7 @@ public sealed partial class MainWindow
         static (string Type, string Id) Key(SidebarPinNavTag tag) => (tag.PinType.ToLowerInvariant(), tag.PinId);
         var old = library.MenuItems.OfType<NavigationViewItem>().ToArray();
         var byKey = old.Where(item => item.Tag is SidebarPinNavTag)
-            .ToDictionary(item => Key((SidebarPinNavTag)item.Tag));
+            .GroupBy(item => Key((SidebarPinNavTag)item.Tag)).ToDictionary(group => group.Key, group => group.First());
         var desired = new List<NavigationViewItem>();
         if (_sidebarPins.TryGetValue(libraryId.ToString(), out var pins))
         foreach (var pin in pins)
@@ -136,6 +160,7 @@ public sealed partial class MainWindow
         if (customized)
         foreach (var source in menu!.Items)
         {
+            if (source.Type != "builtin" && !_viewModel.HasCurrentLibrarySnapshot) continue;
             byKey.TryGetValue(source.SemanticKey, out var item);
             if (ResolvePrimaryMenuItem(source, item) is { } resolved) desired.Add(resolved);
         }

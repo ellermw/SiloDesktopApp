@@ -17,8 +17,12 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         PropertyNameCaseInsensitive = true,
     };
 
+    private readonly object _stateGate = new();
+    private long _loadedGeneration;
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     private bool _loaded;
+    private ApiRequestContext _loadedContext;
+    private long _generation;
 
     public bool IsSupported { get; private set; }
     public bool IsUnavailable { get; private set; }
@@ -30,38 +34,56 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
 
     public event EventHandler? Changed;
 
-    public void Invalidate() => _loaded = false;
+    public void Invalidate()
+    {
+        lock (_stateGate)
+        {
+            Interlocked.Increment(ref _generation);
+            _loaded = false;
+        }
+    }
+
+    private bool IsCurrent(ApiRequestContext context, long generation) =>
+        generation == Volatile.Read(ref _generation) && settingsApi.IsCurrentContext(context);
 
     public async Task EnsureLoadedAsync(CancellationToken cancellationToken = default)
     {
-        if (_loaded) return;
+        lock (_stateGate)
+            if (_loaded && _loadedGeneration == _generation && settingsApi.IsCurrentContext(_loadedContext)) return;
         await RefreshAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
+        => await RefreshAsync(settingsApi.CaptureContext(), Volatile.Read(ref _generation), cancellationToken).ConfigureAwait(false);
+
+    private async Task RefreshAsync(ApiRequestContext context, long generation, CancellationToken cancellationToken)
     {
         await _loadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!IsCurrent(context, generation)) return;
             SettingsContractCapabilities capability;
             try
             {
-                capability = await settingsApi.GetContractCapabilitiesAsync(cancellationToken)
+                capability = await settingsApi.GetContractCapabilitiesAsync(context, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (ApiException ex) when (ex.StatusCode is 404 or 405)
             {
-                Reset(supported: false, unavailable: false);
+                if (!IsCurrent(context, generation)) return;
+                Reset(context, generation, supported: false, unavailable: false);
                 return;
             }
 
+            if (!IsCurrent(context, generation)) return;
             if (!capability.SupportsRevision5Customization)
             {
-                Reset(supported: false, unavailable: false);
+                Reset(context, generation, supported: false, unavailable: false);
                 return;
             }
 
             var response = await settingsApi.GetContractEffectiveSettingsAsync(
+                    context,
                     [
                         UICustomizationSettingKeys.PrimaryMenu,
                         UICustomizationSettingKeys.Shortcuts,
@@ -69,25 +91,32 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
                     ],
                     ct: cancellationToken)
                 .ConfigureAwait(false);
+            if (!IsCurrent(context, generation)) return;
             var values = response.Settings.ToDictionary(entry => entry.Key, StringComparer.Ordinal);
 
-            CardPresentation = values.TryGetValue(UICustomizationSettingKeys.CardPresentation, out var cards)
-                ? ParseCardPresentation(cards.Value)
-                : CardPresentation.Default;
-            CardPresentationSource = cards?.Source ?? "default";
+            lock (_stateGate)
+            {
+                if (!IsCurrent(context, generation)) return;
+                CardPresentation = values.TryGetValue(UICustomizationSettingKeys.CardPresentation, out var cards)
+                    ? ParseCardPresentation(cards.Value)
+                    : CardPresentation.Default;
+                CardPresentationSource = cards?.Source ?? "default";
 
-            PrimaryMenu = values.TryGetValue(UICustomizationSettingKeys.PrimaryMenu, out var menu)
-                ? ParsePrimaryMenu(menu.Value)
-                : null;
-            PrimaryMenuSource = menu?.Source ?? "default";
+                PrimaryMenu = values.TryGetValue(UICustomizationSettingKeys.PrimaryMenu, out var menu)
+                    ? ParsePrimaryMenu(menu.Value)
+                    : null;
+                PrimaryMenuSource = menu?.Source ?? "default";
 
-            Shortcuts = values.TryGetValue(UICustomizationSettingKeys.Shortcuts, out var shortcuts)
-                ? ParseShortcuts(shortcuts.Value)
-                : new NavigationShortcutDocument();
+                Shortcuts = values.TryGetValue(UICustomizationSettingKeys.Shortcuts, out var shortcuts)
+                    ? ParseShortcuts(shortcuts.Value)
+                    : new NavigationShortcutDocument();
 
-            IsSupported = true;
-            IsUnavailable = false;
-            _loaded = true;
+                IsSupported = true;
+                IsUnavailable = false;
+                _loaded = true;
+                _loadedContext = context;
+                _loadedGeneration = generation;
+            }
             Changed?.Invoke(this, EventArgs.Empty);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -96,7 +125,8 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         }
         catch
         {
-            Reset(supported: false, unavailable: true);
+            if (!IsCurrent(context, generation)) return;
+            Reset(context, generation, supported: false, unavailable: true);
         }
         finally
         {
@@ -134,12 +164,16 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     {
         if (key is not (UICustomizationSettingKeys.CardPresentation or UICustomizationSettingKeys.PrimaryMenu))
             throw new ArgumentOutOfRangeException(nameof(key));
+        var context = settingsApi.CaptureContext();
+        var generation = Volatile.Read(ref _generation);
         await settingsApi.DeleteContractSettingValueAsync(
+            context,
             key,
             "profile_device",
             ct: cancellationToken).ConfigureAwait(false);
+        if (!IsCurrent(context, generation)) return;
         _loaded = false;
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SavePrimaryMenuAsync(
@@ -148,25 +182,39 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     {
         var validated = ValidatePrimaryMenu(items);
         var document = new PrimaryMenuDocument { Items = validated };
+        var context = settingsApi.CaptureContext();
+        var generation = Volatile.Read(ref _generation);
         await settingsApi.SetContractSettingValueAsync(
+            context,
             UICustomizationSettingKeys.PrimaryMenu,
             "profile_client",
             document,
             ct: cancellationToken).ConfigureAwait(false);
-        PrimaryMenu = document;
-        PrimaryMenuSource = "profile_client";
-        _loaded = true;
+        if (!IsCurrent(context, generation)) return;
+        lock (_stateGate)
+        {
+            if (!IsCurrent(context, generation)) return;
+            PrimaryMenu = document;
+            PrimaryMenuSource = "profile_client";
+            _loaded = true;
+            _loadedContext = context;
+            _loadedGeneration = generation;
+        }
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task ResetPrimaryMenuAsync(CancellationToken cancellationToken = default)
     {
+        var context = settingsApi.CaptureContext();
+        var generation = Volatile.Read(ref _generation);
         await settingsApi.DeleteContractSettingValueAsync(
+            context,
             UICustomizationSettingKeys.PrimaryMenu,
             "profile_client",
             ct: cancellationToken).ConfigureAwait(false);
+        if (!IsCurrent(context, generation)) return;
         _loaded = false;
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
     }
 
     public static List<PrimaryMenuItem> DefaultDesktopMenu() =>
@@ -186,16 +234,22 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     // Always reserve the complete series/title/episode metadata caption.
     public double CardCaptionHeight => 76;
 
-    private void Reset(bool supported, bool unavailable)
+    private void Reset(ApiRequestContext context, long generation, bool supported, bool unavailable)
     {
-        IsSupported = supported;
-        IsUnavailable = unavailable;
-        CardPresentation = CardPresentation.Default;
-        CardPresentationSource = "default";
-        PrimaryMenu = null;
-        PrimaryMenuSource = "default";
-        Shortcuts = new NavigationShortcutDocument();
-        _loaded = true;
+        lock (_stateGate)
+        {
+            if (!IsCurrent(context, generation)) return;
+            IsSupported = supported;
+            IsUnavailable = unavailable;
+            CardPresentation = CardPresentation.Default;
+            CardPresentationSource = "default";
+            PrimaryMenu = null;
+            PrimaryMenuSource = "default";
+            Shortcuts = new NavigationShortcutDocument();
+            _loaded = true;
+            _loadedContext = context;
+            _loadedGeneration = generation;
+        }
         Changed?.Invoke(this, EventArgs.Empty);
     }
 

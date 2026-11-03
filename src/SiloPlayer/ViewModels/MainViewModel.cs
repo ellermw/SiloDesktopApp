@@ -13,6 +13,7 @@ public partial class MainViewModel : ObservableObject
     private readonly AuthService _authService;
     private CancellationTokenSource? _libraryLoadCts;
     private long _libraryLoadGeneration;
+    public bool HasCurrentLibrarySnapshot { get; private set; }
 
     public MainViewModel(CatalogApi catalogApi, AuthService authService)
     {
@@ -34,6 +35,7 @@ public partial class MainViewModel : ObservableObject
 
     public void RetireLibraries()
     {
+        HasCurrentLibrarySnapshot = false;
         Interlocked.Increment(ref _libraryLoadGeneration);
         _libraryLoadCts?.Cancel();
         _libraryLoadCts = null;
@@ -61,6 +63,7 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
+            HasCurrentLibrarySnapshot = true;
             Libraries.Clear();
             foreach (var lib in libraries)
             {
