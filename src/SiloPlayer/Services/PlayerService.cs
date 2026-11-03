@@ -845,15 +845,32 @@ public partial class PlayerService : IDisposable
         {
             // Superseded by a newer seek or playback teardown.
         }
-        catch (PlaybackPlanTerminalException terminal) when (PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason))
+        catch (Exception ex) when (
+            (ex is PlaybackPlanTerminalException terminal && PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason)) ||
+            (ex is ApiException api && PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode)))
         {
             if (generation == Volatile.Read(ref _seekRestartGeneration))
             {
-                LogToFile("player_seek_error.txt", terminal.ToString());
-                // Replan refusals leave the current session intact. Use the
-                // persistent failure surface instead of losing account guidance
-                // in a transient generic seek OSD.
-                EnterPlaybackTerminalState(terminal, CurrentMediaPosition, "seek-refused", CaptureUserPausedState());
+                LogToFile("player_seek_error.txt", ex.ToString());
+                if (_idleRemuxResume.IsReopening)
+                {
+                    // The idle response is no longer usable, unlike a refused
+                    // seek on a healthy stream. Keep the explicit retry surface.
+                    EnterPlaybackTerminalState(ex, mediaPosition, "idle-remux-resume", _idleRemuxResume.DesiredPaused);
+                }
+                else
+                {
+                    // A refused replan leaves the current transport and its
+                    // pause state intact. Retrying the seek must not report
+                    // that healthy plan as a playback failure.
+                    _switchingContent = false;
+                    IsLoading = false;
+                    if (loadingOwner != null)
+                        App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
+                    var (title, detail) = DescribePlaybackError(ex);
+                    ErrorMessage = detail;
+                    ShowNotice(title, detail, "error");
+                }
             }
         }
         catch (Exception ex)

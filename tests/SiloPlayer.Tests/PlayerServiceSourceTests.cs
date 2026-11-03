@@ -1303,20 +1303,33 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void SeekAccountLimitsKeepActionableGuidanceOnThePersistentFailureSurface()
+    public void SeekAccountLimitsShowGuidanceWithoutFailingTheHealthyTransport()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
         var start = source.IndexOf("private async Task RestartTransportForSeekAsync", StringComparison.Ordinal);
         var end = source.IndexOf("private async Task ReportSeekProgressAsync", start, StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
-        var method = source[start..end];
-        var terminalCatch = method.IndexOf("catch (PlaybackPlanTerminalException terminal) when (PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason))", StringComparison.Ordinal);
-        var genericCatch = method.IndexOf("catch (Exception ex)", terminalCatch, StringComparison.Ordinal);
-        Assert.True(terminalCatch >= 0 && genericCatch > terminalCatch);
-        var refusal = method[terminalCatch..genericCatch];
+        var method = source[start..end].Replace("\r", "");
+        var accountCatch = method.IndexOf("catch (Exception ex) when (", StringComparison.Ordinal);
+        Assert.True(accountCatch >= 0);
+        var genericCatch = method.IndexOf("catch (Exception ex)\n", accountCatch, StringComparison.Ordinal);
+        Assert.True(genericCatch > accountCatch);
+        var refusal = method[accountCatch..genericCatch];
+        Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason)", refusal);
+        Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode)", refusal);
         Assert.Contains("generation == Volatile.Read(ref _seekRestartGeneration)", refusal);
-        Assert.Contains("EnterPlaybackTerminalState(terminal, CurrentMediaPosition, \"seek-refused\", CaptureUserPausedState())", refusal);
+        Assert.Contains("if (_idleRemuxResume.IsReopening)", refusal);
+        Assert.Contains("EnterPlaybackTerminalState(ex, mediaPosition, \"idle-remux-resume\", _idleRemuxResume.DesiredPaused)", refusal);
+        var healthy = refusal[refusal.IndexOf("else", StringComparison.Ordinal)..];
+        Assert.Contains("_switchingContent = false;", healthy);
+        Assert.Contains("IsLoading = false;", healthy);
+        Assert.Contains("HideLoadingOverlay(loadingOwner)", healthy);
+        Assert.Contains("DescribePlaybackError(ex)", healthy);
+        Assert.Contains("ShowNotice(title, detail, \"error\")", healthy);
+        Assert.DoesNotContain("EnterPlaybackTerminalState", healthy);
+        Assert.DoesNotContain(".Pause()", healthy);
+        Assert.DoesNotContain(".Play()", healthy);
         Assert.DoesNotContain("StopSession", refusal);
         Assert.DoesNotContain("Seek failed", refusal);
         Assert.DoesNotContain("RecoverInterruptedStreamAsync", refusal);
