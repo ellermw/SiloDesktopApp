@@ -151,6 +151,43 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             // Pre-play choices must change the composited video plan before
             // its first load, without saving an automatic/startup preference.
             await Until(() => Get(service, "_pendingSubtitlePreferenceIndex") == null);
+            // A rejected startup refinement must not discard the playable plan
+            // or retry the failed choice from FILE_LOADED (including Auto).
+            foreach (var prePlaySelection in new int?[] { -1, Spanish, null })
+            {
+                var initial = await manager.StartSessionAsync(42, subtitleTrackIndex: Dvd);
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                var streamUrl = manager.StreamUrl;
+                var watch = new WatchDetailResponse { EffectiveSubtitleMode = "always", EffectiveSubtitleLanguage = "spa" };
+                Call(service, "ResolveInitialSubtitleSelection", watch, Version(), initial, null, prePlaySelection, null);
+                Require(manager.SubtitleSelectionForLoad == (prePlaySelection ?? Spanish),
+                    "Failure fixture did not establish a different pre-play subtitle choice.");
+                wire.FailNextTrackChange = true;
+                var retained = await (Task<PlaybackStartResponse>)Call(service, "ReconcileInitialSubtitlePlanAsync", initial, CancellationToken.None)!;
+                Require(ReferenceEquals(retained, initial) && ReferenceEquals(manager.CurrentSession, initial) &&
+                    manager.StreamUrl == streamUrl && retained.IsSubtitleBurnedIn &&
+                    manager.SubtitleSelectionForLoad == Dvd && manager.IsSubtitleSelectionAutomatic &&
+                    service.ActiveSubtitleServerIndex == Dvd && Get(service, "_pendingAutomaticSubtitleSelection") == null &&
+                    Get(service, "_pendingSubtitleSelection") == null,
+                    "A failed pre-play replan discarded the accepted plan or retained its failed subtitle intent.");
+                await Loaded(async () =>
+                {
+                    var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", retained, Version(), manager.StreamUrl!, 0d, CancellationToken.None)!;
+                    await prepare;
+                    var prepared = prepare.GetType().GetProperty("Result")!.GetValue(prepare)!;
+                    Call(service, "ApplyPreparedTransport", prepared);
+                    Call(service, "BeginMpvLoad", prepared, false);
+                });
+                await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading &&
+                    service.ActiveSubtitleServerIndex == Dvd && !mpv.IsPaused);
+                Require(ReferenceEquals(manager.CurrentSession, initial) && wire.Replans.Count == replans + 1 &&
+                    wire.PreferenceWrites == writes && Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                    Get(service, "_pendingSubtitlePreferenceIndex") == null && mpv.GetPropertyDouble("duration") > 0,
+                    "Playback did not start on the retained plan, retried the failed subtitle or saved an unexecuted preference.");
+            }
+            Program.Log("PASS: failed explicit Off/text and automatic pre-play subtitle replans retain the playable burn-in plan and start native playback without retries or preference writes.");
+
             foreach (var prePlaySelection in new[] { -1, Spanish })
             {
                 var initial = await manager.StartSessionAsync(42, subtitleTrackIndex: Dvd);

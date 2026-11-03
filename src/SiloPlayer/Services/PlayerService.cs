@@ -3888,8 +3888,32 @@ public partial class PlayerService : IDisposable
 
         // A local sid cannot remove server-composited pixels. Resolve pre-play
         // choices using the accepted inventory, and replan before the first load.
-        var replacement = await manager.ReplanSubtitleAsync(requested < 0 ? null : requested, session.Position, ct,
-            isAutomatic: _pendingAutomaticSubtitleSelection != null);
+        var initialIntent = manager.CaptureLocalSubtitleIntent();
+        PlaybackStartResponse replacement;
+        try
+        {
+            replacement = await manager.ReplanSubtitleAsync(requested < 0 ? null : requested, session.Position, ct,
+                isAutomatic: _pendingAutomaticSubtitleSelection != null);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested &&
+            ReferenceEquals(manager, _playbackManager) && ReferenceEquals(manager.CurrentSession, session))
+        {
+            // The subtitle request failed before adoption, not the playable start.
+            // Drop its tentative intent and load the accepted automatic grant.
+            LogToFile("player_subtitle_error.txt", ex.ToString());
+            lock (_subtitleTrackStateLock)
+            {
+                // A newer viewer choice owns its own execution and feedback.
+                if (manager.CaptureLocalSubtitleIntent() != initialIntent) return session;
+                manager.RestoreLocalSubtitleIntent(new(false, null, session.MediaFileId, true));
+                _pendingSubtitleSelection = null;
+                _pendingAutomaticSubtitleSelection = null;
+                _pendingInitialServerSubtitleIndex = manager.SubtitleSelectionForLoad;
+                _activeSubtitleServerIndex = manager.SubtitleSelectionForLoad;
+                ShowSubtitleSelectionUnavailable();
+            }
+            return session;
+        }
         ct.ThrowIfCancellationRequested();
         if (ReferenceEquals(manager, _playbackManager) && ReferenceEquals(manager.CurrentSession, replacement))
         {
