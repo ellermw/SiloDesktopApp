@@ -111,6 +111,32 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 service.ActiveSubtitleServerIndex == 0 && wire.PreferenceWrites == 3 &&
                 manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0).Language == "spa",
                 "The newly published next-item menu did not select its own Spanish row.");
+
+            manager.WatchDetail!.Versions.Add(Version(42));
+            Property(service, "Versions", manager.WatchDetail.Versions);
+            foreach (var entry in new[] { "overlay", "osc", "cast" })
+            {
+                var currentSpanish = manager.CurrentSession!.SubtitleUrls.Single(t => t.Language == "spa");
+                await service.SetSubtitleTrackAndPersistAsync(currentSpanish.Index + 1, currentSpanish.Language, currentSpanish);
+                var writes = wire.PreferenceWrites;
+                var oldSid = mpv.GetPropertyDouble("sid");
+                Set(service, "_switchingContent", true);
+                Set(service, "_subtitleVersionSwitchActive", true);
+                if (entry == "overlay") await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+                else if (entry == "osc")
+                    Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!,
+                        "OSC Off was refused during a version switch.");
+                else await service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track" });
+                Require(manager.SubtitleSelectionForLoad == -1 && wire.PreferenceWrites == writes && mpv.GetPropertyDouble("sid") == oldSid,
+                    "Off during a version switch was not recorded and deferred without a premature preference write.");
+                var nextFile = manager.CurrentSession.MediaFileId == 44 ? 42 : 44;
+                await manager.StartReplacementSessionAsync(nextFile, 12);
+                await Load(-1, 12);
+                await Until(() => Get(service, "_loadedMediaInitCts") == null && wire.PreferenceWrites == writes + 1);
+                Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                    wire.PreferenceWrites == writes + 1 && Get(service, "_pendingSubtitlePreferenceIndex") == null,
+                    "The replacement did not execute Off and save its preference exactly once.");
+            }
             Program.Log("PASS: actual libmpv sid and PlayerService adopt subtitle identity across quality/version changes, refuse outgoing next-item indices until publication, and persist only executed viewer choices.");
         }
         finally

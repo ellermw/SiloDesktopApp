@@ -39,7 +39,7 @@ public sealed class MpvOscRuntimeTests
     }
 
     [Fact]
-    public void SubtitleRightClickCyclesServerChoicesAndSkipsUnavailable()
+    public void SubtitleRightClickUsesLocalHostCycleWithoutPersistedSelections()
     {
         var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
             local state = osc_test_state
@@ -49,7 +49,7 @@ public sealed class MpvOscRuntimeTests
             osc_test_layout()
             state.mouse_x, state.mouse_y = state.layout.btn_cc.x + 2, state.layout.btn_cc.y + 2
             right(); right()
-            mp.set_property('user-data/cycle-subtitles', table.concat(intents, ','))
+            mp.set_property('user-data/cycle-subtitles', tostring(state.active_subtitle)..':'..table.concat(intents, ','))
             """, rawAss: true, resultProperty: "user-data/cycle-subtitles", beforeScript: """
             intents = {}
             local add = mp.add_key_binding
@@ -65,12 +65,41 @@ public sealed class MpvOscRuntimeTests
             local command = mp.commandv
             mp.commandv = function(...)
                 local args = {...}
-                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]) end
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-cycle' then table.insert(intents, 'local-cycle') end
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, 'persist:'..args[3]) end
                 if args[1] == 'cycle' and args[2] == 'sub' then table.insert(intents, 'native-cycle') end
                 return command(...)
             end
             """);
-        Assert.Equal("12,8", output);
+        Assert.Equal("-1:local-cycle,local-cycle", output);
+    }
+
+    [Fact]
+    public void CaptionShortcutTurnsOffExecutedTrackAfterSameFileInventoryRefresh()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":8,"language":"en"}]', '42')
+            handlers['osc-set-active-subtitle']('8')
+            handlers['osc-set-subtitles']('[{"index":8,"language":"en"},{"index":12,"language":"es"}]', '42')
+            handlers['osc-set-active-subtitle']('8') -- host republishes executed identity
+            local highlighted = state.active_subtitle
+            keys['silo-captions-toggle']()
+            mp.set_property('user-data/refreshed-caption', tostring(highlighted)..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/refreshed-caption", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("8:-1", output);
     }
 
     [Theory]

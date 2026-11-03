@@ -241,6 +241,55 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task FailedPickRollbackPreservesAutoAcrossAnUnmatchedVersion(bool localAutomaticSelection, bool automaticOff)
+    {
+        using var scope = new Fixture();
+        scope.Wire.InitialSubtitleSelection = automaticOff ? -1 : 0;
+        scope.Manager.WatchDetail!.Versions[0].SubtitleTracks![0].Language = "en-US";
+        await scope.Manager.StartSessionAsync(42);
+        if (localAutomaticSelection)
+            scope.Manager.RecordLocalSubtitleSelection(automaticOff ? null : 0, isAutomatic: true);
+        var previous = scope.Manager.CaptureLocalSubtitleIntent();
+
+        // The service tentatively records a manual sidecar pick, then refuses
+        // it when the route fails. Rollback must include absence of intent too.
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        Assert.False(scope.Manager.IsSubtitleSelectionAutomatic);
+        scope.Manager.RestoreLocalSubtitleIntent(previous);
+        Assert.Equal(previous, scope.Manager.CaptureLocalSubtitleIntent());
+        Assert.True(scope.Manager.IsSubtitleSelectionAutomatic);
+
+        scope.Wire.InitialSubtitleSelection = 1;
+        var replacement = await scope.Manager.StartReplacementSessionAsync(44, 14);
+        Assert.Empty(scope.Wire.Replans);
+        Assert.Equal("sub:44:1", replacement.SelectedSubtitleTrackId);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.ReplanQualityAsync("720p", 15);
+        Assert.Equal("quality_change", Assert.Single(scope.Wire.Replans).GetProperty("operation").GetString());
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
+    [Fact]
+    public async Task FailedPickRollbackPreservesExplicitOffRatherThanAcceptingAuto()
+    {
+        using var scope = new Fixture();
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(null);
+        var previous = scope.Manager.CaptureLocalSubtitleIntent();
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        scope.Manager.RestoreLocalSubtitleIntent(previous);
+        Assert.False(scope.Manager.IsSubtitleSelectionAutomatic);
+        scope.Wire.InitialSubtitleSelection = 1;
+        await scope.Manager.StartReplacementSessionAsync(44, 14);
+        Assert.False(Assert.Single(scope.Wire.Replans).GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("und")]
     [InlineData("eng")]

@@ -5206,16 +5206,9 @@ local function handle_mouse_down_right()
 
     -- Right-click on CC button: cycle subtitle backward
     if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
-        local choices, current = {-1}, 1
-        for _, track in ipairs(state.subtitle_tracks) do
-            if not track.unplayable then
-                table.insert(choices, track.index)
-                if track.index == state.active_subtitle then current = #choices end
-            end
-        end
-        current = current > 1 and current - 1 or #choices
-        state.active_subtitle = choices[current]
-        mp.commandv("script-message", "silo-subtitle-select", tostring(choices[current]))
+        -- The host maps only already-loaded, available rows to actual SIDs.
+        -- Cycling is local, not a persisted menu selection or a sidecar fetch.
+        mp.commandv("script-message", "silo-subtitle-cycle")
         return
     end
 end

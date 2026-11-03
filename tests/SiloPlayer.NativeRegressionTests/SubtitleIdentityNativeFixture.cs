@@ -156,9 +156,12 @@ internal static class SubtitleIdentityNativeFixture
                     subtitles.Fail = true;
                     preferenceWrites = wire.PreferenceWrites;
                     var cache = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                    manager.RecordLocalSubtitleSelection(previousIndex, isAutomatic: true);
+                    var automaticIntent = manager.CaptureLocalSubtitleIntent();
                     await (Task)Call(service, "SelectSubtitleByServerIndexAsync", busy.Index, true)!;
                     Require(service.ActiveSubtitleServerIndex == previousIndex && mpv.GetPropertyDouble("sid") == previousSid &&
-                        wire.PreferenceWrites == preferenceWrites && !cache.ContainsKey(busy.Index) && manager.SubtitleSelectionForLoad == previousIndex,
+                        wire.PreferenceWrites == preferenceWrites && !cache.ContainsKey(busy.Index) && manager.SubtitleSelectionForLoad == previousIndex &&
+                        manager.CaptureLocalSubtitleIntent() == automaticIntent && manager.IsSubtitleSelectionAutomatic,
                         "Failed sidecar add cached or persisted an unchanged native SID.");
 
                     var castTracks = service.CaptureSiloCastState()["subtitleTracks"]!.AsArray();
@@ -173,6 +176,16 @@ internal static class SubtitleIdentityNativeFixture
                     Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
                         wire.PreferenceWrites == preferenceWrites && !cache.ContainsKey(busy.Index),
                         "Failed sidecar add while Off guessed SID 1 or persisted the failed choice.");
+                    manager.RecordLocalSubtitleSelection(null, isAutomatic: true);
+                    automaticIntent = manager.CaptureLocalSubtitleIntent();
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, true);
+                    await service.SetSubtitleTrackAndPersistAsync(busy.Index + 1, busy.Language, busy);
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, false);
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", busy.Index, false)!;
+                    Require(manager.CaptureLocalSubtitleIntent() == automaticIntent && manager.IsSubtitleSelectionAutomatic &&
+                        service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                        Get(service, "_pendingSubtitlePreferenceIndex") == null && wire.PreferenceWrites == preferenceWrites,
+                        "A refused deferred sidecar pick converted automatic Off into an explicit viewer choice.");
                     // A transient sidecar failure on reload must affect only this
                     // file's execution, not turn the viewer's session intent Off.
                     subtitles.Fail = false;
@@ -294,6 +307,30 @@ internal static class SubtitleIdentityNativeFixture
             await service.SetSubtitleTrackAndPersistAsync(3, english.Language, english);
             Require(mpv.GetPropertyDouble("sid") == 1, "Interleaved index-only inventory selected the wrong native SID instead of source container track 2.");
             Require(mpv.IsPaused, "Native subtitle selection resumed viewer-paused playback.");
+            var republishedActive = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Republished(string[] message)
+            {
+                if (message.FirstOrDefault() == "silo-identity-active" && message.Length > 1) republishedActive.TrySetResult(message[1]);
+            }
+            mpv.ScriptMessageReceived += Republished;
+            try
+            {
+                var activeProbe = Path.Combine(Program.ResultDirectory, "identity-active.lua");
+                await File.WriteAllTextAsync(activeProbe, """
+                    local mp = require 'mp'
+                    mp.register_script_message('osc-set-active-subtitle', function(index)
+                        mp.commandv('script-message', 'silo-identity-active', index)
+                    end)
+                    mp.commandv('script-message', 'silo-identity-active', 'ready')
+                    """);
+                Call(mpv, "Command", (object)new[] { "load-script", activeProbe });
+                Require(await republishedActive.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "ready", "Active subtitle probe did not load.");
+                republishedActive = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                Call(service, "SendSubtitleListToOsc");
+                Require(await republishedActive.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "2" && mpv.GetPropertyDouble("sid") == 1,
+                    "Republishing the subtitle inventory reported Off instead of the executed active track.");
+            }
+            finally { mpv.ScriptMessageReceived -= Republished; }
             var unavailable = session.SubtitleUrls.Single(t => t.Index == 3);
             var previous = service.ActiveSubtitleServerIndex; var writes = wire.PreferenceWrites;
             await service.SetSubtitleTrackAndPersistAsync(4, "en", unavailable);
@@ -315,6 +352,32 @@ internal static class SubtitleIdentityNativeFixture
             Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused, "Later native identity was shifted by sidecar/index-only inventory.");
             await service.SetSubtitleTrackAndPersistAsync(0, null, null);
             Require(mpv.GetPropertyDouble("sid") <= 0 && mpv.IsPaused, "Explicit Off changed viewer pause intent.");
+            // Remote-only rows remain in the menu, but a local cycle must not
+            // fetch them (including a busy URL) or save series preferences.
+            Call(service, "LoadSubtitles");
+            subtitles.Fail = true;
+            var cycleWrites = wire.PreferenceWrites;
+            var cycleRequests = Volatile.Read(ref subtitles.Requests);
+            foreach (var (index, sid) in new[] { (4, 2), (2, 1), (-1, 0) })
+            {
+                Call(service, "CycleSubtitleBackward");
+                Require(service.ActiveSubtitleServerIndex == index && manager.SubtitleSelectionForLoad == index &&
+                    (sid == 0 ? mpv.GetPropertyDouble("sid") <= 0 : mpv.GetPropertyDouble("sid") == sid),
+                    "Local caption cycling did not map server rows to their actual loaded native SIDs.");
+            }
+            japanese.Unplayable = true;
+            try
+            {
+                Call(service, "CycleSubtitleBackward");
+                Require(service.ActiveSubtitleServerIndex == 2 && mpv.GetPropertyDouble("sid") == 1,
+                    "Local caption cycling selected an unavailable native row.");
+                Call(service, "CycleSubtitleBackward");
+                Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0,
+                    "Local caption cycling did not include Off.");
+            }
+            finally { japanese.Unplayable = false; }
+            Require(wire.PreferenceWrites == cycleWrites && Volatile.Read(ref subtitles.Requests) == cycleRequests && mpv.IsPaused,
+                "Local caption cycling downloaded a remote sidecar, saved a series preference or resumed playback.");
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");
         }
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
@@ -336,6 +399,7 @@ internal static class SubtitleIdentityNativeFixture
         private readonly HttpListener _listener = new();
         public string Origin { get; }
         public volatile bool Fail;
+        public int Requests;
         public SubtitleServer(byte[] bytes)
         {
             var reserve = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0); reserve.Start();
@@ -347,6 +411,7 @@ internal static class SubtitleIdentityNativeFixture
                 {
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
+                    Interlocked.Increment(ref Requests);
                     if (Fail)
                     {
                         request.Response.StatusCode = 503;

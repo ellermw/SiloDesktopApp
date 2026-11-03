@@ -150,6 +150,34 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
+    public void SupersededAutomaticRefinementSkipsOnlySubtitleWorkNotSettingsPublication()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task InitializeLoadedMediaAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private bool IsLoadedMediaInitializationCurrent(", start, StringComparison.Ordinal);
+        var worker = source[start..end];
+        Assert.DoesNotContain("!ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic)) return;", worker);
+        var refinement = worker.IndexOf("applyInitialSubtitleSelection = ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic);", StringComparison.Ordinal);
+        var guardedSelection = worker.IndexOf("if (applyInitialSubtitleSelection)", refinement + 1, StringComparison.Ordinal);
+        var settings = worker.IndexOf("await SendAutoSkipSettingsToOscAsync(ct);", guardedSelection, StringComparison.Ordinal);
+        var ai = worker.IndexOf("await SendSubtitleAiAvailabilityToOscAsync(ct);", settings, StringComparison.Ordinal);
+        Assert.True(refinement >= 0 && guardedSelection > refinement && settings > guardedSelection && ai > settings);
+        Assert.Contains("if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;", worker[..refinement]);
+        Assert.Contains("lock (_subtitleTrackStateLock)", worker[..refinement]);
+    }
+
+    [Fact]
+    public void InventoryRepublishUsesExecutedIdentityOnlyForTheCurrentFile()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private void SendSubtitleListToOsc()", StringComparison.Ordinal);
+        var end = source.IndexOf("private void SendAudioTrackListToOsc()", start, StringComparison.Ordinal);
+        var publish = source[start..end];
+        Assert.Contains("_executedSubtitleFileId == session.MediaFileId ? _executedSubtitleTrack?.Index ?? -1 : -1", publish);
+        Assert.DoesNotContain("(_pendingInitialServerSubtitleIndex ?? -1)", publish);
+    }
+
+    [Fact]
     public void AdaptedPlanKeepsIdentityAndUnavailableOrdinals()
     {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };

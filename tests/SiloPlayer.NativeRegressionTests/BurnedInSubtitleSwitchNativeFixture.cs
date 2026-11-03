@@ -177,6 +177,14 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     "Pre-play subtitle reconciliation persisted an automatic choice or resumed paused playback.");
             }
             Program.Log("PASS: pre-play Off and text remove an automatic burn-in plan before native loading, execute the requested route and do not save preferences.");
+
+            var automaticWrites = wire.PreferenceWrites;
+            manager.RecordLocalSubtitleSelection(Dvd, isAutomatic: true);
+            await Loaded(() => (Task)Call(service, "SelectSubtitleByServerIndexAsync", Dvd, false)!);
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+            Require(manager.CurrentSession!.IsSubtitleBurnedIn && manager.IsSubtitleSelectionAutomatic &&
+                manager.CaptureLocalSubtitleIntent().IsAutomatic && wire.PreferenceWrites == automaticWrites,
+                "The load worker's automatic bitmap replan became an explicit subtitle preference.");
         }
         finally
         {

@@ -15,6 +15,33 @@ public partial class PlaybackManager
     private int _viewerAudioIndex, _viewerAudioFile;
     private long _audioRevision, _audioSentRevision;
 
+    public sealed record SubtitleSelectionIntent(bool HasSelection, SubtitleTrackInfo? Track,
+        int MediaFileId, bool IsAutomatic);
+
+    public SubtitleSelectionIntent CaptureLocalSubtitleIntent()
+    {
+        lock (_trackIntentGate)
+            return new(_hasViewerSubtitle, _viewerSubtitle, _viewerSubtitleFile, _subtitleSelectionIsAutomatic);
+    }
+
+    /// <summary>Rolls back an unexecuted pick without inventing an explicit Off choice.</summary>
+    public void RestoreLocalSubtitleIntent(SubtitleSelectionIntent intent)
+    {
+        lock (_trackIntentGate)
+        {
+            _hasViewerSubtitle = intent.HasSelection;
+            _viewerSubtitle = intent.Track;
+            _viewerSubtitleFile = intent.MediaFileId;
+            _subtitleSelectionIsAutomatic = intent.IsAutomatic;
+            ++_subtitleRevision;
+        }
+    }
+
+    public bool IsSubtitleSelectionAutomatic
+    {
+        get { lock (_trackIntentGate) return !_hasViewerSubtitle || _subtitleSelectionIsAutomatic; }
+    }
+
     /// <summary>Records a local choice, retaining whether startup policy or the viewer selected it.</summary>
     public void RecordLocalSubtitleSelection(int? subtitleIndex, bool isAutomatic = false)
     {
