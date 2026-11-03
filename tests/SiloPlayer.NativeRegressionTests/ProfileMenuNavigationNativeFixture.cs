@@ -83,6 +83,16 @@ internal static class ProfileMenuNavigationNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TRANSPARENT_ON_MONITOR") == "1") TransparentFixtureWindow.Configure(window);
             window.AppWindow.Move(new(x, y)); window.AppWindow.ResizeClient(new(width, height)); window.AppWindow.Show(false);
             await Task.Delay(160); window.RestoreMainPane(); navigation.Navigate<Page>();
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "sidebar-detached-publication")
+            {
+                await SidebarPublicationNativeFixture.RunDetachedAsync(window, provider);
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "sidebar-publication")
+            {
+                await SidebarPublicationNativeFixture.RunAsync(window, provider);
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_UPDATES") == "1")
             {
                 await AppUpdateNativeFixture.CheckAsync(window, provider);
@@ -170,6 +180,8 @@ internal static class ProfileMenuNavigationNativeFixture
         {
             if (request.RequestUri?.Host != "profile-menu.fixture.invalid") throw new InvalidOperationException("External network access blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "sidebar-publication" or "sidebar-detached-publication")
+                return SidebarPublicationNativeFixture.RespondAsync(request, ct);
             if (path == "/api/v2/auth/logout") Logouts++;
             var partyProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_WATCH_PARTY_FREEZE") == "1";
             var itemCount = partyProbe ? 100 : 1;

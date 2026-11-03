@@ -32,6 +32,15 @@ public partial class MainViewModel : ObservableObject
     private Task LoadLibrariesAsync()
         => ReloadLibrariesAsync();
 
+    public void RetireLibraries()
+    {
+        Interlocked.Increment(ref _libraryLoadGeneration);
+        _libraryLoadCts?.Cancel();
+        _libraryLoadCts = null;
+        IsLoadingLibraries = false;
+        Libraries.Clear();
+    }
+
     public async Task ReloadLibrariesAsync(CancellationToken cancellationToken = default)
     {
         _libraryLoadCts?.Cancel();
@@ -40,12 +49,14 @@ public partial class MainViewModel : ObservableObject
         _libraryLoadCts = loadCts;
         var generation = Interlocked.Increment(ref _libraryLoadGeneration);
 
+        var context = _catalogApi.CaptureContext();
         IsLoadingLibraries = true;
         try
         {
             var libraries = await _catalogApi.GetLibrariesAsync(loadCts.Token);
             if (loadCts.IsCancellationRequested ||
-                generation != Volatile.Read(ref _libraryLoadGeneration))
+                generation != Volatile.Read(ref _libraryLoadGeneration) ||
+                !_catalogApi.IsCurrentContext(context))
             {
                 return;
             }

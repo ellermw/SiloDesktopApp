@@ -1472,14 +1472,23 @@ public sealed partial class MainWindow : Window
 
     private void OnAccountAuthorityChanged()
     {
-        DispatcherQueue.TryEnqueue(() =>
+        void Refresh()
         {
+            if (_hydratedShellKey != null &&
+                (!CanExposeAuthenticatedNavigation || !string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal)))
+            {
+                RetireSidebarNavigation();
+                CancelShellHydration();
+                _hydratedShellKey = null;
+            }
             // Initial login still belongs to the profile/bootstrap flow.
             if (!CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible) return;
             if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
             { _pendingAccessRefresh = true; return; }
             ShowMainNavigation();
-        });
+        }
+        if (DispatcherQueue.HasThreadAccess) Refresh();
+        else DispatcherQueue.TryEnqueue(Refresh);
     }
 
     private void ApplyPendingAccessRefresh()
@@ -1487,14 +1496,20 @@ public sealed partial class MainWindow : Window
         if (!_pendingAccessRefresh || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
             _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
         _pendingAccessRefresh = false;
-        ShowMainNavigation();
+        if (!string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal))
+        {
+            // A new request authority needs the complete hydration once. Show
+            // owns it; do not immediately cancel and start a second load.
+            ShowMainNavigation();
+            TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
+            return;
+        }
         CancelShellHydration();
         _shellHydrationCts = new CancellationTokenSource();
         var shellKey = GetAuthenticatedShellKey();
         _hydratedShellKey = shellKey;
         var token = _shellHydrationCts.Token;
-        _viewModel.Libraries.Clear();
-        UpdateLibraryNavItems();
+        RetireSidebarNavigation(retireCustomization: false);
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
         // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
@@ -1513,6 +1528,7 @@ public sealed partial class MainWindow : Window
         var shouldHydrateShell = !string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal);
         if (shouldHydrateShell)
         {
+            RetireSidebarNavigation();
             _hydratedShellKey = shellKey;
             CancelShellHydration();
             _shellHydrationCts = new CancellationTokenSource();
@@ -1558,7 +1574,10 @@ public sealed partial class MainWindow : Window
                     DispatcherQueue.TryEnqueue(() =>
                     {
                         if (IsCurrentShellHydration(shellKey, shellToken))
+                        {
+                            _sidebarCustomizationReady = true;
                             ApplyPrimaryMenuCustomization();
+                        }
                     });
                 });
             _ = RunShellWorkAsync("profile_display", () => UpdateProfileDisplayAsync(shellKey, shellToken));
@@ -1592,7 +1611,7 @@ public sealed partial class MainWindow : Window
             // Watch for library changes to update nav (marshal to UI thread)
             _viewModel.Libraries.CollectionChanged += (_, _) =>
             {
-                DispatcherQueue.TryEnqueue(() => TryShellAction("library_navigation_rebuild", UpdateLibraryNavItems));
+                UpdateLibraryNavItems();
             };
         }
 
@@ -1612,7 +1631,8 @@ public sealed partial class MainWindow : Window
     private bool IsCurrentShellHydration(string shellKey, CancellationToken cancellationToken) =>
         !cancellationToken.IsCancellationRequested &&
         CanExposeAuthenticatedNavigation &&
-        string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal);
+        string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal) &&
+        string.Equals(GetAuthenticatedShellKey(), shellKey, StringComparison.Ordinal);
 
     private void CancelShellHydration()
     {
@@ -1853,15 +1873,18 @@ public sealed partial class MainWindow : Window
             ? $"{profile.IsPrimary}:{profile.IsChild}:{profile.MaxContentRating}:{profile.MaxPlaybackQuality}"
             : "";
         var server = _authService.ConfiguredServerUrl ?? "";
-        return string.Join("|", server, userId, username, role, profileId, profileName, profileFlags);
+        var context = _apiClient.CaptureIdentityContext();
+        return string.Join("|", server, userId, username, role, profileId, profileName, profileFlags,
+            context.AuthenticationGeneration, context.IdentityGeneration, context.BaseUrl);
     }
 
     private async Task LoadShellNavigationAsync(
         string shellKey,
         CancellationToken cancellationToken)
     {
+        var context = _apiClient.CaptureContext();
         await _viewModel.ReloadLibrariesAsync(cancellationToken);
-        if (!IsCurrentShellHydration(shellKey, cancellationToken))
+        if (!_apiClient.IsCurrentContext(context) || !IsCurrentShellHydration(shellKey, cancellationToken))
             return;
 
         await RefreshSidebarPinsAsync(shellKey, cancellationToken);
@@ -2366,9 +2389,8 @@ public sealed partial class MainWindow : Window
         // not treat login/profile transitions as an accidental collapse.
         NavView.IsPaneVisible = false;
         NavView.IsPaneOpen = false;
-        RemoveDynamicLibraryNavItems();
+        RetireSidebarNavigation();
         BuildPluginApps([]);
-        _sidebarPins = [];
         _hydratedShellKey = null;
         CancelShellHydration();
         ReleaseNotificationSubscription();
@@ -2811,95 +2833,13 @@ public sealed partial class MainWindow : Window
         _ => "library",
     };
 
-    public void UpdateLibraryNavItems()
-    {
-        // Find the LibrariesHeader index
-        int headerIndex = -1;
-        for (int i = 0; i < NavView.MenuItems.Count; i++)
-        {
-            if (ReferenceEquals(NavView.MenuItems[i], LibrariesHeader))
-            {
-                headerIndex = i;
-                break;
-            }
-        }
-
-        if (headerIndex < 0) return;
-
-        // Remove old library items (between LibrariesHeader and the next section)
-        int removeStart = headerIndex + 1;
-        while (removeStart < NavView.MenuItems.Count &&
-               NavView.MenuItems[removeStart] is not NavigationViewItemHeader &&
-               !ReferenceEquals(NavView.MenuItems[removeStart], LibrariesHeader))
-        {
-            NavView.MenuItems.RemoveAt(removeStart);
-        }
-
-        if (!CanExposeAuthenticatedNavigation)
-            return;
-
-        // Filter out hidden libraries
-        var appSettings = _settingsService.Load();
-        var hiddenIds = new HashSet<int>(appSettings.HiddenLibraryIds);
-
-        // Insert library items after the header
-        int insertIndex = headerIndex + 1;
-        foreach (var lib in _viewModel.Libraries)
-        {
-            if (hiddenIds.Contains(lib.Id)) continue;
-
-            var icon = LibraryNavigationIconName(lib.Type);
-
-            var navItem = new NavigationViewItem
-            {
-                Content = lib.Name,
-                Tag = lib,
-                Icon = SiloPlayer.Controls.WebUiIcon.Navigation(icon),
-                Visibility = NavView.IsPaneOpen && !_librariesExpanded
-                    ? Visibility.Collapsed
-                    : Visibility.Visible,
-            };
-
-            // Nested pinned collections under this library (webui parity,
-            // sidebar_pins user setting).
-            if (_sidebarPins.TryGetValue(lib.Id.ToString(), out var pins))
-            {
-                foreach (var pin in pins)
-                {
-                    var pinTag = new SidebarPinNavTag
-                    {
-                        LibraryId = lib.Id,
-                        PinType = pin.Type,
-                        PinId = pin.Id,
-                        Label = pin.Label,
-                    };
-                    var pinItem = new NavigationViewItem
-                    {
-                        Tag = pinTag,
-                        Icon = SiloPlayer.Controls.WebUiIcon.Navigation(pin.Type == "collection" ? "folder-open" : "layout-grid", 14),
-                    };
-                    pinItem.Icon.Opacity = .6;
-                    pinItem.Content = BuildPinnedSidebarContent(pinItem, pinTag);
-                    navItem.MenuItems.Add(pinItem);
-                }
-            }
-
-            NavView.MenuItems.Insert(insertIndex++, navItem);
-        }
-
-        ApplyPrimaryMenuCustomization();
-        ResynchronizeSelectedNavigationItem();
-    }
+    public void UpdateLibraryNavItems() => QueueSidebarPublication();
 
     private sealed record PrimaryMenuNavTag(PrimaryMenuItem Item);
 
     private void OnUICustomizationChanged(object? sender, EventArgs e)
     {
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            ApplyPrimaryMenuCustomization();
-            ResynchronizeSelectedNavigationItem();
-        });
+        ApplyPrimaryMenuCustomization();
     }
 
     /// <summary>
@@ -2909,41 +2849,9 @@ public sealed partial class MainWindow : Window
     /// default Home/Recommendations/Calendar shortcuts, not the safe browsing
     /// fallbacks.
     /// </summary>
-    private void ApplyPrimaryMenuCustomization()
-    {
-        var headerIndex = NavView.MenuItems.IndexOf(LibrariesHeader);
-        if (headerIndex < 0) return;
+    private void ApplyPrimaryMenuCustomization() => QueueSidebarPublication();
 
-        for (var index = headerIndex - 1; index >= 0; index--)
-        {
-            if (NavView.MenuItems[index] is NavigationViewItem { Tag: PrimaryMenuNavTag })
-            {
-                NavView.MenuItems.RemoveAt(index);
-                headerIndex--;
-            }
-        }
-
-        var customMenu = _uiCustomizationService.IsSupported
-            ? _uiCustomizationService.PrimaryMenu
-            : null;
-        var customized = customMenu is { Items.Count: > 0 };
-        HomeNavItem.Visibility = customized ? Visibility.Collapsed : Visibility.Visible;
-        RecommendationsNavItem.Visibility = customized ? Visibility.Collapsed : Visibility.Visible;
-        CalendarNavItem.Visibility = customized ? Visibility.Collapsed : Visibility.Visible;
-        if (!customized || !CanExposeAuthenticatedNavigation) return;
-
-        // Search stays fixed after the customized primary shortcuts.
-        var insertionIndex = NavView.MenuItems.IndexOf(SearchNavItem);
-        if (insertionIndex < 0) insertionIndex = headerIndex;
-        foreach (var menuItem in customMenu!.Items)
-        {
-            var resolved = ResolvePrimaryMenuItem(menuItem);
-            if (resolved is null) continue;
-            NavView.MenuItems.Insert(insertionIndex++, resolved);
-        }
-    }
-
-    private NavigationViewItem? ResolvePrimaryMenuItem(PrimaryMenuItem source)
+    private NavigationViewItem? ResolvePrimaryMenuItem(PrimaryMenuItem source, NavigationViewItem? existing = null)
     {
         string label;
         string icon;
@@ -2985,12 +2893,11 @@ public sealed partial class MainWindow : Window
             return null;
         }
 
-        return new NavigationViewItem
-        {
-            Content = label,
-            Tag = new PrimaryMenuNavTag(source.Clone()),
-            Icon = SiloPlayer.Controls.WebUiIcon.Navigation(icon),
-        };
+        var item = existing ?? new NavigationViewItem();
+        if (!Equals(item.Content, label)) item.Content = label;
+        SetSidebarIcon(item, icon);
+        item.Tag = new PrimaryMenuNavTag(source.Clone());
+        return item;
     }
 
     private void RemoveDynamicLibraryNavItems()
@@ -3030,6 +2937,8 @@ public sealed partial class MainWindow : Window
         NavigationViewItem pinItem,
         SidebarPinNavTag pin)
     {
+        var ownerKey = _hydratedShellKey;
+        var ownerContext = _apiClient.CaptureIdentityContext();
         var content = new Grid { MinWidth = 144 };
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -3076,6 +2985,8 @@ public sealed partial class MainWindow : Window
         unpinButton.LostFocus += (_, _) => HideUnpin();
         unpinButton.Click += async (_, _) =>
         {
+            if (ownerKey == null || !_apiClient.IsCurrentIdentityContext(ownerContext) ||
+                !IsCurrentShellHydration(ownerKey, CancellationToken.None)) return;
             pinItem.IsEnabled = false;
             try
             {
@@ -3086,6 +2997,8 @@ public sealed partial class MainWindow : Window
             }
             catch
             {
+                if (ownerKey == null || !_apiClient.IsCurrentIdentityContext(ownerContext) ||
+                    !IsCurrentShellHydration(ownerKey, CancellationToken.None)) return;
                 pinItem.IsEnabled = true;
                 App.Services.GetRequiredService<ToastService>().Error(
                     $"Silo could not unpin {pin.Label}.");
@@ -3226,8 +3139,12 @@ public sealed partial class MainWindow : Window
         string pinId,
         string label)
     {
+        var shellKey = _hydratedShellKey;
+        var context = _apiClient.CaptureContext();
+        if (!IsCurrentSidebarMutation(shellKey, context)) return false;
         var settingsApi = App.Services.GetRequiredService<SettingsApi>();
         var entry = await settingsApi.GetSettingAsync("sidebar_pins");
+        if (!IsCurrentSidebarMutation(shellKey, context)) return false;
         var map = ParseSidebarPins(entry.Value);
         var key = libraryId.ToString();
         var pins = map.TryGetValue(key, out var existing) ? existing : [];
@@ -3257,7 +3174,12 @@ public sealed partial class MainWindow : Window
                 ["id"] = pin.Id,
                 ["label"] = pin.Label,
             }).ToList());
-        await settingsApi.PutSettingAsync("sidebar_pins", System.Text.Json.JsonSerializer.Serialize(serializable));
+        try
+        {
+            await settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
+        }
+        catch (OperationCanceledException) when (!IsCurrentSidebarMutation(shellKey, context)) { return false; }
+        if (!IsCurrentSidebarMutation(shellKey, context)) return false;
         _sidebarPins = map;
         UpdateLibraryNavItems();
         return nowPinned;
@@ -3268,7 +3190,11 @@ public sealed partial class MainWindow : Window
         string pinType,
         string pinId)
     {
+        var shellKey = _hydratedShellKey;
+        var context = _apiClient.CaptureContext();
+        if (!IsCurrentSidebarMutation(shellKey, context)) return;
         var entry = await _settingsApi.GetSettingAsync("sidebar_pins");
+        if (!IsCurrentSidebarMutation(shellKey, context)) return;
         var map = ParseSidebarPins(entry.Value);
         var key = libraryId.ToString();
         if (!map.TryGetValue(key, out var pins))
@@ -3288,12 +3214,15 @@ public sealed partial class MainWindow : Window
                 ["id"] = pin.Id,
                 ["label"] = pin.Label,
             }).ToList());
-        await _settingsApi.PutSettingAsync(
-            "sidebar_pins",
-            System.Text.Json.JsonSerializer.Serialize(serializable));
+        await _settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
+        if (!IsCurrentSidebarMutation(shellKey, context)) return;
         _sidebarPins = map;
         UpdateLibraryNavItems();
     }
+
+    private bool IsCurrentSidebarMutation(string? shellKey, ApiRequestContext context) =>
+        shellKey != null && _apiClient.IsCurrentContext(context) &&
+        IsCurrentShellHydration(shellKey, CancellationToken.None);
 
     /// <summary>
     /// Reloads the cached sidebar pins from the server setting and rebuilds
@@ -3305,6 +3234,7 @@ public sealed partial class MainWindow : Window
         CancellationToken cancellationToken = default)
     {
         shellKey ??= _hydratedShellKey;
+        var context = _apiClient.CaptureContext();
         if (!CanExposeAuthenticatedNavigation)
         {
             _sidebarPins = [];
@@ -3316,7 +3246,7 @@ public sealed partial class MainWindow : Window
         {
             var settingsApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.SettingsApi>();
             var entry = await settingsApi.GetSettingAsync("sidebar_pins", cancellationToken);
-            if (shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
+            if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
                 return;
             _sidebarPins = ParseSidebarPins(entry.Value);
         }
@@ -3326,11 +3256,11 @@ public sealed partial class MainWindow : Window
         }
         catch
         {
-            if (shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
+            if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
                 return;
             _sidebarPins = [];
         }
-        if (shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
+        if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
             return;
         if (!CanExposeAuthenticatedNavigation)
             _sidebarPins = [];
