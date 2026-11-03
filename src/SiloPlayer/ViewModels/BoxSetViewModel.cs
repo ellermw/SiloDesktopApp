@@ -75,14 +75,16 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     }
     public async Task PlayAsync(Func<string, int, ApiRequestContext, CancellationToken, Task> play)
     {
-        if (!CanPlay) return;
+        if (!CanPlay)
+            throw new InvalidOperationException("This box set is no longer available for playback. Reopen it and try again.");
         if (!IsCurrent)
         {
             // An access revision retires reads, not this viewer's intent. Re-read
             // under current authority before selecting a movie or entering a room.
             var identity = _identity;
             await RefreshAsync();
-            if (!catalog.IsCurrentIdentityContext(identity) || !CanPlay) return;
+            if (!catalog.IsCurrentIdentityContext(identity) || !CanPlay)
+                throw new InvalidOperationException("This box set is no longer available for playback. Reopen it and try again.");
             if (!IsCurrent || Failure != DetailFailureKind.None)
                 throw new InvalidOperationException("Could not refresh this box set for playback. Please try again.");
         }

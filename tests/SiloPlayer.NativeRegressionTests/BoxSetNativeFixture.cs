@@ -112,7 +112,14 @@ internal static class BoxSetNativeFixture
         wire.Status = HttpStatusCode.OK; wire.Empty = true; await page.ViewModel.RefreshAsync();
         Check(!Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay").IsEnabled, "empty set is not playable");
         parent.Children.Remove(page); await Task.Delay(30); var departedReads = wire.Reads; await page.ViewModel.RefreshAsync(); Check(wire.Reads == departedReads, "departure cannot restart queued refresh");
-        sent = ""; await page.ViewModel.PlayAsync((id, _, _, _) => { sent = id; return Task.CompletedTask; }); Check(sent == "", "departure retires primary action");
+        sent = "";
+        try
+        {
+            await page.ViewModel.PlayAsync((id, _, _, _) => { sent = id; return Task.CompletedTask; });
+            throw new InvalidOperationException("Box-set native: departure must report a declined primary action");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Reopen")) { }
+        Check(sent == "", "departure retires primary action");
 
         wire.CapabilityStatus = HttpStatusCode.ServiceUnavailable;
         var faultPage = new BoxSetPage(new CatalogApi(api), api) { Width = 540, Height = 600 }; parent.Children.Add(faultPage);
@@ -147,8 +154,9 @@ internal static class BoxSetNativeFixture
         Check(marked.Children.OfType<PosterCard>().Single().MediaItem!.ContentId == "second" && marker.ActualWidth <= marked.ActualWidth, "current-film marker within correct card");
         Check(Descendants(row).OfType<PosterCard>().All(x => MediaNavigationContext.LibraryId(x) == 12), "movie row uses returned set library");
         var sections = (StackPanel)detail.FindName("DetailContentPanel");
-        var order = new[] { "CastSection", "ExtrasSection", "TrailersSection", "BoxSetSection", "SimilarSection", "MediaLocationsSection" }.Select(name => sections.Children.IndexOf((UIElement)detail.FindName(name))).ToArray();
-        Check(order.SequenceEqual(order.OrderBy(x => x)), "official movie section order");
+        var expectedOrder = new[] { "MediaLocationsSection", "ExtrasSection", "TrailersSection", "CastSection", "BoxSetSection", "SimilarSection" };
+        var actualOrder = sections.Children.OfType<FrameworkElement>().Where(section => expectedOrder.Contains(section.Name)).Select(section => section.Name);
+        Check(actualOrder.SequenceEqual(expectedOrder), "official movie section order");
         var rowCards = Descendants(row).OfType<PosterCard>().ToArray();
         Check(rowCards[1].Focus(FocusState.Keyboard), "movie row card receives keyboard focus");
         var sectionUnloads = 0;
@@ -208,6 +216,7 @@ internal static class BoxSetNativeFixture
         Program.Log("PASS: box-set hero/primary action, response library, progress/fallback, keyboard/automation, compact/wide captures, failure/retry/unavailable/empty/departure, actual movie row/order/marker/member/View all destinations and recycled card.");
         }
         finally { parent.Children.Clear(); await Task.Delay(100); servicesField.SetValue(null, originalServices); }
+        await EpisodeQuickPlayNativeFixture.VerifyBoxSetAccessRefreshAsync();
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {

@@ -102,7 +102,8 @@ public sealed class BoxSetOwnershipTests
         var calls = 0;
         await vm.PlayAsync((id, library, owner, ct) => { calls++; Assert.Equal(allPlayed ? "first" : "second", id); Assert.Equal(12, library); Assert.True(client.IsCurrentContext(owner)); Assert.False(ct.IsCancellationRequested); return Task.CompletedTask; });
         Assert.Equal(1, calls); vm.Cancel();
-        await vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }); Assert.Equal(1, calls);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
+        Assert.Contains("Reopen", error.Message); Assert.Equal(1, calls);
     }
     [Fact] public async Task PrimaryActionRevalidatesAccessAndUsesTheCurrentTargetAndReadOwner()
     {
@@ -134,8 +135,25 @@ public sealed class BoxSetOwnershipTests
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
         var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
         client.SetProfile("other"); var calls = 0;
-        await vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; });
-        Assert.False(vm.CanPlay); Assert.Equal(0, calls); vm.Cancel();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
+        Assert.Contains("Reopen", error.Message); Assert.False(vm.CanPlay); Assert.Equal(0, calls); vm.Cancel();
+    }
+    [Theory] [InlineData("profile")] [InlineData("departure")] [InlineData("language")]
+    public async Task PrimaryActionReportsRetirementDuringAccessRevalidation(string change)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        client.InvalidateAccessContext(); wire.Hold = true;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var play = vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; });
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (change == "profile") client.SetProfile("other");
+        if (change == "departure") vm.Cancel();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Release.TrySetResult();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => play);
+        Assert.Contains("Reopen", error.Message); Assert.Equal(0, calls); vm.Cancel();
     }
     [Fact] public async Task DedicatedFailureAllowsRetryButUnavailableIsDistinct()
     {
