@@ -174,20 +174,22 @@ public sealed partial class LibraryPage
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var context = catalog.CaptureContext();
         var language = catalog.FilterCacheGeneration;
+        var visit = _libraryVisit;
+        bool IsCurrent() => visit == _libraryVisit && CanShowLibraryLetters && ViewModel.IsCurrentLetterJump(jump) &&
+            ReferenceEquals(owner, ViewModel.LetterIndex) && index < ViewModel.TotalCount &&
+            ViewModel.GetWindowItem(index) is not null && catalog.IsCurrentContext(context) && catalog.FilterCacheGeneration == language;
         _queuedLetterJumpVersion = jump;
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_queuedLetterJumpVersion == jump) _queuedLetterJumpVersion = 0;
-            if (!CanShowLibraryLetters || !ViewModel.IsCurrentLetterJump(jump) || !ReferenceEquals(owner, ViewModel.LetterIndex) ||
-                index >= ViewModel.TotalCount || ViewModel.GetWindowItem(index) is null ||
-                !catalog.IsCurrentContext(context) || catalog.FilterCacheGeneration != language) return;
+            if (!IsCurrent()) return;
             UpdateVirtualGridMetrics();
             var layout = GetGridLayout();
             var offset = (index / layout.Columns) * layout.RowHeight;
             var maxOffset = VirtualGridScrollGate.GetMaxVerticalOffset(
                 ViewModel.TotalCount, layout.Columns, layout.RowHeight, GetLibraryViewportHeight());
             _chosenLibraryEndLetter = offset >= maxOffset ? owner?.LetterAtIndex(index) : null;
-            SetLibraryVerticalOffset(offset, force: true);
+            SetLibraryVerticalOffset(offset, force: true, owner: IsCurrent);
             UpdateActiveLibraryLetter();
         });
     }

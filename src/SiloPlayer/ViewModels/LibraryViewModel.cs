@@ -609,6 +609,13 @@ public partial class LibraryViewModel : ObservableObject
             && !string.IsNullOrWhiteSpace(_snapshot) && queryVersion == _queryVersion && windowVersion == _windowLoadVersion
             && _catalogContext == _catalogApi.CaptureContext())
         {
+            if (letterLoad is not null)
+            {
+                // Generic viewport recovery cannot retain a semantic letter:
+                // a policy change may have moved it to a different position.
+                if (letterLoad.IsCurrent) letterLoad.CursorRejected = true;
+                return;
+            }
             // The server can retire a signed scope after a visibility-policy or
             // signing change even when our local query/profile is unchanged.
             // Discard its cards and cursors together, then retry this viewport

@@ -61,3 +61,9 @@
 - [x] Confirm unchanged versions, clean diff checks, no other features. Update external report and development record; commit locally once authorized verification passes. Return clean exact head and evidence to parent; no push/PR.
 
 Prep self-review: each 4a requirement maps to Task 1/2 tests or Task 3 verification. Task 4b is intentionally absent. Actual red/green results and runner environment ruling are maintained in the external `letters-task-report.md`; unchecked verification steps remain open until their corresponding final evidence is read.
+
+## Task4a fix round1/5
+
+Review base `adbef50a9b033014ff81d1ac0af414f2c21d5838`: Standards0 findings; Spec2 P2 findings. Corrections preserve generic cursor recovery while revalidating current semantic letter intent after signed-scope retirement, and retain complete authority through both native scroll queues. Snapshots for possible restoration are captured afresh after scope reset. Automatic visible-range requests share one page boundary that respects scoped Retry until manual/new intent retires it.
+
+Covering tests: `LibraryCursorScopeTests.cs` (moved M900, scoped failure/Retry720, missing-target old-card retirement, reversed old-scope completion and five revalidation retirements); `LibraryLettersNativeFixture.cs` (actual signed outcomes, settled200ms/fill/resize, first/second queue interleaving for newer M/query/manual0.5/cached visit). Original letter/end-clamp assertions are retained. Runner `review-focused-final`:115 passed; `review-r1-final-full`:3466 passed. Fresh publish and five selected native groups pass on appD9B9F81F... with completion sentinels. Exact commands, red/inconclusive setup evidence, source/PDB hashes and final commit are in the same external report and `letters/review-r1-bindings.json`. Two corrections implemented; parent owns scoped re-review.

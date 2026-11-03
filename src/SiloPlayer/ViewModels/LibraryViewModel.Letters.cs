@@ -33,7 +33,7 @@ public partial class LibraryViewModel
     private sealed class LetterWindowLoad(Func<bool> isCurrent)
     {
         internal bool IsCurrent => isCurrent();
-        internal bool Received, Failed;
+        internal bool Received, Failed, CursorRejected;
     }
 
     private string LetterQueryKey() => JsonSerializer.Serialize(new
@@ -126,45 +126,75 @@ public partial class LibraryViewModel
         letter = letter.ToUpperInvariant();
         var key = _letterFeedbackKey = LetterQueryKey();
         PendingLetter = letter;
+        _activeLetterJumpVersion = jump;
         bool IsCurrent() => jump == _letterJumpVersion && key == LetterQueryKey();
         try
         {
-            await EnsureLetterIndexAsync();
-            var index = LetterIndex;
-            if (!IsCurrent()) return;
-            if (index is null)
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                // Unsupported optional indexes stay quiet. A failed refresh of
-                // a previously offered choice must keep its scoped Retry alive.
-                if (knownIndex) SetLetterJumpFailure(letter);
+                await EnsureLetterIndexAsync();
+                var index = LetterIndex;
+                if (!IsCurrent()) return;
+                if (index is null)
+                {
+                    // Unsupported optional indexes stay quiet. A failed refresh of
+                    // a previously offered choice must keep its scoped Retry alive.
+                    if (knownIndex) SetLetterJumpFailure(letter);
+                    return;
+                }
+                var entry = index.Letters.FirstOrDefault(x => x.Letter == letter);
+                if (entry is null || entry.Position >= TotalCount)
+                {
+                    if (attempt != 0) { _letterIndexKey = null; SetLetterJumpFailure(letter); }
+                    return;
+                }
+                var previousStart = WindowStartIndex;
+                var previousItems = _windowItems;
+                var previousWindows = _recentWindows.ToArray();
+                var previousHasMore = HasMore;
+                _activeLetterJumpVersion = jump;
+                var loadVersion = jump;
+                var loadKey = key;
+                var load = new LetterWindowLoad(() => loadVersion == _letterJumpVersion && loadKey == LetterQueryKey());
+                await LoadWindowForOwnerAsync(entry.Position, PageSize, force: true, load);
+                if (!IsCurrent() || !ReferenceEquals(index, LetterIndex)) return;
+                if (load.CursorRejected)
+                {
+                    // The signed scope was retired. Its cards, cursors AND index
+                    // are no longer authoritative; only the current semantic choice
+                    // may transfer into a fresh query and exact index read.
+                    var extent = TotalCount;
+                    StartNewCatalogQuery();
+                    _estimatedTotalItems = extent;
+                    TotalCount = extent;
+                    Items.Reset(extent);
+                    jump = _letterJumpVersion;
+                    key = _letterFeedbackKey = LetterQueryKey();
+                    PendingLetter = letter;
+                    _activeLetterJumpVersion = jump;
+                    IsLoading = false;
+                    knownIndex = true;
+                    if (attempt != 0) { SetLetterJumpFailure(letter); return; }
+                    continue;
+                }
+                if (load.Failed || !load.Received || GetWindowItem(entry.Position) is null)
+                {
+                    // Only this operation may restore its still-visible viewport.
+                    // Manual scrolling retires it before another range can publish.
+                    _windowItems = previousItems;
+                    WindowStartIndex = previousStart;
+                    _recentWindows.Clear();
+                    foreach (var window in previousWindows) _recentWindows.AddLast(window);
+                    HasMore = previousHasMore;
+                    if (!load.Failed || attempt != 0) _letterIndexKey = null;
+                    SetLetterJumpFailure(letter);
+                    WindowLoaded?.Invoke();
+                    return;
+                }
+                if (entry.Position < TotalCount)
+                    LetterJumpRequested?.Invoke(entry.Position);
                 return;
             }
-            var entry = index.Letters.FirstOrDefault(x => x.Letter == letter);
-            if (entry is null || entry.Position >= TotalCount) return;
-            var previousStart = WindowStartIndex;
-            var previousItems = _windowItems;
-            var previousWindows = _recentWindows.ToArray();
-            var previousHasMore = HasMore;
-            _activeLetterJumpVersion = jump;
-            var load = new LetterWindowLoad(IsCurrent);
-            await LoadWindowForOwnerAsync(entry.Position, PageSize, force: true, load);
-            if (!IsCurrent() || !ReferenceEquals(index, LetterIndex)) return;
-            if (load.Failed || !load.Received || GetWindowItem(entry.Position) is null)
-            {
-                // Only this operation may restore its still-visible viewport.
-                // Manual scrolling retires it before another range can publish.
-                _windowItems = previousItems;
-                WindowStartIndex = previousStart;
-                _recentWindows.Clear();
-                foreach (var window in previousWindows) _recentWindows.AddLast(window);
-                HasMore = previousHasMore;
-                if (!load.Failed) _letterIndexKey = null; // Revalidate an actually stale optional index on Retry.
-                SetLetterJumpFailure(letter);
-                WindowLoaded?.Invoke();
-                return;
-            }
-            if (entry.Position < TotalCount)
-                LetterJumpRequested?.Invoke(entry.Position);
         }
         finally
         {

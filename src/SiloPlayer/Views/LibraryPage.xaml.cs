@@ -138,6 +138,9 @@ public sealed partial class LibraryPage : Page,
     private int _currentFirstRow;
     private double _libraryVerticalOffset;
     private double? _pendingLibraryOffset;
+    private sealed record LibraryOffsetRequest(double Offset, double Origin, long Visit, Func<bool>? Owner);
+    private LibraryOffsetRequest? _pendingLibraryScroll;
+    private long _libraryVisit;
     private readonly Dictionary<int, LibraryGridCard> _visibleLibraryCards = [];
     private readonly List<LibraryGridCard> _libraryCardSlots = [];
     private readonly Queue<int> _pendingCardBinds = [];
@@ -295,6 +298,7 @@ public sealed partial class LibraryPage : Page,
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _libraryVisit++;
         _isNavigated = true;
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
@@ -336,7 +340,7 @@ public sealed partial class LibraryPage : Page,
                 ClearVirtualCards();
                 _currentFirstRow = 0;
                 _libraryVerticalOffset = 0;
-                _pendingLibraryOffset = 0;
+                QueueLibraryOffset(0);
                 _lastRequestedStartIndex = -1;
                 _lastRequestedEndIndex = -1;
                 _recommendedLoaded = false;
@@ -494,6 +498,7 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        if (_pendingLibraryScroll is { } pendingScroll) ClearPendingLibraryOffset(pendingScroll);
         _queuedLetterJumpVersion = 0;
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
@@ -1515,7 +1520,16 @@ public sealed partial class LibraryPage : Page,
 
     private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
+        if (!_isNavigated) return;
+        if (_pendingLibraryOffset.HasValue)
+        {
+            if (_pendingLibraryScroll is { Owner: not null } pending && LibraryScroller.VerticalOffset != pending.Origin)
+            {
+                ViewModel.RetireLetterJump();
+                ClearPendingLibraryOffset(pending);
+            }
+            return;
+        }
         // There is no programmatic letter movement until its page callback
         // dispatches. Even a fractional manual move retires pending feedback or
         // a queued completion. Afterwards allow native pixel rounding only.
@@ -1544,7 +1558,7 @@ public sealed partial class LibraryPage : Page,
         ScheduleVisibleRangeLoad(force: true);
     }
 
-    private void SetLibraryVerticalOffset(double offset, bool force = false)
+    private void SetLibraryVerticalOffset(double offset, bool force = false, Func<bool>? owner = null)
     {
         var layout = GetGridLayout();
         var maximum = VirtualGridScrollGate.GetMaxVerticalOffset(
@@ -1554,9 +1568,24 @@ public sealed partial class LibraryPage : Page,
         if (!force && clamped == _libraryVerticalOffset)
             return;
 
-        _pendingLibraryOffset = clamped;
+        QueueLibraryOffset(clamped, owner);
         UpdateLibraryScrollPosition(clamped, force);
         ApplyPendingLibraryOffset();
+    }
+
+    private void QueueLibraryOffset(double offset, Func<bool>? owner = null)
+    {
+        _pendingLibraryOffset = offset;
+        _pendingLibraryScroll = new(offset, LibraryScroller.VerticalOffset, _libraryVisit, owner);
+    }
+
+    private void ClearPendingLibraryOffset(LibraryOffsetRequest request)
+    {
+        if (!ReferenceEquals(_pendingLibraryScroll, request)) return;
+        _pendingLibraryOffset = null;
+        _pendingLibraryScroll = null;
+        if (request.Owner is not null) _chosenLibraryEndLetter = null;
+        UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
     }
 
     private void UpdateLibraryScrollPosition(double offset, bool force = false)
@@ -1577,12 +1606,27 @@ public sealed partial class LibraryPage : Page,
 
     private void ApplyPendingLibraryOffset()
     {
-        if (_pendingLibraryOffset is not double offset || LibraryScroller.ViewportHeight <= 0) return;
+        if (_pendingLibraryOffset is not double offset || _pendingLibraryScroll is not { } request ||
+            LibraryScroller.ViewportHeight <= 0) return;
         // Wait for the new extent to be arranged (initial load or density change).
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated || _pendingLibraryOffset != offset) return;
+            if (!ReferenceEquals(request, _pendingLibraryScroll)) return;
+            if (!_isNavigated || request.Visit != _libraryVisit || request.Owner?.Invoke() == false)
+            {
+                ClearPendingLibraryOffset(request);
+                return;
+            }
+            // A native movement can precede its ViewChanged notification. Do
+            // not overwrite that newer manual position while a letter waits.
+            if (request.Owner is not null && LibraryScroller.VerticalOffset != request.Origin)
+            {
+                ViewModel.RetireLetterJump();
+                ClearPendingLibraryOffset(request);
+                return;
+            }
             _pendingLibraryOffset = null;
+            _pendingLibraryScroll = null;
             // ChangeView may be accepted before VerticalOffset reflects it.
             // Republishing that old value clears a deliberately chosen final
             // letter even though the native view subsequently reaches bottom.
@@ -2250,6 +2294,10 @@ public sealed partial class LibraryPage : Page,
         if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
             return;
 
+        // Rendering an empty, newly retired signed scope is not a Retry. Keep
+        // its failure scoped until a choice or actual manual movement retires it.
+        if (ViewModel.LetterJumpError is not null) return;
+
         if (ViewModel.IsLetterJumpInProgress)
         {
             // Recompute the latest viewport after the jump scrolls (or restores
@@ -2396,7 +2444,7 @@ public sealed partial class LibraryPage : Page,
         _posterWidthOverride = width;
         var layout = GetGridLayout();
         _libraryVerticalOffset = (anchor / layout.Columns + fraction) * layout.RowHeight;
-        _pendingLibraryOffset = _libraryVerticalOffset;
+        QueueLibraryOffset(_libraryVerticalOffset);
         UpdateVirtualGridMetrics();
         QueueRenderVirtualGrid(force: true);
         ScheduleVisibleRangeLoad(force: true);
