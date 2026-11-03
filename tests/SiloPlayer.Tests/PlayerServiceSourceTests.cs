@@ -539,14 +539,13 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        var methodStart = source.IndexOf("private async Task SelectSubtitleByServerIndexAsync", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("private void SelectSubtitleTrack", methodStart, StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private bool SelectSubtitleTrack", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0);
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
-        Assert.Contains("SetSubtitleTrackAndPersistAsync(0, null, null)", method);
-        Assert.Contains("SetSubtitleTrackAndPersistAsync(mpvTrackIndex, track.Language, track)", method);
+        Assert.Contains("TrySetSubtitleTrackAndPersistAsync(serverTrackIndex < 0 ? 0 : 1, track?.Language, track)", method);
         Assert.Contains("osc-set-active-subtitle", method);
     }
 
@@ -1299,15 +1298,25 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("CancelSubtitleSelectionRead();", stop);
         Assert.Contains("_subtitleSidecarGeneration++;", stop);
 
-        var persist = source[source.IndexOf("public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
-        var prefetchAt = persist.IndexOf("var ready = await PrefetchSubtitleSidecarAsync(track);", StringComparison.Ordinal);
-        var acceptAt = persist.IndexOf("_activeSubtitleServerIndex = selectedSubtitleIndex;", StringComparison.Ordinal);
-        var recordAt = persist.IndexOf("manager.RecordLocalSubtitleSelection(", StringComparison.Ordinal);
-        var selectAt = persist.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
-        Assert.True(prefetchAt >= 0 && prefetchAt < acceptAt && acceptAt < recordAt && recordAt < selectAt);
-        Assert.Contains("if (!CurrentChoice()) return;", persist[prefetchAt..acceptAt]);
-        Assert.InRange(persist.IndexOf("wasPaused = CaptureUserPausedState();", prefetchAt, StringComparison.Ordinal), prefetchAt, selectAt);
-        Assert.InRange(persist.IndexOf("position = CurrentMediaPosition;", prefetchAt, StringComparison.Ordinal), prefetchAt, selectAt);
-        Assert.True(persist.IndexOf("SaveSubtitlePrefsAsync(", selectAt, StringComparison.Ordinal) > selectAt);
+        var persist = source[source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
+        var persistSelect = persist.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
+        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", persistSelect, StringComparison.Ordinal);
+        Assert.InRange(persist.IndexOf("if (!CurrentChoice()) return false;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
+        Assert.InRange(persist.IndexOf("readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration)", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
+        Assert.InRange(persist.IndexOf("wasPaused = CaptureUserPausedState();", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
+        Assert.InRange(persist.IndexOf("position = CurrentMediaPosition;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
+        Assert.Contains("CompleteExecutedSubtitleSelectionAsync(choice, track)", persist);
+        var lifecycle = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SubtitleSelection.cs"));
+        Assert.Contains("Interlocked.Exchange(ref owner.PreferenceClaimed, 1)", lifecycle);
+        Assert.Contains("ReferenceEquals(owner, Volatile.Read(ref _subtitleSelectionOperation))", lifecycle);
+        Assert.Contains("SaveExecutedSubtitlePreferenceAsync(owner.PreferenceOwner with { Token = sendLifetime.Token }, applied)", lifecycle);
+        Assert.DoesNotContain("using var subtitleChoice", persist);
+        var byIndex = source[source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
+        var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarAsync(track)", StringComparison.Ordinal);
+        var byIndexSelect = byIndex.IndexOf("SelectSubtitleTrack(track)", byIndexPrefetch, StringComparison.Ordinal);
+        Assert.InRange(byIndex.IndexOf("if (!CurrentSelection()) return false;", byIndexPrefetch, StringComparison.Ordinal), byIndexPrefetch, byIndexSelect);
+        Assert.Contains("CurrentSubtitleSidecarGeneration() == sidecarGeneration", byIndex);
+        Assert.Contains("Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration", byIndex);
     }
+
 }

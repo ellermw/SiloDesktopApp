@@ -338,6 +338,10 @@ public partial class PlaybackManager : IDisposable
             },
             SubtitleUrls = plan.Subtitle.Inventory.Select(track => new SubtitleTrackInfo
             {
+                StreamIndex = track.StreamIndex,
+                ContainerTrackId = track.ContainerTrackId,
+                NativeSelectable = track.NativeSelectable,
+                Unplayable = track.Unplayable,
                 SyncKey = track.SyncKey,
                 TrackId = track.TrackId,
                 Index = track.CombinedIndex,
@@ -345,6 +349,7 @@ public partial class PlaybackManager : IDisposable
                 Language = track.Language ?? "",
                 Codec = track.Codec,
                 Label = string.IsNullOrWhiteSpace(track.Label) ? track.Language ?? "Subtitle" : track.Label,
+                NativeTitle = track.Label,
                 Source = track.Source,
                 Url = track.Url ?? "",
                 FontBundleUrl = track.FontBundleUrl,

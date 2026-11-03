@@ -20,7 +20,7 @@ public partial class PlayerService
             audio.Add(new JsonObject { ["kind"] = "audio", ["trackId"] = index + 1,
                 ["title"] = t.Title ?? t.Language ?? $"Audio {index + 1}", ["detail"] = t.Codec });
         var subtitles = new JsonArray();
-        foreach (var t in _playbackManager?.CurrentSession?.SubtitleUrls ?? [])
+        foreach (var t in (_playbackManager?.CurrentSession?.SubtitleUrls ?? []).Where(t => !t.Unplayable))
             subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
                 ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
         var qualities = new JsonArray();
@@ -80,9 +80,11 @@ public partial class PlayerService
                 break;
             case "select_subtitle_track":
                 var sid = command["trackId"]?.GetValue<int>();
-                if (sid.HasValue && !(_playbackManager?.CurrentSession?.SubtitleUrls.Any(t => t.Index + 1 == sid) ?? false))
+                var subtitleTrack = _playbackManager?.CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index + 1 == sid);
+                if (sid.HasValue && (subtitleTrack == null || subtitleTrack.Unplayable || !HasSubtitleSelectionRoute(subtitleTrack)))
                     throw new ArgumentException("This subtitle track is unavailable.");
-                await SelectSubtitleByServerIndexAsync(sid.HasValue ? sid.Value - 1 : -1);
+                if (!await SelectSubtitleByServerIndexAsync(sid.HasValue ? sid.Value - 1 : -1))
+                    throw new ArgumentException("This subtitle track is unavailable.");
                 break;
             case "set_playback_speed":
                 _mpv.SetProperty("speed", Math.Clamp(Number(command, "speed"), 0.25, 4).ToString(CultureInfo.InvariantCulture)); break;

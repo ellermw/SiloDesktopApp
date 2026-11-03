@@ -2934,6 +2934,7 @@ local function render_subtitle_menu()
 
         -- Language name and WebUI-style codec/source badges.
         local display = lang_name(track.language or "")
+        if track.unplayable then display = display .. " (Unavailable)" end
         local text_y = cy + track_item_h / 2
         local detail = track.label or ""
         local detail_lower = detail:lower()
@@ -2968,7 +2969,7 @@ local function render_subtitle_menu()
 
         table.insert(state.subtitle_menu_items, {
             x = menu_x, y = cy, w = menu_w, h = track_item_h,
-            action = "select", index = track.index
+            action = "select", index = track.index, disabled = track.unplayable == true
         })
         cy = cy + track_item_h
     end
@@ -4578,6 +4579,7 @@ local function activate_keyboard_menu_item()
     local items = keyboard_menu_items(kind, raw_items)
     local item = items[state.keyboard_menu_index]
     if not item then return true end
+    if item.disabled then return true end
     if kind == "subtitles" then
         if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then
             if not item.disabled then
@@ -4587,7 +4589,7 @@ local function activate_keyboard_menu_item()
             return true
         elseif item.action == "off" then
             mp.commandv("script-message", "silo-subtitle-select", "-1")
-        elseif item.action == "select" then
+        elseif item.action == "select" and not item.disabled then
             mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
         elseif item.action == "search" then
             state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
@@ -5022,6 +5024,7 @@ local function handle_mouse_down()
         consume_video_click()
         for _, item in ipairs(state.subtitle_menu_items) do
             if point_in_rect(mx, my, item) then
+                if item.disabled then return end
                 if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then
                     if not item.disabled then
                         local intent = item.action == "sync" and "silo-subtitle-sync" or item.action == "reset_timing" and "silo-subtitle-reset-timing" or "silo-subtitle-sync-reload"
@@ -5030,7 +5033,7 @@ local function handle_mouse_down()
                     return
                 elseif item.action == "off" then
                     mp.commandv("script-message", "silo-subtitle-select", "-1")
-                elseif item.action == "select" then
+                elseif item.action == "select" and not item.disabled then
                     mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
                 elseif item.action == "search" then
                     state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
@@ -5203,7 +5206,16 @@ local function handle_mouse_down_right()
 
     -- Right-click on CC button: cycle subtitle backward
     if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
-        mp.commandv("cycle", "sub", "down")
+        local choices, current = {-1}, 1
+        for _, track in ipairs(state.subtitle_tracks) do
+            if not track.unplayable then
+                table.insert(choices, track.index)
+                if track.index == state.active_subtitle then current = #choices end
+            end
+        end
+        current = current > 1 and current - 1 or #choices
+        state.active_subtitle = choices[current]
+        mp.commandv("script-message", "silo-subtitle-select", tostring(choices[current]))
         return
     end
 end
@@ -6095,8 +6107,15 @@ local function setup_key_bindings()
             mp.commandv("script-message", "silo-subtitle-select", "-1")
         else
             local target = state.last_subtitle
-            if target < 0 and #state.subtitle_tracks > 0 then
-                target = state.subtitle_tracks[1].index or -1
+            local available = false
+            for _, track in ipairs(state.subtitle_tracks) do
+                if track.index == target and not track.unplayable then available = true; break end
+            end
+            if not available then
+                target = -1
+                for _, track in ipairs(state.subtitle_tracks) do
+                    if not track.unplayable then target = track.index or -1; break end
+                end
             end
             if target >= 0 then
                 state.active_subtitle = target

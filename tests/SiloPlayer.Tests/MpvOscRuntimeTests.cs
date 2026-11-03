@@ -4,6 +4,76 @@ namespace SiloPlayer.Tests;
 
 public sealed class MpvOscRuntimeTests
 {
+    [Fact]
+    public void SubtitleRightClickCyclesServerChoicesAndSkipsUnavailable()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            state.subtitle_tracks = {{index=3, unplayable=true}, {index=8}, {index=12}}
+            state.active_subtitle = -1
+            osc_test_layout()
+            state.mouse_x, state.mouse_y = state.layout.btn_cc.x + 2, state.layout.btn_cc.y + 2
+            right(); right()
+            mp.set_property('user-data/cycle-subtitles', table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/cycle-subtitles", beforeScript: """
+            intents = {}
+            local add = mp.add_key_binding
+            mp.add_key_binding = function(key, name, fn, flags)
+                if key == 'mbtn_right' then right = fn end
+                return add(key, name, fn, flags)
+            end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]) end
+                if args[1] == 'cycle' and args[2] == 'sub' then table.insert(intents, 'native-cycle') end
+                return command(...)
+            end
+            """);
+        Assert.Equal("12,8", output);
+    }
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
+    public void UnavailableSubtitleRemainsVisibleButRefusesKeyboardAndPointer(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","codec":"webvtt","source":"embedded","unplayable":true},{"index":12,"language":"ja","source":"embedded"}]')
+            state.subtitle_menu_visible = true
+            state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+            osc_test_layout(); osc_test_render_subtitles()
+            local unavailable
+            for _, item in ipairs(state.subtitle_menu_items) do if item.index == 7 then unavailable = item end end
+            assert(unavailable, 'Unavailable track disappeared')
+            local visible = state.subtitle_menu_overlay.data:find('Unavailable', 1, true) ~= nil
+            osc_test_menu_activate()
+            state.subtitle_menu_visible = true; osc_test_render_subtitles()
+            state.mouse_x, state.mouse_y = unavailable.x + 5, unavailable.y + 5
+            osc_test_mouse_down()
+            mp.set_property('user-data/subtitle-unavailable', tostring(visible) .. ':' .. tostring(unavailable.disabled == true) .. ':' .. tostring(selections))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-unavailable", beforeScript: """
+            handlers, selections = {}, 0
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then selections = selections + 1 end
+                return command(...)
+            end
+            """);
+        Assert.Equal("true:true:0", output);
+    }
+
     [Theory]
     [InlineData("content")]
     [InlineData("file")]
