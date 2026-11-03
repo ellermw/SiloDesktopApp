@@ -503,8 +503,12 @@ public sealed class ServerContractSourceTests
         Assert.DoesNotContain(legacyBrand + " could not start playback", source + failureDescriptions);
         Assert.DoesNotContain(legacyBrand + " could not find", source + failureDescriptions);
         Assert.Contains("Silo could not start playback", failureDescriptions);
-        Assert.Contains("too_many_streams", source);
-        Assert.Contains("too_many_transcodes", source);
+        // Account-limit aliases are centralized in the presentation mapper;
+        // PlayerService must use it for both transport and protocol terminals.
+        Assert.Contains("too_many_streams", failureDescriptions);
+        Assert.Contains("too_many_transcodes", failureDescriptions);
+        Assert.Contains("PlaybackFailureDescription.DescribeTransport(api)", source);
+        Assert.Contains("PlaybackFailureDescription.Describe(terminal)", source);
     }
 
     private static string FindRepositoryRoot()
