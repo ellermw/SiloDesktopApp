@@ -32,6 +32,13 @@ public sealed partial class ItemDetailPage
     private void RefreshRetiredOverviewScope()
     {
         if (!IsLoaded) return;
+        if (ViewModel.Item?.Type == "episode")
+        {
+            _episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            // The shared service coalesces reads and bounds retries after optional-read failures.
+            if (_episodeSpoilerPreferences?.IsLoadedForCurrentContext == false)
+                _ = _episodeSpoilerPreferences.EnsureLoadedAsync();
+        }
         ConfigureOverviewIfNeeded();
     }
 
@@ -71,9 +78,9 @@ public sealed partial class ItemDetailPage
 
     private bool IsOverviewHidden(MediaItemDetail owner) =>
         owner.Type == "episode" && !string.IsNullOrWhiteSpace(owner.Overview) &&
-        // A retired preference returns false; it is unknown, not permission to reveal the plot.
+        // Failed optional reads use the last known preference, or the base visible default.
         ((_episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>()) is { } preferences &&
-            (!preferences.IsLoadedForCurrentContext || preferences.HideOverviews)) &&
+            preferences.ShouldHideOverviews) &&
         EpisodeSpoilerPolicy.IsUnwatched(owner.UserData?.Played, owner.UserData?.IsInProgress, owner.UserData?.PositionSeconds) &&
         _revealedEpisodeOverviewId != owner.ContentId;
 
@@ -101,7 +108,9 @@ public sealed partial class ItemDetailPage
             api.IsCurrentContext(context) && api.LocalizedReadGeneration == language;
         try
         {
-            if (item.Type == "episode" && _episodeSpoilerPreferences?.IsLoadedForCurrentContext != true)
+            // Series fallback is not an episode spoiler and must not wait for optional settings.
+            if (item.Type == "episode" && !string.IsNullOrWhiteSpace(item.Overview) &&
+                _episodeSpoilerPreferences?.IsLoadedForCurrentContext != true)
                 await EnsureEpisodeSpoilersAsync();
             if (!Current()) return;
             var source = await ViewModel.ResolveOverviewAsync(navigation?.Token ?? default);

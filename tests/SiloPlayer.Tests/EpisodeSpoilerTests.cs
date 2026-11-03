@@ -74,22 +74,149 @@ public class EpisodeSpoilerTests
         Assert.False(prefs.HideImages);
     }
 
+    public static IEnumerable<object[]> OptionalReadFailures()
+    {
+        foreach (var failure in new[] { "404", "503", "timeout", "network", "malformed", "null" })
+        foreach (var effective in new[] { false, true })
+        foreach (var hide in new[] { false, true })
+            yield return new object[] { failure, effective, hide };
+    }
+
+    [Theory]
+    [MemberData(nameof(OptionalReadFailures))]
+    public async Task FailedOptionalReadShowsDefaultAndRecoversInSameContext(string failure, bool effective, bool hide)
+    {
+        using var wire = new Wire { Failure = failure, FailEffective = effective, Hide = hide };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        var clock = new Clock();
+        using var prefs = new EpisodeSpoilerPreferences(new SettingsApi(client), clock);
+        var changes = 0; prefs.Changed += (_, _) => changes++;
+        Assert.True(prefs.ShouldHideOverviews);
+        await prefs.EnsureLoadedAsync();
+        Assert.False(prefs.IsLoadedForCurrentContext);
+        Assert.False(prefs.ShouldHideOverviews);
+        Assert.Equal(1, changes);
+        await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => prefs.EnsureLoadedAsync()));
+        Assert.Equal(1, wire.CapabilityReads);
+
+        clock.Advance(TimeSpan.FromSeconds(1)); wire.Failure = null; wire.Hold = true;
+        var recovery = prefs.EnsureLoadedAsync();
+        Assert.True(prefs.ShouldHideOverviews); // Retry is in flight, not failed.
+        var consumers = Enumerable.Range(0, 20).Select(_ => prefs.EnsureLoadedAsync()).ToArray();
+        wire.Release.TrySetResult();
+        await Task.WhenAll(consumers.Append(recovery));
+        Assert.True(prefs.IsLoadedForCurrentContext);
+        Assert.Equal(hide, prefs.ShouldHideOverviews);
+        Assert.Equal(hide, prefs.HideOverviews);
+        Assert.Equal(2, changes);
+        Assert.Equal(2, wire.CapabilityReads);
+    }
+
+    [Theory]
+    [MemberData(nameof(OptionalReadFailures))]
+    public async Task FailedReloadKeepsKnownPreferenceUntilSuccessfulRecovery(string failure, bool effective, bool hide)
+    {
+        using var wire = new Wire { Hide = hide };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        var clock = new Clock();
+        using var prefs = new EpisodeSpoilerPreferences(new SettingsApi(client), clock);
+        await prefs.EnsureLoadedAsync();
+        wire.Failure = failure; wire.FailEffective = effective; wire.Hide = !hide;
+        prefs.Invalidate();
+        Assert.True(prefs.ShouldHideOverviews);
+        await prefs.EnsureLoadedAsync();
+        Assert.False(prefs.IsLoadedForCurrentContext);
+        Assert.Equal(hide, prefs.ShouldHideOverviews);
+        clock.Advance(TimeSpan.FromSeconds(1)); wire.Failure = null;
+        await prefs.EnsureLoadedAsync();
+        Assert.True(prefs.IsLoadedForCurrentContext);
+        Assert.Equal(!hide, prefs.ShouldHideOverviews);
+    }
+
+    [Theory]
+    [InlineData("access", true)] [InlineData("same-profile", true)]
+    [InlineData("profile", false)] [InlineData("authentication", false)] [InlineData("server", false)]
+    public async Task FailedNewScopeKeepsKnownHideOnlyForSameIdentity(string change, bool expected)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test"); client.SetProfile("one");
+        using var prefs = new EpisodeSpoilerPreferences(new SettingsApi(client));
+        await prefs.EnsureLoadedAsync();
+        if (change == "access") client.InvalidateAccessContext();
+        else if (change == "same-profile") client.SetProfile("one");
+        else if (change == "profile") client.SetProfile("two");
+        else if (change == "authentication") { client.BeginAuthenticationSession(null); client.SetProfile("one"); }
+        else { client.SetBaseUrl("https://other.test"); client.SetProfile("one"); }
+        wire.Failure = "503";
+        Assert.True(prefs.ShouldHideOverviews);
+        await prefs.EnsureLoadedAsync();
+        Assert.Equal(expected, prefs.ShouldHideOverviews);
+    }
+
+    [Fact]
+    public async Task PersistentFailuresUseCappedBackoffAndNotifyEachAttempt()
+    {
+        using var wire = new Wire { Failure = "503" }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        var clock = new Clock();
+        using var prefs = new EpisodeSpoilerPreferences(new SettingsApi(client), clock);
+        var changes = 0; prefs.Changed += (_, _) => changes++;
+        await prefs.EnsureLoadedAsync();
+        foreach (var delay in new[] { 1, 2, 4, 8, 16, 30, 30 })
+        {
+            var reads = wire.CapabilityReads;
+            clock.Advance(TimeSpan.FromSeconds(delay).Subtract(TimeSpan.FromMilliseconds(1)));
+            await prefs.EnsureLoadedAsync();
+            Assert.Equal(reads, wire.CapabilityReads);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            await prefs.EnsureLoadedAsync();
+            Assert.Equal(reads + 1, wire.CapabilityReads);
+            Assert.Equal(wire.CapabilityReads, changes);
+            Assert.False(prefs.ShouldHideOverviews);
+        }
+    }
+
+    private sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset _now = DateTimeOffset.UnixEpoch;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan duration) => _now += duration;
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
-        public int Revision = 17; public bool Hide = true; public bool Hold; public int EffectiveReads;
+        public int Revision = 17; public bool Hide = true; public bool Hold; public int EffectiveReads, CapabilityReads;
+        public string? Failure; public bool FailEffective;
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             string json;
-            if (request.RequestUri!.AbsolutePath.EndsWith("capabilities")) json = "{\"api_version\":1,\"manifest_revision\":" + Revision + ",\"supports_batched_effective\":true}";
+            if (request.RequestUri!.AbsolutePath.EndsWith("capabilities"))
+            {
+                CapabilityReads++;
+                if (!FailEffective && Failure != null) return FailedResponse();
+                json = "{\"api_version\":1,\"manifest_revision\":" + Revision + ",\"supports_batched_effective\":true}";
+            }
             else
             {
-                EffectiveReads++; Started.TrySetResult(); if (Hold) await Release.Task;
+                EffectiveReads++;
+                if (FailEffective && Failure != null) return FailedResponse();
+                Started.TrySetResult(); if (Hold) await Release.Task;
                 var value = Hide ? "true" : "false";
                 json = "{\"items\":[{\"key\":\"catalog.hide_unwatched_episode_images\",\"value\":" + value + "},{\"key\":\"catalog.hide_unwatched_episode_overviews\",\"value\":" + value + "}]}";
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
         }
+        private HttpResponseMessage FailedResponse() => Failure switch
+        {
+            "404" => new(HttpStatusCode.NotFound),
+            "503" => new(HttpStatusCode.ServiceUnavailable),
+            "timeout" => throw new TaskCanceledException("Synthetic settings timeout"),
+            "network" => throw new HttpRequestException("Synthetic settings network failure"),
+            _ => new(HttpStatusCode.OK) { Content = new StringContent(Failure == "null" ? "null" : "{") }
+        };
     }
 }

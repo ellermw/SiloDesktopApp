@@ -16,20 +16,37 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
 {
     private static readonly string[] Keys = ["catalog.hide_unwatched_episode_images", "catalog.hide_unwatched_episode_overviews"];
     private readonly SettingsApi _settings;
+    private readonly TimeProvider _time;
     private readonly object _sync = new();
     private ApiRequestContext? _context;
     private Task? _load;
     private CancellationTokenSource? _scope;
-    private bool _hideImages, _hideOverviews, _loaded;
+    private bool _hideImages, _hideOverviews, _loaded, _loadFailed, _knownHideOverviews;
+    private DateTimeOffset _retryAt;
+    private TimeSpan _retryDelay = TimeSpan.FromSeconds(1);
     private bool _disposed;
     public event EventHandler? Changed;
     public bool IsLoadedForCurrentContext => _context is { } context && _settings.IsCurrentContext(context) && _loaded;
     public bool HideImages => _context is { } context && _settings.IsCurrentContext(context) && _hideImages;
     public bool HideOverviews => _context is { } context && _settings.IsCurrentContext(context) && _hideOverviews;
 
-    public EpisodeSpoilerPreferences(SettingsApi settings)
+    // Protect unknown/in-flight reads, but not a failed optional read without a known hide value.
+    public bool ShouldHideOverviews
+    {
+        get
+        {
+            lock (_sync)
+                return _context is not { } context || !_settings.IsCurrentContext(context) ||
+                    _knownHideOverviews || (!_loaded && !_loadFailed);
+        }
+    }
+
+    public EpisodeSpoilerPreferences(SettingsApi settings) : this(settings, TimeProvider.System) { }
+
+    internal EpisodeSpoilerPreferences(SettingsApi settings, TimeProvider time)
     {
         _settings = settings;
+        _time = time;
         _settings.LocalProfileSettingChanged += SettingChanged;
     }
 
@@ -40,12 +57,21 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
         {
             if (_disposed) return Task.CompletedTask;
             var context = _settings.CaptureContext();
-            if (_context != context || _load == null)
+            if (_context != context || _load == null ||
+                (_loadFailed && _load.IsCompleted && _time.GetUtcNow() >= _retryAt))
             {
                 _scope?.Cancel(); _scope?.Dispose();
                 _scope = new();
-                _loaded = false;
-                if (_context != context) _hideImages = _hideOverviews = false;
+                _loaded = _loadFailed = false;
+                if (_context != context)
+                {
+                    // Access refreshes may retire reads without changing the viewer's identity.
+                    if (_context is not { } previous || previous.AuthenticationGeneration != context.AuthenticationGeneration ||
+                        previous.BaseUrl != context.BaseUrl || previous.ProfileId != context.ProfileId)
+                        _knownHideOverviews = false;
+                    _hideImages = _hideOverviews = false;
+                    _retryDelay = TimeSpan.FromSeconds(1);
+                }
                 _context = context;
                 _load = LoadAsync(context, _scope.Token);
             }
@@ -59,8 +85,9 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
         lock (_sync)
         {
             _scope?.Cancel();
-            _loaded = false;
+            _loaded = _loadFailed = false;
             _load = null;
+            _retryDelay = TimeSpan.FromSeconds(1);
         }
     }
 
@@ -74,8 +101,9 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
                 lock (_sync)
                 {
                     if (ct.IsCancellationRequested || _context != context || !_settings.IsCurrentContext(context)) return;
-                    _hideImages = _hideOverviews = false;
+                    _hideImages = _hideOverviews = _knownHideOverviews = false;
                     _loaded = true;
+                    _retryDelay = TimeSpan.FromSeconds(1);
                 }
                 Changed?.Invoke(this, EventArgs.Empty);
                 return;
@@ -85,14 +113,24 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
             {
                 if (ct.IsCancellationRequested || _context != context || !_settings.IsCurrentContext(context)) return;
                 bool Read(string key) => values.Settings.FirstOrDefault(entry => entry.Key == key)?.Value.ValueKind == System.Text.Json.JsonValueKind.True;
-                _hideImages = Read(Keys[0]); _hideOverviews = Read(Keys[1]);
+                _hideImages = Read(Keys[0]); _hideOverviews = _knownHideOverviews = Read(Keys[1]);
                 _loaded = true;
+                _retryDelay = TimeSpan.FromSeconds(1);
             }
             Changed?.Invoke(this, EventArgs.Empty);
         }
-        catch (OperationCanceledException) { }
-        catch (ApiException) { }
-        catch (HttpRequestException) { }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        {
+            lock (_sync)
+            {
+                if (ct.IsCancellationRequested || _context != context || !_settings.IsCurrentContext(context)) return;
+                // Keep the completed task through the backoff, including synchronous failures.
+                _loadFailed = true;
+                _retryAt = _time.GetUtcNow().Add(_retryDelay);
+                _retryDelay = TimeSpan.FromSeconds(Math.Min(30, _retryDelay.TotalSeconds * 2));
+            }
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private void SettingChanged(string key)

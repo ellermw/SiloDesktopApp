@@ -174,6 +174,75 @@ internal static class EpisodeOverviewNativeFixture
             }
             Program.Log("PASS: access and same-profile retirement preserve unrevealed own-overview spoilers during and after preference reload.");
 
+            foreach (var failure in new[] { "404", "503", "timeout", "network", "malformed", "null" })
+            foreach (var effective in new[] { false, true })
+            foreach (var hide in new[] { false, true })
+            {
+                wire.Reset(); wire.OwnOverview = "An episode-specific plot.";
+                wire.SpoilerFailure = failure; wire.FailSpoilerEffective = effective; wire.HideOverviews = hide;
+                client.SetProfile($"failed-{failure}-{effective}-{hide}");
+                await Load();
+                await Until(() => !spoilers.IsLoadedForCurrentContext && !spoilers.ShouldHideOverviews &&
+                    overview.Text == wire.OwnOverview && overview.Visibility == Visibility.Visible && button.Visibility == Visibility.Visible);
+                Check(((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed && wire.Posts.Count == 0,
+                    "A failed optional preference read keeps the base visible overview and manual translation action");
+                var reads = wire.Paths.Count(path => path == "/api/v2/settings/contract/capabilities");
+                Call(page, "RefreshRetiredOverviewScope"); Call(page, "RefreshRetiredOverviewScope");
+                Check(wire.Paths.Count(path => path == "/api/v2/settings/contract/capabilities") == reads,
+                    "The scope watcher respects preference failure backoff");
+                wire.SpoilerFailure = null; wire.HoldSpoilers = true;
+                Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                Call(page, "RefreshRetiredOverviewScope");
+                await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed,
+                    "A retry in flight protects an unknown own-episode preference");
+                wire.HoldSpoilers = false; wire.ReleaseSpoilers.TrySetResult();
+                await Until(() => spoilers.IsLoadedForCurrentContext && spoilers.HideOverviews == hide &&
+                    overview.Visibility == (hide ? Visibility.Collapsed : Visibility.Visible) &&
+                    button.Visibility == (hide ? Visibility.Collapsed : Visibility.Visible));
+                Check(wire.Posts.Count == 0 && vm.OverviewSource == vm.Item,
+                    "Preference recovery on the same page restores the hide/translate policy without changing the overview owner");
+            }
+            Program.Log("PASS: failed capability/effective reads (404, 503, timeout, network, malformed and null bodies) retain the visible default and recover both hide values with backoff.");
+
+            // A failed reload after disabling hiding keeps known protection only until recovery.
+            wire.Reset(); wire.OwnOverview = "An episode-specific plot.";
+            await spoilers.EnsureLoadedAsync(); // Last case recovered with hiding enabled.
+            wire.HideOverviews = false; wire.SpoilerFailure = "503"; spoilers.Invalidate();
+            await spoilers.EnsureLoadedAsync(); Call(page, "ApplyEpisodeSpoilers");
+            Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed,
+                "A failed setting reload preserves the known hide preference");
+            wire.SpoilerFailure = null; Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+            Call(page, "RefreshRetiredOverviewScope");
+            await Until(() => spoilers.IsLoadedForCurrentContext && !spoilers.HideOverviews &&
+                overview.Visibility == Visibility.Visible && button.Visibility == Visibility.Visible);
+
+            foreach (var mode in new[] { "button", "auto" })
+            foreach (var hide in new[] { false, true })
+            {
+                wire.Reset(); wire.OnView = mode; wire.HideOverviews = hide;
+                wire.HoldSpoilers = true; wire.SpoilerFailure = "malformed"; wire.FailSpoilerEffective = true;
+                client.SetProfile($"fallback-{mode}-{hide}");
+                await vm.LoadInLibraryAsync("episode", 42); Call(page, "UpdateUI");
+                await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => overview.Text == (mode == "auto" ? Wire.TranslatedText : Wire.SeriesText) &&
+                    button.Visibility == (mode == "auto" ? Visibility.Collapsed : Visibility.Visible));
+                Check(!spoilers.IsLoadedForCurrentContext && overview.Visibility == Visibility.Visible &&
+                    ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed,
+                    "Series text and manual/automatic translation never wait for held optional spoiler preferences");
+                wire.HoldSpoilers = false; wire.ReleaseSpoilers.TrySetResult();
+                await Until(() => !spoilers.ShouldHideOverviews);
+                Check(vm.OverviewSource?.ContentId == "series" && overview.Visibility == Visibility.Visible,
+                    "A malformed optional preference response cannot block or clear series fallback");
+                wire.SpoilerFailure = null; Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => spoilers.IsLoadedForCurrentContext && spoilers.HideOverviews == hide);
+                Check(overview.Visibility == Visibility.Visible && wire.Posts.All(post => post.Contains("/series/translate-description")),
+                    "Recovering either spoiler value keeps the series source visible and translation series-owned");
+            }
+            wire.Reset(); client.SetProfile("fixture"); await spoilers.EnsureLoadedAsync();
+            Program.Log("PASS: failed disable-hide reload recovers; held/malformed preferences never delay series fallback or its manual/automatic translation.");
+
             foreach (var missing in new[] { true, false })
             {
                 wire.Reset(); wire.SeriesId = missing ? null : "series"; wire.FailSeries = !missing;
@@ -519,6 +588,8 @@ internal static class EpisodeOverviewNativeFixture
         internal string[] OwnMachineTranslatedFields = [];
         internal string SeriesOverview = SeriesText;
         internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem, HoldSpoilers;
+        internal bool HideOverviews = true, FailSpoilerEffective;
+        internal string? SpoilerFailure;
         internal int PollReads, SeriesFailuresRemaining, StatusFailuresRemaining, PostFailuresRemaining, PollFailuresRemaining;
         internal TaskCompletionSource StatusEntered = NewGate(), ReleaseStatus = NewGate(), PostEntered = NewGate(), ReleasePost = NewGate(),
             PollEntered = NewGate(), ReleasePoll = NewGate(), ItemReadEntered = NewGate(), ReleaseItemRead = NewGate(),
@@ -529,6 +600,7 @@ internal static class EpisodeOverviewNativeFixture
             Paths.Clear(); Posts.Clear(); OwnOverview = " \t "; SeriesId = "series"; OnView = "button";
             SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = StatusFailuresRemaining = PostFailuresRemaining = PollFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
             FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = HoldSpoilers = false;
+            HideOverviews = true; FailSpoilerEffective = false; SpoilerFailure = null;
             StatusEntered = NewGate(); ReleaseStatus = NewGate(); PostEntered = NewGate(); ReleasePost = NewGate();
             PollEntered = NewGate(); ReleasePoll = NewGate(); ItemReadEntered = NewGate(); ReleaseItemRead = NewGate();
             SpoilersEntered = NewGate(); ReleaseSpoilers = NewGate();
@@ -569,6 +641,16 @@ internal static class EpisodeOverviewNativeFixture
             if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && FailSeries) return new(HttpStatusCode.NotFound);
             if (path.Contains("effective") && HoldSpoilers)
             { SpoilersEntered.TrySetResult(); await ReleaseSpoilers.Task.WaitAsync(ct); }
+            if (SpoilerFailure != null && (FailSpoilerEffective ? path.Contains("effective") :
+                request.RequestUri.AbsolutePath == "/api/v2/settings/contract/capabilities"))
+                return SpoilerFailure switch
+                {
+                    "404" => new(HttpStatusCode.NotFound),
+                    "503" => new(HttpStatusCode.ServiceUnavailable),
+                    "timeout" => throw new TaskCanceledException("Synthetic settings timeout"),
+                    "network" => throw new HttpRequestException("Synthetic settings network failure"),
+                    _ => new(HttpStatusCode.OK) { Content = new StringContent(SpoilerFailure == "null" ? "null" : "{") }
+                };
             object value = request.RequestUri.AbsolutePath switch
             {
                 "/api/v2/catalog/items/episode" => new { content_id = "episode", type = "episode", title = "Episode", series_id = SeriesId, overview = ownOverview, pending_translation_language = translated ? null : targetLanguage, machine_translated_fields = ownFields, user_state = new { }, user_data = new { played = false } },
@@ -576,7 +658,7 @@ internal static class EpisodeOverviewNativeFixture
                 "/api/v2/catalog/items/series" => new { content_id = "series", type = "series", overview = translated ? TranslatedText : SeriesOverview, machine_translated_fields = new[] { "overview" }, pending_translation_language = translated ? null : "fr" },
                 "/api/v2/capabilities/metadata-ai" => new { state = "available", allowed = true, on_view = onView },
                 "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 17, supports_batched_effective = true },
-                _ when path.Contains("effective") => new { items = new[] { new { key = "catalog.hide_unwatched_episode_overviews", value = true } } },
+                _ when path.Contains("effective") => new { items = new[] { new { key = "catalog.hide_unwatched_episode_overviews", value = HideOverviews } } },
                 _ => new { }
             };
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value)) };
