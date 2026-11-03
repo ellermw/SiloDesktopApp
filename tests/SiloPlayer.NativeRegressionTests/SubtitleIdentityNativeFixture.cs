@@ -43,6 +43,19 @@ internal static class SubtitleIdentityNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         try
         {
+            var demuxer = (string?)Call(mpv, "CurrentDemuxer");
+            Program.Log($"Subtitle identity fixture current-demuxer={demuxer ?? "(unavailable)"}");
+            Require(demuxer switch
+            {
+                "mkv" => mpv.HasContainerTrackIds() && !mpv.HasFfmpegTrackIndices(),
+                "lavf" => mpv.HasFfmpegTrackIndices() && !mpv.HasContainerTrackIds(),
+                _ => false
+            }, "Matroska must attest only the active demuxer's identity namespace.");
+            var embedded = mpv.GetEmbeddedSubtitleTracks();
+            Require(embedded.Count == 2 && (demuxer == "mkv"
+                ? embedded.Any(t => t.Id == 1 && t.ContainerTrackId == "2") && embedded.Any(t => t.Id == 2 && t.ContainerTrackId == "3")
+                : embedded.Any(t => t.Id == 1 && t.StreamIndex == 1) && embedded.Any(t => t.Id == 2 && t.StreamIndex == 2)),
+                "Loaded Matroska subtitle identities do not match the attested demuxer namespace.");
             if (regionalOnly)
             {
                 var initial = session.SubtitleUrls.Single(t => t.Index == 4);
@@ -201,8 +214,10 @@ internal static class SubtitleIdentityNativeFixture
             }
             finally { mpv.ScriptMessageReceived -= Observe; }
             var english = session.SubtitleUrls.Single(t => t.Index == 2);
+            var reads = Volatile.Read(ref subtitles.Requests);
             await service.SetSubtitleTrackAndPersistAsync(3, english.Language, english);
             Require(mpv.GetPropertyDouble("sid") == 1, "Interleaved index-only inventory selected the wrong native SID instead of source container track 2.");
+            Require(Volatile.Read(ref subtitles.Requests) == reads, "Native English selection unexpectedly read a remote sidecar.");
             Require(mpv.IsPaused, "Native subtitle selection resumed viewer-paused playback.");
             var unavailable = session.SubtitleUrls.Single(t => t.Index == 3);
             var previous = service.ActiveSubtitleServerIndex; var writes = wire.PreferenceWrites;
@@ -221,17 +236,17 @@ internal static class SubtitleIdentityNativeFixture
             Require(map.TryGetValue(7, out var downloadedSid) && downloadedSid > fallback && mpv.GetPropertyDouble("sid") == downloadedSid,
                 "Downloaded combined ordinal did not execute its sidecar independently of embedded source identity.");
             var japanese = session.SubtitleUrls.Single(t => t.Index == 4);
+            reads = Volatile.Read(ref subtitles.Requests);
             await service.SetSubtitleTrackAndPersistAsync(5, "ja", japanese);
             Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused, "Later native identity was shifted by sidecar/index-only inventory.");
-            Require(mpv.HasFfmpegTrackIndices() && !mpv.HasContainerTrackIds(),
-                "Matroska must use lavf indices without attesting a container TrackNumber namespace.");
+            Require(Volatile.Read(ref subtitles.Requests) == reads, "Native Japanese selection unexpectedly read a remote sidecar.");
             var containerOnly = new SubtitleTrackInfo { Index = 8, TrackId = "sub:42:8", Source = "embedded", Codec = "subrip", Language = "en", ContainerTrackId = "2" };
             session.SubtitleUrls.Add(containerOnly);
             writes = wire.PreferenceWrites;
             await service.SetSubtitleTrackAndPersistAsync(9, containerOnly.Language, containerOnly);
             Require(mpv.GetPropertyDouble("sid") == 1 && service.ActiveSubtitleServerIndex == 8 &&
                 manager.SubtitleSelectionForLoad == 8 && wire.PreferenceWrites == writes + 1 && mpv.IsPaused,
-                "A container-only row without a sidecar failed to select its unique loaded metadata match.");
+                "A container-only row without a sidecar failed to select its loaded container identity or unique metadata match.");
             await service.SetSubtitleTrackAndPersistAsync(0, null, null);
             Require(mpv.GetPropertyDouble("sid") <= 0 && mpv.IsPaused, "Explicit Off changed viewer pause intent.");
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");
@@ -262,6 +277,7 @@ internal static class SubtitleIdentityNativeFixture
         private readonly HttpListener _listener = new();
         public string Origin { get; }
         public volatile bool Fail;
+        public int Requests;
         public SubtitleServer(byte[] bytes)
         {
             var reserve = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0); reserve.Start();
@@ -273,6 +289,7 @@ internal static class SubtitleIdentityNativeFixture
                 {
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
+                    Interlocked.Increment(ref Requests);
                     if (Fail)
                     {
                         request.Response.StatusCode = 503;
