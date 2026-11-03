@@ -1164,10 +1164,13 @@ public partial class PlayerService : IDisposable
         var transportReloadScheduled = false;
         var selectionExecuted = false;
 
-        if (track == null && deferLocalSelection)
+        if (track == null && deferLocalSelection &&
+            (manager?.CurrentSession?.IsSubtitleBurnedIn != true || _subtitleVersionSwitchActive))
         {
-            // Off has no outgoing-file identity. Let the replacement load (and
-            // any in-flight burn-in replan) consume the latest recorded intent.
+            // Off has no outgoing-file identity. A version replacement (or an
+            // in-flight burn-in request) consumes the latest recorded intent.
+            // An already accepted same-file burn-in plan must instead replan
+            // now: clearing sid after its pending load cannot remove its pixels.
             transportReloadScheduled = true;
         }
         else if (track != null && IsUnsupportedBitmapSubtitle(track))
@@ -3763,34 +3766,33 @@ public partial class PlayerService : IDisposable
             var requested = version.SubtitleTracks?.ElementAtOrDefault(explicitSelection.Value);
             if (requested != null)
             {
-                // Watch detail inventories embedded tracks first and external
-                // tracks second, while playback/start advertises external URLs
-                // first. Resolve the explicit choice within its source group
-                // before falling back to its signature, otherwise duplicate
-                // English tracks can silently select the wrong source.
+                // Watch-detail positions and combined playback indices are
+                // different namespaces. Use an embedded stream identity when
+                // supplied, otherwise require a unique source/signature match.
                 var requestedSource = requested.External == true ? "external" : "embedded";
-                var sourceInventory = version.SubtitleTracks?
-                    .Where(candidate => (candidate.External == true) == (requested.External == true))
-                    .ToList() ?? [];
-                var sourceOrdinal = sourceInventory.IndexOf(requested);
-                if (sourceOrdinal >= 0)
+                var sourceInventory = session.SubtitleUrls.Where(track =>
+                    string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase)).ToArray();
+                var identities = requested.External != true && requested.Index is int streamIndex
+                    ? sourceInventory.Where(track => track.StreamIndex == streamIndex).Take(2).ToArray()
+                    : [];
+                if (identities.Length > 0)
                 {
-                    var sourceTrack = session.SubtitleUrls
-                        .Where(track => string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase))
-                        .OrderBy(track => track.Index)
-                        .ElementAtOrDefault(sourceOrdinal);
-                    // Keep unavailable rows in the ordinal calculation; removing
-                    // them would shift the pick onto an unrelated native track.
-                    if (sourceTrack?.Unplayable == false) selectedTrack = sourceTrack;
+                    // An unavailable or ambiguous identity cannot be replaced
+                    // with a different row that happens to share its metadata.
+                    if (identities.Length == 1 && !identities[0].Unplayable) selectedTrack = identities[0];
                 }
-
-                selectedTrack ??= session.SubtitleUrls.FirstOrDefault(track =>
-                    !track.Unplayable &&
-                    string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(track.Language, requested.Language, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(track.Codec, requested.Codec, StringComparison.OrdinalIgnoreCase) &&
-                    (string.IsNullOrWhiteSpace(requested.Title) ||
-                        string.Equals(track.Label, requested.Title, StringComparison.OrdinalIgnoreCase)));
+                else
+                {
+                    var title = string.IsNullOrWhiteSpace(requested.Title) ? requested.EmbeddedTitle : requested.Title;
+                    var matches = sourceInventory.Where(track => !track.Unplayable &&
+                        string.Equals(track.Language, requested.Language, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(track.Codec, requested.Codec, StringComparison.OrdinalIgnoreCase) &&
+                        (string.IsNullOrWhiteSpace(title) ||
+                            string.Equals(track.NativeTitle ?? track.Label, title, StringComparison.OrdinalIgnoreCase)) &&
+                        track.Forced == (requested.Forced == true) &&
+                        track.HearingImpaired == (requested.HearingImpaired == true)).Take(2).ToArray();
+                    if (matches.Length == 1) selectedTrack = matches[0];
+                }
             }
         }
         else if (explicitSelection == null)
@@ -5167,7 +5169,6 @@ public partial class PlayerService : IDisposable
                     // The server accepted the old request. Bring its plan to
                     // the latest choice before loading any burned-in pixels.
                     requestedIndex = _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex;
-                    postLoadSubtitleIndex = requestedIndex;
                     continue;
                 }
                 var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId) ?? version;
@@ -5181,14 +5182,21 @@ public partial class PlayerService : IDisposable
                 // proxies. A replacement owner retires its own resources.
                 StopDirectStreamProxy(); StopHlsProxy();
                 requestedIndex = _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex;
-                postLoadSubtitleIndex = requestedIndex;
             }
             ApplyPreparedTransport(preparedV3);
             PlayMethod = replanned.PlayMethod;
-            _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
-            _pendingInitialSubtitleFileId = replanned.MediaFileId;
+            var resolvedIndex = manager.SubtitleSelectionForLoad;
+            lock (_subtitleTrackStateLock)
+            {
+                _pendingInitialServerSubtitleIndex = resolvedIndex;
+                _pendingInitialSubtitleFileId = replanned.MediaFileId;
+                // Preference execution must follow the same rebound identity,
+                // not wait for the outgoing inventory's now-obsolete index.
+                if (_pendingSubtitlePreferenceIndex == (requestedIndex ?? -1))
+                    _pendingSubtitlePreferenceIndex = resolvedIndex;
+            }
             BeginMpvLoad(preparedV3, restorePaused: wasPaused);
-            var finalTrack = replanned.SubtitleUrls.FirstOrDefault(candidate => candidate.Index == requestedIndex);
+            var finalTrack = replanned.SubtitleUrls.FirstOrDefault(candidate => candidate.Index == resolvedIndex);
             if (replanned.IsSubtitleBurnedIn && finalTrack != null &&
                 (!string.IsNullOrWhiteSpace(replanned.SelectedSubtitleTrackId)
                     ? finalTrack.TrackId == replanned.SelectedSubtitleTrackId

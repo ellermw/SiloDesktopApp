@@ -226,6 +226,30 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             }
             wire.DeclineTrackChanges = false;
             Program.Log("PASS: declined manual/Auto bitmap, Off and text changes settle after exactly one replan without saving unexecuted choices or changing viewer pause.");
+
+            // A server may retain TrackId while rebuilding combined indices.
+            // Both text-after-burn and burn-in loads must consume that accepted
+            // identity, including the preference saved only after execution.
+            foreach (var requested in new[] { Spanish, Dvd })
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                var requestedTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == requested);
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                if (requested == Spanish) wire.ReindexSpanish = true;
+                else wire.ReindexDvd = true;
+                await Loaded(() => service.SetSubtitleTrackAndPersistAsync(requested + 1, requestedTrack.Language, requestedTrack));
+                var reboundIndex = requested + 10;
+                await Until(() => Get(service, "_loadedMediaInitCts") == null &&
+                    service.ActiveSubtitleServerIndex == reboundIndex && Get(service, "_pendingSubtitlePreferenceIndex") == null);
+                Require(wire.Replans.Count == replans + 1 && manager.SubtitleSelectionForLoad == reboundIndex &&
+                    manager.CurrentSession!.SelectedSubtitleTrackId == requestedTrack.TrackId &&
+                    (requested == Dvd ? manager.CurrentSession.IsSubtitleBurnedIn && mpv.GetPropertyDouble("sid") <= 0 :
+                        !manager.CurrentSession.IsSubtitleBurnedIn && NativeSidMatches(service, mpv, reboundIndex)) &&
+                    wire.PreferenceWrites == writes + 1 && wire.LastSubtitlePreferenceIndex == reboundIndex && mpv.IsPaused,
+                    "A rebound burn-in/text plan loaded the outgoing index, replanned again, or lost its executed preference/pause.");
+            }
+            Program.Log("PASS: burn-in replans rebind text and bitmap identities to new combined indices, execute once and save the rebound preference while preserving pause.");
         }
         finally
         {
@@ -329,13 +353,26 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         private int _subtitle = -1;
         public bool FailNextTrackChange;
         public bool DeclineTrackChanges;
+        public bool ReindexSpanish, ReindexDvd;
         public int PreferenceWrites;
+        public int LastSubtitlePreferenceIndex = -2;
         public List<JsonElement> Replans = [];
+        private int CombinedIndex(int track)
+            => (track == Spanish && ReindexSpanish || track == Dvd && ReindexDvd) ? track + 10 : track;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "burn-in.invalid") throw new InvalidOperationException("Burn-in fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
-            if (path.Contains("-prefs/", StringComparison.Ordinal)) { PreferenceWrites++; return Json("{}"); }
+            if (path.Contains("-prefs/", StringComparison.Ordinal))
+            {
+                PreferenceWrites++;
+                if (request.Content is { } content)
+                {
+                    using var preference = JsonDocument.Parse(await content.ReadAsStringAsync(ct));
+                    if (preference.RootElement.TryGetProperty("subtitle_track_index", out var index)) LastSubtitlePreferenceIndex = index.GetInt32();
+                }
+                return Json("{}");
+            }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
@@ -351,7 +388,13 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
                 }
                 if (!DeclineTrackChanges || body.GetProperty("operation").GetString() != "track_change")
-                    _subtitle = SelectedSubtitle(body);
+                {
+                    var selected = SelectedSubtitle(body);
+                    _subtitle = selected == CombinedIndex(Spanish) ? Spanish : selected == CombinedIndex(Dvd) ? Dvd : selected;
+                    // The first request uses the pre-replan index; subsequent
+                    // requests use the combined index from the accepted reply.
+                    if (selected is Spanish or Dvd) _subtitle = selected;
+                }
             }
             var burned = _subtitle == Dvd;
             return Json(JsonSerializer.Serialize(new
@@ -361,7 +404,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 {
                     plan_id = $"plan-{Replans.Count}", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = 42,
                     delivery = "original_http", stream = new { url = origin + "/media.wav" }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = "file:42:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = $"sub:42:{_subtitle}", index = _subtitle } },
+                    selected_tracks = new { audio = new { id = "file:42:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = $"sub:42:{_subtitle}", index = CombinedIndex(_subtitle) } },
                     subtitle = new
                     {
                         mode = burned ? "burn_in" : _subtitle < 0 ? "off" : "render",
@@ -369,8 +412,8 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                         inventory = new object[]
                         {
                             new { track_id = "sub:42:0", combined_index = English, language = "eng", codec = "srt", source = "external", url = origin + "/eng.srt", label = "English", delivery = "sidecar" },
-                            new { track_id = "sub:42:1", combined_index = Spanish, language = "spa", codec = "srt", source = "external", url = origin + "/spa.srt", label = "Spanish", delivery = "sidecar" },
-                            new { track_id = "sub:42:2", combined_index = Dvd, language = "eng", codec = "dvd_subtitle", source = "embedded", label = "English (DVD)", delivery = "burn_in_only" },
+                            new { track_id = "sub:42:1", combined_index = CombinedIndex(Spanish), language = "spa", codec = "srt", source = "external", url = origin + "/spa.srt", label = "Spanish", delivery = "sidecar" },
+                            new { track_id = "sub:42:2", combined_index = CombinedIndex(Dvd), language = "eng", codec = "dvd_subtitle", source = "embedded", label = "English (DVD)", delivery = "burn_in_only" },
                         },
                     },
                 },

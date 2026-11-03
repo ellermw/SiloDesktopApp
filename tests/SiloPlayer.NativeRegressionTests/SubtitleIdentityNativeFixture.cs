@@ -314,6 +314,39 @@ internal static class SubtitleIdentityNativeFixture
                         service.ActiveSubtitleServerIndex == 2 && mpv.GetPropertyDouble("sid") == 1 && wire.PreferenceWrites == 0,
                         "The playable explicit pre-play fallback failed to execute without saving a preference.");
 
+                    // A playable index-only row must not shift an explicit pick,
+                    // and watch-detail array order is not playback index order.
+                    foreach (var reordered in new[] { false, true })
+                    {
+                        session.SubtitleUrls = [originalInventory.Single(t => t.Index == 1), playablePrePlay, retainedPrePlay];
+                        var englishRequest = new VersionSubtitleTrack { Language = playablePrePlay.Language, Codec = playablePrePlay.Codec };
+                        var japaneseRequest = new VersionSubtitleTrack { Language = retainedPrePlay.Language, Codec = retainedPrePlay.Codec };
+                        var reorderedVersion = new FileVersion { FileId = 42, SubtitleTracks = reordered
+                            ? [japaneseRequest, englishRequest] : [englishRequest, japaneseRequest] };
+                        var expected = reordered ? 4 : 2;
+                        Call(service, "ResolveInitialSubtitleSelection", automaticWatch, reorderedVersion, session, null, 0, null);
+                        Require((int?)Get(service, "_pendingInitialServerSubtitleIndex") == expected && manager.SubtitleSelectionForLoad == expected,
+                            "Pre-play selection guessed a source-group ordinal with a playable extra/reordered watch inventory.");
+                        Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", expected, false)! &&
+                            service.ActiveSubtitleServerIndex == expected && mpv.GetPropertyDouble("sid") == (reordered ? 2 : 1) &&
+                            wire.PreferenceWrites == 0 && mpv.IsPaused,
+                            "The identity-resolved pre-play choice did not execute its own native SID without saving preferences.");
+                    }
+
+                    // When metadata duplicates, the watch row's absolute stream
+                    // index can still attest identity; a combined ordinal cannot.
+                    session.SubtitleUrls =
+                    [
+                        new() { Index = 1, Source = playablePrePlay.Source, Language = playablePrePlay.Language,
+                            Codec = playablePrePlay.Codec, StreamIndex = 99 },
+                        playablePrePlay, retainedPrePlay,
+                    ];
+                    var identifiedVersion = new FileVersion { FileId = 42, SubtitleTracks =
+                        [new() { Index = playablePrePlay.StreamIndex, Language = playablePrePlay.Language, Codec = playablePrePlay.Codec }] };
+                    Call(service, "ResolveInitialSubtitleSelection", automaticWatch, identifiedVersion, session, null, 0, null);
+                    Require((int?)Get(service, "_pendingInitialServerSubtitleIndex") == 2 && manager.SubtitleSelectionForLoad == 2,
+                        "Pre-play stream identity was replaced with a different playable metadata duplicate.");
+
                     // Without the matching row, filtering before taking the
                     // ordinal would incorrectly pick Japanese. Refuse instead,
                     // retaining the existing Auto intent rather than explicit Off.

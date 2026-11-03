@@ -241,6 +241,50 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Theory]
+    [InlineData("quality")]
+    [InlineData("audio")]
+    [InlineData("seek")]
+    [InlineData("replacement")]
+    public async Task UnmatchedSameFileAutomaticSubtitleAcceptsTheNewGrant(string operation)
+    {
+        using var scope = new Fixture();
+        scope.Manager.WatchDetail!.Versions[0].SubtitleTracks![0].Language = "und";
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(0, isAutomatic: true);
+        var originalIntent = scope.Manager.CaptureLocalSubtitleIntent();
+        scope.Manager.WatchDetail.Versions[0].SubtitleTracks =
+        [
+            new() { Language = "und", Codec = "ass", Title = "New external row", External = true },
+            new() { Language = "und", Codec = "webvtt", Title = "New automatic row" },
+        ];
+        scope.Wire.SubtitleIdSuffix = ":regenerated";
+        scope.Wire.InitialSubtitleSelection = 1;
+        scope.Wire.ReplanSubtitleSelection = 1;
+
+        var accepted = operation switch
+        {
+            "quality" => await scope.Manager.ReplanQualityAsync("720p", 14),
+            "audio" => await scope.Manager.ReplanAudioAsync(1, 14),
+            "seek" => await scope.Manager.ReplanSeekAsync(14),
+            _ => await scope.Manager.StartReplacementSessionAsync(42, 14),
+        };
+        Assert.Equal("sub:42:1:regenerated", accepted.SelectedSubtitleTrackId);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal(originalIntent, scope.Manager.CaptureLocalSubtitleIntent());
+        Assert.True(scope.Manager.IsSubtitleSelectionAutomatic);
+        Assert.Equal(operation == "replacement" ? 0 : 1, scope.Wire.Replans.Count);
+
+        // A seek may leave the local revision unsent. The next request must
+        // preserve the accepted Auto row instead of sending an omitted/Off pick.
+        scope.Wire.ReplanSubtitleSelection = null;
+        await scope.Manager.ReplanQualityAsync("auto", 15);
+        Assert.Equal("sub:42:1:regenerated", scope.Wire.Replans[^1]
+            .GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString());
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]
@@ -444,6 +488,8 @@ public sealed class PlaybackTrackIntentTests
         public bool FailNextReplan;
         public bool OmitTrackIds;
         public int InitialSubtitleSelection;
+        public int? ReplanSubtitleSelection;
+        public string SubtitleIdSuffix = "";
         public string? UnlabelledSubtitleLanguage;
         public List<FileVersion>? Versions;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -472,6 +518,7 @@ public sealed class PlaybackTrackIntentTests
                 if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selected)) _selected = selected.GetProperty("index").GetInt32();
                 else if (body.GetProperty("operation").GetString() == "track_change") _selected = -1;
                 if (BlockNext) { BlockNext = false; Entered.SetResult(); await Release.Task.WaitAsync(ct); }
+                if (ReplanSubtitleSelection is int granted) _selected = granted;
             }
             var version = Versions?.FirstOrDefault(v => v.FileId == _file) ?? Version(_file, _file == 44, _file == 43);
             if (UnlabelledSubtitleLanguage is { } language)
@@ -481,9 +528,9 @@ public sealed class PlaybackTrackIntentTests
                     track.Title = null;
                 }
             var inventory = (version.SubtitleTracks ?? []).OrderByDescending(t => t.External == true)
-                .Select((t, index) => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{index}", combined_index = (int?)index, language = t.Language, codec = t.Codec, label = t.Title, source = t.External == true ? "external" : "embedded", delivery = "native" })
-                .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : "sub:42:2", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
-            var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}", index = _selected };
+                .Select((t, index) => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{index}{SubtitleIdSuffix}", combined_index = (int?)index, language = t.Language, codec = t.Codec, label = t.Title, source = t.External == true ? "external" : "embedded", delivery = "native" })
+                .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : $"sub:42:2{SubtitleIdSuffix}", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
+            var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", index = _selected };
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "session",
@@ -492,7 +539,7 @@ public sealed class PlaybackTrackIntentTests
                     protocol_version = 3, plan_id = $"plan-{Starts.Count}-{Replans.Count}", plan_attempt_key = "key", session_id = "session", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = "/stream" }, timeline = new { can_seek_anywhere = true },
                     selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = subtitleIdentity },
-                    subtitle = new { mode = _selected < 0 ? "off" : "native", track_id = OmitTrackIds ? "" : _selected < 0 ? null : $"sub:{_file}:{_selected}", inventory },
+                    subtitle = new { mode = _selected < 0 ? "off" : "native", track_id = OmitTrackIds ? "" : _selected < 0 ? null : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", inventory },
                 },
             }));
         }

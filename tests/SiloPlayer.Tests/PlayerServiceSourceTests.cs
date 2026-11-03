@@ -195,9 +195,14 @@ public sealed class PlayerServiceSourceTests
         var method = source[methodStart..methodEnd];
 
         Assert.Contains("requested.External == true ? \"external\" : \"embedded\"", method, StringComparison.Ordinal);
-        Assert.Contains("sourceInventory.IndexOf(requested)", method, StringComparison.Ordinal);
-        Assert.Contains("ElementAtOrDefault(sourceOrdinal)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourceInventory.IndexOf(requested)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("ElementAtOrDefault(sourceOrdinal)", method, StringComparison.Ordinal);
         Assert.Contains("string.Equals(track.Source, requestedSource", method, StringComparison.Ordinal);
+        Assert.Contains("track.StreamIndex == streamIndex", method, StringComparison.Ordinal);
+        Assert.Contains("identities.Length == 1 && !identities[0].Unplayable", method, StringComparison.Ordinal);
+        Assert.Contains("if (matches.Length == 1) selectedTrack = matches[0];", method, StringComparison.Ordinal);
+        Assert.Contains("track.Forced == (requested.Forced == true)", method, StringComparison.Ordinal);
+        Assert.Contains("track.HearingImpaired == (requested.HearingImpaired == true)", method, StringComparison.Ordinal);
     }
 
 

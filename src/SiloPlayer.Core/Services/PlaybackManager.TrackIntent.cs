@@ -83,7 +83,13 @@ public partial class PlaybackManager
             lock (_trackIntentGate)
             {
                 if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
-                    return MatchCurrentSubtitle()?.Index ?? -1;
+                {
+                    var desired = MatchCurrentSubtitle();
+                    if (desired != null || !_subtitleSelectionIsAutomatic || _viewerSubtitle == null)
+                        return desired?.Index ?? -1;
+                    // Seek replies cannot acknowledge an unsent revision, but
+                    // an unmatched Auto row still must not become explicit Off.
+                }
                 return GrantedSubtitleSelection()?.Index ?? -1;
             }
         }
@@ -110,10 +116,12 @@ public partial class PlaybackManager
                 return;
             }
             var desired = MatchCurrentSubtitle();
-            // An automatic row that cannot uniquely rebind on another file is
-            // not a viewer request for Off. Accept that file's Auto grant, but
-            // retain the original row so returning to its source can rebind it.
-            if (_subtitleSelectionIsAutomatic && CurrentSession?.MediaFileId != _viewerSubtitleFile && desired == null)
+            // An automatic row that cannot uniquely rebind is not a viewer
+            // request for Off, even on a same-file replan. Accept the Auto grant,
+            // retaining the original row so a later inventory can rebind it.
+            // A same-file automatic Off still needs its own acknowledgement.
+            if (_subtitleSelectionIsAutomatic && desired == null &&
+                (_viewerSubtitle != null || CurrentSession?.MediaFileId != _viewerSubtitleFile))
             {
                 AcknowledgeSubtitleIntent(revision);
                 return;
@@ -145,7 +153,8 @@ public partial class PlaybackManager
             if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
             {
                 var track = MatchCurrentSubtitle();
-                selected.Subtitle = track == null ? null : new() { Id = track.TrackId ?? "", Index = track.Index };
+                if (track != null || !_subtitleSelectionIsAutomatic || _viewerSubtitle == null)
+                    selected.Subtitle = track == null ? null : new() { Id = track.TrackId ?? "", Index = track.Index };
             }
             return _subtitleRevision;
         }
