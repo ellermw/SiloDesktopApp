@@ -382,6 +382,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void RefreshBoxSets()
     {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(RefreshBoxSets); return; }
         var owner = _searchCts; var query = SearchBox.Text.Trim();
         if (owner == null || !IsCurrentSearchOwner(owner, query)) return;
         _ = _boxSets.SearchAsync(query, enabled: _mediaScope != "audiobook",
@@ -390,10 +391,14 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private async void RefreshBoxSetsAfterPlayback(PlaybackProgressUpdated change)
     {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => RefreshBoxSetsAfterPlayback(change)); return; }
         var search = _searchCts; var query = SearchBox.Text.Trim();
         if (search == null || !IsCurrentSearchOwner(search, query)) return;
         try { await change.Persisted; } catch { return; }
-        if (IsCurrentSearchOwner(search, query)) DispatcherQueue.TryEnqueue(RefreshBoxSets);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (IsCurrentSearchOwner(search, query)) RefreshBoxSets();
+        });
     }
 
     private async Task<List<RequestMediaResult>> SearchRequestsAsync(string query, CancellationToken ct)

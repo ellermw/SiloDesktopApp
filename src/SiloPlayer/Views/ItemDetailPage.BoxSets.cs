@@ -16,11 +16,10 @@ public sealed partial class ItemDetailPage
     }
     private void EnsureBoxSetSectionOrder()
     {
-        var sections = new FrameworkElement[] { CastSection, ExtrasSection, TrailersSection, BoxSetSection, SimilarSection, MediaLocationsSection };
-        var positions = sections.Select(section => DetailContentPanel.Children.IndexOf(section)).ToArray();
-        if (positions.SequenceEqual(positions.OrderBy(x => x))) return;
-        foreach (var section in sections)
-        { DetailContentPanel.Children.Remove(section); DetailContentPanel.Children.Add(section); }
+        var similarIndex = DetailContentPanel.Children.IndexOf(SimilarSection);
+        if (similarIndex < 0 || DetailContentPanel.Children.IndexOf(BoxSetSection) == similarIndex - 1) return;
+        DetailContentPanel.Children.Remove(BoxSetSection);
+        DetailContentPanel.Children.Insert(DetailContentPanel.Children.IndexOf(SimilarSection), BoxSetSection);
     }
     private void BoxSetViewAll_Click(object sender, RoutedEventArgs e)
     {

@@ -130,6 +130,9 @@ internal static class BoxSetNativeFixture
         // Actual movie-detail row uses the real controls and returned-library tags.
         var detail = new ItemDetailPage { Width = 960, Height = 700 }; parent.Children.Add(detail); await Task.Delay(80);
         detail.ViewModel.Item = new MediaItemDetail { ContentId = "second", Type = "movie", Title = "Current film" };
+        var sections = (StackPanel)detail.FindName("DetailContentPanel");
+        var boxSetSection = (UIElement)detail.FindName("BoxSetSection");
+        var originalSections = sections.Children.Where(section => !ReferenceEquals(section, boxSetSection)).ToArray();
         var set = new BoxSetDetail { Id = "7", LibraryId = "12", Title = wire.Title, MovieCount = 3, Items = [new() { ContentId = "first", Type = "movie", Title = "First" }, new() { ContentId = "second", Type = "movie", Title = "Second" }, new() { ContentId = "third", Type = "movie", Title = "Third" }] };
         if (invalidMemberChecks)
         {
@@ -146,9 +149,10 @@ internal static class BoxSetNativeFixture
         var marker = Descendants(row).OfType<TextBlock>().Single(x => x.Text == "This film"); var marked = (Grid)((Border)marker.Parent).Parent;
         Check(marked.Children.OfType<PosterCard>().Single().MediaItem!.ContentId == "second" && marker.ActualWidth <= marked.ActualWidth, "current-film marker within correct card");
         Check(Descendants(row).OfType<PosterCard>().All(x => MediaNavigationContext.LibraryId(x) == 12), "movie row uses returned set library");
-        var sections = (StackPanel)detail.FindName("DetailContentPanel");
-        var order = new[] { "CastSection", "ExtrasSection", "TrailersSection", "BoxSetSection", "SimilarSection", "MediaLocationsSection" }.Select(name => sections.Children.IndexOf((UIElement)detail.FindName(name))).ToArray();
-        Check(order.SequenceEqual(order.OrderBy(x => x)), "official movie section order");
+        Check(sections.Children.Where(section => !ReferenceEquals(section, boxSetSection)).SequenceEqual(originalSections),
+            "box-set membership preserves every unrelated detail section's original order");
+        Check(sections.Children.IndexOf(boxSetSection) == sections.Children.IndexOf((UIElement)detail.FindName("SimilarSection")) - 1,
+            "box-set row sits immediately before recommendations without moving media locations or metadata");
         var rowCards = Descendants(row).OfType<PosterCard>().ToArray();
         Check(rowCards[1].Focus(FocusState.Keyboard), "movie row card receives keyboard focus");
         var sectionUnloads = 0;
@@ -167,6 +171,13 @@ internal static class BoxSetNativeFixture
         detail.Width = 540; detail.UpdateLayout(); await Task.Delay(100);
         Check(((FrameworkElement)detail.FindName("BoxSetSection")).ActualWidth <= 540 && ((TextBlock)detail.FindName("BoxSetTitle")).ActualWidth + viewAll.ActualWidth <= 540, "compact row heading and View all bounds");
         await Capture((FrameworkElement)detail.FindName("BoxSetSection"), "movie-boxset-row-compact.png");
+        var mountedOrder = sections.Children.ToArray();
+        typeof(ItemDetailViewModel).GetProperty("BoxSet")!.SetValue(detail.ViewModel, null);
+        typeof(ItemDetailPage).GetMethod("BuildBoxSetRow", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detail, null);
+        await Task.Delay(50);
+        Check(sections.Children.SequenceEqual(mountedOrder) && ((FrameworkElement)boxSetSection).Visibility == Visibility.Collapsed
+            && sections.Children.Where(section => !ReferenceEquals(section, boxSetSection)).SequenceEqual(originalSections),
+            "clearing membership leaves the original movie layout intact");
         var card = new PosterCard { MediaItem = new MediaItem { Type = "box_set", ContentId = "box_set:7", BoxSet = set } }; parent.Children.Add(card); await Task.Delay(80);
         Check(card.Content is BoxSetCard, "shared aggregate renderer dispatch");
         routeType = null; routeArgs = null;

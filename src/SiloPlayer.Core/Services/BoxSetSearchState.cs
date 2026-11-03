@@ -49,7 +49,9 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
         // restoring an obsolete selection after the request completes.
         if (enabled && query.Length > 0 && _scope == scope && IsCurrentScope())
         {
-            Generation++; CancelPending(); _policyValidated = false;
+            // The last successful policy remains valid for this exact owner if
+            // revalidation fails transiently; retained rows stay openable.
+            Generation++; CancelPending();
         }
         else Retire();
         if (!enabled || query.Length == 0) return;
@@ -58,6 +60,7 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
         var owner = _pending = new CancellationTokenSource(TimeSpan.FromSeconds(6));
         var ct = owner.Token;
         bool Current() => ReferenceEquals(_pending, owner) && !ct.IsCancellationRequested && IsCurrentScope();
+        var policyReadCompleted = false;
         IsLoading = true;
         try
         {
@@ -65,7 +68,8 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
             // box_sets_in_search; that admin flag is absent from viewer libraries.
             var libraries = await catalog.GetSearchBoxSetLibraryIdsAsync(libraryId, ct).WaitAsync(ct);
             if (!Current()) return;
-            if (libraries.Count == 0) { _cache = null; Replace([]); return; }
+            policyReadCompleted = true;
+            if (libraries.Count == 0) { _policyValidated = false; _cache = null; Replace([]); return; }
             _policyValidated = true;
             var cached = _cache?.Scope == scope ? _cache : null;
             if (cached != null)
@@ -89,6 +93,9 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
             if (ReferenceEquals(_pending, owner))
             {
                 if (!IsCurrentScope() || !_policyValidated) Replace([]);
+                // Rebind retained cards to this generation even when policy
+                // failed before the cached snapshot could be republished.
+                else if (!policyReadCompleted) Replace(Items);
                 _pending = null; IsLoading = false;
             }
             owner.Dispose();

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 
@@ -41,6 +42,64 @@ public sealed class BoxSetSearchStateTests
         await state.SearchAsync("Film", refresh: true);
         Assert.Equal(2, wire.SearchReads); Assert.Same(retained, state.Items[0]); Assert.True(state.CanOpen(retained, state.Generation)); Assert.False(state.IsLoading);
         await state.SearchAsync("Other"); Assert.Empty(state.Items); Assert.False(state.CanOpen(retained, state.Generation)); Assert.False(state.IsLoading);
+    }
+
+    [Theory]
+    [InlineData("/api/v2/user/libraries", false)]
+    [InlineData("/api/v2/user/libraries", true)]
+    [InlineData("/api/v2/catalog/search/capabilities", false)]
+    [InlineData("/api/v2/catalog/search/capabilities", true)]
+    public async Task SameQueryPolicyFailureRetainsValidatedRowsAndCache(string path, bool timeout)
+    {
+        using var wire = new Wire(); var catalog = new CatalogApi(wire.Client()); var state = new BoxSetSearchState(catalog);
+        await state.SearchAsync("Film"); var retained = state.Items.ToArray(); var generation = state.Generation;
+        if (path.EndsWith("/capabilities")) ExpireCapabilities(catalog);
+        wire.PolicyFailurePath = path; wire.PolicyTimeout = timeout;
+        var publications = 0; state.Items.CollectionChanged += (_, _) => publications++;
+
+        await state.SearchAsync("Film", refresh: true).WaitAsync(TimeSpan.FromSeconds(9));
+
+        Assert.Equal(retained, state.Items.ToArray()); Assert.False(state.IsLoading);
+        Assert.Equal(1, wire.SearchReads); Assert.True(publications > 0);
+        Assert.False(state.CanOpen(retained[0], generation));
+        Assert.True(state.CanOpen(retained[0], state.Generation));
+        wire.PolicyFailurePath = null;
+        await state.SearchAsync("Film");
+        Assert.Same(retained[0], state.Items[0]); Assert.Equal(1, wire.SearchReads);
+        wire.Enabled = false;
+        await state.SearchAsync("Film");
+        Assert.Empty(state.Items); Assert.False(state.CanOpen(retained[0], state.Generation));
+    }
+
+    [Theory]
+    [InlineData("query")] [InlineData("library")] [InlineData("profile")]
+    [InlineData("access")] [InlineData("language")] [InlineData("surface")]
+    public async Task FailedPolicyCannotRetainRowsForADifferentOwner(string change)
+    {
+        using var wire = new Wire(); var client = wire.Client(); var state = new BoxSetSearchState(new CatalogApi(client));
+        var active = true;
+        await state.SearchAsync("Film", isCurrent: () => active); var retained = state.Items[0];
+        wire.PolicyFailurePath = "/api/v2/user/libraries";
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        if (change == "surface") active = false;
+        await state.SearchAsync(change == "query" ? "Other" : "Film", change == "library" ? 12 : null,
+            isCurrent: () => active, refresh: true);
+        Assert.Empty(state.Items); Assert.False(state.IsLoading); Assert.False(state.CanOpen(retained, state.Generation));
+    }
+
+    [Theory]
+    [InlineData(200)] [InlineData(404)]
+    public async Task SuccessfulUnsupportedPolicyClearsRetainedRows(int status)
+    {
+        using var wire = new Wire(); var catalog = new CatalogApi(wire.Client()); var state = new BoxSetSearchState(catalog);
+        await state.SearchAsync("Film"); var retained = state.Items[0];
+        ExpireCapabilities(catalog); wire.Supported = false;
+        if (status == 404) wire.PolicyFailurePath = "/api/v2/catalog/search/capabilities";
+        wire.PolicyStatus = (HttpStatusCode)status;
+        await state.SearchAsync("Film", refresh: true);
+        Assert.Empty(state.Items); Assert.False(state.CanOpen(retained, state.Generation)); Assert.Equal(1, wire.SearchReads);
     }
 
     [Fact]
@@ -86,15 +145,33 @@ public sealed class BoxSetSearchStateTests
         Assert.False(state.IsLoading); Assert.Empty(state.Items); wire.Release.TrySetResult();
     }
 
+    private static void ExpireCapabilities(CatalogApi catalog)
+    {
+        var field = typeof(CatalogApi).GetField("_searchRuleCache", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var cached = field.GetValue(catalog)!; var type = cached.GetType();
+        field.SetValue(catalog, Activator.CreateInstance(type, new object?[]
+        {
+            type.GetProperty("Context")!.GetValue(cached), DateTime.UtcNow.AddMinutes(-6), type.GetProperty("Value")!.GetValue(cached)
+        }));
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         internal bool Supported = true, Enabled = true, Hold; internal int SearchReads; internal string? LastSearch;
         internal HttpStatusCode Status = HttpStatusCode.OK;
+        internal string? PolicyFailurePath;
+        internal bool PolicyTimeout;
+        internal HttpStatusCode PolicyStatus = HttpStatusCode.ServiceUnavailable;
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal SiloApiClient Client() { var client = new SiloApiClient(new HttpClient(this)); client.SetBaseUrl("https://boxset-state.invalid"); client.SetProfile("alpha"); return client; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath; var body = "{}"; var status = HttpStatusCode.OK;
+            if (path == PolicyFailurePath)
+            {
+                if (PolicyTimeout) await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new HttpResponseMessage(PolicyStatus) { Content = new StringContent(body) };
+            }
             if (path.EndsWith("/capabilities")) body = Supported ? "{\"box_sets\":true}" : "{}";
             if (path == "/api/v2/user/libraries") body = "{\"items\":[{\"id\":12,\"box_sets_enabled\":" + Enabled.ToString().ToLowerInvariant() + "}]}";
             if (path == "/api/v2/catalog/box-sets")

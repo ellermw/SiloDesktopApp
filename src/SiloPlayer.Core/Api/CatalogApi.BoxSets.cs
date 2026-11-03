@@ -34,7 +34,10 @@ public partial class CatalogApi
     public async Task<HashSet<string>> GetSearchBoxSetLibraryIdsAsync(int? libraryId = null, CancellationToken ct = default)
     {
         var context = client.CaptureContext();
-        if (!await SupportsBoxSetsAsync(ct)) return [];
+        bool supported;
+        try { supported = (await GetSearchRuleCapabilitiesAsync(context, ct)).BoxSets; }
+        catch (ApiException ex) when (ex.StatusCode == 404) { return []; }
+        if (!supported) return [];
         var libraries = await client.SendRequestAsync<BrowseCollection<Library>>(context, HttpMethod.Get, "/api/v2/user/libraries", null, ct);
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Box-set library authority changed.", ct);

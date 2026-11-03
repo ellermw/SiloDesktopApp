@@ -213,7 +213,7 @@ public sealed partial class SearchPage : Page
         }
 
         SearchLoadingRepeater.Visibility = hasQuery &&
-            ViewModel.IsLoading &&
+            (ViewModel.IsLoading || ViewModel.BoxSets.IsLoading) &&
             ViewModel.Results.Count == 0 &&
             ViewModel.PeopleResults.Count == 0 && ViewModel.BoxSets.Items.Count == 0
                 ? Visibility.Visible
@@ -228,16 +228,20 @@ public sealed partial class SearchPage : Page
 
     private void RefreshBoxSetSearch()
     {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(RefreshBoxSetSearch); return; }
         if (_isNavigated) _ = ViewModel.RefreshBoxSetSearchAsync();
     }
 
     private async void RefreshBoxSetsAfterPlayback(PlaybackProgressUpdated change)
     {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => RefreshBoxSetsAfterPlayback(change)); return; }
         if (!_isNavigated) return;
         var visit = _navigationGeneration; var owner = _catalogApi.CaptureContext();
         try { await change.Persisted; } catch { return; }
-        if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentContext(owner))
-            DispatcherQueue.TryEnqueue(RefreshBoxSetSearch);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentContext(owner)) RefreshBoxSetSearch();
+        });
     }
 
     private void BoxSetSearch_Prepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)

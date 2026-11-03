@@ -62,6 +62,9 @@ internal static class BoxSetSearchNativeFixture
     {
         frame.Navigate(typeof(SearchPage)); await Task.Delay(120);
         var page = (SearchPage)frame.Content;
+        var dispatcher = page.DispatcherQueue; var publicationsOnUi = true;
+        model.BoxSets.Items.CollectionChanged += (_, _) => publicationsOnUi &= dispatcher.HasThreadAccess;
+        model.BoxSets.PropertyChanged += (_, _) => publicationsOnUi &= dispatcher.HasThreadAccess;
         var initialization = typeof(SearchPage).GetField("_initializationTask", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page) as Task;
         if (initialization != null) await initialization;
         wire.HoldNext(); model.Query = "Film"; await model.SearchCommand.ExecuteAsync(null);
@@ -89,11 +92,18 @@ internal static class BoxSetSearchNativeFixture
         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "film", context: client.CaptureContext()));
         await Until(() => wire.SearchReads > before && model.BoxSets.Items.FirstOrDefault()?.PlayedCount == 2);
         Check(wire.CatalogReads == ordinaryReads, "watched refresh updates optional counts independently of ordinary window");
+        before = wire.SearchReads; wire.Played = 1; wire.HoldNext();
+        await Task.Run(catalog.InvalidateLibraryCache);
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Check(model.BoxSets.IsLoading, "off-thread full library invalidation starts an optional refresh");
+        wire.Unhold(); await Until(() => wire.SearchReads > before && !model.BoxSets.IsLoading && model.BoxSets.Items.FirstOrDefault()?.PlayedCount == 1);
+        Check(publicationsOnUi && wire.CatalogReads == ordinaryReads, "full invalidation publishes loading and rows only on the UI dispatcher");
         var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         before = wire.SearchReads;
-        WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated("film", 100, 100, true) { Persisted = persisted.Task });
+        await Task.Run(() => WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated("film", 100, 100, true) { Persisted = persisted.Task }));
         await Task.Delay(60); Check(wire.SearchReads == before, "playback summary refresh waits for final write");
-        persisted.TrySetResult(); await Until(() => wire.SearchReads > before);
+        await Task.Run(() => persisted.TrySetResult()); await Until(() => wire.SearchReads > before && !model.BoxSets.IsLoading);
+        Check(publicationsOnUi, "background full playback notification publishes only on the UI dispatcher");
         await Task.Delay(80); aggregate = Descendants<BoxSetCard>(section).Single();
         var routeCount = routes.Count; model.Query = "New query"; Invoke(aggregate); await Task.Delay(40);
         Check(routes.Count == routeCount && model.BoxSets.Items.Count == 0, "full stale aggregate callback retires immediately on query edit");
@@ -103,7 +113,17 @@ internal static class BoxSetSearchNativeFixture
         frame.Navigate(typeof(SearchPage)); await Task.Delay(80); page = (SearchPage)frame.Content;
         wire.Enabled = false; model.Query = "Disabled"; before = wire.SearchReads; await model.SearchCommand.ExecuteAsync(null); await Until(() => !model.BoxSets.IsLoading);
         Check(wire.SearchReads == before && model.Results.Count == 1 && model.BoxSets.Items.Count == 0, "full disabled viewer library skips optional endpoint and keeps titles");
-        wire.Enabled = true; wire.Fail = true; model.Query = "NoTitles"; await model.SearchCommand.ExecuteAsync(null); await Until(() => !model.BoxSets.IsLoading); await Task.Delay(80);
+        wire.Enabled = true; wire.HoldNext(); model.Query = "NoTitles"; await model.SearchCommand.ExecuteAsync(null);
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); await Task.Delay(80);
+        Check(!model.IsLoading && model.Results.Count == 0 && model.PeopleResults.Count == 0 && model.BoxSets.IsLoading
+            && ((FrameworkElement)page.FindName("SearchLoadingRepeater")).Visibility == Visibility.Visible
+            && ((FrameworkElement)page.FindName("NoResultsText")).Visibility == Visibility.Collapsed,
+            "empty ordinary results retain a loading skeleton while only box sets are pending");
+        wire.Unhold(); await Until(() => !model.BoxSets.IsLoading); await Task.Delay(80);
+        Check(((FrameworkElement)page.FindName("SearchLoadingRepeater")).Visibility == Visibility.Collapsed && model.BoxSets.Items.Count == 1,
+            "optional completion replaces the loading skeleton with box-set results");
+        model.Query = "NoTitles failure";
+        wire.Fail = true; await model.SearchCommand.ExecuteAsync(null); await Until(() => !model.BoxSets.IsLoading); await Task.Delay(80);
         Check(model.ErrorMessage == null && ((FrameworkElement)page.FindName("NoResultsText")).Visibility == Visibility.Visible, "full optional failure settles empty state without primary error");
         wire.Fail = false; wire.HoldNext(); model.Query = "Profile pending"; await model.SearchCommand.ExecuteAsync(null); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         client.SetProfile("other"); wire.Unhold(); await Until(() => !model.BoxSets.IsLoading);
@@ -167,6 +187,21 @@ internal static class BoxSetSearchNativeFixture
             wire.Unhold(); await Until(() => State(delayed).Items.Count == 1); await Task.Delay(80);
             Check(selection.Index == 1 && AutomationProperties.GetName(Rows(delayed)[0]).Contains("Box set"), "late quick box-set group leads while title selection follows identity");
             Check(Descendants<DefaultArtwork>(Rows(delayed)[0]).Any(), "quick missing art uses native fallback");
+            var dispatcher = delayed.DispatcherQueue; var publicationsOnUi = true;
+            State(delayed).Items.CollectionChanged += (_, _) => publicationsOnUi &= dispatcher.HasThreadAccess;
+            State(delayed).PropertyChanged += (_, _) => publicationsOnUi &= dispatcher.HasThreadAccess;
+            var beforeRefresh = wire.SearchReads; var ordinaryReads = wire.CatalogReads;
+            wire.Played = 2; wire.HoldNext(); await Task.Run(catalog.InvalidateLibraryCache);
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); wire.Unhold();
+            await Until(() => wire.SearchReads > beforeRefresh && !State(delayed).IsLoading && State(delayed).Items.FirstOrDefault()?.PlayedCount == 2);
+            Check(publicationsOnUi && wire.CatalogReads == ordinaryReads, "background quick invalidation publishes loading and rows only on the UI dispatcher");
+            var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            beforeRefresh = wire.SearchReads;
+            await Task.Run(() => WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated("film", 100, 100, true) { Persisted = persisted.Task }));
+            await Task.Delay(60); Check(wire.SearchReads == beforeRefresh, "background quick playback refresh waits for persistence");
+            wire.Played = 3; await Task.Run(() => persisted.TrySetResult());
+            await Until(() => wire.SearchReads > beforeRefresh && !State(delayed).IsLoading && State(delayed).Items.FirstOrDefault()?.PlayedCount == 3);
+            Check(publicationsOnUi, "background quick playback notification reads controls and publishes on the UI dispatcher");
             await MediaParityNativeFixture.CaptureAsync(delayed, "boxset-search-quick-wide.png");
             Invoke(originalTitle); await delayedClosed;
             Check(routes[^1].Type == typeof(ItemDetailPage) && routes[^1].Args as string == "film", "retained ordinary quick callback resolves shifted index by identity");
