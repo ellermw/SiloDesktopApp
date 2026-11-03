@@ -26,7 +26,9 @@ using Windows.Storage.Streams;
 internal static class PlaybackChapterMenuNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
-    internal static async Task RunAsync(Window owner)
+    internal static Task RunAsync(Window owner) => RunAsync(owner, false);
+    internal static Task RunMoreAsync(Window owner) => RunAsync(owner, true);
+    private static async Task RunAsync(Window owner, bool more)
     {
         var appServices = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var oldServices = appServices.GetValue(null);
@@ -75,9 +77,9 @@ internal static class PlaybackChapterMenuNativeFixture
             var script = Path.Combine(Program.ResultDirectory, "chapter-observer.lua");
             await File.WriteAllTextAsync(script, await File.ReadAllTextAsync(Path.Combine(Program.AppDirectory, "libs", "mpv", "scripts", "silo-osc.lua")) + """
 
-                mp.register_script_message('osc-chapters-fixture-query', function(id)
+                mp.register_script_message('osc-chapters-fixture-query', function(id, kind)
                     compute_layout()
-                    local r = state.layout.btn_chapters or state.layout.btn_more or {}
+                    local r = kind == 'more' and state.layout.btn_more or state.layout.btn_chapters or state.layout.btn_more or {}
                     mp.commandv('script-message','silo-chapters-fixture-state',id,require('mp.utils').format_json({
                         x=r.cx or 0,y=r.cy or 0,scope=state.native_chapters_scope or '',
                         sequence=state.native_menu_request and state.native_menu_request.sequence or 0,
@@ -102,8 +104,57 @@ internal static class PlaybackChapterMenuNativeFixture
             mpv.SendScriptMessage("osc-show");
             await Task.Delay(150);
 
+            if (more) { owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 460, 700)); video.SynchronizePosition(); }
             var menu = await Open();
             var list = (ListView)Get(menu, "_list")!;
+            if (more)
+            {
+                Require(string.Join(",", list.Items.OfType<ListViewItem>().Select(row => (string)row.Tag)) ==
+                    "audio,chapters,stats,pip,fill,volume-down,volume-up,mute", "Native More changed existing action order or omitted controls.");
+                Require(!((ListViewItem)list.Items[0]).IsEnabled && ((ListViewItem)list.Items[1]).IsEnabled,
+                    "More audio/chapter availability differs from current source inventory.");
+                Require(mpv.IsPaused, "Opening More changed genuine pause.");
+                await Capture(menu, "more-compact.png");
+                async Task Choose(int index)
+                {
+                    Call(menu, "Input", "home");
+                    // Home skips the explicitly unavailable Audio row.
+                    for (var i = list.SelectedIndex; i < index; i++) Call(menu, "Input", "down");
+                    Require(list.SelectedIndex == index, "More keyboard navigation did not reach the selected action.");
+                    Call(menu, "Input", "activate");
+                    await Until(() => !ReferenceEquals(Menu(service), menu), "More selection did not release its presentation.");
+                }
+                await Choose(1);
+                await Until(() => Menu(service) is { } child && ((ListView)Get(child, "_list")!).Items.Count == 72,
+                    "More did not hand off to real native Chapters.");
+                var childMenu = Menu(service)!;
+                Call(menu, "Input", "cancel");
+                Require(ReferenceEquals(Menu(service), childMenu), "Retired More dismissal retired the child menu.");
+                Call(childMenu, "Input", "cancel");
+                await Until(() => Menu(service) == null, "Child menu did not close.");
+                mpv.SetVolume(50);
+                menu = await Open(); list = (ListView)Get(menu, "_list")!;
+                await Choose(6);
+                await Until(() => Math.Abs(mpv.GetPropertyDouble("volume") - 60) < .1 && Math.Abs(service.Volume - 60) < .1,
+                    "More Volume + bypassed existing actual-volume and saved service policy.");
+                menu = await Open(); list = (ListView)Get(menu, "_list")!;
+                await Choose(5);
+                await Until(() => Math.Abs(mpv.GetPropertyDouble("volume") - 50) < .1, "More Volume - did not clamp/change actual volume.");
+                menu = await Open(); list = (ListView)Get(menu, "_list")!;
+                await Choose(4);
+                await Until(() => mpv.GetPropertyDouble("panscan") > 0, "More Fill action did not use existing panscan policy.");
+                menu = await Open(); list = (ListView)Get(menu, "_list")!;
+                Require(AutomationProperties.GetName((ListViewItem)list.Items[4]).Contains("Contain", StringComparison.Ordinal),
+                    "More did not show accepted fill state.");
+                await Choose(7);
+                await Until(mpv.GetMute, "More mute did not change actual native state.");
+                menu = await Open(); list = (ListView)Get(menu, "_list")!;
+                await Choose(3);
+                await Until(() => service.State == PlayerState.PictureInPicture, "More PiP bypassed existing native mode transition.");
+                Require(mpv.IsPaused, "More utility actions changed genuine pause.");
+                Program.Log("PASS: actual native More order, availability, child handoff, volume/save, fill/contain, mute and PiP.");
+                return;
+            }
             Require(list.Items.Count == 72, "Native Chapters omitted sparse server indices.");
             Require((string)((ListViewItem)list.Items[0]).Tag == "chapter:4", "Native chapter identity was replaced by list position.");
             Require(mpv.IsPaused, "Opening Chapters changed genuine pause.");
@@ -189,7 +240,7 @@ internal static class PlaybackChapterMenuNativeFixture
             var id = Guid.NewGuid().ToString("N");
             var completion = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
             queries[id] = completion;
-            try { mpv.SendScriptMessage("osc-chapters-fixture-query", id); return await completion.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
+            try { mpv.SendScriptMessage("osc-chapters-fixture-query", id, more ? "more" : "chapters"); return await completion.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
             finally { queries.TryRemove(id, out _); }
         }
         async Task<object> Open()
