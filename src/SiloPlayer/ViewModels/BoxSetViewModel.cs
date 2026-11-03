@@ -27,10 +27,25 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
         _id = null; _library = null; Detail = null; IsLoading = false;
     }
     public Task RefreshAsync() => _id is {} id && _library is {} library ? ReadAsync(id, library) : Task.CompletedTask;
-    public Task LoadAsync(string id, string library)
+    public async Task LoadAsync(string id, string library, Task? pendingProgressSave = null)
     {
+        // First activation may not have received the playback close message.
+        var refreshAfterSave = pendingProgressSave is { IsCompleted: false };
+        var owner = catalog.CaptureIdentityContext();
         Cancel();
-        return ReadAsync(id, library);
+        var loading = ReadAsync(id, library);
+        var lifetime = _playLifetime;
+        await loading;
+        if (refreshAfterSave && ReferenceEquals(_playLifetime, lifetime) && catalog.IsCurrentIdentityContext(owner))
+            _ = RefreshAfterProgressSaveAsync(pendingProgressSave!);
+    }
+    private async Task RefreshAfterProgressSaveAsync(Task pendingProgressSave)
+    {
+        var lifetime = _playLifetime; var owner = _playOwner;
+        var id = _id; var library = _library;
+        try { await pendingProgressSave; } catch { return; }
+        if (lifetime is { IsCancellationRequested: false } && ReferenceEquals(_playLifetime, lifetime)
+            && _id == id && _library == library && catalog.IsCurrentIdentityContext(owner)) await RefreshAsync();
     }
     private async Task ReadAsync(string id, string library)
     {

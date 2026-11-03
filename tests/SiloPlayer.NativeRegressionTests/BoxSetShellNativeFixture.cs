@@ -86,7 +86,111 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 "Shell refresh silently abandoned the accepted movie start.");
             Program.Log($"PASS: box-set shell {invalidation} during held {boundary} from {initialState} preserves visit and starts the movie.");
         }
+        await VerifyMovieMembershipAccessRefreshAsync(scope);
+        await VerifyBoxSetPendingSaveActivationAsync(scope);
         await scope.ResetAsync();
+    }
+
+    private static async Task VerifyMovieMembershipAccessRefreshAsync(LifecycleScope scope)
+    {
+        await scope.ResetAsync();
+        var navigation = scope.Services.GetRequiredService<NavigationService>();
+        Check(navigation.Navigate<ItemDetailPage>(new ItemDetailNavigationArgs("boxset-film", 73)), "Movie route was rejected.");
+        await Until(() => scope.Frame.Content is ItemDetailPage { IsLoaded: true, ViewModel.BoxSet: not null } arriving
+            && Descendants<PosterCard>((DependencyObject)arriving.FindName("BoxSetMovies")).Any());
+        var page = (ItemDetailPage)scope.Frame.Content;
+        var row = (DependencyObject)page.FindName("BoxSetMovies");
+        var cards = Descendants<PosterCard>(row).ToArray();
+        var visible = page.ViewModel.BoxSet;
+        Check(cards[0].Focus(FocusState.Keyboard), "Movie membership card could not receive keyboard focus.");
+        scope.Wire.HoldMembership = true;
+        scope.Wire.MembershipStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Wire.ReleaseMembership = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            scope.Client.InvalidateAccessContext(); scope.Catalog.InvalidateLibraryCache();
+            await scope.Wire.MembershipStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            // Let queued row renders run while the replacement response is held.
+            await Task.Delay(60);
+            Check(ReferenceEquals(page.ViewModel.BoxSet, visible)
+                && Descendants<PosterCard>(row).SequenceEqual(cards) && cards[0].FocusState == FocusState.Keyboard
+                && ((FrameworkElement)page.FindName("BoxSetSection")).Visibility == Visibility.Visible,
+                "An access revision unmounted the movie membership row or lost keyboard focus.");
+            scope.Wire.BoxSetPlayed = true; scope.Wire.HoldMembership = false; scope.Wire.ReleaseMembership.TrySetResult();
+            await Until(() => page.ViewModel.BoxSet?.PlayedCount == 1 && cards[0].MediaItem?.UserState?.Played == true);
+            Check(Descendants<PosterCard>(row).SequenceEqual(cards) && cards[0].FocusState == FocusState.Keyboard,
+                "The replacement membership read rebuilt the movie row instead of updating its cards.");
+            Program.Log("PASS: same-viewer access revision preserves the mounted movie membership row and keyboard focus during a held read.");
+        }
+        finally { scope.Wire.HoldMembership = false; scope.Wire.ReleaseMembership.TrySetResult(); scope.Wire.BoxSetPlayed = false; }
+    }
+
+    private static async Task VerifyBoxSetPendingSaveActivationAsync(LifecycleScope scope)
+    {
+        var navigation = scope.Services.GetRequiredService<NavigationService>();
+        var events = scope.Services.GetRequiredService<EventChannelClient>();
+        foreach (var destination in new[] { "detail", "view-all" })
+        {
+            await scope.ResetAsync(); scope.Wire.BoxSetPlayed = false;
+            Check(navigation.Navigate<ItemDetailPage>(new ItemDetailNavigationArgs("boxset-film", 73)), "Movie route was rejected.");
+            await Until(() => scope.Frame.Content is ItemDetailPage { IsLoaded: true, ViewModel.BoxSet: not null } arriving
+                && Descendants<PosterCard>((DependencyObject)arriving.FindName("BoxSetMovies")).Any());
+            var original = (ItemDetailPage)scope.Frame.Content;
+            // Attach a real synthetic movie session without loading remote media.
+            scope.Wire.AcceptStart = true;
+            var manager = new PlaybackManager(scope.Playback, scope.Catalog, scope.Auth, scope.Client);
+            manager.UseWatchDetail(new() { ContentId = "boxset-film", Type = "movie", Versions = [new() { FileId = 42, Duration = 1200 }] });
+            await manager.StartSessionAsync(42, 1190);
+            SetField(scope.Player, "_playbackManager", manager);
+            typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "boxset-film");
+            typeof(PlayerService).GetProperty("Position")!.SetValue(scope.Player, 1190d);
+            typeof(PlayerService).GetProperty("Duration")!.SetValue(scope.Player, 1200d);
+            scope.Player.SetState(PlayerState.Expanded);
+            var published = typeof(EventChannelClient).GetMethod("PublishAccessInvalidation", Private)!
+                .Invoke(events, [scope.Client.CaptureContext(), null, true]);
+            Check(published is true, "Catch-up event was not published.");
+            await Until(() => (bool)GetField(scope.Window, "_pendingAccessRefresh")!);
+            scope.Wire.HoldStop = true;
+            scope.Wire.StopStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            scope.Wire.ReleaseStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                await scope.Player.CloseAsync();
+                await scope.Wire.StopStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Check(!scope.Player.PendingProgressSave.IsCompleted, "Fixture did not hold the final stop write.");
+                await Until(() => scope.Frame.Content is ItemDetailPage { IsLoaded: true, ViewModel.BoxSet: not null } replacement
+                    && !ReferenceEquals(replacement, original)
+                    && Descendants<PosterCard>((DependencyObject)replacement.FindName("BoxSetMovies")).Any());
+                var page = (ItemDetailPage)scope.Frame.Content;
+                Check(page.ViewModel.BoxSet!.PlayedCount == 0, "Replacement detail did not read pre-save state.");
+                if (destination == "view-all")
+                {
+                    var viewAll = Descendants<Button>((DependencyObject)page.FindName("BoxSetSection")).Single(x => x.Content as string == "View all");
+                    Invoke(viewAll);
+                    await Until(() => scope.Frame.Content is BoxSetPage { IsLoaded: true, ViewModel.Detail: not null, ViewModel.IsLoading: false });
+                    var setPage = (BoxSetPage)scope.Frame.Content;
+                    Check(setPage.ViewModel.Detail!.PlayedCount == 0, "View all did not first read pre-save state.");
+                    var reads = scope.Wire.BoxSetReads;
+                    scope.Wire.ReleaseStop.TrySetResult(); await scope.Player.PendingProgressSave;
+                    await Until(() => scope.Wire.BoxSetReads > reads && setPage.ViewModel.Detail?.PlayedCount == 1
+                        && Descendants<PosterCard>(setPage).All(x => x.MediaItem?.UserState?.Played == true));
+                    Check(Descendants<TextBlock>(setPage).Any(x => x.Text.Contains("1 / 1 watched")), "View all retained pre-save counts.");
+                }
+                else
+                {
+                    var reads = scope.Wire.MembershipReads;
+                    scope.Wire.ReleaseStop.TrySetResult(); await scope.Player.PendingProgressSave;
+                    await Until(() => scope.Wire.MembershipReads > reads && page.ViewModel.BoxSet?.PlayedCount == 1
+                        && Descendants<PosterCard>((DependencyObject)page.FindName("BoxSetMovies")).All(x => x.MediaItem?.UserState?.Played == true));
+                }
+                Program.Log($"PASS: pending catch-up at Idle replaces movie detail; {destination} first activation re-reads membership after the held stop write.");
+            }
+            finally
+            {
+                scope.Wire.ReleaseStop.TrySetResult(); await scope.Player.PendingProgressSave;
+                scope.Wire.HoldStop = false; scope.Wire.BoxSetPlayed = false;
+            }
+        }
     }
 
     internal static async Task VerifyBoxSetPointerAsync()

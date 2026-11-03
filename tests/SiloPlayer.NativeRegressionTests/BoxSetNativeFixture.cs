@@ -152,6 +152,34 @@ internal static class BoxSetNativeFixture
         Check(delayedPage.IsLoaded && delayedPage.ViewModel.Detail != null && delayedPage.ViewModel.IsCurrent, "Loaded recovers an invalidation missed before subscription");
         parent.Children.Remove(delayedPage); await Task.Delay(30);
 
+        // A close can also arrive after activation but before membership is known.
+        var firstLoadPage = new BoxSetPage(catalog, api) { Width = 540, Height = 600 };
+        parent.Children.Add(firstLoadPage);
+        for (var i = 0; i < 100 && !firstLoadPage.IsLoaded; i++) await Task.Delay(10);
+        Check(firstLoadPage.IsLoaded, "first-load playback fixture is active");
+        wire.Empty = false; wire.Played = 1; wire.Hold = true;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var heldFirstLoad = firstLoadPage.ViewModel.LoadAsync("7", "12");
+        var firstLoadSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Check(firstLoadPage.ViewModel.Detail == null, "membership is unknown when the close message arrives");
+            firstLoadPage.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("second", 100, 100, true) { Persisted = firstLoadSave.Task });
+            var receivedFirstLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            firstLoadPage.DispatcherQueue.TryEnqueue(() => receivedFirstLoad.TrySetResult()); await receivedFirstLoad.Task;
+            wire.Hold = false; wire.Release.TrySetResult(); await heldFirstLoad;
+            var firstLoadReads = wire.Reads; wire.Played = 3; firstLoadSave.TrySetResult();
+            for (var i = 0; i < 100 && (wire.Reads == firstLoadReads || firstLoadPage.ViewModel.Detail?.PlayedCount != 3); i++) await Task.Delay(10);
+            Check(wire.Reads > firstLoadReads && firstLoadPage.ViewModel.Detail?.PlayedCount == 3,
+                "a close received before known membership still refreshes after its final write");
+        }
+        finally
+        {
+            wire.Hold = false; wire.Release.TrySetResult(); firstLoadSave.TrySetResult();
+            await heldFirstLoad; parent.Children.Remove(firstLoadPage);
+        }
+
         // Actual movie-detail row uses the real controls and returned-library tags.
         var detail = new ItemDetailPage { Width = 960, Height = 700 }; parent.Children.Add(detail); await Task.Delay(80);
         detail.ViewModel.Item = new MediaItemDetail { ContentId = "second", Type = "movie", Title = "Current film" };

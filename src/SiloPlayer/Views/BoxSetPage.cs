@@ -80,14 +80,22 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         // A pre-save access refresh can read old progress; this visit still
         // needs its post-write refresh even when that read context was retired.
         var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureIdentityContext();
-        if (!_active || detail?.Items.Any(x => x.ContentId == message.ContentId) != true) return;
+        // Until the first read completes we cannot rule out membership. Keep
+        // the final-save refresh rather than dropping a close during loading.
+        if (!_active || (detail != null && !detail.Items.Any(x => x.ContentId == message.ContentId))) return;
         try { await message.Persisted; } catch { return; }
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner)) Refresh();
         });
     });
-    protected override async void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); _knownMembership = null; _visit++; if (e.Parameter is BoxSetNavigationArgs route) await ViewModel.LoadAsync(route.Id, route.LibraryId); }
+    protected override async void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e); _knownMembership = null; _visit++;
+        if (e.Parameter is BoxSetNavigationArgs route)
+            await ViewModel.LoadAsync(route.Id, route.LibraryId,
+                App.Services.GetRequiredService<PlayerService>().PendingProgressSave);
+    }
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; _visit++; _knownMembership = null; ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async Task PlayPrimaryAsync()
     {

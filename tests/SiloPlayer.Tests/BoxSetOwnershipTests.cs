@@ -70,6 +70,84 @@ public sealed class BoxSetOwnershipTests
         }
         finally { movie.CancelPendingLoads(); wire.Release.TrySetResult(); persisted.TrySetResult(); await refreshing; }
     }
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public async Task FirstActivationRefreshesAfterAnOutstandingSaveWithoutReceivingItsMessage(bool dedicated)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var set = new BoxSetViewModel(api);
+        var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((id, _) =>
+            Task.FromResult(new MediaItemDetail { ContentId = id, Type = "movie", UserState = new() })));
+        try
+        {
+            if (dedicated) await set.LoadAsync("7", "2", persisted.Task);
+            else await movie.LoadInLibraryAsync("film", null, persisted.Task);
+            for (var i = 0; i < 100 && (dedicated ? set.Detail : movie.BoxSet) == null; i++) await Task.Delay(10);
+            Assert.Equal(1, (dedicated ? set.Detail : movie.BoxSet)!.PlayedCount);
+            var reads = wire.DetailReads;
+            wire.AllPlayed = true; persisted.TrySetResult();
+            for (var i = 0; i < 100 && (wire.DetailReads == reads || (dedicated ? set.Detail : movie.BoxSet)?.PlayedCount != 2); i++) await Task.Delay(10);
+            var refreshed = dedicated ? set.Detail : movie.BoxSet;
+            Assert.True(wire.DetailReads > reads);
+            Assert.Equal(2, refreshed!.PlayedCount); Assert.Equal("first", refreshed.PlayTarget?.ContentId);
+        }
+        finally { movie.CancelPendingLoads(); set.Cancel(); persisted.TrySetResult(); }
+    }
+    [Theory]
+    [InlineData(false, "departure")] [InlineData(true, "departure")]
+    [InlineData(false, "profile")] [InlineData(true, "profile")]
+    [InlineData(false, "route")] [InlineData(true, "route")]
+    public async Task FirstActivationPostSaveRefreshCannotReviveARetiredVisit(bool dedicated, string change)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http); var api = new CatalogApi(client);
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var set = new BoxSetViewModel(api);
+        var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((id, _) =>
+            Task.FromResult(new MediaItemDetail { ContentId = id, Type = "movie", UserState = new() })));
+        try
+        {
+            if (dedicated) await set.LoadAsync("7", "2", persisted.Task);
+            else await movie.LoadInLibraryAsync("film", null, persisted.Task);
+            for (var i = 0; i < 100 && (dedicated ? set.Detail : movie.BoxSet) == null; i++) await Task.Delay(10);
+            Assert.NotNull(dedicated ? set.Detail : movie.BoxSet);
+            if (change == "departure") { set.Cancel(); movie.CancelPendingLoads(); }
+            if (change == "profile") client.SetProfile("other");
+            if (change == "route")
+            {
+                if (dedicated) await set.LoadAsync("8", "12");
+                else movie.Item = new MediaItemDetail { ContentId = "other", Type = "movie" };
+            }
+            var reads = wire.DetailReads; wire.AllPlayed = true; persisted.TrySetResult(); await Task.Delay(50);
+            Assert.Equal(reads, wire.DetailReads);
+        }
+        finally { movie.CancelPendingLoads(); set.Cancel(); persisted.TrySetResult(); }
+    }
+    [Theory] [InlineData(200)] [InlineData(503)]
+    public async Task MembershipAccessRevisionPreservesVisibleRowAndPostSaveMembership(int status)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var movie = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie); await movie.RefreshBoxSetAsync(); var visible = movie.BoxSet;
+        var blanked = false;
+        movie.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(movie.BoxSet) && movie.BoxSet == null) blanked = true; };
+        wire.Hold = true; wire.DetailStatus = (HttpStatusCode)status;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.InvalidateAccessContext();
+        var refreshing = movie.RefreshBoxSetAsync();
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); Assert.Same(visible, movie.BoxSet); Assert.False(blanked);
+            movie.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("second", 100, 100, true) { Persisted = persisted.Task });
+            wire.Hold = false; wire.Release.TrySetResult(); await refreshing;
+            Assert.False(blanked);
+            if (status == 503) Assert.Same(visible, movie.BoxSet);
+            var reads = wire.DetailReads; wire.DetailStatus = HttpStatusCode.OK; wire.AllPlayed = true; persisted.TrySetResult();
+            for (var i = 0; i < 100 && (wire.DetailReads == reads || movie.BoxSet?.PlayedCount != 2); i++) await Task.Delay(10);
+            Assert.True(wire.DetailReads > reads); Assert.Equal(2, movie.BoxSet!.PlayedCount);
+        }
+        finally { movie.CancelPendingLoads(); wire.Release.TrySetResult(); persisted.TrySetResult(); await refreshing; }
+    }
     [Fact] public async Task QueuedRefreshCannotSuppressPersistedPlaybackState()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));

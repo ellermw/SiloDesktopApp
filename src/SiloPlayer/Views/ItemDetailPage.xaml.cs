@@ -1010,7 +1010,8 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrEmpty(contentId))
         {
             _currentContentId = contentId;
-            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId);
+            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
+                _playerService?.PendingProgressSave ?? Task.CompletedTask);
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
                 return;
             if (ViewModel.Item == null)
