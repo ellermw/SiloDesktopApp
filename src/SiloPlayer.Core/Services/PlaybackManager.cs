@@ -349,6 +349,7 @@ public partial class PlaybackManager : IDisposable
                 Language = track.Language ?? "",
                 Codec = track.Codec,
                 Label = string.IsNullOrWhiteSpace(track.Label) ? track.Language ?? "Subtitle" : track.Label,
+                NativeTitle = track.Label,
                 Source = track.Source,
                 Url = track.Url ?? "",
                 FontBundleUrl = track.FontBundleUrl,

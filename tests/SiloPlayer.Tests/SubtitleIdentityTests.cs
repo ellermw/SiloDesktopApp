@@ -74,6 +74,40 @@ public sealed class SubtitleIdentityTests
         Assert.Equal(8, SubtitleAutoSelect.Resolve(new("always", SubtitleAutoSelect.BuildCandidates(tracks), "en", "ja", "en", false)));
     }
 
+    [Theory]
+    [InlineData("eng")]
+    [InlineData("en")]
+    [InlineData("")]
+    public void UnlabelledLegacyPlanResolvesUntitledNativeTrack(string language)
+    {
+        var decision = new PlaybackDecisionResponseV3
+        {
+            Outcome = "playable",
+            PlaybackPlan = new()
+            {
+                Delivery = "original_http",
+                Subtitle = new() { Inventory = [new() { CombinedIndex = 0, Source = "embedded", Codec = "subrip", Language = language }] }
+            }
+        };
+        var method = typeof(PlaybackManager).GetMethod("AdoptProtocolV3Decision", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var response = (PlaybackStartResponse)method.Invoke(null, [decision, "attempt", "original", null])!;
+        var track = Assert.Single(response.SubtitleUrls);
+        Assert.Null(track.NativeTitle);
+        Assert.Equal(7, SiloPlayer.Player.NativeSubtitleSelection.Resolve(
+            new(0, track.StreamIndex, track.ContainerTrackId, track.Codec, track.Language, track.NativeTitle),
+            [new(7, 1, "2", "subrip", language.Length == 0 ? null : "eng", null)], false));
+    }
+
+    [Fact]
+    public void LoadedSubtitleSelectionPrecedesOptionalSettingsReads()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task InitializeLoadedMediaAsync(", StringComparison.Ordinal);
+        var selection = source.IndexOf("await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false)", start, StringComparison.Ordinal);
+        var settings = source.IndexOf("await SendAutoSkipSettingsToOscAsync(ct)", start, StringComparison.Ordinal);
+        Assert.True(selection > start && settings > selection);
+    }
+
     [Fact]
     public void AdaptedPlanKeepsIdentityAndUnavailableOrdinals()
     {

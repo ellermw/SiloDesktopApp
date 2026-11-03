@@ -36,13 +36,43 @@ public sealed partial class MpvPlayer
         }
     }
 
+    /// <summary>Actual subtitle IDs, including sidecars, for verifying sub-add.</summary>
+    public IReadOnlyList<int> GetSubtitleTrackIds(bool externalOnly = false)
+    {
+        ThrowIfNotInitialized();
+        using var lease = EnterNative();
+        if (!lease.Active) return [];
+        if (mpv_get_property_int(_mpvHandle, "track-list/count", MPV_FORMAT_INT64, out var count) < 0) return [];
+        var ids = new List<int>();
+        for (var i = 0; i < count; i++)
+        {
+            if (GetString($"track-list/{i}/type") != "sub" ||
+                externalOnly && GetString($"track-list/{i}/external") != "yes") continue;
+            if (mpv_get_property_int(_mpvHandle, $"track-list/{i}/id", MPV_FORMAT_INT64, out var id) >= 0 && id > 0)
+                ids.Add(checked((int)id));
+        }
+        return ids;
+
+        string? GetString(string name)
+        {
+            var pointer = mpv_get_property_string(_mpvHandle, name);
+            try { return pointer == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(pointer); }
+            finally { if (pointer != IntPtr.Zero) mpv_free(pointer); }
+        }
+    }
+
+    /// <summary>Only the builtin Matroska demuxer attests container TrackNumbers here.</summary>
+    public bool HasContainerTrackIds() => CurrentDemuxer() == "mkv";
+
     /// <summary>Only libavformat guarantees the server's AVStream index namespace.</summary>
-    public bool HasFfmpegTrackIndices()
+    public bool HasFfmpegTrackIndices() => CurrentDemuxer() == "lavf";
+
+    private string? CurrentDemuxer()
     {
         using var lease = EnterNative();
-        if (!lease.Active) return false;
+        if (!lease.Active) return null;
         var pointer = mpv_get_property_string(_mpvHandle, "current-demuxer");
-        try { return Marshal.PtrToStringUTF8(pointer) == "lavf"; }
+        try { return pointer == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(pointer); }
         finally { if (pointer != IntPtr.Zero) mpv_free(pointer); }
     }
 }

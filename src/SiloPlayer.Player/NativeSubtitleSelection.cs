@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Services;
+
 namespace SiloPlayer.Player;
 
 public sealed record NativeSubtitleTrack(int Id, int? StreamIndex, string? ContainerTrackId,
@@ -7,28 +9,39 @@ public sealed record NativeSubtitleTrack(int Id, int? StreamIndex, string? Conta
 public static class NativeSubtitleSelection
 {
     public static int Resolve(NativeSubtitleTrack requested, IReadOnlyList<NativeSubtitleTrack> loaded,
-        bool trustworthyStreamIndex)
+        bool trustworthyStreamIndex, bool trustworthyContainerTrackId = true)
     {
         IEnumerable<NativeSubtitleTrack> matches;
-        if (!string.IsNullOrWhiteSpace(requested.ContainerTrackId))
+        if (trustworthyStreamIndex && requested.StreamIndex is not null)
         {
-            matches = loaded.Where(t => t.ContainerTrackId == requested.ContainerTrackId &&
-                (!trustworthyStreamIndex || requested.StreamIndex == null || t.StreamIndex == requested.StreamIndex));
+            // lavf's src-id is not necessarily a container TrackNumber. Only
+            // cross-check it when the caller can attest that namespace too.
+            matches = loaded.Where(t => t.StreamIndex == requested.StreamIndex &&
+                (!trustworthyContainerTrackId || string.IsNullOrWhiteSpace(requested.ContainerTrackId) ||
+                 string.IsNullOrWhiteSpace(t.ContainerTrackId) || t.ContainerTrackId == requested.ContainerTrackId));
+        }
+        else if (!string.IsNullOrWhiteSpace(requested.ContainerTrackId))
+        {
+            if (!trustworthyContainerTrackId) return 0;
+            matches = loaded.Where(t => t.ContainerTrackId == requested.ContainerTrackId);
         }
         else if (requested.StreamIndex is not null)
         {
-            if (!trustworthyStreamIndex) return 0;
-            matches = loaded.Where(t => t.StreamIndex == requested.StreamIndex);
+            return 0;
         }
         else
         {
             // Older responses have no absolute identity. A unique full
             // metadata match is safe; duplicate language/codec rows are not.
-            if (string.IsNullOrWhiteSpace(requested.Codec) || string.IsNullOrWhiteSpace(requested.Language)) return 0;
-            matches = loaded.Where(t => Codec(t.Codec) == Codec(requested.Codec) &&
-                Same(t.Language, requested.Language) && t.Forced == requested.Forced &&
-                t.HearingImpaired == requested.HearingImpaired &&
-                (string.IsNullOrWhiteSpace(requested.Title) || Same(t.Title, requested.Title)));
+            if (string.IsNullOrWhiteSpace(requested.Codec)) return 0;
+            var metadata = loaded.Where(t => t.Id > 0 && Codec(t.Codec) == Codec(requested.Codec) &&
+                MediaLanguageCatalog.Normalize(t.Language) == MediaLanguageCatalog.Normalize(requested.Language) &&
+                t.Forced == requested.Forced && t.HearingImpaired == requested.HearingImpaired).ToArray();
+            // A display label need not be the container title. Use a supplied
+            // raw label only to disambiguate otherwise identical metadata.
+            matches = metadata.Length > 1 && !string.IsNullOrWhiteSpace(requested.Title)
+                ? metadata.Where(t => !string.IsNullOrWhiteSpace(t.Title) && Same(t.Title, requested.Title))
+                : metadata;
         }
         var unique = matches.Where(t => t.Id > 0).Take(2).ToArray();
         return unique.Length == 1 ? unique[0].Id : 0;

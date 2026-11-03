@@ -85,7 +85,68 @@ internal static class SubtitleIdentityNativeFixture
                         "Refused no-route subtitle did not restore the retained OSC highlight.");
                     Require(noticePayload.RootElement.GetProperty("message").GetString()!.Contains("another subtitle", StringComparison.OrdinalIgnoreCase),
                         "Refused no-route subtitle did not provide an actionable notice.");
-                    Program.Log("PASS: unresolved identity without sidecar refuses public/callback selection, preserves previous SID/highlight/preferences and sends an actionable OSC notice.");
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, true);
+                    await service.SetSubtitleTrackAndPersistAsync(10, "en", noRoute);
+                    Require(wire.PreferenceWrites == preferenceWrites && (int?)Get(service, "_pendingSubtitlePreferenceIndex") == 9,
+                        "A choice made during loading persisted before native execution.");
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, false);
+                    Call(service, "LoadSubtitles");
+                    mpv.SetSubtitleTrack(0); // Replacement loads suppress unverified subtitles.
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 9, false)!;
+                    Require(service.ActiveSubtitleServerIndex == previousIndex && mpv.GetPropertyDouble("sid") == previousSid &&
+                        wire.PreferenceWrites == preferenceWrites && manager.SubtitleSelectionForLoad == previousIndex &&
+                        Get(service, "_pendingInitialServerSubtitleIndex") == null && Get(service, "_pendingSubtitlePreferenceIndex") == null,
+                        "Load-time refusal failed to restore the last executed SID, intent and pending preference.");
+
+                    var deferredJapanese = session.SubtitleUrls.Single(t => t.Index == 4);
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, true);
+                    await service.SetSubtitleTrackAndPersistAsync(5, deferredJapanese.Language, deferredJapanese);
+                    Require(wire.PreferenceWrites == preferenceWrites, "A valid deferred choice wrote its preference too early.");
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, false);
+                    Call(service, "LoadSubtitles");
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 4, false)!;
+                    Require(service.ActiveSubtitleServerIndex == 4 && mpv.GetPropertyDouble("sid") == 2 &&
+                        wire.PreferenceWrites == preferenceWrites + 1, "A successful deferred choice did not persist exactly once after execution.");
+
+                    await service.SetSubtitleTrackAndPersistAsync(3, previousTrack.Language, previousTrack);
+                    preferenceWrites = wire.PreferenceWrites;
+                    var previousUrl = previousTrack.Url;
+                    previousTrack.Url = "";
+                    Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("remux", subtitles.Origin + "/video.mkv"));
+                    Call(service, "LoadSubtitles");
+                    mpv.SetSubtitleTrack(0);
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", previousIndex, false)!;
+                    Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                        manager.SubtitleSelectionForLoad == -1 && wire.PreferenceWrites == preferenceWrites,
+                        "A native-only choice remained highlighted after replacement with a no-route remux.");
+                    previousTrack.Url = previousUrl;
+                    Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", Path.Combine(assets, "tracks.mkv")));
+                    await service.SetSubtitleTrackAndPersistAsync(3, previousTrack.Language, previousTrack);
+
+                    var busy = new SubtitleTrackInfo { Index = 10, Source = "embedded", Codec = "subrip", Language = "en",
+                        StreamIndex = 99, ContainerTrackId = "99", Url = subtitles.Origin + "/busy.srt" };
+                    session.SubtitleUrls.Add(busy);
+                    subtitles.Fail = true;
+                    preferenceWrites = wire.PreferenceWrites;
+                    var cache = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", busy.Index, true)!;
+                    Require(service.ActiveSubtitleServerIndex == previousIndex && mpv.GetPropertyDouble("sid") == previousSid &&
+                        wire.PreferenceWrites == preferenceWrites && !cache.ContainsKey(busy.Index) && manager.SubtitleSelectionForLoad == previousIndex,
+                        "Failed sidecar add cached or persisted an unchanged native SID.");
+
+                    var castTracks = service.CaptureSiloCastState()["subtitleTracks"]!.AsArray();
+                    Require(castTracks.All(t => t!["trackId"]!.GetValue<int>() != 4), "SiloCast advertised an explicitly unplayable subtitle.");
+                    foreach (var sid in new[] { 4, 10, 11 })
+                        await ExpectUnavailableAsync(() => service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = sid }));
+                    Require(service.ActiveSubtitleServerIndex == previousIndex && wire.PreferenceWrites == preferenceWrites,
+                        "A refused SiloCast command changed the selected subtitle or preference.");
+                    await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+                    preferenceWrites = wire.PreferenceWrites;
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", busy.Index, true)!;
+                    Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                        wire.PreferenceWrites == preferenceWrites && !cache.ContainsKey(busy.Index),
+                        "Failed sidecar add while Off guessed SID 1 or persisted the failed choice.");
+                    Program.Log("PASS: no-route and failed-sidecar selections retain executed SID/intent/preferences, deferred choices persist only after execution, and SiloCast refuses unavailable choices.");
                 }
                 finally { mpv.ScriptMessageReceived -= Notice; }
                 return;
@@ -146,6 +207,13 @@ internal static class SubtitleIdentityNativeFixture
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
     }
 
+    private static async Task ExpectUnavailableAsync(Func<Task> action)
+    {
+        try { await action(); }
+        catch (ArgumentException) { return; }
+        throw new InvalidOperationException("SiloCast reported success for an unavailable subtitle.");
+    }
+
     private static object? Call(object target, string method, params object?[] args) => target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, args);
     private static object? Get(object target, string field) => target.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(target);
     private static void Set(object target, string field, object? value) => target.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
@@ -154,6 +222,7 @@ internal static class SubtitleIdentityNativeFixture
     {
         private readonly HttpListener _listener = new();
         public string Origin { get; }
+        public volatile bool Fail;
         public SubtitleServer(byte[] bytes)
         {
             var reserve = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0); reserve.Start();
@@ -165,6 +234,12 @@ internal static class SubtitleIdentityNativeFixture
                 {
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
+                    if (Fail)
+                    {
+                        request.Response.StatusCode = 503;
+                        request.Response.Close();
+                        continue;
+                    }
                     request.Response.ContentType = "application/x-subrip"; request.Response.ContentLength64 = bytes.Length;
                     await request.Response.OutputStream.WriteAsync(bytes); request.Response.Close();
                 }

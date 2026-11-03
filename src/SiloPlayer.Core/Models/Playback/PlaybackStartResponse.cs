@@ -51,6 +51,8 @@ public class SubtitleTrackInfo
     public string Language { get; set; } = "";
     public string? Codec { get; set; }
     public string Label { get; set; } = "";
+    // The unsynthesized server label, used only as a native-title hint.
+    public string? NativeTitle { get; set; }
     public string? Source { get; set; }
     public string Url { get; set; } = "";
     public string? Delivery { get; set; }
