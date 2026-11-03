@@ -83,12 +83,25 @@ public partial class PlaybackApi
     public Task<WatchTogetherSuggestionsResponse> CreateWatchTogetherSuggestionAsync(string roomId, string roomToken,
         string contentId, string contentType, string title, string? subtitle = null, string? posterUrl = null, string? note = null, CancellationToken ct = default,
         ApiIdentityContext? expectedIdentityContext = null)
-        => MutateSuggestionsAsync(HttpMethod.Post, roomId, roomToken, "", new Dictionary<string, object?>
+        => MutateSuggestionsAsync(HttpMethod.Post, roomId, roomToken, "",
+            SuggestionBody(contentId, contentType, title, subtitle, posterUrl, note), ct, expectedIdentityContext);
+
+    // Movie entry only needs the accepted write before navigating. A separate
+    // suggestions read must not turn that acceptance into a retryable failure.
+    public Task SubmitWatchTogetherSuggestionAsync(string roomId, string roomToken,
+        string contentId, string contentType, string title, ApiIdentityContext expectedIdentityContext,
+        string? subtitle = null, string? posterUrl = null, string? note = null, CancellationToken ct = default)
+        => WriteSuggestionsAsync(HttpMethod.Post, roomId, roomToken, "",
+            SuggestionBody(contentId, contentType, title, subtitle, posterUrl, note), ct, expectedIdentityContext);
+
+    private static Dictionary<string, object?> SuggestionBody(string contentId, string contentType, string title,
+        string? subtitle, string? posterUrl, string? note)
+        => new()
         {
             ["suggestion_id"] = Guid.NewGuid().ToString(), ["content_id"] = contentId,
             ["content_type"] = contentType, ["title"] = title, ["subtitle"] = subtitle ?? "",
             ["poster_url"] = posterUrl ?? "", ["note"] = note ?? "",
-        }, ct, expectedIdentityContext);
+        };
 
     public Task<WatchTogetherSuggestionsResponse> DeleteWatchTogetherSuggestionAsync(string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
         => MutateSuggestionsAsync(HttpMethod.Delete, roomId, roomToken, "/" + Uri.EscapeDataString(suggestionId), null, ct);
@@ -102,6 +115,13 @@ public partial class PlaybackApi
     private async Task<WatchTogetherSuggestionsResponse> MutateSuggestionsAsync(HttpMethod method, string roomId, string roomToken, string suffix, object? body, CancellationToken ct,
         ApiIdentityContext? expectedIdentityContext = null)
     {
+        await WriteSuggestionsAsync(method, roomId, roomToken, suffix, body, ct, expectedIdentityContext).ConfigureAwait(false);
+        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct).ConfigureAwait(false);
+    }
+
+    private async Task WriteSuggestionsAsync(HttpMethod method, string roomId, string roomToken, string suffix, object? body, CancellationToken ct,
+        ApiIdentityContext? expectedIdentityContext)
+    {
         var authority = client.CaptureContext();
         EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
         var path = RoomPath(roomId) + "/suggestions" + suffix;
@@ -110,9 +130,6 @@ public partial class PlaybackApi
         else
             await client.SendNoContentRequestAsync(method, path, body, RoomProof(roomToken), ct).ConfigureAwait(false);
         EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
-        // The accepted write survives an access revision. Its follow-up read
-        // captures fresh authority rather than replaying the suggestion POST.
-        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct).ConfigureAwait(false);
     }
 
     public Task<WatchTogetherRoomResponse> PromoteWatchTogetherSuggestionAsync(string roomId, string roomToken, string suggestionId, CancellationToken ct = default)

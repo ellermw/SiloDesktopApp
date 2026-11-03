@@ -76,6 +76,28 @@ public sealed class WatchTogetherV2Tests
         if (suggestion) Assert.All(handler.Requests, request => Assert.Equal("proof", request.RoomProof));
     }
 
+    [Theory] [InlineData("access")] [InlineData("profile")]
+    public async Task SuggestionSubmissionCompletesAtAcceptanceWithoutAListRead(string change)
+    {
+        using var handler = new RoomHandler { HoldMutations = true, FailSuggestionReads = true };
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test"); client.SetProfile("viewer");
+        var pending = new PlaybackApi(client).SubmitWatchTogetherSuggestionAsync("room", "proof", "movie", "movie", "Film", client.CaptureIdentityContext());
+        try
+        {
+            await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            if (change == "access") client.InvalidateAccessContext(); else client.SetProfile("replacement");
+        }
+        finally { handler.Release.TrySetResult(); }
+        if (change == "access") await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        else await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        var request = Assert.Single(handler.Requests);
+        Assert.EndsWith("/suggestions", request.Uri.AbsolutePath);
+        Assert.Equal("movie", request.Body.GetProperty("content_id").GetString());
+        Assert.True(Guid.TryParse(request.Body.GetProperty("suggestion_id").GetString(), out _));
+        Assert.Equal("proof", request.RoomProof);
+    }
+
     [Theory] [InlineData(false)] [InlineData(true)]
     public async Task RetiredRoomIntentCannotSendUnderReplacementViewer(bool suggestion)
     {
@@ -99,7 +121,7 @@ public sealed class WatchTogetherV2Tests
     private sealed class RoomHandler : HttpMessageHandler
     {
         public List<(Uri Uri, string? RoomProof, JsonElement Body)> Requests { get; } = [];
-        internal bool HoldMutations;
+        internal bool HoldMutations, FailSuggestionReads;
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -108,6 +130,8 @@ public sealed class WatchTogetherV2Tests
             Requests.Add((uri, request.Headers.TryGetValues("X-Room-Token", out var proof) ? proof.Single() : null,
                 JsonDocument.Parse(json).RootElement.Clone()));
             if (HoldMutations && request.Method != HttpMethod.Get) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
+            if (FailSuggestionReads && request.Method == HttpMethod.Get && uri.AbsolutePath.EndsWith("/suggestions"))
+                return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
             if (uri.AbsolutePath.EndsWith("/vote")) return new(HttpStatusCode.NoContent);
             if (uri.AbsolutePath.EndsWith("/ws-ticket")) return Json($$"""{"ticket":"ticket-{{Requests.Count}}","protocol":"silo.room.v2","expires_in":30,"max_connection_seconds":300}""");
             if (request.Method == HttpMethod.Get)

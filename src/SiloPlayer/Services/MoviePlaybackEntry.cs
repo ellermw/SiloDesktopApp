@@ -40,7 +40,7 @@ public static class MoviePlaybackEntry
             room.Room = response.Room;
         }
         else
-            await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, movie.ContentId, "movie", movie.Title,
+            await playback.SubmitWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, movie.ContentId, "movie", movie.Title,
                 posterUrl: movie.PosterUrl, ct: ct, expectedIdentityContext: owner);
         if (CurrentRoom()) App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
         { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });

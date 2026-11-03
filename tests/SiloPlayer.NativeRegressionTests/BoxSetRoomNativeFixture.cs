@@ -29,9 +29,11 @@ internal static class BoxSetRoomNativeFixture
         using var events = new EventChannelClient(client, auth);
         events.AccessChanged += _ => catalog.InvalidateLibraryCache();
         events.ReadCatchUpRequested += _ => catalog.InvalidateLibraryCache();
-        Type? routeType = null;
-        var navigation = new NavigationService { Frame = new Frame(), NavigationRequestHandler = (type, _) => { routeType = type; return true; } };
-        slot.SetValue(null, new Services(original, client, catalog, playback, navigation));
+        Type? routeType = null; var navigationCount = 0;
+        var navigation = new NavigationService { Frame = new Frame(), NavigationRequestHandler = (type, _) => { routeType = type; navigationCount++; return true; } };
+        var toastContainer = new SiloPlayer.Controls.ToastContainer();
+        var toast = new ToastService(); toast.Register(toastContainer, parent.DispatcherQueue);
+        slot.SetValue(null, new Services(original, client, catalog, playback, navigation, toast));
         var coordinator = original.GetRequiredService<WatchTogetherCoordinator>(); var player = original.GetRequiredService<PlayerService>();
         try
         {
@@ -39,15 +41,22 @@ internal static class BoxSetRoomNativeFixture
             await page.ViewModel.LoadAsync("7", "12"); await Task.Delay(70);
             foreach (var mode in new[] { "host-lobby", "guest-lobby", "host-playing", "guest-playing", "host-vote" })
             {
-                coordinator.ClearActiveRoom();
+                coordinator.ClearActiveRoom(); routeType = null;
                 var room = new WatchTogetherRoomViewModel(playback, client) { RoomId = "fixture-room", RoomToken = "fixture-proof", Room = new() { RoomId = "fixture-room", Phase = mode.EndsWith("playing") ? "playing" : "lobby", SelectedContentId = "room-existing", SelfCanManageRoom = mode.StartsWith("host"), SelectionMode = mode == "host-vote" ? "vote" : "host_pick" } };
                 coordinator.SetActiveRoom(room); var stages = wire.Stages; var suggestions = wire.Suggestions; var currentContent = player.ContentId;
+                var navigations = navigationCount;
                 var button = Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay");
                 ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
                 for (var i = 0; i < 100 && (wire.Stages == stages && wire.Suggestions == suggestions || !button.IsEnabled); i++) await Task.Delay(10);
                 Check(mode == "host-lobby" ? wire.Stages == stages + 1 && wire.Suggestions == suggestions : wire.Suggestions == suggestions + 1 && wire.Stages == stages, mode + " enters the room stage/suggestion route");
                 Check(ReferenceEquals(coordinator.ActiveRoom, room) && player.ContentId == currentContent && wire.LocalStarts == 0, mode + " preserves active room and local playback authority");
-                Check(routeType == typeof(WatchTogetherRoomPage), mode + " returns to the room destination");
+                Check(routeType == typeof(WatchTogetherRoomPage) && navigationCount == navigations + 1, mode + " returns once to the room destination");
+                // The list endpoint fails even though suggestion writes are accepted.
+                // Entry must navigate once, without querying it or showing a false error.
+                var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                parent.DispatcherQueue.TryEnqueue(() => drained.TrySetResult()); await drained.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                Check(wire.SuggestionReads == 0 && ((StackPanel)toastContainer.FindName("ToastStack")).Children.Count == 0,
+                    mode + " completes the accepted suggestion without a list-read failure or error toast");
             }
             foreach (var host in new[] { true, false })
             foreach (var catchUp in new[] { false, true })
@@ -102,17 +111,17 @@ internal static class BoxSetRoomNativeFixture
             Check(calls == 1, "retired movie entry cannot start standalone playback");
             Program.Log("PASS: actual box-set primary action stages host lobby, suggests guest/playing/vote intents, retains room/local authority, and standalone entry preserves movie/library/owner; late stage preserves replaced room.");
         }
-        finally { wire.ReleaseStage.TrySetResult(); wire.ReleaseSuggestion.TrySetResult(); coordinator.ClearActiveRoom(); parent.Children.Clear(); await Task.Delay(100); slot.SetValue(null, original); }
+        finally { wire.ReleaseStage.TrySetResult(); wire.ReleaseSuggestion.TrySetResult(); toast.Unregister(); coordinator.ClearActiveRoom(); parent.Children.Clear(); await Task.Delay(100); slot.SetValue(null, original); }
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root) { for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++){var child=VisualTreeHelper.GetChild(root,i);yield return child;foreach(var nested in Descendants(child))yield return nested;} }
     private static void Check(bool value,string message) { if(!value)throw new InvalidOperationException("Box-set room: " + message); }
-    private sealed class Services(IServiceProvider original, SiloApiClient client, CatalogApi catalog, PlaybackApi playback, NavigationService navigation) : IServiceProvider
+    private sealed class Services(IServiceProvider original, SiloApiClient client, CatalogApi catalog, PlaybackApi playback, NavigationService navigation, ToastService toast) : IServiceProvider
     {
-        public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(CatalogApi) ? catalog : type == typeof(PlaybackApi) ? playback : type == typeof(NavigationService) ? navigation : original.GetService(type);
+        public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(CatalogApi) ? catalog : type == typeof(PlaybackApi) ? playback : type == typeof(NavigationService) ? navigation : type == typeof(ToastService) ? toast : original.GetService(type);
     }
     private sealed class Wire : HttpMessageHandler
     {
-        internal int Stages, Suggestions, LocalStarts, Reads;
+        internal int Stages, Suggestions, SuggestionReads, LocalStarts, Reads;
         internal bool HoldStage, HoldSuggestion;
         internal TaskCompletionSource StageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseStage = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource SuggestionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseSuggestion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -134,6 +143,11 @@ internal static class BoxSetRoomNativeFixture
                 Suggestions++; var data=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement;
                 Check(data.GetProperty("content_id").GetString()=="second" && data.GetProperty("content_type").GetString()=="movie", "suggest normal movie rather than aggregate");
                 SuggestionStarted.TrySetResult(); if(HoldSuggestion) await ReleaseSuggestion.Task;
+            }
+            else if(path.EndsWith("/suggestions") && request.Method==HttpMethod.Get)
+            {
+                SuggestionReads++;
+                return new(HttpStatusCode.ServiceUnavailable) { Content=new StringContent("{}") };
             }
             else if(path.Contains("/playback/"))LocalStarts++;
             return new(HttpStatusCode.OK) { Content=new StringContent(JsonSerializer.Serialize(body)) };

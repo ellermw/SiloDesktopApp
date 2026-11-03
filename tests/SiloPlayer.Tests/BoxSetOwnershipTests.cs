@@ -45,6 +45,31 @@ public sealed class BoxSetOwnershipTests
         Assert.True(wire.DetailReads > reads, "A playback message received during a held row refresh still owns a post-write refresh.");
         Assert.Equal(2, movie.BoxSet!.PlayedCount); movie.CancelPendingLoads();
     }
+    [Fact] public async Task MembershipPostSaveRefreshSurvivesSameViewerAccessInvalidationDuringRead()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var movie = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie); await movie.RefreshBoxSetAsync();
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        movie.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("second", 100, 100, true) { Persisted = persisted.Task });
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshing = movie.RefreshBoxSetAsync();
+        try
+        {
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var readOwner = client.CaptureContext(); var identity = client.CaptureIdentityContext();
+            client.InvalidateAccessContext();
+            Assert.False(client.IsCurrentContext(readOwner)); Assert.True(client.IsCurrentIdentityContext(identity));
+            wire.Hold = false; wire.Release.TrySetResult(); await refreshing;
+            await movie.RefreshBoxSetAsync();
+            Assert.Equal(1, movie.BoxSet!.PlayedCount); Assert.Equal("second", movie.BoxSet.PlayTarget?.ContentId);
+            var reads = wire.DetailReads; wire.AllPlayed = true; persisted.TrySetResult();
+            for (var i = 0; i < 100 && (wire.DetailReads == reads || movie.BoxSet?.PlayedCount != 2); i++) await Task.Delay(10);
+            Assert.True(wire.DetailReads > reads, "A retired pre-save read must not retire the visit's post-save refresh.");
+            Assert.Equal(2, movie.BoxSet!.PlayedCount); Assert.Equal("first", movie.BoxSet.PlayTarget?.ContentId);
+        }
+        finally { movie.CancelPendingLoads(); wire.Release.TrySetResult(); persisted.TrySetResult(); await refreshing; }
+    }
     [Fact] public async Task QueuedRefreshCannotSuppressPersistedPlaybackState()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
