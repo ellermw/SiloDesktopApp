@@ -17,7 +17,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
 {
     internal static async Task VerifyBoxSetMenuScopeAsync(StackPanel parent, bool retiredOwnerChecks = false)
     {
-        foreach (var surface in retiredOwnerChecks ? new[] { "recycled", "scope-change", "departed", "profile" } : new[] { "dedicated", "membership", "unscoped" })
+        foreach (var surface in retiredOwnerChecks ? new[] { "recycled", "scope-change", "departed", "profile", "access-refresh" } : new[] { "dedicated", "membership", "unscoped" })
         {
             using var fixture = new Fixture();
             EnsureNativeResolver();
@@ -54,11 +54,11 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 MenuFlyoutItem? restart = null;
                 await Until(() => (restart = VisualTreeHelper.GetOpenPopupsForXamlRoot(card.XamlRoot)
                     .SelectMany(popup => Descendants<MenuFlyoutItem>(popup.Child)).SingleOrDefault(x => x.Text == "Play from Beginning")) != null);
-                if (retiredOwnerChecks)
+                if (retiredOwnerChecks && surface != "access-refresh")
                 {
                     if (surface == "recycled") card.MediaItem = new MediaItem { ContentId = "replacement", Type = "movie", Title = "Replacement" };
                     if (surface is "recycled" or "scope-change") card.Tag = new ItemDetailNavigationArgs(card.MediaItem!.ContentId, 74);
-                    if (surface == "departed") parent.Children.Remove(card);
+                    if (surface == "departed") { parent.Children.Remove(card); await Until(() => !card.IsLoaded); }
                     if (surface == "profile") fixture.Auth.SelectProfile("other", profile: new() { Id = "other", Name = "Other fixture" });
                     var clicked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     restart!.Click += (_, _) => clicked.TrySetResult();
@@ -68,6 +68,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
                     Program.Log($"PASS: retained {surface} restart menu does not prepare or start old movie playback.");
                     continue;
                 }
+                if (surface == "access-refresh") fixture.Client.InvalidateAccessContext();
                 ((IInvokeProvider)new MenuFlyoutItemAutomationPeer(restart!).GetPattern(PatternInterface.Invoke)).Invoke();
                 await Until(() => fixture.Wire.Starts.Count == 1 && restart!.IsEnabled);
                 var expectedQuery = surface == "unscoped" ? "" : "?library_id=73";

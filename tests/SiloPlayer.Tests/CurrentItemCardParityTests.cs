@@ -149,7 +149,8 @@ public sealed class CurrentItemCardParityTests
         Assert.Contains("ItemMaintenanceActionPolicy.Resolve", code);
         Assert.Contains("item.UserState != null", code);
         Assert.Contains("item.Type is \"movie\" or \"episode\" or \"audiobook\"", code);
-        Assert.Contains("PlayAsync(item.ContentId, fromStart: true)", code);
+        // BoxSetMenuNativeFixture invokes the real restart popup and checks
+        // scoped watch requests, explicit zero restart and retained-menu owners.
         Assert.Contains("ShowRefreshMetadataDialogAsync", code);
         Assert.Contains("ShowMatchItemDialogAsync", code);
         Assert.Contains("maintenance.CanMatch", code);
