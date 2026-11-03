@@ -561,7 +561,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("_pendingSiblingEpisodeIndex = episodeIndex", page);
         Assert.Contains("SiblingEpisodesScrollViewer.UpdateLayout()", page);
         Assert.Contains("TryAlignSiblingEpisodeToStart()", page);
-        Assert.Contains("SiblingEpisodesScrollViewer.ChangeView(targetOffset", page);
+        Assert.Contains("ScrollSiblingEpisodesTo(targetOffset", page);
         Assert.Contains("scrollTo(currentEpisodeIndex)", page);
         Assert.Contains("_pendingSiblingEpisodeIndex * (cardWidth + gap)", page);
         Assert.DoesNotContain("cardCenter - viewport / 2d", page);

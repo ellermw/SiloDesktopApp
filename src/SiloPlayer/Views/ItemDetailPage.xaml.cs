@@ -489,8 +489,40 @@ public sealed partial class ItemDetailPage : Page
             UpdateDetailCarouselButtons(scroller, CastPrevButton, CastNextButton);
     }
 
-    private void SiblingEpisodesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    private void SiblingEpisodesScrollViewer_ViewChanged(ScrollView sender, object args)
         => UpdateSiblingEpisodeScrollButtons();
+
+    private void SiblingEpisodesScrollViewer_ExtentChanged(ScrollView sender, object args)
+    {
+        TryAlignSiblingEpisodeToStart();
+        UpdateSiblingEpisodeScrollButtons();
+    }
+
+    private void SiblingEpisodesScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var properties = e.GetCurrentPoint(SiblingEpisodesScrollViewer).Properties;
+        var delta = EpisodeRailNavigation.HorizontalWheelDelta(properties.MouseWheelDelta,
+            properties.IsHorizontalMouseWheel, e.KeyModifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift),
+            SiblingEpisodeCardWidth() + SiblingEpisodesPanel.Spacing);
+        // The presenter excludes native wheel redirection. Upright wheel is
+        // left unhandled for ContentScroll, including bursts during inertia.
+        if (delta == 0) return;
+        ScrollSiblingEpisodesTo(SiblingEpisodesScrollViewer.HorizontalOffset + delta, animate: false);
+        e.Handled = true;
+    }
+
+    private void SiblingEpisodesScrollViewer_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        var direction = e.Key switch
+        {
+            Windows.System.VirtualKey.Left => -1,
+            Windows.System.VirtualKey.Right => 1,
+            _ => 0,
+        };
+        if (direction == 0) return;
+        ScrollSiblingEpisodes(direction);
+        e.Handled = true;
+    }
 
     private void SiblingEpisodesScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -545,12 +577,22 @@ public sealed partial class ItemDetailPage : Page
 
     private void ScrollSiblingEpisodes(int direction)
     {
-        var delta = Math.Max(252d, SiblingEpisodesScrollViewer.ViewportWidth * 0.82d) * direction;
-        var target = Math.Clamp(
-            SiblingEpisodesScrollViewer.HorizontalOffset + delta,
-            0,
-            Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
-        SiblingEpisodesScrollViewer.ChangeView(target, null, null);
+        var stride = SiblingEpisodeCardWidth() + SiblingEpisodesPanel.Spacing;
+        var cardsPerPage = Math.Max(1, Math.Floor(SiblingEpisodesScrollViewer.ViewportWidth / stride));
+        var position = SiblingEpisodesScrollViewer.HorizontalOffset / stride;
+        // A drag or horizontal wheel can leave a partial card at the leading
+        // edge. Start the next page from a whole-card index in either direction.
+        var index = direction > 0 ? Math.Floor(position + .001) + cardsPerPage
+            : Math.Ceiling(position - .001) - cardsPerPage;
+        ScrollSiblingEpisodesTo(index * stride);
+    }
+
+    private void ScrollSiblingEpisodesTo(double offset, bool animate = true)
+    {
+        var target = Math.Clamp(offset, 0, Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
+        SiblingEpisodesScrollViewer.ScrollTo(target, 0, new ScrollingScrollOptions(
+            animate ? ScrollingAnimationMode.Auto : ScrollingAnimationMode.Disabled,
+            ScrollingSnapPointsMode.Ignore));
         UpdateSiblingEpisodeScrollButtons();
     }
 
@@ -606,7 +648,7 @@ public sealed partial class ItemDetailPage : Page
             _siblingEpisodesDragStartOffset - delta,
             0,
             Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
-        SiblingEpisodesScrollViewer.ChangeView(target, null, null, disableAnimation: true);
+        ScrollSiblingEpisodesTo(target, animate: false);
         UpdateSiblingEpisodeScrollButtons();
         e.Handled = true;
     }
@@ -6986,7 +7028,7 @@ public sealed partial class ItemDetailPage : Page
             0,
             Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
         _pendingSiblingEpisodeIndex = -1;
-        SiblingEpisodesScrollViewer.ChangeView(targetOffset, null, null, disableAnimation: true);
+        ScrollSiblingEpisodesTo(targetOffset, animate: false);
         UpdateSiblingEpisodeScrollButtons();
     }
 
