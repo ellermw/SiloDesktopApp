@@ -284,7 +284,7 @@ public partial class PlaybackManager : IDisposable
             var terminal = decision.Terminal;
             var detail = terminal?.Message;
             if (string.IsNullOrWhiteSpace(detail) &&
-                terminal?.Reason is not ("stream_limit_reached" or "transcode_limit_reached"))
+                !PlaybackFailureDescription.IsAccountLimitReason(terminal?.Reason))
                 detail = "The server could not find a compatible playback route.";
             throw new PlaybackPlanTerminalException(
                 terminal?.Reason ?? decision.Outcome,
@@ -626,7 +626,8 @@ public partial class PlaybackManager : IDisposable
     /// Starts a replacement session before retiring the active one. This mirrors
     /// the current WebUI handoff: the old stream remains usable until the server
     /// has accepted the new session, so version and quality switches do not sit
-    /// behind synchronous history/scrobble cleanup on DELETE.
+    /// behind synchronous history/scrobble cleanup on DELETE. An account-limit
+    /// refusal instead retires the outgoing session and retries once.
     /// </summary>
     public async Task<PlaybackStartResponse> StartReplacementSessionAsync(
         int fileId,
@@ -638,10 +639,13 @@ public partial class PlaybackManager : IDisposable
         string? qualityPreference = null,
         CancellationToken ct = default)
     {
+        var owner = _apiClient.CaptureIdentityContext();
         var previousSessionId = _sessionId;
+        var previousSession = CurrentSession;
+        var retiringTranscode = previousSession?.PlayMethod == "transcode";
         var subtitleIndex = ReplacementSubtitleIndex(fileId);
         audioTrackIndex ??= ReplacementAudioIndex(fileId);
-        var response = await StartSessionAsync(
+        Task<PlaybackStartResponse> StartReplacementAsync() => StartSessionAsync(
             fileId,
             startPosition,
             forceStartPosition,
@@ -650,7 +654,33 @@ public partial class PlaybackManager : IDisposable
             qualityPreference: qualityPreference,
             ct: ct,
             subtitleTrackIndex: subtitleIndex,
-            preserveTrackIntent: true).ConfigureAwait(false);
+            preserveTrackIntent: true,
+            expectedIdentityContext: owner);
+
+        PlaybackStartResponse response;
+        try
+        {
+            response = await StartReplacementAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (
+            !ct.IsCancellationRequested && _apiClient.IsCurrentIdentityContext(owner) &&
+            !string.IsNullOrWhiteSpace(previousSessionId) &&
+            ReferenceEquals(CurrentSession, previousSession) &&
+            string.Equals(_sessionId, previousSessionId, StringComparison.Ordinal) &&
+            ((ex is ApiException api && api.StatusCode == 429 &&
+                PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)) ||
+             (ex is PlaybackPlanTerminalException terminal &&
+                PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason, includeTranscode: retiringTranscode))))
+        {
+            // Only our outgoing session can release a slot here. Other limits
+            // and a second refusal propagate normally, without a retry loop.
+            await StopSessionAsync(previousFinalPosition ?? startPosition, ct: ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (!_apiClient.IsCurrentIdentityContext(owner) || _sessionId != null)
+                throw new OperationCanceledException("Playback owner changed.", ct);
+            previousSessionId = null;
+            response = await StartReplacementAsync().ConfigureAwait(false);
+        }
 
         if (!string.IsNullOrWhiteSpace(previousSessionId) &&
             !string.Equals(previousSessionId, response.SessionId, StringComparison.Ordinal))

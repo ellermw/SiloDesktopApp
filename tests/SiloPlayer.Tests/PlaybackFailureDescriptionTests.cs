@@ -74,7 +74,8 @@ public sealed class PlaybackFailureDescriptionTests
 
     public static IEnumerable<object[]> AccountLimitTransportFailures()
     {
-        foreach (var code in new[] { "too_many_streams", "stream_limit_reached", "too_many_transcodes", "transcode_limit_reached" })
+        foreach (var alias in new[] { "too_many_streams", "stream_limit_reached", "too_many_transcodes", "transcode_limit_reached" })
+        foreach (var code in new[] { alias, " \t" + alias.ToUpperInvariant() + "\r\n" })
         foreach (var status in new[] { 400, 401, 403, 404, 426, 429, 500, 503 })
         foreach (var message in new[] { "", " \r\n\t", "  End another account session first.\r\n" })
             yield return [code, status, message];
@@ -85,7 +86,7 @@ public sealed class PlaybackFailureDescriptionTests
     public void TransportAccountLimitsMatchTerminalGuidanceBeforeGenericStatusHandling(
         string code, int status, string message)
     {
-        var reason = code is "too_many_streams" or "stream_limit_reached"
+        var reason = code.Trim().ToLowerInvariant() is "too_many_streams" or "stream_limit_reached"
             ? "stream_limit_reached" : "transcode_limit_reached";
         var expected = PlaybackFailureDescription.Describe(
             new PlaybackPlanTerminalException(reason, message, retryable: true));
@@ -97,7 +98,8 @@ public sealed class PlaybackFailureDescriptionTests
 
     public static IEnumerable<object?[]> AccountLimitExceptionMessages()
     {
-        foreach (var reason in new[] { "stream_limit_reached", "transcode_limit_reached" })
+        foreach (var alias in new[] { "stream_limit_reached", "transcode_limit_reached", "too_many_streams", "too_many_transcodes" })
+        foreach (var reason in new[] { alias, " \t" + alias.ToUpperInvariant() + "\r\n" })
         foreach (var message in new string?[] { null, "", " \r\n\t", "  End another account session first.\r\n" })
         foreach (var retryable in new[] { false, true })
             yield return [reason, message, retryable];
@@ -114,9 +116,36 @@ public sealed class PlaybackFailureDescriptionTests
         Assert.Equal($"{description.Title}: {description.Message}", error.Message);
         Assert.DoesNotContain("compatible playback route", error.Message);
         Assert.DoesNotContain(reason, error.Message);
-        Assert.Equal(reason, error.Reason);
+        Assert.Equal(reason.Trim(), error.Reason);
         Assert.Equal(string.IsNullOrWhiteSpace(message) ? null : message.Trim(), error.ServerMessage);
         Assert.Equal(retryable, error.Retryable);
+    }
+
+    [Theory]
+    [InlineData("stream_limit_reached", true)]
+    [InlineData("too_many_streams", true)]
+    [InlineData("transcode_limit_reached", false)]
+    [InlineData("too_many_transcodes", false)]
+    public void AccountLimitRecognitionSharesAliasesAndOnlyIncludesConversionWhenRequested(string alias, bool streamLimit)
+    {
+        foreach (var reason in new[] { alias, " \t" + alias.ToUpperInvariant() + "\r\n" })
+        {
+            Assert.True(PlaybackFailureDescription.IsAccountLimitReason(reason));
+            Assert.Equal(streamLimit, PlaybackFailureDescription.IsAccountLimitReason(reason, includeTranscode: false));
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" \t\r\n")]
+    [InlineData("capacity_unavailable")]
+    [InlineData("transcoding_disabled")]
+    [InlineData("future_reason")]
+    public void OtherReasonsAreNotAccountLimits(string? reason)
+    {
+        Assert.False(PlaybackFailureDescription.IsAccountLimitReason(reason));
+        Assert.False(PlaybackFailureDescription.IsAccountLimitReason(reason, includeTranscode: false));
     }
 
     [Fact]

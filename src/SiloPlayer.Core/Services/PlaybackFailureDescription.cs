@@ -129,12 +129,27 @@ public static class PlaybackFailureDescription
         return new PlaybackFailurePresentation(title, message, terminal.Retryable);
     }
 
+    /// <summary>Recognizes account-limit aliases; conversion limits only help when a transcode is retiring.</summary>
+    public static bool IsAccountLimitReason(string? reason, bool includeTranscode = true)
+    {
+        var normalizedReason = NormalizeAccountLimitReason(reason);
+        return normalizedReason == "stream_limit_reached" ||
+            (includeTranscode && normalizedReason == "transcode_limit_reached");
+    }
+
+    private static string? NormalizeAccountLimitReason(string? reason) => reason?.Trim().ToLowerInvariant() switch
+    {
+        "stream_limit_reached" or "too_many_streams" => "stream_limit_reached",
+        "transcode_limit_reached" or "too_many_transcodes" => "transcode_limit_reached",
+        _ => null,
+    };
+
     internal static PlaybackFailurePresentation? DescribeAccountLimit(string reason, string? serverMessage, bool retryable)
     {
-        var title = reason switch
+        var title = NormalizeAccountLimitReason(reason) switch
         {
-            "stream_limit_reached" or "too_many_streams" => "Streaming limit reached",
-            "transcode_limit_reached" or "too_many_transcodes" => "Video conversion limit reached",
+            "stream_limit_reached" => "Streaming limit reached",
+            "transcode_limit_reached" => "Video conversion limit reached",
             _ => null,
         };
         if (title == null)

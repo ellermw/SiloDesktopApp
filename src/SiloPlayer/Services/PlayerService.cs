@@ -2372,11 +2372,9 @@ public partial class PlayerService : IDisposable
             catch (Exception ex) when (
                 !retiringSessionTask.IsCompleted &&
                 ((ex is ApiException api && api.StatusCode == 429 &&
-                    (api.ErrorCode == "too_many_streams" ||
-                        (retiringTranscode && api.ErrorCode == "too_many_transcodes"))) ||
+                    PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)) ||
                  (ex is PlaybackPlanTerminalException terminal &&
-                    (terminal.Reason == "stream_limit_reached" ||
-                        (retiringTranscode && terminal.Reason == "transcode_limit_reached")))))
+                    PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason, includeTranscode: retiringTranscode))))
             {
                 LogToFile("state_trace.txt", "Next playback session reached an account limit; waiting for the retiring session and retrying once.");
                 await retiringSessionTask.WaitAsync(requestToken);

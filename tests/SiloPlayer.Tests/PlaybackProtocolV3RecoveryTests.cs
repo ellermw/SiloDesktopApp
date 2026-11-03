@@ -9,7 +9,8 @@ public sealed class PlaybackProtocolV3RecoveryTests
 {
     public static IEnumerable<object?[]> AccountLimitDecisions()
     {
-        foreach (var reason in new[] { "stream_limit_reached", "transcode_limit_reached" })
+        foreach (var alias in new[] { "stream_limit_reached", "transcode_limit_reached", "too_many_streams", "too_many_transcodes" })
+        foreach (var reason in new[] { alias, " \t" + alias.ToUpperInvariant() + "\r\n" })
         foreach (var message in new string?[] { null, "", " \r\n\t", "  Stop another session first.  " })
         foreach (var replan in new[] { false, true })
             yield return [reason, message, replan];
@@ -31,7 +32,8 @@ public sealed class PlaybackProtocolV3RecoveryTests
             ? manager.ReplanQualityAsync("720p", 10)
             : manager.StartSessionAsync(42, forceStartPosition: true));
         var description = PlaybackFailureDescription.Describe(error);
-        Assert.Equal(reason == "stream_limit_reached" ? "Streaming limit reached" : "Video conversion limit reached", description.Title);
+        var streamLimit = reason.Trim().ToLowerInvariant() is "stream_limit_reached" or "too_many_streams";
+        Assert.Equal(streamLimit ? "Streaming limit reached" : "Video conversion limit reached", description.Title);
         Assert.Equal(string.IsNullOrWhiteSpace(message)
             ? "Stop anything else playing or paused on your account, then try again." : message.Trim(), description.Message);
         Assert.True(description.CanRetry);
@@ -270,7 +272,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
                           "protocol_version": 3,
                           "outcome": "terminal",
                           "terminal": {
-                            "reason": "{{TerminalReason}}",
+                            "reason": {{JsonSerializer.Serialize(TerminalReason)}},
                             "message": {{JsonSerializer.Serialize(TerminalMessage)}},
                             "retryable": true
                           }

@@ -729,7 +729,7 @@ public sealed class PlayerServiceSourceTests
 
         Assert.Contains("retiringSessionTask = retiringManager.StopSessionAsync", method);
         Assert.Contains("_ = FinishClosingSessionAsync(retiringManager, retiringSessionTask)", method);
-        Assert.Contains("api.ErrorCode == \"too_many_streams\"", method);
+        Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)", method);
         Assert.Contains("await retiringSessionTask.WaitAsync(requestToken)", method);
         var startupHandoffEnd = method.IndexOf("ErrorMessage = null;", StringComparison.Ordinal);
         Assert.True(startupHandoffEnd > 0);
@@ -762,11 +762,9 @@ public sealed class PlayerServiceSourceTests
         var filter = method[guard..wait];
         Assert.Contains("!retiringSessionTask.IsCompleted &&", filter);
         Assert.Contains("ex is ApiException api && api.StatusCode == 429", filter);
-        Assert.Contains("api.ErrorCode == \"too_many_streams\"", filter);
-        Assert.Contains("retiringTranscode && api.ErrorCode == \"too_many_transcodes\"", filter);
+        Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)", filter);
         Assert.Contains("ex is PlaybackPlanTerminalException terminal", filter);
-        Assert.Contains("terminal.Reason == \"stream_limit_reached\"", filter);
-        Assert.Contains("retiringTranscode && terminal.Reason == \"transcode_limit_reached\"", filter);
+        Assert.Contains("PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason, includeTranscode: retiringTranscode)", filter);
         Assert.Equal(2, method.Split("session = await _playbackManager.StartSessionAsync(", StringSplitOptions.None).Length - 1);
         Assert.DoesNotContain("while (", method[firstStart..retry]);
         Assert.DoesNotContain("for (", method[firstStart..retry]);
