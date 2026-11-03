@@ -85,6 +85,31 @@ internal static class SidebarReviewNativeFixture
             if (reset || clear) Check(MenuReads == reads, "outgoing reset/clear completion cannot start a new-profile refresh");
             Check(draft.Last().Label == "Outgoing menu", "retired Settings caller cannot replace its draft with another profile's state");
         }
+        else if (mode.EndsWith("home-initial", StringComparison.Ordinal))
+        {
+            await Until(() => MenuReads > 0);
+            navigation.Navigate<HomePage>(); await Until(() => navigation.Frame!.Content is HomePage page && page.IsLoaded && !page.ViewModel.IsLoading);
+            var library = LibraryRows(nav)[0]; var pin = (NavigationViewItem)library.MenuItems[0];
+            var stale = EffectiveMenu(); var original = HeldMenuRead!; HeldMenuRead = Hold();
+            var current = HeldMenuRead; MenuLabel = "Current catch-up menu";
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext()); await Drain();
+            original.SetResult(stale); await Drain();
+            var ready = typeof(MainWindow).GetField("_sidebarCustomizationReady", Instance)!;
+            Check(MenuReads == 2, "loaded Home request-only catch-up rearms unfinished customization with one current read");
+            Check(!(bool)ready.GetValue(window)! && PrimaryRows(nav).Length == 0,
+                "stale initial response cannot mark current shell customization ready while replacement is held");
+            current.SetResult(EffectiveMenu()); HeldMenuRead = null; await Drain();
+            Check((bool)ready.GetValue(window)! && PrimaryRows(nav).Any(n => Equals(n.Content, "Current catch-up menu")) &&
+                !PrimaryRows(nav).Any(n => Equals(n.Content, "Current menu")), "current catch-up response publishes only current primary menu data");
+            var reads = MenuReads;
+            window.ShowMainNavigation();
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext()); await Drain();
+            Check(MenuReads == reads, "same-shell Show and Home catch-up after readiness add no customization reads");
+            Check(ReferenceEquals(LibraryRows(nav)[0], library) && ReferenceEquals(library.MenuItems[0], pin) && pin.IsEnabled,
+                "initial Home catch-up preserves same-identity library and pin nodes");
+            var writes = PinWrites; Invoke(Unpin(library)); await Drain();
+            Check(PinWrites == writes + 1, "retained pin callback stays useful after initial and ready Home catch-up");
+        }
         else if (mode.EndsWith("initial", StringComparison.Ordinal))
         {
             await Until(() => MenuReads > 0);

@@ -1467,6 +1467,12 @@ public sealed partial class MainWindow : Window
                 _playerService.State is not (PlayerState.Expanded or PlayerState.Fullscreen))
             {
                 _ = home.CatchUpAfterReconnectAsync(context);
+                if (!_sidebarCustomizationReady && _hydratedShellKey is { } shellKey &&
+                    _shellHydrationCts is { IsCancellationRequested: false } owner)
+                {
+                    _ = RunShellWorkAsync("home_catchup_ui_customization",
+                        () => LoadSidebarCustomizationAsync(shellKey, owner.Token));
+                }
                 return;
             }
             _pendingAccessRefresh = true;
