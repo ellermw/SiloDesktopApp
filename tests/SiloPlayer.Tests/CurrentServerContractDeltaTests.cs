@@ -34,7 +34,7 @@ public sealed class CurrentServerContractDeltaTests
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);
         Assert.Contains("int? requestedIndex = track?.Index ?? postLoadSubtitleIndex", player);
-        Assert.Contains("manager.ReplanSubtitleAsync(requestedIndex, position, ct)", player);
+        Assert.Matches(@"manager\.ReplanSubtitleAsync\(requestedIndex, position, ct,\s*isAutomatic: manager\.IsSubtitleSelectionAutomatic\)", player);
         Assert.Contains("Pgs deliberately does not use this", player, StringComparison.OrdinalIgnoreCase);
     }
 

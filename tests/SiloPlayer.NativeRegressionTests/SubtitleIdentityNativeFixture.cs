@@ -299,6 +299,47 @@ internal static class SubtitleIdentityNativeFixture
                             Volatile.Read(ref notices) == 0 && wire.PreferenceWrites == 0,
                             "Automatic startup did not skip unroutable candidates quietly and execute the next eligible track (or Off).");
                     }
+
+                    var playablePrePlay = originalInventory.Single(t => t.Index == 2);
+                    var retainedPrePlay = originalInventory.Single(t => t.Index == 4);
+                    var unavailablePrePlay = new SubtitleTrackInfo { Index = 1, Source = playablePrePlay.Source,
+                        Language = playablePrePlay.Language, Codec = playablePrePlay.Codec, Unplayable = true };
+                    var explicitVersion = new FileVersion { FileId = 42, SubtitleTracks =
+                        [new() { Language = playablePrePlay.Language, Codec = playablePrePlay.Codec }] };
+                    session.SubtitleUrls = [unavailablePrePlay, playablePrePlay, retainedPrePlay];
+                    Call(service, "ResolveInitialSubtitleSelection", automaticWatch, explicitVersion, session, null, 0, null);
+                    Require((int?)Get(service, "_pendingInitialServerSubtitleIndex") == 2 && manager.SubtitleSelectionForLoad == 2,
+                        "Pre-play index selected an unavailable ordinal instead of its playable metadata match.");
+                    Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 2, false)! &&
+                        service.ActiveSubtitleServerIndex == 2 && mpv.GetPropertyDouble("sid") == 1 && wire.PreferenceWrites == 0,
+                        "The playable explicit pre-play fallback failed to execute without saving a preference.");
+
+                    // Without the matching row, filtering before taking the
+                    // ordinal would incorrectly pick Japanese. Refuse instead,
+                    // retaining the existing Auto intent rather than explicit Off.
+                    session.SubtitleUrls = [unavailablePrePlay, retainedPrePlay];
+                    manager.RecordLocalSubtitleSelection(4, isAutomatic: true);
+                    Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 4, false)!,
+                        "Pre-play refusal fixture did not establish its retained native choice.");
+                    var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                    var noticesBeforeRefusal = Volatile.Read(ref notices);
+                    foreach (var bySignature in new[] { false, true })
+                    {
+                        var signature = bySignature ? new SubtitleTrackSignature { Source = playablePrePlay.Source,
+                            Language = playablePrePlay.Language, Codec = playablePrePlay.Codec } : null;
+                        Call(service, "ResolveInitialSubtitleSelection", automaticWatch, explicitVersion, session, null,
+                            bySignature ? null : (int?)0, signature);
+                        Require(Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                            Get(service, "_pendingSubtitleSelection") == null && manager.CaptureLocalSubtitleIntent() == retainedIntent &&
+                            manager.IsSubtitleSelectionAutomatic && service.ActiveSubtitleServerIndex == 4 &&
+                            mpv.GetPropertyDouble("sid") == 2 && wire.PreferenceWrites == 0,
+                            "Unavailable pre-play selection changed the retained route/Auto intent or recorded explicit Off.");
+                    }
+                    ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Call(mpv, "Command", (object)new[] { "script-message", "silo-identity-auto-drain" });
+                    await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(Volatile.Read(ref notices) == noticesBeforeRefusal + 2,
+                        "Refused explicit pre-play choices did not show unavailable feedback.");
                 }
                 finally { session.SubtitleUrls = originalInventory; }
             }

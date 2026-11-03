@@ -137,7 +137,29 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     wire.PreferenceWrites == writes + 1 && Get(service, "_pendingSubtitlePreferenceIndex") == null,
                     "The replacement did not execute Off and save its preference exactly once.");
             }
-            Program.Log("PASS: actual libmpv sid and PlayerService adopt subtitle identity across quality/version changes, refuse outgoing next-item indices until publication, and persist only executed viewer choices.");
+            // A local CC cycle is not a saved preference change. Startup Auto
+            // -> loaded English -> cycle Off must let the next version run Auto.
+            await manager.StartSessionAsync(42, subtitleTrackIndex: 0);
+            var automaticWatch = new WatchDetailResponse { EffectiveSubtitleMode = "always", EffectiveSubtitleLanguage = "eng" };
+            Call(service, "ResolveInitialSubtitleSelection", automaticWatch, Version(42), manager.CurrentSession, null, null, null);
+            await Load(0, 0);
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+            var cycleWrites = wire.PreferenceWrites;
+            var cycleReplans = wire.Replans.Count;
+            Require(manager.IsSubtitleSelectionAutomatic, "Cycle fixture did not establish startup Auto.");
+            Call(service, "CycleSubtitleBackward");
+            Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                manager.IsSubtitleSelectionAutomatic && wire.PreferenceWrites == cycleWrites,
+                "The local caption cycle converted automatic Off into an explicit viewer preference.");
+            wire.AutomaticSubtitleSelection = 0;
+            await manager.StartReplacementSessionAsync(44, 0);
+            Require(wire.Replans.Count == cycleReplans && manager.SubtitleSelectionForLoad == 0 &&
+                manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0).Language == "spa",
+                "A version switch forced cycled Off instead of accepting the new file's Auto grant.");
+            await Load(0, 0);
+            Require(wire.PreferenceWrites == cycleWrites && mpv.IsPaused,
+                "Automatic caption cycling/version adoption saved a preference or resumed playback.");
+            Program.Log("PASS: actual libmpv sid and PlayerService adopt subtitle identity across quality/version changes, refuse outgoing next-item indices until publication, preserve Auto through local caption cycling and persist only executed viewer choices.");
         }
         finally
         {
@@ -218,6 +240,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         private int _file = 42, _subtitle = 0;
         public List<JsonElement> Replans = [];
         public int PreferenceWrites;
+        public int? AutomaticSubtitleSelection;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "oct24-adoption.invalid") throw new InvalidOperationException("Native adoption fixture attempted external networking.");
@@ -230,7 +253,8 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             if (path.EndsWith("/start"))
             {
                 _file = int.Parse(body.GetProperty("file_id").GetString()!);
-                _subtitle = body.TryGetProperty("subtitle_track_index", out var initial) ? initial.GetInt32() : _file == 42 && Replans.Count == 0 ? 0 : -1;
+                _subtitle = body.TryGetProperty("subtitle_track_index", out var initial) ? initial.GetInt32()
+                    : AutomaticSubtitleSelection ?? (_file == 42 && Replans.Count == 0 ? 0 : -1);
             }
             else
             {

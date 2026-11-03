@@ -3775,13 +3775,17 @@ public partial class PlayerService : IDisposable
                 var sourceOrdinal = sourceInventory.IndexOf(requested);
                 if (sourceOrdinal >= 0)
                 {
-                    selectedTrack = session.SubtitleUrls
+                    var sourceTrack = session.SubtitleUrls
                         .Where(track => string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase))
                         .OrderBy(track => track.Index)
                         .ElementAtOrDefault(sourceOrdinal);
+                    // Keep unavailable rows in the ordinal calculation; removing
+                    // them would shift the pick onto an unrelated native track.
+                    if (sourceTrack?.Unplayable == false) selectedTrack = sourceTrack;
                 }
 
                 selectedTrack ??= session.SubtitleUrls.FirstOrDefault(track =>
+                    !track.Unplayable &&
                     string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Language, requested.Language, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Codec, requested.Codec, StringComparison.OrdinalIgnoreCase) &&
@@ -3830,10 +3834,13 @@ public partial class PlayerService : IDisposable
                 selectedTrack = session.SubtitleUrls.FirstOrDefault(track => track.Index == index);
         }
 
-        if (selectedTrack == null && explicitSelection is >= 0 && explicitSignature == null)
+        if (selectedTrack == null && (explicitSelection is >= 0 || explicitSignature != null))
         {
-            _pendingSubtitleSelection = explicitSelection;
+            // Refusing a missing/unavailable pre-play choice is not an explicit
+            // viewer Off. Retain the accepted plan and its automatic provenance.
+            _pendingSubtitleSelection = null;
             _pendingInitialServerSubtitleIndex = null;
+            ShowSubtitleSelectionUnavailable();
             return;
         }
 
@@ -3886,6 +3893,7 @@ public partial class PlayerService : IDisposable
         {
             _pendingInitialServerSubtitleIndex = manager.SubtitleSelectionForLoad;
             _pendingInitialSubtitleFileId = replacement.MediaFileId;
+            _subtitleReplanAttempt = new(replacement, manager.SubtitleSelectionForLoad);
         }
         return replacement;
     }
@@ -5096,6 +5104,8 @@ public partial class PlayerService : IDisposable
         => _activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive;
 
     private enum SubtitleTransportResult { Failed, Superseded, ReloadScheduled }
+    private sealed record SubtitleReplanAttempt(PlaybackStartResponse Session, int SelectionIndex);
+    private volatile SubtitleReplanAttempt? _subtitleReplanAttempt;
 
     /// <summary>
     /// DVD/VOBSUB and DVB bitmap tracks have no usable sidecar representation.
@@ -5149,6 +5159,9 @@ public partial class PlayerService : IDisposable
                     isAutomatic: manager.IsSubtitleSelectionAutomatic).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 if (!CurrentOwner() || manager.CurrentSession != replanned) return SubtitleTransportResult.Superseded;
+                // The returned inventory may have rebound the same intent to a
+                // different combined index. Bound retries using that inventory.
+                _subtitleReplanAttempt = new(replanned, manager.SubtitleSelectionForLoad);
                 if (_activeSubtitleServerIndex != (requestedIndex ?? -1))
                 {
                     // The server accepted the old request. Bring its plan to
@@ -5176,8 +5189,13 @@ public partial class PlayerService : IDisposable
             _pendingInitialSubtitleFileId = replanned.MediaFileId;
             BeginMpvLoad(preparedV3, restorePaused: wasPaused);
             var finalTrack = replanned.SubtitleUrls.FirstOrDefault(candidate => candidate.Index == requestedIndex);
-            _mpv.ShowOsdText(replanned.IsSubtitleBurnedIn && finalTrack != null
-                ? $"{finalTrack.Label} · burned in" : "Bitmap subtitles off", 2500);
+            if (replanned.IsSubtitleBurnedIn && finalTrack != null &&
+                (!string.IsNullOrWhiteSpace(replanned.SelectedSubtitleTrackId)
+                    ? finalTrack.TrackId == replanned.SelectedSubtitleTrackId
+                    : finalTrack.Index == replanned.SelectedSubtitleTrackIndex))
+                _mpv.ShowOsdText($"{finalTrack.Label} · burned in", 2500);
+            else if (!replanned.IsSubtitleBurnedIn && (finalTrack == null || !IsUnsupportedBitmapSubtitle(finalTrack)))
+                _mpv.ShowOsdText("Bitmap subtitles off", 2500);
             SendQualityInfoToOsc();
             return SubtitleTransportResult.ReloadScheduled;
         }
@@ -5300,9 +5318,16 @@ public partial class PlayerService : IDisposable
             var burnedTrack = session?.IsSubtitleBurnedIn == true ? session.SubtitleUrls.FirstOrDefault(t =>
                 !string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)
                     ? t.TrackId == session.SelectedSubtitleTrackId : t.Index == session.SelectedSubtitleTrackIndex) : null;
+            // A playable reply may decline the requested burn-in change. The
+            // resulting load must not automatically send that same request again.
+            // A new viewer pick still goes through the persistent path and may retry.
+            var attempt = _subtitleReplanAttempt;
+            var alreadyReplanned = ReferenceEquals(attempt?.Session, session) &&
+                attempt?.SelectionIndex == serverTrackIndex;
             if (session?.IsSubtitleBurnedIn == true && (track == null || track.Index != burnedTrack?.Index))
             {
-                var result = await SetBitmapSubtitleBurnInAsync(null, postLoadSubtitleIndex: track?.Index);
+                var result = alreadyReplanned ? SubtitleTransportResult.Failed :
+                    await SetBitmapSubtitleBurnInAsync(null, postLoadSubtitleIndex: track?.Index);
                 if (result == SubtitleTransportResult.ReloadScheduled) return true;
                 if (result == SubtitleTransportResult.Superseded || !CurrentSelection()) return false;
                 if (!RestoreExecutedSubtitleSelection(reapply: false, currentSelection: CurrentSelection)) return false;
@@ -5318,7 +5343,8 @@ public partial class PlayerService : IDisposable
                     !(manager?.CurrentSession is { IsSubtitleBurnedIn: true } burned &&
                       string.Equals(burned.SelectedSubtitleTrackId, track.TrackId, StringComparison.Ordinal)))
                 {
-                    var result = await SetBitmapSubtitleBurnInAsync(track);
+                    var result = alreadyReplanned ? SubtitleTransportResult.Failed :
+                        await SetBitmapSubtitleBurnInAsync(track);
                     // An accepted reload owns its pending index, possibly reconciled
                     // to a newer pick. A retired worker must not overwrite it.
                     if (result == SubtitleTransportResult.ReloadScheduled) return true;
@@ -5408,7 +5434,8 @@ public partial class PlayerService : IDisposable
             _pendingSubtitlePreferenceIndex = null;
             _pendingSubtitlePreferenceOwner = null;
             _activeSubtitleServerIndex = selected.Track?.Index ?? -1;
-            if (session.ProtocolVersion >= 3) manager!.RecordLocalSubtitleSelection(selected.Track?.Index);
+            if (session.ProtocolVersion >= 3) manager!.RecordLocalSubtitleSelection(selected.Track?.Index,
+                isAutomatic: manager.IsSubtitleSelectionAutomatic);
             CommitExecutedSubtitleSelection(selected.Track);
             mpv.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }

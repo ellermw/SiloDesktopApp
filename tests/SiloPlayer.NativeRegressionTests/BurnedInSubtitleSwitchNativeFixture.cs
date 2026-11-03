@@ -185,6 +185,47 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             Require(manager.CurrentSession!.IsSubtitleBurnedIn && manager.IsSubtitleSelectionAutomatic &&
                 manager.CaptureLocalSubtitleIntent().IsAutomatic && wire.PreferenceWrites == automaticWrites,
                 "The load worker's automatic bitmap replan became an explicit subtitle preference.");
+
+            // A playable track_change can decline burn-in, or retain it after
+            // Off/text. Its FILE_LOADED must refuse the unexecuted choice, not
+            // start another replan/load cycle. Exercise manual and Auto callers.
+            foreach (var automatic in new[] { false, true })
+            foreach (var requested in new[] { Dvd, -1, Spanish })
+            {
+                wire.DeclineTrackChanges = false;
+                var baseline = requested == Dvd ? -1 : Dvd;
+                if (manager.CurrentSession!.IsSubtitleBurnedIn != (baseline == Dvd))
+                {
+                    var baselineTrack = manager.CurrentSession.SubtitleUrls.FirstOrDefault(t => t.Index == baseline);
+                    await Loaded(() => service.SetSubtitleTrackAndPersistAsync(baseline + 1, baselineTrack?.Language, baselineTrack));
+                }
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetPaused(true);
+                await Until(() => mpv.IsPaused && service.IsPaused);
+                var replansBeforeDecline = wire.Replans.Count;
+                var writesBeforeDecline = wire.PreferenceWrites;
+                wire.DeclineTrackChanges = true;
+                await Loaded(() =>
+                {
+                    if (automatic)
+                    {
+                        manager.RecordLocalSubtitleSelection(requested < 0 ? null : requested, isAutomatic: true);
+                        return (Task)Call(service, "SelectSubtitleByServerIndexAsync", requested, false)!;
+                    }
+                    var requestedTrack = manager.CurrentSession!.SubtitleUrls.FirstOrDefault(t => t.Index == requested);
+                    return service.SetSubtitleTrackAndPersistAsync(requested + 1, requestedTrack?.Language, requestedTrack);
+                });
+                await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading);
+                await Task.Delay(500);
+                Require(wire.Replans.Count == replansBeforeDecline + 1,
+                    $"Declined {(automatic ? "Auto" : "manual")} subtitle {requested} entered a replan/reload loop.");
+                Require(manager.CurrentSession!.IsSubtitleBurnedIn == (baseline == Dvd) &&
+                    service.ActiveSubtitleServerIndex == baseline && mpv.IsPaused && service.IsPaused &&
+                    wire.PreferenceWrites == writesBeforeDecline && Get(service, "_pendingSubtitlePreferenceIndex") == null,
+                    "A declined subtitle change did not retain the executed selection/pause or saved an unexecuted preference.");
+            }
+            wire.DeclineTrackChanges = false;
+            Program.Log("PASS: declined manual/Auto bitmap, Off and text changes settle after exactly one replan without saving unexecuted choices or changing viewer pause.");
         }
         finally
         {
@@ -287,6 +328,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
     {
         private int _subtitle = -1;
         public bool FailNextTrackChange;
+        public bool DeclineTrackChanges;
         public int PreferenceWrites;
         public List<JsonElement> Replans = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -308,7 +350,8 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     FailNextTrackChange = false;
                     throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
                 }
-                _subtitle = SelectedSubtitle(body);
+                if (!DeclineTrackChanges || body.GetProperty("operation").GetString() != "track_change")
+                    _subtitle = SelectedSubtitle(body);
             }
             var burned = _subtitle == Dvd;
             return Json(JsonSerializer.Serialize(new
