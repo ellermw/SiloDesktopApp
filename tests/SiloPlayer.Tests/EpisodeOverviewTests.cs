@@ -39,6 +39,71 @@ public sealed class EpisodeOverviewTests
     }
 
     [Theory]
+    [InlineData("language", null)] [InlineData("access", null)]
+    [InlineData("language", "")] [InlineData("access", "")]
+    [InlineData("language", " \t\r\n ")] [InlineData("access", " \t\r\n ")]
+    public async Task RetiredSeriesDisplaySurvivesFailedReadsUntilReplacementResolves(string change, string? own)
+    {
+        using var scope = new Scope { Own = own };
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var episode = scope.Vm.Item;
+        var source = await scope.Vm.ResolveOverviewAsync();
+        Assert.NotNull(source);
+        if (change == "access") scope.Client.InvalidateAccessContext();
+        else scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        Assert.Null(scope.Vm.OverviewSource);
+        Assert.Same(source, scope.Vm.OverviewDisplaySource);
+        scope.FailSeries = true;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            Assert.Null(await scope.Vm.ResolveOverviewAsync());
+            Assert.True(scope.Vm.OverviewResolutionFailed);
+            Assert.Null(scope.Vm.OverviewSource);
+            Assert.Same(source, scope.Vm.OverviewDisplaySource);
+            Assert.Equal("Series summary", scope.Vm.OverviewDisplaySource!.Overview);
+            var reads = scope.Paths.Count;
+            await scope.Vm.RefreshOverviewAsync(source!, default);
+            Assert.Equal(reads, scope.Paths.Count);
+        }
+        scope.FailSeries = false; scope.HoldSeries = true; scope.Translated = true;
+        var pending = scope.Vm.ResolveOverviewAsync();
+        await scope.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(scope.Vm.OverviewSource);
+        Assert.Same(source, scope.Vm.OverviewDisplaySource);
+        scope.Release.TrySetResult();
+        var replacement = await pending;
+        Assert.NotNull(replacement);
+        Assert.NotSame(source, replacement);
+        Assert.Same(replacement, scope.Vm.OverviewSource);
+        Assert.Same(replacement, scope.Vm.OverviewDisplaySource);
+        Assert.Equal("Résumé traduit", replacement!.Overview);
+        Assert.Null(replacement.PendingTranslationLanguage);
+        Assert.False(scope.Vm.OverviewResolutionFailed);
+        Assert.Same(episode, scope.Vm.Item);
+        Assert.Equal(own, episode!.Overview);
+    }
+
+    [Theory]
+    [InlineData("item")] [InlineData("library")] [InlineData("profile")]
+    [InlineData("authentication")] [InlineData("server")] [InlineData("page")]
+    public async Task RetiredSeriesDisplayCannotFollowAnotherOwner(string change)
+    {
+        using var scope = new Scope();
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var source = await scope.Vm.ResolveOverviewAsync();
+        scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        Assert.NotNull(source);
+        Assert.Same(source, scope.Vm.OverviewDisplaySource);
+        if (change == "item") scope.Vm.Item = new() { ContentId = "other", Type = "episode" };
+        else if (change == "library") await scope.Vm.LoadInLibraryAsync("episode", 99);
+        else if (change == "profile") scope.Client.SetProfile("other-profile");
+        else if (change == "authentication") { scope.Client.BeginAuthenticationSession(null); scope.Client.SetProfile("synthetic"); }
+        else if (change == "server") { scope.Client.SetBaseUrl("https://other-overview-tests.invalid"); scope.Client.SetProfile("synthetic"); }
+        else scope.Vm.CancelPendingLoads();
+        Assert.Null(scope.Vm.OverviewDisplaySource);
+    }
+
+    [Theory]
     [InlineData("profile")] [InlineData("language")]
     public async Task OwnTranslationSourceRetiresWithItsMetadataScope(string change)
     {

@@ -151,6 +151,43 @@ internal static class EpisodeOverviewNativeFixture
                 "A later failed optional retry still leaves the episode usable");
             Program.Log("PASS: transient series reads recover text and translation on the same page; persistent failures retain capped backoff retries.");
 
+            foreach (var change in new[] { "language", "access" })
+            {
+                wire.Reset(); wire.SeriesOverview = string.Concat(Enumerable.Repeat(Wire.SeriesText + " ", 30));
+                await Load();
+                var source = vm.OverviewSource;
+                var visibleText = overview.Text;
+                ((IInvokeProvider)new ButtonAutomationPeer((Button)overview.Children[1]).GetPattern(PatternInterface.Invoke)).Invoke();
+                Check(((TextBlock)overview.Children[0]).MaxLines == 0, "Series description is expanded before scope retirement");
+                wire.FailSeries = true; wire.SeriesOverview = "Recovered series description";
+                if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+                else client.InvalidateAccessContext();
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => vm.OverviewResolutionFailed && Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
+                for (var attempt = 0; attempt < 3; attempt++)
+                {
+                    Call(page, "ApplyEpisodeSpoilers");
+                    Check(vm.OverviewSource == null && ReferenceEquals(source, vm.OverviewDisplaySource) && overview.Text == visibleText &&
+                        overview.Visibility == Visibility.Visible && ((TextBlock)overview.Children[0]).MaxLines == 0 &&
+                        ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed,
+                        "Failed replacement reads preserve expanded series text under episode spoilers without stale translation");
+                    Call(page, "TranslateOverviewButton_Click", button, new RoutedEventArgs());
+                    Check(wire.Posts.Count == 0, "A retired series display is never a translation target");
+                    var reads = wire.Paths.Count(path => path == "/api/v2/catalog/items/series?library_id=42");
+                    Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                    Call(page, "RefreshRetiredOverviewScope");
+                    await Until(() => wire.Paths.Count(path => path == "/api/v2/catalog/items/series?library_id=42") == reads + 1 &&
+                        Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
+                }
+                wire.FailSeries = false;
+                Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => overview.Text == "Recovered series description" && vm.OverviewSource != null && button.Visibility == Visibility.Visible);
+                Check(!ReferenceEquals(source, vm.OverviewSource) && vm.Item!.ContentId == "episode" && string.IsNullOrWhiteSpace(vm.Item.Overview),
+                    "Successful retry replaces the series display without replacing episode identity");
+            }
+            Program.Log("PASS: language/access retirement and repeated series failures preserve expanded fallback text until a successful retry.");
+
             foreach (var type in new[] { "movie", "episode" })
             foreach (var change in new[] { "language", "access" })
             {

@@ -54,17 +54,19 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
     }
 
-    // A retired own description may remain visible, but must never be used for translation.
+    // A retired description may remain visible, but must never be used for translation.
     public MediaItemDetail? OverviewDisplaySource
     {
         get
         {
             if (OverviewSource is { } source) return source;
             if (!ReferenceEquals(Item, _overviewEpisode) || LibraryId != _overviewLibrary ||
-                _overviewContext is not { } previous || string.IsNullOrWhiteSpace(Item?.Overview)) return null;
+                _overviewContext is not { } previous) return null;
             var current = _catalogApi.CaptureContext();
-            return previous.AuthenticationGeneration == current.AuthenticationGeneration &&
-                previous.BaseUrl == current.BaseUrl && previous.ProfileId == current.ProfileId ? Item : null;
+            if (previous.AuthenticationGeneration != current.AuthenticationGeneration ||
+                previous.BaseUrl != current.BaseUrl || previous.ProfileId != current.ProfileId) return null;
+            return !string.IsNullOrWhiteSpace(Item?.Overview) ? Item :
+                Item?.Type == "episode" ? _seriesOverview : null;
         }
     }
 
