@@ -248,13 +248,15 @@ public sealed partial class CollectionEditorPage
         ViewModel.IsSaving = true;
         try
         {
-            var created = await _syncedImports.ImportTemplateAsync(new()
+            var draft = new TemplateImportDraft
             {
                 Template = pick, Title = ViewModel.Name, Description = ViewModel.Description, MaxItems = int.TryParse(ViewModel.MaxItemsText, out var max) ? max : null,
                 LibraryIds = ViewModel.SelectedLibraryIds.ToList(), IsShared = ViewModel.IsShared, MDBListUrl = _syncedLink.Text, TMDBListUrl = _syncedLink.Text,
                 SyncSchedule = ViewModel.SyncSchedule, PosterUrl = poster is { Length: > 0 } || ViewModel.RemovePosterOnSave ? null : !string.IsNullOrWhiteSpace(ViewModel.PosterSourceUrl) ? ViewModel.PosterSourceUrl : _syncedPickedPosterUrl, DisplayQueryDefinition = ViewModel.CaptureDisplayQuery()
-                , SortConfig = ViewModel.CaptureSortConfig()
-            });
+            };
+            if (_creationCapabilities?.CollectionDefaultSort == true)
+                draft.SortConfig = ViewModel.CaptureSortConfig();
+            var created = await _syncedImports.ImportTemplateAsync(draft);
             if (!_editorActive || !client.IsCurrentContext(context)) return;
             if (created == null) { _syncedError.Text = _syncedImports.TemplateErrorMessage ?? "Couldn't create the list."; return; }
             // The import is durable: retain its ID before artwork or preference
