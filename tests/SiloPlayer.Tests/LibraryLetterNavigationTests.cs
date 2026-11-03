@@ -571,6 +571,43 @@ public sealed class LibraryLetterNavigationTests
     }
 
     [Fact]
+    public async Task SupersedingFailedLetterRestoresTheViewportSnapshotFromBeforeBothClicks()
+    {
+        using var wire = new Wire { TailPosition = 900 }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.LoadWindowAsync(120, 100);
+        var active = model.GetWindowItem(120);
+        var cached = model.GetWindowItem(0);
+        var start = model.WindowStartIndex;
+        Assert.NotNull(active); Assert.NotNull(cached);
+        var first = wire.HoldNextCatalog();
+        var older = model.JumpToLetterCommand.ExecuteAsync("M");
+        Task? newer = null;
+        Wire.ReadGate? second = null;
+        try
+        {
+            await first.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            second = wire.HoldNextCatalog(fail: true);
+            newer = model.JumpToLetterCommand.ExecuteAsync("N");
+            await second.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            second.Release.TrySetResult(); await newer;
+            Assert.Equal(start, model.WindowStartIndex);
+            Assert.Same(active, model.GetWindowItem(120));
+            Assert.Same(cached, model.GetWindowItem(0));
+            Assert.Equal("Couldn't load N titles.", model.LetterJumpError);
+            first.Release.TrySetResult(); await older;
+            Assert.Same(cached, model.GetWindowItem(0));
+            Assert.Equal("Couldn't load N titles.", model.LetterJumpError);
+            Assert.Null(model.ErrorMessage);
+        }
+        finally
+        {
+            first.Release.TrySetResult(); second?.Release.TrySetResult();
+            await older; if (newer is not null) await newer;
+        }
+    }
+
+    [Fact]
     public async Task RetryingAMissingTargetRevalidatesTheIndexInsteadOfRepeatingItsOldPosition()
     {
         using var wire = new Wire { CatalogExact = false, IndexTotal = 1200, TailPosition = 1199 };
@@ -793,12 +830,45 @@ public sealed class LibraryLetterNavigationTests
     {
         using var wire = new Wire(); var model = wire.Create();
         await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var previous = model.GetWindowItem(0);
         wire.Client.SetProfile("other-synthetic-profile"); wire.Supported = false;
 
         await model.JumpToLetterCommand.ExecuteAsync("M");
 
         Assert.Null(model.LetterIndex); Assert.Null(model.PendingLetter);
         Assert.Null(model.LetterJumpError); Assert.Null(model.ErrorMessage);
+        Assert.NotNull(model.GetWindowItem(0));
+        Assert.NotSame(previous, model.GetWindowItem(0));
+    }
+
+    [Theory]
+    [InlineData("profile", false)]
+    [InlineData("profile", true)]
+    [InlineData("language", false)]
+    [InlineData("language", true)]
+    public async Task ScopeChangeRetiresSettledFailureWhenObservedOrRetried(string change, bool observeFirst)
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        wire.FailCatalog = true;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.NotNull(model.LetterJumpError);
+        var notifications = 0;
+        model.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(model.LetterJumpError)) notifications++; };
+        if (change == "profile") wire.Client.SetProfile("other-synthetic-profile");
+        else wire.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.FailCatalog = false;
+        var reads = wire.Seeks.Count;
+
+        if (observeFirst) Assert.Null(model.LetterJumpError);
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+
+        Assert.Null(model.LetterJumpError); Assert.Null(model.PendingLetter);
+        Assert.Equal(1, notifications);
+        Assert.Equal(reads, wire.Seeks.Count); // Never replay a choice owned by the old scope.
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.NotNull(model.GetWindowItem(742));
+        Assert.Null(model.LetterJumpError);
     }
 
     [Fact]

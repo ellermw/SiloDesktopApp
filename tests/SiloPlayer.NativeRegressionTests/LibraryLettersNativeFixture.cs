@@ -428,6 +428,32 @@ internal static class LibraryLettersNativeFixture
                 throw new InvalidOperationException("Ordinary resize loading cleared or globalized scoped Retry.");
         }
         finally { frame.Height = height; page.UpdateLayout(); failed.Release.TrySetResult(); }
+        // A failed seek cancels the pending read for the still-visible range.
+        // It must restart that same range without any subsequent user input.
+        Invoke(letter("M"));
+        await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+        var cancelledViewport = wire.HoldNextWindow();
+        Wire.WindowReadGate? failedTarget = null;
+        try
+        {
+            var requested = (400 / columns) * rowHeight + .25;
+            ManualScroll(page, scroll, requested);
+            await cancelledViewport.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (page.ViewModel.GetWindowItem(400) is not null)
+                throw new InvalidOperationException("The failed-letter regression must start with an uncached visible range.");
+            failedTarget = wire.HoldNextWindow(fail: true); Invoke(letter("A"));
+            await failedTarget.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            failedTarget.Release.TrySetResult();
+            await Until(() => !page.ViewModel.IsLetterJumpInProgress && page.ViewModel.LetterJumpError is not null &&
+                page.ViewModel.GetWindowItem(400) is not null);
+            if (Math.Abs(scroll.VerticalOffset - requested) > .2 || page.ViewModel.ErrorMessage is not null)
+                throw new InvalidOperationException("Failed letter recovery moved the viewport or published a global error.");
+            var canvas = (Canvas)page.FindName("VirtualGridCanvas");
+            await Until(() => canvas.Children.OfType<LibraryGridCard>().Any(card => card.Tag is int index &&
+                index == 400 && ReferenceEquals(card.MediaItem, page.ViewModel.GetWindowItem(index))));
+            Program.Log("PASS: failed letter reloads the cancelled visible range and binds its cards without new scroll/resize input.");
+        }
+        finally { cancelledViewport.Release.TrySetResult(); failedTarget?.Release.TrySetResult(); }
         Invoke(letter("M"));
         await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
         var viewport = wire.HoldNextWindow();

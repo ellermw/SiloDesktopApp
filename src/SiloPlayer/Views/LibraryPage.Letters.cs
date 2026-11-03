@@ -59,7 +59,19 @@ public sealed partial class LibraryPage
         if (e.PropertyName is nameof(ViewModel.LetterIndex) or nameof(ViewModel.IsLetterIndexLoading) or nameof(ViewModel.SelectedSort) or
             nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount) or
             nameof(ViewModel.PendingLetter) or nameof(ViewModel.LetterJumpError))
-            DispatcherQueue.TryEnqueue(UpdateLibraryLetters);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                UpdateLibraryLetters();
+                if ((e.PropertyName is nameof(ViewModel.PendingLetter) or nameof(ViewModel.LetterJumpError)) &&
+                    ViewModel.LetterJumpError is not null && !ViewModel.IsLetterJumpInProgress &&
+                    !ViewModel.IsLetterJumpViewportBlocked)
+                {
+                    // The forced seek may have cancelled this exact row range.
+                    // Retry it without requiring another scroll/resize event.
+                    _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+                    ScheduleVisibleRangeLoad(force: true);
+                }
+            });
     }
 
     private void UpdateLibraryLetters()

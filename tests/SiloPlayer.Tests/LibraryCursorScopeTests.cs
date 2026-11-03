@@ -127,6 +127,38 @@ public sealed class LibraryCursorScopeTests
         Assert.Null(model.ErrorMessage); Assert.Null(model.LetterJumpError);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LetterAfterUnobservedProfileChangeRevalidatesBeforeCapturingItsLoadOwner(bool fail)
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.Client.SetProfile("other-synthetic-profile");
+        wire.ScopeVersion++; wire.LetterPosition = 900; wire.RejectFresh = fail;
+
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+
+        Assert.Equal(2, wire.IndexRequests);
+        Assert.Equal(0, wire.InvalidCursors);
+        Assert.Equal(1000, model.TotalCount);
+        Assert.Null(model.GetWindowItem(0));
+        Assert.Null(model.ErrorMessage); Assert.Null(model.PendingLetter);
+        Assert.False(model.IsLetterJumpInProgress);
+        if (fail)
+        {
+            Assert.Empty(jumps);
+            Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+            Assert.True(model.IsLetterJumpViewportBlocked);
+            wire.RejectFresh = false;
+            await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        }
+        Assert.Equal(new[] { 900 }, jumps);
+        Assert.Equal("item-900-scope1", model.GetWindowItem(900)!.ContentId);
+        Assert.Null(model.LetterJumpError);
+    }
+
     [Fact]
     public async Task RejectedLetterRecoveryFailureStaysScopedAndRetryRevalidatesAgain()
     {
