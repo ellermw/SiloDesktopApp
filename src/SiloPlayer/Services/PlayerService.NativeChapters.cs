@@ -32,6 +32,9 @@ public partial class PlayerService
         var selected = false;
         var chapters = Snapshot();
         var active = ActiveChapter();
+        var previewRefreshers = new Dictionary<int, Action>();
+        var previewCache = new Dictionary<(int Index, string Url), BitmapImage>();
+        var previewOrder = new Queue<(int Index, string Url)>();
         bool CanSeek() => !IsWatchTogetherPlayback ||
             App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom?.Room?.SelfCanManageRoom == true;
         bool Owned() => owner.IsCurrent() && ReferenceEquals(version, ActiveVersion) &&
@@ -64,6 +67,9 @@ public partial class PlayerService
                 chapters = Snapshot();
                 active = ActiveChapter();
                 menu.UpdateChoices(Choices());
+                // A ready URL is image state, not visible row text. The host
+                // intentionally retains text-identical containers.
+                foreach (var refreshPreview in previewRefreshers.Values.ToArray()) refreshPreview();
             }
             if (dispatcher?.HasThreadAccess == true) Apply();
             else dispatcher?.TryEnqueue(Apply);
@@ -122,40 +128,57 @@ public partial class PlayerService
                 VerticalAlignment = VerticalAlignment.Center,
             };
             AutomationProperties.SetName(border, "Chapter preview: " + chapter.Title);
+            var index = chapter.Index;
+            string? acceptedUrl = null;
             CancellationTokenSource? previewLifetime = null;
-            border.Loaded += async (_, _) =>
+            async void RefreshPreview()
             {
-                if (!Current() || string.IsNullOrWhiteSpace(chapter.ThumbnailUrl)) return;
+                if (!Current() || !border.IsLoaded) return;
+                var currentChapter = chapters.FirstOrDefault(item => item.Index == index);
+                var url = currentChapter?.ThumbnailUrl;
+                if (string.IsNullOrWhiteSpace(url) || (image.Source != null && acceptedUrl == url)) return;
                 previewLifetime?.Cancel(); previewLifetime?.Dispose();
                 var loading = CancellationTokenSource.CreateLinkedTokenSource(token);
                 previewLifetime = loading;
                 bool AcceptImage() => !loading.IsCancellationRequested && Current() && border.XamlRoot != null &&
-                    version.Chapters?.Any(current => current.Index == chapter.Index &&
-                        string.Equals(current.ThumbnailUrl, chapter.ThumbnailUrl, StringComparison.Ordinal)) == true;
+                    version.Chapters?.Any(current => current.Index == index &&
+                        string.Equals(current.ThumbnailUrl, url, StringComparison.Ordinal)) == true;
                 try
                 {
-                    var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(
-                        $"chapter_{ContentId}_{chapter.Index}", "chapter", chapter.ThumbnailUrl,
-                        App.Services.GetRequiredService<HttpClient>(), loading.Token);
-                    if (string.IsNullOrWhiteSpace(path) || !AcceptImage()) return;
-                    var file = await StorageFile.GetFileFromPathAsync(path);
-                    if (!AcceptImage()) return;
-                    using var stream = await file.OpenReadAsync();
-                    if (!AcceptImage()) return;
-                    // Stream decode sniffs the image bytes, including WebP
-                    // cached with ImageService's generic .img extension.
-                    var bitmap = new BitmapImage();
-                    await bitmap.SetSourceAsync(stream);
+                    var key = (index, url);
+                    if (!previewCache.TryGetValue(key, out var bitmap))
+                    {
+                        var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(
+                            $"chapter_{ContentId}_{index}", "chapter", url,
+                            App.Services.GetRequiredService<HttpClient>(), loading.Token);
+                        if (string.IsNullOrWhiteSpace(path) || !AcceptImage()) return;
+                        var file = await StorageFile.GetFileFromPathAsync(path);
+                        if (!AcceptImage()) return;
+                        using var stream = await file.OpenReadAsync();
+                        if (!AcceptImage()) return;
+                        // Stream decode sniffs bytes despite the cache's .img
+                        // extension. Bound decoded preview memory per menu.
+                        bitmap = new BitmapImage { DecodePixelWidth = 160 };
+                        await bitmap.SetSourceAsync(stream);
+                        if (!AcceptImage()) return;
+                        previewCache[key] = bitmap;
+                        previewOrder.Enqueue(key);
+                        while (previewCache.Count > 24 && previewOrder.TryDequeue(out var oldest)) previewCache.Remove(oldest);
+                    }
                     if (!AcceptImage()) return;
                     image.Source = bitmap;
+                    acceptedUrl = url;
                     image.Visibility = Visibility.Visible;
                     placeholder.Visibility = Visibility.Collapsed;
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception) { /* Preview failure retains the usable chapter and fallback. */ }
-            };
+            }
+            Action refresh = RefreshPreview;
+            border.Loaded += (_, _) => { previewRefreshers[index] = refresh; refresh(); };
             border.Unloaded += (_, _) =>
             {
+                if (previewRefreshers.TryGetValue(index, out var current) && current == refresh) previewRefreshers.Remove(index);
                 previewLifetime?.Cancel();
                 previewLifetime?.Dispose();
                 previewLifetime = null;
