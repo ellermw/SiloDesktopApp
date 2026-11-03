@@ -109,6 +109,23 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
+    public void LegacyFlyoutKeepsUrllessUnavailableRowsAndAttachesTheirOnlyBadge()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
+        var start = source.IndexOf("private void PopulateSubtitleFlyout()", StringComparison.Ordinal);
+        var end = source.IndexOf("// Match the compact WebUI delay control", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+        Assert.Contains("Manager?.CurrentSession?.SubtitleUrls", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetSubtitleUrls()", method, StringComparison.Ordinal);
+        var badge = method.IndexOf("if (track.Unplayable) badges.Children.Add(CreatePlayerMenuBadge(\"Unavailable\"))", StringComparison.Ordinal);
+        var attach = method.IndexOf("if (badges.Children.Count > 0) descriptor.Children.Add(badges)", StringComparison.Ordinal);
+        Assert.True(badge >= 0 && attach > badge);
+        Assert.Contains("item.IsEnabled = false;", method, StringComparison.Ordinal);
+        Assert.Contains("SetHelpText(item, \"Subtitle unavailable\")", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdaptedPlanKeepsIdentityAndUnavailableOrdinals()
     {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };

@@ -112,8 +112,20 @@ public partial class PlaybackManager
     {
         if (_viewerSubtitle == null) return null;
         var tracks = CurrentSession?.SubtitleUrls.Where(t => !t.Unplayable).ToList() ?? [];
-        return tracks.FirstOrDefault(t => !string.IsNullOrEmpty(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId)
-            ?? tracks.Where(t => SameLanguage(t.Language, _viewerSubtitle.Language) &&
+        var exact = tracks.FirstOrDefault(t => !string.IsNullOrEmpty(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId);
+        if (exact != null) return exact;
+        if (string.IsNullOrWhiteSpace(_viewerSubtitle.TrackId) && !SameLanguage(_viewerSubtitle.Language, _viewerSubtitle.Language))
+        {
+            // Legacy/downloaded rows may have neither identity nor a known
+            // language. Preserve a same-file row, or a unique metadata match,
+            // without selecting an unavailable row or guessing across files.
+            var metadata = tracks.Where(t => !SameLanguage(t.Language, t.Language) &&
+                Equal(t.Source, _viewerSubtitle.Source) && Equal(t.Codec, _viewerSubtitle.Codec) && Equal(t.Label, _viewerSubtitle.Label) &&
+                t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToList();
+            return CurrentSession?.MediaFileId == _viewerSubtitleFile && metadata.FirstOrDefault(t => t.Index == _viewerSubtitle.Index) is { } recorded
+                ? recorded : metadata.Count == 1 ? metadata[0] : null;
+        }
+        return tracks.Where(t => SameLanguage(t.Language, _viewerSubtitle.Language) &&
                 t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired)
                 .OrderByDescending(t => SubtitleScore(t.Source, t.Codec, t.Label, _viewerSubtitle)).FirstOrDefault();
     }

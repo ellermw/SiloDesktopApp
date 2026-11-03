@@ -222,9 +222,13 @@ public sealed class PlayerServiceSourceTests
         Assert.True(refreshStart >= 0 && refreshEnd > refreshStart);
         Assert.DoesNotContain("SwitchVersionAsync", source[refreshStart..refreshEnd]);
         Assert.Contains(
-            "await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false);",
+            "if (!await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false)) return;",
             source[refreshStart..refreshEnd],
             StringComparison.Ordinal);
+        var refusalGuard = source.IndexOf("if (!await SelectSubtitleByServerIndexAsync(preferred.Index)", refreshStart, StringComparison.Ordinal);
+        Assert.True(refusalGuard < source.IndexOf("ResumeAfterLiveSubtitleBuffer(completedJobId)", refreshStart, StringComparison.Ordinal));
+        Assert.True(refusalGuard < source.IndexOf("_mpv.RemoveSubtitle(_liveSubtitleSid)", refreshStart, StringComparison.Ordinal));
+        Assert.True(refusalGuard < source.IndexOf("DeleteLiveSubtitleFileLocked();", refreshStart, StringComparison.Ordinal));
         Assert.DoesNotContain(
             "RestorePlaybackStateAfterSubtitleChange(wasPaused, position",
             source[refreshStart..refreshEnd],

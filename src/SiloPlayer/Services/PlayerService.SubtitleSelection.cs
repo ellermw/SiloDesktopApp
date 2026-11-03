@@ -119,6 +119,19 @@ public partial class PlayerService
         return tracks.FirstOrDefault(t => t.Index == index);
     }
 
+    private enum SubtitlePrefetchOutcome { Ready, Fallback, Busy, Error, Retired }
+
+    private void ShowSubtitleReadFailure(SubtitlePrefetchOutcome outcome)
+    {
+        if (outcome == SubtitlePrefetchOutcome.Busy)
+            ShowSubtitleReadBusy();
+        else if (outcome == SubtitlePrefetchOutcome.Error)
+        {
+            _mpv?.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            ShowNotice("Subtitle could not be loaded", "This subtitle could not be loaded. Choose another subtitle or try again after checking your connection and available disk space.", "warning");
+        }
+    }
+
     private void ShowSubtitleReadBusy()
     {
         // OSC shortcuts optimistically highlight a pending choice. Reassert

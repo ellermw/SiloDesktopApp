@@ -235,6 +235,12 @@ internal static class SubtitleIdentityNativeFixture
             await service.SetSubtitleTrackAndPersistAsync(8, downloaded.Language, downloaded);
             Require(map.TryGetValue(7, out var downloadedSid) && downloadedSid > fallback && mpv.GetPropertyDouble("sid") == downloadedSid,
                 "Downloaded combined ordinal did not execute its sidecar independently of embedded source identity.");
+            var unlabelled = new SubtitleTrackInfo { Index = 9, Source = "downloaded", Codec = "srt", Label = "", Language = "", Url = subtitles.Origin + "/captions.srt" };
+            session.SubtitleUrls.Add(unlabelled);
+            await service.SetSubtitleTrackAndPersistAsync(10, unlabelled.Language, unlabelled);
+            Require(map.TryGetValue(9, out var unlabelledSid) && unlabelledSid > downloadedSid && mpv.GetPropertyDouble("sid") == unlabelledSid &&
+                service.ActiveSubtitleServerIndex == 9 && manager.SubtitleSelectionForLoad == 9,
+                "A sidecar with both blank label and blank language was not selected and retained.");
             var japanese = session.SubtitleUrls.Single(t => t.Index == 4);
             reads = Volatile.Read(ref subtitles.Requests);
             await service.SetSubtitleTrackAndPersistAsync(5, "ja", japanese);
@@ -249,6 +255,17 @@ internal static class SubtitleIdentityNativeFixture
                 "A container-only row without a sidecar failed to select its loaded container identity or unique metadata match.");
             await service.SetSubtitleTrackAndPersistAsync(0, null, null);
             Require(mpv.GetPropertyDouble("sid") <= 0 && mpv.IsPaused, "Explicit Off changed viewer pause intent.");
+            var untitled = Path.Combine(Program.ResultDirectory, "untitled-select.srt");
+            var untitledAuto = Path.Combine(Program.ResultDirectory, "untitled-auto.srt");
+            File.Copy(Path.Combine(assets, "english.srt"), untitled, overwrite: true);
+            File.Copy(Path.Combine(assets, "english.srt"), untitledAuto, overwrite: true);
+            var maximumSid = mpv.GetSubtitleTrackIds().Max();
+            Require(mpv.AddSubtitle(untitled, "", "", select: true) && mpv.GetPropertyDouble("sid") > maximumSid,
+                "sub-add with an empty title did not honor select:true.");
+            var untitledSid = mpv.GetPropertyDouble("sid");
+            Require(mpv.AddSubtitle(untitledAuto, null, "en", select: false) && mpv.GetPropertyDouble("sid") == untitledSid,
+                "sub-add without a title did not honor auto or lost the language argument slot.");
+            mpv.SetSubtitleTrack(0);
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");
         }
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }

@@ -160,6 +160,62 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(1, scope.Wire.Starts.Last().GetProperty("subtitle_track_index").GetInt32());
     }
 
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData("", "und")]
+    [InlineData(null, "und")]
+    public async Task SameFileReloadPreservesIdentitylessUnknownLanguageChoice(string? trackId, string language)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var track = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+        track.TrackId = trackId; track.Language = language;
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+
+        await scope.Manager.StartReplacementSessionAsync(42, 14);
+        Assert.Equal(1, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("und")]
+    public async Task QualityReplanSendsIdentitylessUnknownLanguageChoiceInsteadOfOff(string language)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var track = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+        track.TrackId = null; track.Language = language;
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        await scope.Manager.ReplanQualityAsync("720p", 14);
+        Assert.Equal(1, scope.Wire.Replans.Single().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
+    [Fact]
+    public async Task UnknownLanguageMetadataFallbackRequiresUniqueOrRecordedSameFileRowAndRejectsUnavailable()
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var track = session.SubtitleUrls.Single(t => t.Index == 1);
+        track.TrackId = null; track.Language = "und";
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        SubtitleTrackInfo Copy(int index) => new()
+        {
+            Index = index, Language = "und", Source = track.Source, Codec = track.Codec, Label = track.Label,
+            Forced = track.Forced, HearingImpaired = track.HearingImpaired,
+        };
+        session.SubtitleUrls = [Copy(1), Copy(7)];
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        session.SubtitleUrls = [Copy(7)];
+        Assert.Equal(7, scope.Manager.SubtitleSelectionForLoad);
+        session.SubtitleUrls.Add(Copy(8));
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        session.SubtitleUrls = [Copy(1)]; session.SubtitleUrls[0].Unplayable = true;
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.StartReplacementSessionAsync(42, 14);
+        Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+    }
+
     private sealed class Fixture : IDisposable
     {
         public readonly Wire Wire = new();

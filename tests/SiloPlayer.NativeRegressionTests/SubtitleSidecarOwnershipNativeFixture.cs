@@ -42,7 +42,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
 
     internal static async Task RunBusyAsync(StackPanel parent)
     {
-        foreach (var scenario in new[] { "exhausted", "recovered", "recovered-playing", "viewer-pauses", "viewer-resumes", "viewer-seeks", "newer-off", "newer-track", "superseded-exhausted", "aba", "load", "profile", "close", "translation-completed", "timeout", "oversized-declared", "oversized-chunked" })
+        foreach (var scenario in new[] { "exhausted", "recovered", "recovered-playing", "viewer-pauses", "viewer-resumes", "viewer-seeks", "newer-off", "newer-track", "superseded-exhausted", "aba", "load", "profile", "close", "translation-completed", "timeout", "oversized-declared", "oversized-chunked", "not-found", "not-found-automatic", "no-context-load", "no-context-sync-stop" })
         {
             await CheckBusyAsync(parent, scenario);
             Program.Log("PASS: busy sidecar " + scenario);
@@ -52,8 +52,9 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     private static async Task CheckBusyAsync(StackPanel parent, string scenario)
     {
         var recovers = scenario.StartsWith("recovered", StringComparison.Ordinal) || scenario.StartsWith("viewer-", StringComparison.Ordinal);
-        var readFailure = scenario is "timeout" or "oversized-declared" or "oversized-chunked";
+        var readFailure = scenario is "timeout" or "oversized-declared" or "oversized-chunked" or "not-found" or "not-found-automatic";
         var translationCompleted = scenario == "translation-completed";
+        var noContext = scenario.StartsWith("no-context-", StringComparison.Ordinal);
         using var subtitles = new HeldSubtitleServer(false) { BusyResponses = readFailure ? 0 : recovers ? 2 : 100,
             ReadFailure = readFailure ? scenario : null };
         using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
@@ -78,6 +79,38 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var startsPaused = scenario is not ("recovered-playing" or "viewer-pauses");
         service.SetPaused(startsPaused); await Until(() => mpv.IsPaused == startsPaused);
         subtitles.Release.TrySetResult();
+        object? replacement = null;
+        if (scenario == "no-context-load")
+        {
+            subtitles.ReplacementMedia = await File.ReadAllBytesAsync(wave);
+            var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", manager.CurrentSession!, Version(),
+                subtitles.Origin + "/stream/direct/replacement.wav", 0d, CancellationToken.None)!;
+            await prepare;
+            replacement = prepare.GetType().GetProperty("Result")!.GetValue(prepare)!;
+        }
+        var notices = new ConcurrentQueue<string>();
+        var noticeReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var noticeDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void ObserveNotice(string[] message)
+        {
+            if (message.FirstOrDefault() == "busy-notice-ready") noticeReady.TrySetResult();
+            if (message.FirstOrDefault() == "busy-notice-drained") noticeDrained.TrySetResult();
+            if (message.FirstOrDefault() == "busy-notice" && message.Length > 1) notices.Enqueue(message[1]);
+        }
+        mpv.ScriptMessageReceived += ObserveNotice;
+        var noticeProbe = Path.Combine(Program.ResultDirectory, "busy-notice-" + scenario + ".lua");
+        await File.WriteAllTextAsync(noticeProbe, """
+            local mp = require 'mp'
+            mp.register_script_message('osc-show-notice', function(payload)
+                mp.commandv('script-message', 'busy-notice', payload)
+            end)
+            mp.register_script_message('busy-notice-barrier', function()
+                mp.commandv('script-message', 'busy-notice-drained')
+            end)
+            mp.commandv('script-message', 'busy-notice-ready')
+            """);
+        Call(mpv, "Command", (object)new[] { "load-script", noticeProbe });
+        await noticeReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
         try
         {
             await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!;
@@ -94,7 +127,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 Set(service, "_liveSubtitleJobId", 73L); Set(service, "_liveSubtitleFileId", 42);
             }
             var pending = translationCompleted ? service.RefreshSubtitlesAfterAiAsync(42, 73) :
-                (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+                noContext ? Task.Run(() =>
+                {
+                    Require(SynchronizationContext.Current == null, "OSC regression must run without a synchronization context.");
+                    return (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+                }) : (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, scenario != "not-found-automatic")!;
             await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await Task.Delay(150);
@@ -112,13 +149,67 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (scenario == "load") Call(service, "LoadSubtitles");
             if (scenario == "profile") api.SetProfile("replacement");
             if (scenario == "close") await service.CloseAsync();
+            if (noContext)
+            {
+                var readOwner = Get(service, "_subtitleReadOperation")!;
+                var readToken = (CancellationToken)readOwner.GetType().GetProperty("Token")!.GetValue(readOwner)!;
+                var readGeneration = (long)Get(service, "_loadedMediaInitGeneration")!;
+                long cancellationGeneration = -1;
+                var cancellationSawLoading = false;
+                using var registration = readToken.Register(() =>
+                {
+                    cancellationGeneration = (long)Get(service, "_loadedMediaInitGeneration")!;
+                    cancellationSawLoading = service.IsLoading;
+                });
+                if (scenario == "no-context-load")
+                {
+                    Call(service, "ApplyPreparedTransport", replacement); Call(service, "WireMpvEvents");
+                    await Task.Run(() => Call(service, "BeginMpvLoad", replacement, true));
+                    Require(cancellationGeneration > readGeneration && cancellationSawLoading,
+                        "Read cancellation observed the old generation or an unpublished reload.");
+                    await subtitles.MediaEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(!pending.IsCompleted && wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
+                        "An OSC choice was dropped or persisted before replacement media loaded.");
+                    subtitles.BusyResponses = 0;
+                    subtitles.MediaRelease.TrySetResult();
+                }
+                else
+                {
+                    await Task.Run(() => Call(service, "StopSubtitleSync"));
+                    Require(cancellationGeneration == readGeneration, "Sync-stop regression unexpectedly changed the load generation.");
+                }
+            }
             if (scenario == "aba")
             {
                 subtitles.BusyResponses = 0;
                 await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
             }
             await pending.WaitAsync(TimeSpan.FromSeconds(12));
-            if (readFailure || translationCompleted || scenario is "exhausted" or "profile" or "superseded-exhausted" or "missing-native-503")
+            if (scenario == "no-context-load")
+            {
+                await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
+                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") > 0 &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }) && manager.SubtitleSelectionForLoad == 0,
+                    "A no-context OSC choice did not survive reload and persist exactly once after execution.");
+            }
+            if (scenario != "close")
+            {
+                mpv.SendScriptMessage("busy-notice-barrier");
+                await noticeDrained.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            }
+            if (readFailure)
+            {
+                Require(notices.Any(n => n.Contains("could not be loaded", StringComparison.Ordinal)) &&
+                    !notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal)),
+                    "Permanent subtitle failure was missing actionable feedback or mislabeled as busy.");
+            }
+            if (scenario is "exhausted" or "missing-native-503")
+                Require(notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal)) &&
+                    !notices.Any(n => n.Contains("could not be loaded", StringComparison.Ordinal)), "Busy exhaustion lost its distinct retry notice.");
+            if (noContext)
+                Require(!notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal) || n.Contains("could not be loaded", StringComparison.Ordinal)),
+                    "A retired read emitted a busy/error notice.");
+            if (readFailure || translationCompleted || scenario is "exhausted" or "profile" or "superseded-exhausted" or "missing-native-503" or "no-context-sync-stop")
             {
                 Require(service.ActiveSubtitleServerIndex == 1, "Busy failure replaced the accepted server subtitle selection.");
                 Require(mpv.GetPropertyDouble("sid") == priorSid, "Busy failure changed the accepted native SID.");
@@ -139,7 +230,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "Refused stored translation removed the live SID or its cue file.");
             if (translationCompleted || scenario is "exhausted" or "missing-native-503") Require(subtitles.EngRequests == 4, "Exhausted busy read exceeded its attempt budget.");
             if (readFailure) Require(subtitles.EngRequests == 1, "Failed text read was retried outside the bounded reader.");
-            if (scenario is "newer-off" or "newer-track" or "load" or "profile" or "close") Require(subtitles.EngRequests == 1, "Retired busy read continued requesting.");
+            if (scenario is "newer-off" or "newer-track" or "load" or "profile" or "close" or "no-context-sync-stop") Require(subtitles.EngRequests == 1, "Retired busy read continued requesting.");
             using var logReader = new StreamReader(new FileStream(Path.Combine(Program.ResultDirectory, "mpv_log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
             var nativeLog = logReader.ReadToEnd();
             Require(!nativeLog.Split('\n').Any(line => line.Contains("Run command: sub-add", StringComparison.Ordinal) && line.Contains(subtitles.Origin, StringComparison.Ordinal)), "Text selection issued a remote native sub-add.");
@@ -159,7 +250,9 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
         finally
         {
-            Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+            subtitles.MediaRelease.TrySetResult();
+            Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout"); Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+            mpv.ScriptMessageReceived -= ObserveNotice;
             Set(service, "_mpv", null); Set(service, "_playbackManager", null);
         }
     }
@@ -925,6 +1018,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                             if (request.Request.UserAgent?.Contains("mpv", StringComparison.OrdinalIgnoreCase) == true || request.Request.UserAgent?.Contains("Lavf", StringComparison.OrdinalIgnoreCase) == true) Interlocked.Increment(ref SyncRequests);
                             Entered.TrySetResult(); await Release.Task;
                             if (count <= BusyResponses || count > BusyAfter || BusyChangedFile && request.Request.Url.AbsolutePath == "/changed-eng.srt") { request.Response.StatusCode = 503; request.Response.Headers["Retry-After"] = "1"; request.Response.Close(); return; }
+                            if (ReadFailure is "not-found" or "not-found-automatic") { request.Response.StatusCode = 404; request.Response.Close(); return; }
                             if (ReadFailure == "timeout") await Task.Delay(TimeSpan.FromSeconds(10));
                             if (ReadFailure is "oversized-declared" or "oversized-chunked")
                             {

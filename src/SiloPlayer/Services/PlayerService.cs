@@ -1112,7 +1112,7 @@ public partial class PlayerService : IDisposable
             while (true)
             {
                 var readLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
-                var ready = await PrefetchSubtitleSidecarAsync(track);
+                var readOutcome = await PrefetchSubtitleSidecarAsync(track);
                 if (!CurrentChoice()) return false;
                 if (readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration))
                 {
@@ -1131,7 +1131,12 @@ public partial class PlayerService : IDisposable
                     selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
                     continue;
                 }
-                if (!ready) { ShowSubtitleReadBusy(); return false; }
+                if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
+                if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
+                {
+                    ShowSubtitleReadFailure(readOutcome);
+                    return false;
+                }
                 break;
             }
         }
@@ -2626,6 +2631,10 @@ public partial class PlayerService : IDisposable
             ?? throw new InvalidOperationException("The playback session ended before media loading began.");
         var loadingOwner = _playbackCts;
 
+        // Publish the reload before cancelling: token continuations can run
+        // inline and must wait for the new file instead of retrying the old one.
+        _switchingContent = true;
+        IsLoading = true;
         // Retire the outgoing file's asynchronous subtitle work before loadfile:
         // the next FILE_LOADED can be delayed by the replacement HTTP stream.
         CancelPendingLoadedMediaInitialization();
@@ -2639,8 +2648,6 @@ public partial class PlayerService : IDisposable
         _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
             prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
             prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
-        _switchingContent = true;
-        IsLoading = true;
         SetConnectionMediaActive(true);
         if (loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
@@ -2908,8 +2915,10 @@ public partial class PlayerService : IDisposable
 
     private void CancelPendingLoadedMediaInitialization()
     {
-        CancelSubtitleSelectionRead();
+        // Cancellation can synchronously resume an OSC selection's await.
+        // Retire its load generation before any read continuation observes it.
         Interlocked.Increment(ref _loadedMediaInitGeneration);
+        CancelSubtitleSelectionRead();
         var cts = Interlocked.Exchange(ref _loadedMediaInitCts, null);
         try { cts?.Cancel(); } catch (ObjectDisposedException) { }
         // The worker owns disposal so cancellation cannot race its token reads.
@@ -5091,12 +5100,14 @@ public partial class PlayerService : IDisposable
             Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration;
         if (track != null)
         {
-            if (!await PrefetchSubtitleSidecarAsync(track))
+            var readOutcome = await PrefetchSubtitleSidecarAsync(track);
+            if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
+            if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
             {
                 if (CurrentSelection())
                 {
                     if (manualChoice != null) manualChoice.Accepted = false;
-                    ShowSubtitleReadBusy();
+                    ShowSubtitleReadFailure(readOutcome);
                 }
                 return false;
             }
@@ -5229,7 +5240,8 @@ public partial class PlayerService : IDisposable
             if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl))
                 return false;
 
-            var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
+            var label = !string.IsNullOrWhiteSpace(track.Label) ? track.Label :
+                !string.IsNullOrWhiteSpace(track.Language) ? track.Language : "Unknown";
             var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;
             var previousSid = (int)Math.Round(_mpv.GetPropertyDouble("sid"));
             var previousMaximum = _mpv.GetSubtitleTrackIds().DefaultIfEmpty(0).Max();
@@ -5257,13 +5269,14 @@ public partial class PlayerService : IDisposable
         lock (_subtitleTrackStateLock) return _subtitleSidecarGeneration;
     }
 
-    private async Task<bool> PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
+    private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
     {
-        if (track.Unplayable) return false;
-        if (_mpv == null || IsUnsupportedBitmapSubtitle(track) ||
+        if (track.Unplayable) return SubtitlePrefetchOutcome.Error;
+        if (_mpv == null) return SubtitlePrefetchOutcome.Retired;
+        if (IsUnsupportedBitmapSubtitle(track) ||
             string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
             CanUseNativeEmbeddedSubtitleTrack() && ResolveNativeEmbeddedSid(track) > 0)
-            return true;
+            return SubtitlePrefetchOutcome.Ready;
         long generation;
         var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
         using var selection = BeginSubtitleRead();
@@ -5275,11 +5288,11 @@ public partial class PlayerService : IDisposable
         Uri url;
         lock (_subtitleTrackStateLock)
         {
-            if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return true;
+            if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
             var pair = manager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
             if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var parsed) ||
                 parsed.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, parsed, track.Codec) == null)
-                return true;
+                return SubtitlePrefetchOutcome.Fallback;
             url = parsed;
             generation = _subtitleSidecarGeneration;
         }
@@ -5309,32 +5322,32 @@ public partial class PlayerService : IDisposable
         string? path = null;
         try
         {
-            if (!CurrentOwner()) return false;
+            if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
             // Same URL mpv would request; never attach account Authorization
             // to server-advertised CDN/worker sidecars.
             var read = await SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url, track.Codec, bounded.Token);
-            if (!CurrentOwner()) return false;
-            if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return false;
-            if (read.Outcome == SubtitleSidecarReadOutcome.Error) return false;
-            if (read.Outcome == SubtitleSidecarReadOutcome.Fallback) return true;
+            if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Error) return SubtitlePrefetchOutcome.Error;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Fallback) return SubtitlePrefetchOutcome.Fallback;
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + read.Extension);
             await File.WriteAllBytesAsync(path, read.Bytes!, bounded.Token);
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             {
-                if (generation != _subtitleSidecarGeneration || !CurrentOwner()) return false;
-                if (_prefetchedSubtitleFiles.ContainsKey(track.Index)) return true;
+                if (generation != _subtitleSidecarGeneration || !CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+                if (_prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
                 _prefetchedSubtitleFiles[track.Index] = path;
                 _subtitleSyncFiles.Add(path);
                 path = null;
             }
-            return true;
+            return SubtitlePrefetchOutcome.Ready;
         }
-        catch (OperationCanceledException) { return false; }
+        catch (OperationCanceledException) { return SubtitlePrefetchOutcome.Retired; }
         catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException)
         {
             LogToFile("state_trace.txt", $"Subtitle sidecar prefetch skipped: {ex.GetType().Name}");
-            return false;
+            return CurrentOwner() ? SubtitlePrefetchOutcome.Error : SubtitlePrefetchOutcome.Retired;
         }
         finally
         {
