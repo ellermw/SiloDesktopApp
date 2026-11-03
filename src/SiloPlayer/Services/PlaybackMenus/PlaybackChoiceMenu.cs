@@ -32,6 +32,10 @@ internal class PlaybackChoiceMenu
     private readonly FrameworkElement? _footer;
     private readonly Func<PlaybackMenuChoice, FrameworkElement?>? _leadingContent;
     private int _footerIndex = -1;
+    private bool _keepSelectionVisible = true;
+    private bool _layoutQueued;
+    private bool _placementPending;
+    private readonly PointerEventHandler _wheelHandler;
     private readonly TaskCompletionSource _loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Action _dismiss;
     private readonly DispatcherQueueTimer _ownerWatch;
@@ -89,6 +93,10 @@ internal class PlaybackChoiceMenu
         _root.Loaded += OnLoaded;
         _root.PreviewKeyDown += OnKeyDown;
         _list.ItemClick += OnItemClick;
+        _list.SizeChanged += OnListSizeChanged;
+        _wheelHandler = OnListPointerWheel;
+        _list.AddHandler(UIElement.PointerWheelChangedEvent, _wheelHandler, true);
+        if (_footer != null) _footer.SizeChanged += OnFooterSizeChanged;
         _window.Activated += OnActivated;
         _window.Closed += OnClosed;
         _ownerWatch = _root.DispatcherQueue.CreateTimer();
@@ -115,6 +123,9 @@ internal class PlaybackChoiceMenu
             if (choice.Metadata.Length > 0)
                 copy.Children.Add(new TextBlock { Text = choice.Metadata, Opacity = .7, TextWrapping = TextWrapping.Wrap,
                     MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 });
+            if (!choice.IsEnabled && choice.DisabledReason.Length > 0)
+                copy.Children.Add(new TextBlock { Text = choice.DisabledReason, FontSize = 12,
+                    TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis });
             var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
             foreach (var text in choice.Badges.Where(s => s.Length > 0))
                 badges.Children.Add(new Border
@@ -124,7 +135,7 @@ internal class PlaybackChoiceMenu
                     Child = new TextBlock { Text = text, FontSize = 11 },
                 });
             copy.Children.Add(badges);
-            var row = new Grid { ColumnSpacing = 8 };
+            var row = new Grid { ColumnSpacing = 8, Opacity = choice.IsEnabled ? 1 : .55 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             if (_leadingContent?.Invoke(choice) is { } leading)
@@ -139,7 +150,7 @@ internal class PlaybackChoiceMenu
             Grid.SetColumn(check, 1); row.Children.Add(check);
             var item = new ListViewItem { Content = row, Tag = choice.Id, IsEnabled = choice.IsEnabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(item, string.Join(", ", new[] { choice.Title, choice.Metadata, string.Join(", ", choice.Badges),
-                choice.IsCurrent ? "Current track" : "", choice.IsPending ? "Pending" : "", choice.DisabledReason }.Where(s => s.Length > 0)));
+                choice.IsCurrent ? "Current selection" : "", choice.IsPending ? "Pending" : "", choice.DisabledReason }.Where(s => s.Length > 0)));
             ToolTipService.SetToolTip(item, AutomationProperties.GetName(item));
             item.Loaded += OnRowLoaded;
             return item;
@@ -178,6 +189,7 @@ internal class PlaybackChoiceMenu
             _list.SelectedIndex = Math.Max(0, choices.ToList().FindIndex(choice => choice.Id == selected));
             if (_shown) ScrollSelectionIntoView();
         }
+        if (_shown) QueueLayout(placement: true);
     }
 
     internal async Task ShowAsync()
@@ -205,7 +217,9 @@ internal class PlaybackChoiceMenu
     {
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         _applyTypography?.Invoke(_root);
-        var selected = Math.Max(0, _choices.ToList().FindIndex(c => c.IsCurrent));
+        var selected = _choices.ToList().FindIndex(c => c.IsCurrent && c.IsEnabled);
+        if (selected < 0) selected = _choices.ToList().FindIndex(c => c.IsEnabled);
+        selected = Math.Max(0, selected);
         _list.SelectedIndex = selected;
         ScrollSelectionIntoView();
         if (_focusOnLoad && GetForegroundWindow() == Hwnd && _list.Items[selected] is ListViewItem item)
@@ -227,7 +241,27 @@ internal class PlaybackChoiceMenu
     private void OnOwnerChanged()
     {
         if (_owner.Hwnd == IntPtr.Zero || !_isCurrent() || !IsWindowVisible(_owner.Hwnd)) Close(PlaybackMenuCloseReason.OwnerRetired);
-        else Position();
+        else { Position(); QueueLayout(); }
+    }
+
+    private void OnListSizeChanged(object sender, SizeChangedEventArgs args) => QueueLayout();
+    private void OnFooterSizeChanged(object sender, SizeChangedEventArgs args) => QueueLayout(placement: true);
+    private void OnListPointerWheel(object sender, PointerRoutedEventArgs args) => _keepSelectionVisible = false;
+
+    private void QueueLayout(bool placement = false)
+    {
+        if (_finished || !_shown) return;
+        _placementPending |= placement;
+        if (_layoutQueued) return;
+        _layoutQueued = true;
+        if (!_root.DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            _layoutQueued = false;
+            if (_finished || !_isCurrent()) return;
+            var reposition = _placementPending; _placementPending = false;
+            if (reposition) Position();
+            if (_keepSelectionVisible && _footerIndex < 0) ScrollSelectionIntoView();
+        })) _layoutQueued = false;
     }
 
     private void OnOwnerWatch(DispatcherQueueTimer sender, object args)
@@ -276,6 +310,7 @@ internal class PlaybackChoiceMenu
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         var choice = _choices.FirstOrDefault(choice => choice.Id == id);
         if (choice == null || !choice.IsEnabled) return;
+        _keepSelectionVisible = true;
         if (choice.CloseOnInvoke) Close(PlaybackMenuCloseReason.Selection);
         _selected(id);
     }
@@ -303,6 +338,7 @@ internal class PlaybackChoiceMenu
     {
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         if (action == "cancel") { Close(PlaybackMenuCloseReason.Cancel); return; }
+        if (action is "home" or "end" or "up" or "left" or "down" or "right") _keepSelectionVisible = true;
         if (action == "activate")
         {
             if (_footerIndex >= 0)
@@ -369,6 +405,9 @@ internal class PlaybackChoiceMenu
         _owner.SurfaceChanged -= OnOwnerChanged;
         _root.Loaded -= OnLoaded; _root.PreviewKeyDown -= OnKeyDown;
         _list.ItemClick -= OnItemClick;
+        _list.SizeChanged -= OnListSizeChanged;
+        _list.RemoveHandler(UIElement.PointerWheelChangedEvent, _wheelHandler);
+        if (_footer != null) _footer.SizeChanged -= OnFooterSizeChanged;
         foreach (ListViewItem row in _list.Items) row.Loaded -= OnRowLoaded;
         _window.Activated -= OnActivated; _window.Closed -= OnClosed;
         _loaded.TrySetCanceled();
