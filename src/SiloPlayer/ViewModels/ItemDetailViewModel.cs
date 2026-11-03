@@ -1174,10 +1174,12 @@ public partial class ItemDetailViewModel : ObservableObject,
                 Interlocked.Increment(ref _localStateGeneration);
                 item.SeriesId = fresh.SeriesId;
             }
-            item.SeriesTitle = fresh.SeriesTitle;
-            item.SeasonNumber = fresh.SeasonNumber;
-            item.EpisodeNumber = fresh.EpisodeNumber;
-            item.IsSpecials = fresh.IsSpecials;
+            // Omitted legacy identity fields must not erase the mounted breadcrumb
+            // or numbering. Explicit zero/false values are still supplied metadata.
+            if (fresh.SeriesTitle != null) item.SeriesTitle = fresh.SeriesTitle;
+            if (fresh.SeasonNumber.HasValue) item.SeasonNumber = fresh.SeasonNumber;
+            if (fresh.EpisodeNumber.HasValue) item.EpisodeNumber = fresh.EpisodeNumber;
+            if (fresh.IsSpecials.HasValue) item.IsSpecials = fresh.IsSpecials;
             item.FolderPaths = fresh.FolderPaths;
             MetadataRefreshErrorMessage = null;
             OnPropertyChanged(nameof(Item));

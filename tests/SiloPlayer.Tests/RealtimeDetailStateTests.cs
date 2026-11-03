@@ -1204,6 +1204,55 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("series", false, false)]
+    [InlineData("series", false, true)]
+    [InlineData("series", true, false)]
+    [InlineData("series", true, true)]
+    [InlineData("season", false, false)]
+    [InlineData("season", false, true)]
+    [InlineData("season", true, false)]
+    [InlineData("season", true, true)]
+    public async Task MetadataReloadPreservesOmittedIdentityAndAdoptsSuppliedValues(string type, bool supplied, bool afterMatch)
+    {
+        using var scope = new Scope(type);
+        var mounted = scope.Vm.Item!;
+        mounted.SeriesId = "known-parent";
+        mounted.SeriesTitle = "Known parent";
+        mounted.SeasonNumber = 2;
+        mounted.EpisodeNumber = 3;
+        mounted.IsSpecials = true;
+        var body = new Dictionary<string, object?>
+        {
+            ["content_id"] = mounted.ContentId, ["type"] = type, ["title"] = "Edited title"
+        };
+        if (supplied)
+        {
+            body["series_title"] = "Edited parent";
+            body["season_number"] = 0;
+            body["episode_number"] = 0;
+            body["is_specials"] = false;
+        }
+        scope.OverrideResponse = request => request.RequestUri!.AbsolutePath == "/api/v2/catalog/items/" + mounted.ContentId
+            ? new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") }
+            : null;
+        var notified = false;
+        scope.Vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(scope.Vm.Item)) notified = true; };
+
+        if (afterMatch) await scope.Vm.ReloadAfterMatchAsync(mounted.ContentId);
+        else await scope.Vm.ReloadAsync(mounted.ContentId);
+
+        Assert.True(notified);
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Equal("Edited title", mounted.Title);
+        Assert.Equal("known-parent", mounted.SeriesId);
+        Assert.Equal(supplied ? "Edited parent" : "Known parent", mounted.SeriesTitle);
+        Assert.Equal(supplied ? 0 : 2, mounted.SeasonNumber);
+        Assert.Equal(supplied ? 0 : 3, mounted.EpisodeNumber);
+        Assert.Equal(!supplied, mounted.IsSpecials);
+        Assert.Null(scope.Vm.MetadataRefreshErrorMessage);
+    }
+
+    [Theory]
     [InlineData("series")]
     [InlineData("season")]
     public async Task MetadataReloadRetainsRowsSelectionAndStateForTheNextRemoteEvent(string type)

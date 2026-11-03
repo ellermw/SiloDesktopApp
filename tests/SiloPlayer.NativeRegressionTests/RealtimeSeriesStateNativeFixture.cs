@@ -421,6 +421,17 @@ internal static class RealtimeSeriesStateNativeFixture
             await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(["season"]), new HashSet<string>()));
             await UntilAsync(() => SeriesLink().Tag as string == "newer-series");
             Check(vm.Item!.SeriesId == "newer-series", "A retained sweep did not adopt the fresh parent identity.");
+            // Legacy detail responses omit both parent fields. Metadata editing
+            // and same-ID Match must keep the mounted parent link navigable.
+            wire.ParentSeries = null;
+            foreach (var afterMatch in new[] { false, true })
+            {
+                if (afterMatch) await vm.ReloadAfterMatchAsync("season");
+                else await vm.ReloadAsync("season");
+                Call(page, "UpdateUI");
+                Check(SeriesLink().Tag as string == "newer-series" && ((TextBlock)SeriesLink().Content).Text == "Matched series",
+                    "A legacy metadata reload dropped or changed the mounted parent-series breadcrumb.");
+            }
         }
         finally
         {
