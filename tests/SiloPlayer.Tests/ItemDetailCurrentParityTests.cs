@@ -473,7 +473,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("navigationToken", page);
         Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
         Assert.Contains("PlayButtonText.Text = \"Play First Episode\"", page);
-        Assert.Contains("_playableContentId = firstEpisode?.ContentId", page);
+        // Explicit server targets (including null) take precedence. Only
+        // canonical rows from this season may supply the legacy first episode.
+        Assert.Contains("_playableContentId = item.HasAuthoritativePlayTarget ? item.PlayContentId", page);
+        Assert.Contains("ViewModel.EpisodesSeasonContentId == item.ContentId ? ViewModel.Episodes.FirstOrDefault()?.ContentId : null", page);
         Assert.Contains("No playable episodes found for this season.", page);
         Assert.DoesNotContain("NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true", page);
         Assert.Contains("BuildSeasonBreadcrumb(item, seasonLabel)", page);
@@ -513,7 +516,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("catch (OperationCanceledException)", viewModel);
         Assert.Contains("var contentId = Item?.ContentId;", viewModel);
         Assert.Contains("if (Item?.ContentId != contentId) return;", viewModel);
-        Assert.Contains("Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating)", viewModel);
+        Assert.Contains("MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, context)", viewModel);
+        Assert.Contains("if (!Current()) _suppressedViewerFeedback = message;", viewModel);
+        Assert.Contains("WeakReferenceMessenger.Default.Send(message)", viewModel);
         Assert.Contains("seriesId, context: context)", viewModel);
         Assert.Contains("bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)", viewModel);
         Assert.Contains("if (Current())\n                IsWatched = wasWatched;", viewModel.Replace("\r\n", "\n"));
@@ -746,12 +751,16 @@ public sealed class ItemDetailCurrentParityTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var loadStart = page.IndexOf("await ViewModel.LoadSeasonsCommand.ExecuteAsync(null);", StringComparison.Ordinal);
-        var cardPaint = page.IndexOf("BuildSeasonCards();", loadStart, StringComparison.Ordinal);
+        var cardPaint = page.IndexOf("await UpdateSeriesLayoutAsync(contentId, navigationToken, reloadEpisodes: true);", loadStart, StringComparison.Ordinal);
         var targetAction = page.IndexOf("await ApplySeriesActionAsync();", loadStart, StringComparison.Ordinal);
 
         Assert.True(loadStart >= 0);
         Assert.True(cardPaint > loadStart);
         Assert.True(targetAction > cardPaint);
+        var layoutStart = page.IndexOf("private Task UpdateSeriesLayoutAsync(", StringComparison.Ordinal);
+        var layoutEnd = page.IndexOf("private async Task<bool> ShowSingleSeasonEpisodesAsync(", layoutStart, StringComparison.Ordinal);
+        Assert.True(layoutStart >= 0 && layoutEnd > layoutStart);
+        Assert.Contains("if (!ViewModel.SeasonsLoadFailed) BuildSeasonCards();", page[layoutStart..layoutEnd]);
 
         // The wrapper also supports omitted legacy targets, but an explicit
         // detail target must still be applied before any companion read/await.

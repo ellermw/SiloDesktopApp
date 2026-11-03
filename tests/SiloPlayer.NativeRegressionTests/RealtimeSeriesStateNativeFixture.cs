@@ -197,6 +197,23 @@ internal static class RealtimeSeriesStateNativeFixture
                     refresh.CatchUp(client.CaptureContext());
                     await UntilAsync(() => !vm.IsFavorite && favoriteIcon.Glyph == outlineHeart);
                     Check(page.CanPreserveOnReconnect, "A healthy mounted detail should survive reconnect.");
+                    Call(page, "UpdateUI");
+                    if (type == "season") Call(page, "ApplySeasonAction");
+                    else await (Task)typeof(ItemDetailPage).GetMethod("ApplySeriesActionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
+                    var expectedPlayLabel = type == "season" ? "Play First Episode" : SeriesPrimaryActionResolver.ResolveDetail(vm.Item).Label;
+                    var watchReads = wire.WatchReads;
+                    typeof(ItemDetailPage).GetMethod("OnPlayerStateChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(page, [PlayerState.Idle]);
+                    var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    page.DispatcherQueue.TryEnqueue(() => dispatched.TrySetResult());
+                    await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>([type]), new HashSet<string>(), CatchUp: true));
+                    Check(wire.WatchReads == watchReads, "Closing playback fetched episode /watch controls for a container.");
+                    Check(((TextBlock)page.FindName("PlayButtonText")).Text == expectedPlayLabel,
+                        "Closing playback overwrote the container's primary action label.");
+                    foreach (var control in new[] { "VersionDropdownButton", "AudioTracksButton", "SubtitlesPopoverButton" })
+                        Check(((UIElement)page.FindName(control)).Visibility == Visibility.Collapsed,
+                            "Closing playback exposed a leaf-only selector on the mounted container: " + control);
                     foreach (var metadataAction in new[] { "translation", "edit" })
                     {
                         var retainedSeasons = vm.Seasons.ToArray();
@@ -287,6 +304,8 @@ internal static class RealtimeSeriesStateNativeFixture
             await VerifyCardArtworkRecoveryAsync(parent, wire, client);
             await VerifyMatchedParentBreadcrumbAsync(parent, wire, client);
             await VerifyRemappedSeasonRowsAsync(parent, wire, client);
+            await VerifyInitialSeasonRemapAsync(parent, wire, client);
+            await VerifyPrimarySeasonReadOwnershipAsync(parent, wire);
             foreach (var type in new[] { "series", "season" })
             {
                 await VerifyTranslationReconnectAsync(parent, wire, client, type);
@@ -319,6 +338,110 @@ internal static class RealtimeSeriesStateNativeFixture
             }
         }
         finally { slot.SetValue(null, original); }
+    }
+
+    private static async Task VerifyInitialSeasonRemapAsync(StackPanel parent, Wire wire, SiloApiClient client)
+    {
+        // Use real navigation: a direct LoadSeasonEpisodesAsync call alone
+        // cannot exercise OnNavigatedTo's fatal-error and remaining-setup paths.
+        var frame = new Frame { Width = 900, Height = 720 };
+        var initialRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remappedRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.ParentSeries = "old-series"; wire.OmitTarget = true;
+        wire.HeldCompanion = "episodes"; wire.ReleaseCompanion = initialRelease;
+        wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        parent.Children.Add(frame);
+        ItemDetailPage? page = null;
+        try
+        {
+            Check(frame.Navigate(typeof(ItemDetailPage), "season"), "Initial season navigation failed.");
+            page = (ItemDetailPage)frame.Content;
+            await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(page.ViewModel.Episodes.Count == 0, "The initial episode read was not held.");
+            wire.ParentSeries = "matched-series";
+            wire.ReleaseCompanion = remappedRelease;
+            wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            await page.ViewModel.RefreshMediaStateAsync(new(client.CaptureContext(),
+                new HashSet<string>(["season"]), new HashSet<string>()));
+            await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            wire.HeldCompanion = null;
+            remappedRelease.TrySetResult();
+            await UntilAsync(() => page.ViewModel.Episodes.Count == 2 && !page.ViewModel.IsEpisodesLoading);
+            initialRelease.TrySetResult();
+            await UntilAsync(() => (int)typeof(ItemDetailPage).GetField("_seasonEpisodesLoads", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)! == 0);
+            await Task.Delay(100); // Drain the retired navigation continuation and its queued paints.
+            Check(page.ViewModel.Item!.SeriesId == "matched-series" && page.ViewModel.EpisodesSeasonContentId == "season",
+                "The remap reload did not retain the new parent's canonical rows.");
+            Check(((UIElement)page.FindName("SeasonEpisodesFatalError")).Visibility == Visibility.Collapsed
+                && ((UIElement)page.FindName("ContentScroll")).Visibility == Visibility.Visible,
+                "A retired initial episode read covered a valid remapped season with a fatal error.");
+            Check(((UIElement)page.FindName("EpisodesPanel")).Visibility == Visibility.Visible
+                && ((UIElement)page.FindName("EpisodesLoadingSkeleton")).Visibility == Visibility.Collapsed
+                && ((Button)page.FindName("PrimaryPlayButton")).IsEnabled
+                && ((TextBlock)page.FindName("PlayButtonText")).Text == "Play First Episode",
+                "Initial season navigation did not finish setup after yielding to the remap reload.");
+        }
+        finally
+        {
+            wire.ParentSeries = null; wire.OmitTarget = false; wire.HeldCompanion = null;
+            initialRelease.TrySetResult(); remappedRelease.TrySetResult();
+            frame.Navigate(typeof(Page)); frame.BackStack.Clear(); parent.Children.Remove(frame);
+            if (page != null) WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel);
+        }
+    }
+
+    private static async Task VerifyPrimarySeasonReadOwnershipAsync(StackPanel parent, Wire wire)
+    {
+        foreach (var olderFails in new[] { false, true })
+        {
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            var vm = page.ViewModel;
+            using var navigation = new CancellationTokenSource();
+            vm.Item = new() { ContentId = "series", Type = "series", Title = "Primary read ownership" };
+            vm.IsSeries = true;
+            var first = new Season { ContentId = "season", SeasonNumber = 1, EpisodeCount = 2,
+                UserData = new() { UnplayedCount = 2 } };
+            vm.Seasons.Add(first);
+            vm.Seasons.Add(new() { ContentId = "second-season", SeasonNumber = 2, EpisodeCount = 2,
+                UserData = new() { UnplayedCount = 2 } });
+            Set(page, "_currentContentId", "series"); Set(page, "_navigationCts", navigation);
+            parent.Children.Add(page);
+            var apply = typeof(ItemDetailPage).GetMethod("ApplySeriesActionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var olderRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var newerRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.HeldCompanion = "episodes"; wire.EpisodeSeasonNumber = 1;
+            wire.EpisodeResponseStatus = olderFails ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
+            wire.ReleaseCompanion = olderRelease;
+            wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                var older = (Task)apply.Invoke(page, null)!;
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                // Keep the first season in membership: only the current primary
+                // target and generation can distinguish the retired response.
+                first.UserData!.Played = true; first.UserData.WatchedCount = 2; first.UserData.UnplayedCount = 0;
+                wire.EpisodeSeasonNumber = 2; wire.EpisodeResponseStatus = HttpStatusCode.OK;
+                wire.ReleaseCompanion = newerRelease;
+                wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var newer = (Task)apply.Invoke(page, null)!;
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                newerRelease.TrySetResult(); await newer.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(vm.EpisodesSeasonContentId == "second-season" && vm.Episodes.Count == 2,
+                    "The newer primary-season read did not commit.");
+                var retainedRows = vm.Episodes.ToArray();
+                olderRelease.TrySetResult(); await older.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(vm.EpisodesSeasonContentId == "second-season" && retainedRows.SequenceEqual(vm.Episodes)
+                    && vm.Episodes.All(episode => episode.SeasonNumber == 2)
+                    && ((Button)page.FindName("PrimaryPlayButton")).IsEnabled,
+                    "A retired primary-season response or failure overwrote the current episode grid/action.");
+            }
+            finally
+            {
+                wire.HeldCompanion = null; wire.EpisodeSeasonNumber = 1; wire.EpisodeResponseStatus = HttpStatusCode.OK;
+                olderRelease.TrySetResult(); newerRelease.TrySetResult(); navigation.Cancel();
+                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+            }
+        }
     }
 
     private static async Task VerifySeriesLayoutRefreshAsync(StackPanel parent, Wire wire, SiloApiClient client)
@@ -999,6 +1122,9 @@ internal static class RealtimeSeriesStateNativeFixture
         internal string? Target = "new-target";
         internal bool OmitTarget;
         internal bool FailEpisodes;
+        internal int EpisodeSeasonNumber = 1;
+        internal HttpStatusCode EpisodeResponseStatus = HttpStatusCode.OK;
+        internal int WatchReads;
         internal bool Favorite;
         internal string? ParentSeries;
         internal bool LoadedPlayed;
@@ -1014,6 +1140,7 @@ internal static class RealtimeSeriesStateNativeFixture
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path.StartsWith("/api/v2/watch/", StringComparison.Ordinal)) ++WatchReads;
             var translate = request.Method == HttpMethod.Post && path is "/api/v2/catalog/items/season/translate-description" or "/api/v2/catalog/items/series/translate-description";
             if (request.RequestUri.Host != "realtime-native.invalid" || (request.Method != HttpMethod.Get && !translate))
                 throw new InvalidOperationException("Only synthetic fixture reads and episode translations are authorized.");
@@ -1061,8 +1188,8 @@ internal static class RealtimeSeriesStateNativeFixture
             object body = path == "/api/v2/capabilities/metadata-ai" ? new { state = "available", allowed = true, on_view = TranslationOnView } :
                 path.EndsWith("/episodes") && EmptyEpisodes ? new { items = Array.Empty<object>() } :
                 path.EndsWith("/episodes") ? new { items = new[] {
-                    new { content_id = "sibling", season_number = 1, user_data = new { played = false, position_seconds = 31d, duration_seconds = 1200d } },
-                    new { content_id = "loaded", season_number = 1, user_data = new { played = LoadedPlayed, position_seconds = LoadedPosition, duration_seconds = 1200d } } } } :
+                    new { content_id = "sibling", season_number = EpisodeSeasonNumber, user_data = new { played = false, position_seconds = 31d, duration_seconds = 1200d } },
+                    new { content_id = "loaded", season_number = EpisodeSeasonNumber, user_data = new { played = LoadedPlayed, position_seconds = LoadedPosition, duration_seconds = 1200d } } } } :
                 path.StartsWith("/api/v2/catalog/items/") ?
                 new Dictionary<string, object?> { ["content_id"] = path.Split('/').Last(), ["type"] = path.Split('/').Last(),
                     ["play_content_id"] = Target, ["play_season_number"] = 1, ["episode_count"] = 6, ["season_count"] = SeasonCount,
@@ -1076,7 +1203,8 @@ internal static class RealtimeSeriesStateNativeFixture
             if (OmitTarget && body is Dictionary<string, object?> detail) detail.Remove("play_content_id");
             if (ParentSeries != null && body is Dictionary<string, object?> parentDetail)
             { parentDetail["series_id"] = ParentSeries; parentDetail["series_title"] = "Matched series"; }
-            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+            var response = new HttpResponseMessage(path.EndsWith("/episodes") ? EpisodeResponseStatus : HttpStatusCode.OK)
+                { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
             if (HeldCompanion is { } companion && path.EndsWith("/" + companion) && ReleaseCompanion is { } release)
             {
                 CompanionStarted?.TrySetResult();

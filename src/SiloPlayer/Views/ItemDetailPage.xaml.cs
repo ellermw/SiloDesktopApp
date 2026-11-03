@@ -31,7 +31,7 @@ public sealed partial class ItemDetailPage : Page
         && (ViewModel.Item.Type is "series" or "season")
         && ViewModel.FailureKind == DetailFailureKind.None
         && !ViewModel.IsLoading && !ViewModel.IsMetadataRefreshing && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
-        && _seasonEpisodesLoads == 0
+        && _seasonEpisodesLoads == 0 && _seriesPrimaryEpisodesTask is not { IsCompleted: false }
         && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
         && !_isTranslatingOverview && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
         && _detailArtworkLoads == 0 && !_detailArtworkInterrupted
@@ -46,6 +46,10 @@ public sealed partial class ItemDetailPage : Page
     private Task<bool>? _singleSeasonEpisodesTask;
     private string? _singleSeasonEpisodesContentId;
     private long _seasonParentPlaybackRevision;
+    private long _seriesPrimaryEpisodesGeneration;
+    private Task? _seriesPrimaryEpisodesTask;
+    private string? _seriesPrimaryEpisodesContentId;
+    private Func<bool>? _seriesPrimaryEpisodesCurrent;
     private CancellationTokenSource? _translationCts;
     private CancellationTokenSource? _episodesTranslationCts;
     private string? _episodesTranslationKey;
@@ -1022,7 +1026,13 @@ public sealed partial class ItemDetailPage : Page
             DispatcherQueue?.TryEnqueue(() =>
             {
                 if (_navigationCts is not { IsCancellationRequested: false }) return;
-                if (_playableContentId != null)
+                // A container's playable ID names an episode, not this page's
+                // owner. Its /watch controls must never be painted on the container.
+                if (ViewModel.Item?.Type is "series")
+                    _ = ApplySeriesActionAsync();
+                else if (ViewModel.Item?.Type is "season")
+                    ApplySeasonAction();
+                else if (_playableContentId != null)
                     _ = LoadWatchDetailAsync(_playableContentId);
                 _ = ViewModel.RefreshWatchedStateAsync(
                     _playerService?.PendingProgressSave ?? Task.CompletedTask,
@@ -1192,6 +1202,8 @@ public sealed partial class ItemDetailPage : Page
                 EpisodesLoadingSkeleton.Visibility = Visibility.Visible;
                 EpisodesLoadError.Visibility = Visibility.Collapsed;
                 EpisodesPanel.Visibility = Visibility.Collapsed;
+                var episodesParentId = ViewModel.Item.SeriesId;
+                var episodesParentRevision = ViewModel.ParentPlaybackRevision;
                 var episodesLoaded = await LoadSeasonEpisodesAsync(
                     ViewModel.Item.ContentId,
                     ViewModel.Item.SeasonNumber ?? 0,
@@ -1200,14 +1212,20 @@ public sealed partial class ItemDetailPage : Page
                     return;
                 if (navigationToken.IsCancellationRequested)
                     return;
-                EpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
-                if (!episodesLoaded)
+                // A parent remap retires this read, but not navigation. The
+                // remap reload owns the skeleton/rows; still finish page setup.
+                if (ViewModel.Item.SeriesId == episodesParentId
+                    && ViewModel.ParentPlaybackRevision == episodesParentRevision)
                 {
-                    ShowSeasonEpisodesFatalError(ViewModel.Item);
-                    return;
+                    EpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
+                    if (!episodesLoaded)
+                    {
+                        ShowSeasonEpisodesFatalError(ViewModel.Item);
+                        return;
+                    }
+                    EpisodesLoadError.Visibility = Visibility.Collapsed;
+                    EpisodesPanel.Visibility = Visibility.Visible;
                 }
-                EpisodesLoadError.Visibility = Visibility.Collapsed;
-                EpisodesPanel.Visibility = Visibility.Visible;
             }
 
             _ = ConfigureOnViewTranslationAsync(ViewModel.Item);
@@ -1278,7 +1296,8 @@ public sealed partial class ItemDetailPage : Page
                 // A season is a collection, not a playable catalog leaf. The
                 // current WebUI targets its first episode and labels the action
                 // "Play First Episode". Never request /watch/{season-id}.
-                BuildEpisodeRows();
+                // A remap reload may still own an empty grid and its skeleton.
+                if (!ViewModel.IsEpisodesLoading) BuildEpisodeRows();
                 ApplySeasonAction();
                 VersionDropdownButton.Visibility = Visibility.Collapsed;
                 VersionSeparator.Visibility = Visibility.Collapsed;
@@ -6997,6 +7016,8 @@ public sealed partial class ItemDetailPage : Page
             && ViewModel.ParentPlaybackRevision == parentRevision
             && ViewModel.LibraryId == libraryId && catalog.IsCurrentContext(context);
         ViewModel.IsEpisodesLoading = true;
+        ContentScroll.Visibility = Visibility.Visible;
+        SeasonEpisodesFatalError.Visibility = Visibility.Collapsed;
         EpisodesSection.Visibility = Visibility.Visible;
         EpisodesLoadingSkeleton.Visibility = Visibility.Visible;
         EpisodesEmptyState.Visibility = Visibility.Collapsed;
@@ -8617,39 +8638,60 @@ public sealed partial class ItemDetailPage : Page
         catch { }
     }
 
-    private async Task LoadSeriesPrimaryEpisodesAsync(string seasonContentId)
+    private Task LoadSeriesPrimaryEpisodesAsync(string seasonContentId)
     {
+        // Share repeated paints of one target, but let a new primary season
+        // supersede it without waiting for the old transport to complete.
+        if (_seriesPrimaryEpisodesContentId == seasonContentId
+            && _seriesPrimaryEpisodesTask is { IsCompleted: false }
+            && _seriesPrimaryEpisodesCurrent?.Invoke() == true)
+            return _seriesPrimaryEpisodesTask;
+
+        var generation = ++_seriesPrimaryEpisodesGeneration;
         var item = ViewModel.Item;
         var parentId = item?.SeriesId;
+        var parentRevision = ViewModel.ParentPlaybackRevision;
         var libraryId = ViewModel.LibraryId;
-        var token = _navigationCts?.Token ?? CancellationToken.None;
-        bool Current() => item != null && ReferenceEquals(ViewModel.Item, item) && item.SeriesId == parentId
-            && ViewModel.Seasons.Any(season => season.ContentId == seasonContentId)
-            && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == libraryId && !token.IsCancellationRequested;
-        try
+        var navigation = _navigationCts;
+        var token = navigation?.Token ?? CancellationToken.None;
+        var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalogApi.CaptureContext();
+        bool Current() => generation == _seriesPrimaryEpisodesGeneration
+            && item is { Type: "series", HasAuthoritativePlayTarget: false }
+            && ReferenceEquals(ViewModel.Item, item) && item.SeriesId == parentId
+            && ViewModel.ParentPlaybackRevision == parentRevision
+            && SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons).TargetSeasonId == seasonContentId
+            && ReferenceEquals(_navigationCts, navigation) && IsCurrentDetail(item.ContentId)
+            && ViewModel.LibraryId == libraryId && !token.IsCancellationRequested && catalogApi.IsCurrentContext(context);
+        _seriesPrimaryEpisodesContentId = seasonContentId;
+        _seriesPrimaryEpisodesCurrent = Current;
+        return _seriesPrimaryEpisodesTask = LoadAsync();
+
+        async Task LoadAsync()
         {
-            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
-            var context = catalogApi.CaptureContext();
-            EpisodesResponse response;
-            var attempt = 0;
-            while (true)
+            try
             {
-                var revision = ViewModel.WatchedStateRevision;
-                var remoteRevision = ViewModel.RemoteStateRevision;
-                response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, token);
-                if (!Current() || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return;
-                if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                EpisodesResponse response;
+                var attempt = 0;
+                while (true)
+                {
+                    var revision = ViewModel.WatchedStateRevision;
+                    var remoteRevision = ViewModel.RemoteStateRevision;
+                    response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, token);
+                    if (!Current()) return;
+                    if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                }
+                ViewModel.EpisodesSeasonContentId = seasonContentId;
+                ViewModel.Episodes.Clear();
+                foreach (var episode in response.Episodes)
+                    ViewModel.Episodes.Add(episode);
+                if (response.Episodes.Count > 0)
+                    ViewModel.SelectedSeasonNumber = response.Episodes[0].SeasonNumber;
             }
-            ViewModel.EpisodesSeasonContentId = seasonContentId;
-            ViewModel.Episodes.Clear();
-            foreach (var episode in response.Episodes)
-                ViewModel.Episodes.Add(episode);
-            if (response.Episodes.Count > 0)
-                ViewModel.SelectedSeasonNumber = response.Episodes[0].SeasonNumber;
-        }
-        catch
-        {
-            if (Current()) ViewModel.Episodes.Clear();
+            catch
+            {
+                if (Current()) ViewModel.Episodes.Clear();
+            }
         }
     }
 

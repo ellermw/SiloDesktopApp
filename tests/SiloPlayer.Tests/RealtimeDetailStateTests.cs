@@ -512,7 +512,15 @@ public sealed class RealtimeDetailStateTests
         var item = scope.Vm.Item!;
         var data = item.UserData;
         item.PlayContentId = "mounted-target";
-        scope.Vm.RemoteStateErrorMessage = "A viewer-state retry is pending.";
+        // Establish viewer-only retry ownership through an actual failed read;
+        // assigning the public error text alone cannot identify its scope.
+        scope.OverrideResponse = _ => Unavailable();
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(item.ContentId) with
+        {
+            ViewerStateContentIds = new HashSet<string>([item.ContentId])
+        });
+        Assert.NotNull(scope.Vm.RemoteStateErrorMessage);
+        scope.OverrideResponse = null;
         await scope.Vm.RefreshMediaStateAsync(scope.Message(item.ContentId) with
         {
             CatchUp = true, ViewerStateContentIds = new HashSet<string>([item.ContentId])
@@ -1197,19 +1205,34 @@ public sealed class RealtimeDetailStateTests
         Assert.True(scope.Vm.InWatchlist);
         Assert.Equal(4, scope.Vm.UserRating);
         Assert.Same(season, Assert.Single(scope.Vm.Seasons));
-        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        // A remap must retire the old parent's rows. The mounted page owns
+        // the canonical membership reload; the VM sweep only patches retained rows.
+        Assert.Empty(scope.Vm.Episodes);
+        Assert.Null(scope.Vm.EpisodesSeasonContentId);
+        Assert.Equal(1, scope.Vm.ParentPlaybackRevision);
         Assert.Equal(1, scope.Vm.SelectedSeasonNumber);
-        Assert.Equal("season", scope.Vm.EpisodesSeasonContentId);
-        Assert.Equal(0, episode.UserData!.PositionSeconds);
+        Assert.Equal(31, episode.UserData!.PositionSeconds);
         if (type == "series") Assert.Equal(2, season.UserData!.WatchedCount);
         Assert.Equal(2, scope.DetailReads);
-        Assert.Equal(1, scope.EpisodeReads);
+        Assert.Equal(0, scope.EpisodeReads);
         Assert.Null(scope.Vm.ErrorMessage);
         Assert.Null(scope.Vm.RemoteStateErrorMessage);
         await scope.Vm.RefreshMediaStateAsync(scope.Message("unloaded", "old-series"));
         Assert.Equal(2, scope.DetailReads);
         await scope.Vm.RefreshMediaStateAsync(scope.Message("unloaded", "matched-series"));
         Assert.Equal(3, scope.DetailReads);
+
+        // Model the page's completed canonical reload and verify subsequent
+        // state refreshes update only the new row, never the retired object.
+        var replacement = new Episode { ContentId = "sibling", SeasonNumber = 1, UserData = new() { PositionSeconds = 90 } };
+        scope.Vm.Episodes.Add(replacement);
+        scope.Vm.EpisodesSeasonContentId = "season";
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(mounted.ContentId));
+        Assert.Same(replacement, Assert.Single(scope.Vm.Episodes));
+        Assert.Equal(0, replacement.UserData!.PositionSeconds);
+        Assert.Equal(31, episode.UserData.PositionSeconds);
+        Assert.Equal(1, scope.EpisodeReads);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
     }
 
     [Theory]
@@ -1570,8 +1593,8 @@ public sealed class RealtimeDetailStateTests
                     ["user_state"] = detail.UserState == null ? null : new { is_favorite = detail.UserState.IsFavorite,
                         in_watchlist = detail.UserState.InWatchlist, not_interested = detail.UserState.NotInterested },
                     ["user_rating"] = detail.UserRating,
-                    ["user_data"] = new { watched_count = detail.UserData?.WatchedCount, unplayed_count = detail.UserData?.UnplayedCount,
-                        in_progress_count = detail.UserData?.InProgressCount, played = detail.UserData?.Played }
+                    ["user_data"] = detail.UserData == null ? null : new { watched_count = detail.UserData.WatchedCount, unplayed_count = detail.UserData.UnplayedCount,
+                        in_progress_count = detail.UserData.InProgressCount, played = detail.UserData.Played }
                 };
                 if (detail.HasAuthoritativeSeriesId) body["series_id"] = detail.SeriesId;
                 if (detail.SeriesTitle != null) body["series_title"] = detail.SeriesTitle;

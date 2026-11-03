@@ -105,6 +105,28 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (_stateRefreshActive) _localProgressRefresh.Invalidate(StateInvalidation(message));
             return;
         }
+        // A library-scoped GET bypasses the speculative cache. Keep accepted
+        // local mutations in the initial invalidation scope so its pre-write
+        // snapshot is corrected before commit, even while Item is still null.
+        if (Item == null && !ReferenceEquals(message, _suppressedWatchedFeedback)
+            && message.Kind is (MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared
+                or MediaSurfaceChangeKind.FavoriteAdded or MediaSurfaceChangeKind.FavoriteRemoved
+                or MediaSurfaceChangeKind.WatchlistAdded or MediaSurfaceChangeKind.WatchlistRemoved
+                or MediaSurfaceChangeKind.RatingChanged))
+        {
+            var invalidation = StateInvalidation(message);
+            if (message.Kind is not (MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared))
+                invalidation = invalidation with { ViewerStateContentIds = new HashSet<string>([message.ContentId]) };
+            lock (_remoteStateGate)
+            {
+                if (_stateRefreshActive && _loadCts is { IsCancellationRequested: false })
+                {
+                    _initialRemoteState = MergeState(_initialRemoteState, invalidation);
+                    ++_initialStateRevision;
+                }
+            }
+            return;
+        }
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
         {
             ApplyWatchedChange(message);

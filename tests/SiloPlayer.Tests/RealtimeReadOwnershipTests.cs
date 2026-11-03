@@ -997,6 +997,47 @@ public sealed class RealtimeReadOwnershipTests
         Assert.All(f.Wire.CatalogUris, uri => Assert.Equal("?library_id=9", uri.Query));
     }
 
+    [Theory]
+    [InlineData(MediaSurfaceChangeKind.WatchedMarked, true)]
+    [InlineData(MediaSurfaceChangeKind.WatchedCleared, false)]
+    [InlineData(MediaSurfaceChangeKind.FavoriteAdded, true)]
+    [InlineData(MediaSurfaceChangeKind.FavoriteRemoved, false)]
+    [InlineData(MediaSurfaceChangeKind.WatchlistAdded, true)]
+    [InlineData(MediaSurfaceChangeKind.WatchlistRemoved, false)]
+    [InlineData(MediaSurfaceChangeKind.RatingChanged, true)]
+    [InlineData(MediaSurfaceChangeKind.RatingChanged, false)]
+    public async Task AcceptedLocalFeedbackDuringLibraryDetailLoadCorrectsThePreWriteSnapshot(
+        MediaSurfaceChangeKind kind, bool enabled)
+    {
+        using var f = new Fixture();
+        f.Wire.DetailType = "movie";
+        f.Wire.Played = f.Wire.Favorite = f.Wire.Watchlist = !enabled;
+        f.Wire.Rating = enabled ? null : 4;
+        f.Wire.HoldDetails = true;
+        var loading = f.Vm.LoadInLibraryAsync(EpisodeA, 9);
+        var initial = await f.Wire.NextAsync();
+        Assert.Null(f.Vm.Item);
+        f.Wire.Played = f.Wire.Favorite = f.Wire.Watchlist = enabled;
+        f.Wire.Rating = enabled ? 4 : null;
+        f.Vm.Receive(new MediaSurfaceChanged(kind, EpisodeA, rating: f.Wire.Rating,
+            context: f.Client.CaptureContext()));
+        f.Wire.HoldDetails = false;
+        initial.Release();
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, f.Wire.DetailReads);
+        Assert.Equal(enabled, f.Vm.IsWatched);
+        Assert.Equal(enabled, f.Vm.Item!.UserData!.Played);
+        Assert.Equal(enabled, f.Vm.IsFavorite);
+        Assert.Equal(enabled, f.Vm.Item.UserState!.IsFavorite);
+        Assert.Equal(enabled, f.Vm.InWatchlist);
+        Assert.Equal(enabled, f.Vm.Item.UserState.InWatchlist);
+        Assert.Equal(f.Wire.Rating, f.Vm.UserRating);
+        Assert.Equal(f.Wire.Rating, f.Vm.Item.UserRating);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+        Assert.All(f.Wire.CatalogUris, uri => Assert.Equal("?library_id=9", uri.Query));
+    }
+
     [Fact]
     public async Task RemoteChangeDuringInitialSeasonsReadRetriesStaleCounts()
     {
@@ -1085,6 +1126,10 @@ public sealed class RealtimeReadOwnershipTests
             f.Vm.Item!.Type = "season";
             f.Vm.Item.ContentId = "series:review-S02";
             f.Vm.Item.SeriesId = Series;
+            // Keep backend identity aligned with the mounted season. An
+            // explicit null series_id would intentionally retire its rows.
+            f.Wire.DetailType = type;
+            f.Wire.DetailSeriesId = Series;
         }
         f.Vm.Item!.PlayContentId = namedSeries ? EpisodeA : EpisodeB;
         f.Wire.Count = 1; f.Wire.HoldDetails = true;
