@@ -10,14 +10,25 @@ public partial class CatalogApi
         catch (OperationCanceledException) { throw; }
         catch { return false; }
     }
-    public async Task<bool> BoxSetsEnabledAsync(int? libraryId, CancellationToken ct = default)
+    public async Task<bool> BoxSetsEnabledAsync(int? libraryId, CancellationToken ct = default, bool throwOnCapabilityFailure = false)
+    {
+        if (libraryId is <= 0) return false;
+        var libraries = await GetBoxSetLibraryIdsAsync(ct, throwOnCapabilityFailure);
+        return libraryId.HasValue ? libraries.Contains(libraryId.Value) : libraries.Count > 0;
+    }
+    public async Task<IReadOnlySet<int>> GetBoxSetLibraryIdsAsync(CancellationToken ct = default, bool throwOnCapabilityFailure = false)
     {
         var context = client.CaptureContext();
-        if (!await SupportsBoxSetsAsync(ct)) return false;
-        var libraries = await client.SendRequestAsync<BrowseCollection<Library>>(context, HttpMethod.Get, "/api/v2/user/libraries", null, ct);
+        bool supported;
+        try { supported = (await GetSearchRuleCapabilitiesAsync(context, ct)).BoxSets; }
+        catch (OperationCanceledException) { throw; }
+        catch (ApiException ex) when (ex.StatusCode == 404) { return new HashSet<int>(); }
+        catch when (!throwOnCapabilityFailure) { return new HashSet<int>(); }
+        if (!supported) return new HashSet<int>();
+        var libraries = await client.SendRequestAsync<BrowseCollection<Library>>(context, HttpMethod.Get, "/api/v2/user/libraries?include_hidden=true", null, ct);
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Box-set library authority changed.", ct);
-        return libraries.Items.Any(x => x.Enabled && x.BoxSetsEnabled && (!libraryId.HasValue || x.Id == libraryId));
+        return libraries.Items.Where(x => x.Id > 0 && x.Enabled && x.BoxSetsEnabled).Select(x => x.Id).ToHashSet();
     }
     public Task<BoxSetDetail> GetBoxSetAsync(string id, string libraryId, CancellationToken ct = default)
     {

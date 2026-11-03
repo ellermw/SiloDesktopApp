@@ -30,3 +30,13 @@ Modify LibraryGridCard.cs and LibraryPage group refresh handling; inspect poster
 - [x] Commit verified local source and record exact hashes/red-green/limits in external grouped-library-report.md; parent owns review and remote gates.
 
 Final local result: focused108/108, full3108/3108, Release and combined native PASS. Exact source/artifact hashes and all red/intermediate/final receipts are in the external grouped-library-report.md. The dependency/readiness gate in Global Constraints remains a parent delivery obligation; this plan's local implementation and handoff are complete.
+
+## Corrected foundation reconciliation
+
+Parent authorized local reconciliation of verified grouped cursor-recovery head `d97666f22e44987c65ba78f066888cb4f892d9cd` with complete foundation companion `7617ddf2d5a90b5ea0a0e9792c3e8e95326a8123` (product091defe9 on pipeline8071bdb3). Preserve every earlier source/artifact baseline. The parent owns independent review and remote delivery; a complete reviewed/tested stack may precede foundation's Beta merge.
+
+- [x] Preserve both development histories and native dispatch routes in the two merge conflicts; retain grouping recovery and incoming unscoped-library capability/lifecycle guards.
+- [x] Verify pinned native dependency and scoped grouped/foundation/letter/cursor/window tests (181/181).
+- [x] Freeze combined source inputs; run full units (3,146/3,146), fresh Release and grouped plus foundation/unscoped/room native suites against identical published bytes.
+- [ ] Incorporate the additional focused Play from Beginning library-owner dependency when supplied; refresh affected evidence.
+- [ ] Record source/artifact/fixture hashes and exact clean local commit; return the handoff without remote submission.

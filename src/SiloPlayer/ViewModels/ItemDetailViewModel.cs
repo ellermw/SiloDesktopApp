@@ -75,10 +75,10 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (message.Context is { } context && !_catalogApi.IsCurrentContext(context)) return;
         _detailPrefetchCache.Invalidate(message.ContentId);
-        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed) _ = RefreshBoxSetAsync();
+        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
         {
-            _ = RefreshBoxSetAsync();
+            if (IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
             ApplyWatchedChange(message);
             return;
         }
@@ -358,6 +358,11 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void CancelPendingLoads()
     {
         RetireBoxSet();
+        CancelDetailLoad();
+    }
+
+    private void CancelDetailLoad()
+    {
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -366,7 +371,11 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task LoadAsync(string contentId)
     {
-        CancelPendingLoads();
+        // Translation polling reloads the same movie; it does not retire its
+        // visible membership row or detach focused controls below that row.
+        if (!CanPreserveBoxSet(contentId)) RetireBoxSet();
+        else CancelBoxSetRead();
+        CancelDetailLoad();
         _boxSetRetired = false;
         var loadCts = new CancellationTokenSource();
         _loadCts = loadCts;
