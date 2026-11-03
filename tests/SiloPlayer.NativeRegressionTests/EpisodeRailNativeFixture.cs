@@ -103,7 +103,25 @@ internal static partial class EpisodeQuickPlayNativeFixture
             Require(index == 4 && Math.Abs(RailOffset(rail) - 1008) < 1, "Current episode alignment was lost.");
             var current = (FrameworkElement)cards.Children[index];
             var play = Descendants<Button>(current).Single(button => AutomationProperties.GetName(button).StartsWith("Play "));
-            play.Focus(FocusState.Keyboard); await Task.Delay(80);
+            Require(play.Focus(FocusState.Keyboard), "Could not focus the current episode's Play action.");
+            await Task.Delay(80);
+            var focusedOffset = RailOffset(rail);
+            foreach (var key in new[] { Windows.System.VirtualKey.Right, Windows.System.VirtualKey.Left })
+            {
+                var keyCount = keys.Count;
+                RailKey((nuint)key); await RailSettle(rail);
+                Require(keys.Count == keyCount + 1 && keys[^1] == key,
+                    $"Focused action's {key} key did not reach the actual rail's native KeyDown boundary.");
+                Require(Math.Abs(RailOffset(rail) - focusedOffset) < 1,
+                    $"Focused action's {key} key paged the rail.");
+                Require(ReferenceEquals(FocusManager.GetFocusedElement(page.XamlRoot), play),
+                    $"Focused action's {key} key moved keyboard focus.");
+                var bounds = play.TransformToVisual(rail).TransformBounds(
+                    new Windows.Foundation.Rect(0, 0, play.ActualWidth, play.ActualHeight));
+                Require(bounds.Width > 0 && bounds.Height > 0 && bounds.Left >= -1 && bounds.Right <= rail.ActualWidth + 1 &&
+                    bounds.Top >= -1 && bounds.Bottom <= rail.ActualHeight + 1,
+                    $"Focused action's {key} key left the Play action outside the visible rail.");
+            }
             typeof(ItemDetailPage).GetMethod("ScrollSiblingEpisodes", Private)!.Invoke(page, [1]); await RailSettle(rail);
             Require(ReferenceEquals(FocusManager.GetFocusedElement(page.XamlRoot), play), "Arrow paging changed the focused episode action.");
             Require(cards.Children[index] == current && fixture.Wire.Watches.Count == 0, "Navigation replaced current card or started quick play.");

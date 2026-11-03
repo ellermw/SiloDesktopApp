@@ -549,6 +549,10 @@ public sealed partial class ItemDetailPage : Page
             _ => 0,
         };
         if (direction == 0) return;
+        // Card actions bubble arrow keys too. Only page when the rail owns
+        // focus, so a focused Play/Resume or menu action stays in view.
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(SiblingEpisodesScrollViewer.XamlRoot), SiblingEpisodesScrollViewer))
+            return;
         ScrollSiblingEpisodes(direction);
         e.Handled = true;
     }
