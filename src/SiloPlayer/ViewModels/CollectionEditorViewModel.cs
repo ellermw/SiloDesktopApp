@@ -358,7 +358,9 @@ public partial class CollectionEditorViewModel : ObservableObject
                 if (CollectionType == "smart")
                 {
                     request.QueryDefinition = BuildQueryDefinition();
-                    if (_clearSmartDefaultSort) request.SortConfig = _storedSortConfig.Where(pair => pair.Key is not ("field" or "order")).ToDictionary(pair => pair.Key, pair => pair.Value);
+                    if (_clearSmartDefaultSort && Capabilities?.CollectionDefaultSort == true &&
+                        (_storedSortConfig.ContainsKey("field") || _storedSortConfig.ContainsKey("order")))
+                        request.SortConfig = _storedSortConfig.Where(pair => pair.Key is not ("field" or "order")).ToDictionary(pair => pair.Key, pair => pair.Value);
                 }
                 if (CollectionType == "manual" && (WatchFilter != _initialWatchFilter || MediaFilter != _initialMediaFilter))
                     request.DisplayQueryDefinition = BuildDisplayQueryDefinition();
