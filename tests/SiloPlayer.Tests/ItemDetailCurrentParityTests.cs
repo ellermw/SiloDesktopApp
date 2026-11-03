@@ -84,7 +84,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("Text=\"Crew\"", xaml);
         Assert.Contains("x:Name=\"SimilarPanel\"", xaml);
         Assert.DoesNotContain("x:Name=\"SimilarScrollViewer\"", xaml);
-        Assert.Contains("HorizontalScrollMode=\"Enabled\"", xaml);
+        var similarScroller = NamedElement(xaml, "SimilarScroller");
+        Assert.Equal("Enabled", similarScroller.Attribute("HorizontalScrollMode")?.Value);
+        Assert.Equal("Disabled", similarScroller.Attribute("VerticalScrollMode")?.Value);
         Assert.Contains("TitleText.FontSize = isSeason", code);
         Assert.Contains("TitleText.CharacterSpacing = isSeason ? -25 : -50", code);
         Assert.Contains("TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight", code);
@@ -561,7 +563,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("_pendingSiblingEpisodeIndex = episodeIndex", page);
         Assert.Contains("SiblingEpisodesScrollViewer.UpdateLayout()", page);
         Assert.Contains("TryAlignSiblingEpisodeToStart()", page);
-        Assert.Contains("SiblingEpisodesScrollViewer.ChangeView(targetOffset", page);
+        Assert.Contains("ScrollSiblingEpisodesTo(targetOffset", page);
         Assert.Contains("scrollTo(currentEpisodeIndex)", page);
         Assert.Contains("_pendingSiblingEpisodeIndex * (cardWidth + gap)", page);
         Assert.DoesNotContain("cardCenter - viewport / 2d", page);
@@ -572,9 +574,18 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("x:Name=\"SiblingEpisodesNextButton\"", xaml);
         Assert.Contains("Click=\"SiblingEpisodesPrev_Click\"", xaml);
         Assert.Contains("Click=\"SiblingEpisodesNext_Click\"", xaml);
-        Assert.Contains("PointerPressed=\"SiblingEpisodesScrollViewer_PointerPressed\"", xaml);
-        Assert.Contains("PointerMoved=\"SiblingEpisodesScrollViewer_PointerMoved\"", xaml);
-        Assert.Contains("HorizontalScrollMode=\"Disabled\"", xaml);
+        var rail = NamedElement(xaml, "SiblingEpisodesScrollViewer");
+        Assert.Equal("ScrollView", rail.Name.LocalName);
+        Assert.Equal("Enabled", rail.Attribute("HorizontalScrollMode")?.Value);
+        Assert.Equal("Disabled", rail.Attribute("VerticalScrollMode")?.Value);
+        var ignoredInputs = (rail.Attribute("IgnoredInputKinds")?.Value ?? "")
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains("MouseWheel", ignoredInputs);
+        Assert.Contains("Keyboard", ignoredInputs);
+        Assert.Equal("SiblingEpisodesScrollViewer_KeyDown", rail.Attribute("KeyDown")?.Value);
+        Assert.Equal("SiblingEpisodesScrollViewer_PointerWheelChanged", rail.Attribute("PointerWheelChanged")?.Value);
+        Assert.Equal("SiblingEpisodesScrollViewer_PointerPressed", rail.Attribute("PointerPressed")?.Value);
+        Assert.Equal("SiblingEpisodesScrollViewer_PointerMoved", rail.Attribute("PointerMoved")?.Value);
         Assert.Contains("ScrollSiblingEpisodes(-1)", page);
         Assert.Contains("ScrollSiblingEpisodes(1)", page);
         Assert.Contains("SiblingEpisodesScrollViewer.CapturePointer", page);
@@ -583,6 +594,19 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("SiblingEpisodesNextButton.Visibility = canScrollNext", page);
         Assert.Contains("item.ItemSource == \"episode_carousel\"", landscapeCard);
         Assert.Contains("? \"still\"", landscapeCard);
+    }
+
+    [Theory]
+    [InlineData("TrailersScrollViewer")]
+    [InlineData("CastScrollViewer")]
+    public void TrailerAndCastCarouselsKeepNativeScrollingDisabled(string name)
+    {
+        var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
+        var scroller = NamedElement(xaml, name);
+
+        Assert.Equal("ScrollViewer", scroller.Name.LocalName);
+        Assert.Equal("Disabled", scroller.Attribute("HorizontalScrollMode")?.Value);
+        Assert.Equal("Disabled", scroller.Attribute("VerticalScrollMode")?.Value);
     }
 
     [Fact]
@@ -697,6 +721,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("SeasonsLoadingSkeleton.Visibility = Visibility.Visible", page);
         Assert.Contains("SeasonsLoadError.Visibility", page);
     }
+
+    private static XElement NamedElement(string xaml, string name)
+        => XDocument.Parse(xaml).Descendants().Single(element =>
+            (string?)element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml")) == name);
 
     private static string Read(params string[] parts)
     {

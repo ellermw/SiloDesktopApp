@@ -189,6 +189,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
+            {
+                await CollectionsAcceptanceNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
             {
                 await HomeRowReviewNativeFixture.RunAsync(parent);
@@ -201,6 +206,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 await HomeRowWindowNativeFixture.RunAsync(parent);
                 await HomeCurrentNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-rail")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyRailNavigationAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay-review")

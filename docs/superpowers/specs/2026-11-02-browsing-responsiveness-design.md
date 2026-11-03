@@ -1,0 +1,39 @@
+# Browsing responsiveness — owner-approved first milestone
+
+The owner accepted the recommended sequence on 2026-11-02 and authorized implementation and focused PRs through the Beta pipeline. Start from fresh `origin/beta`; this milestone improves browsing before the larger OSC/menu project. The extensive comparison is local research under `D:\SiloPlayer\.codex-tmp\granary-comparison-nov02` and is evidence, not third-party implementation to copy.
+
+## User-visible requirements
+
+1. More Episodes: ordinary upright mouse-wheel input scrolls the containing detail page, including repeated/fast wheel input. Explicit horizontal intent (horizontal wheel/Shift where supported), drag and arrow/key navigation remain usable. Arrow advances align to whole cards, clamp correctly at both ends and preserve current-episode context, keyboard focus and separate Play/Resume actions. Long-season realization will be bounded in a focused follow-up if it materially expands the input fix.
+2. Sidebar: loading or refreshing libraries/pins must avoid repeated whole-menu reconstruction. Keep selected/focused entries and expansion where their identity survives. Preserve primary customization, plugin Apps, pins, hidden libraries, capability visibility and API/profile ownership. Never retain another viewer's data to make a transition look smoother.
+3. Library scrolling: artwork presentation responds to motion. During rapid movement, keep lightweight placeholders/text/focus responsive and avoid decoding every passing poster. Present current visible cards promptly after settling. Cancellation, URL authority, stale bind guards and bounded metadata/network work remain intact. Apply a shared policy to actual library/card paths rather than a new unrelated cache.
+4. Alphabet and retained navigation: acknowledge letter selection immediately while its target loads, retain latest letter/query/profile/language ownership, provide failure/retry, and avoid clickable stale content. A valid same-scope library return should avoid redundant blocking restoration while preserving refreshed settings/access invalidation and user changes.
+
+## Preservation and exclusions
+
+- Preserve the owner's preferred detail presentation and current featured-Home behavior.
+- Do not change startup/playback-start loading icons or animations. Dashboard/Activity remains a deferred future feature.
+- Preserve player renderer, playback/room intent, update protocols, installed player, all dirty/frozen work and existing pipeline work.
+- No version changes; the Beta pipeline owns stamping/build/review/merge/publication. PRs target `beta` in `ellermw/SiloDesktopApp`, not a fork/main.
+- Native library remains pinned by `libs/mpv/engine.json`; every .NET build/test holds `SiloOct18Build`; all outputs/evidence are fresh task-owned paths on D:.
+- Synthetic APIs/accounts/data and fixture processes only. No global input, user-app control, credentials/settings reads, installer or production changes.
+
+## Approach and evidence
+
+Use existing native control and service seams, with independent implementations. Reproduce the actual input/refresh behavior before choosing a correction. Native wheel behavior cannot be established by a source-text assertion. Use tests of actual controls plus small pure policy tests only where useful; validate red before product changes and green afterward. Preserve fast/slow wheel, horizontal input, resize/end bounds, stale navigation, profile/language changes, optional read failures, and genuinely paused/room behavior where touched.
+
+Each PR must have local focused regressions, full unit suite, fresh Release compile/publish where WinUI changes, scoped actual-control checks, independent Standards and Spec reviews, and exact source/artifact receipts. Inspect fresh remote heads before push; don't overwrite pipeline/author changes. Passing offscreen/functional tests alone is not a claim of improved observed frame pacing or historic buffering repair.
+
+## Task 1 native input contract and local evidence
+
+The focused sibling rail uses native `ScrollView` with `IgnoredInputKinds="MouseWheel,Keyboard"`. Ordinary upright wheel is left unhandled for the containing detail scroller, including repeated deltas. Explicit horizontal wheel uses its signed horizontal delta; Shift+upright wheel reverses the vertical delta into horizontal travel. Native touch/pen horizontal manipulation and the existing manual pointer capture remain enabled. Left/Right keys and arrows share whole-card paging, using complete visible-card counts from either partial offsets or clamped endpoints. Native keyboard scrolling is excluded because actual-control evidence showed its class handler consuming Right/Left before the page's card policy.
+
+Ruling (parent, 2026-11-02): verify the realized native `ScrollPresenter` input policy and actual control scrolling/keys/focus while leaving physical wheel and pointer drag unobserved. Scoped posted HWND wheel messages did not enter modern WinUI pointer events; no desktop-global injection is permitted. The initial wheel diagnostics therefore cannot certify the reported physical behavior. Cost if wrong: mouse/trackpad/touch compatibility needs hardware validation. Keep this limitation in the PR and do not claim physical wheel reproduction.
+
+Local source remains `1.2.544-beta.1` from Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af`; official server main fetched for this pass is `391e90910e59b864bf4663dd9c5a10a95a21e5c8`. Focused checks pass 41/41; full unit suite passes 3,068/3,068 with no skipped tests. Fresh Release app and all three selected native groups pass: the new rail contract, existing episode quick-play, and existing detail cards. Native arrow targets are literally 344/1008 at widths 420/1200; owned Right/Left events settle at 1008/0; current-episode alignment, focused quick-play, clamps and short-season extent changes pass. Existing quick-play review fixture reflection was corrected to call the unchanged public `SetState` API after the same five setup failures were reproduced on the frozen baseline.
+
+Publish and all final native groups use app DLL SHA256 `DB6CA3AA310F43A286F83F1F1AB63A6B571F8BE80BC524704ABC903D6CFC49B0`. Full evidence, original failures, source fingerprints and verification limits: `D:/SiloPlayer/.codex-tmp/browse-polish-nov02/episode-task-report.md`. This is local synthetic evidence; parent owns independent Standards/Spec review and Beta delivery. No version stamp, installer, release, production state or installed-player process changed.
+
+Independent Spec review fix round 1: actual-control regressions reproduced lost same-turn horizontal deltas, reversals, and rapid arrow/key pages. Navigation now retains each clamped requested target until its matching native completion; interrupted older completions cannot clear the newer request. Absolute drag/current-episode alignment replaces that target, and manipulation/resize/navigation retirement returns ownership to the observed position. Native relative ScrollBy was characterized before this decision: it accumulated ordinary bursts but combined a clamp followed by reversal, so it did not meet the per-event boundary contract.
+
+The endpoint-focus finding was withdrawn after eight actual keyboard-focused activations at both ends and widths 420/1200 retained focus on the rail or opposite usable arrow; no focus-transfer code was added. The committed regression now covers 44 conditional rail checks including burst/animation ordering, absolute replacement and those endpoints. Corrected-source focused 41/41, full 3,068/3,068, fresh Release publish and all three native groups pass. Physical wheel/pointer drag remain unobserved under the existing ruling. Earlier source/artifact generations and original red evidence remain frozen in the external task report.
