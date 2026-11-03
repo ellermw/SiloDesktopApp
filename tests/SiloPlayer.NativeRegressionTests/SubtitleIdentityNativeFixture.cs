@@ -10,7 +10,7 @@ using SiloPlayer.Services;
 
 internal static class SubtitleIdentityNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent, bool unresolvedOnly = false)
+    internal static async Task RunAsync(StackPanel parent, bool unresolvedOnly = false, bool regionalOnly = false)
     {
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
         using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt")));
@@ -43,6 +43,29 @@ internal static class SubtitleIdentityNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         try
         {
+            if (regionalOnly)
+            {
+                var initial = session.SubtitleUrls.Single(t => t.Index == 4);
+                await service.SetSubtitleTrackAndPersistAsync(5, initial.Language, initial);
+                Require(mpv.GetPropertyDouble("sid") == 2, "Regional fixture did not establish the previous native choice.");
+                var regionalWrites = wire.PreferenceWrites;
+                var regional = new SubtitleTrackInfo { Index = 11, Source = "embedded", Codec = "subrip", Language = "en-GB", Url = subtitles.Origin + "/regional.srt" };
+                session.SubtitleUrls.Add(regional);
+                await service.SetSubtitleTrackAndPersistAsync(12, regional.Language, regional);
+                var sidecars = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                Require(sidecars.TryGetValue(11, out var regionalSid) && regionalSid > 2 && mpv.GetPropertyDouble("sid") == regionalSid &&
+                    service.ActiveSubtitleServerIndex == 11 && wire.PreferenceWrites == regionalWrites + 1 && mpv.IsPaused,
+                    "No-ID en-GB request substituted the unqualified loaded eng track instead of executing its authorized sidecar.");
+                var noRoute = new SubtitleTrackInfo { Index = 12, Source = "embedded", Codec = "subrip", Language = "en-GB" };
+                session.SubtitleUrls.Add(noRoute);
+                regionalWrites = wire.PreferenceWrites;
+                await service.SetSubtitleTrackAndPersistAsync(13, noRoute.Language, noRoute);
+                Require(service.ActiveSubtitleServerIndex == 11 && mpv.GetPropertyDouble("sid") == regionalSid &&
+                    wire.PreferenceWrites == regionalWrites && mpv.IsPaused,
+                    "Regional metadata mismatch without a sidecar changed the previous executed route or preference.");
+                Program.Log("PASS: no-ID regional request refuses unqualified native language, executes its authorized sidecar, and preserves that route/preferences/pause when the next mismatched choice has no sidecar.");
+                return;
+            }
             if (unresolvedOnly)
             {
                 var previousTrack = session.SubtitleUrls.Single(t => t.Index == 2);

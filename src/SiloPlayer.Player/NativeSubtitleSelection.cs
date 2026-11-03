@@ -35,7 +35,7 @@ public static class NativeSubtitleSelection
             // metadata match is safe; duplicate language/codec rows are not.
             if (string.IsNullOrWhiteSpace(requested.Codec)) return 0;
             var metadata = loaded.Where(t => t.Id > 0 && Codec(t.Codec) == Codec(requested.Codec) &&
-                MediaLanguageCatalog.Normalize(t.Language) == MediaLanguageCatalog.Normalize(requested.Language) &&
+                LanguageIdentity(t.Language) == LanguageIdentity(requested.Language) &&
                 t.Forced == requested.Forced && t.HearingImpaired == requested.HearingImpaired).ToArray();
             // A display label need not be the container title. Use a supplied
             // raw label only to disambiguate otherwise identical metadata.
@@ -49,6 +49,16 @@ public static class NativeSubtitleSelection
 
     private static bool Same(string? left, string? right) =>
         string.Equals(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static string LanguageIdentity(string? value)
+    {
+        // Native metadata identity retains explicit BCP47 region/script subtags.
+        // Reuse the catalog's ISO aliases only for the primary language.
+        var tag = value?.Trim().Replace('_', '-') ?? "";
+        var separator = tag.IndexOf('-');
+        return separator < 0 ? MediaLanguageCatalog.Normalize(tag)
+            : MediaLanguageCatalog.Normalize(tag[..separator]) + tag[separator..].ToLowerInvariant();
+    }
 
     private static string Codec(string? value) => value?.Trim().ToLowerInvariant() switch
     {

@@ -44,7 +44,7 @@ public sealed class CurrentServerContractDeltaTests
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("postLoadSubtitleIndex: track.Index", player);
         Assert.Contains("_pendingInitialServerSubtitleIndex = postLoadSubtitleIndex", player);
-        Assert.Contains("if (!transportReloadScheduled && !_switchingContent && !IsLoading &&", player);
+        Assert.Contains("if (transportReloadScheduled || _switchingContent || IsLoading ||", player);
         Assert.Contains("SelectSubtitleByServerIndexAsync", player);
         // Burn-in is detected from the v3 plan's subtitle mode.
         Assert.Contains("manager?.CurrentSession?.IsSubtitleBurnedIn == true", player);

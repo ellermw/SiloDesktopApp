@@ -4,6 +4,38 @@ namespace SiloPlayer.Tests;
 
 public sealed class NativeSubtitleSelectionTests
 {
+    [Theory]
+    [InlineData("pt-BR", "pt-PT")]
+    [InlineData("zh-Hant", "zh-Hans")]
+    [InlineData("en-GB", "eng")]
+    [InlineData("eng", "en-GB")]
+    [InlineData("pt", "por-BR")]
+    [InlineData("zh-Hant-TW", "zh-Hant")]
+    public void LegacyMetadataCannotDiscardExplicitLanguageSubtags(string requestedLanguage, string loadedLanguage)
+    {
+        var requested = English with { StreamIndex = null, ContainerTrackId = null, Language = requestedLanguage, Title = null };
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested, [English with { Language = loadedLanguage, Title = null }], false));
+    }
+
+    [Theory]
+    [InlineData("eng-GB", "en-gb")]
+    [InlineData("POR_br", "pt-BR")]
+    [InlineData("zho-Hant-TW", "zh-hant-tw")]
+    public void LegacyMetadataKeepsIsoAliasesWithinTheSameLanguageSubtags(string requestedLanguage, string loadedLanguage)
+    {
+        var requested = English with { StreamIndex = null, ContainerTrackId = null, Language = requestedLanguage, Title = null };
+        Assert.Equal(4, NativeSubtitleSelection.Resolve(requested, [English with { Language = loadedLanguage, Title = null }], false));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AuthoritativeIdentityDoesNotDependOnLanguageMetadata(bool useFfmpegIndex)
+    {
+        var requested = English with { Language = "en-GB" };
+        Assert.Equal(4, NativeSubtitleSelection.Resolve(requested, [English with { Language = "eng" }], useFfmpegIndex));
+    }
+
     private static readonly NativeSubtitleTrack English = new(4, 7, "20", "subrip", "eng", "English");
     private static readonly NativeSubtitleTrack Japanese = new(9, 12, "41", "ass", "jpn", "Japanese");
 
