@@ -8,6 +8,40 @@ namespace SiloPlayer.Helpers;
 internal static class ArtworkViewport
 {
     private static readonly ConditionalWeakTable<ScrollViewer, ArtworkMotionPolicy> Policies = new();
+    private static readonly DependencyProperty ActiveProperty = DependencyProperty.RegisterAttached(
+        "ArtworkActive", typeof(bool), typeof(ArtworkViewport), new PropertyMetadata(true));
+
+    internal static void SetActive(FrameworkElement owner, bool active) => owner.SetValue(ActiveProperty, active);
+
+    // Collapsed retained tabs do not necessarily unload their realized cards.
+    // Each loaded card owns and disposes its ancestor subscriptions.
+    internal static IDisposable ObserveActivity(FrameworkElement card, Action<bool> changed) => new Activity(card, changed);
+
+    private sealed class Activity : IDisposable
+    {
+        private readonly List<(FrameworkElement Element, long Visibility, long Active)> _owners = new();
+        private readonly Action<bool> _changed;
+        internal Activity(FrameworkElement card, Action<bool> changed)
+        {
+            _changed = changed;
+            for (DependencyObject? node = card; node != null; node = VisualTreeHelper.GetParent(node))
+                if (node is FrameworkElement element)
+                    _owners.Add((element,
+                        element.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) => Notify()),
+                        element.RegisterPropertyChangedCallback(ActiveProperty, (_, _) => Notify())));
+            Notify();
+        }
+        private void Notify() => _changed(_owners.All(owner => owner.Element.Visibility == Visibility.Visible && (bool)owner.Element.GetValue(ActiveProperty)));
+        public void Dispose()
+        {
+            foreach (var owner in _owners)
+            {
+                owner.Element.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, owner.Visibility);
+                owner.Element.UnregisterPropertyChangedCallback(ActiveProperty, owner.Active);
+            }
+            _owners.Clear();
+        }
+    }
 
     internal static ArtworkMotionPolicy For(ScrollViewer scroll) => Policies.GetValue(scroll, owner =>
     {

@@ -497,6 +497,7 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        ArtworkViewport.SetActive(RecommendedPanel, false);
         foreach (var card in _libraryCardSlots) card.SuspendArtwork();
         _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
         _uiCustomizationService.Changed -= UICustomization_Changed;
@@ -969,6 +970,7 @@ public sealed partial class LibraryPage : Page,
         UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = tag == "Library" && _currentAudiobookAxis != "books" ? Visibility.Visible : Visibility.Collapsed;
         RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
+        ArtworkViewport.SetActive(RecommendedPanel, _isNavigated && tag == "Recommended");
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
 
         _currentTab = tag;

@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Home;
 using System.Collections.Concurrent;
@@ -17,7 +18,7 @@ using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
-internal static class ArtworkMotionNativeFixture
+internal static partial class ArtworkMotionNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent, Window window)
     {
@@ -28,13 +29,14 @@ internal static class ArtworkMotionNativeFixture
         using var auth = new AuthService(client, new AuthApi(client));
         auth.SetCurrentUser(new() { Id = "fixture", Role = "user" }); auth.SelectProfile("fixture");
         var catalog = new CatalogApi(client); var settings = new SettingsApi(client);
+        using var spoilers = new EpisodeSpoilerPreferences(settings);
         using var events = new EventChannelClient(client, auth);
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "images"));
         var navigation = new NavigationService();
         field.SetValue(null, new Services(previous, new()
         {
             [typeof(SiloApiClient)] = client, [typeof(AuthService)] = auth, [typeof(CatalogApi)] = catalog,
-            [typeof(SettingsApi)] = settings, [typeof(NavigationService)] = navigation,
+            [typeof(EpisodeSpoilerPreferences)] = spoilers, [typeof(SettingsApi)] = settings, [typeof(NavigationService)] = navigation,
             [typeof(SettingsService)] = new SettingsService(Path.Combine(Program.ResultDirectory, "settings")),
             [typeof(UICustomizationService)] = new UICustomizationService(settings),
             [typeof(CardOverlayService)] = new CardOverlayService(settings), [typeof(EventChannelClient)] = events,
@@ -43,11 +45,25 @@ internal static class ArtworkMotionNativeFixture
         Frame? frame = null;
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "artwork-first-mount")
+            {
+                await FirstMountCasesAsync(parent, wire, client, spoilers);
+                if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
+                return;
+            }
             window.AppWindow.ResizeClient(new(1100, 800));
             frame = new Frame { Width = 1100, Height = 800 }; parent.Children.Add(frame); navigation.Frame = frame;
             frame.Navigate(typeof(LibraryPage), new LibraryPage.NavigationArgs(new Library { Id = 11, Name = "Synthetic artwork", Type = "movie" }, "Library"));
             var page = (LibraryPage)frame.Content;
             await Until(() => page.IsLoaded && page.ViewModel.Library is not null);
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "artwork-review")
+            {
+                await RecommendedCasesAsync(page, frame, wire);
+                frame.Navigate(typeof(Page)); parent.Children.Remove(frame); frame = null; await Task.Delay(200);
+                await BlurStageCasesAsync(parent, client, spoilers);
+                if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
+                return;
+            }
             ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("LibraryTab")).GetPattern(PatternInterface.Invoke)).Invoke();
             await Until(() => page.ViewModel.GetWindowItem(0) is not null);
             var scroll = (ScrollViewer)page.FindName("LibraryScroller");
@@ -105,6 +121,7 @@ internal static class ArtworkMotionNativeFixture
             await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded);
             await Until(() => slots.Any(card => card.MediaItem?.PosterUrl == retainedItem.PosterUrl && CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
             Program.Log("PASS artwork cached LibraryPage resumes missing current bind.");
+            await RecommendedCasesAsync(page, frame, wire);
             frame.Navigate(typeof(LibraryPage), new LibraryPage.NavigationArgs(new Library { Id = 12, Name = "Synthetic audiobook library", Type = "audiobook" }, "Library"));
             page = (LibraryPage)frame.Content;
             await Until(() => page.IsLoaded && page.ViewModel.Library?.Id == 12);
@@ -121,6 +138,8 @@ internal static class ArtworkMotionNativeFixture
             frame.Navigate(typeof(Page)); parent.Children.Remove(frame); frame = null; await Task.Delay(300);
             foreach (var kind in new[] { "library", "poster", "landscape" })
                 await CardCasesAsync(parent, wire, client, kind);
+            await BlurStageCasesAsync(parent, client, spoilers);
+            await FirstMountCasesAsync(parent, wire, client, spoilers);
             if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
         }
         finally
@@ -337,6 +356,15 @@ internal static class ArtworkMotionNativeFixture
                 return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = query["library_id"] == "12" ? "audiobook" : "movie", poster_url = "https://artwork-motion.invalid/art/" + index }),
                     total = 1000, total_exact = !query.ContainsKey("skip_total"), window_cursor = query["library_id"] + ":" + limit + ":0",
                     page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) } });
+            }
+            if (path == "/api/v2/settings/contract/capabilities") return Reply(new { api_version = 1, manifest_revision = 17, supports_batched_effective = true });
+            if (path == "/api/v2/settings/values/effective") return Reply(new { items = new[] { new { key = "catalog.hide_unwatched_episode_images", value = true }, new { key = "catalog.hide_unwatched_episode_overviews", value = true } } });
+            if (path == "/api/v2/library/11/layout") return Reply(new { sections = new[] { new { id = "poster", title = "Posters", section_type = "recently_added", item_limit = 30 }, new { id = "landscape", title = "Wide", section_type = "next_up", item_limit = 30 } } });
+            if (path.StartsWith("/api/v2/library/11/sections/"))
+            {
+                var id = path.Split('/')[6];
+                return Reply(new { id, title = id, section_type = id == "poster" ? "recently_added" : "next_up", item_limit = 30,
+                    items = Enumerable.Range(0, 30).Select(i => new { content_id = id + i, type = "movie", title = id + i, poster_url = "https://artwork-motion.invalid/art/row-" + id + i, backdrop_url = "https://artwork-motion.invalid/art/row-" + id + i }) });
             }
             if (path.EndsWith("/layout") || path.EndsWith("/sections")) return Reply(new { sections = Array.Empty<object>() });
             if (path.EndsWith("/filters")) return Reply(new { genres = Array.Empty<string>() });
