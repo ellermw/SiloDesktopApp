@@ -138,6 +138,42 @@ internal static class EpisodeOverviewNativeFixture
             }
             Program.Log("PASS: watched/progress spoiler transitions restore own-overview translation without Reveal or reload.");
 
+            foreach (var mode in new[] { "button", "auto" })
+            foreach (var change in new[] { "access", "same-profile" })
+            {
+                wire.Reset(); wire.OwnOverview = "An unrevealed episode plot."; wire.OnView = mode;
+                await vm.LoadInLibraryAsync("episode", 42); Call(page, "UpdateUI");
+                await (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
+                Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed && wire.Posts.Count == 0,
+                    "An unrevealed own overview starts protected before access retirement");
+                wire.OwnOverview = "A refreshed unrevealed plot."; wire.HoldSpoilers = true;
+                if (change == "access") client.InvalidateAccessContext();
+                else client.SetProfile("fixture");
+                Call(page, "RefreshRetiredOverviewScope");
+                await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(!spoilers.IsLoadedForCurrentContext && !spoilers.HideOverviews,
+                    "The held replacement preference is unknown in the new access context");
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    Call(page, "RefreshRetiredOverviewScope"); Call(page, "ApplyOverviewSpoilers");
+                    Check(overview.Visibility == Visibility.Collapsed &&
+                        ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible &&
+                        button.Visibility == Visibility.Collapsed && wire.Posts.Count == 0,
+                        "Access retirement must not reveal or translate a plot while preferences are loading");
+                    await Task.Delay(550);
+                }
+                wire.HoldSpoilers = false; wire.ReleaseSpoilers.TrySetResult();
+                await Until(() => spoilers.IsLoadedForCurrentContext && spoilers.HideOverviews &&
+                    vm.OverviewSource != null && overview.Text == "A refreshed unrevealed plot.");
+                await Task.Delay(550);
+                Check(overview.Visibility == Visibility.Collapsed &&
+                    ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible &&
+                    button.Visibility == Visibility.Collapsed && wire.Posts.Count == 0 &&
+                    !wire.Paths.Contains("/api/v2/capabilities/metadata-ai"),
+                    "Reloaded spoiler preferences keep the own plot hidden and block manual/automatic translation");
+            }
+            Program.Log("PASS: access and same-profile retirement preserve unrevealed own-overview spoilers during and after preference reload.");
+
             foreach (var missing in new[] { true, false })
             {
                 wire.Reset(); wire.SeriesId = missing ? null : "series"; wire.FailSeries = !missing;
@@ -171,6 +207,27 @@ internal static class EpisodeOverviewNativeFixture
                     "A successful capability retry restores automatic or manual series translation on the same page");
             }
             Program.Log("PASS: metadata-AI capability failures retry with backoff and recover manual/automatic series translation.");
+
+            foreach (var stage in new[] { "post", "poll" })
+            {
+                wire.Reset(); wire.OnView = "auto";
+                wire.PostFailuresRemaining = stage == "post" ? 1 : 0;
+                wire.PollFailuresRemaining = stage == "poll" ? 1 : 0;
+                await vm.LoadInLibraryAsync("episode", 42); Call(page, "UpdateUI");
+                await Until(() => wire.Posts.Count == 1 && button.Visibility == Visibility.Visible && button.IsEnabled && overview.Opacity == 1);
+                Check(overview.Text == Wire.SeriesText && vm.OverviewSource!.PendingTranslationLanguage == "fr" &&
+                    (string)button.Content == "Translate description" && Field<bool>(page, "_translateButtonMode"),
+                    $"A failed automatic {stage} retains the description and offers a manual retry");
+                await Task.Delay(600);
+                Check(wire.Posts.Count == 1 && button.Visibility == Visibility.Visible && button.IsEnabled,
+                    "The scope watcher preserves the recovery action without repeating automatic writes");
+                ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Until(() => wire.Posts.Count == 2 && overview.Text == Wire.TranslatedText && button.Visibility == Visibility.Collapsed);
+                Check(wire.Posts.All(post => post == "/api/v2/catalog/items/series/translate-description|fr") &&
+                    vm.Item!.ContentId == "episode" && string.IsNullOrWhiteSpace(vm.Item.Overview),
+                    "Manual recovery after an automatic failure still translates only the scoped series source");
+            }
+            Program.Log("PASS: automatic translation POST/poll failures expose a working manual recovery action.");
 
             foreach (var mode in new[] { "button", "auto" })
             {
@@ -461,18 +518,20 @@ internal static class EpisodeOverviewNativeFixture
         internal string OnView = "button", TargetLanguage = "fr";
         internal string[] OwnMachineTranslatedFields = [];
         internal string SeriesOverview = SeriesText;
-        internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem;
-        internal int PollReads, SeriesFailuresRemaining, StatusFailuresRemaining;
+        internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem, HoldSpoilers;
+        internal int PollReads, SeriesFailuresRemaining, StatusFailuresRemaining, PostFailuresRemaining, PollFailuresRemaining;
         internal TaskCompletionSource StatusEntered = NewGate(), ReleaseStatus = NewGate(), PostEntered = NewGate(), ReleasePost = NewGate(),
-            PollEntered = NewGate(), ReleasePoll = NewGate(), ItemReadEntered = NewGate(), ReleaseItemRead = NewGate();
+            PollEntered = NewGate(), ReleasePoll = NewGate(), ItemReadEntered = NewGate(), ReleaseItemRead = NewGate(),
+            SpoilersEntered = NewGate(), ReleaseSpoilers = NewGate();
         private static TaskCompletionSource NewGate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void Reset()
         {
             Paths.Clear(); Posts.Clear(); OwnOverview = " \t "; SeriesId = "series"; OnView = "button";
-            SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = StatusFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
-            FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = false;
+            SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = StatusFailuresRemaining = PostFailuresRemaining = PollFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
+            FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = HoldSpoilers = false;
             StatusEntered = NewGate(); ReleaseStatus = NewGate(); PostEntered = NewGate(); ReleasePost = NewGate();
             PollEntered = NewGate(); ReleasePoll = NewGate(); ItemReadEntered = NewGate(); ReleaseItemRead = NewGate();
+            SpoilersEntered = NewGate(); ReleaseSpoilers = NewGate();
         }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -487,12 +546,14 @@ internal static class EpisodeOverviewNativeFixture
             {
                 using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 Posts.Add(path + "|" + payload.RootElement.GetProperty("target_language").GetString());
+                if (PostFailuresRemaining > 0) { --PostFailuresRemaining; return new(HttpStatusCode.ServiceUnavailable); }
                 if (HoldPost) { PostEntered.TrySetResult(); await ReleasePost.Task; }
                 Translated = !KeepPending; return new(HttpStatusCode.NoContent);
             }
             if ((request.RequestUri.AbsolutePath is "/api/v2/catalog/items/series" or "/api/v2/catalog/items/episode" or "/api/v2/catalog/items/movie") && Posts.Count > 0)
             {
                 Interlocked.Increment(ref PollReads);
+                if (PollFailuresRemaining > 0) { --PollFailuresRemaining; return new(HttpStatusCode.ServiceUnavailable); }
                 if (HoldPoll) { HoldPoll = false; PollEntered.TrySetResult(); await ReleasePoll.Task; }
             }
             if ((request.RequestUri.AbsolutePath is "/api/v2/catalog/items/episode" or "/api/v2/catalog/items/movie") && HoldItem)
@@ -506,6 +567,8 @@ internal static class EpisodeOverviewNativeFixture
             if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && SeriesFailuresRemaining > 0)
             { --SeriesFailuresRemaining; return new(HttpStatusCode.InternalServerError); }
             if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && FailSeries) return new(HttpStatusCode.NotFound);
+            if (path.Contains("effective") && HoldSpoilers)
+            { SpoilersEntered.TrySetResult(); await ReleaseSpoilers.Task.WaitAsync(ct); }
             object value = request.RequestUri.AbsolutePath switch
             {
                 "/api/v2/catalog/items/episode" => new { content_id = "episode", type = "episode", title = "Episode", series_id = SeriesId, overview = ownOverview, pending_translation_language = translated ? null : targetLanguage, machine_translated_fields = ownFields, user_state = new { }, user_data = new { played = false } },

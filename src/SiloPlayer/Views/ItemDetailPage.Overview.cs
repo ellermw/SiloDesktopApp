@@ -70,7 +70,10 @@ public sealed partial class ItemDetailPage
     }
 
     private bool IsOverviewHidden(MediaItemDetail owner) =>
-        owner.Type == "episode" && !string.IsNullOrWhiteSpace(owner.Overview) && _episodeSpoilerPreferences?.HideOverviews == true &&
+        owner.Type == "episode" && !string.IsNullOrWhiteSpace(owner.Overview) &&
+        // A retired preference returns false; it is unknown, not permission to reveal the plot.
+        ((_episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>()) is { } preferences &&
+            (!preferences.IsLoadedForCurrentContext || preferences.HideOverviews)) &&
         EpisodeSpoilerPolicy.IsUnwatched(owner.UserData?.Played, owner.UserData?.IsInProgress, owner.UserData?.PositionSeconds) &&
         _revealedEpisodeOverviewId != owner.ContentId;
 
@@ -98,6 +101,9 @@ public sealed partial class ItemDetailPage
             api.IsCurrentContext(context) && api.LocalizedReadGeneration == language;
         try
         {
+            if (item.Type == "episode" && _episodeSpoilerPreferences?.IsLoadedForCurrentContext != true)
+                await EnsureEpisodeSpoilersAsync();
+            if (!Current()) return;
             var source = await ViewModel.ResolveOverviewAsync(navigation?.Token ?? default);
             if (!Current()) return;
             RenderOverview();
@@ -193,7 +199,12 @@ public sealed partial class ItemDetailPage
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (Current()) App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+            if (Current())
+            {
+                // Auto mode must leave a recovery action after a failed POST or poll.
+                _translateButtonMode = true;
+                App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+            }
         }
         finally
         {

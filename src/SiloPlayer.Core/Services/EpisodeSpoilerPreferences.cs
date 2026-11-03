@@ -20,9 +20,10 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
     private ApiRequestContext? _context;
     private Task? _load;
     private CancellationTokenSource? _scope;
-    private bool _hideImages, _hideOverviews;
+    private bool _hideImages, _hideOverviews, _loaded;
     private bool _disposed;
     public event EventHandler? Changed;
+    public bool IsLoadedForCurrentContext => _context is { } context && _settings.IsCurrentContext(context) && _loaded;
     public bool HideImages => _context is { } context && _settings.IsCurrentContext(context) && _hideImages;
     public bool HideOverviews => _context is { } context && _settings.IsCurrentContext(context) && _hideOverviews;
 
@@ -43,6 +44,7 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
             {
                 _scope?.Cancel(); _scope?.Dispose();
                 _scope = new();
+                _loaded = false;
                 if (_context != context) _hideImages = _hideOverviews = false;
                 _context = context;
                 _load = LoadAsync(context, _scope.Token);
@@ -57,6 +59,7 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
         lock (_sync)
         {
             _scope?.Cancel();
+            _loaded = false;
             _load = null;
         }
     }
@@ -72,6 +75,7 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
                 {
                     if (ct.IsCancellationRequested || _context != context || !_settings.IsCurrentContext(context)) return;
                     _hideImages = _hideOverviews = false;
+                    _loaded = true;
                 }
                 Changed?.Invoke(this, EventArgs.Empty);
                 return;
@@ -82,6 +86,7 @@ public sealed class EpisodeSpoilerPreferences : IDisposable
                 if (ct.IsCancellationRequested || _context != context || !_settings.IsCurrentContext(context)) return;
                 bool Read(string key) => values.Settings.FirstOrDefault(entry => entry.Key == key)?.Value.ValueKind == System.Text.Json.JsonValueKind.True;
                 _hideImages = Read(Keys[0]); _hideOverviews = Read(Keys[1]);
+                _loaded = true;
             }
             Changed?.Invoke(this, EventArgs.Empty);
         }
