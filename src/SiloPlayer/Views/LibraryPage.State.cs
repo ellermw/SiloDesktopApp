@@ -20,7 +20,7 @@ public sealed partial class LibraryPage
     private bool _applyingLibraryState, _stateEventsAttached, _stateRefreshQueued, _stateRefreshAgain;
     private DispatcherTimer? _stateSaveTimer;
     private CancellationTokenSource? _stateRestoreCancellation;
-    private (int Id, string Search, SettingsRequestContext Owner)? _pendingStateSave;
+    private (int Id, string Search, SettingsRequestContext Owner, long Edit)? _pendingStateSave;
 
     private bool IsLibraryStateVisitCurrent(long visit, SettingsRequestContext owner, int libraryId)
         => _isNavigated && visit == _stateVisit && _activeLibraryId == libraryId &&
@@ -132,7 +132,7 @@ public sealed partial class LibraryPage
         _retainedSearch = search;
         ++_stateEdit;
         if (_stateSettings.LibraryPageState.TryGetConfirmed(id, out var confirmed) && !confirmed.Remember) return;
-        _pendingStateSave = (id, search, owner);
+        _pendingStateSave = (id, search, owner, _stateEdit);
         _stateSaveTimer ??= CreateStateSaveTimer();
         _stateSaveTimer.Stop(); _stateSaveTimer.Start();
     }
@@ -159,7 +159,7 @@ public sealed partial class LibraryPage
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (IsLibraryStateVisitCurrent(visit, save.Owner, save.Id))
+            if (IsLibraryStateVisitCurrent(visit, save.Owner, save.Id) && save.Edit == _stateEdit)
                 App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember library view: {ex.Message}");
         }
     }

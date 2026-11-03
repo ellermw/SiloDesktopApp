@@ -15,9 +15,9 @@ using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 using SiloPlayer.Controls;
 
-internal static class RetainedLibraryNativeFixture
+internal static partial class RetainedLibraryNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent, Window window, bool recoveryOnly = false)
+    internal static async Task RunAsync(StackPanel parent, Window window, bool recoveryOnly = false, bool reviewOnly = false)
     {
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = (IServiceProvider)servicesField.GetValue(null)!;
@@ -44,6 +44,7 @@ internal static class RetainedLibraryNativeFixture
         var failures = new List<string>();
         try
         {
+            if (reviewOnly) { await CheckReviewAsync(parent, navigation, wire, settings, auth); return; }
             if (recoveryOnly) { await CheckRecoveryAsync(); return; }
             parent.Children.Add(frame); navigation.Frame = frame;
             frame.Navigate(typeof(LibraryPage), new Library { Id = 11, Name = "Retained fixture", Type = "movie" });
@@ -230,6 +231,7 @@ internal static class RetainedLibraryNativeFixture
             if (failures.Count > 0) throw new InvalidOperationException(string.Join("\n", failures));
             frame.Navigate(typeof(Page)); await Until(() => !page.IsLoaded);
             await CheckRecoveryAsync();
+            await CheckReviewAsync(parent, navigation, wire, settings, auth);
         }
         finally
         {
@@ -304,9 +306,10 @@ internal static class RetainedLibraryNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int StateReads, StateWrites, RatingReads, CollectionsReads, LayoutReads, LibraryId = 11;
-        internal bool Remember = true, PutStarted, FailHeldRead;
+        internal bool Remember = true, PutStarted, FailHeldRead, FailPut;
         internal string Search = "?tab=library";
         internal string LastCatalogRequest = "", ErrorMessage = "Retired synthetic settings failure";
+        internal string PutErrorMessage = "Synthetic save failure";
         internal TaskCompletionSource? ReadGate, PutGate, CollectionsGate, RatingsGate, GroupGate;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -327,7 +330,9 @@ internal static class RetainedLibraryNativeFixture
             }
             else if (path.EndsWith("/ui.library_page_state") && request.Method == HttpMethod.Put)
             {
+                var failure = FailPut; var message = PutErrorMessage;
                 StateWrites++; PutStarted = true; if (PutGate is { } gate) await gate.Task;
+                if (failure) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent(JsonSerializer.Serialize(new { message })) };
                 var payload = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct));
                 Search = payload.GetProperty("value").GetProperty("libraries").GetProperty(LibraryId.ToString()).GetProperty("search").GetString()!;
             }

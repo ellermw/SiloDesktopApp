@@ -338,6 +338,7 @@ public sealed partial class LibraryPage : Page,
         {
             var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && ViewModel.Library.Type == library.Type && _stateOwner == owner && _stateLanguage == language;
             if (_stateLanguage != language) _stateSettings.LibraryPageState.Invalidate();
+            if (_stateOwner != owner) _stateSnapshot = null;
             _stateOwner = owner;
             _stateLanguage = language;
             _pageStateContext = owner.Request;
@@ -386,6 +387,8 @@ public sealed partial class LibraryPage : Page,
                 snapshot = await RestoreLibraryStateAsync(library.Id, visit, owner);
                 if (!IsLibraryStateVisitCurrent(visit, owner, library.Id) || edit != _stateEdit) return;
             }
+            // A failed read cannot turn this owner's known opt-out into an unknown preference.
+            if (snapshot == null && _stateSnapshot is { Remember: false }) snapshot = _stateSnapshot;
             var retain = sameLibrary && (snapshot == null || snapshot.Value.Remember &&
                 (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch));
             var state = retain ? CaptureLibraryViewState(_currentTab) :
