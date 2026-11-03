@@ -176,6 +176,109 @@ public sealed class RealtimeReadOwnershipTests
     [InlineData("watchlist", true)]
     [InlineData("rating", false)]
     [InlineData("rating", true)]
+    public async Task ReconnectCatchUpRepairsFailedOptimisticViewerStateWhenTheSnapshotIsUnchanged(string mutation, bool initiallySet)
+    {
+        using var f = new Fixture(); f.Seed();
+        var item = f.Vm.Item!;
+        item.Type = f.Wire.DetailType = "movie";
+        f.Vm.IsSeries = false;
+        f.Vm.Seasons.Clear(); f.Vm.Episodes.Clear();
+        item.UserState = new() { IsFavorite = initiallySet, InWatchlist = initiallySet };
+        f.Vm.IsFavorite = f.Wire.Favorite = initiallySet;
+        f.Vm.InWatchlist = f.Wire.Watchlist = initiallySet;
+        item.UserRating = f.Vm.UserRating = f.Wire.Rating = initiallySet ? 4 : null;
+        f.Wire.PendingWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Wire.WriteStatus = HttpStatusCode.Forbidden;
+        f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Wire.OnWrite = () => started.TrySetResult();
+        var write = mutation == "favorite" ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null)
+            : mutation == "watchlist" ? f.Vm.ToggleWatchlistCommand.ExecuteAsync(null)
+            : f.Vm.SetRatingCommand.ExecuteAsync(4);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        f.Client.InvalidateAccessContext();
+        var catchUp = f.Vm.RefreshMediaStateAsync(f.Change(item.ContentId) with { CatchUp = true });
+        f.Wire.PendingWrite.SetResult();
+        await Task.WhenAll(write, catchUp).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(item, f.Vm.Item);
+        Assert.Equal(initiallySet, item.UserState.IsFavorite);
+        Assert.Equal(initiallySet, item.UserState.InWatchlist);
+        Assert.Equal(initiallySet, f.Vm.IsFavorite);
+        Assert.Equal(initiallySet, f.Vm.InWatchlist);
+        Assert.Equal(initiallySet ? (int?)4 : null, item.UserRating);
+        Assert.Equal(item.UserRating, f.Vm.UserRating);
+        Assert.Equal(1, f.Wire.DetailReads);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("movie", "watched", "favorite", false)]
+    [InlineData("movie", "watched", "favorite", true)]
+    [InlineData("movie", "progress", "rating", false)]
+    [InlineData("movie", "progress", "rating", true)]
+    [InlineData("episode", "watched", "favorite", false)]
+    [InlineData("episode", "watched", "favorite", true)]
+    [InlineData("episode", "progress", "rating", false)]
+    [InlineData("episode", "progress", "rating", true)]
+    public async Task SameLeafMixedBatchesAndMergedPlaybackScopeReconcilePlayback(
+        string type, string playbackChange, string viewerChange, bool trailing)
+    {
+        using var f = new Fixture(); f.Seed();
+        var item = f.Vm.Item!;
+        item.ContentId = EpisodeA; item.Type = f.Wire.DetailType = type;
+        f.Vm.IsSeries = false;
+        f.Vm.Seasons.Clear(); f.Vm.Episodes.Clear();
+        f.Wire.Played = true; f.Wire.Count = 2; f.Wire.DetailPosition = 900;
+        f.Wire.Target = EpisodeB; f.Wire.Favorite = true; f.Wire.Rating = 4;
+        var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(f.Vm.Item) && f.Vm.IsWatched && item.UserData!.PositionSeconds == 900)
+                applied.TrySetResult();
+        };
+        if (trailing)
+        {
+            // A full targeted sweep already owns playback scope. A viewer
+            // batch queued during that read must not turn its trailing work
+            // into viewer-only scope, including for legacy untyped messages.
+            f.Wire.Played = false; f.Wire.Count = 0; f.Wire.DetailPosition = 0;
+            f.Wire.Target = EpisodeA; f.Wire.Favorite = false; f.Wire.Rating = null;
+            f.Wire.HoldDetails = true;
+            var active = f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA) with { CatchUp = true });
+            var heldRead = await f.Wire.NextAsync();
+            f.Wire.Played = true; f.Wire.Count = 2; f.Wire.DetailPosition = 900;
+            f.Wire.Target = EpisodeB; f.Wire.Favorite = true; f.Wire.Rating = 4;
+            f.Raw(EpisodeA, viewerChange); f.Clock.Advance(200);
+            f.Wire.HoldDetails = false; heldRead.Release();
+            await active.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        else
+        {
+            f.Raw(EpisodeA, playbackChange); f.Raw(EpisodeA, viewerChange);
+            f.Clock.Advance(200);
+        }
+        await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(item, f.Vm.Item);
+        Assert.True(f.Vm.IsWatched);
+        Assert.True(item.UserData!.Played);
+        Assert.Equal(900, item.UserData.PositionSeconds);
+        Assert.Equal(EpisodeB, item.PlayContentId);
+        Assert.True(f.Vm.IsFavorite);
+        Assert.Equal(4, f.Vm.UserRating);
+        Assert.Equal(trailing ? 2 : 1, f.Wire.DetailReads);
+        Assert.Equal(0, f.Wire.EpisodeReads);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("favorite", false)]
+    [InlineData("favorite", true)]
+    [InlineData("watchlist", false)]
+    [InlineData("watchlist", true)]
+    [InlineData("rating", false)]
+    [InlineData("rating", true)]
     public async Task CurrentViewerWritePublishesItsCapturedItemAndContext(string mutation, bool initiallySet)
     {
         using var f = new Fixture(); f.Seed();

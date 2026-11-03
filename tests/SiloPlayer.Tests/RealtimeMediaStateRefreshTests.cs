@@ -169,6 +169,31 @@ public sealed class RealtimeMediaStateRefreshTests
     }
 
     [Theory]
+    [InlineData("watched", "favorite", false)]
+    [InlineData("watched", "favorite", true)]
+    [InlineData("progress", "rating", false)]
+    [InlineData("progress", "rating", true)]
+    public void SameItemMixedBatchRetainsBothKindsAndClearsPlaybackScopeAfterFlush(
+        string playbackChange, string viewerChange, bool viewerFirst)
+    {
+        using var fixture = new Fixture();
+        fixture.Send("movie", null, viewerFirst ? viewerChange : playbackChange);
+        fixture.Send("movie", null, viewerFirst ? playbackChange : viewerChange);
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.Equal(new[] { "movie" }, batch.ContentIds);
+        Assert.Equal(new[] { "movie" }, batch.ViewerStateContentIds);
+        Assert.Equal(new[] { "movie" }, batch.PlaybackStateContentIds);
+
+        fixture.Messages.Clear();
+        fixture.Send("movie", null, viewerChange);
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.Equal(new[] { "movie" }, batch.ViewerStateContentIds);
+        Assert.Empty(batch.PlaybackStateContentIds!);
+    }
+
+    [Theory]
     [InlineData("other", "progress", "episode", "user_state", "user_state.changed")]
     [InlineData("profile", "unknown", "episode", "user_state", "user_state.changed")]
     [InlineData("other", "favorite", "series", "user_state", "user_state.changed")]

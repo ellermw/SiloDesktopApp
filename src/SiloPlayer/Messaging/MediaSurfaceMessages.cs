@@ -5,7 +5,8 @@ namespace SiloPlayer.Messaging;
 /// the bounded, coalesced delivery also refreshes mounted detail surfaces.
 /// These IDs describe refresh scope, never watched/progress scalar values.
 /// ViewerStateContentIds permits viewer-only leaf refreshes without advancing
-/// their navigation-owned playback state, including in mixed event batches.
+/// their navigation-owned playback state, unless PlaybackStateContentIds also
+/// names that leaf in a mixed event batch.
 /// </summary>
 public sealed record MediaStateInvalidated(
     SiloPlayer.Core.Api.ApiRequestContext Context,
@@ -13,7 +14,8 @@ public sealed record MediaStateInvalidated(
     IReadOnlySet<string> SeriesIds,
     bool CatchUp = false,
     bool RefreshDetails = true,
-    IReadOnlySet<string>? ViewerStateContentIds = null);
+    IReadOnlySet<string>? ViewerStateContentIds = null,
+    IReadOnlySet<string>? PlaybackStateContentIds = null);
 
 /// <summary>A captured profile's server-ordered Home preference was accepted.</summary>
 public sealed record HomePreferenceChanged(SiloPlayer.Core.Api.ApiRequestContext Context, bool ReloadLayout = false);

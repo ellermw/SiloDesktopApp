@@ -17,6 +17,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     private readonly HashSet<string> _items = new(StringComparer.Ordinal);
     private readonly HashSet<string> _series = new(StringComparer.Ordinal);
     private readonly HashSet<string> _viewerStateItems = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _playbackStateItems = new(StringComparer.Ordinal);
     private ApiRequestContext? _context;
     private DateTimeOffset _deadline;
     private ITimer? _timer;
@@ -47,7 +48,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
 
     internal void Invalidate(MediaStateInvalidated message) =>
         Queue(message.Context, message.ContentIds.ToArray(), message.SeriesIds.ToArray(), message.CatchUp,
-            message.ViewerStateContentIds?.ToArray());
+            message.ViewerStateContentIds?.ToArray(), message.PlaybackStateContentIds?.ToArray());
 
     public void ReceiveRealtime(string channel, string eventName, JsonElement data)
     {
@@ -68,9 +69,11 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     private static string? Text(JsonElement data, string name) =>
         data.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private void Queue(ApiRequestContext context, string[] items, string[] series, bool catchUp, string[]? viewerStateItems = null)
+    private void Queue(ApiRequestContext context, string[] items, string[] series, bool catchUp,
+        string[]? viewerStateItems = null, string[]? playbackStateItems = null)
     {
         if (string.IsNullOrEmpty(context.ProfileId)) return;
+        playbackStateItems ??= items.Except(viewerStateItems ?? [], StringComparer.Ordinal).ToArray();
         long epoch;
         lock (_gate)
         {
@@ -80,7 +83,8 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
             // before playback can accept them while the UI dispatcher is busy.
             _publish(new MediaStateInvalidated(context, items.ToHashSet(StringComparer.Ordinal),
                 series.ToHashSet(StringComparer.Ordinal), catchUp, RefreshDetails: false,
-                ViewerStateContentIds: viewerStateItems?.ToHashSet(StringComparer.Ordinal)));
+                ViewerStateContentIds: viewerStateItems?.ToHashSet(StringComparer.Ordinal),
+                PlaybackStateContentIds: playbackStateItems.ToHashSet(StringComparer.Ordinal)));
         }
         _enqueue(() =>
         {
@@ -96,6 +100,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
                     _deadline = _time.GetUtcNow() + TimeSpan.FromSeconds(1);
                 _items.UnionWith(items); _series.UnionWith(series); _catchUp |= catchUp;
                 if (viewerStateItems != null) _viewerStateItems.UnionWith(viewerStateItems);
+                _playbackStateItems.UnionWith(playbackStateItems);
                 var wait = _deadline - _time.GetUtcNow();
                 var schedule = ++_schedule;
                 if (wait <= TimeSpan.Zero)
@@ -119,7 +124,8 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
             if (_disposed || epoch != _epoch || schedule != _schedule || _context is not { } context) return;
             var message = new MediaStateInvalidated(context, _items.ToHashSet(StringComparer.Ordinal),
                 _series.ToHashSet(StringComparer.Ordinal), _catchUp,
-                ViewerStateContentIds: _viewerStateItems.ToHashSet(StringComparer.Ordinal));
+                ViewerStateContentIds: _viewerStateItems.ToHashSet(StringComparer.Ordinal),
+                PlaybackStateContentIds: _playbackStateItems.ToHashSet(StringComparer.Ordinal));
             ClearPending();
             if (_isCurrentContext(context)) _publish(message);
         }
@@ -132,7 +138,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     {
         _timer?.Dispose(); _timer = null; ++_schedule;
         _context = null; _items.Clear(); _series.Clear(); _catchUp = false;
-        _viewerStateItems.Clear();
+        _viewerStateItems.Clear(); _playbackStateItems.Clear();
     }
 
     public void Dispose() { lock (_gate) { _disposed = true; ++_epoch; ClearPending(); } }

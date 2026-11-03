@@ -54,6 +54,37 @@ public sealed class ItemDetailWatchedMutationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task ReconnectCatchUpRepairsAFailedOptimisticWatchedFlagEvenWhenTheSnapshotIsUnchanged(bool initiallyWatched)
+    {
+        using var scope = new Scope("episode", initiallyWatched)
+            { Delayed = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        scope.Client.SetProfile("profile");
+        scope.Vm.Seasons.Clear(); scope.Vm.Episodes.Clear();
+        var item = scope.Vm.Item!;
+        scope.Read = _ => Task.FromResult(Json(JsonSerializer.Serialize(new
+        {
+            content_id = item.ContentId, type = item.Type,
+            user_data = new { played = initiallyWatched, watched_count = initiallyWatched ? 2 : 0,
+                unplayed_count = initiallyWatched ? 0 : 2 }
+        })));
+        var write = scope.Vm.ToggleWatchedCommand.ExecuteAsync(null);
+        Assert.Equal(!initiallyWatched, scope.Vm.IsWatched);
+        scope.Client.InvalidateAccessContext();
+        var catchUp = scope.Vm.RefreshMediaStateAsync(new(scope.Client.CaptureContext(),
+            new HashSet<string>([item.ContentId]), new HashSet<string>(), CatchUp: true));
+        scope.Delayed.SetResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+        await Task.WhenAll(write, catchUp).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal(initiallyWatched, item.UserData!.Played);
+        Assert.Equal(initiallyWatched ? 2 : 0, item.UserData.WatchedCount);
+        Assert.Equal(initiallyWatched, scope.Vm.IsWatched);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task DelayedWriteCannotChangeReplacementPageOrProfile(bool changeProfile)
     {
         using var scope = new Scope("series", false) { Delayed = new(TaskCreationOptions.RunContinuationsAsynchronously) };

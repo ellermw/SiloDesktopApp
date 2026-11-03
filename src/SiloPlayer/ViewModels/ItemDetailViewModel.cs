@@ -213,6 +213,11 @@ public partial class ItemDetailViewModel : ObservableObject,
         else _stateContext.Post(_ => action(), null);
     }
 
+    // Older/local callers without explicit kinds treat non-viewer IDs as playback scope.
+    private static IEnumerable<string> PlaybackScope(MediaStateInvalidated message) =>
+        message.PlaybackStateContentIds is { } ids ? ids
+            : message.ContentIds.Where(id => message.ViewerStateContentIds?.Contains(id) != true);
+
     private static MediaStateInvalidated MergeState(MediaStateInvalidated? earlier, MediaStateInvalidated later) =>
         earlier == null || earlier.Context != later.Context ? later : later with
         {
@@ -220,6 +225,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             SeriesIds = earlier.SeriesIds.Concat(later.SeriesIds).ToHashSet(StringComparer.Ordinal),
             ViewerStateContentIds = (earlier.ViewerStateContentIds ?? new HashSet<string>())
                 .Concat(later.ViewerStateContentIds ?? new HashSet<string>()).ToHashSet(StringComparer.Ordinal),
+            PlaybackStateContentIds = PlaybackScope(earlier).Concat(PlaybackScope(later)).ToHashSet(StringComparer.Ordinal),
             CatchUp = earlier.CatchUp || later.CatchUp,
             RefreshDetails = earlier.RefreshDetails || later.RefreshDetails
         };
@@ -261,7 +267,8 @@ public partial class ItemDetailViewModel : ObservableObject,
             Exception? refreshFailure = null;
             var refreshCompleted = false;
             var viewerOnlyLeaf = item != null && item.Type is not ("series" or "season")
-                && message.ViewerStateContentIds?.Contains(item.ContentId) == true;
+                && message.ViewerStateContentIds?.Contains(item.ContentId) == true
+                && message.PlaybackStateContentIds?.Contains(item.ContentId) != true;
             try
             {
                 lock (_remoteStateGate)
@@ -310,7 +317,10 @@ public partial class ItemDetailViewModel : ObservableObject,
                     { item.EpisodeCount = refreshed.EpisodeCount; itemChanged = true; }
                     if (refreshed.SeasonCount.HasValue && item.SeasonCount != refreshed.SeasonCount)
                     { item.SeasonCount = refreshed.SeasonCount; itemChanged = true; }
-                    if (refreshed.UserData is { } userData && !SameUserData(item.UserData, userData))
+                    // Optimistic flags can differ even when the retained REST
+                    // snapshot is unchanged (for example, a write retired by reconnect).
+                    if (refreshed.UserData is { } userData
+                        && (!SameUserData(item.UserData, userData) || IsWatched != userData.Played))
                     {
                         item.UserData = userData;
                         IsWatched = userData.Played;
@@ -331,6 +341,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                     if (viewerOnlyLeaf && refreshed.UserState is { } viewerState)
                         viewerState.Played = item.UserState?.Played ?? item.UserData?.Played ?? IsWatched;
                     if (refreshed.UserState != null && (item.UserState == null
+                        || IsFavorite != refreshed.UserState.IsFavorite || InWatchlist != refreshed.UserState.InWatchlist
                         || (item.UserState.Played, item.UserState.IsFavorite, item.UserState.InWatchlist, item.UserState.NotInterested)
                             != (refreshed.UserState.Played, refreshed.UserState.IsFavorite, refreshed.UserState.InWatchlist, refreshed.UserState.NotInterested)))
                     {
@@ -339,7 +350,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                         InWatchlist = item.UserState.InWatchlist;
                         itemChanged = true;
                     }
-                    if (refreshed.HasAuthoritativeUserRating && (!item.HasAuthoritativeUserRating || item.UserRating != refreshed.UserRating))
+                    if (refreshed.HasAuthoritativeUserRating && (!item.HasAuthoritativeUserRating
+                        || item.UserRating != refreshed.UserRating || UserRating != refreshed.UserRating))
                     {
                         item.UserRating = refreshed.UserRating;
                         UserRating = item.UserRating;
