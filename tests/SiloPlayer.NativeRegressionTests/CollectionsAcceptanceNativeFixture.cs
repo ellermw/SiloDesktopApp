@@ -173,6 +173,7 @@ internal static class CollectionsAcceptanceNativeFixture
             await Case("imported successful Save stays clean", () => ImportedSaveAsync(frame, window, wire, navigation));
             await Case("locked Discover presentation", () => LockedSourcesAsync(frame, window));
             await Case("converted manual collection retains title and items", () => ConvertedManualAsync(frame, window, wire));
+            await Case("synced sort direction and discard", () => SyncedSortDirectionAsync(frame, window));
             await Case("artwork draft preview and Delete Cancel", () => ArtworkAsync(frame, window, wire));
             if (Failures.Count != 0) throw new InvalidOperationException(string.Join("; ", Failures));
             Program.Log("PASS: finite collection template, discovery, mutation, imported Save and artwork acceptance.");
@@ -695,13 +696,44 @@ internal static class CollectionsAcceptanceNativeFixture
             order.StartBringIntoView(); await Layout();
             Check(!direction!.IsEnabled && ((ComboBoxItem)direction.SelectedItem).Content as string == "As listed",
                 "Source order must disable direction as As listed.");
-            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "title:asc")); await Layout();
+            var sortItems = sort.Items.OfType<ComboBoxItem>().ToArray();
+            Check(sort.Focus(FocusState.Keyboard), "Sort must accept keyboard focus before opening its popup.");
+            sort.IsDropDownOpen = true; await Layout();
+            try
+            {
+                foreach (var value in new[] { "title:asc", "year:desc", "title:asc" })
+                {
+                    var item = sortItems.Single(item => Equals(item.Tag, value));
+                    sort.SelectedIndex = Array.IndexOf(sortItems, item); await Layout();
+                    Check(sort.Items.OfType<ComboBoxItem>().SequenceEqual(sortItems) && ReferenceEquals(sort.SelectedItem, item)
+                        && page.ViewModel.DefaultSortValue == value,
+                        "Sort navigation must retain its rows and highlighted selection across queued refreshes.");
+                }
+            }
+            finally { sort.IsDropDownOpen = false; }
             Check(direction.IsEnabled && page.ViewModel.DefaultSortValue == "title:asc", "Title must default to ascending.");
             Check(direction.Items.OfType<ComboBoxItem>().Select(item => item.Content as string).SequenceEqual(new[] { "A–Z", "Z–A" }),
                 "Alphabetical direction labels differ from the WebUI.");
-            direction.SelectedItem = direction.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "desc"));
+            var directionItems = direction.Items.OfType<ComboBoxItem>().ToArray();
+            Check(direction.Focus(FocusState.Keyboard), "Direction must accept keyboard focus before opening its popup.");
+            direction.IsDropDownOpen = true; await Layout();
+            try
+            {
+                foreach (var index in new[] { 1, 0, 1 })
+                {
+                    direction.SelectedIndex = index; await Layout();
+                    Check(direction.Items.OfType<ComboBoxItem>().SequenceEqual(directionItems)
+                        && ReferenceEquals(direction.SelectedItem, directionItems[index]),
+                        "Direction navigation must retain its rows and highlighted selection across queued refreshes.");
+                }
+            }
+            finally { direction.IsDropDownOpen = false; }
             Check(page.ViewModel.DefaultSortValue == "title:desc" && (string)page.ViewModel.CaptureSortConfig()["order"] == "desc",
                 "Direction must update the saved field/order contract.");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "content_rating:asc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "content_rating:asc" && direction.Items.OfType<ComboBoxItem>()
+                .Select(item => item.Content as string).SequenceEqual(new[] { "A–Z", "Z–A" }),
+                "Content Rating must use alphabetical direction labels and default to ascending.");
             page.ViewModel.DefaultSortValue = "release_date:asc"; await Layout();
             Check((string)((ComboBoxItem)sort.SelectedItem).Tag == "release_date:desc" &&
                 (string)((ComboBoxItem)direction.SelectedItem).Tag == "asc", "A stored reverse direction must keep its field and direction visible.");
@@ -741,8 +773,46 @@ internal static class CollectionsAcceptanceNativeFixture
             }
             order.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = .5 }); await Layout();
             await Capture(frame, $"synced-direction-{(create ? "new" : "saved")}-{width}.png");
+            if (!create) await SyncedDiscardAsync(page);
             frame.Content = null;
         }
+    }
+
+    private static async Task SyncedDiscardAsync(CollectionEditorPage page)
+    {
+        var saved = (Dictionary<string, string>)Read(page, "_draftBaseline")!;
+        Click(All<Button>((Border)page.FindName("ImportedSourceSection")).Single(button => Equals(button.Content, "Change link")));
+        await Layout();
+        Check((bool)Read(page, "_savedSourceChanging")!, "Change link must open the saved source editor.");
+        page.ViewModel.SourceUrl = "https://mdblist.com/lists/fixture/discarded/";
+        // The fixture's server has no libraries. Add a local choice to verify
+        // that Discard rebuilds the flyout from the reloaded reference data.
+        page.ViewModel.AvailableLibraries.Add(new() { Id = 987, Name = "Draft library", Type = "movies" });
+        Call(page, "RefreshSyncedLibraries");
+        var choices = (StackPanel)Read(page, "_syncedLibraryChoices")!;
+        choices.Children.OfType<CheckBox>().Single().IsChecked = true;
+        var limit = (TextBox)Read(page, "_titleLimit")!;
+        var sort = (ComboBox)page.FindName("ImportedDefaultSortCombo");
+        Check(limit.Focus(FocusState.Keyboard), "Max titles must accept focus for editing.");
+        limit.Text = "5";
+        Check(sort.Focus(FocusState.Keyboard), "Leaving Max titles must move focus to Sort.");
+        await Layout();
+        Check(page.ViewModel.MaxItemsText == "5" && page.ViewModel.SelectedLibraryIds.Contains(987)
+            && ((FrameworkElement)page.FindName("CollectionDirtyDock")).Visibility == Visibility.Visible,
+            "Editing Max titles and libraries must dirty the synced draft.");
+        Call(page, "Discard_Click", page, new RoutedEventArgs());
+        await Until(() => !page.ViewModel.IsLoading); await Layout();
+        Check(page.ViewModel.ErrorMessage == null && limit.Text == saved["limit"] && !(bool)Read(page, "_savedSourceChanging")!
+            && choices.Children.OfType<CheckBox>().Count() == page.ViewModel.AvailableLibraries.Count
+            && AutomationProperties.GetName((Button)Read(page, "_syncedMatchButton")!) == "Match into: All my libraries",
+            "Discard must restore Max titles, library choices, the Match into label and the closed source editor.");
+        Check(limit.Focus(FocusState.Keyboard), "Restored Max titles must accept focus.");
+        await Layout();
+        Check(sort.Focus(FocusState.Keyboard), "Restored Max titles must allow focus to leave.");
+        await Layout();
+        Check(!((Dictionary<string, string>)Call(page, "CaptureDraft")!).Any(pair => saved.GetValueOrDefault(pair.Key) != pair.Value)
+            && ((FrameworkElement)page.FindName("CollectionDirtyDock")).Visibility == Visibility.Collapsed,
+            "Moving focus through Max titles after Discard must not recommit discarded values or dirty the draft.");
     }
 
     private static async Task Viewport(Frame frame, Window window, int width)

@@ -138,38 +138,35 @@ public sealed partial class CollectionEditorPage
             var field = selected.Split(':', 2)[0];
             var synced = _newSynced || ViewModel.IsImportedCollection;
             var choice = _importedSortChoices.FirstOrDefault(item => item.Value.Split(':', 2)[0] == field);
-            CatalogSortChoices.Apply(ImportedDefaultSortCombo, _importedSortChoices, _shownRatingSources,
-                null, synced ? choice?.Value ?? selected : selected, keepSavedEditorSort: true);
-            if (synced && field.Length > 0 && choice == null)
-            {
-                // Preserve a future server's saved field without translating it
-                // into a different order merely by visiting the editor.
-                var saved = new ComboBoxItem { Content = $"Saved sort ({field})", Tag = selected };
-                ImportedDefaultSortCombo.Items.Add(saved); ImportedDefaultSortCombo.SelectedItem = saved;
-            }
+            // Include a future server's saved field in the choice set without
+            // translating it into a different order merely by visiting the editor.
+            var choices = synced && field.Length > 0 && choice == null
+                ? _importedSortChoices.Append(new CatalogSortChoices.Choice($"Saved sort ({field})", selected)).ToArray()
+                : _importedSortChoices;
+            CatalogSortChoices.Apply(ImportedDefaultSortCombo, choices, _shownRatingSources,
+                null, synced ? choice?.Value ?? selected : selected, keepSavedEditorSort: true, preserveItems: true);
             if (synced && ImportedDefaultSortCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, "")) is { } source)
                 source.Content = "List order";
             ImportedDefaultSortCombo.IsEnabled = !ViewModel.IsReadOnly && !ViewModel.IsSaving;
-            _syncedDirection.Items.Clear();
-            if (field.Length == 0)
+            var directions = field.Length == 0 ? new[] { "" } : new[] { "asc", "desc" };
+            if (!_syncedDirection.Items.OfType<ComboBoxItem>().Select(item => item.Tag as string).SequenceEqual(directions))
             {
-                _syncedDirection.Items.Add(new ComboBoxItem { Content = "As listed", Tag = "" });
-                _syncedDirection.SelectedIndex = 0; _syncedDirection.IsEnabled = false;
-                return;
+                _syncedDirection.Items.Clear();
+                foreach (var direction in directions) _syncedDirection.Items.Add(new ComboBoxItem { Tag = direction });
             }
-            var alphabetical = field is "title" or "author" or "narrator" or "series";
+            var alphabetical = field is "title" or "content_rating" or "author" or "narrator" or "series";
             var date = field is "year" or "added_at" or "release_date" or "last_air_date" or "latest_episode_added" or "last_watched_at";
-            var order = selected.Split(':', 2).ElementAtOrDefault(1);
-            foreach (var direction in new[] { "asc", "desc" })
+            var order = field.Length == 0 ? "" : selected.Split(':', 2).ElementAtOrDefault(1);
+            foreach (var item in _syncedDirection.Items.OfType<ComboBoxItem>())
             {
-                var label = alphabetical ? direction == "asc" ? "A–Z" : "Z–A"
+                var direction = (string)item.Tag;
+                item.Content = field.Length == 0 ? "As listed"
+                    : alphabetical ? direction == "asc" ? "A–Z" : "Z–A"
                     : date ? direction == "asc" ? "Oldest first" : "Newest first"
                     : direction == "asc" ? "Lowest first" : "Highest first";
-                var item = new ComboBoxItem { Content = label, Tag = direction };
-                _syncedDirection.Items.Add(item);
-                if (direction == order) _syncedDirection.SelectedItem = item;
             }
-            _syncedDirection.IsEnabled = synced && choice != null && !ViewModel.IsReadOnly && !ViewModel.IsSaving;
+            _syncedDirection.SelectedItem = _syncedDirection.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, order));
+            _syncedDirection.IsEnabled = synced && field.Length > 0 && choice != null && !ViewModel.IsReadOnly && !ViewModel.IsSaving;
         }
         finally { _suppressImportedSortEvents = suppressed; }
     }

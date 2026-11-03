@@ -260,9 +260,11 @@ public sealed partial class CollectionEditorPage : Page
         }
 
         await ViewModel.LoadExistingCommand.ExecuteAsync(ViewModel.CollectionId);
+        if (ViewModel.IsNotFound || ViewModel.IsLoadUnavailable) return;
         UpdateTypeToggleUI();
         UpdateSectionVisibility();
         BuildImportedOptionsUI();
+        BuildSavedSyncedContents();
         ApplyReadOnlyState();
         UpdateSourceBanner();
         UpdateEditorSummary();
