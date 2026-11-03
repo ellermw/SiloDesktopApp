@@ -160,6 +160,7 @@ local state = {
     native_audio_scope = nil,
     native_menu_sequence = 0,
     native_menu_request = nil,
+    native_menu_pointer_block = nil,
     audio_menu_visible = false,
     audio_menu_overlay = nil,
     audio_menu_items = {},
@@ -4704,7 +4705,9 @@ local function open_native_audio_menu(keyboard)
     state.controller_focus_name = nil
     state.pressed_control = nil
     state.native_menu_request = request
-    consume_video_click()
+    -- Retain the opening gesture through its release, even if Escape closes
+    -- the host first. Only a fresh pointer-down starts a new video gesture.
+    if not keyboard then state.native_menu_pointer_block = request end
     mp.commandv("script-message", "silo-native-audio-open", request.owner, tostring(request.sequence),
         tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
         tostring(state.osd_width), tostring(state.osd_height))
@@ -6210,7 +6213,6 @@ local function setup_script_messages()
             state.native_menu_request = nil
             state.native_menu_sequence = 0
             state.native_audio_scope = scope
-            consume_video_click()
             request_tick()
         end
     end)
@@ -6218,7 +6220,7 @@ local function setup_script_messages()
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
         state.native_menu_request = nil
-        if consume == "true" then consume_video_click() end
+        if consume == "true" then state.native_menu_pointer_block = request end
         if not state.osc_disabled then
             state.controller_focus_name = request.focus_name
             show_osc()
@@ -6272,6 +6274,7 @@ local function setup_script_messages()
     -- Host app can send mouse button events
     mp.register_script_message("osc-mouse-down", function(x, y)
         if state.native_menu_request then return end
+        state.native_menu_pointer_block = nil
         state.mouse_x = tonumber(x) or state.mouse_x
         state.mouse_y = tonumber(y) or state.mouse_y
         handle_mouse_down()
@@ -6349,6 +6352,7 @@ local function setup_script_messages()
     -- clicking the video body works like every other media player.
     mp.register_script_message("osc-video-click", function(x, y)
         if state.native_menu_request then return end
+        if state.native_menu_pointer_block then return end
         if state.playback_failure_visible then return end
         if mp.get_time() <= (state.ignore_video_click_until or 0) then
             return

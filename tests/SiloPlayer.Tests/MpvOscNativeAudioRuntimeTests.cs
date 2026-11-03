@@ -2,6 +2,67 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData("opening")]
+    [InlineData("outside")]
+    [InlineData("unrelated")]
+    public void NativeAudioPointerBarrierRetainsOnlyItsGesture(string origin)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            native_probe_time = 10
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = { {index=0,title='English'}, {index=1,title='Japanese'} }
+            native_handlers['osc-native-audio-scope']('11111111111111111111111111111111')
+            osc_test_layout()
+            local r = s.layout.btn_audio
+            native_handlers['osc-mouse-down'](tostring(r.cx), tostring(r.cy))
+            local request = assert(native_requests[1])
+            if '{{origin}}' == 'unrelated' then s.ignore_video_click_until = 11 end
+            native_handlers['osc-native-menu-closed'](request[3], request[4], '{{origin}}' == 'outside' and 'true' or 'false')
+            native_probe_time = 10.01
+            native_handlers['osc-mouse-up']('100','100')
+            native_handlers['osc-video-click']('100','100')
+            local release = #native_intents
+            native_handlers['osc-mouse-down']('100','100')
+            native_handlers['osc-mouse-up']('100','100')
+            native_handlers['osc-video-click']('100','100')
+            mp.set_property('user-data/native-audio-result', tostring(release)..':'..tostring(#native_intents))
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe);
+        Assert.Equal(origin == "unrelated" ? "0:0" : "0:1", output);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NativeAudioKeyboardCloseAllowsImmediateFreshVideoClick(bool pointerOpen)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            native_probe_time = 10
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = { {index=0,title='English'}, {index=1,title='Japanese'} }
+            native_handlers['osc-native-audio-scope']('11111111111111111111111111111111')
+            osc_test_layout()
+            if {{pointerOpen.ToString().ToLowerInvariant()}} then
+                local r = s.layout.btn_audio
+                native_handlers['osc-mouse-down'](tostring(r.cx), tostring(r.cy))
+            else
+                s.controller_focus_name = 'btn_audio'; osc_test_activate()
+            end
+            local request = assert(native_requests[1])
+            native_handlers['osc-native-menu-closed'](request[3], request[4], 'false')
+            native_probe_time = 10.01
+            native_handlers['osc-mouse-down']('100','100')
+            native_handlers['osc-mouse-up']('100','100')
+            native_handlers['osc-video-click']('100','100')
+            mp.set_property('user-data/native-audio-result', tostring(#native_intents))
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe);
+        Assert.Equal("1", output);
+    }
+
     [Fact]
     public void NativeAudioPendingBlocksNativeWindowMinimizeShortcut()
     {

@@ -94,7 +94,7 @@ public partial class PlayerService
             // The acknowledgement remains scoped; a late request cannot clear
             // the newer owner's pending input guard.
             _mpv?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
-                request.Sequence.ToString(CultureInfo.InvariantCulture), "true");
+                request.Sequence.ToString(CultureInfo.InvariantCulture), "false");
             return;
         }
         if (!_nativeAudioGate.TryOpen(request))
@@ -104,7 +104,7 @@ public partial class PlayerService
             // so its Lua pending guard can advance to a fresh sequence.
             if (_nativeAudioRequest is not { } active || active.Sequence != request.Sequence)
                 owner.Mpv.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
-                    request.Sequence.ToString(CultureInfo.InvariantCulture), "true");
+                    request.Sequence.ToString(CultureInfo.InvariantCulture), "false");
             return;
         }
         _nativeAudioRequest = request;
@@ -119,7 +119,7 @@ public partial class PlayerService
             if (lease) { lease = false; _playbackDialogGate.Release(); }
             owner.Mpv.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
-                "true");
+                reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
         }
         try
         {

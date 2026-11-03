@@ -1322,7 +1322,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("if (_idleRemuxResume.IsReopening)", refusal);
         Assert.Contains("EnterPlaybackTerminalState(ex, mediaPosition, \"idle-remux-resume\", _idleRemuxResume.DesiredPaused)", refusal);
         var healthy = refusal[refusal.IndexOf("else", StringComparison.Ordinal)..];
-        Assert.Contains("_switchingContent = false;", healthy);
+        Assert.Contains("SetSwitchingContent(false);", healthy);
         Assert.Contains("IsLoading = false;", healthy);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", healthy);
         Assert.Contains("DescribePlaybackError(ex)", healthy);

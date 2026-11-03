@@ -13,7 +13,7 @@ namespace SiloPlayer.Services.PlaybackMenus;
 internal sealed record PlaybackAudioChoice(int SourceIndex, string Title, string Metadata,
     string Codec, string Channels, bool IsDefault, bool IsCurrent);
 
-internal enum PlaybackMenuCloseReason { Selection, Cancel, OutsidePointer, Deactivated, OwnerRetired }
+internal enum PlaybackMenuCloseReason { Selection, PointerSelection, Cancel, OutsidePointer, Deactivated, OwnerRetired }
 
 /// <summary>A menu-sized owned surface. Playback and account authority stay with PlayerService.</summary>
 internal sealed class PlaybackAudioMenu
@@ -35,6 +35,7 @@ internal sealed class PlaybackAudioMenu
     private bool _nativeClosed;
     private bool _shown;
     private bool _focusOnLoad;
+    private bool _pointerSelection;
 
     internal PlaybackAudioMenu(MpvVideoWindow owner, PlaybackMenuAnchor anchor,
         IReadOnlyList<PlaybackAudioChoice> choices, Func<bool> isCurrent,
@@ -111,6 +112,9 @@ internal sealed class PlaybackAudioMenu
         try { _window.AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); } catch { /* Cosmetic only. */ }
         _root.Loaded += OnLoaded;
         _root.PreviewKeyDown += OnKeyDown;
+        _root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPointerPressed), true);
+        _root.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPointerReleased), true);
+        _root.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPointerReleased), true);
         _list.ItemClick += OnItemClick;
         _window.Activated += OnActivated;
         _window.Closed += OnClosed;
@@ -208,13 +212,22 @@ internal sealed class PlaybackAudioMenu
         // clicks as well as UIA Invoke. Resolve only our exact owned row.
         var item = _list.Items.OfType<ListViewItem>()
             .FirstOrDefault(row => ReferenceEquals(row, args.ClickedItem) || ReferenceEquals(row.Content, args.ClickedItem));
-        if (item?.Tag is int index) Select(index);
+        if (item?.Tag is int index) Select(index, _pointerSelection);
     }
 
-    private void Select(int index)
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs args) => _pointerSelection = true;
+
+    private void OnPointerReleased(object sender, PointerRoutedEventArgs args)
+    {
+        // ItemClick runs in the release dispatch. Clear after that dispatch so
+        // later keyboard/UIA activation cannot inherit an earlier pointer.
+        _root.DispatcherQueue.TryEnqueue(() => _pointerSelection = false);
+    }
+
+    private void Select(int index, bool pointer = false)
     {
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
-        Close(PlaybackMenuCloseReason.Selection);
+        Close(pointer ? PlaybackMenuCloseReason.PointerSelection : PlaybackMenuCloseReason.Selection);
         _selected(index);
     }
 
@@ -238,6 +251,7 @@ internal sealed class PlaybackAudioMenu
 
     internal void Input(string action)
     {
+        _pointerSelection = false;
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         if (action == "cancel") { Close(PlaybackMenuCloseReason.Cancel); return; }
         if (action == "activate")
@@ -267,6 +281,9 @@ internal sealed class PlaybackAudioMenu
         _owner.ClearMenuDismissal(_dismiss);
         _owner.SurfaceChanged -= OnOwnerChanged;
         _root.Loaded -= OnLoaded; _root.PreviewKeyDown -= OnKeyDown;
+        _root.RemoveHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPointerPressed));
+        _root.RemoveHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPointerReleased));
+        _root.RemoveHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPointerReleased));
         _list.ItemClick -= OnItemClick;
         foreach (ListViewItem row in _list.Items) row.Loaded -= OnRowLoaded;
         _window.Activated -= OnActivated; _window.Closed -= OnClosed;
