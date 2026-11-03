@@ -172,6 +172,7 @@ internal static class PlaybackAudioMenuNativeFixture
             // Native activation dismissal is consumed before a video down/up can
             // become osc-video-click. These messages target only our owned HWND.
             menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
+            foreground.Observe("left-activation-dismiss-before");
             var activation = SendMessageW(video.Hwnd, 0x0021, video.Hwnd, new IntPtr((0x0201 << 16) | 1));
             Require(activation == new IntPtr(2), "WM_MOUSEACTIVATE did not eat the dismissal click.");
             SendMessageW(video.Hwnd, 0x0202, IntPtr.Zero, new IntPtr((100 << 16) | 100));
@@ -186,13 +187,16 @@ internal static class PlaybackAudioMenuNativeFixture
             finally { video.FullscreenToggleRequested -= Fullscreen; }
             await Until(() => Menu(service) == null && !IsWindow(hwnd), "Activation dismissal left the native menu open.");
             Require(mpv.IsPaused && service.IsPaused && wire.AudioPicks.Count == 0 && fullscreen == 0, "Dismissal/double-click changed paused playback, fullscreen or selected audio.");
+            foreground.Observe("left-activation-dismiss-after");
 
             menu = await OpenFromOsc();
+            foreground.Observe("right-activation-dismiss-before");
             activation = SendMessageW(video.Hwnd, 0x0021, video.Hwnd, new IntPtr((0x0204 << 16) | 1));
             Require(activation == new IntPtr(2), "Right activation did not eat the dismissal click.");
             SendMessageW(video.Hwnd, 0x0205, IntPtr.Zero, new IntPtr((100 << 16) | 100));
             await Until(() => Menu(service) == null, "Right activation dismissal left the native menu open.");
             Require(mpv.IsPaused && service.IsPaused, "Right dismissal changed paused playback.");
+            foreground.Observe("right-activation-dismiss-after");
 
             menu = await OpenFromOsc();
             SendMessageW(video.Hwnd, 0x0201, new IntPtr(1), new IntPtr((100 << 16) | 100));
@@ -211,7 +215,9 @@ internal static class PlaybackAudioMenuNativeFixture
             finally { Gate(service).Release(); }
 
             menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
+            foreground.Observe("native-window-close-before");
             ((Window)Get(menu, "_window")!).Close();
+            foreground.Observe("native-window-close-after");
             await Until(() => Menu(service) == null && !IsWindow(hwnd), "Native Window.Close stranded Audio ownership.");
             Call(menu, "Input", "cancel");
             Require(Gate(service).CurrentCount == 1, "Late close released the native Audio lease twice.");
@@ -229,6 +235,7 @@ internal static class PlaybackAudioMenuNativeFixture
             // selection/request; it is not a physical load or timeout cancel.
             menu = await OpenFromOsc();
             var retired = menu; var ownerState = await Query();
+            foreground.Observe("synthetic-file-retirement-before");
             Set(service, "_playbackFileGeneration", (long)Get(service, "_playbackFileGeneration")! + 1);
             Call(retired, "Input", "activate");
             await Until(() => Menu(service) == null, "A stale file menu did not retire before selection.");
@@ -237,6 +244,7 @@ internal static class PlaybackAudioMenuNativeFixture
             await Task.Delay(60); Require(Menu(service) == null, "Old file scope reopened a native menu.");
             Call(service, "SendAudioTrackListToOsc");
             menu = await OpenFromOsc();
+            foreground.Observe("profile-retirement-before");
             api.SetProfile("replacement"); Call(menu, "Input", "activate");
             await Until(() => Menu(service) == null, "A stale profile menu did not retire.");
             Require(wire.AudioPicks.Count == 0, "A retired profile selected audio.");
@@ -351,24 +359,48 @@ internal static class PlaybackAudioMenuNativeFixture
             Call(menu, "Input", "end");
             var last = (ListViewItem)list.Items[71];
             await Until(() => last.XamlRoot != null && last.ActualHeight > 0, "Last native audio row was not realized.");
-            var peer = FrameworkElementAutomationPeer.CreatePeerForElement(last) ?? new ListViewItemAutomationPeer(last);
-            if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke)
-                throw new InvalidOperationException("Actual Audio row has no UIA Invoke pattern.");
             list.ItemClick += (_, args) => Program.Log("Audio fixture observed actual ItemClick payload: " + args.ClickedItem?.GetType().FullName);
-            invoke.Invoke();
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_SKIP_UIA") == "1")
+            {
+                foreground.Observe("keyboard-invoke-before");
+                Call(menu, "Input", "activate");
+                foreground.Observe("keyboard-invoke-after");
+            }
+            else
+            {
+                foreground.Observe("uia-peer-before");
+                var peer = FrameworkElementAutomationPeer.CreatePeerForElement(last) ?? new ListViewItemAutomationPeer(last);
+                if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke)
+                    throw new InvalidOperationException("Actual Audio row has no UIA Invoke pattern.");
+                // WinUI's UIA Invoke explicitly asks to activate its window
+                // before raising ItemClick. Isolate that framework request on
+                // the interactive development desktop; this does not certify
+                // normal UIA focus/activation or change product behavior.
+                using (var veto = new OwnMenuActivationVeto(MenuHwnd(menu)))
+                {
+                    foreground.Observe("uia-invoke-before");
+                    invoke.Invoke();
+                    foreground.Observe("uia-invoke-after");
+                }
+                foreground.Observe("uia-isolation-ended");
+            }
             await Until(() => wire.AudioPicks.Count == 1, "Native Audio Invoke did not reach the existing replan caller.");
+            foreground.Observe("accepted-replan-observed");
             Require(wire.AudioPicks.Single() == 71, "Native Audio reinterpreted a source index as an mpv track ID.");
             await Until(() => !service.IsLoading && !mpv.IsPaused && !service.IsPaused, "Accepted Audio replan did not preserve playing intent.");
+            foreground.Observe("accepted-replan-loaded");
             Require(Menu(service) == null && Gate(service).CurrentCount == 1, "Accepted Audio selection stranded a menu or gate.");
             var position = mpv.Position; await Task.Delay(250);
             Require(mpv.Position > position || position > 3.7 && mpv.Position < position, "Synthetic playback stopped after Audio selection.");
             Call(service, "SendAudioTrackListToOsc");
             menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
+            foreground.Observe("owner-hide-before");
             video.Hide();
+            foreground.Observe("owner-hide-after");
             await Until(() => Menu(service) == null && !IsWindow(hwnd), "Hiding the native owner stranded its Audio menu.");
             Require(Gate(service).CurrentCount == 1, "Owner hide failed to release the Audio dialog lease.");
             foreground.Observe("normal-complete");
-            Program.Log("PASS: native Audio actual OSC/service/owned window, current metadata, 72-row native scroll and UIA source-index replan; stale callbacks/file/profile/dialog ownership, pointer dismissal, pause/play continuity and HWND/gate cleanup. Owned foreground activation is checked separately.");
+            Program.Log("PASS: native Audio actual OSC/service/owned window, current metadata, 72-row native scroll and source-index replan; stale callbacks/file/profile/dialog ownership, pointer dismissal, pause/play continuity and HWND/gate cleanup. UIA command routing uses explicit activation isolation; foreground is checked separately.");
         }
         finally
         {
@@ -395,18 +427,21 @@ internal static class PlaybackAudioMenuNativeFixture
         }
         async Task TriggerOsc()
         {
+            foreground.Observe("osc-trigger-before");
             var geometry = await Query();
             Require(geometry.GetProperty("w").GetDouble() > 0, "Actual Audio opener is unavailable.");
             var x = geometry.GetProperty("x").ToString(); var y = geometry.GetProperty("y").ToString();
             mpv.SendScriptMessage("osc-show");
             mpv.SendScriptMessage("osc-mouse-move", x, y); mpv.SendScriptMessage("osc-mouse-down", x, y);
             mpv.SendScriptMessage("osc-mouse-up", x, y); mpv.SendScriptMessage("osc-video-click", x, y);
+            foreground.Observe("osc-trigger-sent");
         }
         async Task<object> OpenFromOsc()
         {
             await TriggerOsc();
             await Until(() => Menu(service) is { } shown && ((ListView)Get(shown, "_list")!).XamlRoot != null,
                 "Actual OSC Audio gesture produced no native Audio menu.");
+            foreground.WatchMenu((Window)Get(Menu(service)!, "_window")!, MenuHwnd(Menu(service)!));
             foreground.Observe("menu-opened", MenuHwnd(Menu(service)!), "audio-menu");
             return Menu(service)!;
         }
@@ -575,9 +610,12 @@ internal static class PlaybackAudioMenuNativeFixture
     private sealed class ForegroundOwnershipProbe : IDisposable
     {
         private readonly uint _processId = (uint)Environment.ProcessId;
-        private readonly ConcurrentQueue<long> _ownedEvents = new();
+        private readonly ConcurrentQueue<ForegroundEvent> _ownedEvents = new();
         private readonly List<ForegroundSample> _samples = [];
         private readonly Dictionary<long, string> _roles = [];
+        private readonly HashSet<Window> _watchedMenus = [];
+        private string _phase = "constructor";
+        private bool _callbackFailed;
         private readonly WinEventCallback _callback;
         private GCHandle _callbackRoot;
         private IntPtr _hook;
@@ -585,13 +623,19 @@ internal static class PlaybackAudioMenuNativeFixture
         internal ForegroundOwnershipProbe(IntPtr main)
         {
             _roles[main.ToInt64()] = "fixture-main";
-            _callback = (_, _, hwnd, _, _, _, _) =>
+            _callback = (_, _, hwnd, _, _, thread, eventTime) =>
             {
-                if (hwnd != IntPtr.Zero)
+                // The hook filters the originating PID. Delivery is queued:
+                // the owned HWND may already be closed or reused by now.
+                try
                 {
-                    GetWindowThreadProcessId(hwnd, out var process);
-                    if (process == _processId) _ownedEvents.Enqueue(hwnd.ToInt64());
+                    if (hwnd == IntPtr.Zero) return;
+                    var current = GetForegroundWindow();
+                    GetWindowThreadProcessId(current, out var process);
+                    _ownedEvents.Enqueue(new(hwnd.ToInt64(), thread, eventTime, Environment.TickCount64,
+                        _phase, current.ToInt64(), process));
                 }
+                catch { _callbackFailed = true; }
             };
             _callbackRoot = GCHandle.Alloc(_callback);
             // EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT; nonzero process
@@ -607,19 +651,38 @@ internal static class PlaybackAudioMenuNativeFixture
 
         internal void Observe(string stage, IntPtr hwnd = default, string? role = null)
         {
+            _phase = stage;
             if (hwnd != IntPtr.Zero && role != null) _roles[hwnd.ToInt64()] = role;
             var current = GetForegroundWindow();
             GetWindowThreadProcessId(current, out var process);
-            _samples.Add(new(stage, current.ToInt64(), process, process == _processId));
+            _samples.Add(new(stage, current.ToInt64(), process, process == _processId, Environment.TickCount64));
+        }
+
+        internal void WatchMenu(Window menu, IntPtr hwnd)
+        {
+            if (!_watchedMenus.Add(menu)) return;
+            _roles[hwnd.ToInt64()] = "audio-menu";
+            void Activated(object sender, WindowActivatedEventArgs args)
+                => Observe("menu-activated-" + args.WindowActivationState, hwnd, "audio-menu");
+            void Closed(object sender, WindowEventArgs args)
+            {
+                Observe("menu-closed", hwnd, "audio-menu");
+                menu.Activated -= Activated; menu.Closed -= Closed;
+                _watchedMenus.Remove(menu);
+            }
+            menu.Activated += Activated; menu.Closed += Closed;
         }
 
         internal void Complete()
         {
             Observe("after-fixture-cleanup");
             var first = _samples[0]; var last = _samples[^1];
-            var ownedEvents = _ownedEvents.Select(hwnd => new
+            var ownedEvents = _ownedEvents.Select(observation => new
             {
-                hwnd, role = _roles.GetValueOrDefault(hwnd, "other-fixture-window"),
+                hwnd = observation.Hwnd,
+                role = _roles.GetValueOrDefault(observation.Hwnd, "other-fixture-window"),
+                observation.EventThread, observation.EventTime, observation.CallbackTick,
+                observation.PhaseAtDelivery, observation.ForegroundAtDelivery, observation.ForegroundProcessAtDelivery,
             }).ToArray();
             var caseName = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (string.IsNullOrEmpty(caseName)) caseName = "normal";
@@ -627,11 +690,13 @@ internal static class PlaybackAudioMenuNativeFixture
             {
                 fixtureProcessId = _processId, first, last, samples = _samples,
                 ownedForegroundEvents = ownedEvents,
+                callbackFailed = _callbackFailed,
+                skipUia = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_SKIP_UIA") == "1",
                 externalForegroundChanged = first.Hwnd != last.Hwnd && !first.BelongsToFixture && !last.BelongsToFixture,
                 scope = "Own-process foreground WinEvents and explicit HWND/PID snapshots only; no external titles/content or foreground control.",
             }, new JsonSerializerOptions { WriteIndented = true }));
             Program.Log($"Audio foreground {caseName}: initial HWND={first.Hwnd}, PID={first.ProcessId}; final HWND={last.Hwnd}, PID={last.ProcessId}; fixture PID={_processId}; owned events={ownedEvents.Length}.");
-            Require(ownedEvents.Length == 0 && !_samples.Any(sample => sample.BelongsToFixture),
+            Require(!_callbackFailed && ownedEvents.Length == 0 && !_samples.Any(sample => sample.BelongsToFixture),
                 "Offscreen native Audio verification activated a fixture-owned foreground window.");
         }
 
@@ -642,12 +707,90 @@ internal static class PlaybackAudioMenuNativeFixture
             _callbackRoot.Free(); GC.KeepAlive(_callback);
         }
 
-        private sealed record ForegroundSample(string Stage, long Hwnd, uint ProcessId, bool BelongsToFixture);
+        private sealed record ForegroundSample(string Stage, long Hwnd, uint ProcessId, bool BelongsToFixture, long Tick);
+        private sealed record ForegroundEvent(long Hwnd, uint EventThread, uint EventTime, long CallbackTick,
+            string PhaseAtDelivery, long ForegroundAtDelivery, uint ForegroundProcessAtDelivery);
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         private delegate void WinEventCallback(IntPtr hook, uint eventId, IntPtr hwnd, int objectId, int childId, uint thread, uint time);
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventCallback callback, uint process, uint thread, uint flags);
         [DllImport("user32.dll")] private static extern bool UnhookWinEvent(IntPtr hook);
+    }
+
+    /// <summary>
+    /// Test isolation for the framework's explicit UIA Invoke activation.
+    /// Applies only to this exact menu HWND, current fixture PID and UI thread.
+    /// </summary>
+    private sealed class OwnMenuActivationVeto : IDisposable
+    {
+        private readonly IntPtr _menu;
+        private readonly uint _process = (uint)Environment.ProcessId;
+        private readonly uint _thread = GetCurrentThreadId();
+        private readonly List<object> _attempts = [];
+        private readonly CbtCallback _callback;
+        private GCHandle _callbackRoot;
+        private IntPtr _hook;
+        private bool _callbackFailed;
+
+        internal int BlockedCount => _attempts.Count;
+
+        internal OwnMenuActivationVeto(IntPtr menu)
+        {
+            _menu = menu;
+            var targetThread = GetWindowThreadProcessId(menu, out var process);
+            Require(process == _process && targetThread == _thread, "UIA isolation target is not on the fixture's own UI thread.");
+            _callback = (code, window, data) =>
+            {
+                if (code == 5 && window == _menu) // HCBT_ACTIVATE
+                {
+                    GetWindowThreadProcessId(window, out var targetProcess);
+                    if (targetProcess == _process)
+                    {
+                        try
+                        {
+                            var foreground = GetForegroundWindow();
+                            GetWindowThreadProcessId(foreground, out var foregroundProcess);
+                            _attempts.Add(new { tick = Environment.TickCount64, hwnd = window.ToInt64(),
+                                fixtureThread = _thread, foreground = foreground.ToInt64(), foregroundProcess });
+                        }
+                        catch { _callbackFailed = true; }
+                        return new IntPtr(1); // Veto only this owned activation.
+                    }
+                }
+                return CallNextHookEx(_hook, code, window, data);
+            };
+            _callbackRoot = GCHandle.Alloc(_callback);
+            _hook = SetWindowsHookExW(5, _callback, IntPtr.Zero, _thread); // WH_CBT, own thread only
+            if (_hook == IntPtr.Zero)
+            {
+                _callbackRoot.Free();
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot isolate owned UIA activation.");
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_hook == IntPtr.Zero) return;
+            if (!UnhookWindowsHookEx(_hook))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot remove owned UIA activation isolation.");
+            _hook = IntPtr.Zero;
+            _callbackRoot.Free(); GC.KeepAlive(_callback);
+            File.WriteAllText(Path.Combine(Program.ResultDirectory, "normal-uia-veto.json"), JsonSerializer.Serialize(new
+            {
+                hwnd = _menu.ToInt64(), fixtureProcess = _process, fixtureThread = _thread,
+                blockedActivationAttempts = _attempts, callbackFailed = _callbackFailed,
+                scope = "Only the synchronous explicit UIA Invoke call; unhooked before awaiting backend completion. UIA focus/activation was blocked in this isolated fixture and is not certified. No external HWND or thread is vetoed.",
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            Require(!_callbackFailed, "Owned UIA isolation callback failed.");
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        private delegate IntPtr CbtCallback(int code, IntPtr window, IntPtr data);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetWindowsHookExW(int hook, CbtCallback callback, IntPtr module, uint thread);
+        [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr window, IntPtr data);
+        [DllImport("user32.dll", SetLastError = true)] private static extern bool UnhookWindowsHookEx(IntPtr hook);
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct Rect { internal int Left, Top, Right, Bottom; }
