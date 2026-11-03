@@ -3,7 +3,7 @@ using System.Net;
 
 namespace SiloPlayer.Core.Services;
 
-public enum SubtitleSidecarReadOutcome { Ready, Fallback, Busy }
+public enum SubtitleSidecarReadOutcome { Ready, Fallback, Busy, Error }
 public sealed record SubtitleSidecarRead(SubtitleSidecarReadOutcome Outcome, byte[]? Bytes = null, string? Extension = null, bool WasBusy = false);
 
 /// <summary>Bounded text-sidecar reads. Only a subtitle read's 503 is retried.</summary>
@@ -19,7 +19,9 @@ public static class SubtitleSidecarReader
         if (!url.IsAbsoluteUri || url.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, url, codec) == null)
             return new(SubtitleSidecarReadOutcome.Fallback);
         var busy = false;
-        SubtitleSidecarRead Failure() => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Fallback, WasBusy: busy);
+        // Fallback is only for formats outside this reader. A failed text
+        // read must never retry the same URL through synchronous mpv sub-add.
+        SubtitleSidecarRead Failure() => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: busy);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(Budget);
         var clock = Stopwatch.StartNew();

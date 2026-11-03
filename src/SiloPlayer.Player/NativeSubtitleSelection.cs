@@ -20,9 +20,8 @@ public static class NativeSubtitleSelection
                 (!trustworthyContainerTrackId || string.IsNullOrWhiteSpace(requested.ContainerTrackId) ||
                  string.IsNullOrWhiteSpace(t.ContainerTrackId) || t.ContainerTrackId == requested.ContainerTrackId));
         }
-        else if (!string.IsNullOrWhiteSpace(requested.ContainerTrackId))
+        else if (trustworthyContainerTrackId && !string.IsNullOrWhiteSpace(requested.ContainerTrackId))
         {
-            if (!trustworthyContainerTrackId) return 0;
             matches = loaded.Where(t => t.ContainerTrackId == requested.ContainerTrackId);
         }
         else if (requested.StreamIndex is not null)
@@ -31,8 +30,9 @@ public static class NativeSubtitleSelection
         }
         else
         {
-            // Older responses have no absolute identity. A unique full
-            // metadata match is safe; duplicate language/codec rows are not.
+            // Older responses and container-only rows with an unattested
+            // namespace have no usable absolute identity. Require a unique
+            // full metadata match; duplicate language/codec rows are not safe.
             if (string.IsNullOrWhiteSpace(requested.Codec)) return 0;
             var metadata = loaded.Where(t => t.Id > 0 && Codec(t.Codec) == Codec(requested.Codec) &&
                 LanguageIdentity(t.Language) == LanguageIdentity(requested.Language) &&

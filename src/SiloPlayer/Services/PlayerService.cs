@@ -5249,7 +5249,8 @@ public partial class PlayerService : IDisposable
     /// A synchronous libmpv sub-add of an HTTP URL blocks its caller for the
     /// whole download (the UI thread for player-overlay selections). Download a
     /// remote text sidecar off that thread first; SelectSubtitleSidecar then adds
-    /// the local file. Any failure keeps the previous URL path.
+    /// the local file. Failed text reads refuse selection; only unsupported
+    /// formats retain the existing URL path.
     /// </summary>
     private long CurrentSubtitleSidecarGeneration()
     {
@@ -5306,7 +5307,6 @@ public partial class PlayerService : IDisposable
         }
         var watch = WatchOwnerAsync();
         string? path = null;
-        var allowFallback = true;
         try
         {
             if (!CurrentOwner()) return false;
@@ -5315,8 +5315,8 @@ public partial class PlayerService : IDisposable
             var read = await SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url, track.Codec, bounded.Token);
             if (!CurrentOwner()) return false;
             if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return false;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Error) return false;
             if (read.Outcome == SubtitleSidecarReadOutcome.Fallback) return true;
-            allowFallback = !read.WasBusy;
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + read.Extension);
             await File.WriteAllBytesAsync(path, read.Bytes!, bounded.Token);
             lock (_subtitleSyncGate)
@@ -5334,7 +5334,7 @@ public partial class PlayerService : IDisposable
         catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException)
         {
             LogToFile("state_trace.txt", $"Subtitle sidecar prefetch skipped: {ex.GetType().Name}");
-            return allowFallback && CurrentOwner();
+            return false;
         }
         finally
         {
@@ -7028,7 +7028,7 @@ public partial class PlayerService : IDisposable
                 : null;
             if (preferred != null && _mpv != null)
             {
-                await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false);
+                if (!await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false)) return;
                 var completedJobId = _liveSubtitleJobId;
                 if (completedJobId > 0) ResumeAfterLiveSubtitleBuffer(completedJobId);
                 lock (_liveSubtitleLock)

@@ -223,6 +223,15 @@ internal static class SubtitleIdentityNativeFixture
             var japanese = session.SubtitleUrls.Single(t => t.Index == 4);
             await service.SetSubtitleTrackAndPersistAsync(5, "ja", japanese);
             Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused, "Later native identity was shifted by sidecar/index-only inventory.");
+            Require(mpv.HasFfmpegTrackIndices() && !mpv.HasContainerTrackIds(),
+                "Matroska must use lavf indices without attesting a container TrackNumber namespace.");
+            var containerOnly = new SubtitleTrackInfo { Index = 8, TrackId = "sub:42:8", Source = "embedded", Codec = "subrip", Language = "en", ContainerTrackId = "2" };
+            session.SubtitleUrls.Add(containerOnly);
+            writes = wire.PreferenceWrites;
+            await service.SetSubtitleTrackAndPersistAsync(9, containerOnly.Language, containerOnly);
+            Require(mpv.GetPropertyDouble("sid") == 1 && service.ActiveSubtitleServerIndex == 8 &&
+                manager.SubtitleSelectionForLoad == 8 && wire.PreferenceWrites == writes + 1 && mpv.IsPaused,
+                "A container-only row without a sidecar failed to select its unique loaded metadata match.");
             await service.SetSubtitleTrackAndPersistAsync(0, null, null);
             Require(mpv.GetPropertyDouble("sid") <= 0 && mpv.IsPaused, "Explicit Off changed viewer pause intent.");
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");

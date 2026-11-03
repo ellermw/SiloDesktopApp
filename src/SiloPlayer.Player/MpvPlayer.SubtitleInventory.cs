@@ -61,8 +61,9 @@ public sealed partial class MpvPlayer
         }
     }
 
-    /// <summary>Only the builtin Matroska demuxer attests container TrackNumbers here.</summary>
-    public bool HasContainerTrackIds() => CurrentDemuxer() == "mkv";
+    /// <summary>The current demuxer does not attest a container TrackNumber namespace.</summary>
+    // Matroska uses lavf too; its src-id must not be assumed to be a TrackNumber.
+    public bool HasContainerTrackIds() => false;
 
     /// <summary>Only libavformat guarantees the server's AVStream index namespace.</summary>
     public bool HasFfmpegTrackIndices() => CurrentDemuxer() == "lavf";

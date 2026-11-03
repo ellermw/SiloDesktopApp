@@ -80,6 +80,31 @@ public sealed class NativeSubtitleSelectionTests
         Assert.Equal(0, NativeSubtitleSelection.Resolve(Japanese, [Japanese],
             trustworthyStreamIndex: false, trustworthyContainerTrackId: false));
 
+    [Fact]
+    public void UnattestedContainerOnlyRowUsesUniqueMetadataNotSrcId()
+    {
+        var requested = English with { StreamIndex = null, ContainerTrackId = "999" };
+        Assert.Equal(4, NativeSubtitleSelection.Resolve(requested, [English, Japanese],
+            trustworthyStreamIndex: true, trustworthyContainerTrackId: false));
+    }
+
+    [Fact]
+    public void UnattestedContainerNumberCannotDisambiguateDuplicateMetadata()
+    {
+        var requested = English with { StreamIndex = null, Title = null };
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested, [English, English with { Id = 17, ContainerTrackId = "99" }],
+            trustworthyStreamIndex: true, trustworthyContainerTrackId: false));
+    }
+
+    [Fact]
+    public void UnattestedContainerOnlyRowStillRequiresCompleteMatchingMetadata()
+    {
+        var requested = English with { StreamIndex = null };
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Codec = null }, [English], true, false));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Language = "en-GB" }, [English], true, false));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Forced = true }, [English], true, false));
+    }
+
     [Theory]
     [InlineData("en", "eng")]
     [InlineData("", null)]

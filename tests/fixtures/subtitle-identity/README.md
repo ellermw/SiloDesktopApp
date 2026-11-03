@@ -15,6 +15,8 @@ ffmpeg -f lavfi -i anullsrc=r=8000:cl=mono -i english.srt -i japanese.srt -map 0
 Frozen media SHA256: `A0EEBB0C91BC5F7F17DC08F91E290034DD5CA31F4018F7F9462856C1EB6B8AF3`.
 
 The resolver follows the [mpv track-list contract](https://mpv.io/manual/master/#property-list):
-`id` is the selectable SID, `src-id` is the container ID, and `ff-index` is
-only guaranteed to use FFmpeg's namespace with libavformat. The builtin
-Matroska demuxer's approximate FFmpeg index alone is insufficient identity.
+`id` is the selectable SID, and `ff-index` is only guaranteed to use FFmpeg's
+namespace with libavformat (`lavf`), including Matroska. The native fixture
+checks that demuxer capability on the bundled engine. `src-id` is not treated
+as an attested Matroska TrackNumber. Container-only rows instead require a
+unique full metadata match, or use an authorized sidecar when available.
