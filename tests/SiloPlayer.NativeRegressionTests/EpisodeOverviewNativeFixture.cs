@@ -98,9 +98,9 @@ internal static class EpisodeOverviewNativeFixture
             wire.OwnOverview = "A new-language episode plot."; wire.TargetLanguage = "de";
             client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
             Call(page, "ApplyEpisodeSpoilers");
-            Check(vm.OverviewSource == null && overview.Text == "" && overview.Visibility == Visibility.Collapsed &&
-                ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible,
-                "A retired language scope clears stale plot text without removing spoiler protection");
+            Check(vm.OverviewSource == null && overview.Text == "An episode-specific plot." && overview.Visibility == Visibility.Collapsed &&
+                ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible && button.Visibility == Visibility.Collapsed,
+                "A retired language scope preserves display text and spoiler protection without allowing stale translation");
             await Until(() => vm.OverviewSource != null && overview.Text == "A new-language episode plot.");
             Check(wire.Paths.Count(path => path == "/api/v2/catalog/items/episode?library_id=42") == 2 &&
                 vm.OverviewSource!.PendingTranslationLanguage == "de", "Retired own overview is re-read in the captured library");
@@ -140,8 +140,58 @@ internal static class EpisodeOverviewNativeFixture
             await Until(() => wire.Paths.Count(path => path == "/api/v2/catalog/items/series?library_id=42") == 2);
             await Task.Delay(1200);
             Check(wire.Paths.Count(path => path == "/api/v2/catalog/items/series?library_id=42") == 2 && overview.Text == "" &&
-                button.Visibility == Visibility.Collapsed && vm.ErrorMessage == null, "Persistent optional failures have only one backoff retry");
-            Program.Log("PASS: transient series reads recover text and translation on the same page; persistent failures have bounded retries.");
+                button.Visibility == Visibility.Collapsed && vm.ErrorMessage == null, "Persistent optional failures back off instead of issuing rapid retries");
+            Check(Field<DateTimeOffset?>(page, "_overviewRetryAt") != null && Field<TimeSpan>(page, "_overviewRetryDelay") <= TimeSpan.FromSeconds(30),
+                "Persistent failures re-arm a retry with a capped delay");
+            Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+            Call(page, "RefreshRetiredOverviewScope");
+            await Until(() => wire.Paths.Count(path => path == "/api/v2/catalog/items/series?library_id=42") == 3 &&
+                Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
+            Check(overview.Text == "" && button.Visibility == Visibility.Collapsed && vm.ErrorMessage == null,
+                "A later failed optional retry still leaves the episode usable");
+            Program.Log("PASS: transient series reads recover text and translation on the same page; persistent failures retain capped backoff retries.");
+
+            foreach (var type in new[] { "movie", "episode" })
+            foreach (var change in new[] { "language", "access" })
+            {
+                wire.Reset(); wire.OwnOverview = "Already visible plot";
+                Set(page, "_currentContentId", type); Set(page, "_revealedEpisodeOverviewId", type);
+                await vm.LoadInLibraryAsync(type, 42); Call(page, "UpdateUI");
+                await Until(() => overview.Text == "Already visible plot" && button.Visibility == Visibility.Visible);
+                var configuredOwner = Field<object>(page, "_overviewConfiguredOwner");
+                wire.OwnOverview = "Recovered plot"; wire.TargetLanguage = "de";
+                wire.OwnMachineTranslatedFields = ["overview"]; wire.FailItem = true;
+                if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+                else client.InvalidateAccessContext();
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => vm.OverviewResolutionFailed && Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
+                for (var attempt = 0; attempt < 6; attempt++)
+                {
+                    Check(vm.OverviewSource == null && overview.Text == "Already visible plot" && overview.Visibility == Visibility.Visible &&
+                        button.Visibility == Visibility.Collapsed && wire.Posts.Count == 0 &&
+                        ReferenceEquals(configuredOwner, Field<object>(page, "_overviewConfiguredOwner")),
+                        "Failed own reads retain visible text, retire translation and do not commit the replacement owner");
+                    Check(Field<TimeSpan>(page, "_overviewRetryDelay") <= TimeSpan.FromSeconds(30) &&
+                        Field<DateTimeOffset?>(page, "_overviewRetryAt") <= DateTimeOffset.UtcNow.AddSeconds(30),
+                        "Repeated failures never grow the retry backoff beyond its cap");
+                    Call(page, "TranslateOverviewButton_Click", button, new RoutedEventArgs());
+                    var reads = wire.Paths.Count(path => path == $"/api/v2/catalog/items/{type}?library_id=42");
+                    Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                    Call(page, "RefreshRetiredOverviewScope");
+                    await Until(() => wire.Paths.Count(path => path == $"/api/v2/catalog/items/{type}?library_id=42") == reads + 1 &&
+                        Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
+                }
+                wire.FailItem = false;
+                Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => overview.Text == "Recovered plot" && vm.OverviewSource != null && button.Visibility == Visibility.Visible && button.IsEnabled);
+                Check(vm.OverviewSource!.PendingTranslationLanguage == "de" && wire.Posts.Count == 0 &&
+                    ((FrameworkElement)page.FindName("OverviewTranslationLabel")).Visibility == Visibility.Visible &&
+                    Field<DateTimeOffset?>(page, "_overviewRetryAt") == null,
+                    "A later successful retry atomically publishes the replacement text, provenance and translation target");
+            }
+            Set(page, "_revealedEpisodeOverviewId", null!);
+            Program.Log("PASS: repeated own-overview failures after language/access retirement preserve visible text and recover on a later same-page retry.");
 
             foreach (var type in new[] { "movie", "episode" })
             foreach (var mode in new[] { "button", "auto" })
@@ -158,10 +208,14 @@ internal static class EpisodeOverviewNativeFixture
                 var oldPosts = wire.Posts.Count;
                 wire.OwnOverview = "New-language plot"; wire.TargetLanguage = "de";
                 wire.OwnMachineTranslatedFields = ["overview"]; wire.HoldItem = true;
+                var ownReadsBeforeRetirement = wire.Paths.Count(path => path == $"/api/v2/catalog/items/{type}?library_id=42");
                 client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
                 await wire.ItemReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                Check(vm.OverviewSource == null && overview.Text == "" && button.Visibility == Visibility.Collapsed && wire.Posts.Count == oldPosts,
-                    "A retired own source stays unavailable until its new-language read succeeds");
+                Check(vm.OverviewSource == null && overview.Text == "Old-language plot" && button.Visibility == Visibility.Collapsed && wire.Posts.Count == oldPosts,
+                    "A retired own source retains display text but stays unavailable for translation until its new-language read succeeds");
+                Call(page, "RefreshRetiredOverviewScope"); Call(page, "UpdateUI");
+                Check(wire.Paths.Count(path => path == $"/api/v2/catalog/items/{type}?library_id=42") == ownReadsBeforeRetirement + 1,
+                    "Timer and enrichment paints do not overlap a held replacement read");
                 wire.HoldItem = false; wire.ReleaseItemRead.TrySetResult();
                 await Until(() => overview.Text == "New-language plot" &&
                     (mode == "auto" ? wire.Posts.Count == oldPosts + 1 : button.Visibility == Visibility.Visible && button.IsEnabled));
@@ -321,7 +375,7 @@ internal static class EpisodeOverviewNativeFixture
         internal string OnView = "button", TargetLanguage = "fr";
         internal string[] OwnMachineTranslatedFields = [];
         internal string SeriesOverview = SeriesText;
-        internal bool FailSeries, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem;
+        internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem;
         internal int PollReads, SeriesFailuresRemaining;
         internal TaskCompletionSource StatusEntered = NewGate(), ReleaseStatus = NewGate(), PostEntered = NewGate(), ReleasePost = NewGate(),
             PollEntered = NewGate(), ReleasePoll = NewGate(), ItemReadEntered = NewGate(), ReleaseItemRead = NewGate();
@@ -330,7 +384,7 @@ internal static class EpisodeOverviewNativeFixture
         {
             Paths.Clear(); Posts.Clear(); OwnOverview = " \t "; SeriesId = "series"; OnView = "button";
             SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
-            FailSeries = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = false;
+            FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = false;
             StatusEntered = NewGate(); ReleaseStatus = NewGate(); PostEntered = NewGate(); ReleasePost = NewGate();
             PollEntered = NewGate(); ReleasePoll = NewGate(); ItemReadEntered = NewGate(); ReleaseItemRead = NewGate();
         }
@@ -357,6 +411,8 @@ internal static class EpisodeOverviewNativeFixture
             }
             if ((request.RequestUri.AbsolutePath is "/api/v2/catalog/items/episode" or "/api/v2/catalog/items/movie") && HoldItem)
             { ItemReadEntered.TrySetResult(); await ReleaseItemRead.Task; }
+            if ((request.RequestUri.AbsolutePath is "/api/v2/catalog/items/episode" or "/api/v2/catalog/items/movie") && FailItem)
+                return new(HttpStatusCode.InternalServerError);
             if (request.RequestUri.AbsolutePath == "/api/v2/capabilities/metadata-ai" && HoldStatus)
             { StatusEntered.TrySetResult(); await ReleaseStatus.Task; }
             if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && SeriesFailuresRemaining > 0)

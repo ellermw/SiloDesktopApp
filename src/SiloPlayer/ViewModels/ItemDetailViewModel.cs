@@ -54,13 +54,31 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
     }
 
+    // A retired own description may remain visible, but must never be used for translation.
+    public MediaItemDetail? OverviewDisplaySource
+    {
+        get
+        {
+            if (OverviewSource is { } source) return source;
+            if (!ReferenceEquals(Item, _overviewEpisode) || LibraryId != _overviewLibrary ||
+                _overviewContext is not { } previous || string.IsNullOrWhiteSpace(Item?.Overview)) return null;
+            var current = _catalogApi.CaptureContext();
+            return previous.AuthenticationGeneration == current.AuthenticationGeneration &&
+                previous.BaseUrl == current.BaseUrl && previous.ProfileId == current.ProfileId ? Item : null;
+        }
+    }
+
     public async Task<MediaItemDetail?> ResolveOverviewAsync(CancellationToken ct = default)
     {
         var revision = ++_overviewRevision;
         var item = Item;
         var refreshItem = ReferenceEquals(item, _overviewEpisode) && !IsOverviewScopeCurrent &&
             item != null && (item.Type != "episode" || !string.IsNullOrWhiteSpace(item.Overview));
-        _seriesOverview = null;
+        if (!ReferenceEquals(item, _overviewEpisode))
+        {
+            _seriesOverview = null;
+            _overviewContext = null;
+        }
         _overviewEpisode = item;
         OverviewResolutionFailed = false;
         var library = LibraryId;
@@ -73,24 +91,29 @@ public partial class ItemDetailViewModel : ObservableObject,
             LibraryId == library && _catalogApi.IsCurrentContext(context) && language == _catalogApi.LocalizedReadGeneration;
         try
         {
+            MediaItemDetail? refreshed = null, series = null;
             if (refreshItem)
             {
-                var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, library, ct);
+                refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, library, ct);
                 if (!Current()) return null;
                 if (refreshed.ContentId != item.ContentId) { OverviewResolutionFailed = true; return null; }
+            }
+            if (!Current()) return null;
+            if (item.Type == "episode" && string.IsNullOrWhiteSpace((refreshed ?? item).Overview) &&
+                !string.IsNullOrWhiteSpace(item.SeriesId))
+            {
+                series = await _catalogApi.GetItemDetailAsync(item.SeriesId, library, ct);
+                if (!Current()) return null;
+                if (series.ContentId != item.SeriesId) { OverviewResolutionFailed = true; return null; }
+            }
+            // Publish text, provenance and scope together, only after all required reads succeed.
+            if (refreshed != null)
+            {
                 item.Overview = refreshed.Overview;
                 item.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
                 item.MachineTranslatedFields = refreshed.MachineTranslatedFields;
             }
-            if (!Current()) return null;
-            if (item.Type == "episode" && string.IsNullOrWhiteSpace(item.Overview))
-            {
-                if (string.IsNullOrWhiteSpace(item.SeriesId)) return null;
-                var series = await _catalogApi.GetItemDetailAsync(item.SeriesId, library, ct);
-                if (!Current()) return null;
-                if (series.ContentId != item.SeriesId) { OverviewResolutionFailed = true; return null; }
-                _seriesOverview = series;
-            }
+            _seriesOverview = series;
             _overviewLibrary = library;
             _overviewContext = context;
             _overviewLanguage = language;
@@ -99,7 +122,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
         catch (Exception)
         {
-            // Optional description reads must not fail the detail page; allow a bounded retry.
+            // Optional description reads must not fail the detail page; preserve the last published text.
             if (Current()) OverviewResolutionFailed = true;
             return null;
         }

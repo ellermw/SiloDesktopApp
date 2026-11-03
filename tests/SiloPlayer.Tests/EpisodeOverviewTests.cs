@@ -70,6 +70,8 @@ public sealed class EpisodeOverviewTests
         await scope.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Null(scope.Vm.OverviewSource);
         Assert.Equal("Old plot", item!.Overview);
+        if (change != "profile") Assert.Same(item, scope.Vm.OverviewDisplaySource);
+        else Assert.Null(scope.Vm.OverviewDisplaySource);
         scope.Release.TrySetResult();
         Assert.Same(item, await pending);
         Assert.Same(item, scope.Vm.Item);
@@ -129,6 +131,75 @@ public sealed class EpisodeOverviewTests
         Assert.False(scope.Vm.OverviewResolutionFailed);
         Assert.Equal("New plot", item.Overview);
         Assert.Equal("de", item.PendingTranslationLanguage);
+    }
+
+    [Theory]
+    [InlineData("movie", "language")] [InlineData("episode", "language")]
+    [InlineData("movie", "access")] [InlineData("episode", "access")]
+    public async Task RepeatedOwnReadFailuresPreserveDisplayButNeverRevalidateTranslation(string type, string change)
+    {
+        using var scope = new Scope { ItemType = type, Own = "Visible plot" };
+        await scope.Vm.LoadInLibraryAsync(type, 42);
+        var item = await scope.Vm.ResolveOverviewAsync();
+        if (change == "access") scope.Client.InvalidateAccessContext();
+        else scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        scope.Own = "Replacement plot"; scope.TargetLanguage = "de"; scope.FailItem = true;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            Assert.Null(await scope.Vm.ResolveOverviewAsync());
+            Assert.True(scope.Vm.OverviewResolutionFailed);
+            Assert.Null(scope.Vm.OverviewSource);
+            Assert.Same(item, scope.Vm.OverviewDisplaySource);
+            Assert.Equal("Visible plot", scope.Vm.OverviewDisplaySource!.Overview);
+            Assert.Equal("fr", item!.PendingTranslationLanguage);
+            var reads = scope.Paths.Count;
+            await scope.Vm.RefreshOverviewAsync(item, default);
+            Assert.Equal(reads, scope.Paths.Count);
+        }
+        scope.FailItem = false;
+        Assert.Same(item, await scope.Vm.ResolveOverviewAsync());
+        Assert.False(scope.Vm.OverviewResolutionFailed);
+        Assert.Same(item, scope.Vm.OverviewDisplaySource);
+        Assert.Equal("Replacement plot", item!.Overview);
+        Assert.Equal("de", item.PendingTranslationLanguage);
+    }
+
+    [Fact]
+    public async Task OwnReplacementAndSeriesFallbackPublishAtomically()
+    {
+        using var scope = new Scope { Own = "Visible episode plot" };
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var item = await scope.Vm.ResolveOverviewAsync();
+        scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        scope.Own = " "; scope.TargetLanguage = "de"; scope.FailSeries = true;
+        Assert.Null(await scope.Vm.ResolveOverviewAsync());
+        Assert.True(scope.Vm.OverviewResolutionFailed);
+        Assert.Null(scope.Vm.OverviewSource);
+        Assert.Same(item, scope.Vm.OverviewDisplaySource);
+        Assert.Equal("Visible episode plot", item!.Overview);
+        Assert.Equal("fr", item.PendingTranslationLanguage);
+        scope.FailSeries = false;
+        var series = await scope.Vm.ResolveOverviewAsync();
+        Assert.Equal("series", series!.ContentId);
+        Assert.Same(series, scope.Vm.OverviewDisplaySource);
+        Assert.Equal(" ", item.Overview);
+        Assert.Equal("de", item.PendingTranslationLanguage);
+    }
+
+    [Theory]
+    [InlineData("item")] [InlineData("library")] [InlineData("profile")] [InlineData("page")]
+    public async Task StaleOwnDisplayCannotFollowAnotherOwner(string change)
+    {
+        using var scope = new Scope { Own = "Visible plot" };
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var item = await scope.Vm.ResolveOverviewAsync();
+        scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        Assert.Same(item, scope.Vm.OverviewDisplaySource);
+        if (change == "item") scope.Vm.Item = new() { ContentId = "other", Type = "episode" };
+        else if (change == "library") { scope.Own = ""; await scope.Vm.LoadInLibraryAsync("episode", 99); }
+        else if (change == "profile") scope.Client.SetProfile("other-profile");
+        else scope.Vm.CancelPendingLoads();
+        Assert.Null(scope.Vm.OverviewDisplaySource);
     }
 
     [Fact]
