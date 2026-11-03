@@ -483,6 +483,19 @@ internal static class CollectionsAcceptanceNativeFixture
                 All<TextBlock>(page).Any(t => t.Text == "The preview didn't load. You can still save."),
                 "a failed preview discards healthy matches or blocks the collection draft");
             wire.RejectPreview = false;
+            var rules = (DependencyObject)Read(page, "_rulesEditor")!;
+            var sort = All<ComboBox>(rules).Single(combo => AutomationProperties.GetName(combo) == "Sort by");
+            var direction = All<ComboBox>(rules).Single(combo => AutomationProperties.GetName(combo) == "Direction");
+            sort.SelectedItem = sort.Items.Cast<object>().Single(item => item.ToString() == "Content Rating"); await Layout();
+            Check(page.ViewModel.RuleDefinition.Sort?.Field == "content_rating" && page.ViewModel.RuleDefinition.Sort?.Order == "asc"
+                && direction.Items.Cast<object>().Select(item => item.ToString()).SequenceEqual(new[] { "A–Z", "Z–A" })
+                && direction.SelectedItem?.ToString() == "A–Z",
+                "Smart Content Rating must default to ascending and offer alphabetical directions in the synced editor's order.");
+            direction.SelectedItem = direction.Items.Cast<object>().Single(item => item.ToString() == "Z–A"); await Layout();
+            Check(page.ViewModel.RuleDefinition.Sort?.Field == "content_rating" && page.ViewModel.RuleDefinition.Sort?.Order == "desc"
+                && direction.SelectedItem?.ToString() == "Z–A",
+                "Smart Content Rating's Z–A direction must preserve the field and store descending order.");
+            sort.SelectedItem = sort.Items.Cast<object>().Single(item => item.ToString() == "Date Added"); await Layout();
             if (width == 1280)
             {
                 var limit = (TextBox)Read(page, "_smartLimit")!; limit.Text = "12"; Call(page, "CommitSmartLimit");
@@ -665,7 +678,9 @@ internal static class CollectionsAcceptanceNativeFixture
         Check(page.ViewModel.ErrorMessage != null && ReferenceEquals(frame.Content, page) && page.ViewModel.PosterFileBytes?.SequenceEqual(bytes) == true && preview.Source != null,
             "rejected poster write lost the editor or selected preview");
         wire.PosterGate = null; Click(save); await Until(() => wire.PosterCalls == 2 && !page.ViewModel.IsSaving && !page.ViewModel.IsLoading); await Layout();
-        Check(page.ViewModel.ErrorMessage == null && page.ViewModel.PosterFileBytes == null && ((FrameworkElement)page.FindName("CollectionDirtyDock")).Visibility == Visibility.Collapsed,
+        Check(page.ViewModel.ErrorMessage == null && page.ViewModel.PosterFileBytes == null
+            && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Collapsed
+            && DraftMatches(page, (Dictionary<string, string>)Read(page, "_draftBaseline")!),
             "successful artwork retry did not establish a clean saved editor");
         await (Task)Call(page, "ApplyPosterDropAsync", drop.GetView())!; await Layout();
         Call(page, "Discard_Click", page, new RoutedEventArgs()); await Until(() => !page.ViewModel.IsLoading && page.ViewModel.PosterFileBytes == null); await Layout();
@@ -815,7 +830,7 @@ internal static class CollectionsAcceptanceNativeFixture
         Check(sort.Focus(FocusState.Keyboard), "Leaving Max titles must move focus to Sort.");
         await Layout();
         Check(page.ViewModel.MaxItemsText == "5" && page.ViewModel.SelectedLibraryIds.Contains(987)
-            && ((FrameworkElement)page.FindName("CollectionDirtyDock")).Visibility == Visibility.Visible,
+            && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Visible && !DraftMatches(page, saved),
             "Editing Max titles and libraries must dirty the synced draft.");
         Call(page, "Discard_Click", page, new RoutedEventArgs());
         await Until(() => !page.ViewModel.IsLoading); await Layout();
@@ -827,9 +842,15 @@ internal static class CollectionsAcceptanceNativeFixture
         await Layout();
         Check(sort.Focus(FocusState.Keyboard), "Restored Max titles must allow focus to leave.");
         await Layout();
-        Check(!((Dictionary<string, string>)Call(page, "CaptureDraft")!).Any(pair => saved.GetValueOrDefault(pair.Key) != pair.Value)
-            && ((FrameworkElement)page.FindName("CollectionDirtyDock")).Visibility == Visibility.Collapsed,
+        Check(DraftMatches(page, saved) && DraftMatches(page, (Dictionary<string, string>)Read(page, "_draftBaseline")!)
+            && ((Border)Read(page, "_editorFooter")!).Visibility == Visibility.Collapsed,
             "Moving focus through Max titles after Discard must not recommit discarded values or dirty the draft.");
+    }
+
+    private static bool DraftMatches(CollectionEditorPage page, Dictionary<string, string> baseline)
+    {
+        var draft = (Dictionary<string, string>)Call(page, "CaptureDraft")!;
+        return draft.Count == baseline.Count && draft.All(pair => baseline.TryGetValue(pair.Key, out var value) && value == pair.Value);
     }
 
     private static async Task Viewport(Frame frame, Window window, int width)

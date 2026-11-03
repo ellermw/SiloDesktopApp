@@ -85,9 +85,9 @@ public sealed partial class QueryRulesEditor
         {
             updating = true;
             var field = Query.Sort?.Field ?? "added_at";
-            var alphabetical = field is "title" or "author" or "narrator" or "series";
+            var alphabetical = field is "title" or "author" or "narrator" or "series" or "content_rating";
             var date = field is "added_at" or "release_date" or "last_air_date" or "latest_episode_added" or "year" or "date_viewed";
-            direction.ItemsSource = new[] { new Option(alphabetical ? "Z–A" : date ? "Newest first" : "Highest first", "desc"), new Option(alphabetical ? "A–Z" : date ? "Oldest first" : "Lowest first", "asc") };
+            direction.ItemsSource = new[] { new Option(alphabetical ? "A–Z" : date ? "Oldest first" : "Lowest first", "asc"), new Option(alphabetical ? "Z–A" : date ? "Newest first" : "Highest first", "desc") };
             direction.SelectedItem = direction.Items.Cast<Option>().First(o => o.Value == (Query.Sort?.Order ?? "desc")); updating = false;
         }
         Directions();
