@@ -18,6 +18,7 @@ public sealed partial class LibraryPage
     private string? _focusedLibraryLetter;
     private string? _activeLibraryLetter;
     private string? _chosenLibraryEndLetter;
+    private long _queuedLetterJumpVersion;
 
     private bool IsLibraryLetterGrid => _isNavigated && _currentTab == "Library" &&
         _currentAudiobookAxis == "books" && ViewModel.SelectedSort == "title";
@@ -56,18 +57,26 @@ public sealed partial class LibraryPage
     private void LibraryLetters_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(ViewModel.LetterIndex) or nameof(ViewModel.IsLetterIndexLoading) or nameof(ViewModel.SelectedSort) or
-            nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount))
+            nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount) or
+            nameof(ViewModel.PendingLetter) or nameof(ViewModel.LetterJumpError))
             DispatcherQueue.TryEnqueue(UpdateLibraryLetters);
     }
 
     private void UpdateLibraryLetters()
     {
+        if (!IsLibraryLetterGrid) ViewModel.RetireLetterJump();
         if (!ReferenceEquals(_displayedLetterIndex, ViewModel.LetterIndex))
         {
             _displayedLetterIndex = ViewModel.LetterIndex;
             _chosenLibraryEndLetter = null;
         }
         LibraryLetterRail.Visibility = CanShowLibraryLetters ? Visibility.Visible : Visibility.Collapsed;
+        var pending = ViewModel.PendingLetter;
+        var error = ViewModel.LetterJumpError;
+        LibraryLetterStatus.Text = error ?? (pending is null ? "" : $"Loading {pending}…");
+        LibraryLetterFeedback.Visibility = IsLibraryLetterGrid && (pending is not null || error is not null)
+            ? Visibility.Visible : Visibility.Collapsed;
+        LibraryLetterRetry.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
         foreach (var (letter, button) in _libraryLetterButtons)
         {
             var entry = CanShowLibraryLetters ? ViewModel.LetterIndex?.Letters.FirstOrDefault(item => item.Letter == letter) : null;
@@ -127,8 +136,8 @@ public sealed partial class LibraryPage
         var atBottom = Math.Abs(_libraryVerticalOffset - maxOffset) < 2;
         if (!atBottom) _chosenLibraryEndLetter = null;
         var topRowEnd = Math.Min(ViewModel.TotalCount - 1, (_currentFirstRow + 1) * layout.Columns - 1);
-        var activeLetter = atBottom && _chosenLibraryEndLetter is not null
-            ? _chosenLibraryEndLetter : ViewModel.LetterIndex!.LetterAtIndex(topRowEnd);
+        var activeLetter = ViewModel.PendingLetter ?? (atBottom && _chosenLibraryEndLetter is not null
+            ? _chosenLibraryEndLetter : ViewModel.LetterIndex!.LetterAtIndex(topRowEnd));
         if (!force && activeLetter == _activeLibraryLetter) return;
         _activeLibraryLetter = activeLetter;
         foreach (var (letter, button) in _libraryLetterButtons)
@@ -137,7 +146,8 @@ public sealed partial class LibraryPage
             button.Background = active ? (Brush)Application.Current.Resources["AccentBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             button.Foreground = (Brush)Application.Current.Resources[active ? "PrimaryTextBrush" : "SecondaryTextBrush"];
             button.Opacity = button.IsEnabled ? 1 : .35;
-            AutomationProperties.SetHelpText(button, active ? "Current letter" : "Jump to letter");
+            AutomationProperties.SetHelpText(button, letter == ViewModel.PendingLetter ? "Loading titles" :
+                active ? "Current letter" : "Jump to letter");
         }
         UpdateLibraryLetterTabStop();
     }
@@ -159,13 +169,16 @@ public sealed partial class LibraryPage
 
     private void OnLibraryLetterJumpRequested(int index)
     {
+        var jump = ViewModel.LetterJumpVersion;
         var owner = ViewModel.LetterIndex;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var context = catalog.CaptureContext();
         var language = catalog.FilterCacheGeneration;
+        _queuedLetterJumpVersion = jump;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!CanShowLibraryLetters || !ReferenceEquals(owner, ViewModel.LetterIndex) ||
+            if (_queuedLetterJumpVersion == jump) _queuedLetterJumpVersion = 0;
+            if (!CanShowLibraryLetters || !ViewModel.IsCurrentLetterJump(jump) || !ReferenceEquals(owner, ViewModel.LetterIndex) ||
                 index >= ViewModel.TotalCount || ViewModel.GetWindowItem(index) is null ||
                 !catalog.IsCurrentContext(context) || catalog.FilterCacheGeneration != language) return;
             UpdateVirtualGridMetrics();

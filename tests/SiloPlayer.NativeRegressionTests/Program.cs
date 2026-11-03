@@ -486,6 +486,18 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-letter-feedback")
+            {
+                await LibraryLettersNativeFixture.RunAsync(parent, _window, verifyImmediateFeedback: true);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-letter-ownership")
+            {
+                await LibraryLettersNativeFixture.RunAsync(parent, _window, verifyOwnership: true);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-cursor")
             {
                 await LibraryCursorNativeFixture.RunAsync(parent, _window);

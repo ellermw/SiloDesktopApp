@@ -494,6 +494,7 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        _queuedLetterJumpVersion = 0;
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         DetachRecommendedRealtimeEvents();
@@ -1515,6 +1516,14 @@ public sealed partial class LibraryPage : Page,
     private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
         if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
+        // There is no programmatic letter movement until its page callback
+        // dispatches. Even a fractional manual move retires pending feedback or
+        // a queued completion. Afterwards allow native pixel rounding only.
+        var movement = Math.Abs(LibraryScroller.VerticalOffset - _libraryVerticalOffset);
+        var letterPending = ViewModel.PendingLetter is not null || ViewModel.LetterJumpError is not null ||
+            _queuedLetterJumpVersion != 0;
+        if (movement > 0 && (letterPending || movement > 1))
+            ViewModel.RetireLetterJump();
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
     }
 
@@ -1574,8 +1583,11 @@ public sealed partial class LibraryPage : Page,
         {
             if (!_isNavigated || _pendingLibraryOffset != offset) return;
             _pendingLibraryOffset = null;
-            LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true);
-            UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+            // ChangeView may be accepted before VerticalOffset reflects it.
+            // Republishing that old value clears a deliberately chosen final
+            // letter even though the native view subsequently reaches bottom.
+            if (!LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true))
+                UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
         });
     }
 

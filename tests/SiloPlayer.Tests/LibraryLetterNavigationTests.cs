@@ -518,6 +518,203 @@ public sealed class LibraryLetterNavigationTests
     }
 
     [Fact]
+    public async Task FailedLetterReadKeepsTheCatalogUsableInsteadOfPublishingAGlobalError()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var original = model.GetWindowItem(0);
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        wire.FailCatalog = true;
+
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+
+        Assert.Empty(jumped);
+        Assert.Same(original, model.GetWindowItem(0));
+        Assert.Null(model.ErrorMessage); // Failure belongs to the selected letter's retry surface.
+        Assert.False(model.IsLetterJumpInProgress);
+        wire.FailCatalog = false;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.Equal(new[] { 742 }, jumped);
+        Assert.NotNull(model.GetWindowItem(742));
+    }
+
+    [Fact]
+    public async Task RetryingAMissingTargetRevalidatesTheIndexInsteadOfRepeatingItsOldPosition()
+    {
+        using var wire = new Wire { CatalogExact = false, IndexTotal = 1200, TailPosition = 1199 };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+        Assert.Empty(jumped);
+        // A scan changed the optional index independently of the catalog page.
+        wire.IndexTotal = 1000; wire.TailPosition = 900;
+
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+
+        Assert.Equal(new[] { 900 }, jumped);
+        Assert.NotNull(model.GetWindowItem(900));
+        Assert.Equal(2, wire.IndexRequests);
+    }
+
+    [Theory]
+    [InlineData("profile")]
+    [InlineData("language")]
+    [InlineData("filter")]
+    [InlineData("library")]
+    [InlineData("navigation")]
+    public async Task HeldLetterCompletionCannotPublishAfterItsOwnerChanges(string change)
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        wire.HoldCatalog = true;
+        var pending = model.JumpToLetterCommand.ExecuteAsync("M");
+        try
+        {
+            Assert.True(model.IsLetterJumpInProgress);
+            Assert.False(pending.IsCompleted);
+            if (change == "profile") wire.Client.SetProfile("new-synthetic-profile");
+            else if (change == "language") wire.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+            else if (change == "filter") model.SelectedGenre = "Comedy";
+            else if (change == "library") model.Library = new Library { Id = 8, Type = "movie" };
+            else model.SuspendCatalogLoads();
+        }
+        finally { wire.ReleaseCatalog.TrySetResult(); await pending; }
+
+        Assert.Empty(jumped);
+        Assert.False(model.IsLetterJumpInProgress);
+        Assert.Null(model.GetWindowItem(742));
+        Assert.Null(model.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ReversedCompletionsPublishOnlyTheLatestLetterChoice()
+    {
+        using var wire = new Wire { TailPosition = 900 }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        var first = wire.HoldNextCatalog();
+        var older = model.JumpToLetterCommand.ExecuteAsync("M");
+        await first.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = wire.HoldNextCatalog();
+        var newer = model.JumpToLetterCommand.ExecuteAsync("N");
+        try
+        {
+            await second.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("N", model.PendingLetter);
+            second.Release.TrySetResult(); await newer;
+            first.Release.TrySetResult(); await older;
+            Assert.Equal(new[] { 900 }, jumped);
+            Assert.NotNull(model.GetWindowItem(900));
+            Assert.Null(model.PendingLetter); Assert.Null(model.LetterJumpError);
+        }
+        finally { first.Release.TrySetResult(); second.Release.TrySetResult(); await Task.WhenAll(older, newer); }
+    }
+
+    [Fact]
+    public async Task RepeatedSameLetterKeepsNewerPendingStateWhenOlderReadFails()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        var first = wire.HoldNextCatalog(fail: true);
+        var older = model.JumpToLetterCommand.ExecuteAsync("M");
+        await first.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = wire.HoldNextCatalog();
+        var newer = model.JumpToLetterCommand.ExecuteAsync("M");
+        try
+        {
+            await second.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            first.Release.TrySetResult(); await older;
+            Assert.Equal("M", model.PendingLetter);
+            Assert.True(model.IsLetterJumpInProgress);
+            Assert.Null(model.LetterJumpError); Assert.Null(model.ErrorMessage);
+            second.Release.TrySetResult(); await newer;
+            Assert.Equal(new[] { 742 }, jumped);
+            Assert.Null(model.PendingLetter);
+        }
+        finally { first.Release.TrySetResult(); second.Release.TrySetResult(); await Task.WhenAll(older, newer); }
+    }
+
+    [Fact]
+    public async Task RetiredLetterFailureCannotRestoreOverANewerManualViewport()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        var gate = wire.HoldNextCatalog(fail: true);
+        var pending = model.JumpToLetterCommand.ExecuteAsync("M");
+        try
+        {
+            await gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            model.RetireLetterJump();
+            await model.EnsureRangeLoadedAsync(300, 359);
+            var current = model.GetWindowItem(300);
+            Assert.NotNull(current);
+            gate.Release.TrySetResult(); await pending;
+            Assert.Same(current, model.GetWindowItem(300));
+            Assert.Empty(jumped); Assert.Null(model.PendingLetter);
+            Assert.Null(model.LetterJumpError); Assert.Null(model.ErrorMessage);
+        }
+        finally { gate.Release.TrySetResult(); await pending; }
+    }
+
+    [Fact]
+    public async Task ScopedRetryClearsFailureImmediatelyAndLoadsTheCurrentChoice()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        wire.FailCatalog = true;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.NotNull(model.LetterJumpError); Assert.Null(model.PendingLetter);
+        wire.FailCatalog = false;
+        var gate = wire.HoldNextCatalog();
+        var pending = model.RetryLetterJumpCommand.ExecuteAsync(null);
+        try
+        {
+            await gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("M", model.PendingLetter); Assert.Null(model.LetterJumpError);
+            Assert.Null(model.ErrorMessage);
+        }
+        finally { gate.Release.TrySetResult(); await pending; }
+        Assert.NotNull(model.GetWindowItem(742)); Assert.Null(model.PendingLetter);
+    }
+
+    [Fact]
+    public async Task FailedIndexRevalidationKeepsScopedRetryAvailableUntilItSucceeds()
+    {
+        using var wire = new Wire { CatalogExact = false, IndexTotal = 1200, TailPosition = 1199 };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+        Assert.NotNull(model.LetterJumpError);
+        wire.FailIndex = true;
+
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+
+        Assert.NotNull(model.LetterJumpError);
+        Assert.Null(model.PendingLetter); Assert.Null(model.ErrorMessage);
+        wire.FailIndex = false; wire.IndexTotal = 1000; wire.TailPosition = 900;
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        Assert.NotNull(model.GetWindowItem(900));
+        Assert.Null(model.LetterJumpError);
+    }
+
+    [Fact]
+    public async Task AnotherContextWithoutOptionalIndexDoesNotInheritTheOldChoiceFailure()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        wire.Client.SetProfile("other-synthetic-profile"); wire.Supported = false;
+
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+
+        Assert.Null(model.LetterIndex); Assert.Null(model.PendingLetter);
+        Assert.Null(model.LetterJumpError); Assert.Null(model.ErrorMessage);
+    }
+
+    [Fact]
     public async Task IndexFailureLeavesCatalogUsableAndDoesNotGuess()
     {
         using var wire = new Wire { FailIndex = true }; var model = wire.Create();
@@ -719,11 +916,20 @@ public sealed class LibraryLetterNavigationTests
         internal bool WindowTotalExact;
         internal int? ExactCountTotal;
         internal readonly TaskCompletionSource ReleaseExactCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool HoldCatalog;
+        internal bool HoldCatalog, FailCatalog;
         internal readonly TaskCompletionSource ReleaseCatalog = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource IndexStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseIndex = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<int> Seeks = [];
+        private readonly System.Collections.Concurrent.ConcurrentQueue<ReadGate> heldReads = new();
+        internal sealed class ReadGate(bool fail)
+        {
+            internal bool Fail => fail;
+            internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        internal ReadGate HoldNextCatalog(bool fail = false)
+        { var gate = new ReadGate(fail); heldReads.Enqueue(gate); return gate; }
         internal Wire() { http = new(this, disposeHandler: false); Client = new(http); Client.SetBaseUrl("https://letter-fixture.invalid"); }
         internal LibraryViewModel Create() => new(new CatalogApi(Client)) { Library = new Library { Id = 7, Type = "movie" } };
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -750,7 +956,14 @@ public sealed class LibraryLetterNavigationTests
                 CatalogGroups = q.GetValueOrDefault("groups"); CatalogMatch = q.GetValueOrDefault("match", "all");
                 var limit = int.Parse(q["limit"]); var seek = q.TryGetValue("seek", out var value) ? int.Parse(value) : 0;
                 Seeks.Add(seek); if (limit == 1) ProbeRequests++;
+                if (heldReads.TryDequeue(out var gate))
+                {
+                    gate.Started.TrySetResult();
+                    await gate.Release.Task; // Late transports deliberately ignore cancellation.
+                    if (gate.Fail) return Reply(new { detail = "Synthetic retired window failure" }, HttpStatusCode.ServiceUnavailable);
+                }
                 if (HoldCatalog) await ReleaseCatalog.Task;
+                if (FailCatalog) return Reply(new { detail = "Synthetic unavailable catalog window" }, HttpStatusCode.ServiceUnavailable);
                 var countOnly = !q.ContainsKey("skip_total") && ExactCountTotal.HasValue;
                 if (countOnly) await ReleaseExactCount.Task;
                 var total = countOnly ? ExactCountTotal!.Value : CatalogTotal;

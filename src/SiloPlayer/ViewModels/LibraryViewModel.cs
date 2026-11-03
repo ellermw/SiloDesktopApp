@@ -457,6 +457,9 @@ public partial class LibraryViewModel : ObservableObject
     }
 
     public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
+        => LoadWindowForOwnerAsync(startIndex, itemCount, force, null);
+
+    private Task LoadWindowForOwnerAsync(int startIndex, int itemCount, bool force, LetterWindowLoad? letterLoad)
     {
         if (Library == null || itemCount <= 0) return Task.CompletedTask;
         var context = _catalogApi.CaptureContext();
@@ -537,7 +540,7 @@ public partial class LibraryViewModel : ObservableObject
         }
         _pendingWindowStart = startIndex;
         _pendingWindowEnd = startIndex + itemCount - 1;
-        return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force);
+        return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force, letterLoad: letterLoad);
     }
 
     private async Task CompleteOverlappingRangeAsync(Task pending, int startIndex, int itemCount,
@@ -549,7 +552,8 @@ public partial class LibraryViewModel : ObservableObject
         await LoadWindowAsync(startIndex, itemCount);
     }
 
-    private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force, bool allowCursorRecovery = true)
+    private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force, bool allowCursorRecovery = true,
+        LetterWindowLoad? letterLoad = null)
     {
         if (Library == null || itemCount <= 0)
             return;
@@ -584,7 +588,8 @@ public partial class LibraryViewModel : ObservableObject
             const bool includeTotal = false;
             await FetchWindowAsync(startIndex, itemCount, includeTotal, response =>
             {
-                if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion)
+                if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion ||
+                    letterLoad is { IsCurrent: false })
                     return;
                 // A count may have landed while this speculative window was
                 // in flight. Even total_exact on a skip-total window cannot
@@ -594,6 +599,7 @@ public partial class LibraryViewModel : ObservableObject
 
                 ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
                 RememberWindow(startIndex, response, includeTotal);
+                if (letterLoad is not null) letterLoad.Received = true;
                 WindowLoaded?.Invoke();
                 EnsureExactCountRequested();
             }, _snapshot, ct);
@@ -627,7 +633,10 @@ public partial class LibraryViewModel : ObservableObject
         catch (Exception ex)
         {
             if (queryVersion == _queryVersion && windowVersion == _windowLoadVersion)
-                ErrorMessage = $"Failed to load catalog: {ex.Message}";
+            {
+                if (letterLoad is { IsCurrent: true }) letterLoad.Failed = true;
+                else if (letterLoad is null) ErrorMessage = $"Failed to load catalog: {ex.Message}";
+            }
         }
         finally
         {
