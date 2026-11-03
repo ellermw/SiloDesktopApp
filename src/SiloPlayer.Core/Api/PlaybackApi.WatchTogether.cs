@@ -36,12 +36,13 @@ public partial class PlaybackApi
     public Task<WatchTogetherCapabilities> GetWatchTogetherCapabilitiesAsync(CancellationToken ct = default)
         => client.GetAsync<WatchTogetherCapabilities>("/api/v2/watch-together/capabilities", ct);
 
-    public Task<WatchTogetherRoomResponse> StageWatchTogetherRoomItemAsync(string roomId, string contentId, int? fileId = null, int? libraryId = null, CancellationToken ct = default)
+    public Task<WatchTogetherRoomResponse> StageWatchTogetherRoomItemAsync(string roomId, string contentId, int? fileId = null, int? libraryId = null, CancellationToken ct = default,
+        ApiIdentityContext? expectedIdentityContext = null)
     {
         var body = new Dictionary<string, object?> { ["content_id"] = contentId };
         if (fileId.HasValue) body["file_id"] = fileId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (libraryId.HasValue) body["library_id"] = libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        return RoomRequestAsync(HttpMethod.Put, RoomPath(roomId) + "/staged-selection", body, null, ct);
+        return RoomRequestAsync(HttpMethod.Put, RoomPath(roomId) + "/staged-selection", body, null, ct, expectedIdentityContext);
     }
     public Task<WatchTogetherRoomResponse> StartWatchTogetherRoomPlaybackAsync(string roomId, CancellationToken ct = default)
         => RoomRequestAsync(HttpMethod.Post, RoomPath(roomId) + "/playback/start", null, null, ct);
@@ -80,13 +81,14 @@ public partial class PlaybackApi
     }
 
     public Task<WatchTogetherSuggestionsResponse> CreateWatchTogetherSuggestionAsync(string roomId, string roomToken,
-        string contentId, string contentType, string title, string? subtitle = null, string? posterUrl = null, string? note = null, CancellationToken ct = default)
+        string contentId, string contentType, string title, string? subtitle = null, string? posterUrl = null, string? note = null, CancellationToken ct = default,
+        ApiIdentityContext? expectedIdentityContext = null)
         => MutateSuggestionsAsync(HttpMethod.Post, roomId, roomToken, "", new Dictionary<string, object?>
         {
             ["suggestion_id"] = Guid.NewGuid().ToString(), ["content_id"] = contentId,
             ["content_type"] = contentType, ["title"] = title, ["subtitle"] = subtitle ?? "",
             ["poster_url"] = posterUrl ?? "", ["note"] = note ?? "",
-        }, ct);
+        }, ct, expectedIdentityContext);
 
     public Task<WatchTogetherSuggestionsResponse> DeleteWatchTogetherSuggestionAsync(string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
         => MutateSuggestionsAsync(HttpMethod.Delete, roomId, roomToken, "/" + Uri.EscapeDataString(suggestionId), null, ct);
@@ -97,11 +99,19 @@ public partial class PlaybackApi
     public Task<WatchTogetherSuggestionsResponse> UnvoteWatchTogetherSuggestionAsync(string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
         => MutateSuggestionsAsync(HttpMethod.Delete, roomId, roomToken, "/" + Uri.EscapeDataString(suggestionId) + "/vote", null, ct);
 
-    private async Task<WatchTogetherSuggestionsResponse> MutateSuggestionsAsync(HttpMethod method, string roomId, string roomToken, string suffix, object? body, CancellationToken ct)
+    private async Task<WatchTogetherSuggestionsResponse> MutateSuggestionsAsync(HttpMethod method, string roomId, string roomToken, string suffix, object? body, CancellationToken ct,
+        ApiIdentityContext? expectedIdentityContext = null)
     {
         var authority = client.CaptureContext();
-        await client.SendNoContentRequestAsync(method, RoomPath(roomId) + "/suggestions" + suffix, body, RoomProof(roomToken), ct).ConfigureAwait(false);
-        EnsureAuthority(authority);
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
+        var path = RoomPath(roomId) + "/suggestions" + suffix;
+        if (expectedIdentityContext is { } owner)
+            await client.SendIdentityBoundNoContentAsync(owner, method, path, body, ct, RoomProof(roomToken)).ConfigureAwait(false);
+        else
+            await client.SendNoContentRequestAsync(method, path, body, RoomProof(roomToken), ct).ConfigureAwait(false);
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
+        // The accepted write survives an access revision. Its follow-up read
+        // captures fresh authority rather than replaying the suggestion POST.
         return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct).ConfigureAwait(false);
     }
 
@@ -123,11 +133,21 @@ public partial class PlaybackApi
     private static Dictionary<string, string> RoomProof(string roomToken) => new() { ["X-Room-Token"] = roomToken };
 
     private async Task<WatchTogetherRoomResponse> RoomRequestAsync(HttpMethod method, string path, object? body,
-        IReadOnlyDictionary<string, string>? headers, CancellationToken ct)
+        IReadOnlyDictionary<string, string>? headers, CancellationToken ct, ApiIdentityContext? expectedIdentityContext = null)
     {
         var authority = client.CaptureContext();
-        var response = await client.SendRequestAsync<WatchTogetherRoomResponse>(method, path, body, headers, ct).ConfigureAwait(false);
-        EnsureAuthority(authority);
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
+        var response = expectedIdentityContext is { } owner
+            ? await client.SendIdentityBoundRequestAsync<WatchTogetherRoomResponse>(owner, method, path, body, ct, headers).ConfigureAwait(false)
+            : await client.SendRequestAsync<WatchTogetherRoomResponse>(method, path, body, headers, ct).ConfigureAwait(false);
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
         return response;
+    }
+
+    private void EnsureRoomIntentOwner(ApiRequestContext authority, ApiIdentityContext? identity, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (identity is not { } owner) EnsureAuthority(authority);
+        else if (!client.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Room intent identity changed.", ct);
     }
 }

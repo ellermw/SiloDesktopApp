@@ -77,12 +77,14 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     }
     public void Receive(PlaybackProgressUpdated message) => DispatcherQueue.TryEnqueue(async () =>
     {
-        var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureContext();
+        // A pre-save access refresh can read old progress; this visit still
+        // needs its post-write refresh even when that read context was retired.
+        var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureIdentityContext();
         if (!_active || detail?.Items.Any(x => x.ContentId == message.ContentId) != true) return;
         try { await message.Persisted; } catch { return; }
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_active && visit == _visit && _catalog.IsCurrentContext(owner)) Refresh();
+            if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner)) Refresh();
         });
     });
     protected override async void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); _knownMembership = null; _visit++; if (e.Parameter is BoxSetNavigationArgs route) await ViewModel.LoadAsync(route.Id, route.LibraryId); }
@@ -91,10 +93,11 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     {
         var detail = ViewModel.Detail; var movie = detail?.PlayTarget;
         if (movie == null) return;
-        await ViewModel.PlayAsync((id, library, owner, ct) => MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
-            () => !ct.IsCancellationRequested && _catalog.IsCurrentContext(owner) && id == movie.ContentId,
+        var owner = _catalog.CaptureIdentityContext();
+        await ViewModel.PlayAsync((id, library, _, ct) => MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
+            () => !ct.IsCancellationRequested && _catalog.IsCurrentIdentityContext(owner) && id == movie.ContentId,
             (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>().PlayAsync(target,
-                libraryId: scope, expectedContext: context, cancellationToken: cancellation)));
+                libraryId: scope, expectedIdentityContext: context, cancellationToken: cancellation)));
     }
     public void Render()
     {

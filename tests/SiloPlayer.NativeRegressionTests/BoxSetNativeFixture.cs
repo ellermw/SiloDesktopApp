@@ -232,6 +232,26 @@ internal static class BoxSetNativeFixture
         var duringReadCount = wire.Reads; wire.Played = 3; await Task.Run(() => duringReadPersisted.TrySetResult());
         for (var i = 0; i < 100 && (wire.Reads == duringReadCount || activated.ViewModel.Detail?.PlayedCount != 3); i++) await Task.Delay(10);
         Check(wire.Reads > duringReadCount && activated.ViewModel.Detail?.PlayedCount == 3, "message during held read must requery after final playback write");
+
+        wire.Played = 1; await activated.ViewModel.RefreshAsync();
+        var accessPersisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        activated.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("second", 100, 100, true) { Persisted = accessPersisted.Task });
+        // Drain the queued Receive callback so it captures its owner before access changes.
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        activated.DispatcherQueue.TryEnqueue(() => received.TrySetResult()); await received.Task;
+        var beforeAccessRead = wire.Reads;
+        await Task.Run(() => { api.InvalidateAccessContext(); catalog.InvalidateLibraryCache(); });
+        for (var i = 0; i < 100 && (wire.Reads == beforeAccessRead || activated.ViewModel.IsLoading); i++) await Task.Delay(10);
+        Check(wire.Reads > beforeAccessRead && activated.ViewModel.Detail?.PlayedCount == 1
+            && activated.ViewModel.Detail.PlayTarget?.ContentId == "second" && !accessPersisted.Task.IsCompleted,
+            "access-triggered read sees pre-save counts while persistence is pending");
+        var beforeAccessSave = wire.Reads; wire.Played = 3; accessPersisted.TrySetResult();
+        for (var i = 0; i < 100 && (wire.Reads == beforeAccessSave || activated.ViewModel.Detail?.PlayedCount != 3 || activated.ViewModel.IsLoading); i++) await Task.Delay(10);
+        Check(wire.Reads > beforeAccessSave && activated.ViewModel.Detail?.PlayedCount == 3
+            && activated.ViewModel.Detail.PlayTarget?.ContentId == "first"
+            && ((TextBlock)Descendants(activated).OfType<Button>().Single(x => x.Name == "BoxSetPlay").Content).Text == "Play First"
+            && Descendants(activated).OfType<TextBlock>().Any(x => x.Text.Contains("3 / 3 watched")),
+            "post-save refresh survives same-viewer access invalidation and updates counts and PlayTarget");
         destinationFrame.Content = null; parent.Children.Remove(destinationFrame);
         card.MediaItem = new MediaItem { Type = "movie", ContentId = "ordinary", Title = "Ordinary film" }; await Task.Delay(80);
         Check(card.Content is not BoxSetCard && card.IsTabStop, "recycled aggregate restores ordinary card/focus");

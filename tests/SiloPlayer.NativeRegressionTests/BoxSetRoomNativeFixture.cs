@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -24,6 +25,10 @@ internal static class BoxSetRoomNativeFixture
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://boxset-room.invalid"); client.SetProfile("fixture");
         var catalog = new CatalogApi(client); var playback = new PlaybackApi(client);
+        using var auth = new AuthService(client, new AuthApi(client));
+        using var events = new EventChannelClient(client, auth);
+        events.AccessChanged += _ => catalog.InvalidateLibraryCache();
+        events.ReadCatchUpRequested += _ => catalog.InvalidateLibraryCache();
         Type? routeType = null;
         var navigation = new NavigationService { Frame = new Frame(), NavigationRequestHandler = (type, _) => { routeType = type; return true; } };
         slot.SetValue(null, new Services(original, client, catalog, playback, navigation));
@@ -44,6 +49,38 @@ internal static class BoxSetRoomNativeFixture
                 Check(ReferenceEquals(coordinator.ActiveRoom, room) && player.ContentId == currentContent && wire.LocalStarts == 0, mode + " preserves active room and local playback authority");
                 Check(routeType == typeof(WatchTogetherRoomPage), mode + " returns to the room destination");
             }
+            foreach (var host in new[] { true, false })
+            foreach (var catchUp in new[] { false, true })
+            {
+                coordinator.ClearActiveRoom(); routeType = null;
+                var room = new WatchTogetherRoomViewModel(playback, client) { RoomId = "fixture-room", RoomToken = "fixture-proof", Room = new() { RoomId = "fixture-room", Phase = "lobby", SelectedContentId = "before-refresh", SelfCanManageRoom = host } };
+                coordinator.SetActiveRoom(room);
+                var snapshot = room.Room; var reads = wire.Reads; var stages = wire.Stages; var suggestions = wire.Suggestions;
+                var identity = client.CaptureIdentityContext(); var readOwner = client.CaptureContext();
+                wire.HoldStage = host; wire.HoldSuggestion = !host;
+                wire.StageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.ReleaseStage = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.SuggestionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.ReleaseSuggestion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var button = Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay");
+                ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                try
+                {
+                    await (host ? wire.StageStarted.Task : wire.SuggestionStarted.Task).WaitAsync(TimeSpan.FromSeconds(2));
+                    var published = typeof(EventChannelClient).GetMethod("PublishAccessInvalidation", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(events, [readOwner, null, catchUp]);
+                    Check(published is true && !client.IsCurrentContext(readOwner) && client.IsCurrentIdentityContext(identity), "access event retires only read authority");
+                    for (var i = 0; i < 100 && (wire.Reads == reads || page.ViewModel.IsLoading); i++) await Task.Delay(10);
+                    Check(wire.Reads > reads && !page.ViewModel.IsLoading && !button.IsEnabled && routeType == null, "refresh completes without abandoning the held room intent");
+                }
+                finally
+                {
+                    wire.HoldStage = wire.HoldSuggestion = false;
+                    wire.ReleaseStage.TrySetResult(); wire.ReleaseSuggestion.TrySetResult();
+                }
+                for (var i = 0; i < 100 && !button.IsEnabled; i++) await Task.Delay(10);
+                Check(button.IsEnabled && routeType == typeof(WatchTogetherRoomPage) && ReferenceEquals(coordinator.ActiveRoom, room), "accepted room intent navigates after access/catch-up refresh");
+                Check(host ? room.Room?.SelectedContentId == "second" && !ReferenceEquals(room.Room, snapshot) : ReferenceEquals(room.Room, snapshot), "stage applies its returned snapshot; suggestion preserves the room selection");
+                Check(wire.Stages == stages + (host ? 1 : 0) && wire.Suggestions == suggestions + (host ? 0 : 1) && wire.LocalStarts == 0, "refresh never resubmits the room write or starts local playback");
+            }
             coordinator.ClearActiveRoom();
             var pendingRoom = new WatchTogetherRoomViewModel(playback, client) { RoomId = "fixture-room", RoomToken = "fixture-proof", Room = new() { RoomId = "fixture-room", Phase = "lobby", SelectedContentId = "before-pending", SelfCanManageRoom = true } };
             coordinator.SetActiveRoom(pendingRoom); var originalSnapshot = pendingRoom.Room; routeType = null;
@@ -57,15 +94,15 @@ internal static class BoxSetRoomNativeFixture
             Check(ReferenceEquals(coordinator.ActiveRoom, replacement) && ReferenceEquals(pendingRoom.Room, originalSnapshot) && routeType == null, "late stage cannot mutate/navigate a replaced room");
             coordinator.ClearActiveRoom();
             var helper = typeof(BoxSetPage).Assembly.GetType("SiloPlayer.Services.MoviePlaybackEntry")!.GetMethod("PlayAsync")!;
-            var calls = 0; Func<string, int, ApiRequestContext, CancellationToken, Task> local = (id, library, owner, ct) => { calls++; Check(id == "second" && library == 12 && client.IsCurrentContext(owner) && !ct.IsCancellationRequested, "standalone normal movie owner/library"); return Task.CompletedTask; };
+            var calls = 0; Func<string, int, ApiIdentityContext, CancellationToken, Task> local = (id, library, owner, ct) => { calls++; Check(id == "second" && library == 12 && client.IsCurrentIdentityContext(owner) && !ct.IsCancellationRequested, "standalone normal movie owner/library"); return Task.CompletedTask; };
             var movie = new MediaItem { ContentId = "second", Type = "movie", Title = "Second" };
-            await (Task)helper.Invoke(null, [movie, 12, client.CaptureContext(), CancellationToken.None, (Func<bool>)(() => true), local])!;
+            await (Task)helper.Invoke(null, [movie, 12, client.CaptureIdentityContext(), CancellationToken.None, (Func<bool>)(() => true), local])!;
             Check(calls == 1, "standalone delegates to ordinary movie playback");
-            await (Task)helper.Invoke(null, [movie, 12, client.CaptureContext(), CancellationToken.None, (Func<bool>)(() => false), local])!;
+            await (Task)helper.Invoke(null, [movie, 12, client.CaptureIdentityContext(), CancellationToken.None, (Func<bool>)(() => false), local])!;
             Check(calls == 1, "retired movie entry cannot start standalone playback");
             Program.Log("PASS: actual box-set primary action stages host lobby, suggests guest/playing/vote intents, retains room/local authority, and standalone entry preserves movie/library/owner; late stage preserves replaced room.");
         }
-        finally { coordinator.ClearActiveRoom(); parent.Children.Clear(); await Task.Delay(100); slot.SetValue(null, original); }
+        finally { wire.ReleaseStage.TrySetResult(); wire.ReleaseSuggestion.TrySetResult(); coordinator.ClearActiveRoom(); parent.Children.Clear(); await Task.Delay(100); slot.SetValue(null, original); }
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root) { for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++){var child=VisualTreeHelper.GetChild(root,i);yield return child;foreach(var nested in Descendants(child))yield return nested;} }
     private static void Check(bool value,string message) { if(!value)throw new InvalidOperationException("Box-set room: " + message); }
@@ -75,15 +112,16 @@ internal static class BoxSetRoomNativeFixture
     }
     private sealed class Wire : HttpMessageHandler
     {
-        internal int Stages, Suggestions, LocalStarts;
-        internal bool HoldStage;
+        internal int Stages, Suggestions, LocalStarts, Reads;
+        internal bool HoldStage, HoldSuggestion;
         internal TaskCompletionSource StageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseStage = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource SuggestionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseSuggestion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var path=request.RequestUri!.AbsolutePath; object body=new { items=Array.Empty<object>() };
             if(path.EndsWith("/catalog/search/capabilities"))body=new { box_sets=true };
             else if(path.EndsWith("/user/libraries"))body=new { items=new[] { new { id=12,box_sets_enabled=true } } };
-            else if(path.Contains("/catalog/box-sets/"))body=new { id="7",library_id="12",title="Fixture set",movie_count=2,played_count=1,items=new object[] { new { content_id="first",type="movie",title="First",user_state=new { played=true } },new { content_id="second",type="movie",title="Second",user_state=new { played=false } } } };
+            else if(path.Contains("/catalog/box-sets/")) { Reads++; body=new { id="7",library_id="12",title="Fixture set",movie_count=2,played_count=1,items=new object[] { new { content_id="first",type="movie",title="First",user_state=new { played=true } },new { content_id="second",type="movie",title="Second",user_state=new { played=false } } } }; }
             else if(path.EndsWith("/staged-selection"))
             {
                 Stages++; var data=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement;
@@ -95,6 +133,7 @@ internal static class BoxSetRoomNativeFixture
             {
                 Suggestions++; var data=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement;
                 Check(data.GetProperty("content_id").GetString()=="second" && data.GetProperty("content_type").GetString()=="movie", "suggest normal movie rather than aggregate");
+                SuggestionStarted.TrySetResult(); if(HoldSuggestion) await ReleaseSuggestion.Task;
             }
             else if(path.Contains("/playback/"))LocalStarts++;
             return new(HttpStatusCode.OK) { Content=new StringContent(JsonSerializer.Serialize(body)) };

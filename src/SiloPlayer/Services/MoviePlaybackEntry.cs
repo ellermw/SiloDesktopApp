@@ -9,11 +9,12 @@ namespace SiloPlayer.Services;
 /// <summary>Preserves room transport ownership for a movie intent before entering standalone playback.</summary>
 public static class MoviePlaybackEntry
 {
-    public static async Task PlayAsync(MediaItem movie, int libraryId, ApiRequestContext owner, CancellationToken ct,
-        Func<bool> isCurrentOwner, Func<string, int, ApiRequestContext, CancellationToken, Task> playStandalone)
+    public static async Task PlayAsync(MediaItem movie, int libraryId, ApiIdentityContext owner, CancellationToken ct,
+        Func<bool> isCurrentOwner, Func<string, int, ApiIdentityContext, CancellationToken, Task> playStandalone)
     {
         var client = App.Services.GetRequiredService<SiloApiClient>();
-        bool Current() => !ct.IsCancellationRequested && isCurrentOwner() && client.IsCurrentContext(owner);
+        // Access revisions retire reads, not an already accepted movie intent.
+        bool Current() => !ct.IsCancellationRequested && isCurrentOwner() && client.IsCurrentIdentityContext(owner);
         if (!Current() || !BoxSetDetail.IsMovieMember(movie)) return;
         var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
         if (coordinator.ActiveRoom is not {} room)
@@ -34,13 +35,13 @@ public static class MoviePlaybackEntry
         var playback = App.Services.GetRequiredService<PlaybackApi>();
         if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
         {
-            var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, movie.ContentId, libraryId: libraryId, ct: ct);
+            var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, movie.ContentId, libraryId: libraryId, ct: ct, expectedIdentityContext: owner);
             if (!CurrentRoom()) return;
             room.Room = response.Room;
         }
         else
             await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, movie.ContentId, "movie", movie.Title,
-                posterUrl: movie.PosterUrl, ct: ct);
+                posterUrl: movie.PosterUrl, ct: ct, expectedIdentityContext: owner);
         if (CurrentRoom()) App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
         { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
     }
