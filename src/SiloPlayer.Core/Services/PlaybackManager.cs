@@ -391,9 +391,10 @@ public partial class PlaybackManager : IDisposable
     public Task<PlaybackStartResponse> ReplanSubtitleAsync(
         int? subtitleTrackIndex,
         double positionSeconds,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool isAutomatic = false)
     {
-        RecordLocalSubtitleSelection(subtitleTrackIndex);
+        RecordLocalSubtitleSelection(subtitleTrackIndex, isAutomatic);
         return ReplanAsync(
             "track_change",
             positionSeconds,

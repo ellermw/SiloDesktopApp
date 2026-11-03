@@ -124,6 +124,22 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
+    public void NextItemMenuIsInvalidatedBeforeTransportDrainAndEnabledOnlyByPublication()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task PlayCoreAsync(", StringComparison.Ordinal);
+        var drain = source.IndexOf("await CancelAndDrainTransportRestartsAsync(requestToken)", start, StringComparison.Ordinal);
+        var invalidate = source.IndexOf("_subtitleMenuPending = true;", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && invalidate > start && drain > invalidate);
+        var guard = source.IndexOf("private bool IsSubtitleMenuCurrent()", StringComparison.Ordinal);
+        var publish = source.IndexOf("private void SendSubtitleListToOsc()", guard, StringComparison.Ordinal);
+        Assert.Contains("!_subtitleMenuPending", source[guard..publish]);
+        var send = source.IndexOf("_mpv.SendScriptMessage(\"osc-set-subtitles\"", publish, StringComparison.Ordinal);
+        var enable = source.IndexOf("_subtitleMenuPending = false;", publish, StringComparison.Ordinal);
+        Assert.True(send > publish && enable > send);
+    }
+
+    [Fact]
     public void LoadedSubtitleSelectionPrecedesOptionalSettingsReads()
     {
         var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));

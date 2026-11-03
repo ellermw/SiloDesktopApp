@@ -5,6 +5,40 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscRuntimeTests
 {
     [Fact]
+    public void CaptionShortcutRemembersARowOnlyWithinItsMediaFile()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":0,"language":"en"},{"index":1,"language":"es"}]', '42')
+            handlers['osc-set-active-subtitle']('0')
+            handlers['osc-set-active-subtitle']('-1')
+            handlers['osc-set-subtitles']('[{"index":1,"language":"es"},{"index":0,"language":"en"}]', '42')
+            keys['silo-captions-toggle']()
+            handlers['osc-set-active-subtitle']('-1')
+            -- The same indices now describe the opposite languages on episode B.
+            handlers['osc-set-subtitles']('[{"index":1,"language":"en"},{"index":0,"language":"es"}]', '44')
+            local reset = state.last_subtitle == -1 and state.active_subtitle == -1
+            keys['silo-captions-toggle']()
+            handlers['osc-set-subtitles']('[]', '45')
+            reset = reset and state.last_subtitle == -1 and state.active_subtitle == -1
+            mp.set_property('user-data/caption-file', tostring(reset)..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/caption-file", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("true:0,1", output);
+    }
+
+    [Fact]
     public void SubtitleRightClickCyclesServerChoicesAndSkipsUnavailable()
     {
         var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """

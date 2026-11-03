@@ -6,6 +6,7 @@ public partial class PlaybackManager
 {
     private readonly object _trackIntentGate = new();
     private bool _hasViewerSubtitle;
+    private bool _subtitleSelectionIsAutomatic;
     private SubtitleTrackInfo? _viewerSubtitle;
     private int _viewerSubtitleFile;
     private long _subtitleRevision, _subtitleSentRevision;
@@ -14,8 +15,8 @@ public partial class PlaybackManager
     private int _viewerAudioIndex, _viewerAudioFile;
     private long _audioRevision, _audioSentRevision;
 
-    /// <summary>Records a viewer's local sid change without saving automatic plan fallbacks.</summary>
-    public void RecordLocalSubtitleSelection(int? subtitleIndex)
+    /// <summary>Records a local choice, retaining whether startup policy or the viewer selected it.</summary>
+    public void RecordLocalSubtitleSelection(int? subtitleIndex, bool isAutomatic = false)
     {
         lock (_trackIntentGate)
         {
@@ -23,6 +24,7 @@ public partial class PlaybackManager
             if (subtitleIndex.HasValue && track == null) throw new InvalidOperationException("The selected subtitle is no longer in the active inventory.");
             if (track?.Unplayable == true) throw new InvalidOperationException("The selected subtitle is unavailable.");
             _hasViewerSubtitle = true; _viewerSubtitle = track;
+            _subtitleSelectionIsAutomatic = isAutomatic;
             _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
             ++_subtitleRevision;
         }
@@ -65,6 +67,7 @@ public partial class PlaybackManager
         lock (_trackIntentGate)
         {
             _hasViewerSubtitle = _hasViewerAudio = false; _viewerSubtitle = null; _viewerAudio = null;
+            _subtitleSelectionIsAutomatic = false;
             ++_subtitleRevision; _subtitleSentRevision = _subtitleRevision;
             ++_audioRevision; _audioSentRevision = _audioRevision;
         }
@@ -139,21 +142,38 @@ public partial class PlaybackManager
     {
         if (_viewerSubtitle == null) return null;
         var tracks = CurrentSession?.SubtitleUrls.Where(t => !t.Unplayable).ToList() ?? [];
-        return tracks.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId)
-            ?? tracks.Where(t => MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
-                t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired)
-                .OrderByDescending(t => UnknownSubtitleLanguage(_viewerSubtitle.Language) &&
-                    CurrentSession?.MediaFileId == _viewerSubtitleFile && t.Index == _viewerSubtitle.Index)
-                .ThenByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).FirstOrDefault();
+        var identities = tracks.Where(t => !string.IsNullOrWhiteSpace(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId).Take(2).ToArray();
+        if (identities.Length != 0) return identities.Length == 1 ? identities[0] : null;
+        var candidates = tracks.Where(t => MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
+            t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
+        // An index identifies a legacy row only within the same file. Across
+        // versions, equally good metadata is ambiguous, not a first-row choice.
+        if (CurrentSession?.MediaFileId == _viewerSubtitleFile &&
+            candidates.FirstOrDefault(t => t.Index == _viewerSubtitle.Index) is { } sameFile) return sameFile;
+        var ranked = candidates.OrderByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).Take(2).ToArray();
+        return ranked.Length == 1 || ranked.Length == 2 &&
+            SubtitleScore(ranked[0].Language, ranked[0].Source, ranked[0].Codec, ranked[0].Label, _viewerSubtitle) >
+            SubtitleScore(ranked[1].Language, ranked[1].Source, ranked[1].Codec, ranked[1].Label, _viewerSubtitle)
+                ? ranked[0] : null;
     }
     private void CaptureReplacementSubtitleIntent()
     {
         lock (_trackIntentGate)
         {
+            // A local Auto result of no subtitle is not an explicit viewer Off
+            // either. Startup policy must be reconsidered for the new file.
+            if (_hasViewerSubtitle && _viewerSubtitle == null && _subtitleSelectionIsAutomatic)
+            {
+                _hasViewerSubtitle = false;
+                return;
+            }
             // A granted automatic selection also survives a transport/session replacement.
             if (!_hasViewerSubtitle)
             {
                 _viewerSubtitle = GrantedSubtitleSelection();
+                // No automatic grant is not a viewer's explicit Off. Let the
+                // replacement start resolve Auto against its own inventory.
+                if (_viewerSubtitle == null) return;
                 _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
                 _hasViewerSubtitle = true;
             }

@@ -5753,9 +5753,17 @@ local function observe_properties()
         state.stream_target_video_kbps = tonumber(target_video_kbps) or 0
     end)
 
-    mp.register_script_message("osc-set-subtitles", function(json_str)
+    mp.register_script_message("osc-set-subtitles", function(json_str, media_file_id)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
+            local file_id = tonumber(media_file_id) or (data[1] and tonumber(data[1].media_file_id))
+            if file_id ~= state.subtitle_menu_file_id then
+                -- Combined indices and the caption shortcut's remembered row
+                -- belong to one file, even when the new list reuses an index.
+                state.last_subtitle = -1
+                state.active_subtitle = -1
+            end
+            state.subtitle_menu_file_id = file_id
             state.subtitle_tracks = data
             state.subtitle_menu_offset = 1
         end

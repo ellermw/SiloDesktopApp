@@ -158,6 +158,56 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task VersionWithNoAutomaticSubtitleLeavesReplacementAutoGrantIntact(bool localAutomaticOff)
+    {
+        using var scope = new Fixture();
+        scope.Wire.InitialSubtitleSelection = -1;
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        if (localAutomaticOff) scope.Manager.RecordLocalSubtitleSelection(null, isAutomatic: true);
+
+        scope.Wire.InitialSubtitleSelection = 1;
+        var replacement = await scope.Manager.StartReplacementSessionAsync(44, 14);
+        Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+        Assert.Empty(scope.Wire.Replans);
+        Assert.Equal("sub:44:1", replacement.SelectedSubtitleTrackId);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("und")]
+    [InlineData("eng")]
+    public async Task DuplicateLegacyMetadataNeverGuessesTheFirstRowInAnotherVersion(string language)
+    {
+        using var scope = new Fixture();
+        scope.Wire.OmitTrackIds = true;
+        foreach (var version in scope.Manager.WatchDetail!.Versions.Where(v => v.FileId is 42 or 44))
+            version.SubtitleTracks =
+            [
+                new() { Index = 0, Language = language, Codec = "srt" },
+                new() { Index = 1, Language = language, Codec = "srt" },
+            ];
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        await scope.Manager.ReplanQualityAsync("720p", 12);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.ReplanAudioAsync(0, 13);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+
+        await scope.Manager.StartReplacementSessionAsync(44, 14);
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.False(scope.Wire.Replans[^1].GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        // Refusal on the ambiguous version must not erase the selected source row.
+        await scope.Manager.StartReplacementSessionAsync(42, 15);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal(1, scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+    }
+
     [Fact]
     public async Task VersionSwitchPreservesExplicitOffAndNeverSavesAutomaticFallback()
     {
