@@ -7,10 +7,12 @@ internal readonly record struct PlaybackMenuAnchor(double Left, double Top, doub
 
 internal sealed record PlaybackMenuRequest(string OwnerToken, long Sequence, PlaybackMenuAnchor Anchor)
 {
+    internal string Kind { get; init; } = "audio";
+
     internal static bool TryParse(string[] message, [NotNullWhen(true)] out PlaybackMenuRequest? request)
     {
         request = null;
-        if (message.Length != 9 || message[0] != "silo-native-audio-open"
+        if (message.Length != 9 || message[0] is not ("silo-native-audio-open" or "silo-native-quality-open" or "silo-native-chapters-open" or "silo-native-speed-open" or "silo-native-stats-open" or "silo-native-more-open" or "silo-native-party-open")
             || !Guid.TryParseExact(message[1], "N", out var scope) || scope == Guid.Empty
             || !long.TryParse(message[2], NumberStyles.None, CultureInfo.InvariantCulture, out var sequence)
             || sequence is <= 0 or > 9_007_199_254_740_991)
@@ -29,7 +31,7 @@ internal sealed record PlaybackMenuRequest(string OwnerToken, long Sequence, Pla
 
         request = new PlaybackMenuRequest(message[1], sequence,
             new PlaybackMenuAnchor(x / surfaceWidth, y / surfaceHeight,
-                (x + width) / surfaceWidth, (y + height) / surfaceHeight));
+                (x + width) / surfaceWidth, (y + height) / surfaceHeight)) { Kind = message[0][12..^5] };
         return true;
     }
 }

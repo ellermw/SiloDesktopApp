@@ -306,7 +306,7 @@ internal static class PlaybackAudioMenuNativeFixture
                 Require(wire.AudioPicks.Single() == 71, "Actual native keyboard selection did not retain the source index.");
                 // This is the real presentation retirement helper invoked by
                 // mode/layout transitions. Avoid moving any fixture fullscreen.
-                Call(service, "RetireNativeAudioMenu");
+                Call(service, "RetireNativeMenus");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
@@ -448,10 +448,20 @@ internal static class PlaybackAudioMenuNativeFixture
         void Host(params string[] args) => Call(service, "OnScriptMessage", (object)args);
     }
 
-    private static object? Menu(PlayerService service) => typeof(PlayerService).GetField("_nativeAudioMenu", Private)?.GetValue(service);
+    private static object? Menu(PlayerService service) => typeof(PlayerService).GetField("_nativeMenu", Private)?.GetValue(service);
     private static SemaphoreSlim Gate(PlayerService service) => (SemaphoreSlim)Get(service, "_playbackDialogGate")!;
-    private static IntPtr MenuHwnd(object menu) => (IntPtr)menu.GetType().GetProperty("Hwnd", Private)!.GetValue(menu)!;
-    private static object? Get(object target, string field) => target.GetType().GetField(field, Private)!.GetValue(target);
+    private static IntPtr MenuHwnd(object menu)
+    {
+        for (var type = menu.GetType(); type != null; type = type.BaseType)
+            if (type.GetProperty("Hwnd", Private | BindingFlags.DeclaredOnly) is { } property) return (IntPtr)property.GetValue(menu)!;
+        throw new MissingMemberException("Native menu HWND");
+    }
+    private static object? Get(object target, string field)
+    {
+        for (var type = target.GetType(); type != null; type = type.BaseType)
+            if (type.GetField(field, Private | BindingFlags.DeclaredOnly) is { } member) return member.GetValue(target);
+        throw new MissingFieldException(target.GetType().FullName, field);
+    }
     private static void Set(object target, string field, object? value) => target.GetType().GetField(field, Private)!.SetValue(target, value);
     private static void Property(object target, string name, object value) => target.GetType().GetProperty(name)!.SetValue(target, value);
     private static object? Call(object target, string method, params object?[] args)
@@ -570,6 +580,13 @@ internal static class PlaybackAudioMenuNativeFixture
                 {
                     HttpListenerContext context;
                     try { context = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
+                    if (context.Request.Url?.AbsolutePath == "/fixture-subtitle.vtt")
+                    {
+                        var subtitle = Encoding.UTF8.GetBytes("WEBVTT\n\n00:00.000 --> 01:00.000\nSynthetic subtitle\n");
+                        context.Response.ContentType = "text/vtt"; context.Response.ContentLength64 = subtitle.Length;
+                        try { await context.Response.OutputStream.WriteAsync(subtitle); context.Response.Close(); } catch (HttpListenerException) { }
+                        continue;
+                    }
                     var from = 0; var through = bytes.Length - 1;
                     context.Response.ContentType = "application/octet-stream";
                     context.Response.Headers["Accept-Ranges"] = "bytes";

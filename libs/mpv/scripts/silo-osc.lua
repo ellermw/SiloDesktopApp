@@ -4679,13 +4679,15 @@ local function set_keyboard_transport_menu(kind, visible)
     state.keyboard_menu_index = -1
 end
 
-local function open_native_audio_menu(keyboard)
-    if not state.native_audio_scope then return false end
-    if state.native_menu_request or #state.audio_tracks <= 1 or state.osc_disabled
+local function open_native_menu(kind, keyboard)
+    local scope = state['native_' .. kind .. '_scope']
+    if not scope then return false end
+    if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1) or state.osc_disabled
         or state.playback_loading or state.post_roll_active
         or state.native_menu_sequence >= 9007199254740991 then return true end
     compute_layout()
-    local anchor = state.layout.btn_audio or state.layout.btn_more
+    local opener = ({audio='btn_audio', subtitle='btn_cc', quality='btn_quality', chapters='btn_chapters', stats='btn_stats', speed='btn_speed', more='btn_more', party='btn_party'})[kind]
+    local anchor = state.layout[opener] or state.layout.btn_more
     if not anchor then return true end
     close_transport_menus(nil)
     state.compact_menu_visible = false
@@ -4693,9 +4695,9 @@ local function open_native_audio_menu(keyboard)
     state.dragging_volume = false
     state.native_menu_sequence = state.native_menu_sequence + 1
     local request = {
-        owner = state.native_audio_scope,
+        owner = scope, kind = kind,
         sequence = state.native_menu_sequence,
-        focus_name = keyboard and (state.layout.btn_audio and "btn_audio" or "btn_more") or nil,
+        focus_name = keyboard and (state.layout[opener] and opener or "btn_more") or nil,
     }
     -- The native surface now owns input. Do not leave the old pointer/focus
     -- looking active under it; fresh video mouse messages resume after close.
@@ -4705,7 +4707,7 @@ local function open_native_audio_menu(keyboard)
     state.pressed_control = nil
     state.native_menu_request = request
     consume_video_click()
-    mp.commandv("script-message", "silo-native-audio-open", request.owner, tostring(request.sequence),
+    mp.commandv("script-message", "silo-native-" .. kind .. "-open", request.owner, tostring(request.sequence),
         tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
         tostring(state.osd_width), tostring(state.osd_height))
     request_tick()
@@ -4717,7 +4719,7 @@ local function toggle_transport_menu_from_button(mx, my)
     local L = state.layout
 
     if L.btn_audio and point_in_rect(mx, my, L.btn_audio) and #state.audio_tracks > 1 then
-        if open_native_audio_menu() then return true end
+        if open_native_menu("audio") then return true end
         local opening = not state.audio_menu_visible
         close_transport_menus("audio")
         state.audio_menu_visible = opening
@@ -4828,7 +4830,7 @@ end
 local function open_transport_menu_from_controller(kind)
     close_transport_menus(kind)
     if kind == "audio" then
-        if open_native_audio_menu(true) then return end
+        if open_native_menu("audio", true) then return end
         state.audio_menu_visible = not state.audio_menu_visible
         set_keyboard_transport_menu(kind, state.audio_menu_visible)
         render_audio_menu()
@@ -6204,16 +6206,24 @@ end
 --------------------------------------------------------------------------------
 
 local function setup_script_messages()
-    mp.register_script_message("osc-native-audio-scope", function(token)
-        local scope = token and #token == 32 and token:match("^%x+$") and token or nil
-        if scope ~= state.native_audio_scope then
-            state.native_menu_request = nil
-            state.native_menu_sequence = 0
-            state.native_audio_scope = scope
-            consume_video_click()
-            request_tick()
-        end
-    end)
+    for _, menu_kind in ipairs({'audio','quality','chapters','speed','stats','more','party'}) do
+        local kind = menu_kind
+        mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
+            local scope = token and #token == 32 and token:match('^%x+$') and token or nil
+            local key = 'native_' .. kind .. '_scope'
+            if scope ~= state[key] then
+                local request = state.native_menu_request
+                if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
+                    state.native_menu_request = nil
+                end
+                state[key] = scope
+                -- Sequences span all kinds sharing one host/gate. Rotating an
+                -- unrelated capability cannot reset a live request sequence.
+                consume_video_click()
+                request_tick()
+            end
+        end)
+    end
     mp.register_script_message("osc-native-menu-closed", function(token, sequence, consume)
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end

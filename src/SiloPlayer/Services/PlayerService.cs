@@ -943,7 +943,7 @@ public partial class PlayerService : IDisposable
 
     private void CancelPendingPlayRequest()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         Interlocked.Increment(ref _playRequestGeneration);
         var cts = Interlocked.Exchange(ref _playRequestCts, null);
         if (cts == null)
@@ -1714,7 +1714,7 @@ public partial class PlayerService : IDisposable
 
     public void SetState(PlayerState newState)
     {
-        if (State != newState) RetireNativeAudioMenu();
+        if (State != newState) RetireNativeMenus();
         var threadId = Environment.CurrentManagedThreadId;
         LogToFile("state_trace.txt", $"SetState: {State} -> {newState} (thread={threadId})");
 
@@ -1746,7 +1746,7 @@ public partial class PlayerService : IDisposable
             }
             else if (IsAudiobook)
                 _videoWindow?.Hide();
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
             PublishFullscreenVisualState(newState == PlayerState.Fullscreen);
             PublishPictureInPictureVisualState(newState == PlayerState.PictureInPicture);
             if (newState == PlayerState.Idle)
@@ -1792,7 +1792,7 @@ public partial class PlayerService : IDisposable
         else
             _videoWindow?.Hide();
 
-        PublishNativeAudioScope();
+        PublishNativeMenuScopes();
         InvokeSubscribersSafely(StateChanged, newState, nameof(StateChanged));
     }
 
@@ -2051,7 +2051,7 @@ public partial class PlayerService : IDisposable
         try { previous?.Cancel(); }
         catch (ObjectDisposedException) { }
         previous?.Dispose();
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var generation = Interlocked.Increment(ref _playRequestGeneration);
         var gateEntered = false;
 
@@ -2632,7 +2632,7 @@ public partial class PlayerService : IDisposable
         // any preparation/native call can fail. A different load invalidates it.
         var fileOwner = Interlocked.Increment(ref _playbackFileGeneration);
         acceptLoad?.Invoke(fileOwner);
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         AdoptBufferingQualityPlan();
         StartPlaybackStallWatchdog();
         _idleRemuxResume.ResetPauseClock();
@@ -4163,7 +4163,7 @@ public partial class PlayerService : IDisposable
         try { UnwireMpvEvents(); } catch { }
         try { _mpv?.Dispose(); } catch { }
         _mpv = null;
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         try { _videoWindow?.Dispose(); } catch { }
         _videoWindow = null;
     }
@@ -4362,7 +4362,7 @@ public partial class PlayerService : IDisposable
 
             LogToFile("state_trace.txt", $"  -> Series post-roll requested at media end ({trigger})");
             _playingNextShown = true;
-            RetireNativeAudioMenu();
+            RetireNativeMenus();
             _postRollActive = true;
             _postRollVideoEnded = true;
             PrefetchQueuedEpisodeWatchDetail();
@@ -4434,7 +4434,7 @@ public partial class PlayerService : IDisposable
                 CurrentMediaDuration - mediaPosition <= 30)
             {
                 _playingNextShown = true;
-                RetireNativeAudioMenu();
+                RetireNativeMenus();
                 _postRollActive = true;
                 _postRollVideoEnded = false;
                 PrefetchQueuedEpisodeWatchDetail();
@@ -5449,7 +5449,7 @@ public partial class PlayerService : IDisposable
 
     private void SendAudioTrackListToOsc()
     {
-        PublishNativeAudioScope();
+        PublishNativeMenuScopes();
         if (_mpv == null)
             return;
 
@@ -5847,7 +5847,7 @@ public partial class PlayerService : IDisposable
         {
             case "silo-native-audio-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
-                    dispatch.TryEnqueue(() => _ = HandleNativeAudioOpenAsync(menuRequest));
+                    dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;
             case "silo-native-menu-input":
                 if (args.Length == 4)
@@ -6118,7 +6118,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleSearchDialogAsync()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var session = _playbackManager?.CurrentSession;
         var mainWindow = App.MainWindowInstance;
         if (session == null || mainWindow?.Content?.XamlRoot == null)
@@ -6156,7 +6156,7 @@ public partial class PlayerService : IDisposable
             _playbackDialogGate.Release();
             RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
             _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
         }
 
         if (!changed || _closing || !ReferenceEquals(session, _playbackManager?.CurrentSession))
@@ -6172,7 +6172,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAppearanceDialogAsync()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow?.Content?.XamlRoot == null)
             return;
@@ -6197,7 +6197,7 @@ public partial class PlayerService : IDisposable
             _playbackDialogGate.Release();
             RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
             _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
         }
     }
 
@@ -6230,7 +6230,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAiDialogAsync()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow == null)
             return;
@@ -6250,7 +6250,7 @@ public partial class PlayerService : IDisposable
             _playbackDialogGate.Release();
             RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
             _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
         }
     }
 
@@ -6418,7 +6418,7 @@ public partial class PlayerService : IDisposable
             if (_closeCompletion is { Task.IsCompleted: false }) return _closeCompletion.Task;
             var completion = _closeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _closing = true;
-            RetireNativeAudioMenu();
+            RetireNativeMenus();
             _ = CompleteCloseAsync(completion);
             return completion.Task;
         }
@@ -6595,7 +6595,7 @@ public partial class PlayerService : IDisposable
 
     public void Dispose()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         _volumePersistenceDisposed = true;
         try { _volumeSaveTimer?.Stop(); } catch { /* Dispatcher may be shutting down. */ }
         EndBufferingQuality();

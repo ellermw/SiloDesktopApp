@@ -47,6 +47,21 @@ public sealed class PlaybackMenuRequestTests
     }
 
     [Fact]
+    public void DifferentKindsShareOneMonotonicPresentationGate()
+    {
+        var gate = new PlaybackMenuRequestGate(); gate.ResetOwner(Owner);
+        Assert.True(PlaybackMenuRequest.TryParse(Message(), out var audio));
+        var message = Message("2"); message[0] = "silo-native-quality-open";
+        Assert.True(PlaybackMenuRequest.TryParse(message, out var quality));
+        Assert.Equal("audio", audio!.Kind);
+        Assert.Equal("quality", quality!.Kind);
+        Assert.True(gate.TryOpen(audio)); Assert.True(gate.TryOpen(quality));
+        Assert.False(gate.TryClose(Owner, audio.Sequence));
+        Assert.True(gate.IsCurrent(quality));
+        Assert.False(gate.TryOpen(audio));
+    }
+
+    [Fact]
     public void OldCloseCannotRetireANewerPresentation()
     {
         var gate = new PlaybackMenuRequestGate(); gate.ResetOwner(Owner);
