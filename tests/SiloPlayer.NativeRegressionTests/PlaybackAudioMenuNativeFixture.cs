@@ -341,6 +341,8 @@ internal static class PlaybackAudioMenuNativeFixture
                 // Lua round trip, after the held reply has been delivered.
                 await Task.Delay(500);
                 var after = await Query();
+                Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "A retired profile's native Audio replan stranded loading/busy state.");
                 Require(service.ErrorMessage == initialError && !after.GetProperty("notice").GetBoolean(),
                     "A retired profile's native Audio replan published an error or notice.");
                 Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
