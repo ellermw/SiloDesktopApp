@@ -71,15 +71,21 @@ public sealed class ShellNavigationReentrancySourceTests
     public void UnpaintedArtworkAndRetiredOverviewWorkRetainRemountRecovery()
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        foreach (var method in new[] { "private async Task LoadSeasonPosterAsync(", "private async Task LoadEpisodeStillAsync(" })
+        foreach (var (method, navigation, border, revision) in new[]
+        {
+            ("private async Task LoadSeasonPosterAsync(", "navigation", "posterBorder", "revision"),
+            ("private async Task LoadEpisodeStillAsync(", "navigationOwner", "stillBorder", "stillRevision")
+        })
         {
             var load = MethodBody(page, method);
             Assert.Contains("++_detailArtworkLoads", load);
             Assert.Contains("finally", load);
             Assert.Contains("--_detailArtworkLoads", load);
-            Assert.Contains("if (!painted && ReferenceEquals(_navigationCts,", load);
-            Assert.Contains("_detailArtworkInterrupted = true", load);
-            Assert.Contains("painted = true", load);
+            Assert.Contains("completed = imageService.IsKnownUnavailable", load);
+            Assert.Contains("completed = true", load);
+            Assert.Contains($"ReferenceEquals(_navigationCts, {navigation}) && Equals({border}.Tag, {revision})", load);
+            Assert.Contains($"if (completed) _interruptedCardArtwork.Remove({border})", load);
+            Assert.Contains($"else _interruptedCardArtwork.Add({border})", load);
         }
         var configure = MethodBody(page, "private async Task ConfigureOnViewTranslationAsync(");
         Assert.Contains("++_overviewTranslationStatusReads", configure);

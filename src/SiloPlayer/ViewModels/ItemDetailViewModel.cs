@@ -29,6 +29,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     // Write authority is independent of progress/read invalidation revisions.
     private long _watchedWriteGeneration;
     private MediaSurfaceChanged? _suppressedWatchedFeedback;
+    private MediaSurfaceChanged? _suppressedViewerFeedback;
     private bool _stateRefreshActive = true;
     private readonly SynchronizationContext? _stateContext = SynchronizationContext.Current;
     private readonly object _remoteStateGate = new();
@@ -77,10 +78,10 @@ public partial class ItemDetailViewModel : ObservableObject,
     // F4: Helper to publish media-surface changes via the shared messenger.
     // Subscribers (HomeViewModel, FavoritesViewModel, WatchlistViewModel,
     // HistoryViewModel) react by invalidating / adjusting their own state.
-    private static void Publish(MediaSurfaceChangeKind kind, string contentId, string? seriesId = null, int? rating = null)
+    private static void Publish(MediaSurfaceChangeKind kind, string contentId, string? seriesId, int? rating, ApiRequestContext context)
     {
         WeakReferenceMessenger.Default.Send(
-            new MediaSurfaceChanged(kind, contentId, seriesId, rating));
+            new MediaSurfaceChanged(kind, contentId, seriesId, rating, context));
     }
 
     public void Receive(NotInterestedChange message)
@@ -104,6 +105,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (message.Context is { } context && !_catalogApi.IsCurrentContext(context)) return;
         _detailPrefetchCache.Invalidate(message.ContentId);
+        if (ReferenceEquals(message, _suppressedViewerFeedback)) return;
         if (message.Kind == MediaSurfaceChangeKind.PlaybackProgress)
         {
             if (_stateRefreshActive) _localProgressRefresh.Invalidate(StateInvalidation(message));
@@ -1248,9 +1250,12 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task SetRatingAsync(int rating)
     {
-        var contentId = Item?.ContentId;
-        var seriesId = Item?.SeriesId;
+        var item = Item;
+        var contentId = item?.ContentId;
+        var seriesId = item?.SeriesId;
         if (string.IsNullOrWhiteSpace(contentId)) return;
+        var context = _catalogApi.CaptureContext();
+        bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context);
 
         // B13 + F4: optimistic rating swap. Clicking an already-selected star
         // clears the rating (matches webui toggle-off). Revert on failure.
@@ -1265,12 +1270,12 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.SetRatingAsync(contentId, nextRating.Value);
 
-            if (Item?.ContentId != contentId) return;
-            Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating);
+            if (!Current()) return;
+            Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, context);
         }
         catch
         {
-            if (Item?.ContentId == contentId)
+            if (Current())
                 UserRating = priorRating;
         }
         finally { Interlocked.Increment(ref _localStateGeneration); }
@@ -1465,10 +1470,14 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.AddFavoriteAsync(contentId);
 
-            if (!Current()) return;
-            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+            if (!_catalogApi.IsCurrentContext(context)) return;
+            var message = new MediaSurfaceChanged(
                 wasFavorite ? MediaSurfaceChangeKind.FavoriteRemoved : MediaSurfaceChangeKind.FavoriteAdded,
-                contentId, seriesId, context: context));
+                contentId, seriesId, context: context);
+            // App-lifetime surfaces still need accepted writes after this viewer departs.
+            if (!Current()) _suppressedViewerFeedback = message;
+            try { WeakReferenceMessenger.Default.Send(message); }
+            finally { _suppressedViewerFeedback = null; }
         }
         catch
         {
@@ -1498,10 +1507,13 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.AddToWatchlistAsync(contentId);
 
-            if (!Current()) return;
-            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+            if (!_catalogApi.IsCurrentContext(context)) return;
+            var message = new MediaSurfaceChanged(
                 wasInList ? MediaSurfaceChangeKind.WatchlistRemoved : MediaSurfaceChangeKind.WatchlistAdded,
-                contentId, seriesId, context: context));
+                contentId, seriesId, context: context);
+            if (!Current()) _suppressedViewerFeedback = message;
+            try { WeakReferenceMessenger.Default.Send(message); }
+            finally { _suppressedViewerFeedback = null; }
         }
         catch
         {

@@ -88,42 +88,62 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
-    [InlineData(true, false, "navigation")]
-    [InlineData(true, true, "navigation")]
-    [InlineData(false, false, "navigation")]
-    [InlineData(false, true, "navigation")]
-    [InlineData(true, false, "same-id")]
-    [InlineData(true, true, "same-id")]
-    [InlineData(false, false, "same-id")]
-    [InlineData(false, true, "same-id")]
-    [InlineData(true, false, "profile")]
-    [InlineData(true, true, "profile")]
-    [InlineData(false, false, "profile")]
-    [InlineData(false, true, "profile")]
-    [InlineData(true, false, "context")]
-    [InlineData(true, true, "context")]
-    [InlineData(false, false, "context")]
-    [InlineData(false, true, "context")]
-    public async Task RetiredViewerWriteCannotPublishOrRollBackTheCurrentDetail(bool favorite, bool fail, string departure)
+    [InlineData("favorite", false, "cancel")]
+    [InlineData("favorite", true, "cancel")]
+    [InlineData("watchlist", false, "cancel")]
+    [InlineData("watchlist", true, "cancel")]
+    [InlineData("rating", false, "cancel")]
+    [InlineData("rating", true, "cancel")]
+    [InlineData("favorite", false, "navigation")]
+    [InlineData("favorite", true, "navigation")]
+    [InlineData("watchlist", false, "navigation")]
+    [InlineData("watchlist", true, "navigation")]
+    [InlineData("rating", false, "navigation")]
+    [InlineData("rating", true, "navigation")]
+    [InlineData("favorite", false, "same-id")]
+    [InlineData("favorite", true, "same-id")]
+    [InlineData("watchlist", false, "same-id")]
+    [InlineData("watchlist", true, "same-id")]
+    [InlineData("rating", false, "same-id")]
+    [InlineData("rating", true, "same-id")]
+    [InlineData("favorite", false, "profile")]
+    [InlineData("favorite", true, "profile")]
+    [InlineData("watchlist", false, "profile")]
+    [InlineData("watchlist", true, "profile")]
+    [InlineData("rating", false, "profile")]
+    [InlineData("rating", true, "profile")]
+    [InlineData("favorite", false, "context")]
+    [InlineData("favorite", true, "context")]
+    [InlineData("watchlist", false, "context")]
+    [InlineData("watchlist", true, "context")]
+    [InlineData("rating", false, "context")]
+    [InlineData("rating", true, "context")]
+    public async Task RetiredViewerWriteCannotApplyStaleFeedbackOrRollBackTheCurrentDetail(string mutation, bool fail, string departure)
     {
         using var f = new Fixture(); f.Seed();
         f.Wire.PendingWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
         f.Wire.WriteStatus = fail ? HttpStatusCode.Forbidden : HttpStatusCode.NoContent;
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         f.Wire.OnWrite = () => started.TrySetResult();
+        var context = f.Client.CaptureContext();
         var recipient = new object();
         var messages = new List<MediaSurfaceChanged>();
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
         try
         {
-            var operation = favorite ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null) : f.Vm.ToggleWatchlistCommand.ExecuteAsync(null);
+            var operation = mutation == "favorite" ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null)
+                : mutation == "watchlist" ? f.Vm.ToggleWatchlistCommand.ExecuteAsync(null)
+                : f.Vm.SetRatingCommand.ExecuteAsync(4);
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (departure == "navigation") await f.Vm.LoadInLibraryAsync(EpisodeB, 9);
+            if (departure == "cancel") f.Vm.CancelPendingLoads();
+            else if (departure == "navigation") await f.Vm.LoadInLibraryAsync(EpisodeB, 9);
             else if (departure == "same-id") f.Vm.Item = new() { ContentId = Series, Type = "series", UserState = new() };
             else if (departure == "profile") f.Client.SetProfile("replacement");
             else f.Client.InvalidateAccessContext();
             // Opposite values expose either a stale success publish or a stale rollback.
             f.Vm.IsFavorite = fail; f.Vm.InWatchlist = fail;
+            int? currentRating = fail ? 4 : null;
+            f.Vm.Item!.UserRating = f.Vm.UserRating = currentRating;
             var mounted = f.Vm.Item;
             f.Wire.PendingWrite.SetResult();
             await operation.WaitAsync(TimeSpan.FromSeconds(5));
@@ -131,6 +151,83 @@ public sealed class RealtimeReadOwnershipTests
             Assert.Same(mounted, f.Vm.Item);
             Assert.Equal(fail, f.Vm.IsFavorite);
             Assert.Equal(fail, f.Vm.InWatchlist);
+            Assert.Equal(currentRating, f.Vm.UserRating);
+            Assert.Equal(currentRating, mounted!.UserRating);
+            if (!fail && mutation != "rating" && departure is ("cancel" or "navigation" or "same-id"))
+            {
+                // Accepted list writes still notify app-lifetime recipients,
+                // without applying their old feedback to this replacement viewer.
+                var message = Assert.Single(messages);
+                Assert.Equal(Series, message.ContentId);
+                Assert.Equal(context, message.Context);
+                Assert.Equal(mutation == "favorite" ? MediaSurfaceChangeKind.FavoriteAdded : MediaSurfaceChangeKind.WatchlistAdded, message.Kind);
+            }
+            else Assert.Empty(messages);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
+    }
+
+    [Theory]
+    [InlineData("favorite", false)]
+    [InlineData("favorite", true)]
+    [InlineData("watchlist", false)]
+    [InlineData("watchlist", true)]
+    [InlineData("rating", false)]
+    [InlineData("rating", true)]
+    public async Task CurrentViewerWritePublishesItsCapturedItemAndContext(string mutation, bool initiallySet)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Vm.Item!.SeriesId = "parent-series";
+        f.Vm.IsFavorite = initiallySet; f.Vm.InWatchlist = initiallySet;
+        f.Vm.UserRating = initiallySet ? 4 : null;
+        f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
+        f.Wire.OnWrite = () => { };
+        var context = f.Client.CaptureContext();
+        var recipient = new object();
+        var messages = new List<MediaSurfaceChanged>();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        try
+        {
+            await (mutation == "favorite" ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null)
+                : mutation == "watchlist" ? f.Vm.ToggleWatchlistCommand.ExecuteAsync(null)
+                : f.Vm.SetRatingCommand.ExecuteAsync(4));
+            var message = Assert.Single(messages);
+            Assert.Equal(Series, message.ContentId);
+            Assert.Equal("parent-series", message.SeriesId);
+            Assert.Equal(context, message.Context);
+            Assert.Equal(mutation == "rating" ? MediaSurfaceChangeKind.RatingChanged
+                : mutation == "favorite" ? initiallySet ? MediaSurfaceChangeKind.FavoriteRemoved : MediaSurfaceChangeKind.FavoriteAdded
+                : initiallySet ? MediaSurfaceChangeKind.WatchlistRemoved : MediaSurfaceChangeKind.WatchlistAdded, message.Kind);
+            if (mutation == "rating")
+            {
+                int? expected = initiallySet ? null : 4;
+                Assert.Equal(expected, message.Rating);
+                Assert.Equal(expected, f.Vm.UserRating);
+                Assert.Equal(expected, f.Vm.Item.UserRating);
+            }
+            else Assert.Equal(!initiallySet, mutation == "favorite" ? f.Vm.IsFavorite : f.Vm.InWatchlist);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedCurrentRatingWriteRollsBackWithoutPublishing(bool initiallySet)
+    {
+        using var f = new Fixture(); f.Seed();
+        int? prior = initiallySet ? 4 : null;
+        f.Vm.UserRating = prior;
+        f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
+        f.Wire.WriteStatus = HttpStatusCode.Forbidden;
+        f.Wire.OnWrite = () => { };
+        var recipient = new object();
+        var messages = new List<MediaSurfaceChanged>();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        try
+        {
+            await f.Vm.SetRatingCommand.ExecuteAsync(4);
+            Assert.Equal(prior, f.Vm.UserRating);
             Assert.Empty(messages);
         }
         finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
@@ -141,30 +238,51 @@ public sealed class RealtimeReadOwnershipTests
     [InlineData(true, true)]
     [InlineData(false, false)]
     [InlineData(false, true)]
-    public async Task CurrentViewerWritePublishesItsCapturedItemAndContext(bool favorite, bool initiallySet)
+    public async Task DepartedViewerWriteStillUpdatesCollectionsAndClearsPrefetchCache(bool favorite, bool initiallySet)
     {
         using var f = new Fixture(); f.Seed();
-        f.Vm.Item!.SeriesId = "parent-series";
-        f.Vm.IsFavorite = initiallySet; f.Vm.InWatchlist = initiallySet;
-        f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
-        f.Wire.OnWrite = () => { };
-        var context = f.Client.CaptureContext();
-        var recipient = new object();
-        var messages = new List<MediaSurfaceChanged>();
-        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        var catalog = new CatalogApi(f.Client);
+        var favorites = new FavoritesViewModel(catalog);
+        var watchlist = new WatchlistViewModel(catalog, new RequestsApi(f.Client));
+        DetailCacheInvalidation.Attach(f.Cache);
         try
         {
-            await (favorite ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null) : f.Vm.ToggleWatchlistCommand.ExecuteAsync(null));
-            var message = Assert.Single(messages);
-            Assert.Equal(Series, message.ContentId);
-            Assert.Equal("parent-series", message.SeriesId);
-            Assert.Equal(context, message.Context);
-            Assert.Equal(favorite
-                ? initiallySet ? MediaSurfaceChangeKind.FavoriteRemoved : MediaSurfaceChangeKind.FavoriteAdded
-                : initiallySet ? MediaSurfaceChangeKind.WatchlistRemoved : MediaSurfaceChangeKind.WatchlistAdded, message.Kind);
-            Assert.Equal(!initiallySet, favorite ? f.Vm.IsFavorite : f.Vm.InWatchlist);
+            var items = favorite ? favorites.Items : watchlist.Items;
+            if (initiallySet) items.Add(new() { ContentId = Series, Type = "series" });
+            f.Vm.Item!.SeriesId = "parent-series";
+            f.Vm.IsFavorite = initiallySet; f.Vm.InWatchlist = initiallySet;
+            f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
+            f.Wire.PendingWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.Wire.OnWrite = () => started.TrySetResult();
+            // Use another item so the detail VM's own per-item invalidation
+            // cannot stand in for the app-lifetime cache subscription.
+            var prefetched = await f.Cache.GetAsync(EpisodeB, CancellationToken.None);
+            Assert.Same(prefetched, await f.Cache.GetAsync(EpisodeB, CancellationToken.None));
+            var reads = f.Wire.DetailReads;
+            var operation = favorite ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null) : f.Vm.ToggleWatchlistCommand.ExecuteAsync(null);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            f.Vm.CancelPendingLoads();
+            f.Wire.PendingWrite.SetResult();
+            await operation.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // Additions reload the retained collection; removals drop the item.
+            for (var n = 0; n < 50 && (items.Count != (initiallySet ? 0 : 1)
+                || favorites.IsLoading || watchlist.IsLoading); n++) await Task.Delay(10);
+            Assert.Null(favorites.ErrorMessage);
+            Assert.Null(watchlist.ErrorMessage);
+            if (initiallySet) Assert.Empty(items);
+            else Assert.Equal(Series, Assert.Single(items).ContentId);
+            Assert.Equal(initiallySet ? 0 : 1, f.Wire.CollectionReads);
+            Assert.NotSame(prefetched, await f.Cache.GetAsync(EpisodeB, CancellationToken.None));
+            Assert.Equal(reads + 1, f.Wire.DetailReads);
         }
-        finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
+        finally
+        {
+            WeakReferenceMessenger.Default.UnregisterAll(favorites);
+            WeakReferenceMessenger.Default.UnregisterAll(watchlist);
+            WeakReferenceMessenger.Default.UnregisterAll(f.Cache);
+        }
     }
 
     [Theory]
@@ -1099,7 +1217,7 @@ public sealed class RealtimeReadOwnershipTests
 
     private sealed class Backend : HttpMessageHandler
     {
-        internal int Count, DetailReads, SeasonReads, EpisodeReads, WatchReads;
+        internal int Count, DetailReads, SeasonReads, EpisodeReads, WatchReads, CollectionReads;
         internal double Position = 31;
         internal double DetailPosition;
         internal string DetailType = "series";
@@ -1144,7 +1262,12 @@ public sealed class RealtimeReadOwnershipTests
             var path = request.RequestUri.AbsolutePath;
             object body;
             var hold = false;
-            if (path.StartsWith("/api/v2/watch/"))
+            if (path is "/api/v2/favorites" or "/api/v2/watchlist")
+            {
+                CollectionReads++;
+                body = new { items = new[] { new { content_id = Series, type = "series" } } };
+            }
+            else if (path.StartsWith("/api/v2/watch/"))
             {
                 WatchReads++; body = new { content_id = Uri.UnescapeDataString(path.Split('/').Last()), series_id = Series, type = "episode", user_data = new { position_seconds = Position } };
                 BeforeWatchResponse?.Invoke();
