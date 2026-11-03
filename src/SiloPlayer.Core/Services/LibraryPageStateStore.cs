@@ -1,42 +1,151 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Core.Services;
 
+public readonly record struct LibraryPageStateSnapshot(bool Remember, string? Search);
+
+/// <summary>One confirmed document and one write queue per injected settings client.</summary>
 public sealed class LibraryPageStateStore(SettingsApi settings)
 {
-    private static readonly ConcurrentDictionary<ApiRequestContext, SemaphoreSlim> Gates = new();
+    internal sealed class Session
+    {
+        private SemaphoreSlim _operations = new(1, 1);
+        private SettingsRequestContext? _operationOwner;
+        internal readonly object Sync = new();
+        internal long Generation;
+        internal Document? Confirmed;
+        internal event Action? Invalidated;
+        internal SemaphoreSlim OperationsFor(SettingsRequestContext owner, SettingsApi settings)
+        {
+            lock (Sync)
+            {
+                if (!settings.IsCurrentSettingsContext(owner)) throw new OperationCanceledException("Library settings owner changed.");
+                if (_operationOwner != owner) { _operationOwner = owner; _operations = new(1, 1); }
+                return _operations;
+            }
+        }
+        internal void Invalidate()
+        {
+            lock (Sync) { Generation++; Confirmed = null; }
+            Invalidated?.Invoke();
+        }
+    }
+    internal sealed record Document(SettingsRequestContext Owner, long Generation, bool Remember, Dictionary<string, string> Libraries);
+    private Session State => settings.LibraryStateSession;
     private static readonly string[] Keys = ["ui.remember_library_page_state", "ui.library_page_state"];
+    public static bool IsRelevantKey(string? key) => key is "ui.remember_library_page_state" or "ui.library_page_state";
+    public long Revision { get { lock (State.Sync) return State.Generation; } }
+    public event Action? Invalidated { add => State.Invalidated += value; remove => State.Invalidated -= value; }
+    public void Invalidate() => State.Invalidate();
+
+    public bool TryGetConfirmed(int libraryId, out LibraryPageStateSnapshot snapshot)
+    {
+        var owner = settings.CaptureSettingsContext();
+        lock (State.Sync)
+        {
+            if (State.Confirmed is { } saved && saved.Owner == owner && saved.Generation == State.Generation)
+            {
+                snapshot = Snapshot(saved, libraryId);
+                return true;
+            }
+        }
+        snapshot = default;
+        return false;
+    }
+
+    public void NotifyRealtime(string channel, string eventName, JsonElement data)
+    {
+        if (channel != "user_settings" || eventName != "user_settings.changed" || data.ValueKind != JsonValueKind.Object
+            || !data.TryGetProperty("key", out var key) || key.ValueKind != JsonValueKind.String || !IsRelevantKey(key.GetString())) return;
+        if (data.TryGetProperty("profile_id", out var profile) && profile.ValueKind == JsonValueKind.String
+            && !string.IsNullOrEmpty(profile.GetString()) && profile.GetString() != settings.CaptureContext().ProfileId) return;
+        Invalidate();
+    }
 
     public async Task<string?> ReadAsync(int libraryId, CancellationToken ct = default)
     {
-        var context = settings.CaptureContext();
-        var (remember, libraries) = await ReadDocumentAsync(ct);
-        if (!settings.IsCurrentContext(context)) throw new OperationCanceledException("Library profile changed.", ct);
-        return remember && libraries.TryGetValue(libraryId.ToString(), out var search) ? search : null;
+        var result = await ReadSnapshotAsync(libraryId, ct);
+        return result.Remember ? result.Search : null;
+    }
+
+    public async Task<LibraryPageStateSnapshot> ReadSnapshotAsync(int libraryId, CancellationToken ct = default)
+    {
+        var owner = settings.CaptureSettingsContext();
+        var operations = State.OperationsFor(owner, settings);
+        await operations.WaitAsync(ct);
+        try
+        {
+            while (true)
+            {
+                EnsureOwner(owner, ct);
+                long generation;
+                lock (State.Sync)
+                {
+                    generation = State.Generation;
+                    if (State.Confirmed is { } saved && saved.Owner == owner && saved.Generation == generation)
+                        return Snapshot(saved, libraryId);
+                }
+                var (remember, libraries) = await ReadDocumentAsync(owner, ct).WaitAsync(ct);
+                EnsureOwner(owner, ct);
+                lock (State.Sync)
+                {
+                    if (generation != State.Generation) continue;
+                    var saved = new Document(owner, generation, remember, libraries);
+                    State.Confirmed = saved;
+                    return Snapshot(saved, libraryId);
+                }
+            }
+        }
+        finally { operations.Release(); }
     }
 
     public async Task WriteAsync(int libraryId, string search, CancellationToken ct = default)
     {
-        var context = settings.CaptureContext();
-        var gate = Gates.GetOrAdd(context, _ => new(1, 1));
-        await gate.WaitAsync(ct);
+        var owner = settings.CaptureSettingsContext();
+        var operations = State.OperationsFor(owner, settings);
+        await operations.WaitAsync(ct);
         try
         {
-            if (!settings.IsCurrentContext(context)) return;
-            var (remember, libraries) = await ReadDocumentAsync(ct);
-            if (!remember || !settings.IsCurrentContext(context)) return;
-            libraries[libraryId.ToString()] = search;
-            var document = new { version = 1, libraries = libraries.ToDictionary(pair => pair.Key, pair => new { search = pair.Value }) };
-            await settings.SetContractSettingValueAsync("ui.library_page_state", "profile_device", document, ct: ct);
+            while (true)
+            {
+                EnsureOwner(owner, ct);
+                long generation;
+                lock (State.Sync) generation = State.Generation;
+                // Merge into the authoritative document so concurrent libraries survive.
+                var (remember, libraries) = await ReadDocumentAsync(owner, ct);
+                EnsureOwner(owner, ct);
+                Task? write = null;
+                lock (State.Sync)
+                {
+                    if (generation != State.Generation) continue;
+                    if (remember && libraries.GetValueOrDefault(libraryId.ToString()) != search)
+                    {
+                        libraries[libraryId.ToString()] = search;
+                        var value = new { version = 1, libraries = libraries.ToDictionary(pair => pair.Key, pair => new { search = pair.Value }) };
+                        write = settings.WriteLibraryStateDocumentAsync(owner, value, ct);
+                    }
+                }
+                if (write != null) await write;
+                EnsureOwner(owner, ct);
+                lock (State.Sync)
+                    if (generation == State.Generation) State.Confirmed = new(owner, generation, remember, libraries);
+                return;
+            }
         }
-        finally { gate.Release(); }
+        finally { operations.Release(); }
     }
 
-    private async Task<(bool Remember, Dictionary<string, string> Libraries)> ReadDocumentAsync(CancellationToken ct)
+    private static LibraryPageStateSnapshot Snapshot(Document document, int libraryId)
+        => new(document.Remember, document.Remember ? document.Libraries.GetValueOrDefault(libraryId.ToString()) : null);
+    private void EnsureOwner(SettingsRequestContext owner, CancellationToken ct)
     {
-        var response = await settings.GetContractEffectiveSettingsAsync(Keys, ct: ct);
+        ct.ThrowIfCancellationRequested();
+        if (!settings.IsCurrentSettingsContext(owner)) throw new OperationCanceledException("Library settings owner changed.", ct);
+    }
+    private async Task<(bool Remember, Dictionary<string, string> Libraries)> ReadDocumentAsync(SettingsRequestContext owner, CancellationToken ct)
+    {
+        var response = await settings.GetContractEffectiveSettingsAsync(owner.Request, Keys, deviceId: owner.DeviceId, ct: ct);
         var remember = response.Settings.FirstOrDefault(entry => entry.Key == Keys[0])?.Value;
         var enabled = remember is not { ValueKind: JsonValueKind.False } && !(remember is { ValueKind: JsonValueKind.String } text && text.GetString() == "false");
         var libraries = new Dictionary<string, string>(StringComparer.Ordinal);

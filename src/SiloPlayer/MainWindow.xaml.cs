@@ -1438,6 +1438,7 @@ public sealed partial class MainWindow : Window
 
     private void OnAccessChanged(ApiRequestContext context)
     {
+        if (_apiClient.IsCurrentContext(context)) App.Services.GetRequiredService<SettingsApi>().LibraryPageState.Invalidate();
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
@@ -1452,6 +1453,7 @@ public sealed partial class MainWindow : Window
 
     private void OnReadCatchUpRequested(ApiRequestContext context)
     {
+        if (_apiClient.IsCurrentContext(context)) App.Services.GetRequiredService<SettingsApi>().LibraryPageState.Invalidate();
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
@@ -1689,6 +1691,7 @@ public sealed partial class MainWindow : Window
         if (_notificationSubscription != null && CanExposeAuthenticatedNavigation)
         {
             _apiClient.LocalizedReads.NotifyRealtime(channel, eventName, data, _authService.SelectedProfileId);
+            App.Services.GetRequiredService<SettingsApi>().LibraryPageState.NotifyRealtime(channel, eventName, data);
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
             NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
             NotifyInheritedPreferenceFromRealtime(channel, eventName, data);

@@ -296,6 +296,10 @@ public sealed partial class LibraryPage : Page,
     {
         base.OnNavigatedTo(e);
         _isNavigated = true;
+        var visit = ++_stateVisit;
+        var owner = _stateSettings.CaptureSettingsContext();
+        var language = _stateSettings.LocalizedReads.Generation;
+        AttachLibraryStateEvents();
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
@@ -316,6 +320,10 @@ public sealed partial class LibraryPage : Page,
             : Visibility.Collapsed;
         if (library == null)
         {
+            _activeLibraryId = null;
+            _stateOwner = null;
+            _stateSnapshot = null;
+            _retainedSearch = null;
             HeaderGrid.Visibility = Visibility.Collapsed;
             FilterBar.Visibility = Visibility.Collapsed;
             ActiveFiltersBar.Visibility = Visibility.Collapsed;
@@ -328,7 +336,11 @@ public sealed partial class LibraryPage : Page,
 
         if (library != null)
         {
-            var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && _pageStateContext == _stateSettings.CaptureContext();
+            var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && ViewModel.Library.Type == library.Type && _stateOwner == owner && _stateLanguage == language;
+            if (_stateLanguage != language) _stateSettings.LibraryPageState.Invalidate();
+            _stateOwner = owner;
+            _stateLanguage = language;
+            _pageStateContext = owner.Request;
             if (!sameLibrary)
             {
                 ResetRecommendedContent();
@@ -348,7 +360,7 @@ public sealed partial class LibraryPage : Page,
             LibraryTitle.Text = library.Name;
             LibraryEyebrowName.Text = library.Name.ToUpperInvariant();
             RecommendedTab.Content = library.Type is "audiobook" or "audiobooks" ? "Home" : "Recommended";
-            _currentAudiobookAxis = "books";
+            if (!sameLibrary) _currentAudiobookAxis = "books";
             MediaTypeFilterField.Visibility = string.Equals(library.Type, "mixed", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -361,9 +373,24 @@ public sealed partial class LibraryPage : Page,
 
             // B42: Restore previously-viewed tab + filters for this library if any.
             // Falls back to fresh defaults on first visit.
-            var state = await RestoreLibraryStateAsync(library.Id);
+            var edit = _stateEdit;
+            var revision = _stateSettings.LibraryPageState.Revision;
+            var snapshot = sameLibrary && _stateSettings.LibraryPageState.TryGetConfirmed(library.Id, out var confirmed)
+                ? confirmed : await RestoreLibraryStateAsync(library.Id, visit, owner);
+            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id) || edit != _stateEdit) return;
             await CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<CatalogApi>());
-            if (!_isNavigated || _activeLibraryId != library.Id || _pageStateContext != _stateSettings.CaptureContext()) return;
+            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id) || edit != _stateEdit) return;
+            while (revision != _stateSettings.LibraryPageState.Revision)
+            {
+                revision = _stateSettings.LibraryPageState.Revision;
+                snapshot = await RestoreLibraryStateAsync(library.Id, visit, owner);
+                if (!IsLibraryStateVisitCurrent(visit, owner, library.Id) || edit != _stateEdit) return;
+            }
+            var retain = sameLibrary && (snapshot == null || snapshot.Value.Remember &&
+                (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch));
+            var state = retain ? CaptureLibraryViewState(_currentTab) :
+                ParseOwnedLibrarySearch(snapshot?.Search, visit, owner, library.Id) ??
+                (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
             _currentAudiobookAxis = library.Type is "audiobook" or "audiobooks" ? state.Axis : "books";
             if (requestedTab is "Recommended" or "Library" or "Collections")
                 state.Tab = requestedTab;
@@ -372,11 +399,64 @@ public sealed partial class LibraryPage : Page,
                 state.Tab = "Library";
                 state.Genre = requestedGenre;
                 state.Genres = [requestedGenre];
+                foreach (var group in state.QueryGroups) group.Rules.RemoveAll(rule => rule.Field == "genre");
+                if (state.QueryGroups.Count > 0) state.QueryGroups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = requestedGenre }] });
             }
 
+            if (!retain || !string.IsNullOrWhiteSpace(requestedGenre))
+            {
+                _libraryCatalogLoaded = false;
+                ViewModel.CancelCatalogLoads();
+                ClearVirtualCards();
+                _libraryVerticalOffset = 0;
+                _pendingLibraryOffset = 0;
+            }
+            ApplyLibraryViewState(state);
+            _stateSnapshot = snapshot;
+            if (requestedTab != null || requestedGenre != null) ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));
+            _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
+
+            if (state.Tab == "Recommended")
+            {
+                if (!_recommendedLoaded)
+                    await LoadRecommendationsAsync();
+                else
+                    QueueRecommendedRefresh();
+            }
+
+            if (state.Tab == "Library")
+            {
+                if (_currentAudiobookAxis != "books")
+                {
+                    var groupOffset = retain ? AudiobookGroupsPanel.VerticalOffset : 0;
+                    var groupEdit = _stateEdit;
+                    await LoadAudiobookGroupsAsync(true);
+                    if (IsLibraryStateVisitCurrent(visit, owner, library.Id) && groupEdit == _stateEdit && _currentTab == "Library")
+                    {
+                        AudiobookGroupsPanel.UpdateLayout();
+                        AudiobookGroupsPanel.ChangeView(null, groupOffset, null, true);
+                    }
+                    return;
+                }
+                await EnsureLibraryCatalogLoadedAsync();
+                await FillViewportAsync();
+                QueueRenderVirtualGrid(force: true);
+            }
+
+            if (state.Tab == "Collections")
+                await LoadCollectionsAsync();
+        }
+    }
+
+    private void ApplyLibraryViewState(LibraryViewState state)
+    {
+        _applyingLibraryState = true;
+        try
+        {
+            _currentAudiobookAxis = ViewModel.Library!.Type is "audiobook" or "audiobooks" ? state.Axis : "books";
             _suppressFilterEvents = true;
-            UpdateSortOptions(library.Type, state.Sort, state.MediaType);
-            ConfigureBrowseTypeSelector(library.Type, state.MediaType);
+            UpdateSortOptions(ViewModel.Library!.Type, state.Sort, state.MediaType);
+            ConfigureBrowseTypeSelector(ViewModel.Library!.Type, state.MediaType);
             MediaTypeComboBox.SelectedIndex = IndexOfMediaType(state.MediaType);
             GenreComboBox.SelectedIndex = -1;
             ContentRatingComboBox.SelectedIndex = -1;
@@ -411,7 +491,7 @@ public sealed partial class LibraryPage : Page,
             FourKToggle.IsChecked = state.FourK;
             HdrToggle.IsChecked = state.Hdr;
             DolbyVisionToggle.IsChecked = state.DolbyVision;
-            ConfigureFilterSections(library.Type);
+            ConfigureFilterSections(ViewModel.Library!.Type);
             _orderAsc = state.Order != "desc";
             UpdateOrderButton();
             var restoredSort = SortComboBox.SelectedItem is SortOption restoredOption ? restoredOption.Value : "title";
@@ -463,25 +543,8 @@ public sealed partial class LibraryPage : Page,
 
             ShowTab(state.Tab);
 
-            if (state.Tab == "Recommended")
-            {
-                if (!_recommendedLoaded)
-                    await LoadRecommendationsAsync();
-                else
-                    QueueRecommendedRefresh();
-            }
-
-            if (state.Tab == "Library")
-            {
-                if (_currentAudiobookAxis != "books") { await LoadAudiobookGroupsAsync(true); return; }
-                await EnsureLibraryCatalogLoadedAsync();
-                await FillViewportAsync();
-                QueueRenderVirtualGrid(force: true);
-            }
-
-            if (state.Tab == "Collections")
-                await LoadCollectionsAsync();
         }
+        finally { _applyingLibraryState = false; _suppressFilterEvents = false; }
     }
 
     private void ManageLibraryVisibility_Click(object sender, RoutedEventArgs e)
@@ -489,6 +552,8 @@ public sealed partial class LibraryPage : Page,
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        ++_stateVisit;
+        DetachLibraryStateEvents();
         _shuffleLaunch?.Cancel();
         base.OnNavigatedFrom(e);
         FlushLibraryStateSave();
@@ -897,7 +962,12 @@ public sealed partial class LibraryPage : Page,
     private void SaveViewState(string tab)
     {
         if (ViewModel.Library == null) return;
-        var state = new LibraryViewState
+        var state = CaptureLibraryViewState(tab);
+        ScheduleLibraryStateSave(ViewModel.Library.Id, state);
+    }
+
+    private LibraryViewState CaptureLibraryViewState(string tab)
+        => new LibraryViewState
         {
             Tab = tab,
             Axis = _currentAudiobookAxis,
@@ -934,8 +1004,6 @@ public sealed partial class LibraryPage : Page,
             Hdr = ViewModel.SelectedHdr,
             DolbyVision = ViewModel.SelectedDolbyVision,
         };
-        ScheduleLibraryStateSave(ViewModel.Library.Id, state);
-    }
 
     private void ShowTab(string tag)
     {
@@ -1208,6 +1276,7 @@ public sealed partial class LibraryPage : Page,
 
     private async Task ApplyGuidedMultiSelectFiltersAsync()
     {
+        MarkLibraryStateEdited();
         ViewModel.SelectedGenres = _selectedGenres.ToList();
         ViewModel.SelectedGenre = _selectedGenres.FirstOrDefault();
         ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
@@ -1231,6 +1300,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void SortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         if (SortComboBox.SelectedItem is SortOption option)
         {
@@ -1251,6 +1321,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void OrderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || OrderComboBox.SelectedItem is not ComboBoxItem item || item.Tag is not string order)
             return;
 
@@ -1330,6 +1401,7 @@ public sealed partial class LibraryPage : Page,
         SizeLibraryFilterSheet();
         _sharedFilterEditor.SortChanged += () =>
         {
+            MarkLibraryStateEdited();
             if (query.Sort is not {} sort) return;
             ViewModel.SelectedSort = sort.Field; ViewModel.SelectedOrder = sort.Order;
             _suppressFilterEvents = true;
@@ -1354,6 +1426,7 @@ public sealed partial class LibraryPage : Page,
 
     private void StoreLibraryRuleDraft(QueryDefinition query)
     {
+        MarkLibraryStateEdited();
         ViewModel.AdvancedRulesMatch = query.Match; ViewModel.AdvancedGroups.Clear();
         foreach (var group in query.Groups)
         {
@@ -1385,6 +1458,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void AdvancedMatch_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || AdvancedMatchComboBox.SelectedItem is not ComboBoxItem { Tag: string match }) return;
         ViewModel.AdvancedRulesMatch = match == "any" ? "any" : "all";
         await ApplyAdvancedRulesAsync();
@@ -1415,6 +1489,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void MediaTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         if (MediaTypeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string type)
         {
@@ -1445,6 +1520,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void GenreComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedGenre = SelectedFilterValue(GenreComboBox);
@@ -1456,6 +1532,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void ContentRatingComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedContentRating = SelectedFilterValue(ContentRatingComboBox);
@@ -1467,6 +1544,7 @@ public sealed partial class LibraryPage : Page,
 
     private void YearFilter_TextChanged(object sender, TextChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         _suppressFilterEvents = true;
@@ -1493,6 +1571,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void DecadeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents ||
             DecadeComboBox.SelectedItem is not ComboBoxItem { Tag: string decade } ||
             string.IsNullOrEmpty(decade))
@@ -1720,6 +1799,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void BrowseTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || BrowseTypeComboBox.SelectedItem is not FilterOption option)
             return;
 
@@ -1747,6 +1827,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void AudiobookAxis_Click(object sender, RoutedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (sender is not Button { Tag: string axis } || axis == _currentAudiobookAxis)
             return;
 
@@ -1792,6 +1873,7 @@ public sealed partial class LibraryPage : Page,
 
     private void AudiobookGroupSearch_TextChanged(object sender, TextChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || _currentAudiobookAxis == "books") return;
         _audiobookGroupSearchTimer?.Stop();
         _audiobookGroupSearchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -1806,6 +1888,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void AudiobookGroupSort_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || _currentAudiobookAxis == "books") return;
         await LoadAudiobookGroupsAsync(reset: true);
     }
@@ -2078,6 +2161,7 @@ public sealed partial class LibraryPage : Page,
 
     private async Task SelectAudiobookGroupAsync(string name)
     {
+        MarkLibraryStateEdited();
         switch (_currentAudiobookAxis)
         {
             case "author": ViewModel.SelectedAuthor = name; AuthorBox.Text = name; break;
@@ -2577,6 +2661,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void Tab_Click(object sender, RoutedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
@@ -3618,6 +3703,7 @@ public sealed partial class LibraryPage : Page,
     private async void PersonFacet_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
         if (_suppressFilterEvents || args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+        MarkLibraryStateEdited();
         if (_facetOwners.Remove(sender, out var previous)) previous.Cancel();
         var owner = new CancellationTokenSource(); _facetOwners[sender] = owner;
         var field = sender.Name.Replace("Box", "").ToLowerInvariant();
@@ -3640,6 +3726,7 @@ public sealed partial class LibraryPage : Page,
 
     private void AdvancedTextFilter_TextChanged(object sender, TextChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         _advancedFilterDebounceTimer?.Stop();
@@ -3655,12 +3742,14 @@ public sealed partial class LibraryPage : Page,
 
     private async void AdvancedComboFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         await ApplyAdvancedFiltersAsync();
     }
 
     private async void AdvancedToggle_Toggled(object sender, RoutedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         await ApplyAdvancedFiltersAsync();
     }
@@ -3703,6 +3792,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void StudioComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedStudio = SelectedFilterValue(StudioComboBox);
@@ -3714,6 +3804,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void CountryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedCountry = SelectedFilterValue(CountryComboBox);
@@ -3725,6 +3816,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void ResolutionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedResolution = SelectedFilterValue(ResolutionComboBox);
@@ -3736,6 +3828,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void AudioLangComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedAudioLanguage = SelectedFilterValue(AudioLangComboBox);
@@ -3922,6 +4015,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void ClearAllFilters_Click(object sender, RoutedEventArgs e)
     {
+        MarkLibraryStateEdited();
         _suppressFilterEvents = true;
         if (ViewModel.UseAdvancedRules)
         {

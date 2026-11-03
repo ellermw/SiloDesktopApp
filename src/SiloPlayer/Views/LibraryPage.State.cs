@@ -13,28 +13,133 @@ public sealed partial class LibraryPage
 {
     private readonly SettingsApi _stateSettings = App.Services.GetRequiredService<SettingsApi>();
     private ApiRequestContext? _pageStateContext;
+    private SettingsRequestContext? _stateOwner;
+    private LibraryPageStateSnapshot? _stateSnapshot;
+    private long _stateVisit, _stateEdit, _stateLanguage;
+    private string? _retainedSearch;
+    private bool _applyingLibraryState, _stateEventsAttached, _stateRefreshQueued, _stateRefreshAgain;
     private DispatcherTimer? _stateSaveTimer;
-    private (int Id, string Search)? _pendingStateSave;
+    private CancellationTokenSource? _stateRestoreCancellation;
+    private (int Id, string Search, SettingsRequestContext Owner)? _pendingStateSave;
 
-    private async Task<LibraryViewState> RestoreLibraryStateAsync(int libraryId)
+    private bool IsLibraryStateVisitCurrent(long visit, SettingsRequestContext owner, int libraryId)
+        => _isNavigated && visit == _stateVisit && _activeLibraryId == libraryId &&
+            _stateSettings.IsCurrentSettingsContext(owner) && _stateLanguage == _stateSettings.LocalizedReads.Generation;
+
+    private async Task<LibraryPageStateSnapshot?> RestoreLibraryStateAsync(int libraryId, long visit, SettingsRequestContext owner)
     {
-        _pageStateContext = _stateSettings.CaptureContext();
-        try
+        if (!IsLibraryStateVisitCurrent(visit, owner, libraryId) || _stateRestoreCancellation is not { } cancellation) return null;
+        var edit = _stateEdit;
+        try { return await _stateSettings.LibraryPageState.ReadSnapshotAsync(libraryId, cancellation.Token); }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception ex)
         {
-            var search = await new LibraryPageStateStore(_stateSettings).ReadAsync(libraryId);
-            if (!_isNavigated || _pageStateContext != _stateSettings.CaptureContext()) return new();
-            return ParseLibrarySearch(search);
+            if (IsLibraryStateVisitCurrent(visit, owner, libraryId) && edit == _stateEdit)
+                App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}");
+            return null;
         }
-        catch (OperationCanceledException) { return new(); }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}"); return new(); }
+    }
+
+    private void AttachLibraryStateEvents()
+    {
+        _stateRestoreCancellation?.Cancel();
+        _stateRestoreCancellation?.Dispose();
+        _stateRestoreCancellation = new();
+        if (_stateEventsAttached) return;
+        _stateEventsAttached = true;
+        _stateSettings.LibraryPageState.Invalidated += LibraryState_Invalidated;
+        _stateSettings.LocalizedReads.Invalidated += LibraryState_LanguageChanged;
+    }
+
+    private LibraryViewState? ParseOwnedLibrarySearch(string? search, long visit, SettingsRequestContext owner, int libraryId)
+    {
+        try { return ParseLibrarySearch(search); }
+        catch (Exception ex)
+        {
+            if (IsLibraryStateVisitCurrent(visit, owner, libraryId))
+                App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void DetachLibraryStateEvents()
+    {
+        _stateRestoreCancellation?.Cancel();
+        _stateRestoreCancellation?.Dispose();
+        _stateRestoreCancellation = null;
+        _stateEventsAttached = false;
+        _stateRefreshQueued = false;
+        _stateRefreshAgain = false;
+        _stateSettings.LibraryPageState.Invalidated -= LibraryState_Invalidated;
+        _stateSettings.LocalizedReads.Invalidated -= LibraryState_LanguageChanged;
+    }
+
+    private void LibraryState_LanguageChanged(long generation)
+    {
+        // The shell owns language navigation; immediately retire this visit's restoration.
+        _stateSettings.LibraryPageState.Invalidate();
+    }
+
+    private void LibraryState_Invalidated()
+    {
+        var visit = _stateVisit;
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            if (!_isNavigated || visit != _stateVisit || _stateOwner is not { } owner || _activeLibraryId is not { } id) return;
+            if (_stateRefreshQueued) { _stateRefreshAgain = true; return; }
+            _stateRefreshQueued = true;
+            var edit = _stateEdit;
+            try
+            {
+                await FlushLibraryStateSaveAsync();
+                var snapshot = await RestoreLibraryStateAsync(id, visit, owner);
+                if (snapshot == null || !IsLibraryStateVisitCurrent(visit, owner, id) || edit != _stateEdit) return;
+                var previous = _stateSnapshot;
+                _stateSnapshot = snapshot;
+                // Opt-out changes future activation/save eligibility, never current user intent.
+                if (!snapshot.Value.Remember || snapshot == previous || snapshot.Value.Search == _retainedSearch) return;
+                var state = ParseOwnedLibrarySearch(snapshot.Value.Search, visit, owner, id);
+                if (state == null) return;
+                ApplyLibraryViewState(state);
+                _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
+                _libraryCatalogLoaded = false;
+                _recommendedLoaded = false;
+                _collectionsLoaded = false;
+                if (_currentTab == "Library")
+                {
+                    if (_currentAudiobookAxis != "books") await LoadAudiobookGroupsAsync(true);
+                    else { await EnsureLibraryCatalogLoadedAsync(); await FillViewportAsync(); }
+                }
+                else if (_currentTab == "Collections") await LoadCollectionsAsync();
+                else await LoadRecommendationsAsync();
+            }
+            finally
+            {
+                if (visit == _stateVisit)
+                {
+                    _stateRefreshQueued = false;
+                    if (_stateRefreshAgain) { _stateRefreshAgain = false; LibraryState_Invalidated(); }
+                }
+            }
+        });
     }
 
     private void ScheduleLibraryStateSave(int id, LibraryViewState state)
     {
-        if (_pageStateContext != _stateSettings.CaptureContext()) return;
-        _pendingStateSave = (id, FormatLibrarySearch(state));
+        if (!_isNavigated || _applyingLibraryState || _stateOwner is not { } owner || !_stateSettings.IsCurrentSettingsContext(owner)) return;
+        var search = FormatLibrarySearch(state);
+        if (search == _retainedSearch) return;
+        _retainedSearch = search;
+        ++_stateEdit;
+        if (_stateSettings.LibraryPageState.TryGetConfirmed(id, out var confirmed) && !confirmed.Remember) return;
+        _pendingStateSave = (id, search, owner);
         _stateSaveTimer ??= CreateStateSaveTimer();
         _stateSaveTimer.Stop(); _stateSaveTimer.Start();
+    }
+
+    private void MarkLibraryStateEdited()
+    {
+        if (_isNavigated && !_suppressFilterEvents && !_applyingLibraryState) ++_stateEdit;
     }
 
     private DispatcherTimer CreateStateSaveTimer()
@@ -43,13 +148,20 @@ public sealed partial class LibraryPage
         timer.Tick += (_, _) => FlushLibraryStateSave(); return timer;
     }
 
-    private async void FlushLibraryStateSave()
+    private async void FlushLibraryStateSave() => await FlushLibraryStateSaveAsync();
+
+    private async Task FlushLibraryStateSaveAsync()
     {
         _stateSaveTimer?.Stop(); var pending = _pendingStateSave; _pendingStateSave = null;
-        if (pending == null || _pageStateContext != _stateSettings.CaptureContext()) return;
-        try { await new LibraryPageStateStore(_stateSettings).WriteAsync(pending.Value.Id, pending.Value.Search); }
+        if (pending is not { } save || !_stateSettings.IsCurrentSettingsContext(save.Owner)) return;
+        var visit = _stateVisit;
+        try { await _stateSettings.LibraryPageState.WriteAsync(save.Id, save.Search); }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember library view: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            if (IsLibraryStateVisitCurrent(visit, save.Owner, save.Id))
+                App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember library view: {ex.Message}");
+        }
     }
 
     private static string FormatLibrarySearch(LibraryViewState state)
