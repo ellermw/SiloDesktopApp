@@ -39,11 +39,11 @@ Parent authorized local reconciliation of verified grouped cursor-recovery head 
 - [x] Verify pinned native dependency and scoped grouped/foundation/letter/cursor/window tests (181/181).
 - [x] Freeze combined source inputs; run full units (3,146/3,146), fresh Release and grouped plus foundation/unscoped/room native suites against identical published bytes.
 - [x] Incorporate the additional focused Play from Beginning library-owner dependency `64bd63e00231fa93e5d23ea33d282f3be01679a5`; refresh affected evidence below.
-- [ ] Record source/artifact/fixture hashes and exact clean local commit; return the handoff without remote submission.
+- [x] Record source/artifact/fixture hashes and exact clean local commit; return the handoff without remote submission.
 
 ### Restart menu reconciliation
 
 - [x] Preserve checkpoint0db939a1; merge64bd63e0 retaining grouped dispatch and both new native menu routes. The sole incoming product file is MediaItemMenu.cs; grouping and invalid-cursor ownership remain unchanged.
-- [ ] Verify focused/full units and fresh Release; consume the dependency's stale source-expectation fixture correction without modifying product.
-- [ ] Run grouped, foundation/unscoped and actual menu scope/retired-owner native suites on the fresh bytes. Prior room evidence may be retained only with exact unchanged route/fixture fingerprints and an explicit artifact-bound limitation.
-- [ ] Freeze final source/artifact bindings, commit clean locally, and return for independent review. No push or PR; final foundation review remains a gate.
+- [x] Verify focused/full units and fresh Release; consume the dependency's stale source-expectation fixture correction without modifying product. Final192/192 scoped and3,146/3,146 full pass; Release810A5C41... is unchanged by the620 fixture-only correction.
+- [x] Run grouped, foundation/unscoped and actual menu scope/retired-owner native suites on the fresh bytes. All four final native modes pass. Room evidence is retained from259A using exact unchanged route/fixture fingerprints; it is not claimed as a new810A room run.
+- [x] Freeze final source/artifact bindings, commit clean locally, and return for independent review. No push or PR; final foundation review remains a gate.
