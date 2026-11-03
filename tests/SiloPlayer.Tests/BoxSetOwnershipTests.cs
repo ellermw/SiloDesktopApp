@@ -175,6 +175,43 @@ public sealed class BoxSetOwnershipTests
         await vm.PlayAsync((_, _, _, ct) => { accepted = ct; return Task.CompletedTask; });
         client.SetProfile("other"); await vm.RefreshAsync(); Assert.True(accepted.IsCancellationRequested); vm.Cancel();
     }
+    [Theory] [InlineData(200)] [InlineData(503)]
+    public async Task SameViewerAccessRefreshPreservesAcceptedStartAndVisibleDetail(int status)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var visible = vm.Detail; Assert.NotNull(visible);
+        var identity = client.CaptureIdentityContext(); var previousRead = client.CaptureContext();
+        var blanked = false;
+        vm.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(vm.Detail) && vm.Detail == null) blanked = true; };
+        var releaseStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken accepted = default; var completed = false;
+        var start = vm.PlayAsync(async (_, _, _, ct) => { accepted = ct; await releaseStart.Task.WaitAsync(ct); completed = true; });
+        wire.Hold = true; wire.AllPlayed = true; wire.DetailStatus = (HttpStatusCode)status;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            client.InvalidateAccessContext();
+            Assert.True(client.IsCurrentIdentityContext(identity)); Assert.False(client.IsCurrentContext(previousRead));
+            var refresh = vm.RefreshAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(vm.IsLoading); Assert.Same(visible, vm.Detail); Assert.False(accepted.IsCancellationRequested);
+            wire.Hold = false; wire.Release.TrySetResult(); await refresh;
+            Assert.False(blanked); Assert.False(vm.IsLoading); Assert.True(vm.IsCurrent);
+            Assert.False(accepted.IsCancellationRequested);
+            if (status == 200) Assert.Equal(2, vm.Detail!.PlayedCount);
+            else { Assert.Same(visible, vm.Detail); Assert.Equal(DetailFailureKind.Transient, vm.Failure); }
+            var calls = 0;
+            await vm.PlayAsync((_, _, owner, _) => { calls++; Assert.True(client.IsCurrentContext(owner)); return Task.CompletedTask; });
+            Assert.Equal(1, calls);
+            releaseStart.TrySetResult(); await start; Assert.True(completed);
+        }
+        finally
+        {
+            wire.Release.TrySetResult(); releaseStart.TrySetResult(); vm.Cancel();
+            try { await start; } catch (OperationCanceledException) { }
+        }
+        Assert.True(accepted.IsCancellationRequested);
+    }
     [Theory] [InlineData(null, 1)] [InlineData(12, 0)]
     public async Task UnscopedOrDisabledMovieCannotBorrowAnotherLibraryFlag(int? library, int expectedReads)
     {

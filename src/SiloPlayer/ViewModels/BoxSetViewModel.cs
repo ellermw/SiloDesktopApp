@@ -8,6 +8,7 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
 {
     private CancellationTokenSource? _pending;
     private CancellationTokenSource? _playLifetime;
+    private ApiIdentityContext _playOwner;
     private ApiRequestContext _owner;
     private long _language;
     private string? _id, _library;
@@ -17,7 +18,8 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     public BoxSetDetail? Detail { get => _detail; private set => SetProperty(ref _detail, value); }
     public bool IsLoading { get => _loading; private set => SetProperty(ref _loading, value); }
     public DetailFailureKind Failure { get => _failure; private set => SetProperty(ref _failure, value); }
-    public bool IsCurrent => _pending is { IsCancellationRequested: false } && catalog.IsCurrentContext(_owner) && catalog.MetadataLanguageGeneration == _language;
+    public bool IsCurrent => _pending is { IsCancellationRequested: false } && catalog.IsCurrentIdentityContext(_playOwner)
+        && catalog.IsCurrentContext(_owner) && catalog.MetadataLanguageGeneration == _language;
     public void Cancel()
     {
         _pending?.Cancel(); _pending?.Dispose(); _pending = null;
@@ -32,18 +34,21 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     }
     private async Task ReadAsync(string id, string library)
     {
-        if (_playLifetime == null || !catalog.IsCurrentContext(_owner))
+        if (_playLifetime == null || !catalog.IsCurrentIdentityContext(_playOwner))
         {
             Cancel();
-            _owner = catalog.CaptureContext();
+            _playOwner = catalog.CaptureIdentityContext();
             _playLifetime = new();
         }
         _pending?.Cancel(); _pending?.Dispose();
+        // Access revisions retire reads, not this viewer's visit or accepted play.
+        _owner = catalog.CaptureContext();
         _id = id; _library = library;
         var pending = _pending = new(); var ct = pending.Token;
         _language = catalog.MetadataLanguageGeneration;
-        var owner = _owner; var language = _language;
-        bool Current() => ReferenceEquals(_pending, pending) && !ct.IsCancellationRequested && catalog.IsCurrentContext(owner) && catalog.MetadataLanguageGeneration == language;
+        var owner = _owner; var playOwner = _playOwner; var language = _language;
+        bool Current() => ReferenceEquals(_pending, pending) && !ct.IsCancellationRequested && catalog.IsCurrentIdentityContext(playOwner)
+            && catalog.IsCurrentContext(owner) && catalog.MetadataLanguageGeneration == language;
         IsLoading = true; Failure = DetailFailureKind.None;
         try
         {

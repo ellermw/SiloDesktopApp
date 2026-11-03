@@ -1799,6 +1799,7 @@ public sealed partial class ItemDetailPage : Page
             SiblingEpisodesSection,
             CastSection,
             CrewSection,
+            BoxSetSection,
             SimilarSection,
             SubtitlesSection,
             StudiosText,
@@ -1827,7 +1828,7 @@ public sealed partial class ItemDetailPage : Page
             "movie" =>
             [
                 MediaLocationsSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, SimilarSection,
+                CastSection, CrewSection, BoxSetSection, SimilarSection,
             ],
             "series" =>
             [

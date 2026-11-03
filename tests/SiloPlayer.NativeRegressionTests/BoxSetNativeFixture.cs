@@ -92,9 +92,20 @@ internal static class BoxSetNativeFixture
         var unrelatedReads = wire.Reads;
         page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedMarked, "unrelated"));
         await Task.Delay(50); Check(wire.Reads == unrelatedReads, "unrelated watched messages do not refresh the page");
-        await Task.Run(catalog.InvalidateLibraryCache);
+        var releaseAccessStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken accessStartToken = default;
+        var accessStart = page.ViewModel.PlayAsync(async (_, _, _, ct) => { accessStartToken = ct; await releaseAccessStart.Task.WaitAsync(ct); });
+        var accessDetail = page.ViewModel.Detail;
+        var accessBlanked = false;
+        System.ComponentModel.PropertyChangedEventHandler observeAccess = (_, args) => { if (args.PropertyName == nameof(page.ViewModel.Detail) && page.ViewModel.Detail == null) accessBlanked = true; };
+        page.ViewModel.PropertyChanged += observeAccess;
+        await Task.Run(() => { api.InvalidateAccessContext(); catalog.InvalidateLibraryCache(); });
         for (var i = 0; i < 100 && (wire.Reads == unrelatedReads || page.ViewModel.IsLoading); i++) await Task.Delay(10);
         Check(wire.Reads > unrelatedReads && page.ViewModel.Detail != null, "off-thread library invalidation refreshes on the UI dispatcher");
+        Check(accessDetail != null && !accessBlanked && accessStartToken.CanBeCanceled && !accessStartToken.IsCancellationRequested
+            && Descendants(page).OfType<PosterCard>().SequenceEqual(members), "same-viewer access invalidation preserves accepted playback and mounted detail");
+        releaseAccessStart.TrySetResult(); await accessStart;
+        page.ViewModel.PropertyChanged -= observeAccess;
         await Capture(page, "boxset-wide.png");
         page.Width = 540; page.Height = 600; page.UpdateLayout(); await Task.Delay(100);
         Check(Descendants(page).OfType<TextBlock>().Where(x => x.Text == wire.Title).All(x => x.ActualWidth <= 540), "compact wrapped hero");
@@ -130,6 +141,12 @@ internal static class BoxSetNativeFixture
         // Actual movie-detail row uses the real controls and returned-library tags.
         var detail = new ItemDetailPage { Width = 960, Height = 700 }; parent.Children.Add(detail); await Task.Delay(80);
         detail.ViewModel.Item = new MediaItemDetail { ContentId = "second", Type = "movie", Title = "Current film" };
+        var updateUI = typeof(ItemDetailPage).GetMethod("UpdateUI", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        updateUI.Invoke(detail, null); detail.UpdateLayout(); await Task.Delay(50);
+        var sections = (StackPanel)detail.FindName("DetailContentPanel");
+        var nonMemberSections = sections.Children.ToArray();
+        var sectionUnloads = 0;
+        foreach (var section in sections.Children.OfType<FrameworkElement>()) section.Unloaded += (_, _) => sectionUnloads++;
         var set = new BoxSetDetail { Id = "7", LibraryId = "12", Title = wire.Title, MovieCount = 3, Items = [new() { ContentId = "first", Type = "movie", Title = "First" }, new() { ContentId = "second", Type = "movie", Title = "Second" }, new() { ContentId = "third", Type = "movie", Title = "Third" }] };
         if (invalidMemberChecks)
         {
@@ -146,13 +163,14 @@ internal static class BoxSetNativeFixture
         var marker = Descendants(row).OfType<TextBlock>().Single(x => x.Text == "This film"); var marked = (Grid)((Border)marker.Parent).Parent;
         Check(marked.Children.OfType<PosterCard>().Single().MediaItem!.ContentId == "second" && marker.ActualWidth <= marked.ActualWidth, "current-film marker within correct card");
         Check(Descendants(row).OfType<PosterCard>().All(x => MediaNavigationContext.LibraryId(x) == 12), "movie row uses returned set library");
-        var sections = (StackPanel)detail.FindName("DetailContentPanel");
-        var order = new[] { "CastSection", "ExtrasSection", "TrailersSection", "BoxSetSection", "SimilarSection", "MediaLocationsSection" }.Select(name => sections.Children.IndexOf((UIElement)detail.FindName(name))).ToArray();
-        Check(order.SequenceEqual(order.OrderBy(x => x)), "official movie section order");
+        var order = new[] { "MediaLocationsSection", "ExtrasSection", "TrailersSection", "CastSection", "CrewSection", "BoxSetSection", "SimilarSection" }.Select(name => sections.Children.IndexOf((UIElement)detail.FindName(name))).ToArray();
+        Check(order.All(x => x >= 0) && order.SequenceEqual(order.OrderBy(x => x)), "movie section order keeps media locations first and membership before similar");
+        Check(sections.Children.SequenceEqual(nonMemberSections) && sectionUnloads == 0, "first row arrival preserves non-member order and mounted major sections after UpdateUI");
         var rowCards = Descendants(row).OfType<PosterCard>().ToArray();
+        updateUI.Invoke(detail, null); detail.UpdateLayout(); await Task.Delay(50);
+        Check(sections.Children.SequenceEqual(nonMemberSections) && Descendants(row).OfType<PosterCard>().SequenceEqual(rowCards), "later UpdateUI keeps the member row in the same movie section order");
         Check(rowCards[1].Focus(FocusState.Keyboard), "movie row card receives keyboard focus");
-        var sectionUnloads = 0;
-        foreach (var section in sections.Children.OfType<FrameworkElement>()) section.Unloaded += (_, _) => sectionUnloads++;
+        sectionUnloads = 0;
         var updatedSet = System.Text.Json.JsonSerializer.Deserialize<BoxSetDetail>(System.Text.Json.JsonSerializer.Serialize(set))!;
         updatedSet.PlayedCount = 2;
         typeof(ItemDetailViewModel).GetProperty("BoxSet")!.SetValue(detail.ViewModel, updatedSet);

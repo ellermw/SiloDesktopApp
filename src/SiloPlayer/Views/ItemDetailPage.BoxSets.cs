@@ -14,14 +14,6 @@ public sealed partial class ItemDetailPage
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(RefreshBoxSetRow); return; }
         _ = ViewModel.RefreshBoxSetAsync();
     }
-    private void EnsureBoxSetSectionOrder()
-    {
-        var sections = new FrameworkElement[] { CastSection, ExtrasSection, TrailersSection, BoxSetSection, SimilarSection, MediaLocationsSection };
-        var positions = sections.Select(section => DetailContentPanel.Children.IndexOf(section)).ToArray();
-        if (positions.SequenceEqual(positions.OrderBy(x => x))) return;
-        foreach (var section in sections)
-        { DetailContentPanel.Children.Remove(section); DetailContentPanel.Children.Add(section); }
-    }
     private void BoxSetViewAll_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.BoxSet is {} set) App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
@@ -34,7 +26,6 @@ public sealed partial class ItemDetailPage
             _boxSetRowItem = _boxSetRowId = _boxSetRowLibrary = null;
             return;
         }
-        EnsureBoxSetSectionOrder();
         var members = set.Items.Where(SiloPlayer.Core.Models.Catalog.BoxSetDetail.IsMovieMember).ToArray();
         var cards = BoxSetMovies.Children.OfType<Grid>().Select(panel => panel.Children.OfType<PosterCard>().Single()).ToArray();
         BoxSetTitle.Text = set.Title; BoxSetSection.Visibility = Visibility.Visible;
