@@ -49,6 +49,8 @@ public partial class PlayerService
             _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             mpv.SendScriptMessage("osc-native-audio-scope", version?.AudioTracks?.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-more-scope", owner.Token);
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -64,6 +66,8 @@ public partial class PlayerService
             _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
             owner?.Mpv.SendScriptMessage("osc-native-audio-scope", "");
+            owner?.Mpv.SendScriptMessage("osc-native-chapters-scope", "");
+            owner?.Mpv.SendScriptMessage("osc-native-more-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -99,6 +103,8 @@ public partial class PlayerService
             menu = request.Kind switch
             {
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
+                "chapters" => CreateNativeChaptersMenu(owner, request, Finish),
+                "more" => CreateNativeMoreMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }

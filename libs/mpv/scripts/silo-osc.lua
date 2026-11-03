@@ -4682,7 +4682,8 @@ end
 local function open_native_menu(kind, keyboard)
     local scope = state['native_' .. kind .. '_scope']
     if not scope then return false end
-    if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1) or state.osc_disabled
+    if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1)
+        or (kind == "chapters" and #state.chapters == 0) or state.osc_disabled
         or state.playback_loading or state.post_roll_active
         or state.native_menu_sequence >= 9007199254740991 then return true end
     compute_layout()
@@ -4729,6 +4730,7 @@ local function toggle_transport_menu_from_button(mx, my)
     end
 
     if L.btn_chapters and point_in_rect(mx, my, L.btn_chapters) and #state.chapters > 0 then
+        if open_native_menu("chapters") then return true end
         local opening = not state.chapter_menu_visible
         close_transport_menus("chapters")
         state.chapter_menu_visible = opening
@@ -4835,6 +4837,7 @@ local function open_transport_menu_from_controller(kind)
         set_keyboard_transport_menu(kind, state.audio_menu_visible)
         render_audio_menu()
     elseif kind == "chapters" then
+        if open_native_menu("chapters", true) then return end
         state.chapter_menu_visible = not state.chapter_menu_visible
         set_keyboard_transport_menu(kind, state.chapter_menu_visible)
         render_chapter_menu()
@@ -4867,6 +4870,7 @@ local function activate_controller_focus()
 
     if name:sub(1, 9) == "overflow_" then name = name:sub(10); state.compact_menu_visible = false end
     if name == "btn_more" then
+        if open_native_menu("more", true) then return true end
         state.compact_menu_visible = not state.compact_menu_visible
     elseif name == "btn_fill" then
         mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
@@ -6206,6 +6210,21 @@ end
 --------------------------------------------------------------------------------
 
 local function setup_script_messages()
+    mp.register_script_message("osc-native-more-action", function(token, sequence, id)
+        local closed = state.native_more_closed
+        if not closed or state.native_menu_request or token ~= state.native_more_scope
+            or closed.owner ~= token or closed.sequence ~= tonumber(sequence)
+            or closed.sequence ~= state.native_menu_sequence then return end
+        local controls = {
+            audio = "btn_audio", chapters = "btn_chapters", stats = "btn_stats", pip = "btn_pip",
+            fill = "btn_fill", ["volume-down"] = "btn_volume_down", ["volume-up"] = "btn_volume_up", mute = "btn_volume",
+        }
+        local control = controls[id]
+        if not control then return end
+        state.native_more_closed = nil
+        state.controller_focus_name = "overflow_" .. control
+        activate_controller_focus()
+    end)
     for _, menu_kind in ipairs({'audio','quality','chapters','speed','stats','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
@@ -6216,6 +6235,7 @@ local function setup_script_messages()
                 if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
                     state.native_menu_request = nil
                 end
+                if kind == "more" then state.native_more_closed = nil end
                 state[key] = scope
                 -- Sequences span all kinds sharing one host/gate. Rotating an
                 -- unrelated capability cannot reset a live request sequence.
@@ -6227,6 +6247,9 @@ local function setup_script_messages()
     mp.register_script_message("osc-native-menu-closed", function(token, sequence, consume)
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
+        if request.kind == "more" then
+            state.native_more_closed = { owner = request.owner, sequence = request.sequence }
+        end
         state.native_menu_request = nil
         if consume == "true" then consume_video_click() end
         if not state.osc_disabled then

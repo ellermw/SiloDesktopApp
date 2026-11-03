@@ -5846,6 +5846,8 @@ public partial class PlayerService : IDisposable
         switch (args[0])
         {
             case "silo-native-audio-open":
+            case "silo-native-chapters-open":
+            case "silo-native-more-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;
