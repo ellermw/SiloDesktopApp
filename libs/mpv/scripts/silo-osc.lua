@@ -161,6 +161,7 @@ local state = {
     native_menu_sequence = 0,
     native_menu_request = nil,
     native_menu_pointer_block = nil,
+    native_dialog_request = nil,
     audio_menu_visible = false,
     audio_menu_overlay = nil,
     audio_menu_items = {},
@@ -1196,10 +1197,12 @@ local _layout_prev_ep = nil
 local _layout_series = nil
 local _layout_audio_count = -1
 local _layout_chapter_count = -1
+local _layout_party = false
 local function compute_layout()
     update_osd_dimensions()
     local W = state.osd_width
     local H = state.osd_height
+    local has_native_party = state.native_party_scope ~= nil and state.watch_party ~= nil and state.watch_party.visible == true
     -- Skip recomputation if dimensions unchanged
     if W == _layout_w and H == _layout_h and _layout_next_ep == state.next_ep_available
         and _layout_prev_ep == state.prev_ep_available
@@ -1207,6 +1210,7 @@ local function compute_layout()
         and _layout_audio_count == #state.audio_tracks
         and _layout_chapter_count == #state.chapters
         and state.layout_quality_available == quality_choices_available()
+        and _layout_party == has_native_party
         and state.layout.bar then return end
     _layout_w, _layout_h = W, H
     _layout_next_ep = state.next_ep_available
@@ -1215,6 +1219,7 @@ local function compute_layout()
     _layout_audio_count = #state.audio_tracks
     _layout_chapter_count = #state.chapters
     state.layout_quality_available = quality_choices_available()
+    _layout_party = has_native_party
     local L = state.layout
     local sc = ui_scale()
     local compact = W < math.floor(1024 * sc)
@@ -1274,6 +1279,12 @@ local function compute_layout()
     local exit_w = math.floor(82 * sc)
     L.btn_exit = { x = top + top_button_size + math.floor(12 * sc), y = top, w = exit_w, h = top_button_size,
         cx = top + top_button_size + math.floor(12 * sc) + exit_w / 2, cy = top + top_button_size / 2 }
+    if has_native_party then
+        local width = math.floor(math.min(224 * sc, math.max(80, W - 180 * sc)))
+        local height = math.floor(76 * sc)
+        L.btn_party = { x = W - top - width, y = top, w = width, h = height,
+            cx = W - top - width / 2, cy = top + height / 2 }
+    else L.btn_party = nil end
 
     -- Right utility rail, in the same order as the WebUI controls that the
     -- native client currently exposes.
@@ -1992,8 +2003,9 @@ local function render_osc()
     state.watch_party_actions = {}
     local party = state.watch_party
     if party and party.visible then
-        local panel_w = math.floor(224 * sc)
-        local panel_h = math.floor(((party.is_host and 132 or 88) + (state.room_quality_offer and 38 or 0)) * sc)
+        local native_party = state.native_party_scope and L.btn_party
+        local panel_w = native_party and L.btn_party.w or math.floor(224 * sc)
+        local panel_h = native_party and L.btn_party.h or math.floor(((party.is_host and 132 or 88) + (state.room_quality_offer and 38 or 0)) * sc)
         local panel_x = W - math.floor(16 * sc) - panel_w
         local panel_y = math.floor(16 * sc)
         draw_rounded_rect(ass, panel_x - 1, panel_y - 1,
@@ -2027,7 +2039,14 @@ local function render_osc()
             math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
 
         local policy_label
-        if party.is_host then
+        if native_party then
+            local rect = L.btn_party
+            table.insert(state.watch_party_actions, {x=rect.x,y=rect.y,w=rect.w,h=rect.h,action='native-party'})
+            if state.controller_focus_name == 'btn_party' or point_in_rect(state.mouse_x, state.mouse_y, rect) then
+                draw_rounded_rect(ass, panel_x, panel_y, panel_x+panel_w, panel_y+panel_h,
+                    math.floor(12*sc), config.text_color, 'DF', ma)
+            end
+        elseif party.is_host then
             policy_label = party.guest_control_policy == "guest_play_pause"
                 and "Guests can pause & resume" or "Only you control playback"
         else
@@ -2062,7 +2081,7 @@ local function render_osc()
                 math.floor(40 * sc), true)
         end
 
-        if state.room_quality_offer then
+        if state.room_quality_offer and not native_party then
             local y = panel_y + panel_h - math.floor(34 * sc)
             local x = panel_x + math.floor(12 * sc)
             local width = panel_w - math.floor(24 * sc)
@@ -2088,7 +2107,7 @@ local function render_osc()
                 math.floor(14 * sc), config.text_color, "00", ma, 5, nil, true)
         end
 
-        if party.is_host and state.watch_party_end_confirm then
+        if party.is_host and state.watch_party_end_confirm and not native_party then
             local confirm_w = math.floor(330 * sc)
             local confirm_h = math.floor(142 * sc)
             local confirm_x = W / 2 - confirm_w / 2
@@ -4794,6 +4813,7 @@ local function focusable_transport_controls()
     add("btn_fill")
     add("btn_more")
     add("btn_fullscreen")
+    add("btn_party")
     return result
 end
 
@@ -4875,7 +4895,9 @@ local function activate_controller_focus()
     end
 
     if name:sub(1, 9) == "overflow_" then name = name:sub(10); state.compact_menu_visible = false end
-    if name == "btn_more" then
+    if name == "btn_party" then
+        open_native_menu("party", true)
+    elseif name == "btn_more" then
         state.compact_menu_visible = not state.compact_menu_visible
     elseif name == "btn_fill" then
         mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
@@ -4939,6 +4961,16 @@ local function handle_mouse_down()
 
     if state.osc_disabled then return end
 
+    -- The opener's geometry is authoritative before the next ASS paint.
+    -- Room/scope messages and a pointer gesture can arrive in the same frame.
+    if state.native_party_scope and state.watch_party and state.watch_party.visible then
+        compute_layout()
+        if state.layout.btn_party and point_in_rect(mx, my, state.layout.btn_party) then
+            open_native_menu('party')
+            return
+        end
+    end
+
     for _, item in ipairs(state.buffering_quality_actions or {}) do
         if point_in_rect(mx, my, item) then
             consume_video_click()
@@ -4993,7 +5025,9 @@ local function handle_mouse_down()
     for _, item in ipairs(state.watch_party_actions or {}) do
         if point_in_rect(mx, my, item) then
             consume_video_click()
-            if item.action == "end" then
+            if item.action == "native-party" then
+                open_native_menu("party")
+            elseif item.action == "end" then
                 state.watch_party_end_confirm = true
                 request_tick()
             elseif item.action == "cancel-end" then
@@ -6216,12 +6250,28 @@ end
 --------------------------------------------------------------------------------
 
 local function setup_script_messages()
+    mp.register_script_message('osc-native-dialog-opening', function(token, sequence)
+        local request = state.native_menu_request
+        if request and request.owner == token and request.sequence == tonumber(sequence) then
+            state.native_dialog_request = {owner=token,sequence=request.sequence,kind=request.kind,focus_name=request.focus_name}
+        end
+    end)
+    mp.register_script_message('osc-native-dialog-closed', function(token, sequence, restore)
+        local request = state.native_dialog_request
+        if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
+        state.native_dialog_request = nil
+        if restore == 'true' and not state.osc_disabled and request.focus_name then
+            state.controller_focus_name = request.focus_name; show_osc(); request_tick()
+        end
+    end)
     for _, menu_kind in ipairs({'audio','quality','chapters','speed','stats','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
             local scope = token and #token == 32 and token:match('^%x+$') and token or nil
             local key = 'native_' .. kind .. '_scope'
             if scope ~= state[key] then
+                if scope and state.native_dialog_request and state.native_dialog_request.kind == kind
+                    and state.native_dialog_request.owner ~= scope then state.native_dialog_request = nil end
                 local request = state.native_menu_request
                 if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
                     state.native_menu_request = nil
@@ -6238,7 +6288,7 @@ local function setup_script_messages()
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
         state.native_menu_request = nil
         if consume == "true" then state.native_menu_pointer_block = request end
-        if not state.osc_disabled then
+        if not state.osc_disabled and not state.native_dialog_request then
             state.controller_focus_name = request.focus_name
             show_osc()
         end

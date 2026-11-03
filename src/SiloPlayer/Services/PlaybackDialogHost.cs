@@ -40,6 +40,17 @@ internal static class PlaybackDialogHost
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+
+    internal static bool IsForegroundOwnedBy(IntPtr owner)
+    {
+        var foreground = GetForegroundWindow();
+        for (var i = 0; foreground != IntPtr.Zero && i < 16; i++, foreground = GetWindow(foreground, 4))
+            if (foreground == owner) return true;
+        return false;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
     {
@@ -51,7 +62,8 @@ internal static class PlaybackDialogHost
 
     public static async Task<bool> ShowAsync(
         IntPtr videoHwnd,
-        Func<XamlRoot, IntPtr, Task> showDialogAsync)
+        Func<XamlRoot, IntPtr, Task> showDialogAsync,
+        bool activate = true, Func<bool>? canRestoreFocus = null)
     {
         ArgumentNullException.ThrowIfNull(showDialogAsync);
         if (videoHwnd == IntPtr.Zero)
@@ -96,8 +108,8 @@ internal static class PlaybackDialogHost
         var restorePlayerInput = false;
         try
         {
-            host.Activate();
-            SetForegroundWindow(hostHwnd);
+            if (activate) { host.Activate(); SetForegroundWindow(hostHwnd); }
+            else host.AppWindow.Show(false);
             var xamlRoot = await loaded.Task;
             await showDialogAsync(xamlRoot, hostHwnd);
         }
@@ -107,7 +119,7 @@ internal static class PlaybackDialogHost
             // the native mpv owner. Restore player input only when this modal
             // still owns the foreground; never pull the user back from an app
             // they switched to while the dialog was open.
-            restorePlayerInput = GetForegroundWindow() == hostHwnd;
+            restorePlayerInput = GetForegroundWindow() == hostHwnd && (canRestoreFocus?.Invoke() ?? true);
             host.Close();
             if (restorePlayerInput)
                 SetForegroundWindow(videoHwnd);
