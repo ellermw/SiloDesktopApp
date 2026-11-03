@@ -1497,8 +1497,10 @@ public sealed partial class MainWindow : Window
         UpdateLibraryNavItems();
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
-        // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
-        TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
+        // Box sets consume LibraryCacheInvalidated in place. Re-navigation would
+        // retire the visit (and accepted playback still preparing in Idle/Minimized).
+        if (ContentFrame.Content is not BoxSetPage)
+            TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
     }
 
     public void ShowMainNavigation()

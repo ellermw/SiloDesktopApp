@@ -138,6 +138,20 @@ internal static class BoxSetNativeFixture
         wire.CapabilityStatus = HttpStatusCode.OK; await faultPage.ViewModel.RefreshAsync(); Check(faultPage.ViewModel.Detail != null, "capability fault recovers on retry");
         parent.Children.Remove(faultPage);
 
+        // A route can lose its read context before Loaded installs invalidation handlers.
+        var delayedPage = new BoxSetPage(catalog, api) { Width = 540, Height = 600 };
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var initialRead = delayedPage.ViewModel.LoadAsync("7", "12");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        api.InvalidateAccessContext(); catalog.InvalidateLibraryCache();
+        wire.Hold = false; wire.Release.TrySetResult(); await initialRead;
+        Check(!delayedPage.ViewModel.IsLoading && delayedPage.ViewModel.Failure == DetailFailureKind.Transient
+            && delayedPage.Body.Children.OfType<Button>().Any(x => (x.Content as string) == "Try again"), "abandoned initial read exposes retry instead of an endless skeleton");
+        parent.Children.Add(delayedPage);
+        for (var i = 0; i < 100 && (!delayedPage.IsLoaded || delayedPage.ViewModel.IsLoading || delayedPage.ViewModel.Detail == null); i++) await Task.Delay(10);
+        Check(delayedPage.IsLoaded && delayedPage.ViewModel.Detail != null && delayedPage.ViewModel.IsCurrent, "Loaded recovers an invalidation missed before subscription");
+        parent.Children.Remove(delayedPage); await Task.Delay(30);
+
         // Actual movie-detail row uses the real controls and returned-library tags.
         var detail = new ItemDetailPage { Width = 960, Height = 700 }; parent.Children.Add(detail); await Task.Delay(80);
         detail.ViewModel.Item = new MediaItemDetail { ContentId = "second", Type = "movie", Title = "Current film" };

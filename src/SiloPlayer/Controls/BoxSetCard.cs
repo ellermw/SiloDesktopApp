@@ -9,7 +9,13 @@ public sealed class BoxSetCard : Button
 {
     public BoxSetSummary? Summary { get; private set; }
     public event Action<BoxSetSummary>? Invoked;
-    public BoxSetCard() { Width = 170; Padding = new Thickness(0); Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); Click += (_, _) => { if (Summary is {} set) Invoked?.Invoke(set); }; }
+    public BoxSetCard()
+    {
+        Width = 170; Padding = new Thickness(0); Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        Click += (_, _) => { if (Summary is {} set) Invoked?.Invoke(set); };
+        // A nested aggregate owns its activation, not PosterCard's bubbling tap.
+        Tapped += (_, args) => args.Handled = true;
+    }
     public void SetSummary(BoxSetSummary set, string? posterUrl = null, string? posterThumbhash = null)
     {
         Summary = set;

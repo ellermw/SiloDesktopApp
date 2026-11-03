@@ -111,6 +111,61 @@ public sealed class BoxSetOwnershipTests
         wire.DetailStatus = HttpStatusCode.NotFound; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.NotFound, vm.Failure);
         wire.DetailStatus = HttpStatusCode.OK; await vm.RefreshAsync(); Assert.NotNull(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
     }
+    [Theory]
+    [InlineData("profile", false)] [InlineData("access", false)] [InlineData("language", false)]
+    [InlineData("profile", true)] [InlineData("access", true)] [InlineData("language", true)]
+    public async Task AbandonedDedicatedReadEndsLoadingAndAllowsRetry(string change, bool capability)
+    {
+        using var wire = new Wire { Hold = !capability, HoldCapability = capability };
+        using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client));
+        var pending = vm.LoadAsync("7", "2");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Hold = wire.HoldCapability = false; wire.Release.TrySetResult(); await pending;
+        Assert.Null(vm.Detail); Assert.False(vm.IsLoading); Assert.False(vm.IsCurrent);
+        Assert.Equal(DetailFailureKind.Transient, vm.Failure);
+        await vm.RefreshAsync();
+        Assert.NotNull(vm.Detail); Assert.False(vm.IsLoading); Assert.True(vm.IsCurrent);
+        Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
+    }
+    [Theory] [InlineData("profile")] [InlineData("access")] [InlineData("language")]
+    public async Task AbandonedBackgroundReadIsTerminalWithoutAdoptingStaleDetail(string change)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2"); var visible = vm.Detail;
+        wire.Hold = true;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = vm.RefreshAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Release.TrySetResult(); await pending;
+        Assert.False(vm.IsLoading); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
+        if (change == "profile") Assert.Null(vm.Detail); else Assert.Same(visible, vm.Detail);
+        vm.Cancel();
+    }
+    [Fact] public async Task AbandonedReadCannotFinishItsSuccessorsLoadingState()
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); var first = vm.LoadAsync("7", "2");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); var releaseFirst = wire.Release;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.InvalidateAccessContext(); var second = vm.RefreshAsync();
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); releaseFirst.TrySetResult(); await first;
+        Assert.True(vm.IsLoading); Assert.Equal(DetailFailureKind.None, vm.Failure); Assert.Null(vm.Detail);
+        wire.Release.TrySetResult(); await second;
+        Assert.False(vm.IsLoading); Assert.Equal(DetailFailureKind.None, vm.Failure); Assert.NotNull(vm.Detail); vm.Cancel();
+    }
+    [Fact] public async Task AbandonedReadCannotPublishFailureAfterDeparture()
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire);
+        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); var pending = vm.LoadAsync("7", "2");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); vm.Cancel(); wire.Release.TrySetResult(); await pending;
+        Assert.False(vm.IsLoading); Assert.Null(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure);
+    }
     [Fact] public async Task CapabilityFaultIsRetryableOnDedicatedDestination()
     {
         using var wire = new Wire { CapabilityStatus = HttpStatusCode.ServiceUnavailable }; using var http = new HttpClient(wire);
@@ -310,7 +365,7 @@ public sealed class BoxSetOwnershipTests
     private sealed class Wire : HttpMessageHandler
     {
         internal bool? Supported = true;
-        internal bool Hold, AllPlayed, Enabled = true, OtherEnabled = true; internal int DetailReads;
+        internal bool Hold, HoldCapability, AllPlayed, Enabled = true, OtherEnabled = true; internal int DetailReads;
         internal string ReturnedLibrary = "12";
         internal HttpStatusCode DetailStatus = HttpStatusCode.OK, CapabilityStatus = HttpStatusCode.OK;
         internal bool TimeoutDetail, TimeoutCapability, NoMembership;
@@ -322,6 +377,7 @@ public sealed class BoxSetOwnershipTests
             var json = Supported.HasValue ? "{\"box_sets\":" + Supported.Value.ToString().ToLowerInvariant() + "}" : "{}"; var status = HttpStatusCode.OK;
             if (path.EndsWith("/capabilities"))
             {
+                if (HoldCapability) { Started.TrySetResult(); await Release.Task; }
                 if (TimeoutCapability) throw new TaskCanceledException("Synthetic capability timeout without caller cancellation.");
                 status = CapabilityStatus;
             }

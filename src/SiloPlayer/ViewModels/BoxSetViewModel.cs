@@ -70,7 +70,20 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
                 Failure = failure;
             }
         }
-        finally { if (Current()) IsLoading = false; }
+        finally
+        {
+            // Read ownership, not context validity, determines who may end
+            // loading. An abandoned context must still expose a retry.
+            if (ReferenceEquals(_pending, pending))
+            {
+                if (!Current())
+                {
+                    if (!catalog.IsCurrentIdentityContext(playOwner)) Detail = null;
+                    Failure = DetailFailureKind.Transient;
+                }
+                IsLoading = false;
+            }
+        }
     }
     public async Task PlayAsync(Func<string, int, ApiRequestContext, CancellationToken, Task> play)
     {

@@ -48,7 +48,16 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         var scroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 1); root.Children.Add(scroll); Content = root;
         ViewModel.PropertyChanged += (_, _) => Render();
-        Loaded += (_, _) => { _active = true; _visit++; WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this); WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this); _catalog.LibraryCacheInvalidated += Refresh; _client.LocalizedReads.Invalidated += LanguageChanged; };
+        Loaded += (_, _) =>
+        {
+            _active = true; _visit++;
+            WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+            WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
+            _catalog.LibraryCacheInvalidated += Refresh;
+            _client.LocalizedReads.Invalidated += LanguageChanged;
+            // Navigation starts the initial read before Loaded subscribes to invalidations.
+            if (!ViewModel.IsCurrent) Refresh();
+        };
         Unloaded += (_, _) => { _active = false; _visit++; _knownMembership = null; WeakReferenceMessenger.Default.UnregisterAll(this); _catalog.LibraryCacheInvalidated -= Refresh; _client.LocalizedReads.Invalidated -= LanguageChanged; ViewModel.Cancel(); };
     }
     private void Refresh()
