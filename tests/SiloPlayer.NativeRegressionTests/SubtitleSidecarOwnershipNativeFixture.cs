@@ -13,6 +13,14 @@ using SiloPlayer.Services;
 
 internal static class SubtitleSidecarOwnershipNativeFixture
 {
+    internal static async Task RunReconciliationAsync(StackPanel parent)
+    {
+        foreach (var scenario in new[] { "load-start-queued-return", "load-start-queued-aba" })
+        {
+            await CheckLoadStartAsync(scenario);
+            Program.Log("PASS: reconciled subtitle lifecycle " + scenario);
+        }
+    }
     internal static async Task RunAsync(StackPanel parent)
     {
         var failures = new List<string>();
@@ -544,6 +552,18 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 pending = Task.Run(() => service.SetSubtitleTrackAndPersistAsync(1, english.Language, english));
             }
             else pending = Task.Run(() => (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!);
+            if (scenario is "load-start-queued-return" or "load-start-queued-aba")
+            {
+                await pending!.WaitAsync(TimeSpan.FromSeconds(1));
+                Require(wire.PreferenceWrites == preferencesBefore, "A queued choice persisted before actual FILE_LOADED execution.");
+                if (scenario == "load-start-queued-aba")
+                {
+                    await service.SetSubtitleTrackAndPersistAsync(0, null, null).WaitAsync(TimeSpan.FromSeconds(1));
+                    var latest = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0);
+                    await service.SetSubtitleTrackAndPersistAsync(1, latest.Language, latest).WaitAsync(TimeSpan.FromSeconds(1));
+                    Require(wire.PreferenceWrites == preferencesBefore, "A retired queued ABA choice persisted before execution.");
+                }
+            }
             await Task.WhenAny(pending!, Task.Delay(400));
             if (wire.Replans > 0) await Until(() => Volatile.Read(ref subtitles.MediaRequests) >= 2);
             var earlyRegistered = retired && ((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(0);
