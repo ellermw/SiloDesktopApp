@@ -146,6 +146,7 @@ public sealed partial class LibraryPage : Page,
     private int _lastRenderedEndIndex = -1;
     private bool _renderQueued;
     private bool _forceQueuedRender;
+    private readonly ArtworkMotionPolicy _artworkMotion;
     private DispatcherTimer? _cardBindTimer;
     private bool _isNavigated;
     private bool _viewModelEventsAttached;
@@ -165,6 +166,7 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        _artworkMotion = ArtworkViewport.For(LibraryScroller);
         InitializeLibraryLetters();
         CatalogToolbarChoices.Apply(BrowseTypeComboBox, SortComboBox, OrderComboBox);
         var savedWidth = App.Services.GetRequiredService<SettingsService>().Load().LibraryPosterWidth;
@@ -296,6 +298,7 @@ public sealed partial class LibraryPage : Page,
     {
         base.OnNavigatedTo(e);
         _isNavigated = true;
+        _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
@@ -494,6 +497,8 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        foreach (var card in _libraryCardSlots) card.SuspendArtwork();
+        _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         DetachRecommendedRealtimeEvents();
@@ -961,6 +966,7 @@ public sealed partial class LibraryPage : Page,
 
         FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         LibraryContentArea.Visibility = tag == "Library" && _currentAudiobookAxis == "books" ? Visibility.Visible : Visibility.Collapsed;
+        UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = tag == "Library" && _currentAudiobookAxis != "books" ? Visibility.Visible : Visibility.Collapsed;
         RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
@@ -1512,6 +1518,21 @@ public sealed partial class LibraryPage : Page,
         SaveViewState(_currentTab);
     }
 
+    private void UpdateLibraryArtworkActivity()
+    {
+        if (!_isNavigated || LibraryContentArea.Visibility != Visibility.Visible)
+        {
+            _libraryReadAheadCts?.Cancel();
+            _libraryReadAheadCts?.Dispose();
+            _libraryReadAheadCts = null;
+        }
+        foreach (var card in _libraryCardSlots)
+        {
+            if (_isNavigated && LibraryContentArea.Visibility == Visibility.Visible) card.ResumeArtwork();
+            else card.SuspendArtwork();
+        }
+    }
+
     private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
         if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
@@ -1552,6 +1573,7 @@ public sealed partial class LibraryPage : Page,
 
     private void UpdateLibraryScrollPosition(double offset, bool force = false)
     {
+        _artworkMotion.Observe(0, offset);
         var layout = GetGridLayout();
         _libraryVerticalOffset = offset;
         _currentFirstRow = VirtualGridScrollGate.GetFirstVisibleRow(offset, layout.RowHeight);
@@ -1707,7 +1729,7 @@ public sealed partial class LibraryPage : Page,
         var created = 0;
         while (_libraryCardSlots.Count < requiredCount && created < 4)
         {
-            var card = new LibraryGridCard();
+            var card = new LibraryGridCard { ArtworkMotion = _artworkMotion };
             HideVirtualCardSlot(card);
             _libraryCardSlots.Add(card);
             VirtualGridCanvas.Children.Add(card);
@@ -1756,6 +1778,7 @@ public sealed partial class LibraryPage : Page,
         var showBooks = axis == "books";
         UpdateLibraryLetters();
         LibraryContentArea.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = showBooks ? Visibility.Collapsed : Visibility.Visible;
         SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
         OrderComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
@@ -2093,6 +2116,7 @@ public sealed partial class LibraryPage : Page,
         OpenFiltersButton.Visibility = Visibility.Visible;
         ResultCountText.Visibility = Visibility.Collapsed;
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        UpdateLibraryArtworkActivity();
         await FillViewportAsync();
         UpdateActiveFilterBadges();
         SaveViewState(_currentTab);
@@ -2265,12 +2289,13 @@ public sealed partial class LibraryPage : Page,
         var token = readAhead.Token;
         _lastRequestedStartIndex = range.StartIndex;
         _lastRequestedEndIndex = range.EndIndex;
+        var context = _stateSettings.CaptureContext();
         await ViewModel.EnsureRangeLoadedAsync(range.StartIndex, range.EndIndex);
-        if (token.IsCancellationRequested || !_isNavigated) return;
-        _ = WarmLibraryNeighborhoodAsync(range.StartIndex, range.EndIndex, forward, token);
+        if (token.IsCancellationRequested || !_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
+        _ = WarmLibraryNeighborhoodAsync(range.StartIndex, range.EndIndex, forward, context, token);
     }
 
-    private async Task WarmLibraryNeighborhoodAsync(int start, int end, bool forward, CancellationToken ct)
+    private async Task WarmLibraryNeighborhoodAsync(int start, int end, bool forward, SiloPlayer.Core.Api.ApiRequestContext context, CancellationToken ct)
     {
         try
         {
@@ -2279,6 +2304,7 @@ public sealed partial class LibraryPage : Page,
             await Task.Delay(150, ct);
             var items = await ViewModel.PrefetchAroundAsync(start, end, forward, ct);
             ct.ThrowIfCancellationRequested();
+            if (!_stateSettings.IsCurrentContext(context)) return;
             var images = App.Services.GetRequiredService<ImageService>();
             var http = App.Services.GetRequiredService<HttpClient>();
             await Parallel.ForEachAsync(items,
@@ -2288,15 +2314,25 @@ public sealed partial class LibraryPage : Page,
                     var poster = !string.IsNullOrWhiteSpace(item.PosterUrl);
                     var url = poster ? item.PosterUrl : item.BackdropUrl;
                     if (string.IsNullOrWhiteSpace(url)) return;
-                    await s_artworkWarmupThrottle.RunAsync(async _ =>
+                    while (true)
                     {
+                        await _artworkMotion.WaitAsync(token);
                         token.ThrowIfCancellationRequested();
-                        // Shared downloads outlive a caller's cancellation.
-                        // Keep this slot until completion so rapid reversals
-                        // cannot accumulate unbounded background downloads.
-                        await images.GetImageDiskPathAsync(item.ContentId,
-                            poster ? "poster" : "backdrop", url, http, CancellationToken.None);
-                    }, token);
+                        if (!_stateSettings.IsCurrentContext(context)) return;
+                        var started = await s_artworkWarmupThrottle.RunAsync(async _ =>
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (!_stateSettings.IsCurrentContext(context)) return true;
+                            if (_artworkMotion.IsDeferred) return false;
+                            // Shared downloads outlive a caller's cancellation.
+                            // Keep this slot until completion, retaining the
+                            // existing bound on background downloads.
+                            await images.GetImageDiskPathAsync(item.ContentId,
+                                poster ? "poster" : "backdrop", url, http, CancellationToken.None);
+                            return true;
+                        }, token);
+                        if (started) break;
+                    }
                 });
         }
         catch (OperationCanceledException) { }
