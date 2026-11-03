@@ -6,7 +6,7 @@ public sealed class PlayerServiceSourceTests
     public void AudioAndQualityControlsCaptureTheirOwnerBeforeDrainingTransportWork()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        foreach (var signature in new[] { "public async Task SwitchAudioTrackAsync(int trackIndex)", "private async Task SwitchQualityTierAsync(string tierId," })
+        foreach (var signature in new[] { "private async Task SwitchAudioTrackCoreAsync(int trackIndex", "private async Task SwitchQualityTierAsync(string tierId," })
         {
             var start = source.IndexOf(signature, StringComparison.Ordinal);
             Assert.True(start >= 0, $"Missing owner-scoped control: {signature}");
@@ -16,7 +16,7 @@ public sealed class PlayerServiceSourceTests
             Assert.True(capturedScope > start && capturedManager > start && capturedScope < drain && capturedManager < drain);
             Assert.Contains("ReferenceEquals(authority, _activeAuthority)", source[capturedScope..drain]);
             Assert.Contains("ReferenceEquals(manager, _playbackManager)", source[capturedScope..drain]);
-            Assert.StartsWith("\n        if (!CurrentSwitch()) return;", source[(drain + "await CancelAndDrainTransportRestartsAsync(ct);".Length)..].Replace("\r", ""));
+            Assert.StartsWith("\n        if (!CurrentSwitch()", source[(drain + "await CancelAndDrainTransportRestartsAsync(ct);".Length)..].Replace("\r", ""));
         }
     }
 
@@ -782,7 +782,7 @@ public sealed class PlayerServiceSourceTests
             "SiloPlayer",
             "Services",
             "PlayerService.cs"));
-        var methodStart = source.IndexOf("public async Task SwitchAudioTrackAsync", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task SwitchAudioTrackCoreAsync", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("// ── Subtitles", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
@@ -1291,7 +1291,7 @@ public sealed class PlayerServiceSourceTests
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
         var start = source.IndexOf("public async Task SwitchVersionAsync", StringComparison.Ordinal);
-        var end = source.IndexOf("public async Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
+        var end = source.IndexOf("public Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         var method = source[start..end];
         Assert.Contains("var previousSession = manager.CurrentSession;", method);
