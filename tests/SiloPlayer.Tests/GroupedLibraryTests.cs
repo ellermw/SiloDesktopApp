@@ -93,6 +93,8 @@ public sealed class GroupedLibraryTests
         Assert.True(model.WindowEndIndex >= 839);
         Assert.Equal(1000, model.TotalCount);
         var old = model.GetWindowItem(700);
+        await model.EnsureLetterIndexAsync();
+        var letterIndex = model.LetterIndex;
         var totals = new List<int>();
         var displayedTotals = new List<int>();
         model.PropertyChanged += (_, args) =>
@@ -107,6 +109,8 @@ public sealed class GroupedLibraryTests
         Assert.Equal(1000, model.TotalCount);
         Assert.Equal(1000, model.DisplayTotalCount);
         Assert.Equal(1000, model.Items.Count);
+        Assert.Same(letterIndex, model.LetterIndex);
+        Assert.Same(old, model.GetWindowItem(700));
         wire.Release.TrySetResult(); await refresh;
         Assert.All(Enumerable.Range(660, 180), index => Assert.Equal(3, model.GetWindowItem(index)!.BoxSet!.PlayedCount));
         Assert.NotSame(old, model.GetWindowItem(700));
@@ -146,10 +150,84 @@ public sealed class GroupedLibraryTests
         Assert.Empty(wire.Letters); Assert.Null(model.LetterIndex); Assert.Equal("box_set", wire.Catalog[0].Group); model.CancelCatalogLoads();
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(760)]
+    public async Task FailedBackgroundRefreshKeepsLiveCardsTotalsAndAlphabetAndCanRetry(int failFromStart)
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.LoadWindowAsync(660, 180);
+        var item = model.GetWindowItem(700); var index = model.LetterIndex;
+        wire.CatalogStatus = HttpStatusCode.ServiceUnavailable; wire.FailWindowFromStart = failFromStart;
+        Assert.Equal(LibraryViewModel.GroupedRefreshResult.Failed, await model.RefreshGroupedCatalogAsync(660, 180));
+        Assert.Same(item, model.GetWindowItem(700)); Assert.Same(index, model.LetterIndex);
+        Assert.Equal(1000, model.TotalCount); Assert.Equal(1000, model.DisplayTotalCount);
+        Assert.Null(model.ErrorMessage);
+        wire.CatalogStatus = HttpStatusCode.OK; wire.PlayedCount = 3;
+        await model.RefreshGroupedCatalogAsync(660, 180);
+        Assert.Equal(3, model.GetWindowItem(700)!.BoxSet!.PlayedCount);
+        model.CancelCatalogLoads();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GroupedRefreshDefersToAUserLetterJump(bool jumpStartsDuringRefresh)
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var index = model.LetterIndex; int? requested = null;
+        model.LetterJumpRequested += position => requested = position;
+        wire.HoldCatalog = true;
+        var refresh = jumpStartsDuringRefresh ? model.RefreshGroupedCatalogAsync(0, 60) : null;
+        if (refresh is not null) await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var jump = model.JumpToLetterCommand.ExecuteAsync("M");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        if (refresh is null)
+        {
+            var reads = wire.Catalog.Count;
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Deferred, await model.RefreshGroupedCatalogAsync(0, 60));
+            Assert.Equal(reads, wire.Catalog.Count);
+        }
+        wire.Release.TrySetResult(); await jump;
+        if (refresh is not null) Assert.Equal(LibraryViewModel.GroupedRefreshResult.Deferred, await refresh);
+        Assert.Equal(742, requested); Assert.Same(index, model.LetterIndex);
+        Assert.NotNull(model.GetWindowItem(742)); Assert.False(model.IsLetterJumpInProgress);
+        model.CancelCatalogLoads();
+    }
+
+    [Fact]
+    public async Task CapabilityFailureCannotFlattenTheQueryAndTheNextReadRetries()
+    {
+        using var wire = new Wire { CapabilityStatus = HttpStatusCode.ServiceUnavailable }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Empty(wire.Catalog); Assert.NotNull(model.ErrorMessage);
+        wire.CapabilityStatus = HttpStatusCode.OK;
+        await model.LoadWindowAsync(0, 60, force: true);
+        Assert.NotEmpty(wire.Catalog); Assert.All(wire.Catalog, request => Assert.Equal("box_set", request.Group));
+        Assert.Null(model.ErrorMessage); model.CancelCatalogLoads();
+    }
+
+    [Fact]
+    public async Task SuspendedPopulatedQueryKeepsItsResolvedGrouping()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        var reads = wire.CapabilityReads;
+        model.SuspendCatalogLoads(); wire.CapabilityStatus = HttpStatusCode.ServiceUnavailable;
+        await model.LoadWindowAsync(800, 60);
+        Assert.Equal(reads, wire.CapabilityReads);
+        Assert.All(wire.Catalog, request => Assert.Equal("box_set", request.Group));
+        Assert.NotNull(model.GetWindowItem(800)); model.CancelCatalogLoads();
+    }
+
     internal sealed class Wire : HttpMessageHandler
     {
         public bool Supported = true, LetterSupport = true, HoldCatalog, OmitWindowTotals;
         public int PlayedCount = 1;
+        public int CapabilityReads, FailWindowFromStart;
+        public HttpStatusCode CapabilityStatus = HttpStatusCode.OK, CatalogStatus = HttpStatusCode.OK;
         public bool HoldCapabilities;
         public readonly TaskCompletionSource CapabilitiesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseCapabilities = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient? Client;
@@ -167,7 +245,9 @@ public sealed class GroupedLibraryTests
             var path = request.RequestUri!.AbsolutePath;
             if (path.EndsWith("capabilities"))
             {
+                CapabilityReads++;
                 CapabilitiesStarted.TrySetResult(); if (HoldCapabilities) await ReleaseCapabilities.Task;
+                if (CapabilityStatus != HttpStatusCode.OK) return new(CapabilityStatus) { Content = new StringContent("{}") };
                 return Json(JsonSerializer.Serialize(new { box_sets = Supported, letter_index = LetterSupport }));
             }
             if (path.EndsWith("letters"))
@@ -187,6 +267,8 @@ public sealed class GroupedLibraryTests
                 var includeTotal = Value("skip_total") != "true" && Value("skip_total") != "True";
                 CatalogRanges.Add((start, Value("cursor"), includeTotal));
                 if (HoldCatalog) { Started.TrySetResult(); await Release.Task; }
+                if (CatalogStatus != HttpStatusCode.OK && start >= FailWindowFromStart)
+                    return new(CatalogStatus) { Content = new StringContent("{}") };
                 var items = Enumerable.Range(start, Math.Min(limit, 1000 - start)).Select(i => new { content_id = Value("group") == "box_set" ? "box_set:9:" + i : "movie-" + i, type = Value("group") == "box_set" ? "box_set" : "movie", title = "Set " + i, box_set = Value("group") == "box_set" ? new { id = i.ToString(), library_id = "9", title = "Set " + i, movie_count = 3, played_count = PlayedCount } : null });
                 return Json(JsonSerializer.Serialize(new { items, total = OmitWindowTotals && !includeTotal ? 0 : 1000, total_exact = includeTotal, window_cursor = "root", page = new { has_more = start + limit < 1000, next_cursor = "next-" + (start + limit) } }));
             }

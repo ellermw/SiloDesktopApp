@@ -1,7 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
+using SiloPlayer.Services;
+using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
 
@@ -10,8 +13,12 @@ public sealed partial class LibraryPage
     private CancellationTokenSource? _groupedRefreshCts;
     private long _groupedLibraryVisit;
     private long _libraryFlagsRead;
+    private bool _groupedCatalogDirty;
+    private bool _libraryFlagsDirty;
 
     private bool IsBoxSetLibrary => ViewModel.Library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "mixed" };
+    private bool CanRefreshGroupedGrid => _isNavigated && IsBoxSetLibrary && _currentTab == "Library"
+        && _currentAudiobookAxis == "books" && _libraryCatalogLoaded && LibraryContentArea.Visibility == Visibility.Visible;
 
     private void AttachGroupedLibraryEvents()
     {
@@ -25,38 +32,60 @@ public sealed partial class LibraryPage
     {
         _groupedLibraryVisit++; _libraryFlagsRead++;
         App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated -= GroupedLibraryFlagsChanged;
-        _groupedRefreshCts?.Cancel(); _groupedRefreshCts?.Dispose(); _groupedRefreshCts = null;
+        CancelGroupedCatalogRefresh();
+    }
+
+    private void CancelGroupedCatalogRefresh()
+    {
+        if (_groupedRefreshCts is null) return;
+        _groupedCatalogDirty = true;
+        var pending = _groupedRefreshCts; _groupedRefreshCts = null;
+        pending.Cancel(); pending.Dispose();
     }
 
     private void QueueGroupedCatalogRefresh()
     {
-        if (!_isNavigated || !IsBoxSetLibrary) return;
-        _groupedRefreshCts?.Cancel(); _groupedRefreshCts?.Dispose();
+        if (!IsBoxSetLibrary) return;
+        _groupedCatalogDirty = true;
+        if (!CanRefreshGroupedGrid || _groupedRefreshCts is not null) return;
         var owner = _groupedRefreshCts = new();
+        var token = owner.Token;
         var visit = _groupedLibraryVisit;
         var library = ViewModel.Library;
-        var context = App.Services.GetRequiredService<CatalogApi>().CaptureContext();
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalog.CaptureContext();
         _ = RefreshAsync();
+        bool Current() => !token.IsCancellationRequested && CanRefreshGroupedGrid && visit == _groupedLibraryVisit
+            && ReferenceEquals(library, ViewModel.Library) && catalog.IsCurrentContext(context);
         async Task RefreshAsync()
         {
             try
             {
-                await Task.Delay(200, owner.Token);
-                if (!_isNavigated || visit != _groupedLibraryVisit || !ReferenceEquals(library, ViewModel.Library)
-                    || !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(context)) return;
-                var layout = GetGridLayout();
-                var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
-                await ViewModel.RefreshGroupedCatalogAsync(range.StartIndex, Math.Max(1, range.EndIndex - range.StartIndex + 1));
-                if (_isNavigated && visit == _groupedLibraryVisit && !owner.IsCancellationRequested)
+                // One trailing refresh, never cancel a useful read for each scan event.
+                await Task.Delay(500, token);
+                while (Current() && _groupedCatalogDirty)
                 {
-                    QueueRenderVirtualGrid(force: true);
-                    // The viewport may have moved during the read. Bypass the
-                    // last-requested-range shortcut even if no ViewChanged fires.
-                    ScheduleVisibleRangeLoad(force: true);
+                    if (ViewModel.IsLetterJumpInProgress) { await Task.Delay(100, token); continue; }
+                    _groupedCatalogDirty = false;
+                    var layout = GetGridLayout();
+                    var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
+                    var result = await ViewModel.RefreshGroupedCatalogCoreAsync(range.StartIndex,
+                        Math.Max(1, range.EndIndex - range.StartIndex + 1), token);
+                    if (result != LibraryViewModel.GroupedRefreshResult.Completed) _groupedCatalogDirty = true;
+                    if (!Current() || result == LibraryViewModel.GroupedRefreshResult.Failed) break;
+                    if (result == LibraryViewModel.GroupedRefreshResult.Completed)
+                    {
+                        QueueRenderVirtualGrid(force: true);
+                        ScheduleVisibleRangeLoad(force: true);
+                    }
+                    if (_groupedCatalogDirty) await Task.Delay(500, token);
                 }
             }
             catch (OperationCanceledException) { }
-            finally { if (ReferenceEquals(_groupedRefreshCts, owner)) { _groupedRefreshCts = null; owner.Dispose(); } }
+            finally
+            {
+                if (ReferenceEquals(_groupedRefreshCts, owner)) { _groupedRefreshCts = null; owner.Dispose(); }
+            }
         }
     }
 
@@ -75,33 +104,74 @@ public sealed partial class LibraryPage
         });
     }
 
+    private static bool LibraryScopeChanged(Library? previous, Library current) => previous is null
+        || previous.Id != current.Id || previous.Enabled != current.Enabled
+        || previous.BoxSetsEnabled != current.BoxSetsEnabled || previous.Type != current.Type;
+
+    private void ShowLibraryUnavailable()
+    {
+        _libraryCatalogLoaded = false;
+        CancelGroupedCatalogRefresh();
+        ViewModel.CancelCatalogLoads();
+        ViewModel.Library = null;
+        ClearVirtualCards();
+        LibraryUnavailableState.Visibility = Visibility.Visible;
+        HeaderGrid.Visibility = FilterBar.Visibility = ActiveFiltersBar.Visibility = Visibility.Collapsed;
+        LibraryContentArea.Visibility = RecommendedPanel.Visibility = CollectionsPanel.Visibility = AudiobookGroupsPanel.Visibility = Visibility.Collapsed;
+    }
+
     private void GroupedLibraryFlagsChanged()
     {
         DispatcherQueue.TryEnqueue(async () =>
         {
-            if (!_isNavigated || _activeLibraryId is not {} libraryId) return;
-            var visit = _groupedLibraryVisit;
-            var read = ++_libraryFlagsRead;
-            var catalog = App.Services.GetRequiredService<CatalogApi>();
-            var context = catalog.CaptureContext();
-            // Hide cached aggregates immediately; a failed policy refresh cannot
-            // leave a disabled library's prior box-set presentation mounted.
-            _groupedRefreshCts?.Cancel();
-            _libraryCatalogLoaded = false;
-            ViewModel.CancelCatalogLoads(); ClearVirtualCards();
-            ViewModel.Library = null;
-            try
-            {
-                var libraries = await catalog.GetLibrariesAsync();
-                if (!_isNavigated || visit != _groupedLibraryVisit || read != _libraryFlagsRead || !catalog.IsCurrentContext(context)) return;
-                ViewModel.Library = libraries.FirstOrDefault(x => x.Id == libraryId && x.Enabled);
-                if (ViewModel.Library is not null && _currentTab == "Library")
-                {
-                    await EnsureLibraryCatalogLoadedAsync(); await FillViewportAsync();
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch { /* Leave the retired window hidden until a later successful library refresh. */ }
+            _libraryFlagsDirty = true;
+            await RefreshLibraryFlagsAsync(reloadVisible: true);
         });
+    }
+
+    private async Task RefreshLibraryFlagsAsync(bool reloadVisible = false)
+    {
+        if (!_isNavigated || _activeLibraryId is not {} libraryId) return;
+        var visit = _groupedLibraryVisit;
+        var read = ++_libraryFlagsRead;
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalog.CaptureContext();
+        try
+        {
+            // Read policy first. An unrelated invalidation or transient failure
+            // must not retire a working catalog (including non-movie libraries).
+            var libraries = await catalog.GetLibrariesAsync(includeHidden: true);
+            if (!_isNavigated || visit != _groupedLibraryVisit || read != _libraryFlagsRead || !catalog.IsCurrentContext(context)) return;
+            _libraryFlagsDirty = false;
+            var current = libraries.FirstOrDefault(x => x.Id == libraryId && x.Enabled);
+            if (current is null) { ShowLibraryUnavailable(); return; }
+            if (!LibraryScopeChanged(ViewModel.Library, current)) return;
+            CancelGroupedCatalogRefresh();
+            _libraryCatalogLoaded = false;
+            ViewModel.Library = current;
+            ClearVirtualCards();
+            LibraryUnavailableState.Visibility = Visibility.Collapsed;
+            ResetRecommendedContent();
+            _collectionsLoaded = false;
+            if (!reloadVisible) return;
+            HeaderGrid.Visibility = Visibility.Visible;
+            ShowTab(_currentTab);
+            if (_currentTab == "Library" && _currentAudiobookAxis == "books")
+            {
+                await EnsureLibraryCatalogLoadedAsync(); await FillViewportAsync();
+            }
+            else if (_currentTab == "Recommended") await LoadRecommendationsAsync();
+            else if (_currentTab == "Collections") await LoadCollectionsAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!_isNavigated || visit != _groupedLibraryVisit || read != _libraryFlagsRead || !catalog.IsCurrentContext(context)) return;
+            _libraryFlagsDirty = true;
+            LocalLog.AppendException("catalog_errors.txt", ex, "library_flags_refresh");
+            // Retain the previous window and make the failure visible; selecting
+            // Library again retries this read, even when the catalog is cached.
+            App.Services.GetRequiredService<ToastService>().Error(ex);
+        }
     }
 }

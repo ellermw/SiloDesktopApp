@@ -104,6 +104,39 @@ public sealed class BoxSetOwnershipTests
         Assert.Equal(1, calls); vm.Cancel();
         await vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }); Assert.Equal(1, calls);
     }
+    [Fact] public async Task PrimaryActionRevalidatesAccessAndUsesTheCurrentTargetAndReadOwner()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        client.InvalidateAccessContext(); wire.AllPlayed = true;
+        Assert.False(vm.IsCurrent); Assert.True(vm.CanPlay);
+        var reads = wire.DetailReads; var calls = 0;
+        await vm.PlayAsync((id, library, owner, ct) =>
+        {
+            calls++; Assert.Equal("first", id); Assert.Equal(12, library);
+            Assert.True(client.IsCurrentContext(owner)); Assert.False(ct.IsCancellationRequested);
+            return Task.CompletedTask;
+        });
+        Assert.Equal(1, calls); Assert.True(wire.DetailReads > reads); Assert.True(vm.IsCurrent); vm.Cancel();
+    }
+    [Fact] public async Task FailedAccessRevalidationReportsARetryablePrimaryActionFailure()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        client.InvalidateAccessContext(); wire.DetailStatus = HttpStatusCode.ServiceUnavailable;
+        var calls = 0;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
+        Assert.Equal(0, calls); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
+        wire.DetailStatus = HttpStatusCode.OK; await vm.RefreshAsync(); Assert.True(vm.CanPlay); vm.Cancel();
+    }
+    [Fact] public async Task PrimaryActionCannotAdoptADifferentViewer()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        client.SetProfile("other"); var calls = 0;
+        await vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; });
+        Assert.False(vm.CanPlay); Assert.Equal(0, calls); vm.Cancel();
+    }
     [Fact] public async Task DedicatedFailureAllowsRetryButUnavailableIsDistinct()
     {
         using var wire = new Wire { DetailStatus = HttpStatusCode.ServiceUnavailable }; using var http = new HttpClient(wire);

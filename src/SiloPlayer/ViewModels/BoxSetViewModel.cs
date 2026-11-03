@@ -9,6 +9,7 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     private CancellationTokenSource? _pending;
     private CancellationTokenSource? _playLifetime;
     private ApiRequestContext _owner;
+    private ApiIdentityContext _identity;
     private long _language;
     private string? _id, _library;
     private BoxSetDetail? _detail;
@@ -18,6 +19,8 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     public bool IsLoading { get => _loading; private set => SetProperty(ref _loading, value); }
     public DetailFailureKind Failure { get => _failure; private set => SetProperty(ref _failure, value); }
     public bool IsCurrent => _pending is { IsCancellationRequested: false } && catalog.IsCurrentContext(_owner) && catalog.MetadataLanguageGeneration == _language;
+    public bool CanPlay => _playLifetime is { IsCancellationRequested: false } && catalog.IsCurrentIdentityContext(_identity)
+        && catalog.MetadataLanguageGeneration == _language;
     public void Cancel()
     {
         _pending?.Cancel(); _pending?.Dispose(); _pending = null;
@@ -36,6 +39,7 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
         {
             Cancel();
             _owner = catalog.CaptureContext();
+            _identity = catalog.CaptureIdentityContext();
             _playLifetime = new();
         }
         _pending?.Cancel(); _pending?.Dispose();
@@ -69,7 +73,19 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     }
     public async Task PlayAsync(Func<string, int, ApiRequestContext, CancellationToken, Task> play)
     {
-        if (!IsCurrent || Detail is not {} detail || detail.PlayTarget is not {} movie || !int.TryParse(detail.LibraryId, out var library)) return;
+        if (!CanPlay) return;
+        if (!IsCurrent)
+        {
+            // An access revision retires reads, not this viewer's intent. Re-read
+            // under current authority before selecting a movie or entering a room.
+            var identity = _identity;
+            await RefreshAsync();
+            if (!catalog.IsCurrentIdentityContext(identity) || !CanPlay) return;
+            if (!IsCurrent || Failure != DetailFailureKind.None)
+                throw new InvalidOperationException("Could not refresh this box set for playback. Please try again.");
+        }
+        if (Detail is not {} detail || detail.PlayTarget is not {} movie || !int.TryParse(detail.LibraryId, out var library))
+            throw new InvalidOperationException("This box set is no longer available. Refresh it and try again.");
         // Refreshes (including the final save from the session being replaced) do
         // not own an accepted playback intent. Only visit/authority retirement does.
         await play(movie.ContentId, library, _owner, _playLifetime!.Token);

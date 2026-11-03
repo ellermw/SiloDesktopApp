@@ -475,7 +475,7 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private Task<bool> EnsureGroupingAsync()
+    private async Task<bool> EnsureGroupingAsync()
     {
         if (_catalogContext is null && _catalogLibraryScope is null)
         {
@@ -483,7 +483,10 @@ public partial class LibraryViewModel : ObservableObject
         }
         else if (_catalogContext != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryGroupingScope(Library))
             StartNewCatalogQuery();
-        return _groupingTask ??= ResolveGroupingAsync(Library, _queryVersion, _catalogQueryCts.Token);
+        var task = _groupingTask ??= ResolveGroupingAsync(Library, _queryVersion, _catalogQueryCts.Token);
+        var ready = await task;
+        if (!ready && ReferenceEquals(_groupingTask, task)) _groupingTask = null;
+        return ready;
     }
 
     private async Task<bool> ResolveGroupingAsync(Library? library, int version, CancellationToken ct)
@@ -497,19 +500,64 @@ public partial class LibraryViewModel : ObservableObject
             _catalogGroup = supported ? "box_set" : null;
             return true;
         }
-        catch (OperationCanceledException) { return false; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || version != _queryVersion) { return false; }
+        catch (Exception ex)
+        {
+            if (version == _queryVersion)
+                ErrorMessage = $"Failed to load catalog capabilities: {ex.Message}";
+            return false;
+        }
     }
 
-    public async Task RefreshGroupedCatalogAsync(int startIndex, int itemCount)
+    public enum GroupedRefreshResult { Completed, Deferred, Failed }
+
+    public Task<GroupedRefreshResult> RefreshGroupedCatalogAsync(int startIndex, int itemCount)
+        => RefreshGroupedCatalogCoreAsync(startIndex, itemCount, CancellationToken.None);
+
+    internal async Task<GroupedRefreshResult> RefreshGroupedCatalogCoreAsync(int startIndex, int itemCount, CancellationToken ct)
     {
-        if (Library is null || itemCount <= 0 || !await EnsureGroupingAsync() || !IsGroupedCatalog) return;
-        // The active window may include many contiguous pages behind the viewport.
-        // Retire its cursors, but keep the scroll extent until fresh totals arrive.
-        StartNewCatalogQuery(preserveExtent: true);
-        Items.Reset(TotalCount);
-        var cards = LoadWindowAsync(startIndex, itemCount, force: true);
-        _ = EnsureLetterIndexAsync();
-        await cards;
+        if (Library is null || itemCount <= 0 || !await EnsureGroupingAsync()) return GroupedRefreshResult.Failed;
+        if (!IsGroupedCatalog) return GroupedRefreshResult.Completed;
+        if (IsLetterJumpInProgress) return GroupedRefreshResult.Deferred;
+        var version = _queryVersion;
+        var jump = _letterJumpVersion;
+        var key = LetterQueryKey();
+        var group = _catalogGroup;
+        using var pending = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
+        try
+        {
+            // Read a replacement without touching live cards, cursors or totals.
+            // The first read deliberately has no snapshot/continuation from the old window.
+            CatalogResponse? replacement = null;
+            await FetchWindowAsync(startIndex, itemCount, false, response => replacement = response,
+                snapshot: null, ct: pending.Token, publishState: false);
+            if (pending.IsCancellationRequested || version != _queryVersion || key != LetterQueryKey())
+                return GroupedRefreshResult.Failed;
+            if (IsLetterJumpInProgress || jump != _letterJumpVersion) return GroupedRefreshResult.Deferred;
+            if (replacement is null) return GroupedRefreshResult.Failed;
+
+            // Commit together, retaining the exact extent and mounted alphabet rail
+            // until their optional replacements arrive. No user jump is retired.
+            StartNewCatalogQuery(preserveExtent: true, preserveLetters: true);
+            IsLoading = false;
+            _catalogGroup = group;
+            _groupingTask = Task.FromResult(true);
+            Items.Reset(TotalCount);
+            _observedCatalogEnd = startIndex + replacement.Items.Count;
+            ApplyWindowResponse(startIndex, replacement, false);
+            RememberWindow(startIndex, replacement, false);
+            WindowLoaded?.Invoke();
+            _exactCountQueryVersion = _queryVersion;
+            _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
+            _ = EnsureLetterIndexCoreAsync(preserveExisting: true);
+            return GroupedRefreshResult.Completed;
+        }
+        catch (OperationCanceledException) when (pending.IsCancellationRequested) { return GroupedRefreshResult.Failed; }
+        catch (Exception ex)
+        {
+            SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex, "grouped_catalog_refresh");
+            return GroupedRefreshResult.Failed;
+        }
     }
 
     public async Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
@@ -708,9 +756,17 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private int StartNewCatalogQuery(bool preserveExtent = false)
+    private int StartNewCatalogQuery(bool preserveExtent = false, bool preserveLetters = false)
     {
-        ResetLetterIndex();
+        var hadExactTotal = preserveExtent && _hasExactTotal;
+        if (!preserveLetters) ResetLetterIndex();
+        else
+        {
+            _letterIndexKey = null;
+            _letterIndexTask = null;
+            _letterIndexLoadVersion++;
+            IsLetterIndexLoading = false;
+        }
         _catalogGroup = null; _groupingTask = null; _catalogLibraryScope = LibraryGroupingScope(Library);
         _catalogContext = _catalogApi.CaptureContext();
         CancelWindowLoad();
@@ -725,7 +781,7 @@ public partial class LibraryViewModel : ObservableObject
         _estimatedTotalItems = preserveExtent ? TotalCount : 0;
         _observedCatalogEnd = 0;
         _catalogEndTotal = null;
-        _hasExactTotal = false;
+        _hasExactTotal = hadExactTotal;
         _lastVisibleEndIndex = PageSize - 1;
         if (!preserveExtent)
         {
@@ -734,7 +790,7 @@ public partial class LibraryViewModel : ObservableObject
         }
         HasMore = false;
         ErrorMessage = null;
-        ClearActiveWindow(notify: true);
+        ClearActiveWindow(notify: !preserveExtent);
         // Sorting or jumping to a letter cancels the query token. Retry any
         // filter load that was already requested but had not finished yet.
         if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
@@ -745,6 +801,8 @@ public partial class LibraryViewModel : ObservableObject
     public void CancelCatalogLoads()
     {
         _groupingTask = null;
+        _catalogGroup = null;
+        _snapshot = null;
         ResetLetterIndex();
         _loadedFiltersLibraryId = null;
         CancelWindowLoad();
@@ -766,7 +824,10 @@ public partial class LibraryViewModel : ObservableObject
     /// </summary>
     public void SuspendCatalogLoads()
     {
-        _groupingTask = null;
+        // Retained rows and signed cursors keep the resolved grouping decision.
+        // Only a genuinely new query may choose a different catalog shape.
+        _groupingTask = _groupingTask is { IsCompletedSuccessfully: true } && _groupingTask.Result
+            ? Task.FromResult(true) : null;
         ResetLetterIndex();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -877,18 +938,18 @@ public partial class LibraryViewModel : ObservableObject
     }
 
     private async Task FetchWindowAsync(int startIndex, int itemCount, bool includeTotal,
-        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default)
+        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default, bool publishState = true)
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure(
             includeTotal ? "catalog-request-with-total" : "catalog-request-window");
-        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct);
+        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct, publishState);
         ct.ThrowIfCancellationRequested();
         publishPage(response);
         while (response.Items.Count < itemCount && response.HasMore)
         {
             ct.ThrowIfCancellationRequested();
             var next = await FetchWindowPageAsync(startIndex + response.Items.Count,
-                false, response.Snapshot ?? snapshot, ct);
+                false, response.Snapshot ?? snapshot, ct, publishState);
             ct.ThrowIfCancellationRequested();
             response.HasMore = next.HasMore;
             if (response.Page is not null) response.Page.HasMore = next.HasMore;
@@ -924,7 +985,7 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct)
+    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct, bool publishState = true)
     {
         using var operation = SiloPlayer.Core.Services.LocalLog.BeginOperation("catalog-" + Guid.NewGuid().ToString("N"));
         var context = _catalogApi.CaptureContext();
@@ -936,7 +997,7 @@ public partial class LibraryViewModel : ObservableObject
             SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
             groups = BuildAdvancedGroups(), AdvancedRulesMatch,
         });
-        var nextCursor = _completedBoundaries.TryGetValue(startIndex, out var boundary)
+        var nextCursor = publishState && _completedBoundaries.TryGetValue(startIndex, out var boundary)
             && boundary.QueryVersion == version && boundary.Context == context && boundary.QueryKey == queryKey
             && boundary.Snapshot == snapshot ? boundary.NextCursor : null;
         static string Fingerprint(string? text) => string.IsNullOrEmpty(text) ? "none"
@@ -945,8 +1006,9 @@ public partial class LibraryViewModel : ObservableObject
         var cursorFingerprint = Fingerprint(nextCursor ?? snapshot);
         // A refetch retires the boundary supplied by that page immediately;
         // failed or canceled replacements cannot leave an older cursor usable.
-        foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
-            _completedBoundaries.Remove(end);
+        if (publishState)
+            foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
+                _completedBoundaries.Remove(end);
         CatalogResponse response;
         try
         {
@@ -986,13 +1048,13 @@ public partial class LibraryViewModel : ObservableObject
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
         SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_queries.txt",
             $"action={SiloPlayer.Core.Services.LocalLog.CurrentOperationId} start={startIndex} limit={CatalogWindowPageSize} query_version={version} read_generation={context.RequestContextGeneration} query_fingerprint={queryFingerprint} input_cursor={cursorFingerprint} window_cursor={Fingerprint(response.Snapshot)} next_cursor={Fingerprint(response.Page?.NextCursor)} items={response.Items.Count} totals={includeTotal}");
-        if (response.Items.Count == CatalogWindowPageSize && response.HasMore
+        if (publishState && response.Items.Count == CatalogWindowPageSize && response.HasMore
             && !string.IsNullOrWhiteSpace(response.Snapshot) && !string.IsNullOrWhiteSpace(response.Page?.NextCursor))
         {
             _completedBoundaries[startIndex + CatalogWindowPageSize] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
             while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
         }
-        if (response.Items.Count > 0)
+        if (publishState && response.Items.Count > 0)
             _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + response.Items.Count);
         return response;
     }

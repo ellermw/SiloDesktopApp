@@ -40,6 +40,8 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 8);
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
+    internal static AsyncWorkThrottle ImageLoadThrottle => s_imageLoadThrottle;
+    internal static SemaphoreSlim BitmapCreateLock => s_bitmapCreateLock;
 
     private BoxSetCard? _aggregateCard;
     private MediaItem? _mediaItem;
@@ -234,19 +236,32 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     public void Bind(MediaItem item, string? sortKey)
     {
-        ClearAggregateCard();
         if (item.Type == "box_set")
         {
+            if (item.BoxSet is not {} set || string.IsNullOrWhiteSpace(set.Id) || string.IsNullOrWhiteSpace(set.LibraryId))
+            {
+                BindPlaceholder();
+                return;
+            }
             CancelPosterLoad(clearImage: true); CancelPlaybackPrefetch();
             MediaItem = item; SortKey = sortKey; IsHitTestVisible = true; Opacity = 1;
-            foreach (var child in Children) child.Visibility = Visibility.Collapsed;
-            _aggregateCard = new BoxSetCard();
-            if (item.BoxSet is {} set) _aggregateCard.SetSummary(set, item.PosterUrl, item.PosterThumbhash);
-            _aggregateCard.Invoked += set => App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
+            var previousFocus = FocusState.Unfocused;
+            if (_aggregateCard is null)
+            {
+                previousFocus = new[] { _moreButton, _quickWatchedButton, _quickFavoriteButton }
+                    .Select(button => button.FocusState).FirstOrDefault(state => state != FocusState.Unfocused);
+                foreach (var child in Children) child.Visibility = Visibility.Collapsed;
+                _aggregateCard = new BoxSetCard();
+                _aggregateCard.Invoked += summary => App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(summary.Id, summary.LibraryId));
+                Children.Add(_aggregateCard);
+            }
+            _aggregateCard.SetSummary(set, item.PosterUrl, item.PosterThumbhash);
             _aggregateCard.SetCatalogLayout(Width, _posterHeight, Height);
-            Children.Add(_aggregateCard);
+            if (previousFocus != FocusState.Unfocused) _aggregateCard.Focus(previousFocus);
             return;
         }
+        var aggregateFocus = _aggregateCard?.FocusState ?? FocusState.Unfocused;
+        ClearAggregateCard();
         var preservePoster = !LibraryPosterBinding.RequiresReload(MediaItem, item) &&
             (_posterImage.Source != null || (_posterLoadCts != null &&
                 MediaItem?.PosterUrl == item.PosterUrl && MediaItem?.BackdropUrl == item.BackdropUrl));
@@ -265,6 +280,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         SortKey = sortKey;
         IsHitTestVisible = true;
         Opacity = 1;
+        _moreButton.Visibility = Visibility.Visible;
 
         _artworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
         _artworkFallback.Visibility = string.IsNullOrWhiteSpace(item.PosterUrl) && string.IsNullOrWhiteSpace(item.BackdropUrl) ? Visibility.Visible : Visibility.Collapsed;
@@ -287,11 +303,13 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             _ = LoadPosterAsync(item, imageUrl, version, _posterLoadCts.Token);
         }
         else if (string.IsNullOrWhiteSpace(imageUrl)) _ = _artworkFallback.ShowThumbhashAsync();
+        if (aggregateFocus != FocusState.Unfocused) _moreButton.Focus(aggregateFocus);
     }
 
     private void ClearAggregateCard()
     {
         if (_aggregateCard is null) return;
+        _aggregateCard.CancelArtworkLoad();
         Children.Remove(_aggregateCard); _aggregateCard = null;
         foreach (var child in Children) child.Visibility = Visibility.Visible;
     }
@@ -364,6 +382,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         SortKey = null;
         IsHitTestVisible = false;
         Opacity = 0.55;
+        _moreButton.Visibility = Visibility.Collapsed;
         _artworkFallback.Reset(null);
         _artworkFallback.Visibility = Visibility.Collapsed;
         _titleText.Text = "";
@@ -387,6 +406,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         SortKey = null;
         IsHitTestVisible = false;
         Opacity = 1;
+        _moreButton.Visibility = Visibility.Collapsed;
         _artworkFallback.Reset(null);
         _artworkFallback.Visibility = Visibility.Collapsed;
         _titleText.Text = "";

@@ -35,11 +35,27 @@ public sealed class BoxSetFoundationTests
         var client = Client(http); Assert.Equal(expected, await new CatalogApi(client).SupportsBoxSetsAsync());
         Assert.EndsWith("/catalog/search/capabilities", wire.Last);
     }
-    [Theory] [InlineData(404)] [InlineData(500)]
-    public async Task CapabilityFailureFailsClosed(int status)
+    [Theory] [InlineData(404)] [InlineData(500)] [InlineData(503)]
+    public async Task OnlyMissingCapabilityIsUnsupportedWhileTransientFailuresRemainRetryable(int status)
     {
         using var wire = new Wire { Status = (HttpStatusCode)status }; using var http = new HttpClient(wire);
-        Assert.False(await new CatalogApi(Client(http)).SupportsBoxSetsAsync());
+        var api = new CatalogApi(Client(http));
+        if (status == 404) Assert.False(await api.SupportsBoxSetsAsync());
+        else Assert.Equal(status, (await Assert.ThrowsAsync<ApiException>(() => api.SupportsBoxSetsAsync())).StatusCode);
+        wire.Status = HttpStatusCode.OK; wire.Json = "{\"box_sets\":true}";
+        Assert.True(await api.SupportsBoxSetsAsync());
+    }
+    [Theory]
+    [InlineData("7", "12")]
+    [InlineData("18446744073709551615", "12")]
+    [InlineData("\"set-7\"", "\"12\"")]
+    public async Task GroupedCatalogAcceptsNumericOrStringSummaryIdentifiers(string id, string library)
+    {
+        using var wire = new Wire { Json = "{\"items\":[{\"type\":\"box_set\",\"box_set\":{\"id\":" + id + ",\"library_id\":" + library + "}}]}" };
+        using var http = new HttpClient(wire);
+        var result = await new CatalogApi(Client(http)).GetCatalogAsync(12, group: "box_set");
+        Assert.Equal(id.Trim('"'), result.Items.Single().BoxSet!.Id);
+        Assert.Equal("12", result.Items.Single().BoxSet!.LibraryId);
     }
     [Theory] [InlineData(404, DetailFailureKind.NotFound)] [InlineData(503, DetailFailureKind.Transient)]
     public async Task DedicatedReaderPreservesFailureKind(int status, DetailFailureKind expected)

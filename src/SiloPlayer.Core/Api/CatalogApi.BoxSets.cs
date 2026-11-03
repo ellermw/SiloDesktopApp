@@ -3,12 +3,13 @@ namespace SiloPlayer.Core.Api;
 public partial class CatalogApi
 {
     public long MetadataLanguageGeneration => client.LocalizedReads.Generation;
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
     public async Task<bool> SupportsBoxSetsAsync(CancellationToken ct = default)
     {
         var context = client.CaptureContext();
         try { return (await GetSearchRuleCapabilitiesAsync(context, ct)).BoxSets; }
-        catch (OperationCanceledException) { throw; }
-        catch { return false; }
+        catch (ApiException ex) when (ex.StatusCode == 404) { return false; }
     }
     public async Task<bool> BoxSetsEnabledAsync(int? libraryId, CancellationToken ct = default, bool throwOnCapabilityFailure = false)
     {

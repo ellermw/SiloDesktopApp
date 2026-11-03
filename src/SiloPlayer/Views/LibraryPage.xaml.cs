@@ -312,18 +312,32 @@ public sealed partial class LibraryPage : Page,
             requestedGenre = navigationArgs.InitialGenre;
         }
 
+        // Back-stack parameters are snapshots. Revalidate current flags before
+        // trusting a cached grouped window, and refresh counts once on return.
+        var returningLibrary = library is not null && _activeLibraryId == library.Id;
+        if (returningLibrary)
+        {
+            if (_pageStateContext != _stateSettings.CaptureContext())
+            {
+                // Never keep another read authority's cards mounted during policy revalidation.
+                _libraryCatalogLoaded = false;
+                ViewModel.CancelCatalogLoads();
+                ClearVirtualCards();
+            }
+            var visit = _groupedLibraryVisit;
+            _libraryFlagsDirty = true;
+            await RefreshLibraryFlagsAsync();
+            if (!_isNavigated || visit != _groupedLibraryVisit) return;
+            library = ViewModel.Library;
+            _groupedCatalogDirty = IsBoxSetLibrary;
+        }
+
         LibraryUnavailableState.Visibility = library == null
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (library == null)
         {
-            HeaderGrid.Visibility = Visibility.Collapsed;
-            FilterBar.Visibility = Visibility.Collapsed;
-            ActiveFiltersBar.Visibility = Visibility.Collapsed;
-            LibraryContentArea.Visibility = Visibility.Collapsed;
-            RecommendedPanel.Visibility = Visibility.Collapsed;
-            CollectionsPanel.Visibility = Visibility.Collapsed;
-            AudiobookGroupsPanel.Visibility = Visibility.Collapsed;
+            ShowLibraryUnavailable();
             return;
         }
 
@@ -332,6 +346,8 @@ public sealed partial class LibraryPage : Page,
             var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && _pageStateContext == _stateSettings.CaptureContext();
             if (!sameLibrary)
             {
+                _groupedCatalogDirty = false;
+                if (!returningLibrary) _libraryFlagsDirty = false;
                 ResetRecommendedContent();
                 ViewModel.CancelCatalogLoads();
                 ClearVirtualCards();
@@ -346,6 +362,7 @@ public sealed partial class LibraryPage : Page,
             }
 
             _activeLibraryId = library.Id;
+            HeaderGrid.Visibility = Visibility.Visible;
             LibraryTitle.Text = library.Name;
             LibraryEyebrowName.Text = library.Name.ToUpperInvariant();
             RecommendedTab.Content = library.Type is "audiobook" or "audiobooks" ? "Home" : "Recommended";
@@ -943,6 +960,7 @@ public sealed partial class LibraryPage : Page,
 
     private void ShowTab(string tag)
     {
+        if (tag != "Library" || _currentAudiobookAxis != "books") CancelGroupedCatalogRefresh();
         // Update tab button styles
         var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
         foreach (var tab in tabs)
@@ -1694,11 +1712,7 @@ public sealed partial class LibraryPage : Page,
             var item = ViewModel.GetWindowItem(index);
             if (item == null)
             {
-                // A same-scope grouped refresh retires data/cursors before the
-                // replacement read. Keep an already-mounted card in its slot
-                // during that read, never when recycling to a different index.
-                if (!sameIndex || _groupedRefreshCts is not { IsCancellationRequested: false })
-                    card.BindPlaceholder();
+                card.BindPlaceholder();
                 continue;
             }
 
@@ -1762,6 +1776,7 @@ public sealed partial class LibraryPage : Page,
             return;
 
         _currentAudiobookAxis = axis;
+        if (axis != "books") CancelGroupedCatalogRefresh();
         SaveViewState(_currentTab);
         UpdateAudiobookAxisButtons();
         var showBooks = axis == "books";
@@ -2593,7 +2608,7 @@ public sealed partial class LibraryPage : Page,
 
         if (tag == _currentTab)
         {
-            if (tag == "Library" && !_libraryCatalogLoaded)
+            if (tag == "Library")
             {
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
@@ -2628,12 +2643,15 @@ public sealed partial class LibraryPage : Page,
     private async Task EnsureLibraryCatalogLoadedAsync()
     {
         using var timing = LibraryPerformanceTrace.Measure("library-open");
+        if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();
+        if (!_isNavigated || ViewModel.Library is null) return;
         if (_libraryCatalogLoaded)
         {
             // Leaving for an item detail may have canceled optional filters
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
             _ = ViewModel.EnsureLetterIndexAsync();
+            if (_groupedCatalogDirty) QueueGroupedCatalogRefresh();
             return;
         }
 
@@ -2644,7 +2662,8 @@ public sealed partial class LibraryPage : Page,
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
             try { await overlayWarmup; } catch { }
-            _libraryCatalogLoaded = _isNavigated && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
+            _libraryCatalogLoaded = _isNavigated && ViewModel.Library is not null && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
+            if (_libraryCatalogLoaded && _groupedCatalogDirty) QueueGroupedCatalogRefresh();
         }
         finally
         {

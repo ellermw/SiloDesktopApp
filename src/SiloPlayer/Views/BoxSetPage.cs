@@ -80,12 +80,17 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; _visit++; _knownMembership = null; ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async Task PlayPrimaryAsync()
     {
-        var detail = ViewModel.Detail; var movie = detail?.PlayTarget;
-        if (movie == null) return;
-        await ViewModel.PlayAsync((id, library, owner, ct) => MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
-            () => !ct.IsCancellationRequested && _catalog.IsCurrentContext(owner) && id == movie.ContentId,
-            (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>().PlayAsync(target,
-                libraryId: scope, expectedContext: context, cancellationToken: cancellation)));
+        await ViewModel.PlayAsync((id, library, owner, ct) =>
+        {
+            // PlayAsync may have revalidated access and selected a new first
+            // unplayed member. Use that refreshed movie, not the old hero target.
+            var movie = ViewModel.Detail?.Items.FirstOrDefault(item => item.ContentId == id);
+            if (movie is null) throw new InvalidOperationException("This movie is no longer available. Refresh the box set and try again.");
+            return MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
+                () => !ct.IsCancellationRequested && _catalog.IsCurrentContext(owner),
+                (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>().PlayAsync(target,
+                    libraryId: scope, expectedContext: context, cancellationToken: cancellation));
+        });
     }
     public void Render()
     {
@@ -132,7 +137,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         info.Children.Add(_overview = new TextBlock { TextWrapping = TextWrapping.Wrap });
         var actionText = set.PlayTarget is {} next && !string.IsNullOrWhiteSpace(next.Title)
             ? (set.PlayLabel == "Continue" ? "Continue · " : "Play ") + next.Title : set.PlayLabel;
-        var play = new Button { Name = "BoxSetPlay", Style = (Style)Application.Current.Resources["AccentButtonStyle"], Height = 44, CornerRadius = new CornerRadius(22), Padding = new Thickness(24, 0, 24, 0), Content = new TextBlock { Text = actionText, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 400 }, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 440, IsEnabled = set.PlayTarget != null && ViewModel.IsCurrent };
+        var play = new Button { Name = "BoxSetPlay", Style = (Style)Application.Current.Resources["AccentButtonStyle"], Height = 44, CornerRadius = new CornerRadius(22), Padding = new Thickness(24, 0, 24, 0), Content = new TextBlock { Text = actionText, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 400 }, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 440, IsEnabled = set.PlayTarget != null && ViewModel.CanPlay };
         AutomationProperties.SetName(play, actionText);
         _playButton = play; _playText = (TextBlock)play.Content;
         play.Click += async (_, _) =>
@@ -169,7 +174,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             ? (set.PlayLabel == "Continue" ? "Continue · " : "Play ") + next.Title : set.PlayLabel;
         _playText!.Text = actionText;
         AutomationProperties.SetName(_playButton!, actionText);
-        _playButton!.IsEnabled = !_playPending && set.PlayTarget != null && ViewModel.IsCurrent;
+        _playButton!.IsEnabled = !_playPending && set.PlayTarget != null && ViewModel.CanPlay;
         foreach (var (card, movie) in _movies!.Items.OfType<PosterCard>().Zip(set.Items.Where(BoxSetDetail.IsMovieMember)))
             if (!ReferenceEquals(card.MediaItem, movie)) card.RefreshItem(movie);
         var notice = ViewModel.Failure != DetailFailureKind.None && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;

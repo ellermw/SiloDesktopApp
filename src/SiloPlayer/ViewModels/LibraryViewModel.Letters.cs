@@ -28,7 +28,9 @@ public partial class LibraryViewModel
         rules = BuildExtraRules(), groups = BuildAdvancedGroups(), AdvancedRulesMatch,
     });
 
-    public async Task EnsureLetterIndexAsync()
+    public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync(preserveExisting: false);
+
+    private async Task EnsureLetterIndexCoreAsync(bool preserveExisting)
     {
         if (Library is not null && !await EnsureGroupingAsync()) return;
         if (Library is null || SelectedSort != "title")
@@ -38,13 +40,13 @@ public partial class LibraryViewModel
         }
         var key = LetterQueryKey();
         if (_letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
-        LetterIndex = null;
+        if (!preserveExisting) LetterIndex = null;
         _letterIndexKey = key;
         IsLetterIndexLoading = true;
-        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token));
+        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting));
     }
 
-    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -89,7 +91,7 @@ public partial class LibraryViewModel
             {
                 _letterIndexKey = null;
                 _letterIndexTask = null;
-                LetterIndex = null;
+                if (!preserveExisting) LetterIndex = null;
             }
         }
         finally
@@ -103,19 +105,19 @@ public partial class LibraryViewModel
     {
         var jump = ++_letterJumpVersion;
         if (string.IsNullOrEmpty(letter) || SelectedSort != "title") return;
-        await EnsureLetterIndexAsync();
-        var index = LetterIndex;
-        if (jump != _letterJumpVersion || index is null || _letterIndexKey != LetterQueryKey()) return;
-        var entry = index.Letters.FirstOrDefault(x => x.Letter == letter.ToUpperInvariant());
-        if (entry is null || entry.Position >= TotalCount) return;
-        var key = _letterIndexKey;
-        var previousStart = WindowStartIndex;
-        var previousItems = _windowItems;
-        var previousWindows = _recentWindows.ToArray();
-        var previousHasMore = HasMore;
         _activeLetterJumpVersion = jump;
         try
         {
+            await EnsureLetterIndexAsync();
+            var index = LetterIndex;
+            if (jump != _letterJumpVersion || index is null || _letterIndexKey != LetterQueryKey()) return;
+            var entry = index.Letters.FirstOrDefault(x => x.Letter == letter.ToUpperInvariant());
+            if (entry is null || entry.Position >= TotalCount) return;
+            var key = _letterIndexKey;
+            var previousStart = WindowStartIndex;
+            var previousItems = _windowItems;
+            var previousWindows = _recentWindows.ToArray();
+            var previousHasMore = HasMore;
             await LoadWindowAsync(entry.Position, PageSize, force: true);
             if (jump != _letterJumpVersion || key != LetterQueryKey() || !ReferenceEquals(index, LetterIndex)) return;
             if (GetWindowItem(entry.Position) is null)
