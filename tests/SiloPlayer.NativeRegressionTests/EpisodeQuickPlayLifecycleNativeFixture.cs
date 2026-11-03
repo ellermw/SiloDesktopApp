@@ -60,7 +60,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
         scope.Wire.AcceptStart = false;
         SetField(scope.Player, "_playbackManager", manager);
         typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
-        typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+        scope.Player.SetState(PlayerState.Minimized);
         var gate = (SemaphoreSlim)GetField(scope.Player, "_transportRestartGate")!;
         await gate.WaitAsync();
         var pending = scope.Player.PlayAsync("departed", expectedContext: scope.Client.CaptureContext());
@@ -124,7 +124,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             await manager.StartSessionAsync(42, 91);
             SetField(scope.Player, "_playbackManager", manager);
             typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
-            typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+            scope.Player.SetState(PlayerState.Minimized);
             scope.Wire.Starts.Clear();
             scope.Wire.WatchFailuresRemaining = failures;
             var page = scope.MountSeries("retry-episode"); await Task.Delay(60); page.UpdateLayout();
@@ -215,7 +215,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
                     await manager.StartSessionAsync(42, 91);
                     SetField(scope.Player, "_playbackManager", manager);
                     typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
-                    typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+                    scope.Player.SetState(PlayerState.Minimized);
                     scope.Wire.Starts.Clear();
                 }
                 if (boundary == "watch") scope.Wire.HoldWatch = "refresh-during-preparation";
@@ -301,7 +301,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
         foreach (var scoped in new[] { false, true })
         {
             await scope.ResetAsync();
-            typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+            scope.Player.SetState(PlayerState.Minimized);
             var states = new List<PlayerState>();
             void OnStateChanged(PlayerState state) => states.Add(state);
             scope.Player.StateChanged += OnStateChanged;
@@ -528,7 +528,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             SetField(scope.Player, "_playbackManager", manager);
             SetField(scope.Player, "_activeTransportPlan", PlaybackTransportPlanner.Plan(manager.CurrentSession!));
             typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
-            typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+            scope.Player.SetState(PlayerState.Minimized);
 
             scope.Wire.HoldWatch = "abandoned-scoped-start";
             var identity = scope.Client.CaptureIdentityContext();
