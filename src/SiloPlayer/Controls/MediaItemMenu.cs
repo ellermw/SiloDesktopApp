@@ -72,8 +72,7 @@ public static class MediaItemMenu
                     try
                     {
                         await App.Services.GetRequiredService<PlayerService>()
-                            .PlayAsync(item.ContentId, fromStart: true,
-                                libraryId: restartLibrary);
+                            .RestartAsync(item.ContentId, restartLibrary, restartIdentity);
                     }
                     catch (Exception ex) { toast.Error(ex); }
                 }));
