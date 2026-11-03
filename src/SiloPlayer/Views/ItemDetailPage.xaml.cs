@@ -913,6 +913,7 @@ public sealed partial class ItemDetailPage : Page
                 if (!Current()) return;
                 if ((changes & 4) != 0 && item is { Type: "series" } && navigation != null)
                     _ = UpdateSeriesLayoutAsync(item.ContentId, navigation.Token);
+                if ((changes & 2) != 0 && ViewModel.Episodes.Count == 0) BuildEpisodeRows();
                 ApplyEpisodeSpoilers();
                 ApplySeasonAction();
                 RefreshContainerCountBadges();
@@ -1848,6 +1849,7 @@ public sealed partial class ItemDetailPage : Page
         // watch controls. Apply them last so a companion /watch response cannot
         // reintroduce video-quality badges or hide the listening actions.
         ConfigureBookDetail(item);
+        ApplySeasonAction();
         _ = ApplySeriesActionAsync();
         UpdateResponsiveLayout(ActualWidth);
     }
@@ -4896,7 +4898,8 @@ public sealed partial class ItemDetailPage : Page
     private void ApplySeasonAction()
     {
         if (ViewModel.Item is not { Type: "season" } item) return;
-        _playableContentId = item.HasAuthoritativePlayTarget ? item.PlayContentId : ViewModel.Episodes.FirstOrDefault()?.ContentId;
+        _playableContentId = item.HasAuthoritativePlayTarget ? item.PlayContentId
+            : ViewModel.EpisodesSeasonContentId == item.ContentId ? ViewModel.Episodes.FirstOrDefault()?.ContentId : null;
         var playable = !string.IsNullOrWhiteSpace(_playableContentId);
         PlayButtonText.Text = "Play First Episode";
         SplitPlayButton.Visibility = playable ? Visibility.Visible : Visibility.Collapsed;
@@ -4912,18 +4915,21 @@ public sealed partial class ItemDetailPage : Page
         var context = catalog.CaptureContext();
         var navigation = _navigationCts;
         var libraryId = ViewModel.LibraryId;
+        var parentId = item.SeriesId;
         var primaryAction = SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons);
         var season = ViewModel.Seasons.FirstOrDefault(s => s.ContentId == primaryAction.TargetSeasonId);
         if (season != null && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
-            && (ViewModel.Episodes.Count == 0 || ViewModel.Episodes.Any(e => e.SeasonNumber != season.SeasonNumber)))
+            && (ViewModel.EpisodesSeasonContentId != season.ContentId || ViewModel.Episodes.Count == 0
+                || ViewModel.Episodes.Any(e => e.SeasonNumber != season.SeasonNumber)))
             await LoadSeriesPrimaryEpisodesAsync(season.ContentId);
-        if (!ReferenceEquals(ViewModel.Item, item) || !ReferenceEquals(_navigationCts, navigation)
+        if (!ReferenceEquals(ViewModel.Item, item) || item.SeriesId != parentId || !ReferenceEquals(_navigationCts, navigation)
             || navigation?.IsCancellationRequested == true || ViewModel.LibraryId != libraryId
             || !catalog.IsCurrentContext(context)) return;
         // A remote response may have supplied an explicit target while the
         // legacy companion was loading. It always takes precedence, even null.
         if (ApplyAuthoritativeSeriesAction() || primaryAction != SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons)) return;
-        var episodes = ViewModel.Episodes.Where(e => season != null && e.SeasonNumber == season.SeasonNumber).ToArray();
+        var episodes = ViewModel.Episodes.Where(e => season != null
+            && ViewModel.EpisodesSeasonContentId == season.ContentId && e.SeasonNumber == season.SeasonNumber).ToArray();
         var index = Math.Clamp((primaryAction.TargetEpisodeNumber ?? 1) - 1, 0, Math.Max(episodes.Length - 1, 0));
         _playableContentId = episodes.Length > 0 ? episodes[index].ContentId : null;
         PlayButtonText.Text = primaryAction.Label;
@@ -4959,19 +4965,21 @@ public sealed partial class ItemDetailPage : Page
             return string.IsNullOrWhiteSpace(item.PlayContentId) ? null : item.PlayContentId;
         if (item.Type == "series")
         {
+            var parentId = item.SeriesId;
+            var navigation = _navigationCts;
             await ApplySeriesActionAsync();
-            return ReferenceEquals(ViewModel.Item, item) ? _playableContentId : null;
-        }
-
-        if (!string.IsNullOrWhiteSpace(_playableContentId))
+            if (!ReferenceEquals(ViewModel.Item, item) || item.SeriesId != parentId
+                || !ReferenceEquals(_navigationCts, navigation) || navigation?.IsCancellationRequested == true) return null;
+            if (!item.HasAuthoritativePlayTarget && ViewModel.EpisodesSeasonContentId
+                != SeriesPrimaryActionResolver.Resolve(ViewModel.Seasons).TargetSeasonId) return null;
             return _playableContentId;
-
-        if (IsReaderItem(item))
-            return _readerTargetContentId ?? item.ContentId;
+        }
 
         if (string.Equals(item.Type, "season", StringComparison.OrdinalIgnoreCase))
         {
-            if (ViewModel.Episodes.Count == 0)
+            var parentId = item.SeriesId;
+            var navigation = _navigationCts;
+            if (ViewModel.EpisodesSeasonContentId != item.ContentId || ViewModel.Episodes.Count == 0)
             {
                 EpisodesSection.Visibility = Visibility.Visible;
                 EpisodesLoadingSkeleton.Visibility = Visibility.Visible;
@@ -4987,11 +4995,18 @@ public sealed partial class ItemDetailPage : Page
                 if (loaded) BuildEpisodeRows();
             }
 
-            var firstEpisode = ViewModel.Episodes.FirstOrDefault();
-            _playableContentId = firstEpisode?.ContentId;
-            SplitPlayButton.Visibility = firstEpisode == null ? Visibility.Collapsed : Visibility.Visible;
+            if (!ReferenceEquals(ViewModel.Item, item) || item.SeriesId != parentId
+                || !ReferenceEquals(_navigationCts, navigation) || navigation?.IsCancellationRequested == true) return null;
+            // Never reuse a page-owned target from before a parent remap.
+            ApplySeasonAction();
             return _playableContentId;
         }
+
+        if (!string.IsNullOrWhiteSpace(_playableContentId))
+            return _playableContentId;
+
+        if (IsReaderItem(item))
+            return _readerTargetContentId ?? item.ContentId;
 
         return item.ContentId;
     }
@@ -6891,9 +6906,7 @@ public sealed partial class ItemDetailPage : Page
 
             // State-only notifications must keep the mounted rows and their focus.
             if (!reloadEpisodes && EpisodesSection.Visibility == Visibility.Visible && EpisodesLoadError.Visibility != Visibility.Visible
-                && (ViewModel.EpisodesSeasonContentId == season.ContentId
-                    || ViewModel.EpisodesSeasonContentId == null && ViewModel.SelectedSeasonNumber == season.SeasonNumber
-                        && ViewModel.Episodes.Count > 0))
+                && ViewModel.EpisodesSeasonContentId == season.ContentId)
                 return Task.CompletedTask;
 
             _singleSeasonEpisodesCts?.Cancel();
@@ -6968,6 +6981,7 @@ public sealed partial class ItemDetailPage : Page
             var ownerContentId = _currentContentId;
             var libraryId = ViewModel.LibraryId;
             var item = ViewModel.Item;
+            var parentId = item?.SeriesId;
             var context = catalogApi.CaptureContext();
             EpisodesResponse response;
             var attempt = 0;
@@ -6977,7 +6991,8 @@ public sealed partial class ItemDetailPage : Page
                 var remoteRevision = ViewModel.RemoteStateRevision;
                 response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, ct);
                 if (ct.IsCancellationRequested || _currentContentId != ownerContentId || ViewModel.LibraryId != libraryId
-                    || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return false;
+                    || !ReferenceEquals(ViewModel.Item, item) || item?.SeriesId != parentId
+                    || !catalogApi.IsCurrentContext(context)) return false;
                 if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }
             if (response?.Episodes != null)
@@ -8553,9 +8568,12 @@ public sealed partial class ItemDetailPage : Page
     private async Task LoadSeriesPrimaryEpisodesAsync(string seasonContentId)
     {
         var item = ViewModel.Item;
+        var parentId = item?.SeriesId;
         var libraryId = ViewModel.LibraryId;
         var token = _navigationCts?.Token ?? CancellationToken.None;
-        bool Current() => item != null && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == libraryId && !token.IsCancellationRequested;
+        bool Current() => item != null && ReferenceEquals(ViewModel.Item, item) && item.SeriesId == parentId
+            && ViewModel.Seasons.Any(season => season.ContentId == seasonContentId)
+            && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == libraryId && !token.IsCancellationRequested;
         try
         {
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();

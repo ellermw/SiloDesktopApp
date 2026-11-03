@@ -310,7 +310,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                     if (refreshed.HasAuthoritativeSeriesId && item.SeriesId != refreshed.SeriesId)
                     {
                         item.SeriesId = refreshed.SeriesId;
-                        item.ResetPlayTarget();
+                        ResetParentPlaybackState(item);
+                        episodesChanged = true;
                         itemChanged = true;
                     }
                     if (refreshed.SeriesTitle != null && item.SeriesTitle != refreshed.SeriesTitle)
@@ -443,7 +444,10 @@ public partial class ItemDetailViewModel : ObservableObject,
                     // A partial sweep is not a completed catch-up. Offer an
                     // inline retry without covering mounted content or changing
                     // the initial-load failure state used by reconnect handling.
-                    if (Current() && (refreshFailure != null || refreshCompleted))
+                    // A viewer-only leaf sweep cannot recover a playback
+                    // failure, or downgrade its Retry to viewer-only scope.
+                    if (Current() && (refreshFailure != null || refreshCompleted)
+                        && (RemoteStateErrorMessage == null || !viewerOnlyLeaf || _remoteStateRetryViewerOnly))
                     {
                         _remoteStateRetryViewerOnly = refreshFailure != null && viewerOnlyLeaf;
                         RemoteStateErrorMessage = refreshFailure == null ? null
@@ -1122,6 +1126,16 @@ public partial class ItemDetailViewModel : ObservableObject,
         await RefreshMediaStateAsync(new(context, new HashSet<string>([contentId]), new HashSet<string>(), CatchUp: true));
     }
 
+    private void ResetParentPlaybackState(MediaItemDetail item)
+    {
+        item.ResetPlayTarget();
+        // Retained rows and in-flight selections still belong to the old parent.
+        Interlocked.Increment(ref _episodesLoadGeneration);
+        IsEpisodesLoading = false;
+        EpisodesSeasonContentId = null;
+        Episodes.Clear();
+    }
+
     private async Task ReloadContainerMetadataAsync(MediaItemDetail item)
     {
         _metadataLoadCts?.Cancel();
@@ -1189,7 +1203,8 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 Interlocked.Increment(ref _localStateGeneration);
                 item.SeriesId = fresh.SeriesId;
-                item.ResetPlayTarget();
+                ResetParentPlaybackState(item);
+                OnPropertyChanged(nameof(Episodes));
             }
             // Omitted legacy identity fields must not erase the mounted breadcrumb
             // or numbering. Explicit zero/false values are still supplied metadata.

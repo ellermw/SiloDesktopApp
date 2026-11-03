@@ -484,17 +484,44 @@ internal static class RealtimeSeriesStateNativeFixture
         vm.PropertyChanged += handler;
         parent.Children.Add(page);
         HyperlinkButton SeriesLink() => ((Panel)page.FindName("BreadcrumbPanel")).Children.OfType<HyperlinkButton>().First();
+        var resolve = typeof(ItemDetailPage).GetMethod("ResolvePlayableContentIdForPlaybackAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        void SeedOldAction()
+        {
+            vm.EpisodesSeasonContentId = "season";
+            vm.Episodes.Add(new() { ContentId = "old-parent-episode", SeasonNumber = 1 });
+            Call(page, "BuildEpisodeRows");
+            Call(page, "ApplySeasonAction");
+            Check(((Button)page.FindName("PrimaryPlayButton")).IsEnabled,
+                "The parent-remap fixture did not establish a playable old-parent fallback.");
+        }
+        async Task VerifyRetiredActionAsync()
+        {
+            await UntilAsync(() => ((UIElement)page.FindName("SplitPlayButton")).Visibility == Visibility.Collapsed
+                && ((Panel)page.FindName("EpisodesPanel")).Children.Count == 0);
+            Check(!((Button)page.FindName("PrimaryPlayButton")).IsEnabled
+                && typeof(ItemDetailPage).GetField("_playableContentId", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page) == null,
+                "A parent remap retained the previous parent's actual native Play target.");
+            // A click must revalidate even before the queued action repaint.
+            Set(page, "_playableContentId", "old-parent-episode");
+            Check(await (Task<string?>)resolve.Invoke(page, null)! == null,
+                "Season playback reused a cached old-parent episode after remapping.");
+        }
         try
         {
+            wire.OmitTarget = true; wire.EmptyEpisodes = true;
+            SeedOldAction();
             wire.ParentSeries = "matched-series";
             await vm.ReloadAfterMatchAsync("season");
             Call(page, "UpdateUI");
             Check(SeriesLink().Tag as string == "matched-series" && ((TextBlock)SeriesLink().Content).Text == "Matched series",
                 "Same-ID Match left the breadcrumb linked to the old parent series.");
+            await VerifyRetiredActionAsync();
+            SeedOldAction();
             wire.ParentSeries = "newer-series";
             await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(["season"]), new HashSet<string>()));
             await UntilAsync(() => SeriesLink().Tag as string == "newer-series");
             Check(vm.Item!.SeriesId == "newer-series", "A retained sweep did not adopt the fresh parent identity.");
+            await VerifyRetiredActionAsync();
             // Legacy detail responses omit both parent fields. Metadata editing
             // and same-ID Match must keep the mounted parent link navigable.
             wire.ParentSeries = null;
@@ -509,7 +536,7 @@ internal static class RealtimeSeriesStateNativeFixture
         }
         finally
         {
-            wire.ParentSeries = null;
+            wire.ParentSeries = null; wire.OmitTarget = false; wire.EmptyEpisodes = false;
             vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm);
             parent.Children.Remove(page);
         }
@@ -555,6 +582,21 @@ internal static class RealtimeSeriesStateNativeFixture
             Check(await (Task<string?>)resolve.Invoke(page, null)! == "loaded",
                 "The refreshed legacy action did not advance its fallback episode.");
 
+            // Replacing a season with a different ID but the same number must
+            // not reuse rows from the retired season, including on a multi-season page.
+            vm.Seasons.Clear();
+            vm.Seasons.Add(new() { ContentId = "replacement-season", SeasonNumber = 1, EpisodeCount = 6,
+                UserData = new() { UnplayedCount = 6 } });
+            vm.Seasons.Add(new() { ContentId = "second-season", SeasonNumber = 2, EpisodeCount = 6,
+                UserData = new() { UnplayedCount = 6 } });
+            wire.EmptyEpisodes = true;
+            await (Task)apply.Invoke(page, null)!;
+            Check(vm.EpisodesSeasonContentId == "replacement-season" && vm.Episodes.Count == 0
+                && !((Button)page.FindName("PrimaryPlayButton")).IsEnabled
+                && await (Task<string?>)resolve.Invoke(page, null)! == null,
+                "A legacy series action reused another season's rows solely because the season number matched.");
+            wire.EmptyEpisodes = false;
+
             wire.OmitTarget = false; wire.Target = null;
             await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(),
                 new HashSet<string>(["series"])));
@@ -566,7 +608,7 @@ internal static class RealtimeSeriesStateNativeFixture
         }
         finally
         {
-            wire.OmitTarget = false;
+            wire.OmitTarget = false; wire.EmptyEpisodes = false;
             vm.PropertyChanged -= handler; vm.CancelPendingLoads();
             WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
         }

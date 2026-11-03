@@ -282,6 +282,49 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("movie", false)]
+    [InlineData("movie", true)]
+    [InlineData("episode", false)]
+    [InlineData("episode", true)]
+    public async Task ViewerOnlyLeafSweepCannotClearOrDowngradeAPendingPlaybackRetry(string type, bool viewerFails)
+    {
+        using var scope = new Scope(type)
+        {
+            IncludeTarget = true, FreshTarget = "new-target", ContainerPlayed = true,
+            FreshViewerState = new() { IsFavorite = true }
+        };
+        scope.Vm.Seasons.Clear(); scope.Vm.Episodes.Clear();
+        var item = scope.Vm.Item!;
+        item.PlayContentId = "old-target";
+        var stalePlayback = item.UserData;
+        scope.OverrideResponse = _ => Unavailable();
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(item.ContentId) with { CatchUp = true })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var warning = scope.Vm.RemoteStateErrorMessage;
+        Assert.False(string.IsNullOrWhiteSpace(warning));
+
+        if (!viewerFails) scope.OverrideResponse = null;
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(item.ContentId) with
+        {
+            ViewerStateContentIds = new HashSet<string>([item.ContentId]),
+            PlaybackStateContentIds = new HashSet<string>()
+        }).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(warning, scope.Vm.RemoteStateErrorMessage);
+        Assert.Same(stalePlayback, item.UserData);
+        Assert.False(scope.Vm.IsWatched);
+        Assert.Equal("old-target", item.PlayContentId);
+        if (!viewerFails) Assert.True(scope.Vm.IsFavorite);
+
+        scope.OverrideResponse = null;
+        await scope.Vm.RetryRemoteStateCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
+        Assert.True(scope.Vm.IsWatched);
+        Assert.True(item.UserData!.Played);
+        Assert.Equal("new-target", item.PlayContentId);
+    }
+
+    [Theory]
     [InlineData("navigation")]
     [InlineData("profile")]
     public async Task RetiredCatchUpCannotRetryOrShowAnErrorAfterBackoff(string departure)
@@ -1297,9 +1340,11 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
-    [InlineData("series")]
-    [InlineData("season")]
-    public async Task MetadataReloadRetainsRowsSelectionAndStateForTheNextRemoteEvent(string type)
+    [InlineData("series", false)]
+    [InlineData("season", false)]
+    [InlineData("series", true)]
+    [InlineData("season", true)]
+    public async Task MetadataReloadRetainsOnlyRowsFromTheSameParentForTheNextRemoteEvent(string type, bool parentChanged)
     {
         using var scope = new Scope(type);
         var mounted = scope.Vm.Item!;
@@ -1313,7 +1358,7 @@ public sealed class RealtimeDetailStateTests
         scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
         {
             ContentId = mounted.ContentId, Type = type, Title = "Edited title", Overview = "Translated overview",
-            SeriesId = "edited-parent", SeriesTitle = "Edited parent",
+            SeriesId = parentChanged ? "edited-parent" : mounted.SeriesId, SeriesTitle = "Edited parent",
             SeasonNumber = 1, PendingTranslationLanguage = null, PlayContentId = null,
             UserData = new() { Played = true, WatchedCount = 4 }
         });
@@ -1322,17 +1367,32 @@ public sealed class RealtimeDetailStateTests
 
         Assert.Same(mounted, scope.Vm.Item);
         Assert.Equal("Edited title", mounted.Title);
-        Assert.Equal("edited-parent", mounted.SeriesId);
+        Assert.Equal(parentChanged ? "edited-parent" : type == "season" ? "series" : null, mounted.SeriesId);
         Assert.Equal("Edited parent", mounted.SeriesTitle);
         Assert.Equal("Translated overview", mounted.Overview);
         Assert.Null(mounted.PendingTranslationLanguage);
         Assert.Same(viewerState, mounted.UserData);
         Assert.False(mounted.HasAuthoritativePlayTarget);
         Assert.Same(season, Assert.Single(scope.Vm.Seasons));
-        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        if (parentChanged)
+        {
+            Assert.Empty(scope.Vm.Episodes);
+            Assert.Null(scope.Vm.EpisodesSeasonContentId);
+            // A subsequent navigation-owned list load can establish fresh rows;
+            // remote state then updates those, never the old parent's objects.
+            var retiredEpisode = episode;
+            episode = new() { ContentId = "sibling", SeasonNumber = 1, UserData = new() { PositionSeconds = 31 } };
+            scope.Vm.Episodes.Add(episode);
+            scope.Vm.EpisodesSeasonContentId = "season";
+            Assert.NotSame(retiredEpisode, Assert.Single(scope.Vm.Episodes));
+        }
+        else
+        {
+            Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+            Assert.Equal("season", scope.Vm.EpisodesSeasonContentId);
+        }
         Assert.Single(scope.Vm.SimilarItems);
         Assert.Equal(1, scope.Vm.SelectedSeasonNumber);
-        Assert.Equal("season", scope.Vm.EpisodesSeasonContentId);
         Assert.False(scope.Vm.IsLoading);
 
         scope.OverrideDetail = null;
