@@ -117,6 +117,10 @@ internal static class BoxSetNativeFixture
         wire.CapabilityStatus = HttpStatusCode.ServiceUnavailable;
         var faultPage = new BoxSetPage(new CatalogApi(api), api) { Width = 540, Height = 600 }; parent.Children.Add(faultPage);
         await faultPage.ViewModel.LoadAsync("7", "12");
+        for (var i = 0; i < 100 && !faultPage.IsLoaded; i++) await Task.Delay(10);
+        faultPage.UpdateLayout();
+        Check(faultPage.IsLoaded && faultPage.ViewModel.Failure == DetailFailureKind.Transient, "capability fault reaches a loaded transient state");
+        Program.Log($"TRACE: capability fault page loaded={faultPage.IsLoaded}, failure={faultPage.ViewModel.Failure}, body={string.Join(',', faultPage.Body.Children.Select(x => x.GetType().Name))}, visual text={string.Join(',', Descendants(faultPage).OfType<TextBlock>().Select(x => x.Text))}.");
         Check(Descendants(faultPage).OfType<TextBlock>().Any(x => x.Text == "Could not load box set")
             && Descendants(faultPage).OfType<Button>().Any(x => (x.Content as string) == "Try again")
             && Descendants(faultPage).OfType<Button>().Any(x => x.Name == "BoxSetBack"), "capability fault has retry and back rather than terminal unavailable");

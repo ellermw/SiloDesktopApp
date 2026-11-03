@@ -46,6 +46,8 @@ internal static class BoxSetUnscopedNativeFixture
             Check(page.ViewModel.LibraryId == null && wire.MovieQuery == "" && wire.MembershipQuery == "", "unscoped route preserves absent library in both requests");
             var section = (FrameworkElement)page.FindName("BoxSetSection");
             var row = (StackPanel)page.FindName("BoxSetMovies");
+            await Wait(() => section.Visibility == Visibility.Visible && row.Children.Count == 2);
+            page.UpdateLayout();
             Check(section.Visibility == Visibility.Visible && Descendants(row).OfType<PosterCard>().Count() == 2, "actual unscoped detail renders optional membership row");
             Check(Descendants(row).OfType<PosterCard>().All(x => MediaNavigationContext.LibraryId(x) == 12), "discovered row adopts returned eligible library for member actions");
             await Capture(section, "unscoped-row-wide.png");
@@ -62,13 +64,14 @@ internal static class BoxSetUnscopedNativeFixture
             await Capture(section, "unscoped-row-compact.png");
             wire.Enabled = false;
             catalog.InvalidateLibraryCache();
-            await Wait(() => page.ViewModel.BoxSet == null);
+            await Wait(() => page.ViewModel.BoxSet == null && section.Visibility == Visibility.Collapsed);
             Check(section.Visibility == Visibility.Collapsed && row.Children.Count == 0, "disabled response library cannot borrow the other enabled library flag");
             wire.Enabled = true; await page.ViewModel.RefreshBoxSetAsync(); await Wait(() => section.Visibility == Visibility.Visible);
             wire.ReturnedLibrary = "99"; await page.ViewModel.RefreshBoxSetAsync();
+            await Wait(() => section.Visibility == Visibility.Collapsed);
             Check(page.ViewModel.BoxSet == null && section.Visibility == Visibility.Collapsed, "unknown returned library cannot appear in unscoped row");
             wire.ReturnedLibrary = "12"; await page.ViewModel.RefreshBoxSetAsync();
-            wire.Hold = true; var pending = page.ViewModel.RefreshBoxSetAsync(); await wire.Started.Task;
+            wire.Hold = true; var pending = page.ViewModel.RefreshBoxSetAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
             client.SetProfile("beta"); wire.Release.TrySetResult(); await pending;
             // Retiring the route must clear the previous visible row as well as the held result.
             navigation.NavigationRequestHandler = null; frame.Navigate(typeof(ItemDetailPage));
