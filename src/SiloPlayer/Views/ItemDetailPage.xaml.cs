@@ -2735,6 +2735,9 @@ public sealed partial class ItemDetailPage : Page
         if (!IsLoaded || ViewModel.Item is not { } item) return;
         ++_episodeSpoilerRevision;
         ApplyOverviewSpoilers();
+        if ((_overviewPendingOwner ?? _overviewConfiguredOwner) is { } overviewOwner &&
+            overviewOwner.Hidden != IsOverviewHidden(item))
+            ConfigureOverviewIfNeeded();
         if (ViewModel.Episodes.Count > 0 && item.Type is "series" or "season") LayoutEpisodeGrid();
         if (item.Type == "episode") BuildSiblingEpisodeCards();
     }
@@ -2742,7 +2745,6 @@ public sealed partial class ItemDetailPage : Page
     {
         _revealedEpisodeOverviewId = ViewModel.Item?.ContentId;
         ApplyEpisodeSpoilers();
-        _ = ConfigureOnViewTranslationAsync(ViewModel.Item);
     }
 
     private async Task ConfigureResetProgressAsync(MediaItemDetail item, MenuFlyoutItem action)

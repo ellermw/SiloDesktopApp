@@ -9,6 +9,7 @@ using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -113,6 +114,29 @@ internal static class EpisodeOverviewNativeFixture
             await Until(() => wire.Posts.Count == 1 && button.Visibility == Visibility.Collapsed);
             Check(wire.Posts.Single() == "/api/v2/catalog/items/episode/translate-description|de", "Own overview translation remains episode-owned and uses the new target");
             Set(page, "_revealedEpisodeOverviewId", null!);
+
+            foreach (var change in new[] { "watched", "progress" })
+            {
+                wire.Reset(); wire.OwnOverview = "An episode-specific plot.";
+                await Load();
+                await (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
+                var owner = vm.Item!;
+                Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed,
+                    "An unwatched own overview starts with its translation action hidden");
+                if (change == "watched") vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "episode"));
+                else vm.Receive(new PlaybackProgressUpdated("episode", 60, 1200, false));
+                Call(page, "ApplyEpisodeSpoilers");
+                await Until(() => button.Visibility == Visibility.Visible && button.IsEnabled);
+                Check(ReferenceEquals(vm.Item, owner) && overview.Visibility == Visibility.Visible &&
+                    ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed &&
+                    Field<string?>(page, "_revealedEpisodeOverviewId") == null && wire.Posts.Count == 0,
+                    $"A {change} change restores manual translation without reveal, reload or automatic translation");
+                ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Until(() => wire.Posts.Count == 1 && button.Visibility == Visibility.Collapsed);
+                Check(wire.Posts.Single() == "/api/v2/catalog/items/episode/translate-description|fr",
+                    "The restored action translates the current episode overview");
+            }
+            Program.Log("PASS: watched/progress spoiler transitions restore own-overview translation without Reveal or reload.");
 
             foreach (var missing in new[] { true, false })
             {

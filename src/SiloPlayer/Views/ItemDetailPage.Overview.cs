@@ -8,8 +8,9 @@ namespace SiloPlayer.Views;
 public sealed partial class ItemDetailPage
 {
     private long _overviewConfigurationRevision;
+    // Spoiler transitions must reconfigure translation even when the source scope is unchanged.
     private sealed record OverviewConfigurationOwner(MediaItemDetail Item, int? Library, ApiRequestContext Context,
-        long Language, CancellationTokenSource? Navigation);
+        long Language, CancellationTokenSource? Navigation, bool Hidden);
     private OverviewConfigurationOwner? _overviewConfiguredOwner, _overviewPendingOwner;
     private DateTimeOffset? _overviewRetryAt;
     private TimeSpan _overviewRetryDelay = TimeSpan.FromSeconds(1);
@@ -38,7 +39,7 @@ public sealed partial class ItemDetailPage
     {
         if (ViewModel.Item is not { } item || !IsCurrentDetail(item.ContentId) || _navigationCts?.IsCancellationRequested == true) return;
         var api = App.Services.GetRequiredService<CatalogApi>();
-        var owner = new OverviewConfigurationOwner(item, ViewModel.LibraryId, api.CaptureContext(), api.LocalizedReadGeneration, _navigationCts);
+        var owner = new OverviewConfigurationOwner(item, ViewModel.LibraryId, api.CaptureContext(), api.LocalizedReadGeneration, _navigationCts, IsOverviewHidden(item));
         if (owner == _overviewPendingOwner)
         {
             if (_overviewRetryAt is not { } retryAt || DateTimeOffset.UtcNow < retryAt) return;
@@ -88,7 +89,7 @@ public sealed partial class ItemDetailPage
         var language = api.LocalizedReadGeneration;
         var library = ViewModel.LibraryId;
         var navigation = _navigationCts;
-        var owner = new OverviewConfigurationOwner(item, library, context, language, navigation);
+        var owner = new OverviewConfigurationOwner(item, library, context, language, navigation, IsOverviewHidden(item));
         if (owner != _overviewPendingOwner) _overviewRetryDelay = TimeSpan.FromSeconds(1);
         _overviewRetryAt = null;
         _overviewPendingOwner = owner;
