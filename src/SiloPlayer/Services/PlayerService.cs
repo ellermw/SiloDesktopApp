@@ -3701,6 +3701,7 @@ public partial class PlayerService : IDisposable
         if (explicitSignature != null)
         {
             selectedTrack = session.SubtitleUrls.FirstOrDefault(track =>
+                !track.Unplayable &&
                 (string.IsNullOrWhiteSpace(explicitSignature.Source) ||
                     string.Equals(track.Source, explicitSignature.Source, StringComparison.OrdinalIgnoreCase)) &&
                 (string.IsNullOrWhiteSpace(explicitSignature.Language) ||
@@ -3719,6 +3720,7 @@ public partial class PlayerService : IDisposable
                 string.Equals(explicitSignature.Source, "downloaded", StringComparison.OrdinalIgnoreCase))
             {
                 selectedTrack = session.SubtitleUrls.FirstOrDefault(track =>
+                    !track.Unplayable &&
                     string.Equals(track.Source, "external", StringComparison.OrdinalIgnoreCase) &&
                     (string.IsNullOrWhiteSpace(explicitSignature.Language) ||
                         string.Equals(track.Language, explicitSignature.Language, StringComparison.OrdinalIgnoreCase)) &&
@@ -5495,14 +5497,26 @@ public partial class PlayerService : IDisposable
                 source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;
             }
             var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
+            var fileLoadGeneration = Volatile.Read(ref _fileLoadGeneration);
             var previousIds = mpv.GetSubtitleTrackIds().ToHashSet();
-            // Auto never replaces an explicit sid/Off. Select separately only
-            // after checking that this choice still owns the loaded file.
+            // mpv's auto flag can select the new track when sid is Off, even
+            // when a newer viewer choice retired this blocking add's owner.
             var added = mpv.AddSubtitle(source, label, track.Language, select: false);
             var newIds = mpv.GetSubtitleTrackIds(externalOnly: true).Where(id => !previousIds.Contains(id)).ToArray();
             lock (_subtitleTrackStateLock)
             {
-                if (!currentSelection() || !added || newIds.Length != 1) return false;
+                if (!currentSelection() || !added || newIds.Length != 1)
+                {
+                    // Undo only this add, never tracks from a replacement load
+                    // whose native IDs may have been reused in the meantime.
+                    if (!_closing && ReferenceEquals(mpv, _mpv) &&
+                        fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration))
+                    {
+                        if (added && newIds.Length == 1) mpv.RemoveSubtitle(newIds[0]);
+                        if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);
+                    }
+                    return false;
+                }
                 var sid = newIds[0];
                 _loadedExternalSubtitleSids[track.Index] = sid;
                 mpv.SetSubtitleTrack(sid);

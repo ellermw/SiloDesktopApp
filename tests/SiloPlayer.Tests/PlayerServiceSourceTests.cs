@@ -128,10 +128,13 @@ public sealed class PlayerServiceSourceTests
         var sidecar = source[source.IndexOf("private bool SelectSubtitleSidecar(", StringComparison.Ordinal)..];
         sidecar = sidecar[..sidecar.IndexOf("private long CurrentSubtitleSidecarGeneration()", StringComparison.Ordinal)];
         var add = sidecar.IndexOf("mpv.AddSubtitle(source, label, track.Language, select: false)", StringComparison.Ordinal);
-        var ownerCheck = sidecar.IndexOf("if (!currentSelection() || !added || newIds.Length != 1) return false;", add, StringComparison.Ordinal);
-        var select = sidecar.IndexOf("mpv.SetSubtitleTrack(sid);", ownerCheck, StringComparison.Ordinal);
-        Assert.True(add >= 0 && ownerCheck > add && select > ownerCheck,
-            "A complete sidecar add must not select until its owner and actual new native ID are verified.");
+        var ownerCheck = sidecar.IndexOf("if (!currentSelection() || !added || newIds.Length != 1)", add, StringComparison.Ordinal);
+        var cleanup = sidecar.IndexOf("if (added && newIds.Length == 1) mpv.RemoveSubtitle(newIds[0]);", ownerCheck, StringComparison.Ordinal);
+        var select = sidecar.IndexOf("mpv.SetSubtitleTrack(sid);", cleanup, StringComparison.Ordinal);
+        Assert.True(add >= 0 && ownerCheck > add && cleanup > ownerCheck && select > cleanup,
+            "A complete sidecar add must verify its owner and actual new native ID, removing a retired owner's addition.");
+        Assert.Contains("fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", sidecar[ownerCheck..select]);
+        Assert.Contains("if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);", sidecar[cleanup..select]);
         Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
         Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TickSubtitleWindows", source, StringComparison.Ordinal);

@@ -83,6 +83,14 @@ public partial class PlaybackManager
                 return;
             }
             var desired = MatchCurrentSubtitle();
+            // An automatic row that cannot uniquely rebind on another file is
+            // not a viewer request for Off. Accept that file's Auto grant, but
+            // retain the original row so returning to its source can rebind it.
+            if (_subtitleSelectionIsAutomatic && CurrentSession?.MediaFileId != _viewerSubtitleFile && desired == null)
+            {
+                AcknowledgeSubtitleIntent(revision);
+                return;
+            }
             var granted = GrantedSubtitleSelection();
             if (ReferenceEquals(desired, granted) &&
                 (desired != null || string.Equals(CurrentSession?.SubtitleMode, "off", StringComparison.OrdinalIgnoreCase)))
@@ -176,6 +184,7 @@ public partial class PlaybackManager
                 if (_viewerSubtitle == null) return;
                 _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
                 _hasViewerSubtitle = true;
+                _subtitleSelectionIsAutomatic = true;
             }
             // A replacement start has no accepted inventory yet. Retain the
             // identity (including Off), then resolve it against the returned

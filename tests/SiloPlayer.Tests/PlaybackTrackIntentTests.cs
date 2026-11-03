@@ -179,6 +179,68 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Theory]
+    [InlineData(false, false, 1)]
+    [InlineData(true, false, 1)]
+    [InlineData(false, true, 1)]
+    [InlineData(true, true, 1)]
+    [InlineData(false, false, -1)]
+    [InlineData(true, false, -1)]
+    [InlineData(false, true, -1)]
+    [InlineData(true, true, -1)]
+    public async Task UnmatchedAutomaticSubtitleKeepsReplacementGrantAndRetainsSourceIdentity(
+        bool localAutomaticSelection, bool ambiguousInventory, int replacementGrant)
+    {
+        using var scope = new Fixture();
+        var source = scope.Manager.WatchDetail!.Versions.Single(v => v.FileId == 42).SubtitleTracks![0];
+        source.Language = ambiguousInventory ? "eng" : "en-US";
+        source.Title = "Original";
+        scope.Manager.WatchDetail.Versions.Single(v => v.FileId == 44).SubtitleTracks =
+        [
+            new() { Language = "eng", Codec = "srt", Title = "Version B main" },
+            new() { Language = "eng", Codec = "srt", Title = "Version B alternate" },
+        ];
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+        if (localAutomaticSelection) scope.Manager.RecordLocalSubtitleSelection(0, isAutomatic: true);
+
+        scope.Wire.InitialSubtitleSelection = replacementGrant;
+        var replacement = await scope.Manager.StartReplacementSessionAsync(44, 14);
+        Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+        Assert.Empty(scope.Wire.Replans);
+        Assert.Equal(replacementGrant < 0 ? null : "sub:44:1", replacement.SelectedSubtitleTrackId);
+        Assert.Equal(replacementGrant, scope.Manager.SubtitleSelectionForLoad);
+
+        // Subsequent transport changes must keep the accepted Auto grant too.
+        await scope.Manager.ReplanQualityAsync("720p", 15);
+        Assert.Equal("quality_change", Assert.Single(scope.Wire.Replans).GetProperty("operation").GetString());
+        Assert.Equal(replacementGrant, scope.Manager.SubtitleSelectionForLoad);
+
+        // Accepting B's grant must not replace A's retained automatic identity.
+        scope.Wire.InitialSubtitleSelection = 1;
+        await scope.Manager.StartReplacementSessionAsync(42, 16);
+        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal("track_change", scope.Wire.Replans[^1].GetProperty("operation").GetString());
+        Assert.Equal(0, scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+        Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AutomaticSubtitleStillRebindsDuringSameFileReplacement(bool localAutomaticSelection)
+    {
+        using var scope = new Fixture();
+        scope.Wire.InitialSubtitleSelection = 1;
+        await scope.Manager.StartSessionAsync(42);
+        if (localAutomaticSelection) scope.Manager.RecordLocalSubtitleSelection(1, isAutomatic: true);
+        scope.Wire.InitialSubtitleSelection = 0;
+        await scope.Manager.StartReplacementSessionAsync(42, 14);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal("track_change", Assert.Single(scope.Wire.Replans).GetProperty("operation").GetString());
+        Assert.Equal(1, scope.Wire.Replans[0].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("und")]
     [InlineData("eng")]

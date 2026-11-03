@@ -535,6 +535,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 var selected = scenario is "newer-off" or "blocking-add-off" ? -1 : blockingAdd ? 3 : 1;
                 await ((Task)Call(service, "SelectSubtitleByServerIndexAsync", selected, true)!).WaitAsync(TimeSpan.FromSeconds(4));
                 await Until(() => seen.Contains(selected.ToString()));
+                if (blockingAdd)
+                    Require(!pending.IsCompleted && service.ActiveSubtitleServerIndex == selected &&
+                        (selected < 0 ? mpv.GetPropertyDouble("sid") <= 0 : mpv.GetPropertyDouble("sid") == 2),
+                        "Fixture did not establish a newer Off/native choice while the synchronous sub-add was blocked.");
             }
             else if (scenario is "reload-gap" or "manual-reload-gap")
             {
@@ -582,7 +586,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 Require(selected < 0 ? mpv.GetPropertyDouble("sid") <= 0 : blockingAdd ? mpv.GetPropertyDouble("sid") == 2 :
                     map.TryGetValue(selected, out var sid) && mpv.GetPropertyDouble("sid") == sid,
                     "Native SID differs from the latest viewer selection.");
-                Require(wire.PreferenceWrites == 1, "Superseded A persisted a stale subtitle preference.");
+                Require(manager.SubtitleSelectionForLoad == selected && wire.PreferenceWrites == 1 &&
+                    wire.RequestedPreferences.LastOrDefault() == selected,
+                    "Superseded A changed the latest intent or persisted a stale subtitle preference.");
+                if (blockingAdd)
+                    Require(!map.ContainsKey(0) && mpv.GetSubtitleTrackIds(externalOnly: true).Count == 0,
+                        "A retired blocking sub-add left its automatically selected sidecar in the native inventory.");
             }
             else if (scenario is "reload-gap" or "manual-reload-gap" or "reload-cleanup" or "close")
             {

@@ -239,6 +239,33 @@ internal static class SubtitleIdentityNativeFixture
                 var automaticVersion = new FileVersion { FileId = 42, AudioTracks = [new() { Language = "ja" }] };
                 try
                 {
+                    // Blank labels are signature wildcards. An unavailable
+                    // duplicate must not hide the playable row, including the
+                    // older downloaded-to-external source alias.
+                    foreach (var (requestedSource, playableIndex) in new[] { ("embedded", 2), ("downloaded", 7), ("downloaded", 0) })
+                    {
+                        var playable = originalInventory.Single(t => t.Index == playableIndex);
+                        session.SubtitleUrls =
+                        [
+                            new() { Index = 8, Source = playable.Source, Language = playable.Language,
+                                Codec = playable.Codec, Label = "Unavailable duplicate", Unplayable = true },
+                            playable,
+                        ];
+                        var signature = new SubtitleTrackSignature { Source = requestedSource, Language = playable.Language,
+                            Codec = playable.Codec, Label = "" };
+                        Call(service, "ResolveInitialSubtitleSelection", automaticWatch, automaticVersion, session, null, null, signature);
+                        Require((int?)Get(service, "_pendingInitialServerSubtitleIndex") == playableIndex &&
+                            manager.SubtitleSelectionForLoad == playableIndex,
+                            "Pre-play signature bound an unavailable duplicate instead of the playable row.");
+                        Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", playableIndex, false)!,
+                            "The playable pre-play signature choice did not execute.");
+                        var prePlaySidecars = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                        Require(service.ActiveSubtitleServerIndex == playableIndex &&
+                            (playableIndex == 2 ? mpv.GetPropertyDouble("sid") == 1 :
+                                prePlaySidecars.TryGetValue(playableIndex, out var prePlaySid) && mpv.GetPropertyDouble("sid") == prePlaySid) &&
+                            wire.PreferenceWrites == 0 && mpv.IsPaused,
+                            "Pre-play signature lost its native selection, wrote a preference or changed viewer pause.");
+                    }
                     foreach (var hasFallback in new[] { true, false })
                     {
                         session.SubtitleUrls = hasFallback
