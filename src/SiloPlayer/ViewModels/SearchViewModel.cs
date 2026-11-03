@@ -357,7 +357,7 @@ public partial class SearchViewModel : ObservableObject
     public void CancelPendingSearch()
     {
         _boxSetSearchActive = false;
-        BoxSets.Retire();
+        BoxSets.Suspend();
         var previousActions = _externalActionsCts; _externalActionsCts = new(); previousActions.Cancel(); previousActions.Dispose(); _externalPending.Clear();
         OutsideWatchlistTitlesSupported = false;
         Interlocked.Exchange(ref _peopleRetryCts, null)?.Cancel();

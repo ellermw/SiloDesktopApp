@@ -145,6 +145,56 @@ public sealed class BoxSetSearchStateTests
         Assert.False(state.IsLoading); Assert.Empty(state.Items); wire.Release.TrySetResult();
     }
 
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public async Task SameScopePublishedCallbacksStayOpenableDuringPolicyRevalidation(bool failPolicy)
+    {
+        using var wire = new Wire(); var state = new BoxSetSearchState(new CatalogApi(wire.Client()));
+        await state.SearchAsync("Film"); var row = state.Items[0]; var generation = state.Generation;
+        wire.HoldPolicy = true;
+        if (failPolicy) wire.PolicyFailurePath = "/api/v2/user/libraries";
+        var refresh = state.SearchAsync("Film", refresh: true);
+        await wire.PolicyStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(state.IsLoading); Assert.Same(row, state.Items[0]);
+        Assert.Equal(generation, state.Generation); Assert.True(state.CanOpen(row, generation));
+
+        wire.PolicyRelease.TrySetResult(); await refresh;
+        if (failPolicy) Assert.Same(row, state.Items[0]);
+        Assert.False(state.CanOpen(row, generation));
+        Assert.True(state.CanOpen(state.Items[0], state.Generation));
+    }
+
+    [Fact]
+    public async Task SameScopePublishedCallbacksStayOpenableDuringFailedCatalogRefresh()
+    {
+        using var wire = new Wire(); var state = new BoxSetSearchState(new CatalogApi(wire.Client()));
+        await state.SearchAsync("Film"); var row = state.Items[0];
+        wire.Hold = true; wire.Status = HttpStatusCode.ServiceUnavailable;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refresh = state.SearchAsync("Film", refresh: true);
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var generation = state.Generation;
+        Assert.True(state.IsLoading); Assert.True(state.CanOpen(row, generation));
+        wire.Release.TrySetResult(); await refresh;
+        Assert.Equal(generation, state.Generation); Assert.True(state.CanOpen(row, generation));
+    }
+
+    [Theory]
+    [InlineData("query")] [InlineData("library")] [InlineData("profile")] [InlineData("language")]
+    public async Task SuspendedRowsRetireWhenTheirScopeChanges(string change)
+    {
+        using var wire = new Wire(); var client = wire.Client(); var state = new BoxSetSearchState(new CatalogApi(client));
+        await state.SearchAsync("Film"); var row = state.Items[0]; var generation = state.Generation;
+        state.Suspend();
+        Assert.Same(row, state.Items[0]); Assert.False(state.CanOpen(row, generation));
+        if (change == "profile") client.SetProfile("other");
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.PolicyFailurePath = "/api/v2/user/libraries";
+        await state.SearchAsync(change == "query" ? "Other" : "Film", change == "library" ? 12 : null);
+        Assert.Empty(state.Items); Assert.False(state.CanOpen(row, generation));
+    }
+
     private static void ExpireCapabilities(CatalogApi catalog)
     {
         var field = typeof(CatalogApi).GetField("_searchRuleCache", BindingFlags.NonPublic | BindingFlags.Instance)!;
@@ -160,13 +210,18 @@ public sealed class BoxSetSearchStateTests
         internal bool Supported = true, Enabled = true, Hold; internal int SearchReads; internal string? LastSearch;
         internal HttpStatusCode Status = HttpStatusCode.OK;
         internal string? PolicyFailurePath;
-        internal bool PolicyTimeout;
+        internal bool PolicyTimeout, HoldPolicy;
+        internal TaskCompletionSource PolicyStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), PolicyRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal HttpStatusCode PolicyStatus = HttpStatusCode.ServiceUnavailable;
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal SiloApiClient Client() { var client = new SiloApiClient(new HttpClient(this)); client.SetBaseUrl("https://boxset-state.invalid"); client.SetProfile("alpha"); return client; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath; var body = "{}"; var status = HttpStatusCode.OK;
+            if (path == "/api/v2/user/libraries" && HoldPolicy)
+            {
+                PolicyStarted.TrySetResult(); await PolicyRelease.Task.WaitAsync(ct);
+            }
             if (path == PolicyFailurePath)
             {
                 if (PolicyTimeout) await Task.Delay(Timeout.InfiniteTimeSpan, ct);

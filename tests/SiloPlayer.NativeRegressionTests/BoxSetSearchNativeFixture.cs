@@ -105,6 +105,17 @@ internal static class BoxSetSearchNativeFixture
         await Task.Run(() => persisted.TrySetResult()); await Until(() => wire.SearchReads > before && !model.BoxSets.IsLoading);
         Check(publicationsOnUi, "background full playback notification publishes only on the UI dispatcher");
         await Task.Delay(80); aggregate = Descendants<BoxSetCard>(section).Single();
+        var refreshRouteCount = routes.Count; wire.HoldPolicyNext(); catalog.InvalidateLibraryCache();
+        await wire.PolicyStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Invoke(aggregate); await Task.Delay(40);
+        Check(routes.Count == refreshRouteCount + 1 && routes[^1].Type == typeof(BoxSetPage),
+            "already-rendered full-search card remains clickable during held background policy refresh");
+        wire.UnholdPolicy(); await Until(() => !model.BoxSets.IsLoading);
+        await BackAsync(frame, page, model, wire);
+        await Task.Delay(80); aggregate = Descendants<BoxSetCard>(section).Single();
+        var returnRouteCount = routes.Count; Invoke(aggregate); await Task.Delay(40);
+        Check(routes.Count == returnRouteCount + 1 && routes[^1].Args is BoxSetNavigationArgs { Id: "7", LibraryId: "12" },
+            "cached-page return rebinds actual aggregate cards to the current visit");
         var routeCount = routes.Count; model.Query = "New query"; Invoke(aggregate); await Task.Delay(40);
         Check(routes.Count == routeCount && model.BoxSets.Items.Count == 0, "full stale aggregate callback retires immediately on query edit");
         wire.HoldNext(); await model.SearchCommand.ExecuteAsync(null); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -130,6 +141,41 @@ internal static class BoxSetSearchNativeFixture
         Check(model.BoxSets.Items.Count == 0, "full delayed read cannot publish under another profile");
         page.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Disabled;
         frame.Navigate(typeof(Page)); frame.CacheSize = 0; frame.BackStack.Clear();
+    }
+
+    private static async Task BackAsync(Frame frame, SearchPage page, SearchViewModel model, Wire wire)
+    {
+        // Use the real input/debounce so Back does not create a new text edit.
+        ((TextBox)page.FindName("SearchBox")).Text = "Scroll";
+        await Until(() => model.Results.Count == 60 && !model.IsLoading && !model.BoxSets.IsLoading && model.BoxSets.Items.Count == 1);
+        await Task.Delay(150); page.UpdateLayout();
+        var section = (FrameworkElement)page.FindName("BoxSetSearchSection");
+        var scroll = (ScrollViewer)page.FindName("ResultsScroll");
+        Check(scroll.ScrollableHeight > 600, "Back regression has a scrollable title grid");
+        scroll.ChangeView(null, scroll.ScrollableHeight - 40, null, disableAnimation: true);
+        await Task.Delay(150); var offset = scroll.VerticalOffset;
+        Check(offset > 600, "Back regression starts near the bottom of the title grid");
+        var retained = model.BoxSets.Items.Single(); var generation = model.BoxSets.Generation;
+        var emptied = false;
+        model.BoxSets.Items.CollectionChanged += (_, _) => emptied |= model.BoxSets.Items.Count == 0;
+        wire.HoldPolicyNext();
+        frame.Navigate(typeof(Page));
+        Check(model.BoxSets.Items.Contains(retained) && !model.BoxSets.CanOpen(retained, generation), "departure retains mounted rows but suspends aggregate actions");
+        frame.GoBack();
+        await wire.PolicyStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(150); page.UpdateLayout();
+        Check(ReferenceEquals(frame.Content, page) && section.Visibility == Visibility.Visible && !emptied,
+            "actual Frame.GoBack retains the cached box-set section during held policy revalidation");
+        Check(Math.Abs(scroll.VerticalOffset - offset) < 1, "Back preserves the title-grid reading position while policy is pending");
+        Check(model.BoxSets.CanOpen(retained, model.BoxSets.Generation), "returning visit rebinds retained aggregate actions before policy completes");
+        wire.FailPolicy = true; wire.UnholdPolicy();
+        await Until(() => !model.BoxSets.IsLoading); await Task.Delay(100); page.UpdateLayout();
+        Check(section.Visibility == Visibility.Visible && !emptied && ReferenceEquals(model.BoxSets.Items.Single(), retained),
+            "failed return policy keeps the last validated same-scope rows mounted");
+        Check(Math.Abs(scroll.VerticalOffset - offset) < 1, "failed return policy does not shift or clamp the reading position");
+        wire.FailPolicy = false;
+        scroll.ChangeView(null, 0, null, disableAnimation: true);
+        await Until(() => scroll.VerticalOffset < 1 && Descendants<BoxSetCard>(section).Any());
     }
 
     private static async Task QuickAsync(Wire wire, SiloApiClient client, CatalogApi catalog, List<(Type Type, object? Args)> routes)
@@ -257,7 +303,10 @@ internal static class BoxSetSearchNativeFixture
     { public object? GetService(Type type) => values.TryGetValue(type, out var value) ? value : fallback.GetService(type); }
     private sealed class Wire : HttpMessageHandler
     {
-        internal bool Enabled = true, Fail, Hold, RequestsEnabled; internal int SearchReads, CatalogReads, WatchReads, Played;
+        internal bool Enabled = true, Fail, Hold, RequestsEnabled, HoldPolicy, FailPolicy; internal int SearchReads, CatalogReads, WatchReads, Played;
+        internal TaskCompletionSource PolicyStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), PolicyRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void HoldPolicyNext() { HoldPolicy = true; PolicyStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); PolicyRelease = new(TaskCreationOptions.RunContinuationsAsynchronously); }
+        internal void UnholdPolicy() { HoldPolicy = false; PolicyRelease.TrySetResult(); }
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void HoldNext() { Hold = true; Started = new(TaskCreationOptions.RunContinuationsAsynchronously); Release = new(TaskCreationOptions.RunContinuationsAsynchronously); }
         internal void Unhold() { Hold = false; Release.TrySetResult(); }
@@ -267,8 +316,23 @@ internal static class BoxSetSearchNativeFixture
             var path = request.RequestUri.AbsolutePath; var body = "{\"items\":[],\"page\":{\"has_more\":false}}"; var status = HttpStatusCode.OK;
             var empty = request.RequestUri.Query.Contains("NoTitles");
             if (path == "/api/v2/catalog/search/capabilities") body = "{\"box_sets\":true,\"people_media_scope\":true}";
-            if (path == "/api/v2/user/libraries") body = "{\"items\":[{\"id\":12,\"enabled\":true,\"box_sets_enabled\":" + Enabled.ToString().ToLowerInvariant() + "}]}";
-            if (path == "/api/v2/catalog") { CatalogReads++; if (!empty) body = "{\"items\":[{\"content_id\":\"film\",\"title\":\"Film\",\"type\":\"movie\"}],\"total\":60,\"page\":{\"has_more\":false}}"; }
+            if (path == "/api/v2/user/libraries")
+            {
+                if (HoldPolicy) { PolicyStarted.TrySetResult(); await PolicyRelease.Task.WaitAsync(ct); }
+                status = FailPolicy ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
+                body = "{\"items\":[{\"id\":12,\"enabled\":true,\"box_sets_enabled\":" + Enabled.ToString().ToLowerInvariant() + "}]}";
+            }
+            if (path == "/api/v2/catalog")
+            {
+                CatalogReads++;
+                if (request.RequestUri.Query.Contains("q=Scroll"))
+                    body = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        items = Enumerable.Range(0, 60).Select(i => new { content_id = "scroll-" + i, title = "Film " + i, type = "movie" }),
+                        total = 60, page = new { has_more = false }
+                    });
+                else if (!empty) body = "{\"items\":[{\"content_id\":\"film\",\"title\":\"Film\",\"type\":\"movie\"}],\"total\":60,\"page\":{\"has_more\":false}}";
+            }
             if (path == "/api/v2/catalog/people" && !empty) body = "{\"items\":[{\"id\":\"person\",\"name\":\"A Person\"}]}";
             if (path == "/api/v2/catalog/box-sets")
             {

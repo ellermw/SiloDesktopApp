@@ -99,6 +99,7 @@ public sealed partial class SearchPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        var generation = ++_navigationGeneration;
         _isNavigated = true;
         ViewModel.BeginSearchVisit();
         _catalogApi.LibraryCacheInvalidated += RefreshBoxSetSearch;
@@ -134,7 +135,6 @@ public sealed partial class SearchPage : Page
         // scope loads without blocking typing; query facets remain deferred
         // until the user opens the filter sheet.
         _ = EnsureInitializedAsync();
-        var generation = ++_navigationGeneration;
         _shownRatingSources = _catalogApi.CachedShownRatingSources;
         UpdateResultSortChoices();
         _ = RefreshRatingSortChoicesAsync(generation);

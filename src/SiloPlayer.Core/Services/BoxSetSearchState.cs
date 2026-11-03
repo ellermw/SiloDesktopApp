@@ -18,21 +18,29 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
     private Func<bool>? _isCurrent;
     private bool _isLoading;
     private bool _policyValidated;
+    private bool _suspended;
     private readonly ResultCollection _items = [];
     public ObservableCollection<BoxSetSummary> Items => _items;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
     public long Generation { get; private set; }
 
-    public bool CanOpen(BoxSetSummary set, long generation) => generation == Generation && _policyValidated && IsCurrentScope() && Items.Contains(set);
+    public bool CanOpen(BoxSetSummary set, long generation) => !_suspended && generation == Generation && _policyValidated && IsCurrentScope() && Items.Contains(set);
 
     private bool IsCurrentScope() => _scope is { } scope && catalog.IsCurrentContext(scope.Context)
         && catalog.MetadataLanguageGeneration == scope.Language && (_isCurrent?.Invoke() ?? true);
 
+    // Cached pages keep their layout, but departure must stop reads and actions.
+    public void Suspend()
+    {
+        _suspended = true;
+        CancelPending();
+        IsLoading = false;
+    }
+
     public void Retire()
     {
-        Generation++;
-        CancelPending();
-        _scope = null; _isCurrent = null; _policyValidated = false; Replace([]); IsLoading = false;
+        Suspend();
+        _scope = null; _isCurrent = null; _policyValidated = false; Replace([]);
     }
 
     private void CancelPending()
@@ -51,12 +59,16 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
         {
             // The last successful policy remains valid for this exact owner if
             // revalidation fails transiently; retained rows stay openable.
-            Generation++; CancelPending();
+            CancelPending();
         }
         else Retire();
         if (!enabled || query.Length == 0) return;
+        var resume = _suspended && _policyValidated;
         _scope = scope;
         _isCurrent = isCurrent;
+        _suspended = false;
+        // Rebind retained cards to the returning visit before any policy await.
+        if (resume) Replace(Items);
         var owner = _pending = new CancellationTokenSource(TimeSpan.FromSeconds(6));
         var ct = owner.Token;
         bool Current() => ReferenceEquals(_pending, owner) && !ct.IsCancellationRequested && IsCurrentScope();
@@ -93,8 +105,8 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
             if (ReferenceEquals(_pending, owner))
             {
                 if (!IsCurrentScope() || !_policyValidated) Replace([]);
-                // Rebind retained cards to this generation even when policy
-                // failed before the cached snapshot could be republished.
+                // Publish the retained snapshot when policy failed before
+                // the cached snapshot could be republished.
                 else if (!policyReadCompleted) Replace(Items);
                 _pending = null; IsLoading = false;
             }
@@ -104,6 +116,8 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
 
     private void Replace(IEnumerable<BoxSetSummary> items)
     {
+        // A read does not invalidate callbacks for still-published rows.
+        Generation++;
         _items.Replace(items);
     }
 

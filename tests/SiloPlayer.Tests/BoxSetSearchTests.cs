@@ -90,12 +90,42 @@ public sealed class BoxSetSearchTests
         Assert.Empty(vm.BoxSets.Items); Assert.Equal(1, wire.SearchReads); Assert.Contains("library_id=99", wire.LastCatalog); vm.CancelPendingSearch();
     }
 
+    [Theory]
+    [InlineData("return")] [InlineData("sort")] [InlineData("filter")]
+    public async Task FullSearchRetainsMountedRowsAcrossReturnAndSameQueryReruns(string change)
+    {
+        using var wire = new Wire(); var vm = Model(wire.Client()); vm.Query = "Film";
+        await vm.SearchCommand.ExecuteAsync(null); await Until(() => !vm.BoxSets.IsLoading);
+        var row = Assert.Single(vm.BoxSets.Items); var generation = vm.BoxSets.Generation;
+        var emptied = false;
+        vm.BoxSets.Items.CollectionChanged += (_, _) => emptied |= vm.BoxSets.Items.Count == 0;
+        if (change == "return")
+        {
+            vm.CancelPendingSearch();
+            Assert.Same(row, Assert.Single(vm.BoxSets.Items));
+            Assert.False(vm.BoxSets.CanOpen(row, generation));
+            vm.BeginSearchVisit();
+        }
+        else if (change == "sort") vm.SortOrder = "asc";
+        else vm.Genre = "Drama";
+        wire.HoldLibraries = true; wire.FailLibraries = true;
+        var refresh = change == "return" ? vm.RefreshBoxSetSearchAsync() : vm.SearchCommand.ExecuteAsync(null);
+        await wire.LibrariesStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(vm.BoxSets.IsLoading); Assert.Same(row, Assert.Single(vm.BoxSets.Items));
+        Assert.True(vm.BoxSets.CanOpen(row, vm.BoxSets.Generation));
+        wire.LibrariesRelease.TrySetResult(); await refresh; await Until(() => !vm.BoxSets.IsLoading);
+        Assert.Same(row, Assert.Single(vm.BoxSets.Items)); Assert.False(emptied);
+        Assert.True(vm.BoxSets.CanOpen(row, vm.BoxSets.Generation));
+        vm.CancelPendingSearch();
+    }
+
     private static SearchViewModel Model(SiloApiClient client) => new(new CatalogApi(client), new PeopleApi(client), new RequestsApi(client), new SettingsApi(client));
     private static async Task Until(Func<bool> ready) { for (var i = 0; i < 100 && !ready(); i++) await Task.Delay(10); Assert.True(ready()); }
 
     private sealed class Wire : HttpMessageHandler
     {
-        public string? LastSearch, LastCatalog; public int SearchReads; public bool Hold;
+        public string? LastSearch, LastCatalog; public int SearchReads; public bool Hold, HoldLibraries, FailLibraries;
+        public TaskCompletionSource LibrariesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), LibrariesRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<string> LibraryQueries { get; } = [];
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient Client() { var client = new SiloApiClient(new HttpClient(this)); client.SetBaseUrl("https://boxset-search.invalid"); client.SetProfile("alpha"); return client; }
@@ -107,6 +137,8 @@ public sealed class BoxSetSearchTests
             if (path == "/api/v2/user/libraries")
             {
                 LibraryQueries.Add(request.RequestUri.Query);
+                if (HoldLibraries) { LibrariesStarted.TrySetResult(); await LibrariesRelease.Task.WaitAsync(ct); }
+                if (FailLibraries) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
                 body = request.RequestUri.Query.Contains("include_hidden=true")
                     ? "{\"items\":[{\"id\":12,\"enabled\":true,\"box_sets_enabled\":true},{\"id\":99,\"enabled\":true,\"box_sets_enabled\":true}]}"
                     : "{\"items\":[{\"id\":12,\"enabled\":true,\"box_sets_enabled\":true}]}";
