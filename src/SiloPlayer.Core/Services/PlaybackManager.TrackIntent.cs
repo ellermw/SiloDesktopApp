@@ -55,8 +55,7 @@ public partial class PlaybackManager
             {
                 if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
                     return MatchCurrentSubtitle()?.Index ?? -1;
-                return CurrentSession?.SubtitleUrls.FirstOrDefault(t =>
-                    !t.Unplayable && t.TrackId == CurrentSession.SelectedSubtitleTrackId)?.Index ?? -1;
+                return GrantedSubtitleSelection()?.Index ?? -1;
             }
         }
     }
@@ -108,14 +107,28 @@ public partial class PlaybackManager
             return _audioRevision;
         }
     }
+    private SubtitleTrackInfo? GrantedSubtitleSelection()
+    {
+        var session = CurrentSession;
+        if (session == null) return null;
+        // Empty legacy IDs are not identities, and an omitted selection is Off.
+        var matches = session.SubtitleUrls.Where(t => !t.Unplayable &&
+            (!string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)
+                ? t.TrackId == session.SelectedSubtitleTrackId
+                : session.SelectedSubtitleTrackIndex is int index && t.Index == index)).Take(2).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
     private SubtitleTrackInfo? MatchCurrentSubtitle()
     {
         if (_viewerSubtitle == null) return null;
         var tracks = CurrentSession?.SubtitleUrls.Where(t => !t.Unplayable).ToList() ?? [];
-        return tracks.FirstOrDefault(t => !string.IsNullOrEmpty(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId)
-            ?? tracks.Where(t => SameLanguage(t.Language, _viewerSubtitle.Language) &&
+        return tracks.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId)
+            ?? tracks.Where(t => MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
                 t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired)
-                .OrderByDescending(t => SubtitleScore(t.Source, t.Codec, t.Label, _viewerSubtitle)).FirstOrDefault();
+                .OrderByDescending(t => UnknownSubtitleLanguage(_viewerSubtitle.Language) &&
+                    CurrentSession?.MediaFileId == _viewerSubtitleFile && t.Index == _viewerSubtitle.Index)
+                .ThenByDescending(t => SubtitleScore(t.Source, t.Codec, t.Label, _viewerSubtitle)).FirstOrDefault();
     }
     private int? ReplacementSubtitleIndex(int fileId)
     {
@@ -124,7 +137,7 @@ public partial class PlaybackManager
             // A granted automatic selection also survives a transport/session replacement.
             if (!_hasViewerSubtitle)
             {
-                _viewerSubtitle = CurrentSession?.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.TrackId == CurrentSession.SelectedSubtitleTrackId);
+                _viewerSubtitle = GrantedSubtitleSelection();
                 _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
                 _hasViewerSubtitle = true;
             }
@@ -133,7 +146,8 @@ public partial class PlaybackManager
                 return CurrentSession?.MediaFileId == fileId ? MatchCurrentSubtitle()?.Index : _viewerSubtitle.Index;
             var tracks = WatchDetail?.Versions.FirstOrDefault(v => v.FileId == fileId)?.SubtitleTracks ?? [];
             return tracks.Select((track, i) => (Track: track, Index: track.Index ?? i))
-                .Where(t => SameLanguage(t.Track.Language, _viewerSubtitle.Language) &&
+                .Where(t => MatchesSubtitleLanguage(t.Track.Language, t.Track.External == true ? "external" : "embedded",
+                    t.Track.Codec, t.Track.Title ?? t.Track.EmbeddedTitle, _viewerSubtitle) &&
                     (t.Track.Forced == true) == _viewerSubtitle.Forced &&
                     (t.Track.HearingImpaired == true) == _viewerSubtitle.HearingImpaired)
                 .OrderByDescending(t => SubtitleScore(t.Track.External == true ? "external" : "embedded",
@@ -177,6 +191,16 @@ public partial class PlaybackManager
            !string.Equals(left.Trim(), "und", StringComparison.OrdinalIgnoreCase) &&
            !string.Equals(right.Trim(), "und", StringComparison.OrdinalIgnoreCase) &&
            MediaLanguageCatalog.Normalize(left) == MediaLanguageCatalog.Normalize(right);
+    private static bool MatchesSubtitleLanguage(string? language, string? source, string? codec, string? label, SubtitleTrackInfo desired)
+        => SameLanguage(language, desired.Language) ||
+           UnknownSubtitleLanguage(language) && UnknownSubtitleLanguage(desired.Language) &&
+           Equal(source, desired.Source) && Equal(codec, desired.Codec) &&
+           Equal(label ?? "", SubtitleIdentityLabel(desired) ?? "");
+    // Adapted legacy rows can use the language itself as a synthesized label.
+    private static string? SubtitleIdentityLabel(SubtitleTrackInfo track)
+        => track.NativeTitle ?? (Equal(track.Label, track.Language) ? null : track.Label);
+    private static bool UnknownSubtitleLanguage(string? language)
+        => string.IsNullOrWhiteSpace(language) || Equal(language, "und");
     private static string CanonicalLanguage(string? language)
     {
         var parts = (language ?? "").Trim().ToLowerInvariant().Replace('_', '-').Split('-');

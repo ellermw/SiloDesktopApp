@@ -22,6 +22,7 @@ public class PlaybackStartResponse
     public double TimelineOffsetSeconds { get; set; }
     public bool CanSeekAnywhere { get; set; } = true;
     public string? SelectedSubtitleTrackId { get; set; }
+    public int? SelectedSubtitleTrackIndex { get; set; }
     public string SubtitleMode { get; set; } = "off";
 
     /// <summary>

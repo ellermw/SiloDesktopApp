@@ -140,11 +140,15 @@ internal static class SubtitleIdentityNativeFixture
                     mpv.SetSubtitleTrack(0);
                     await (Task)Call(service, "SelectSubtitleByServerIndexAsync", previousIndex, false)!;
                     Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
-                        manager.SubtitleSelectionForLoad == -1 && wire.PreferenceWrites == preferenceWrites,
-                        "A native-only choice remained highlighted after replacement with a no-route remux.");
+                        manager.SubtitleSelectionForLoad == previousIndex && wire.PreferenceWrites == preferenceWrites,
+                        "A no-route remux retained a false highlight or erased the viewer's native subtitle intent.");
                     previousTrack.Url = previousUrl;
                     Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", Path.Combine(assets, "tracks.mkv")));
-                    await service.SetSubtitleTrackAndPersistAsync(3, previousTrack.Language, previousTrack);
+                    Call(service, "LoadSubtitles");
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", manager.SubtitleSelectionForLoad, false)!;
+                    Require(service.ActiveSubtitleServerIndex == previousIndex && mpv.GetPropertyDouble("sid") == previousSid &&
+                        wire.PreferenceWrites == preferenceWrites,
+                        "Returning to direct play did not retry the retained native subtitle intent.");
 
                     var busy = new SubtitleTrackInfo { Index = 10, Source = "embedded", Codec = "subrip", Language = "en",
                         StreamIndex = 99, ContainerTrackId = "99", Url = subtitles.Origin + "/busy.srt" };
@@ -169,17 +173,39 @@ internal static class SubtitleIdentityNativeFixture
                     Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
                         wire.PreferenceWrites == preferenceWrites && !cache.ContainsKey(busy.Index),
                         "Failed sidecar add while Off guessed SID 1 or persisted the failed choice.");
-                    Program.Log("PASS: no-route and failed-sidecar selections retain executed SID/intent/preferences, deferred choices persist only after execution, and SiloCast refuses unavailable choices.");
+                    // A transient sidecar failure on reload must affect only this
+                    // file's execution, not turn the viewer's session intent Off.
+                    subtitles.Fail = false;
+                    var reloadSidecar = session.SubtitleUrls.Single(t => t.Index == 0);
+                    await service.SetSubtitleTrackAndPersistAsync(1, reloadSidecar.Language, reloadSidecar);
+                    preferenceWrites = wire.PreferenceWrites;
+                    subtitles.Fail = true;
+                    Call(service, "LoadSubtitles");
+                    mpv.SetSubtitleTrack(0);
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", reloadSidecar.Index, false)!;
+                    Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                        manager.SubtitleSelectionForLoad == reloadSidecar.Index && wire.PreferenceWrites == preferenceWrites,
+                        "A transient reload sidecar failure replaced viewer intent with Off.");
+                    subtitles.Fail = false;
+                    Call(service, "LoadSubtitles");
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", manager.SubtitleSelectionForLoad, false)!;
+                    Require(service.ActiveSubtitleServerIndex == reloadSidecar.Index &&
+                        cache.TryGetValue(reloadSidecar.Index, out var retriedSid) && mpv.GetPropertyDouble("sid") == retriedSid &&
+                        manager.SubtitleSelectionForLoad == reloadSidecar.Index && wire.PreferenceWrites == preferenceWrites,
+                        "The next reload failed to execute the retained sidecar intent without changing preferences.");
+                    Program.Log("PASS: no-route and failed-sidecar selections retain executed SID/intent/preferences, transient reload failures retry on the next file, deferred choices persist only after execution, and SiloCast refuses unavailable choices.");
                 }
                 finally { mpv.ScriptMessageReceived -= Notice; }
                 return;
             }
             var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var inventory = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var notices = 0;
             void Observe(string[] message)
             {
                 if (message.FirstOrDefault() == "silo-identity-ready") ready.TrySetResult();
                 if (message.FirstOrDefault() == "silo-identity-inventory" && message.Length > 1) inventory.TrySetResult(message[1]);
+                if (message.FirstOrDefault() == "silo-identity-auto-notice") Interlocked.Increment(ref notices);
             }
             mpv.ScriptMessageReceived += Observe;
             try
@@ -190,6 +216,12 @@ internal static class SubtitleIdentityNativeFixture
                     mp.register_script_message('osc-set-subtitles', function(payload)
                         mp.commandv('script-message', 'silo-identity-inventory', payload)
                     end)
+                    mp.register_script_message('osc-show-notice', function(payload)
+                        mp.commandv('script-message', 'silo-identity-auto-notice')
+                    end)
+                    mp.register_script_message('silo-identity-auto-drain', function()
+                        mp.commandv('script-message', 'silo-identity-ready')
+                    end)
                     mp.commandv('script-message', 'silo-identity-ready')
                     """);
                 Call(mpv, "Command", (object)new[] { "load-script", probe });
@@ -198,6 +230,37 @@ internal static class SubtitleIdentityNativeFixture
                 using var payload = JsonDocument.Parse(await inventory.Task.WaitAsync(TimeSpan.FromSeconds(4)));
                 Require(payload.RootElement.GetArrayLength() == 6 && payload.RootElement.EnumerateArray().Single(t => t.GetProperty("index").GetInt32() == 3).GetProperty("unplayable").GetBoolean(),
                     "Production OSC payload lost unavailable row or its combined ordinal.");
+
+                var originalInventory = session.SubtitleUrls;
+                var automaticNoRoute = new SubtitleTrackInfo { Index = 9, Source = "embedded", Codec = "webvtt",
+                    Language = "en", StreamIndex = 99, ContainerTrackId = "99" };
+                var automaticWatch = new WatchDetailResponse { EffectiveSubtitleMode = "always", EffectiveSubtitleLanguage = "en",
+                    EffectiveShowForcedSubtitles = false };
+                var automaticVersion = new FileVersion { FileId = 42, AudioTracks = [new() { Language = "ja" }] };
+                try
+                {
+                    foreach (var hasFallback in new[] { true, false })
+                    {
+                        session.SubtitleUrls = hasFallback
+                            ? [automaticNoRoute, originalInventory.Single(t => t.Index == 2)] : [automaticNoRoute];
+                        Call(service, "ResolveInitialSubtitleSelection", automaticWatch, automaticVersion, session, null, null, null);
+                        // Both embedded candidates have equal priority: the first
+                        // row wins before load, but only the second is executable.
+                        Require((int?)Get(service, "_pendingInitialServerSubtitleIndex") == 9,
+                            "Automatic fixture did not establish the unroutable provisional choice.");
+                        var owner = new CancellationTokenSource();
+                        Set(service, "_loadedMediaInitCts", owner);
+                        await (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
+                        ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        Call(mpv, "Command", (object)new[] { "script-message", "silo-identity-auto-drain" });
+                        await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        Require(service.ActiveSubtitleServerIndex == (hasFallback ? 2 : -1) &&
+                            (hasFallback ? mpv.GetPropertyDouble("sid") == 1 : mpv.GetPropertyDouble("sid") <= 0) &&
+                            Volatile.Read(ref notices) == 0 && wire.PreferenceWrites == 0,
+                            "Automatic startup did not skip unroutable candidates quietly and execute the next eligible track (or Off).");
+                    }
+                }
+                finally { session.SubtitleUrls = originalInventory; }
             }
             finally { mpv.ScriptMessageReceived -= Observe; }
             var english = session.SubtitleUrls.Single(t => t.Index == 2);

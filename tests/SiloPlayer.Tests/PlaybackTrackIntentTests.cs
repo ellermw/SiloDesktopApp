@@ -143,6 +143,52 @@ public sealed class PlaybackTrackIntentTests
         Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(-1)]
+    public async Task LegacyPlanUsesSelectedIndexAndKeepsOffAcrossQualityReload(int selected)
+    {
+        using var scope = new Fixture();
+        scope.Wire.OmitTrackIds = true;
+        scope.Wire.InitialSubtitleSelection = selected;
+        var session = await scope.Manager.StartSessionAsync(42);
+        Assert.Equal(selected < 0 ? (int?)null : selected, session.SelectedSubtitleTrackIndex);
+        Assert.Equal(selected, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.ReplanQualityAsync("720p", 12);
+        Assert.Equal(selected, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Single(scope.Wire.Replans);
+        var tracks = scope.Wire.Replans[0].GetProperty("selected_tracks");
+        if (selected < 0) Assert.False(tracks.TryGetProperty("subtitle", out _));
+        else Assert.Equal(selected, tracks.GetProperty("subtitle").GetProperty("index").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("und")]
+    public async Task LegacyUnlabelledManualChoiceSurvivesQualityAudioAndVersionChanges(string language)
+    {
+        using var scope = new Fixture();
+        scope.Wire.OmitTrackIds = true;
+        scope.Wire.UnlabelledSubtitleLanguage = language;
+        foreach (var version in scope.Manager.WatchDetail!.Versions)
+        foreach (var track in version.SubtitleTracks!.Where(t => t.Language == "spa"))
+        {
+            track.Language = language;
+            track.Title = null;
+        }
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.ReplanQualityAsync("720p", 12);
+        Assert.Equal(1, scope.Wire.Replans[0].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.ReplanAudioAsync(1, 13);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.StartReplacementSessionAsync(44, 14);
+        Assert.Equal(0, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
+        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public readonly Wire Wire = new();
@@ -177,6 +223,9 @@ public sealed class PlaybackTrackIntentTests
         public List<string> Paths = [];
         public bool BlockNext;
         public bool FailNextReplan;
+        public bool OmitTrackIds;
+        public int InitialSubtitleSelection;
+        public string? UnlabelledSubtitleLanguage;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _file = 42, _selected = 0;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -190,7 +239,7 @@ public sealed class PlaybackTrackIntentTests
             if (path.EndsWith("/start"))
             {
                 Starts.Add(body); _file = int.Parse(body.GetProperty("file_id").GetString()!);
-                _selected = body.TryGetProperty("subtitle_track_index", out var startSub) ? startSub.GetInt32() : Starts.Count == 1 ? 0 : -1;
+                _selected = body.TryGetProperty("subtitle_track_index", out var startSub) ? startSub.GetInt32() : Starts.Count == 1 ? InitialSubtitleSelection : -1;
             }
             else
             {
@@ -205,9 +254,15 @@ public sealed class PlaybackTrackIntentTests
                 if (BlockNext) { BlockNext = false; Entered.SetResult(); await Release.Task.WaitAsync(ct); }
             }
             var version = Version(_file, _file == 44, _file == 43);
-            var inventory = (version.SubtitleTracks ?? []).Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, label = t.Title, source = "embedded", delivery = "native" })
-                .Concat(_file == 42 ? new[] { new { track_id = "sub:42:2", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
-            var subtitleIdentity = _selected < 0 ? null : new { id = $"sub:{_file}:{_selected}", index = _selected };
+            if (UnlabelledSubtitleLanguage is { } language)
+                foreach (var track in version.SubtitleTracks!.Where(t => t.Language == "spa"))
+                {
+                    track.Language = language;
+                    track.Title = null;
+                }
+            var inventory = (version.SubtitleTracks ?? []).Select(t => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, label = t.Title, source = "embedded", delivery = "native" })
+                .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : "sub:42:2", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
+            var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}", index = _selected };
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "session",
@@ -216,7 +271,7 @@ public sealed class PlaybackTrackIntentTests
                     protocol_version = 3, plan_id = $"plan-{Starts.Count}-{Replans.Count}", plan_attempt_key = "key", session_id = "session", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = "/stream" }, timeline = new { can_seek_anywhere = true },
                     selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = subtitleIdentity },
-                    subtitle = new { mode = _selected < 0 ? "off" : "native", track_id = _selected < 0 ? null : $"sub:{_file}:{_selected}", inventory },
+                    subtitle = new { mode = _selected < 0 ? "off" : "native", track_id = OmitTrackIds ? "" : _selected < 0 ? null : $"sub:{_file}:{_selected}", inventory },
                 },
             }));
         }
