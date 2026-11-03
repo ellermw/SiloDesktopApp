@@ -163,7 +163,13 @@ public sealed partial class CollectionEditorPage : Page
             if (!Current() || ViewModel.IsLoadUnavailable) return;
             BuildImportedOptionsUI(); BuildRulesUI(); PopulateSmartFields();
             UpdateEditorSummary(); UpdateSectionVisibility();
-            if (kind == "synced") await ConfigureSyncedCreationAsync();
+            if (kind == "synced")
+            {
+                var shownRatingSources = await SiloPlayer.Controls.CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>());
+                if (!Current()) return;
+                _shownRatingSources = shownRatingSources;
+                await ConfigureSyncedCreationAsync();
+            }
             if (!Current()) return;
             _draftBaseline = CaptureDraft();
         }

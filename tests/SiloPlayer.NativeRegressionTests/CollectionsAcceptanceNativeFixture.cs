@@ -286,7 +286,7 @@ internal static class CollectionsAcceptanceNativeFixture
             "Synced editor uses the retired section heading and caption");
         Probe(All<ScrollViewer>(page).Any(s => s.MaxHeight == 420 && ReferenceEquals(s.Content, Read(page, "_syncedChoices"))),
             "Synced popular picks have no bounded420px scroll surface");
-        Probe(All<TextBlock>(page).Any(t => t.Text == "Or paste any MDBList link") && All<TextBlock>(page).Any(t => t.Text.StartsWith("Blank takes the whole list, up to 500.")),
+        Probe(All<TextBlock>(page).Any(t => t.Text == "Or paste any MDBList link") && All<TextBlock>(page).Any(t => t.Text.StartsWith("Blank takes up to 10,000 titles")),
             "Synced link and Order omit current visible labels/help");
         var pristine = (Dictionary<string, string>)Call(page, "CaptureDraft")!;
         All<RadioButton>(page).Single(button => Equals(button.Content, "TMDB chart")).IsChecked = true;
@@ -683,8 +683,7 @@ internal static class CollectionsAcceptanceNativeFixture
                 await Viewport(frame, window, width);
                 page = new CollectionEditorPage(); frame.Content = page;
                 Set(page, "_editorActive", true);
-                await page.ViewModel.LoadReferenceDataCommand.ExecuteAsync(null);
-                await (Task)Call(page, "ConfigureSyncedCreationAsync")!;
+                await (Task)Call(page, "InitializeNewEditorAsync", "synced")!;
                 await Layout();
             }
             else page = await Editor(frame, window, "imported");
@@ -697,6 +696,8 @@ internal static class CollectionsAcceptanceNativeFixture
             Check(!direction!.IsEnabled && ((ComboBoxItem)direction.SelectedItem).Content as string == "As listed",
                 "Source order must disable direction as As listed.");
             var sortItems = sort.Items.OfType<ComboBoxItem>().ToArray();
+            Check(new[] { "rating_rt_critic:desc", "rating_rt_audience:desc" }.All(value => sortItems.Any(item => Equals(item.Tag, value))),
+                "New and saved synced editors must offer the server's available RT rating sorts.");
             Check(sort.Focus(FocusState.Keyboard), "Sort must accept keyboard focus before opening its popup.");
             sort.IsDropDownOpen = true; await Layout();
             try
@@ -743,10 +744,18 @@ internal static class CollectionsAcceptanceNativeFixture
             Check(page.ViewModel.DefaultSortValue == "year:desc" && direction.Items.OfType<ComboBoxItem>()
                 .Select(item => item.Content as string).SequenceEqual(new[] { "Oldest first", "Newest first" }),
                 "Year must use the WebUI's date direction labels.");
+            CheckClosedDirection(direction, "Newest first");
             sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "runtime:desc")); await Layout();
             Check(page.ViewModel.DefaultSortValue == "runtime:desc" && direction.Items.OfType<ComboBoxItem>()
                 .Select(item => item.Content as string).SequenceEqual(new[] { "Lowest first", "Highest first" }),
                 "Numeric field must use default direction and numeric labels.");
+            CheckClosedDirection(direction, "Highest first");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "year:desc")); await Layout();
+            direction.SelectedItem = direction.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "asc")); await Layout();
+            CheckClosedDirection(direction, "Oldest first");
+            sort.SelectedItem = sort.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "title:asc")); await Layout();
+            Check(page.ViewModel.DefaultSortValue == "title:asc", "Changing fields must retain Title's ascending default.");
+            CheckClosedDirection(direction, "A–Z");
             page.ViewModel.IsSaving = true; await Layout();
             Check(!direction.IsEnabled && !sort.IsEnabled, "Pending saves must disable both order controls.");
             page.ViewModel.IsSaving = false; await Layout();
@@ -776,6 +785,14 @@ internal static class CollectionsAcceptanceNativeFixture
             if (!create) await SyncedDiscardAsync(page);
             frame.Content = null;
         }
+    }
+
+    private static void CheckClosedDirection(ComboBox direction, string expected)
+    {
+        var presenter = All<ContentPresenter>(direction).Single(item => item.Name == "ContentPresenter");
+        Check(!direction.IsDropDownOpen && presenter.Content as string == expected &&
+            All<TextBlock>(presenter).Any(text => text.Text == expected && text.ActualWidth > 0 && text.ActualHeight > 0),
+            $"Closed Direction box must display {expected} after changing fields without changing direction.");
     }
 
     private static async Task SyncedDiscardAsync(CollectionEditorPage page)
@@ -907,6 +924,7 @@ internal static class CollectionsAcceptanceNativeFixture
             if (path.EndsWith("/mdblist/search")) { SearchCalls++; SearchQuery = request.RequestUri.Query; return await SearchGate!.Task.WaitAsync(ct); }
             if (path == "/api/v2/collections/preview") { PreviewCalls++; PreviewBody = await request.Content!.ReadAsStringAsync(ct); if (PreviewGate != null) return await PreviewGate.Task; return RejectPreview ? Reply(new { message = "Fixture preview rejected" }, HttpStatusCode.ServiceUnavailable) : Reply(new { total = 80, items = Enumerable.Range(0, 24).Select(i => new { content_id = "preview-" + i, title = "Preview " + i, type = "movie", poster_url = PosterUrl }).ToArray() }); }
             if (path.EndsWith("/mdblist/top")) { TopCalls++; return Reply(new { configured = true, items = new[] { List("top", "Top list") } }); }
+            if (path == "/api/v2/capabilities/ratings") return Reply(new { state = "available", sources = new[] { new { source = "rt_critic" }, new { source = "rt_audience" } } });
             if (path == "/api/v2/collections/capabilities") return RejectCapabilities ? Reply(new { message = "Fixture capabilities rejected" }, HttpStatusCode.ServiceUnavailable) : Reply(new { item_reorder = false, imports = true, import_sources = ImportSources, mdblist_search = true, artwork = true, sync_schedule_editable = true });
             if (path == "/api/v2/collections/templates") return Reply(new { categories = new[] { new { category = "featured", label = "Featured", templates = new[] { new { id = Template.Id, title = Template.Title, description = Template.Description, source = "tmdb", media_kind = "movie", icon = Template.Icon, requires_profile = true, default_sync_schedule = Template.DefaultSyncSchedule, default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "" } }, new { id = "popular", title = "Popular pick", description = "Source pick", source = "mdblist", media_kind = "movie", icon = Template.Icon, requires_profile = false, default_sync_schedule = "0 0 * * *", default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "https://mdblist.com/lists/fixture/popular/" } } } } } });
             if (path == "/api/v2/collections") return Reply(new { items = new[] { Collection("manual"), Collection("imported") }, groups = Array.Empty<object>() });

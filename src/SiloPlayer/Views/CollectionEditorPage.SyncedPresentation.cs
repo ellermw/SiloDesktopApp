@@ -160,10 +160,15 @@ public sealed partial class CollectionEditorPage
             foreach (var item in _syncedDirection.Items.OfType<ComboBoxItem>())
             {
                 var direction = (string)item.Tag;
-                item.Content = field.Length == 0 ? "As listed"
+                var label = field.Length == 0 ? "As listed"
                     : alphabetical ? direction == "asc" ? "A–Z" : "Z–A"
                     : date ? direction == "asc" ? "Oldest first" : "Newest first"
                     : direction == "asc" ? "Lowest first" : "Highest first";
+                // WinUI copies the selected row's content into the closed box.
+                // Reselect only when its label changes, retaining open-popup rows.
+                if (ReferenceEquals(_syncedDirection.SelectedItem, item) && !Equals(item.Content, label))
+                    _syncedDirection.SelectedItem = null;
+                item.Content = label;
             }
             _syncedDirection.SelectedItem = _syncedDirection.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, order));
             _syncedDirection.IsEnabled = synced && field.Length > 0 && choice != null && !ViewModel.IsReadOnly && !ViewModel.IsSaving;
