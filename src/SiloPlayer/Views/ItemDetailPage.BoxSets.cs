@@ -7,26 +7,56 @@ using Microsoft.UI.Xaml.Automation;
 namespace SiloPlayer.Views;
 public sealed partial class ItemDetailPage
 {
-    private void BoxSetLanguageChanged(long _) => DispatcherQueue.TryEnqueue(RefreshBoxSetRow);
-    private async void RefreshBoxSetRow() => await ViewModel.RefreshBoxSetAsync();
+    private string? _boxSetRowItem, _boxSetRowId, _boxSetRowLibrary;
+    private void BoxSetLanguageChanged(long _) => RefreshBoxSetRow();
+    private void RefreshBoxSetRow()
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(RefreshBoxSetRow); return; }
+        _ = ViewModel.RefreshBoxSetAsync();
+    }
+    private void EnsureBoxSetSectionOrder()
+    {
+        var sections = new FrameworkElement[] { CastSection, ExtrasSection, TrailersSection, BoxSetSection, SimilarSection, MediaLocationsSection };
+        var positions = sections.Select(section => DetailContentPanel.Children.IndexOf(section)).ToArray();
+        if (positions.SequenceEqual(positions.OrderBy(x => x))) return;
+        foreach (var section in sections)
+        { DetailContentPanel.Children.Remove(section); DetailContentPanel.Children.Add(section); }
+    }
     private void BoxSetViewAll_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.BoxSet is {} set) App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
     }
     private void BuildBoxSetRow()
     {
-        BoxSetMovies.Children.Clear(); BoxSetSection.Visibility = Visibility.Collapsed;
-        if (ViewModel.BoxSet is not {} set || ViewModel.Item is not { Type: "movie" } item) return;
-        foreach (var section in new FrameworkElement[] { CastSection, ExtrasSection, TrailersSection, BoxSetSection, SimilarSection, MediaLocationsSection })
-        { DetailContentPanel.Children.Remove(section); DetailContentPanel.Children.Add(section); }
+        if (ViewModel.BoxSet is not {} set || ViewModel.Item is not { Type: "movie" } item)
+        {
+            BoxSetMovies.Children.Clear(); BoxSetSection.Visibility = Visibility.Collapsed;
+            _boxSetRowItem = _boxSetRowId = _boxSetRowLibrary = null;
+            return;
+        }
+        EnsureBoxSetSectionOrder();
+        var members = set.Items.Where(SiloPlayer.Core.Models.Catalog.BoxSetDetail.IsMovieMember).ToArray();
+        var cards = BoxSetMovies.Children.OfType<Grid>().Select(panel => panel.Children.OfType<PosterCard>().Single()).ToArray();
         BoxSetTitle.Text = set.Title; BoxSetSection.Visibility = Visibility.Visible;
+        if (_boxSetRowItem == item.ContentId && _boxSetRowId == set.Id && _boxSetRowLibrary == set.LibraryId
+            && cards.Select(card => card.MediaItem?.ContentId).SequenceEqual(members.Select(movie => movie.ContentId)))
+        {
+            foreach (var (card, movie) in cards.Zip(members))
+            {
+                if (!ReferenceEquals(card.MediaItem, movie)) card.RefreshItem(movie);
+                if (movie.ContentId == item.ContentId) AutomationProperties.SetName(card, movie.Title + ", This film");
+            }
+            return;
+        }
+        BoxSetMovies.Children.Clear();
+        _boxSetRowItem = item.ContentId; _boxSetRowId = set.Id; _boxSetRowLibrary = set.LibraryId;
         var current = 0; var index = 0;
         foreach (var movie in set.Items)
         {
             if (!SiloPlayer.Core.Models.Catalog.BoxSetDetail.IsMovieMember(movie)) continue;
             var panel = new Grid();
             var card = new PosterCard { MediaItem = movie };
-            // The returned set's library owns every member action, even from an unscoped detail.
+            // The scoped membership response owns every member action.
             card.Tag = new ItemDetailNavigationArgs(movie.ContentId, int.TryParse(set.LibraryId, out var library) ? library : null);
             panel.Children.Add(card);
             if (movie.ContentId == item.ContentId)

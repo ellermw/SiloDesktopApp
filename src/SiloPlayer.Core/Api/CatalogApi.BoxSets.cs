@@ -10,14 +10,21 @@ public partial class CatalogApi
         catch (OperationCanceledException) { throw; }
         catch { return false; }
     }
-    public async Task<bool> BoxSetsEnabledAsync(int? libraryId, CancellationToken ct = default)
+    public async Task<bool> BoxSetsEnabledAsync(int? libraryId, CancellationToken ct = default, bool throwOnCapabilityFailure = false)
     {
+        // A different library's flag is never authority for an unscoped movie.
+        if (libraryId is not > 0) return false;
         var context = client.CaptureContext();
-        if (!await SupportsBoxSetsAsync(ct)) return false;
-        var libraries = await client.SendRequestAsync<BrowseCollection<Library>>(context, HttpMethod.Get, "/api/v2/user/libraries", null, ct);
+        bool supported;
+        try { supported = (await GetSearchRuleCapabilitiesAsync(context, ct)).BoxSets; }
+        catch (OperationCanceledException) { throw; }
+        catch (ApiException ex) when (ex.StatusCode == 404) { return false; }
+        catch when (!throwOnCapabilityFailure) { return false; }
+        if (!supported) return false;
+        var libraries = await client.SendRequestAsync<BrowseCollection<Library>>(context, HttpMethod.Get, "/api/v2/user/libraries?include_hidden=true", null, ct);
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Box-set library authority changed.", ct);
-        return libraries.Items.Any(x => x.Enabled && x.BoxSetsEnabled && (!libraryId.HasValue || x.Id == libraryId));
+        return libraries.Items.Any(x => x.Enabled && x.BoxSetsEnabled && x.Id == libraryId);
     }
     public Task<BoxSetDetail> GetBoxSetAsync(string id, string libraryId, CancellationToken ct = default)
     {
