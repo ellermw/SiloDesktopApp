@@ -1,6 +1,6 @@
 # Native Audio menu Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Open a real bounded native Audio menu from the active OSC and route one current source-track choice through existing playback authority, with correct dismissal and lifecycle ownership.
 
@@ -40,36 +40,36 @@
 
 **Interfaces:** `PlaybackMenuRequest` carries owner token, monotonic request sequence and normalized opener rectangle derived from bounded finite OSD coordinates. `PlaybackMenuRequestGate.ResetOwner(string token)`, `TryOpen(PlaybackMenuRequest request)` and `TryClose(string token,long sequence)` reject stale owner/replay/late close. No credentials in tokens. Host sends `osc-native-audio-scope(token)`; Lua emits `silo-native-audio-open(token,sequence,x,y,w,h,osdWidth,osdHeight)` and keeps its input guard until matching `osc-native-menu-closed(token,sequence,consumeDismissal)`.
 
-- [ ] Add failing production-policy tests for old owner, replay, newer replacement, stale close and invalid/NaN/oversized coordinates; show a meaningful red before implementation.
-- [ ] Add actual-Lua tests for desktop and compact/controller opens, no legacy menu overlap, exact scoped handoff, blocked underlay pause/seek/volume while pending, matching vs stale close and generation reset. Preserve legacy behavior without capability.
-- [ ] Implement the minimal request/anchor policy and Lua protocol, then run focused tests green under the guarded runner.
-- [ ] Commit only when the integrated caller in Task3 exists; no dormant framework PR.
+- [x] Add failing production-policy tests for old owner, replay, newer replacement, stale close and invalid/NaN/oversized coordinates; show a meaningful red before implementation.
+- [x] Add actual-Lua tests for desktop and compact/controller opens, no legacy menu overlap, exact scoped handoff, blocked underlay pause/seek/volume while pending, matching vs stale close and generation reset. Preserve legacy behavior without capability.
+- [x] Implement the minimal request/anchor policy and Lua protocol, then run focused tests green under the guarded runner.
+- [x] Commit only when the integrated caller in Task3 exists; no dormant framework PR.
 
 ### Task 2: Native Audio surface and dismissal
 
 **Interfaces:** immutable `PlaybackAudioChoice(int SourceIndex,string Title,string Metadata,string Codec,string Channels,bool IsDefault,bool IsCurrent)`; native menu consumes owner video HWND, normalized anchor, current-request predicate and selected/closed callbacks. `ShowAsync(...)` waits for its actual XamlRoot with cancellation/deadline; `CloseAsync(reason)` destroys its owned window and finishes exactly once. Closed reasons distinguish selection/Escape/owner retirement from deactivation/outside pointer dismissal.
 
-- [ ] Write native red: current service/Lua open cannot produce a native menu. Capture actual missing behavior against preserved original app; no synthetic menu drawn by the fixture as a substitute.
-- [ ] Implement menu-sized borderless owned window, tool-window/no-app-window styles, Silo theme/icon, bounded rows and current check/badges. Ensure a long list uses native scrolling and keyboard/controller focus, Home/End, Enter/Space and Escape.
-- [ ] Observe actual owner AppWindow bounds/visibility and clamp opener-relative menu geometry with explicit physical/DPI conversion. Close on owner loss/hide/mode retirement; unsubscribe all events/handlers in Dispose.
-- [ ] Consume native activation dismissal using WM_MOUSEACTIVATE's eat return; guard left down/up when video was already active, suppress the whole sequence, and clear only this request's hook. Keep UI failures inside managed/native boundaries. No full-screen transparent input layer.
-- [ ] Verify actual owned HWND z-order, no extra taskbar style, UIA row/selection/scroll, native input messages on owned fixture HWNDs, pause/position continuity and cleanup. Offscreen tests must not activate user windows or imply physical input/HDR/DPI observation.
+- [x] Write native red: current service/Lua open cannot produce a native menu. Capture actual missing behavior against preserved original app; no synthetic menu drawn by the fixture as a substitute.
+- [x] Implement menu-sized borderless owned window, tool-window/no-app-window styles, Silo theme/icon, bounded rows and current check/badges. Ensure a long list uses native scrolling and keyboard/controller focus, Home/End, Enter/Space and Escape.
+- [x] Observe actual owner AppWindow bounds/visibility and clamp opener-relative menu geometry with explicit physical/DPI conversion. Close on owner loss/hide/mode retirement; unsubscribe all events/handlers in Dispose.
+- [x] Consume native activation dismissal using WM_MOUSEACTIVATE's eat return; guard left down/up when video was already active, suppress the whole sequence, and clear only this request's hook. Keep UI failures inside managed/native boundaries. No full-screen transparent input layer.
+- [x] Verify actual owned HWND z-order, no extra taskbar style, UIA row/selection/scroll, native input messages on owned fixture HWNDs, pause/position continuity and cleanup. Offscreen tests must not activate user windows or imply physical input/HDR/DPI observation.
 
 ### Task 3: Real PlayerService integration
 
 **Interfaces:** partial captures authority + API context, manager/current session, mpv/video identity, content/file, play-request and file-load generations, original track references and request lease. Every queued UI callback and await revalidates this context. The only audio action is existing `SwitchAudioTrackAsync(sourceIndex)` after current inventory validation.
 
-- [ ] Add failing real-service native cases for the open intent, out-of-order opens, stale selection/close and replan/load/authority replacement. Use synthetic API and actual owned renderer; never initialize the owner's account.
-- [ ] Publish/rotate the native capability scope with the current audio inventory. Close and drain the old host before acquiring the existing playback-dialog semaphore; one presentation owns one release. Reject while an unrelated dialog owns it. No old finally block may release a successor's input/gate.
-- [ ] Wire actual OSC open/navigation/activate/cancel messages to the native host, and delegate original source indices after full validation. Opening/closing never pauses or seeks; selection retains existing backend replan and current viewer/room intent. Recheck context before publishing any completion/error.
-- [ ] Retire at earliest BeginMpvLoad, authority/play replacement, minimized/idle/post-roll modes, native teardown and existing subtitle-dialog handoff. Revoke Lua scope/guard on current-owner retirement; stale acknowledgements cannot reopen or unlock another menu.
-- [ ] Run scoped native/lifecycle/protocol tests green and exercise actual rendered menu over synthetic video, current/pending/failure/empty/long labels and selected-row focus/scroll. Document physical focus/input limits precisely.
+- [x] Add failing real-service native cases for the open intent, out-of-order opens, stale selection/close and replan/load/authority replacement. Use synthetic API and actual owned renderer; never initialize the owner's account.
+- [x] Publish/rotate the native capability scope with the current audio inventory. Close and drain the old host before acquiring the existing playback-dialog semaphore; one presentation owns one release. Reject while an unrelated dialog owns it. No old finally block may release a successor's input/gate.
+- [x] Wire actual OSC open/navigation/activate/cancel messages to the native host, and delegate original source indices after full validation. Opening/closing never pauses or seeks; selection retains existing backend replan and current viewer/room intent. Recheck context before publishing any completion/error.
+- [x] Retire at earliest BeginMpvLoad, authority/play replacement, minimized/idle/post-roll modes, native teardown and existing subtitle-dialog handoff. Revoke Lua scope/guard on current-owner retirement; stale acknowledgements cannot reopen or unlock another menu.
+- [x] Run scoped native/lifecycle/protocol tests green and exercise actual rendered menu over synthetic video, current/pending/failure/empty/long labels and selected-row focus/scroll. Document physical focus/input limits precisely.
 
 ### Task 4: Verification, compatibility and Beta PR
 
-- [ ] Run full unit suite, one fresh Release publish and explicit native Audio fixture under SiloOct18Build; seal input/payload/fixture hashes and visually inspect captures. Reuse unchanged product evidence only when fingerprints match.
-- [ ] Check PR75/77/86 latest heads. Do not copy their backend fixes or push to their branches. Verify a separate combined tree when Audio overlaps PR86's current Lua HUD/input work; keep per-branch vs combined claims distinct.
-- [ ] Independent Standards/Spec review of the exact source, focused red/green corrections and final re-review. Preserve meaningful evidence rather than source-string heuristics.
+- [x] Run full unit suite, one fresh Release publish and explicit native Audio fixture under SiloOct18Build; seal input/payload/fixture hashes and visually inspect captures. Reuse unchanged product evidence only when fingerprints match.
+- [x] Check PR75/77/86 latest heads. Do not copy their backend fixes or push to their branches. Verify a separate combined tree when Audio overlaps PR86's current Lua HUD/input work; keep per-branch vs combined claims distinct.
+- [x] Independent Standards/Spec review of the exact source, focused red/green corrections and final re-review. Preserve meaningful evidence rather than source-string heuristics.
 - [ ] Inspect fresh remote target/head/discussion/inline thread state separately before normal push; new same-repo PR targets Beta with no stamp edits. Attach PR and leave its branch to the pipeline.
 
 ## Self-review and execution rulings
