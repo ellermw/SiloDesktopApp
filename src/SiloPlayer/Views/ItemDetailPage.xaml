@@ -1251,6 +1251,8 @@
                             IsTabStop="True"
                             KeyDown="SiblingEpisodesScrollViewer_KeyDown"
                             ViewChanged="SiblingEpisodesScrollViewer_ViewChanged"
+                            ScrollCompleted="SiblingEpisodesScrollViewer_ScrollCompleted"
+                            StateChanged="SiblingEpisodesScrollViewer_StateChanged"
                             ExtentChanged="SiblingEpisodesScrollViewer_ExtentChanged"
                             PointerWheelChanged="SiblingEpisodesScrollViewer_PointerWheelChanged"
                             SizeChanged="SiblingEpisodesScrollViewer_SizeChanged"

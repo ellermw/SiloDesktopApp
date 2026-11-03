@@ -59,6 +59,8 @@ public sealed partial class ItemDetailPage : Page
     private double _siblingEpisodesDragStartX;
     private double _siblingEpisodesDragStartOffset;
     private bool _siblingEpisodesDragging;
+    private double? _siblingEpisodesScrollTarget;
+    private int _siblingEpisodesScrollRequest = -1;
     private uint? _detailCarouselDragPointerId;
     private ScrollViewer? _detailCarouselDragScroller;
     private double _detailCarouselDragStartX;
@@ -106,6 +108,7 @@ public sealed partial class ItemDetailPage : Page
         UpdateThemeGradientColors();
 
         this.Loaded += OnPageLoaded;
+        Unloaded += (_, _) => { if (!IsLoaded) RetireSiblingEpisodeScrollRequest(); };
         Loaded += (_, _) => ViewModel.SimilarItems.CollectionChanged += OnSimilarItemsChanged;
         Unloaded += (_, _) => ViewModel.SimilarItems.CollectionChanged -= OnSimilarItemsChanged;
         Loaded += (_, _) =>
@@ -492,6 +495,29 @@ public sealed partial class ItemDetailPage : Page
     private void SiblingEpisodesScrollViewer_ViewChanged(ScrollView sender, object args)
         => UpdateSiblingEpisodeScrollButtons();
 
+    private void SiblingEpisodesScrollViewer_ScrollCompleted(ScrollView sender, ScrollingScrollCompletedEventArgs args)
+    {
+        if (_siblingEpisodesScrollRequest < 0 || args.CorrelationId != _siblingEpisodesScrollRequest) return;
+        RetireSiblingEpisodeScrollRequest();
+        UpdateSiblingEpisodeScrollButtons();
+    }
+
+    private void SiblingEpisodesScrollViewer_StateChanged(ScrollView sender, object args)
+    {
+        if (sender.State is ScrollingInteractionState.Interaction or ScrollingInteractionState.Inertia)
+            RetireSiblingEpisodeScrollRequest();
+    }
+
+    private double SiblingEpisodeNavigationOffset => Math.Clamp(
+        _siblingEpisodesScrollTarget ?? SiblingEpisodesScrollViewer.HorizontalOffset,
+        0, Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
+
+    private void RetireSiblingEpisodeScrollRequest()
+    {
+        _siblingEpisodesScrollTarget = null;
+        _siblingEpisodesScrollRequest = -1;
+    }
+
     private void SiblingEpisodesScrollViewer_ExtentChanged(ScrollView sender, object args)
     {
         TryAlignSiblingEpisodeToStart();
@@ -507,9 +533,12 @@ public sealed partial class ItemDetailPage : Page
         // The presenter excludes native wheel redirection. Upright wheel is
         // left unhandled for ContentScroll, including bursts during inertia.
         if (delta == 0) return;
-        ScrollSiblingEpisodesTo(SiblingEpisodesScrollViewer.HorizontalOffset + delta, animate: false);
+        ApplySiblingHorizontalDelta(delta);
         e.Handled = true;
     }
+
+    private void ApplySiblingHorizontalDelta(double delta)
+        => ScrollSiblingEpisodesTo(SiblingEpisodeNavigationOffset + delta, animate: false);
 
     private void SiblingEpisodesScrollViewer_KeyDown(object sender, KeyRoutedEventArgs e)
     {
@@ -526,6 +555,7 @@ public sealed partial class ItemDetailPage : Page
 
     private void SiblingEpisodesScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        RetireSiblingEpisodeScrollRequest();
         UpdateSiblingEpisodeCardSizes();
         TryAlignSiblingEpisodeToStart();
         UpdateSiblingEpisodeScrollButtons();
@@ -579,7 +609,7 @@ public sealed partial class ItemDetailPage : Page
     {
         var stride = SiblingEpisodeCardWidth() + SiblingEpisodesPanel.Spacing;
         var cardsPerPage = Math.Max(1, Math.Floor(SiblingEpisodesScrollViewer.ViewportWidth / stride));
-        var position = SiblingEpisodesScrollViewer.HorizontalOffset / stride;
+        var position = SiblingEpisodeNavigationOffset / stride;
         // A drag or horizontal wheel can leave a partial card at the leading
         // edge. Start the next page from a whole-card index in either direction.
         var index = direction > 0 ? Math.Floor(position + .001) + cardsPerPage
@@ -590,9 +620,18 @@ public sealed partial class ItemDetailPage : Page
     private void ScrollSiblingEpisodesTo(double offset, bool animate = true)
     {
         var target = Math.Clamp(offset, 0, Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
-        SiblingEpisodesScrollViewer.ScrollTo(target, 0, new ScrollingScrollOptions(
+        var request = SiblingEpisodesScrollViewer.ScrollTo(target, 0, new ScrollingScrollOptions(
             animate ? ScrollingAnimationMode.Auto : ScrollingAnimationMode.Disabled,
             ScrollingSnapPointsMode.Ignore));
+        // Offset notifications lag queued requests. Retain the clamped target
+        // until this operation ends, and ignore older interrupted completions.
+        if (request >= 0)
+        {
+            _siblingEpisodesScrollTarget = target;
+            _siblingEpisodesScrollRequest = request;
+        }
+        else if (_siblingEpisodesScrollTarget is not { } pending || Math.Abs(pending - target) > .001)
+            RetireSiblingEpisodeScrollRequest();
         UpdateSiblingEpisodeScrollButtons();
     }
 
@@ -618,6 +657,7 @@ public sealed partial class ItemDetailPage : Page
         if (!point.Properties.IsLeftButtonPressed && !point.IsInContact)
             return;
 
+        RetireSiblingEpisodeScrollRequest();
         _siblingEpisodesDragPointerId = e.Pointer.PointerId;
         _siblingEpisodesDragStartX = point.Position.X;
         _siblingEpisodesDragStartOffset = SiblingEpisodesScrollViewer.HorizontalOffset;
@@ -944,6 +984,7 @@ public sealed partial class ItemDetailPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        RetireSiblingEpisodeScrollRequest();
         var music = App.Services.GetService<SiloPlayer.Services.ThemeMusicService>();
         if (e.SourcePageType == typeof(ItemDetailPage)) music?.Suspend(); else music?.Stop();
         if (TrailerOverlay.Visibility == Visibility.Visible)
@@ -999,6 +1040,7 @@ public sealed partial class ItemDetailPage : Page
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
+        RetireSiblingEpisodeScrollRequest();
         base.OnNavigatedTo(e);
         // Navigation away removes this subscription; cached revisits need it too.
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
@@ -6989,6 +7031,7 @@ public sealed partial class ItemDetailPage : Page
 
     private void HideSiblingEpisodes()
     {
+        RetireSiblingEpisodeScrollRequest();
         _siblingEpisodes.Clear();
         SiblingEpisodesSection.Visibility = Visibility.Collapsed;
         SiblingEpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;

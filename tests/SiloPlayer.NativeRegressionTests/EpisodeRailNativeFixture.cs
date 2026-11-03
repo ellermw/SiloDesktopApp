@@ -97,6 +97,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             Require(keys.SequenceEqual(new[] { Windows.System.VirtualKey.Right, Windows.System.VirtualKey.Left }),
                 "Owned key messages did not enter the actual rail's native KeyDown boundary.");
             Program.Log($"Rail native keys: {string.Join(",", keys)}");
+            await VerifyQueuedRailNavigation(page, rail, failures);
             typeof(ItemDetailPage).GetMethod("AlignSiblingEpisodeToStart", Private)!.Invoke(page, [index]);
             await Task.Delay(150);
             Require(index == 4 && Math.Abs(RailOffset(rail) - 1008) < 1, "Current episode alignment was lost.");
@@ -133,6 +134,83 @@ internal static partial class EpisodeQuickPlayNativeFixture
         await Task.Delay(100); // The native request is queued before State changes.
         if (rail is ScrollView view) await Until(() => view.State == ScrollingInteractionState.Idle);
         else await Task.Delay(700);
+    }
+
+    private static async Task VerifyQueuedRailNavigation(ItemDetailPage page, FrameworkElement rail, List<string> failures)
+    {
+        var apply = typeof(ItemDetailPage).GetMethod("ApplySiblingHorizontalDelta", Private)!;
+        var next = RailElement<Button>(page, "SiblingEpisodesNextButton");
+        var previous = RailElement<Button>(page, "SiblingEpisodesPrevButton");
+        var maximum = RailMaximum(rail);
+        async Task Reset(double offset)
+        {
+            RailChange(rail, offset); await RailSettle(rail);
+        }
+        void RequireOffset(string name, double expected)
+        {
+            var actual = RailOffset(rail);
+            Program.Log($"Rail queued {name}: expected={expected}; actual={actual}");
+            if (Math.Abs(actual - expected) >= 1) failures.Add($"Queued {name} lost travel: expected {expected}, actual {actual}.");
+        }
+        foreach (var (name, start, deltas, expected) in new (string, double, double[], double)[]
+        {
+            ("two horizontal deltas", 137, [84, 84], 305),
+            ("three horizontal deltas", 137, [84, 84, 84], 389),
+            ("positive reversal", 137, [84, -84], 137),
+            ("negative reversal", 137, [-84, 84], 137),
+            ("first clamp", 30, [-84, -84], 0),
+            ("last clamp", maximum - 30, [84, 84], maximum),
+            ("first clamp then reverse", 30, [-84, 84], 84),
+            ("last clamp then reverse", maximum - 30, [84, -84], maximum - 84),
+        })
+        {
+            await Reset(start);
+            foreach (var delta in deltas) apply.Invoke(page, [delta]);
+            await RailSettle(rail); RequireOffset(name, expected);
+        }
+        await Reset(137); Invoke(next); Invoke(next); await RailSettle(rail);
+        RequireOffset("two next arrows", 2016);
+        await Reset(2016); Invoke(previous); Invoke(previous); await RailSettle(rail);
+        RequireOffset("two previous arrows", 0);
+        await Reset(137); Invoke(next); Invoke(next); await Task.Delay(60); Invoke(next); await RailSettle(rail);
+        RequireOffset("later Next survives older completion", 3024);
+        await Reset(0); ((Control)rail).Focus(FocusState.Keyboard); await Task.Delay(50);
+        RailKey(0x27); RailKey(0x27); await RailSettle(rail);
+        RequireOffset("two Right keys", 2016);
+        RailKey(0x25); RailKey(0x25); await RailSettle(rail);
+        RequireOffset("two Left keys", 0);
+        RailKey(0x27); RailKey(0x27); await Task.Delay(60); RailKey(0x27); await RailSettle(rail);
+        RequireOffset("later Right survives older completion", 3024);
+
+        var absolute = typeof(ItemDetailPage).GetMethod("ScrollSiblingEpisodesTo", Private)!;
+        await Reset(137); apply.Invoke(page, [84d]); absolute.Invoke(page, [500d, false]); await RailSettle(rail);
+        RequireOffset("absolute drag/alignment replaces queued delta", 500);
+        await Reset(137); absolute.Invoke(page, [500d, false]); apply.Invoke(page, [84d]); await RailSettle(rail);
+        RequireOffset("delta follows absolute drag/alignment", 584);
+        await Reset(584); apply.Invoke(page, [84d]); await RailSettle(rail);
+        RequireOffset("completed owner retires before next delta", 668);
+        await Reset(137); apply.Invoke(page, [84d]); absolute.Invoke(page, [2016d, true]); await Task.Delay(60);
+        apply.Invoke(page, [84d]); await RailSettle(rail);
+        RequireOffset("new absolute owner survives older completion", 2100);
+
+        foreach (var width in new[] { 420d, 1200d })
+        {
+            page.Width = width; page.UpdateLayout(); await Task.Delay(150);
+            for (var repeat = 0; repeat < 2; repeat++)
+            foreach (var atEnd in new[] { true, false })
+            {
+                await Reset(atEnd ? RailMaximum(rail) - 15 : 15);
+                var activated = atEnd ? next : previous;
+                var opposite = atEnd ? previous : next;
+                Check(activated.Focus(FocusState.Keyboard), "Could not focus the active endpoint arrow.");
+                Invoke(activated); await RailSettle(rail);
+                var focused = FocusManager.GetFocusedElement(page.XamlRoot);
+                Program.Log($"Rail endpoint/{width}/{repeat} {(atEnd ? "last" : "first")}: focused={(focused as FrameworkElement)?.Name}; type={focused?.GetType().Name}; state={(focused as Control)?.FocusState}; offset={RailOffset(rail)}");
+                if ((!ReferenceEquals(focused, rail) && !ReferenceEquals(focused, opposite)) ||
+                    (focused as Control)?.FocusState != FocusState.Keyboard || !opposite.IsEnabled || activated.IsEnabled)
+                    failures.Add($"Endpoint/{width}/{repeat} {(atEnd ? "last" : "first")} arrow did not preserve focus on its rail or opposite usable arrow.");
+            }
+        }
     }
 
     private static void RailKey(nuint key)
