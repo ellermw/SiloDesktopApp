@@ -16,6 +16,7 @@ internal static class PlaybackDialogHost
 {
     private const int GwlpHwndParent = -8;
     private const uint SwpShowWindow = 0x0040;
+    private const uint SwpNoActivate = 0x0010;
     private static readonly IntPtr HwndTop = IntPtr.Zero;
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -142,6 +143,8 @@ internal static class PlaybackDialogHost
             videoRect.Top,
             videoWidth,
             videoHeight,
-            SwpShowWindow);
+            // Positioning must respect ShowAsync's explicit activation choice.
+            // SWP_SHOWWINDOW alone activates the newly created owned host.
+            SwpShowWindow | SwpNoActivate);
     }
 }

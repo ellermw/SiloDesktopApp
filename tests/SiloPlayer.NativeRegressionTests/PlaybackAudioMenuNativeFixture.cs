@@ -897,6 +897,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
             menu.Activated += Activated; menu.Closed += Closed;
         }
 
+        internal void RegisterWindow(IntPtr hwnd, string role) => _roles[hwnd.ToInt64()] = role;
+
         internal void Complete()
         {
             Observe("after-fixture-cleanup");

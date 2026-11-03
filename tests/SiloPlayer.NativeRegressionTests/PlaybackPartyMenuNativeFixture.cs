@@ -21,6 +21,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
     internal static async Task RunPartyAsync(Window owner, string mode)
     {
         using var foreground = new ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(owner));
+        using var windows = new PartyWindowTrace(foreground);
         owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
         using var media = new MediaServer(); using var wire = new PartyWire(media.Origin); using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://native-audio.fixture.invalid"); client.SetProfile("synthetic");
@@ -92,6 +93,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Require(GetWindowRect(video.Hwnd, out var vr) && GetWindowRect(MenuHwnd(menu), out var mr)
                     && mr.Left >= vr.Left && mr.Right <= vr.Right && mr.Top >= vr.Top && mr.Bottom <= vr.Bottom,
                     "Party host escaped its small/large video bounds.");
+                var end = Row("end");
+                var endBottom = end.TransformToVisual(list).TransformPoint(new Windows.Foundation.Point(0, end.ActualHeight)).Y;
+                Require(endBottom <= list.ActualHeight + 1, "Viewer footer crowds the End action out of the initial native action viewport.");
                 await Capture(menu, $"party-{size.Item1}.png");
             }
             Call(menu, "Input", "end"); var selection = list.SelectedIndex;
@@ -108,6 +112,12 @@ internal static partial class PlaybackAudioMenuNativeFixture
             room.Room = PartySnapshot(generation: 3); await Task.Delay(50);
             if (mode == "stale")
             {
+                Set(player, "_playbackTerminalState", Activator.CreateInstance(typeof(PlayerService).GetNestedType("PlaybackTerminalState",
+                    System.Reflection.BindingFlags.NonPublic)!, [0d, "synthetic-failure", true, true, null]));
+                InvokeRow("stop");
+                Require(wire.PartyCalls == 0, "Retired Party intent dispatched Stop while an unrelated playback failure owned the surface.");
+                Set(player, "_playbackTerminalState", null);
+                menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 InvokeRow("end"); await Until(() => Get(player, "_nativePartyEndDialog") is ContentDialog { XamlRoot: not null }, "End confirmation was not opened.");
                 using var replacement = new WatchTogetherRoomViewModel(playback, client) { RoomId = "replacement", RoomToken = "replacement-proof",
                     Room = PartySnapshot("replacement"), ConnectionState = "connected" };
@@ -127,6 +137,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             wire.Release.TrySetResult(); await Until(() => !room.IsBusy, "Policy mutation did not settle.");
             Require(room.Room!.GuestControlPolicy == "guest_play_pause", "Policy action did not use actual guarded room mutation.");
             InvokeRow("end"); await Until(() => Get(player, "_nativePartyEndDialog") is ContentDialog { XamlRoot: not null }, "End confirmation did not show.");
+            windows.Phase("end-dialog-shown");
             Require(Menu(player) == null && ((SemaphoreSlim)Get(player, "_playbackDialogGate")!).CurrentCount == 0,
                 "End confirmation overlapped native menu or failed to acquire released shared lease.");
             var dialog = (ContentDialog)Get(player, "_nativePartyEndDialog")!;
@@ -150,7 +161,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Program.Log("PASS: actual native Party End confirmation sends distinct DELETE and retires matching playback.");
                 return;
             }
+            windows.Phase("end-dialog-cancel");
             dialog.Hide(); await Until(() => Get(player, "_nativePartyEndDialog") == null, "Cancel did not close confirmation.");
+            windows.Phase("end-dialog-cancelled");
             Require(wire.Ends == 0 && ((SemaphoreSlim)Get(player, "_playbackDialogGate")!).CurrentCount == 1, "Cancel dispatched End or leaked gate.");
             menu = await Open(); list = (ListView)Get(menu, "_list")!;
             wire.FailStop = true; InvokeRow("stop"); await Until(() => !room.IsBusy && room.ErrorMessage != null, "Rejected Stop lost retry feedback.");
@@ -168,7 +181,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 var row = Row(id); list.SelectedItem = row; list.ScrollIntoView(row); list.UpdateLayout();
                 var peer = FrameworkElementAutomationPeer.CreatePeerForElement(row) ?? new ListViewItemAutomationPeer(row);
                 using var veto = new OwnMenuActivationVeto(MenuHwnd(menu));
+                windows.Phase("uia-row-" + id + "-begin");
                 ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
+                windows.Phase("uia-row-" + id + "-returned");
             }
             void PressPrimary(ContentDialog target)
             {
@@ -176,7 +191,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 var primary = Descendants<Button>(target).Single(button => button.Name == "PrimaryButton");
                 var host = PartyOwnedDialogWindow(video.Hwnd);
                 using var veto = new OwnMenuActivationVeto(host);
+                windows.Phase("uia-primary-begin");
                 ((IInvokeProvider)new ButtonAutomationPeer(primary).GetPattern(PatternInterface.Invoke)).Invoke();
+                windows.Phase("uia-primary-returned");
             }
         }
         finally
@@ -188,6 +205,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             mpv.ScriptMessageReceived -= Message;
             Set(player, "_videoWindow", null); Set(player, "_mpv", null); Set(player, "_playbackManager", null);
             slot.SetValue(null, originalServices); video.Hide();
+            windows.Phase("cleanup");
             await Task.Delay(40); foreground.Complete();
         }
         async Task<JsonElement> Query()
@@ -222,6 +240,44 @@ internal static partial class PlaybackAudioMenuNativeFixture
             IsBuffering = index == 1, IsSyncing = index == 2, IsReady = index == 3 }).ToList(),
     };
     private delegate bool PartyEnumWindow(IntPtr hwnd, IntPtr parameter);
+
+    // Diagnostic only: records creation/activation of this fixture UI thread's
+    // windows. It never changes or suppresses activation, including destroyed HWNDs.
+    private sealed class PartyWindowTrace : IDisposable
+    {
+        private readonly PartyCbtCallback _callback;
+        private readonly List<object> _events = [];
+        private readonly ForegroundOwnershipProbe _foreground;
+        private IntPtr _hook;
+        private string _phase = "fixture-setup";
+        internal PartyWindowTrace(ForegroundOwnershipProbe foreground)
+        {
+            _foreground = foreground;
+            _callback = (code, window, data) =>
+            {
+                if (code is 3 or 4 or 5 or 9)
+                {
+                    if (code == 3) foreground.RegisterWindow(window, "party-thread-created-window");
+                    _events.Add(new { tick = Environment.TickCount64, code, hwnd = window.ToInt64(),
+                        owner = GetWindow(window, 4).ToInt64(), phase = _phase, stack = code == 5 ? Environment.StackTrace : null });
+                }
+                return PartyCallNextHookEx(_hook, code, window, data);
+            };
+            _hook = PartySetWindowsHookExW(5, _callback, IntPtr.Zero, GetCurrentThreadId());
+            Require(_hook != IntPtr.Zero, "Cannot record fixture window activation trace.");
+        }
+        internal void Phase(string phase) { _phase = phase; _foreground.Observe(phase); }
+        public void Dispose()
+        {
+            PartyUnhookWindowsHookEx(_hook); _hook = IntPtr.Zero; GC.KeepAlive(_callback);
+            File.WriteAllText(Path.Combine(Program.ResultDirectory, "party-window-trace.json"), JsonSerializer.Serialize(_events,
+                new JsonSerializerOptions { WriteIndented = true }));
+        }
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate IntPtr PartyCbtCallback(int code, IntPtr window, IntPtr data);
+        [DllImport("user32.dll", EntryPoint = "SetWindowsHookExW")] private static extern IntPtr PartySetWindowsHookExW(int id, PartyCbtCallback callback, IntPtr module, uint thread);
+        [DllImport("user32.dll", EntryPoint = "CallNextHookEx")] private static extern IntPtr PartyCallNextHookEx(IntPtr hook, int code, IntPtr window, IntPtr data);
+        [DllImport("user32.dll", EntryPoint = "UnhookWindowsHookEx")] private static extern bool PartyUnhookWindowsHookEx(IntPtr hook);
+    }
     [DllImport("user32.dll")] private static extern bool EnumThreadWindows(uint thread, PartyEnumWindow callback, IntPtr parameter);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     private static IntPtr PartyOwnedDialogWindow(IntPtr video)

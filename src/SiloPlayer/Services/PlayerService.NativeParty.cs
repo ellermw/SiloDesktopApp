@@ -22,7 +22,7 @@ public partial class PlayerService
         var room = coordinator?.ActiveRoom;
         if (room?.Room == null) return null;
         var roomId = room.Room.RoomId;
-        bool RoomCurrent() => owner.IsCurrent() && ReferenceEquals(coordinator!.ActiveRoom, room)
+        bool RoomCurrent() => owner.IsCurrent() && _playbackTerminalState == null && ReferenceEquals(coordinator!.ActiveRoom, room)
             && room.Room?.RoomId == roomId && room.ClosedReason == null;
         bool Current() => RoomCurrent() && _nativeMenuGate.IsCurrent(request);
         var footer = new StackPanel { Spacing = 8, Margin = new Thickness(12, 6, 12, 12), MaxHeight = 270 };
@@ -34,6 +34,17 @@ public partial class PlayerService
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         AutomationProperties.SetName(memberScroll, "Watch party viewers");
         footer.Children.Add(summary); footer.Children.Add(policy); footer.Children.Add(error); footer.Children.Add(memberScroll);
+        XamlRoot? footerRoot = null;
+        void ResizeFooter(XamlRoot root, XamlRootChangedEventArgs args)
+            => memberScroll.MaxHeight = Math.Clamp(root.Size.Height - 450, 40, 160);
+        void FooterLoaded(object sender, RoutedEventArgs args)
+        {
+            if (footer.XamlRoot is not { } root || ReferenceEquals(root, footerRoot)) return;
+            if (footerRoot != null) footerRoot.Changed -= ResizeFooter;
+            footerRoot = root; root.Changed += ResizeFooter;
+            memberScroll.MaxHeight = Math.Clamp(root.Size.Height - 450, 40, 160);
+        }
+        footer.Loaded += FooterLoaded;
         PlaybackChoiceMenu? menu = null;
         IReadOnlyList<PlaybackMenuChoice> Choices()
         {
@@ -120,6 +131,8 @@ public partial class PlayerService
         }
         void Closed(PlaybackMenuCloseReason reason)
         {
+            footer.Loaded -= FooterLoaded;
+            if (footerRoot != null) footerRoot.Changed -= ResizeFooter;
             room.PropertyChanged -= Changed; NativePartyStateChanged -= QueueRefresh;
             finish(reason);
         }

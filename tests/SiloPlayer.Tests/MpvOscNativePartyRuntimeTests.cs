@@ -3,15 +3,40 @@ namespace SiloPlayer.Tests;
 public sealed partial class MpvOscRuntimeTests
 {
     private const string PartyProbe = NativeAudioProbe + "\n" + """
-        party_requests, party_actions = {}, {}
+        party_requests, party_actions, party_unrelated = {}, {}, {}
         local party_command = mp.commandv
         mp.commandv = function(...)
             local args = {...}
             if args[1] == 'script-message' and args[2] == 'silo-native-party-open' then table.insert(party_requests,args); return end
             if args[1] == 'script-message' and args[2] == 'silo-watch-party-action' then table.insert(party_actions,args); return end
+            if args[1] == 'script-message' and (args[2] == 'silo-buffering-keep' or args[2] == 'silo-playback-retry'
+                or args[2] == 'silo-exit') then table.insert(party_unrelated,args); return end
             return party_command(...)
         end
         """;
+
+    [Theory]
+    [InlineData("buffering", "1:0")]
+    [InlineData("failure", "0:0")]
+    [InlineData("departed", "0:0")]
+    public void PartyControllerIntentNeverDispatchesUnrelatedPriorityAction(string state, string expected)
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local s=osc_test_state
+            s.osc_disabled=false; s.visible=true; s.current_alpha=1; s.target_alpha=1
+            s.watch_party={visible=true,is_host=true,code='TEST1234'}
+            native_handlers['osc-native-party-scope']('11111111111111111111111111111111')
+            osc_test_layout()
+            if '{{state}}'=='buffering' then
+                s.buffering_quality_pill=true; s.buffering_quality_actions={ {action='keep'} }; s.buffering_quality_focus=1
+            elseif '{{state}}'=='failure' then
+                s.playback_failure_visible=true; s.playback_failure_can_retry=true; s.playback_failure_focus='retry'
+            else s.watch_party=nil end
+            s.controller_focus_name='btn_party'; osc_test_activate()
+            mp.set_property('user-data/party-result',tostring(#party_requests)..':'..tostring(#party_unrelated))
+            """, rawAss: true, resultProperty: "user-data/party-result", beforeScript: PartyProbe);
+        Assert.Equal(expected, result);
+    }
 
     [Theory]
     [InlineData("pointer", 1920, 1080)]

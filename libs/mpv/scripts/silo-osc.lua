@@ -4706,6 +4706,7 @@ end
 local function open_native_menu(kind, keyboard)
     local scope = state['native_' .. kind .. '_scope']
     if not scope then return false end
+    if kind == 'party' and (state.playback_failure_visible or not state.watch_party or not state.watch_party.visible) then return true end
     if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1) or state.osc_disabled
         or state.playback_loading or state.post_roll_active
         or state.native_menu_sequence >= 9007199254740991 then return true end
@@ -4883,6 +4884,9 @@ end
 
 local function activate_controller_focus()
     if native_menu_input("activate") then return true end
+    -- A focused Party opener expresses that intent. It must never run a
+    -- buffering/failure action merely because that unrelated surface appeared.
+    if state.controller_focus_name == 'btn_party' then return open_native_menu('party', true) end
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
     end
