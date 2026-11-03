@@ -56,6 +56,27 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             Require(wire.Replans.Last().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString() == "sub:42:1", "Actual local subtitle pick did not reach quality replan.");
             await Load(1, 12);
             Require(service.IsPaused && mpv.GetPropertyFlag("pause") && Math.Abs(mpv.Position - 12) < 2, "Quality reload changed pause or canonical position.");
+
+            // The old menu's English row is index 0, but the replacement's
+            // index 0 is Spanish. Refuse it both before and after adoption.
+            var preferencesBeforeSwitch = wire.PreferenceWrites;
+            Set(service, "_switchingContent", true);
+            Set(service, "_subtitleVersionSwitchActive", true);
+            Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!,
+                "The outgoing menu was accepted while a version switch was preparing.");
+            Require(manager.SubtitleSelectionForLoad == 1 && wire.PreferenceWrites == preferencesBeforeSwitch,
+                "A refused outgoing-menu choice changed subtitle intent or preferences.");
+            // A previously reserved raw index must not outrank rebinding by
+            // identity: index 1 means English on version 44, not Spanish.
+            Set(service, "_pendingInitialServerSubtitleIndex", 1);
+            Set(service, "_pendingInitialSubtitleFileId", 42);
+            await manager.StartReplacementSessionAsync(44, 12);
+            Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!,
+                "The outgoing menu was interpreted against the newly adopted file.");
+            await Load(0, 12);
+            Require(Get(service, "_pendingInitialServerSubtitleIndex") == null && wire.PreferenceWrites == preferencesBeforeSwitch,
+                "A foreign pending index survived the load or persisted a different-language preference.");
+            await manager.StartReplacementSessionAsync(42, 12); await Load(1, 12);
             await manager.StartReplacementSessionAsync(43, 13); await Load(-1, 13);
             await manager.StartReplacementSessionAsync(42, 14); await Load(1, 14);
             await manager.StartReplacementSessionAsync(44, 15); await Load(0, 15);

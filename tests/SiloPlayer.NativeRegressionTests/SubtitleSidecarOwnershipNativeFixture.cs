@@ -16,7 +16,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
+        foreach (var scenario in new[] { "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "manual-reload-finished", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
         {
             try
             {
@@ -389,6 +389,44 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 }
                 return;
             }
+            if (scenario == "manual-reload-finished")
+            {
+                subtitles.HoldOnlyFirstSubtitle = true;
+                var stale = (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+                try
+                {
+                    await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    var generationBeforeLoad = (long)Get(service, "_subtitleSidecarGeneration")!;
+                    subtitles.ReplacementMedia = await File.ReadAllBytesAsync(wave);
+                    var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", manager.CurrentSession!, Version(),
+                        subtitles.Origin + "/stream/direct/replacement.wav", 0d, CancellationToken.None)!;
+                    await prepare;
+                    var prepared = prepare.GetType().GetProperty("Result")!.GetValue(prepare)!;
+                    Call(service, "ApplyPreparedTransport", prepared);
+                    service.ContentLoaded += ReplacementLoaded;
+                    Call(service, "WireMpvEvents");
+                    Call(service, "BeginMpvLoad", prepared, startPaused);
+                    subtitles.MediaRelease.TrySetResult();
+                    await replacementLoaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                    await Until(() => (long)Get(service, "_subtitleSidecarGeneration")! > generationBeforeLoad &&
+                        Get(service, "_loadedMediaInitCts") == null);
+                    Require(!stale.IsCompleted && wire.PreferenceWrites == 1,
+                        "Fixture did not finish the owning load before the original prefetch completed.");
+                    subtitles.Release.TrySetResult();
+                    await stale.WaitAsync(TimeSpan.FromSeconds(5));
+                    var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                    Require(Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                        Get(service, "_pendingSubtitlePreferenceIndex") == null && wire.PreferenceWrites == 1 &&
+                        service.ActiveSubtitleServerIndex == 0 && map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid,
+                        "A late prefetch refilled an already-consumed selection or preference slot.");
+                }
+                finally
+                {
+                    subtitles.Release.TrySetResult();
+                    await stale.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                return;
+            }
             var persist = scenario != "reload-gap" && scenario != "reload-cleanup";
             Task pending;
             if (scenario == "reload-gap")
@@ -398,6 +436,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 var owner = new CancellationTokenSource();
                 Set(service, "_loadedMediaInitCts", owner);
                 Set(service, "_pendingInitialServerSubtitleIndex", 0);
+                Set(service, "_pendingInitialSubtitleFileId", manager.CurrentSession!.MediaFileId);
                 manager.RecordLocalSubtitleSelection(0);
                 pending = (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
             }
@@ -554,6 +593,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         public TaskCompletionSource MediaRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public byte[] ReplacementMedia { get; set; } = [];
         public int MediaRequests;
+        public bool HoldOnlyFirstSubtitle;
+        private int _englishRequests;
         public HeldSubtitleServer(bool oversized)
         {
             this.oversized = oversized;
@@ -588,7 +629,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                             if (request.Request.HttpMethod != "HEAD") await request.Response.OutputStream.WriteAsync(ReplacementMedia.AsMemory(from, to - from + 1));
                             request.Response.Close(); return;
                         }
-                        if (request.Request.Url!.AbsolutePath == "/eng.srt") { Entered.TrySetResult(); await Release.Task; }
+                        if (request.Request.Url!.AbsolutePath == "/eng.srt" &&
+                            (Interlocked.Increment(ref _englishRequests) == 1 || !HoldOnlyFirstSubtitle))
+                        {
+                            Entered.TrySetResult(); await Release.Task;
+                        }
                         if (oversized)
                         {
                             request.Response.ContentType = "application/x-subrip"; request.Response.SendChunked = true;

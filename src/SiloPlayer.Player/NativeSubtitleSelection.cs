@@ -55,6 +55,7 @@ public static class NativeSubtitleSelection
         // Native metadata identity retains explicit BCP47 region/script subtags.
         // Reuse the catalog's ISO aliases only for the primary language.
         var tag = value?.Trim().Replace('_', '-') ?? "";
+        if (tag.Length == 0 || string.Equals(tag, "und", StringComparison.OrdinalIgnoreCase)) return "";
         var separator = tag.IndexOf('-');
         return separator < 0 ? MediaLanguageCatalog.Normalize(tag)
             : MediaLanguageCatalog.Normalize(tag[..separator]) + tag[separator..].ToLowerInvariant();

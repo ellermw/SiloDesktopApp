@@ -33,6 +33,30 @@ public sealed class SubtitleIdentityTests
         });
     }
 
+    [Theory]
+    [InlineData("en-GB", "eng-gb", "en")]
+    [InlineData("POR_br", "pt-BR", "pt-PT")]
+    [InlineData("zho-Hant", "zh-hant", "zh-Hans")]
+    public void LatestChoiceRebindsOnlyTheSameRegionalLanguage(string requested, string matching, string other)
+    {
+        WithManager(manager =>
+        {
+            var original = new SubtitleTrackInfo { Index = 2, Language = requested, Codec = "srt", Source = "embedded", Label = "Same title" };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager,
+                new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [original] });
+            manager.RecordLocalSubtitleSelection(2);
+            var replacement = new PlaybackStartResponse { MediaFileId = 43, SubtitleUrls =
+            [
+                new() { Index = 2, Language = other, Codec = "srt", Source = "embedded", Label = "Same title" },
+                new() { Index = 8, Language = matching, Codec = "srt", Source = "embedded", Label = "Same title" },
+            ] };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, replacement);
+            Assert.Equal(8, manager.SubtitleSelectionForLoad);
+            replacement.SubtitleUrls.RemoveAt(1);
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+        });
+    }
+
     [Fact]
     public void GrantedUnavailableTrackIsNotAutomaticallyLoaded()
     {
@@ -78,6 +102,7 @@ public sealed class SubtitleIdentityTests
     [InlineData("eng")]
     [InlineData("en")]
     [InlineData("")]
+    [InlineData("und")]
     public void UnlabelledLegacyPlanResolvesUntitledNativeTrack(string language)
     {
         var decision = new PlaybackDecisionResponseV3
@@ -95,7 +120,7 @@ public sealed class SubtitleIdentityTests
         Assert.Null(track.NativeTitle);
         Assert.Equal(7, SiloPlayer.Player.NativeSubtitleSelection.Resolve(
             new(0, track.StreamIndex, track.ContainerTrackId, track.Codec, track.Language, track.NativeTitle),
-            [new(7, 1, "2", "subrip", language.Length == 0 ? null : "eng", null)], false));
+            [new(7, 1, "2", "subrip", language.Length == 0 || language == "und" ? null : "eng", null)], false));
     }
 
     [Fact]

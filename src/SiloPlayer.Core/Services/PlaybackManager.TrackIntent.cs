@@ -128,7 +128,7 @@ public partial class PlaybackManager
                 t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired)
                 .OrderByDescending(t => UnknownSubtitleLanguage(_viewerSubtitle.Language) &&
                     CurrentSession?.MediaFileId == _viewerSubtitleFile && t.Index == _viewerSubtitle.Index)
-                .ThenByDescending(t => SubtitleScore(t.Source, t.Codec, t.Label, _viewerSubtitle)).FirstOrDefault();
+                .ThenByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).FirstOrDefault();
     }
     private int? ReplacementSubtitleIndex(int fileId)
     {
@@ -150,7 +150,7 @@ public partial class PlaybackManager
                     t.Track.Codec, t.Track.Title ?? t.Track.EmbeddedTitle, _viewerSubtitle) &&
                     (t.Track.Forced == true) == _viewerSubtitle.Forced &&
                     (t.Track.HearingImpaired == true) == _viewerSubtitle.HearingImpaired)
-                .OrderByDescending(t => SubtitleScore(t.Track.External == true ? "external" : "embedded",
+                .OrderByDescending(t => SubtitleScore(t.Track.Language, t.Track.External == true ? "external" : "embedded",
                     t.Track.Codec, t.Track.Title ?? t.Track.EmbeddedTitle, _viewerSubtitle))
                 .Select(t => (int?)t.Index).FirstOrDefault();
         }
@@ -192,7 +192,8 @@ public partial class PlaybackManager
            !string.Equals(right.Trim(), "und", StringComparison.OrdinalIgnoreCase) &&
            MediaLanguageCatalog.Normalize(left) == MediaLanguageCatalog.Normalize(right);
     private static bool MatchesSubtitleLanguage(string? language, string? source, string? codec, string? label, SubtitleTrackInfo desired)
-        => SameLanguage(language, desired.Language) ||
+        => !UnknownSubtitleLanguage(language) && !UnknownSubtitleLanguage(desired.Language) &&
+           CanonicalLanguage(language) == CanonicalLanguage(desired.Language) ||
            UnknownSubtitleLanguage(language) && UnknownSubtitleLanguage(desired.Language) &&
            Equal(source, desired.Source) && Equal(codec, desired.Codec) &&
            Equal(label ?? "", SubtitleIdentityLabel(desired) ?? "");
@@ -206,6 +207,7 @@ public partial class PlaybackManager
         var parts = (language ?? "").Trim().ToLowerInvariant().Replace('_', '-').Split('-');
         return MediaLanguageCatalog.Normalize(parts[0]) + (parts.Length > 1 ? "-" + string.Join("-", parts.Skip(1)) : "");
     }
-    private static int SubtitleScore(string? source, string? codec, string? label, SubtitleTrackInfo desired)
-        => (Equal(source, desired.Source) ? 4 : 0) + (Equal(codec, desired.Codec) ? 1 : 0) + (Equal(label, desired.Label) ? 8 : 0);
+    private static int SubtitleScore(string? language, string? source, string? codec, string? label, SubtitleTrackInfo desired)
+        => (CanonicalLanguage(language) == CanonicalLanguage(desired.Language) ? 64 : 0) +
+           (Equal(source, desired.Source) ? 4 : 0) + (Equal(codec, desired.Codec) ? 1 : 0) + (Equal(label, desired.Label) ? 8 : 0);
 }

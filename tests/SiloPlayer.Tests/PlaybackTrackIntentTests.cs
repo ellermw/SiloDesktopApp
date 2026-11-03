@@ -132,6 +132,27 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(0, body.GetProperty("audio_track_index").GetInt32());
     }
 
+    [Theory]
+    [InlineData("en-GB", "eng-gb", "en")]
+    [InlineData("pt-BR", "por_br", "pt-PT")]
+    [InlineData("zh-Hant", "zho-Hant", "zh-Hans")]
+    public async Task VersionSwitchKeepsRegionalSubtitleIdentity(string requested, string matching, string other)
+    {
+        using var scope = new Fixture();
+        await scope.Manager.StartSessionAsync(42);
+        var desired = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+        desired.Language = requested;
+        desired.Label = "Same title";
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        scope.Manager.WatchDetail!.Versions.Single(v => v.FileId == 44).SubtitleTracks =
+        [
+            new() { Index = 0, Language = other, Codec = "srt", Title = "Same title" },
+            new() { Index = 1, Language = matching, Codec = "srt", Title = "Same title" },
+        ];
+        await scope.Manager.StartReplacementSessionAsync(44, 14);
+        Assert.Equal(1, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
+    }
+
     [Fact]
     public async Task VersionSwitchPreservesExplicitOffAndNeverSavesAutomaticFallback()
     {
