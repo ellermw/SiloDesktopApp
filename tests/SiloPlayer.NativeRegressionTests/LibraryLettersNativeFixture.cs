@@ -44,7 +44,7 @@ internal static class LibraryLettersNativeFixture
         {
             var runs = verifySecondBoundary
                 ? new[] { ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "query"), ("movie", 1280, 1000, "manual"), ("movie", 1280, 1000, "visit") }
-                : verifyCursorRecovery ? new[] { ("movie", 1280, 1000, "success"), ("movie", 1280, 1000, "failure") }
+                : verifyCursorRecovery ? new[] { ("movie", 1280, 1000, "success"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "manual") }
                 : new[] { ("movie", 1280, 1000, ""), ("audiobook", 960, 550, "") };
             foreach (var (type, width, height, dispatchCase) in runs)
             {
@@ -128,7 +128,10 @@ internal static class LibraryLettersNativeFixture
                     continue;
                 }
                 if (verifyImmediateFeedback || verifyOwnership)
+                {
+                    await VerifyScrollIntentAsync(page, frame, scroll, wire, Letter, columns, rowHeight);
                     await VerifyOwnershipAsync(page, scroll, wire, client, Letter, columns, rowHeight);
+                }
                 scroll.ChangeView(null, (900 / columns) * rowHeight, null, true);
                 await Until(() => Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(Letter("A")) == "Current letter");
                 ((IInvokeProvider)new ButtonAutomationPeer(Letter("Z")).GetPattern(PatternInterface.Invoke)).Invoke();
@@ -238,10 +241,10 @@ internal static class LibraryLettersNativeFixture
     private static async Task VerifyCursorRecoveryAsync(LibraryPage page, Frame frame, ScrollViewer scroll, Wire wire,
         Func<string, Button> letter, string outcome, int columns, double rowHeight)
     {
-        wire.ScopeVersion = 1; wire.MPosition = 900; wire.RejectFresh = outcome == "failure";
+        wire.ScopeVersion = 1; wire.MPosition = 900; wire.RejectFresh = outcome != "success";
         Invoke(letter("M"));
         await Until(() => !page.ViewModel.IsLetterJumpInProgress && !page.ViewModel.IsLoading);
-        if (outcome == "failure")
+        if (outcome != "success")
         {
             await Until(() => page.ViewModel.ErrorMessage is not null || page.ViewModel.LetterJumpError is not null);
             await Task.Delay(200); // Scoped Retry must survive ordinary viewport debounce callbacks.
@@ -258,6 +261,18 @@ internal static class LibraryLettersNativeFixture
                 page.ViewModel.GetWindowItem(600) is not null || page.ViewModel.GetWindowItem(0) is not null)
                 throw new InvalidOperationException("Signed letter recovery lost scoped Retry or restored retired cards.");
             await Until(() => retry.Visibility == Visibility.Visible);
+            if (outcome == "manual")
+            {
+                wire.RejectFresh = false;
+                var requested = scroll.VerticalOffset + .5;
+                ManualScroll(page, scroll, requested);
+                await Until(() => Math.Abs(scroll.VerticalOffset - requested) < .2 &&
+                    page.ViewModel.GetWindowItem(600) is not null && page.ViewModel.LetterJumpError is null);
+                if (page.ViewModel.ErrorMessage is not null || wire.InvalidCursors != 1)
+                    throw new InvalidOperationException("A sub-row scroll did not reload the retired signed-scope viewport.");
+                Program.Log("PASS: sub-row manual scroll releases failed signed-scope recovery and reloads the unchanged visible range.");
+                return;
+            }
             wire.ScopeVersion = 2; wire.MPosition = 720; wire.RejectFresh = false;
             Invoke(retry);
             await Until(() => page.ViewModel.GetWindowItem(720) is not null && Math.Abs(scroll.VerticalOffset - (720 / columns) * rowHeight) < 1);
@@ -287,7 +302,7 @@ internal static class LibraryLettersNativeFixture
                     if (pending is not double) throw new InvalidOperationException("The first letter callback did not establish its second pending boundary.");
                     if (scenario == "newer") { held = wire.HoldNextWindow(); Invoke(letter("M")); }
                     else if (scenario == "query") page.ViewModel.SelectedGenre = "Comedy";
-                    else if (scenario == "manual") { scroll.ChangeView(null, before + .5, null, true); page.UpdateLayout(); }
+                    else if (scenario == "manual") { ManualScroll(page, scroll, before + .5); page.UpdateLayout(); }
                     else
                     {
                         frame.Navigate(typeof(Page)); frame.GoBack();
@@ -321,6 +336,119 @@ internal static class LibraryLettersNativeFixture
     }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static string Help(Button button) => Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(button);
+
+    // Supply the manipulation-start signal as well as native movement. A bare
+    // ChangeView is automatic and must no longer stand in for new user input.
+    private static void ManualScroll(LibraryPage page, ScrollViewer scroll, double offset)
+    {
+        typeof(LibraryPage).GetMethod("LibraryScroller_DirectManipulationStarted", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(page, new object[] { scroll, new object() });
+        scroll.ChangeView(null, offset, null, true);
+    }
+
+    private static async Task VerifyScrollIntentAsync(LibraryPage page, Frame frame, ScrollViewer scroll, Wire wire,
+        Func<string, Button> letter, int columns, double rowHeight)
+    {
+        var top = (Button)page.FindName("ScrollToTopButton");
+        foreach (var outcome in new[] { "held-success", "held-failure", "failed" })
+        {
+            Invoke(letter("M"));
+            await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+            var held = wire.HoldNextWindow(fail: outcome != "held-success");
+            Invoke(letter("M"));
+            try
+            {
+                await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (outcome == "failed")
+                {
+                    held.Release.TrySetResult();
+                    await Until(() => page.ViewModel.LetterJumpError is not null);
+                }
+                await Until(() => top.Visibility == Visibility.Visible);
+                Invoke(top);
+                await Until(() => scroll.VerticalOffset < 1 && !page.ViewModel.IsLetterJumpInProgress &&
+                    page.ViewModel.LetterJumpError is null && page.ViewModel.GetWindowItem(0) is not null);
+                held.Release.TrySetResult(); await Task.Delay(150);
+                if (scroll.VerticalOffset > 1 || page.ViewModel.LetterJumpError is not null || page.ViewModel.ErrorMessage is not null)
+                    throw new InvalidOperationException($"Scroll to top did not retire the {outcome} letter jump.");
+            }
+            finally { held.Release.TrySetResult(); }
+        }
+
+        // Continue a native animated scroll that began before the choice. Its
+        // intermediate frames have no new input authority over the held letter.
+        var coasting = wire.HoldNextWindow();
+        var origin = scroll.VerticalOffset;
+        scroll.ChangeView(null, origin + 3 * rowHeight, null, disableAnimation: false);
+        Invoke(letter("M"));
+        try
+        {
+            await coasting.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Until(() => Math.Abs(scroll.VerticalOffset - origin) > 1);
+            await Task.Delay(300);
+            if (!page.ViewModel.IsLetterJumpInProgress || page.ViewModel.PendingLetter != "M")
+                throw new InvalidOperationException("Earlier native animation cancelled the latest letter choice.");
+        }
+        finally { coasting.Release.TrySetResult(); }
+        await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+
+        scroll.ChangeView(null, scroll.ScrollableHeight, null, true);
+        await Until(() => Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 1);
+        var beforeClamp = scroll.VerticalOffset;
+        var width = frame.Width;
+        var clamped = wire.HoldNextWindow(); Invoke(letter("M"));
+        try
+        {
+            await clamped.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            frame.Width = width + 400; page.UpdateLayout();
+            await Until(() => scroll.VerticalOffset < beforeClamp - 1);
+            if (!page.ViewModel.IsLetterJumpInProgress || page.ViewModel.PendingLetter != "M")
+                throw new InvalidOperationException("A resize-driven native clamp cancelled the held letter choice.");
+        }
+        finally { frame.Width = width; page.UpdateLayout(); clamped.Release.TrySetResult(); }
+        await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+
+        var failed = wire.HoldNextWindow(fail: true); Invoke(letter("A"));
+        var height = frame.Height;
+        try
+        {
+            await failed.Started.Task.WaitAsync(TimeSpan.FromSeconds(5)); failed.Release.TrySetResult();
+            await Until(() => page.ViewModel.LetterJumpError is not null);
+            var error = page.ViewModel.LetterJumpError;
+            // Expose more than the target's bounded 100-card window holds.
+            frame.Height = height + 45 * rowHeight; page.UpdateLayout();
+            var layout = typeof(LibraryPage).GetMethod("GetGridLayout", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
+            var range = ((int StartIndex, int EndIndex))typeof(LibraryPage).GetMethod("GetVisibleItemRange", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(page, new[] { layout })!;
+            if (page.ViewModel.GetWindowItem(range.EndIndex) is not null)
+                throw new InvalidOperationException("Resize failure regression did not expose any uncached rows.");
+            await Until(() => page.ViewModel.GetWindowItem(range.EndIndex) is not null);
+            await Until(() => ((Button)page.FindName("LibraryLetterRetry")).Visibility == Visibility.Visible);
+            if (page.ViewModel.LetterJumpError != error || page.ViewModel.ErrorMessage is not null)
+                throw new InvalidOperationException("Ordinary resize loading cleared or globalized scoped Retry.");
+        }
+        finally { frame.Height = height; page.UpdateLayout(); failed.Release.TrySetResult(); }
+        Invoke(letter("M"));
+        await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+        var viewport = wire.HoldNextWindow();
+        Wire.WindowReadGate? target = null;
+        try
+        {
+            var requested = (400 / columns) * rowHeight + .25;
+            ManualScroll(page, scroll, requested);
+            await viewport.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            target = wire.HoldNextWindow(); Invoke(letter("M"));
+            await target.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            ManualScroll(page, scroll, requested + .25);
+            // Neither late read is released: the same row must get a new read.
+            await Until(() => Math.Abs(scroll.VerticalOffset - requested - .25) < .2 &&
+                !page.ViewModel.IsLetterJumpInProgress && page.ViewModel.GetWindowItem(400) is not null);
+        }
+        finally { viewport.Release.TrySetResult(); target?.Release.TrySetResult(); }
+        Invoke(letter("M"));
+        await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+        Program.Log("PASS: Scroll to top retires held/failed letters; prior animation and resize clamps preserve pending intent; resize retains Retry; sub-row input reloads a cancelled viewport read.");
+    }
 
     private static async Task VerifyOwnershipAsync(LibraryPage page, ScrollViewer scroll, Wire wire, SiloApiClient client,
         Func<string, Button> letter, int columns, double rowHeight)
@@ -359,7 +487,7 @@ internal static class LibraryLettersNativeFixture
         {
             await manual.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var requested = (200 / columns) * rowHeight;
-            scroll.ChangeView(null, requested, null, true);
+            ManualScroll(page, scroll, requested);
             await Until(() => Math.Abs(scroll.VerticalOffset - requested) < 2 && !page.ViewModel.IsLetterJumpInProgress);
             await Until(() => page.ViewModel.GetWindowItem(200) is not null);
             var actual = scroll.VerticalOffset;
@@ -374,7 +502,7 @@ internal static class LibraryLettersNativeFixture
         {
             await manual.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var requested = scroll.VerticalOffset + .5;
-            scroll.ChangeView(null, requested, null, true);
+            ManualScroll(page, scroll, requested);
             await Until(() => Math.Abs(scroll.VerticalOffset - requested) < .2 && !page.ViewModel.IsLetterJumpInProgress);
             manual.Release.TrySetResult(); await Task.Delay(100);
             if (Math.Abs(scroll.VerticalOffset - requested) > .2 || page.ViewModel.ErrorMessage is not null)

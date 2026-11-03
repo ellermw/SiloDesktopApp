@@ -17,6 +17,8 @@ public partial class LibraryViewModel
     private string? _letterJumpError;
     private string? _failedLetter;
     private string? _letterFeedbackKey;
+    private bool _letterJumpRetiredScope;
+    public bool IsLetterJumpViewportBlocked => _letterJumpRetiredScope && WindowStartIndex < 0 && LetterJumpError is not null;
     private string? _letterIndexKey;
     private Task? _letterIndexTask;
     private long _letterIndexLoadVersion;
@@ -120,7 +122,9 @@ public partial class LibraryViewModel
         var currentKey = LetterQueryKey();
         var knownIndex = (LetterIndex is not null && _letterIndexKey == currentKey) ||
             (_failedLetter is not null && _letterFeedbackKey == currentKey);
+        var retiredScope = _letterJumpRetiredScope && _letterFeedbackKey == currentKey;
         RetireLetterJump();
+        _letterJumpRetiredScope = retiredScope;
         var jump = _letterJumpVersion;
         if (string.IsNullOrEmpty(letter) || SelectedSort != "title") return;
         letter = letter.ToUpperInvariant();
@@ -145,7 +149,8 @@ public partial class LibraryViewModel
                 var entry = index.Letters.FirstOrDefault(x => x.Letter == letter);
                 if (entry is null || entry.Position >= TotalCount)
                 {
-                    if (attempt != 0) { _letterIndexKey = null; SetLetterJumpFailure(letter); }
+                    _letterIndexKey = null;
+                    SetLetterJumpFailure(letter);
                     return;
                 }
                 var previousStart = WindowStartIndex;
@@ -165,6 +170,7 @@ public partial class LibraryViewModel
                     // may transfer into a fresh query and exact index read.
                     var extent = TotalCount;
                     StartNewCatalogQuery();
+                    _letterJumpRetiredScope = true;
                     _estimatedTotalItems = extent;
                     TotalCount = extent;
                     Items.Reset(extent);
@@ -191,6 +197,7 @@ public partial class LibraryViewModel
                     WindowLoaded?.Invoke();
                     return;
                 }
+                _letterJumpRetiredScope = false;
                 if (entry.Position < TotalCount)
                     LetterJumpRequested?.Invoke(entry.Position);
                 return;
@@ -227,6 +234,7 @@ public partial class LibraryViewModel
         LetterJumpError = null;
         _failedLetter = null;
         _letterFeedbackKey = null;
+        _letterJumpRetiredScope = false;
     }
 
     private void ResetLetterIndex()

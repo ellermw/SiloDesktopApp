@@ -314,6 +314,8 @@ public sealed class LibraryLetterNavigationTests
         Assert.Empty(jumped);
         Assert.Equal(requests, wire.Seeks.Count);
         Assert.Equal(800, model.TotalCount);
+        Assert.Equal("Couldn't load N titles.", model.LetterJumpError);
+        Assert.Null(model.PendingLetter);
         await model.JumpToLetterCommand.ExecuteAsync("M");
         Assert.Equal(new[] { 742 }, jumped);
         Assert.NotNull(model.GetWindowItem(742));
@@ -481,6 +483,36 @@ public sealed class LibraryLetterNavigationTests
         var guard = source[start..end];
         Assert.Contains("if (ViewModel.IsLetterJumpInProgress)", guard);
         Assert.Contains("ScheduleVisibleRangeLoad(force);", guard);
+    }
+
+    [Fact]
+    public void PageRetiresLettersOnNewScrollInputAndForcesTheRetiredViewportToLoad()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "LibraryPage.xaml.cs"));
+        foreach (var input in new[] { "PointerWheelChanged", "PointerPressed", "KeyDown" })
+        {
+            Assert.Contains($"LibraryScroller.AddHandler(UIElement.{input}Event", source);
+            Assert.Contains($"LibraryScroller_{input}), true)", source);
+        }
+        Assert.Contains("LibraryScroller.DirectManipulationStarted += LibraryScroller_DirectManipulationStarted", source);
+        var start = source.IndexOf("private void LibraryScroller_ViewChanged", StringComparison.Ordinal);
+        var end = source.IndexOf("private void LibraryScroller_SizeChanged", start, StringComparison.Ordinal);
+        Assert.DoesNotContain("RetireLetterJump", source[start..end]);
+        start = source.IndexOf("private void RetireLetterJumpForManualScroll", StringComparison.Ordinal);
+        end = source.IndexOf("private void LibraryScroller_PointerWheelChanged", start, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.RetireLetterJump();", source[start..end]);
+        Assert.Contains("_lastRequestedStartIndex = _lastRequestedEndIndex = -1;", source[start..end]);
+        Assert.Contains("ScheduleVisibleRangeLoad(force: true);", source[start..end]);
+        start = source.IndexOf("private void ScrollToTop_Click", StringComparison.Ordinal);
+        end = source.IndexOf("// ===== Overlay Header", start, StringComparison.Ordinal);
+        Assert.True(source.IndexOf("RetireLetterJumpForManualScroll();", start, StringComparison.Ordinal) <
+            source.IndexOf("SetLibraryVerticalOffset(0", start, StringComparison.Ordinal));
+        Assert.Contains("EnsureVisibleRangeLoadedAsync(force: true)", source[start..end]);
+        start = source.IndexOf("private async Task EnsureVisibleRangeLoadedAsync", StringComparison.Ordinal);
+        end = source.IndexOf("var range = GetVisibleItemRange", start, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (ViewModel.LetterJumpError is not null)", source[start..end]);
+        Assert.Contains("if (ViewModel.IsLetterJumpViewportBlocked)", source[start..end]);
+        Assert.Contains("_forceVisibleRangeLoad |= force;", source[start..end]);
     }
 
     [Fact]
@@ -702,6 +734,61 @@ public sealed class LibraryLetterNavigationTests
     }
 
     [Fact]
+    public async Task OrdinaryViewportReadsKeepScopedRetryWithoutBlockingBrowsing()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        wire.FailCatalog = true;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        var error = model.LetterJumpError;
+        Assert.NotNull(error);
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        wire.FailCatalog = false;
+
+        await model.EnsureRangeLoadedAsync(300, 359);
+
+        Assert.NotNull(model.GetWindowItem(300));
+        Assert.Equal(error, model.LetterJumpError);
+        Assert.Null(model.ErrorMessage);
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        Assert.NotNull(model.GetWindowItem(742));
+        Assert.Null(model.LetterJumpError);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RetryKeepsFailureWhenRevalidatedLetterIsMissingOrOutsideExactExtent(bool missing)
+    {
+        using var wire = new Wire { CatalogExact = false, IndexTotal = 1200, TailPosition = 1199 };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+        Assert.NotNull(model.LetterJumpError);
+        if (missing) { wire.MissingTail = true; wire.IndexTotal = 1000; }
+        else
+        {
+            wire.CatalogTotal = 800; wire.WindowTotalExact = true;
+            await model.LoadWindowAsync(0, 100, force: true);
+        }
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await model.RetryLetterJumpCommand.ExecuteAsync(null);
+            Assert.Equal("Couldn't load N titles.", model.LetterJumpError);
+            Assert.Null(model.PendingLetter); Assert.Null(model.ErrorMessage);
+            Assert.False(model.IsLetterJumpInProgress);
+            Assert.Empty(jumps);
+            Assert.Equal(2 + attempt, wire.IndexRequests);
+        }
+        wire.MissingTail = false; wire.IndexTotal = 800; wire.TailPosition = 790;
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { 790 }, jumps);
+        Assert.Null(model.LetterJumpError);
+    }
+
+    [Fact]
     public async Task AnotherContextWithoutOptionalIndexDoesNotInheritTheOldChoiceFailure()
     {
         using var wire = new Wire(); var model = wire.Create();
@@ -908,7 +995,7 @@ public sealed class LibraryLetterNavigationTests
         internal bool Supported = true;
         internal int IndexRequests, ProbeRequests, CapabilityRequests;
         internal string? IndexBody, CatalogGroups, CatalogMatch;
-        internal bool HoldIndex, FailIndex, FailCapabilities;
+        internal bool HoldIndex, FailIndex, FailCapabilities, MissingTail;
         internal int CatalogTotal = 1000;
         internal int IndexTotal = 1000;
         internal int TailPosition = 749;
@@ -948,6 +1035,9 @@ public sealed class LibraryLetterNavigationTests
                 if (HoldIndex) await ReleaseIndex.Task; // Deliberately ignore cancellation to model a late transport.
                 if (FailIndex) return Reply(new { detail = "Synthetic unavailable index" }, HttpStatusCode.ServiceUnavailable);
                 if (IndexTotal == 0) return Reply(new { total = 0, letters = Array.Empty<object>(), runs = Array.Empty<object>() });
+                if (MissingTail) return Reply(new { total = IndexTotal,
+                    letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = IndexTotal - 742, position = 742 } },
+                    runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position = 742 } } });
                 return Reply(new { total = IndexTotal, letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = TailPosition - 742, position = 742 }, new { letter = "N", count = IndexTotal - TailPosition, position = TailPosition } }, runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position = 742 }, new { letter = "N", position = TailPosition } } });
             }
             if (path == "/api/v2/catalog")
