@@ -1281,6 +1281,12 @@ public sealed partial class PlayerOverlay : UserControl
             Grid.SetColumn(descriptor, 1);
             row.Children.Add(descriptor);
             var item = CreatePlayerMenuButton(row, isActive);
+            if (track.Unplayable)
+            {
+                badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
+                item.IsEnabled = false;
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, "Subtitle unavailable");
+            }
             int capturedMpvIndex = origIdx + 1;
             var capturedTrack = track;
             item.Click += (_, _) =>

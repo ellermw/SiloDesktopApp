@@ -21,6 +21,7 @@ public partial class PlaybackManager
         {
             var track = subtitleIndex.HasValue ? CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index == subtitleIndex) : null;
             if (subtitleIndex.HasValue && track == null) throw new InvalidOperationException("The selected subtitle is no longer in the active inventory.");
+            if (track?.Unplayable == true) throw new InvalidOperationException("The selected subtitle is unavailable.");
             _hasViewerSubtitle = true; _viewerSubtitle = track;
             _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
             ++_subtitleRevision;
@@ -55,7 +56,7 @@ public partial class PlaybackManager
                 if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
                     return MatchCurrentSubtitle()?.Index ?? -1;
                 return CurrentSession?.SubtitleUrls.FirstOrDefault(t =>
-                    t.TrackId == CurrentSession.SelectedSubtitleTrackId)?.Index ?? -1;
+                    !t.Unplayable && t.TrackId == CurrentSession.SelectedSubtitleTrackId)?.Index ?? -1;
             }
         }
     }
@@ -110,7 +111,7 @@ public partial class PlaybackManager
     private SubtitleTrackInfo? MatchCurrentSubtitle()
     {
         if (_viewerSubtitle == null) return null;
-        var tracks = CurrentSession?.SubtitleUrls ?? [];
+        var tracks = CurrentSession?.SubtitleUrls.Where(t => !t.Unplayable).ToList() ?? [];
         return tracks.FirstOrDefault(t => !string.IsNullOrEmpty(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId)
             ?? tracks.Where(t => SameLanguage(t.Language, _viewerSubtitle.Language) &&
                 t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired)
@@ -123,12 +124,13 @@ public partial class PlaybackManager
             // A granted automatic selection also survives a transport/session replacement.
             if (!_hasViewerSubtitle)
             {
-                _viewerSubtitle = CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.TrackId == CurrentSession.SelectedSubtitleTrackId);
+                _viewerSubtitle = CurrentSession?.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.TrackId == CurrentSession.SelectedSubtitleTrackId);
                 _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
                 _hasViewerSubtitle = true;
             }
             if (_viewerSubtitle == null) return null;
-            if (fileId == _viewerSubtitleFile) return _viewerSubtitle.Index;
+            if (fileId == _viewerSubtitleFile)
+                return CurrentSession?.MediaFileId == fileId ? MatchCurrentSubtitle()?.Index : _viewerSubtitle.Index;
             var tracks = WatchDetail?.Versions.FirstOrDefault(v => v.FileId == fileId)?.SubtitleTracks ?? [];
             return tracks.Select((track, i) => (Track: track, Index: track.Index ?? i))
                 .Where(t => SameLanguage(t.Track.Language, _viewerSubtitle.Language) &&

@@ -338,6 +338,10 @@ public partial class PlaybackManager : IDisposable
             },
             SubtitleUrls = plan.Subtitle.Inventory.Select(track => new SubtitleTrackInfo
             {
+                StreamIndex = track.StreamIndex,
+                ContainerTrackId = track.ContainerTrackId,
+                NativeSelectable = track.NativeSelectable,
+                Unplayable = track.Unplayable,
                 SyncKey = track.SyncKey,
                 TrackId = track.TrackId,
                 Index = track.CombinedIndex,
@@ -345,6 +349,7 @@ public partial class PlaybackManager : IDisposable
                 Language = track.Language ?? "",
                 Codec = track.Codec,
                 Label = string.IsNullOrWhiteSpace(track.Label) ? track.Language ?? "Subtitle" : track.Label,
+                NativeTitle = track.Label,
                 Source = track.Source,
                 Url = track.Url ?? "",
                 FontBundleUrl = track.FontBundleUrl,
@@ -388,14 +393,21 @@ public partial class PlaybackManager : IDisposable
         CancellationToken ct = default)
     {
         RecordLocalSubtitleSelection(subtitleTrackIndex);
-        return ReplanAsync(
+        return ReplanRecordedSubtitleSelectionAsync(positionSeconds, ct);
+    }
+
+    /// <summary>
+    /// Submits the already recorded viewer intent after another grant has
+    /// changed inventories, preserving its original file/track identity.
+    /// </summary>
+    public Task<PlaybackStartResponse> ReplanRecordedSubtitleSelectionAsync(double positionSeconds, CancellationToken ct = default)
+        => ReplanAsync(
             "track_change",
             positionSeconds,
             _qualityPreferenceV3,
             selectedTracks => { },
             failure: null,
             ct);
-    }
 
     public Task<PlaybackStartResponse> ReplanSeekAsync(
         double positionSeconds,
