@@ -1,3 +1,4 @@
+using System.Net.WebSockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,9 +24,9 @@ internal static partial class EpisodeQuickPlayNativeFixture
         SetField(scope.Window, "_hydratedShellKey", typeof(MainWindow).GetMethod("GetAuthenticatedShellKey", Private)!.Invoke(scope.Window, null));
         var nav = (NavigationView)((FrameworkElement)scope.Window.Content).FindName("NavView");
         nav.IsPaneVisible = true;
-        foreach (var catchUp in new[] { false, true })
+        foreach (var invalidation in new[] { "access", "catch-up", "language" })
         foreach (var boundary in new[] { "watch", "start" })
-        foreach (var initialState in new[] { PlayerState.Idle, PlayerState.Minimized })
+        foreach (var initialState in invalidation == "language" ? new[] { PlayerState.Idle } : new[] { PlayerState.Idle, PlayerState.Minimized })
         {
             await scope.ResetAsync();
             scope.Player.SetState(initialState);
@@ -49,9 +50,28 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 var scroll = Descendants<ScrollViewer>(page).First();
                 var offset = scroll.VerticalOffset;
                 // Exercise the event publisher and MainWindow subscribers, not direct catalog invalidation.
-                var published = typeof(EventChannelClient).GetMethod("PublishAccessInvalidation", Private)!
-                    .Invoke(events, [scope.Client.CaptureContext(), null, catchUp]);
-                Check(published is true, "Synthetic access/catch-up event was not published.");
+                if (invalidation == "language")
+                {
+                    typeof(MainWindow).GetMethod("EnsureNotificationSubscription", Private)!
+                        .Invoke(scope.Window, [GetField(scope.Window, "_hydratedShellKey")]);
+                    var generation = scope.Client.LocalizedReads.Generation;
+                    using var socket = new ClientWebSocket();
+                    await (Task)typeof(EventChannelClient).GetMethod("DispatchFrame", Private)!.Invoke(events,
+                        [socket, """{"type":"event","channel":"user_settings","event":"user_settings.changed","data":{"profile_id":"fixture","key":"catalog.metadata_language"}}""", CancellationToken.None])!;
+                    Check(scope.Client.LocalizedReads.Generation == generation + 1, "Shell did not publish the realtime language invalidation.");
+                    // The page's read can finish before the shell's 100 ms debounce.
+                    // Keep playback held until that shell refresh has actually completed.
+                    await Until(() => GetField(scope.Window, "_localizedRefreshCts") != null);
+                    await Until(() => GetField(scope.Window, "_localizedRefreshCts") == null);
+                    Check(!(bool)GetField(scope.Window, "_localizedRefreshPending")! && scope.Player.State == PlayerState.Idle,
+                        "Localized shell refresh did not complete during the held Idle start.");
+                }
+                else
+                {
+                    var published = typeof(EventChannelClient).GetMethod("PublishAccessInvalidation", Private)!
+                        .Invoke(events, [scope.Client.CaptureContext(), null, invalidation == "catch-up"]);
+                    Check(published is true, "Synthetic access/catch-up event was not published.");
+                }
                 await Until(() => scope.Wire.BoxSetReads > reads && !page.ViewModel.IsLoading);
                 Check(ReferenceEquals(scope.Frame.Content, page) && scope.Frame.BackStack.Count == backCount
                     && ReferenceEquals(play, Descendants<Button>(page).Single(x => x.Name == "BoxSetPlay"))
@@ -63,8 +83,8 @@ internal static partial class EpisodeQuickPlayNativeFixture
             await Until(() => !scope.Player.IsLoading && scope.Player.State == PlayerState.Expanded);
             Check(scope.Player.Manager?.CurrentSession != null && scope.Player.ContentId == "boxset-film"
                 && scope.Wire.Starts.Count == 1 && !lifetime.IsCancellationRequested,
-                "Access/catch-up refresh silently abandoned the accepted movie start.");
-            Program.Log($"PASS: box-set shell {(catchUp ? "catch-up" : "access")} during held {boundary} from {initialState} preserves visit and starts the movie.");
+                "Shell refresh silently abandoned the accepted movie start.");
+            Program.Log($"PASS: box-set shell {invalidation} during held {boundary} from {initialState} preserves visit and starts the movie.");
         }
         await scope.ResetAsync();
     }
