@@ -17,6 +17,7 @@ public sealed partial class LibraryPage
     private LibraryPageStateSnapshot? _stateSnapshot;
     private long _stateVisit, _stateEdit, _stateLanguage;
     private string? _retainedSearch;
+    private bool _libraryStateApplied;
     private bool _applyingLibraryState, _stateEventsAttached, _stateRefreshQueued, _stateRefreshAgain;
     private DispatcherTimer? _stateSaveTimer;
     private CancellationTokenSource? _stateRestoreCancellation;
@@ -76,7 +77,9 @@ public sealed partial class LibraryPage
 
     private void LibraryState_LanguageChanged(long generation)
     {
-        // The shell owns language navigation; immediately retire this visit's restoration.
+        // The shell refreshes the mounted page in place. Keep this visit armed;
+        // invalidation retires the old document and makes pending reads revalidate.
+        _stateLanguage = generation;
         _stateSettings.LibraryPageState.Invalidate();
     }
 
@@ -85,7 +88,7 @@ public sealed partial class LibraryPage
         var visit = _stateVisit;
         DispatcherQueue.TryEnqueue(async () =>
         {
-            if (!_isNavigated || visit != _stateVisit || _stateOwner is not { } owner || _activeLibraryId is not { } id) return;
+            if (!_isNavigated || !_libraryStateApplied || visit != _stateVisit || _stateOwner is not { } owner || _activeLibraryId is not { } id) return;
             if (_stateRefreshQueued) { _stateRefreshAgain = true; return; }
             _stateRefreshQueued = true;
             var edit = _stateEdit;
@@ -126,7 +129,7 @@ public sealed partial class LibraryPage
 
     private void ScheduleLibraryStateSave(int id, LibraryViewState state)
     {
-        if (!_isNavigated || _applyingLibraryState || _stateOwner is not { } owner || !_stateSettings.IsCurrentSettingsContext(owner)) return;
+        if (!_isNavigated || !_libraryStateApplied || id != _activeLibraryId || _applyingLibraryState || _stateOwner is not { } owner || !_stateSettings.IsCurrentSettingsContext(owner)) return;
         var search = FormatLibrarySearch(state);
         if (search == _retainedSearch) return;
         _retainedSearch = search;

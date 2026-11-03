@@ -169,6 +169,44 @@ public sealed class RetainedLibraryStateTests
         await wire.Store.ReadAsync(11); Assert.Equal(2, wire.Reads);
     }
 
+    [Theory]
+    [InlineData("{\"version\":2,\"libraries\":{\"5\":{\"search\":\"?tab=collections\"}}}")]
+    [InlineData("{\"version\":\"1\",\"libraries\":{\"5\":{\"search\":\"?tab=collections\"}}}")]
+    [InlineData("{\"version\":1,\"libraries\":[]}")]
+    [InlineData("{\"libraries\":{\"5\":{\"search\":\"?tab=collections\"}}}")]
+    [InlineData("\"not JSON\"")]
+    public async Task UnrecognizedDocumentIsNeverReplaced(string json)
+    {
+        using var wire = new Wire { StateDocument = JsonSerializer.Deserialize<JsonElement>(json) };
+        Assert.Null(await wire.Store.ReadAsync(9));
+        await wire.Store.WriteAsync(9, "?tab=library");
+        Assert.Equal(0, wire.Writes);
+        Assert.Equal(json, wire.StateDocument.Value.GetRawText());
+    }
+
+    [Fact]
+    public async Task EditingOneLibraryPreservesUnknownEntriesAndFields()
+    {
+        using var wire = new Wire
+        {
+            StateDocument = JsonSerializer.Deserialize<JsonElement>("""
+                {"version":1,"extra":{"keep":true},"libraries":{
+                  "5":"?tab=collections","6":{"search":42,"unknown":[1,2]},
+                  "9":{"search":"?tab=recommended","position":17}}}
+                """)
+        };
+        await wire.Store.WriteAsync(9, "?tab=library");
+        Assert.Equal(1, wire.Writes);
+        var saved = wire.StateDocument!.Value;
+        Assert.True(saved.GetProperty("extra").GetProperty("keep").GetBoolean());
+        var libraries = saved.GetProperty("libraries");
+        Assert.Equal("?tab=collections", libraries.GetProperty("5").GetString());
+        Assert.Equal(42, libraries.GetProperty("6").GetProperty("search").GetInt32());
+        Assert.Equal(2, libraries.GetProperty("6").GetProperty("unknown").GetArrayLength());
+        Assert.Equal(17, libraries.GetProperty("9").GetProperty("position").GetInt32());
+        Assert.Equal("?tab=library", libraries.GetProperty("9").GetProperty("search").GetString());
+    }
+
     private static JsonElement Event(string key = "ui.library_page_state", string profile = "profile")
         => JsonSerializer.SerializeToElement(new { key, scope = "profile_device", profile_id = profile });
 
@@ -179,6 +217,7 @@ public sealed class RetainedLibraryStateTests
         internal LibraryPageStateStore Store => Settings.LibraryPageState;
         internal Dictionary<int, string> Libraries = new() { [11] = "old" };
         internal bool Remember = true;
+        internal JsonElement? StateDocument;
         internal bool HoldFirstReadOnly;
         internal int Reads, Writes;
         internal TaskCompletionSource? ReadGate, PutGate;
@@ -195,7 +234,7 @@ public sealed class RetainedLibraryStateTests
             {
                 Reads++;
                 var body = JsonSerializer.Serialize(new { items = new object[] { new { key = "ui.remember_library_page_state", value = (object)Remember },
-                    new { key = "ui.library_page_state", value = (object)new { version = 1, libraries = Libraries.ToDictionary(p => p.Key.ToString(), p => new { search = p.Value }) } } } });
+                    new { key = "ui.library_page_state", value = StateDocument is { } document ? (object)document : new { version = 1, libraries = Libraries.ToDictionary(p => p.Key.ToString(), p => new { search = p.Value }) } } } });
                 ReadStarted.TrySetResult(); if (ReadGate is { } gate && (!HoldFirstReadOnly || Reads == 1)) await gate.Task;
                 return new(HttpStatusCode.OK) { Content = new StringContent(body) };
             }
@@ -203,7 +242,8 @@ public sealed class RetainedLibraryStateTests
             {
                 Writes++; PutStarted.TrySetResult(); if (PutGate is { } gate) await gate.Task;
                 var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync());
-                Libraries = body.GetProperty("value").GetProperty("libraries").EnumerateObject().ToDictionary(p => int.Parse(p.Name), p => p.Value.GetProperty("search").GetString()!);
+                if (StateDocument != null) StateDocument = body.GetProperty("value").Clone();
+                else Libraries = body.GetProperty("value").GetProperty("libraries").EnumerateObject().ToDictionary(p => int.Parse(p.Name), p => p.Value.GetProperty("search").GetString()!);
             }
             return new(HttpStatusCode.OK) { Content = new StringContent("{}") };
         }

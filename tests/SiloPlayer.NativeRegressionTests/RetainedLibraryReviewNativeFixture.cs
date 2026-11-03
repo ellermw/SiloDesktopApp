@@ -12,6 +12,7 @@ internal static partial class RetainedLibraryNativeFixture
 {
     private static async Task CheckReviewAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings, AuthService auth)
     {
+        await CheckActivationAndDepartureAsync(parent, navigation, wire, settings);
         var failures = new List<string>();
         foreach (var scenario in new[] { "opt-out", "save-error" })
         {

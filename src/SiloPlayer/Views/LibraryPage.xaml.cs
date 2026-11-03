@@ -321,6 +321,8 @@ public sealed partial class LibraryPage : Page,
         if (library == null)
         {
             _activeLibraryId = null;
+            _libraryStateApplied = false;
+            IsEnabled = true;
             _stateOwner = null;
             _stateSnapshot = null;
             _retainedSearch = null;
@@ -336,7 +338,11 @@ public sealed partial class LibraryPage : Page,
 
         if (library != null)
         {
-            var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && ViewModel.Library.Type == library.Type && _stateOwner == owner && _stateLanguage == language;
+            var sameLibrary = _activeLibraryId == library.Id && _libraryStateApplied && ViewModel.Library?.Id == library.Id && ViewModel.Library.Type == library.Type && _stateOwner == owner && _stateLanguage == language;
+            // Controls still contain the previous library until its successor is applied.
+            // Do not accept input or persist that provisional view during restoration.
+            _libraryStateApplied = sameLibrary;
+            IsEnabled = sameLibrary;
             if (_stateLanguage != language) _stateSettings.LibraryPageState.Invalidate();
             if (_stateOwner != owner) _stateSnapshot = null;
             _stateOwner = owner;
@@ -378,18 +384,21 @@ public sealed partial class LibraryPage : Page,
             var revision = _stateSettings.LibraryPageState.Revision;
             var snapshot = sameLibrary && _stateSettings.LibraryPageState.TryGetConfirmed(library.Id, out var confirmed)
                 ? confirmed : await RestoreLibraryStateAsync(library.Id, visit, owner);
-            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id) || edit != _stateEdit) return;
+            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id)) return;
             await CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<CatalogApi>());
-            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id) || edit != _stateEdit) return;
+            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id)) return;
             while (revision != _stateSettings.LibraryPageState.Revision)
             {
                 revision = _stateSettings.LibraryPageState.Revision;
                 snapshot = await RestoreLibraryStateAsync(library.Id, visit, owner);
-                if (!IsLibraryStateVisitCurrent(visit, owner, library.Id) || edit != _stateEdit) return;
+                if (!IsLibraryStateVisitCurrent(visit, owner, library.Id)) return;
             }
             // A failed read cannot turn this owner's known opt-out into an unknown preference.
             if (snapshot == null && _stateSnapshot is { Remember: false }) snapshot = _stateSnapshot;
-            var retain = sameLibrary && (snapshot == null || snapshot.Value.Remember &&
+            // A newer same-library edit wins over the restore, but must not abandon
+            // activation: an interrupted tab still needs its content loaded.
+            var edited = sameLibrary && edit != _stateEdit;
+            var retain = sameLibrary && (edited || snapshot == null || snapshot.Value.Remember &&
                 (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch));
             var state = retain ? CaptureLibraryViewState(_currentTab) :
                 ParseOwnedLibrarySearch(snapshot?.Search, visit, owner, library.Id) ??
@@ -414,10 +423,19 @@ public sealed partial class LibraryPage : Page,
                 _libraryVerticalOffset = 0;
                 _pendingLibraryOffset = 0;
             }
-            ApplyLibraryViewState(state);
+            // This library is already configured when a retained visit accepts
+            // input. Reapplying even a captured state would erase debounced drafts.
+            if (!edited || requestedTab != null || requestedGenre != null)
+                ApplyLibraryViewState(state);
             _stateSnapshot = snapshot;
-            if (requestedTab != null || requestedGenre != null) ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));
-            _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
+            _libraryStateApplied = true;
+            IsEnabled = true;
+            // Only newly restored input establishes a baseline; retaining visible
+            // input must not mark an unsaved edit as already persisted.
+            if (!retain) _retainedSearch = snapshot?.Search;
+            if (requestedTab != null || requestedGenre != null)
+                ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));
+            if (!retain) _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
 
             if (state.Tab == "Recommended")
             {
@@ -559,7 +577,23 @@ public sealed partial class LibraryPage : Page,
         DetachLibraryStateEvents();
         _shuffleLaunch?.Cancel();
         base.OnNavigatedFrom(e);
+        // Accept debounced input and capture edits before canceling their reloads.
+        // Their async continuations may not run until after this visit has ended.
+        var pendingFilters = _yearDebounceTimer != null || _advancedFilterDebounceTimer != null;
+        if (_yearDebounceTimer != null)
+        {
+            ViewModel.SelectedYearMin = NullIfWhiteSpace(YearMinBox.Text);
+            ViewModel.SelectedYearMax = NullIfWhiteSpace(YearMaxBox.Text);
+        }
+        if (_advancedFilterDebounceTimer != null && !ViewModel.UseAdvancedRules)
+            CopyAdvancedFilterInputs();
+        _yearDebounceTimer?.Stop(); _yearDebounceTimer = null;
+        _advancedFilterDebounceTimer?.Stop(); _advancedFilterDebounceTimer = null;
+        if (!ViewModel.UseAdvancedRules || _sharedFilterEditor?.IsValid != false)
+            SaveViewState(_currentTab);
         FlushLibraryStateSave();
+        if (pendingFilters || ViewModel.IsLoading && ViewModel.WindowStartIndex < 0)
+            _libraryCatalogLoaded = false;
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
         _uiCustomizationService.Changed -= UICustomization_Changed;
@@ -2664,8 +2698,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void Tab_Click(object sender, RoutedEventArgs e)
     {
-        MarkLibraryStateEdited();
-        if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
+        if (!_libraryStateApplied || sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
         if (tag == _currentTab)
@@ -2682,6 +2715,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
+        MarkLibraryStateEdited();
         ShowTab(tag);
 
         if (tag == "Recommended")
@@ -3757,7 +3791,7 @@ public sealed partial class LibraryPage : Page,
         await ApplyAdvancedFiltersAsync();
     }
 
-    private async Task ApplyAdvancedFiltersAsync()
+    private void CopyAdvancedFilterInputs()
     {
         ViewModel.SelectedMinimumRating = NullIfWhiteSpace(MinimumRatingBox.Text);
         ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
@@ -3777,7 +3811,11 @@ public sealed partial class LibraryPage : Page,
         ViewModel.SelectedFourK = FourKToggle.IsChecked == true;
         ViewModel.SelectedHdr = HdrToggle.IsChecked == true;
         ViewModel.SelectedDolbyVision = DolbyVisionToggle.IsChecked == true;
+    }
 
+    private async Task ApplyAdvancedFiltersAsync()
+    {
+        CopyAdvancedFilterInputs();
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
         UpdateActiveFilterBadges();

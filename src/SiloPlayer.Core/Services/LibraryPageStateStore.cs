@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Core.Services;
@@ -86,7 +87,7 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
                     if (State.Confirmed is { } saved && saved.Owner == owner && saved.Generation == generation)
                         return Snapshot(saved, libraryId);
                 }
-                var (remember, libraries) = await ReadDocumentAsync(owner, ct).WaitAsync(ct);
+                var (remember, libraries, _) = await ReadDocumentAsync(owner, ct).WaitAsync(ct);
                 EnsureOwner(owner, ct);
                 lock (State.Sync)
                 {
@@ -113,16 +114,23 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
                 long generation;
                 lock (State.Sync) generation = State.Generation;
                 // Merge into the authoritative document so concurrent libraries survive.
-                var (remember, libraries) = await ReadDocumentAsync(owner, ct);
+                var (remember, libraries, value) = await ReadDocumentAsync(owner, ct);
                 EnsureOwner(owner, ct);
                 Task? write = null;
                 lock (State.Sync)
                 {
                     if (generation != State.Generation) continue;
-                    if (remember && libraries.GetValueOrDefault(libraryId.ToString()) != search)
+                    if (remember && value != null && libraries.GetValueOrDefault(libraryId.ToString()) != search)
                     {
-                        libraries[libraryId.ToString()] = search;
-                        var value = new { version = 1, libraries = libraries.ToDictionary(pair => pair.Key, pair => new { search = pair.Value }) };
+                        var id = libraryId.ToString();
+                        libraries[id] = search;
+                        var saved = (JsonObject)value["libraries"]!;
+                        if (saved[id] is not JsonObject entry)
+                        {
+                            entry = new JsonObject();
+                            saved[id] = entry;
+                        }
+                        entry["search"] = search;
                         write = settings.WriteLibraryStateDocumentAsync(owner, value, ct);
                     }
                 }
@@ -143,22 +151,40 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
         ct.ThrowIfCancellationRequested();
         if (!settings.IsCurrentSettingsContext(owner)) throw new OperationCanceledException("Library settings owner changed.", ct);
     }
-    private async Task<(bool Remember, Dictionary<string, string> Libraries)> ReadDocumentAsync(SettingsRequestContext owner, CancellationToken ct)
+    private async Task<(bool Remember, Dictionary<string, string> Libraries, JsonObject? Value)> ReadDocumentAsync(SettingsRequestContext owner, CancellationToken ct)
     {
         var response = await settings.GetContractEffectiveSettingsAsync(owner.Request, Keys, deviceId: owner.DeviceId, ct: ct);
         var remember = response.Settings.FirstOrDefault(entry => entry.Key == Keys[0])?.Value;
         var enabled = remember is not { ValueKind: JsonValueKind.False } && !(remember is { ValueKind: JsonValueKind.String } text && text.GetString() == "false");
         var libraries = new Dictionary<string, string>(StringComparer.Ordinal);
         var state = response.Settings.FirstOrDefault(entry => entry.Key == Keys[1])?.Value;
+        JsonObject? value = null;
         try
         {
-            if (state is { ValueKind: JsonValueKind.String } encoded) state = JsonSerializer.Deserialize<JsonElement>(encoded.GetString() ?? "{}");
-            if (state is { ValueKind: JsonValueKind.Object } doc && doc.TryGetProperty("version", out var version) && version.GetInt32() == 1 && doc.TryGetProperty("libraries", out var saved))
-                foreach (var entry in saved.EnumerateObject())
-                    if (entry.Value.TryGetProperty("search", out var search) && search.ValueKind == JsonValueKind.String) libraries[entry.Name] = search.GetString() ?? "";
+            if (state is null or { ValueKind: JsonValueKind.Null })
+                value = new JsonObject { ["version"] = 1, ["libraries"] = new JsonObject() };
+            else
+            {
+                if (state is { ValueKind: JsonValueKind.String } encoded)
+                    state = JsonSerializer.Deserialize<JsonElement>(encoded.GetString() ?? "");
+                if (state is { ValueKind: JsonValueKind.Object } doc &&
+                    doc.TryGetProperty("version", out var version) && version.ValueKind == JsonValueKind.Number &&
+                    version.TryGetInt32(out var number) && number == 1 &&
+                    doc.TryGetProperty("libraries", out var saved) && saved.ValueKind == JsonValueKind.Object)
+                {
+                    // Keep the original document, including entries/fields this client
+                    // cannot interpret. Only the edited library's search is replaced.
+                    value = JsonNode.Parse(doc.GetRawText())!.AsObject();
+                    foreach (var entry in saved.EnumerateObject())
+                        if (entry.Value.ValueKind == JsonValueKind.Object &&
+                            entry.Value.TryGetProperty("search", out var search) && search.ValueKind == JsonValueKind.String)
+                            libraries[entry.Name] = search.GetString() ?? "";
+                }
+            }
         }
         catch (JsonException) { }
         catch (InvalidOperationException) { }
-        return (enabled, libraries);
+        // A present but unrecognized document is not an empty writable document.
+        return (enabled, libraries, value);
     }
 }

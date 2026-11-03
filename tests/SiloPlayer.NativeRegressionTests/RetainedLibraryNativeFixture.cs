@@ -305,12 +305,12 @@ internal static partial class RetainedLibraryNativeFixture
     { public object? GetService(Type type) => type == typeof(LibraryViewModel) ? model() : values.TryGetValue(type, out var value) ? value : fallback.GetService(type); }
     private sealed class Wire : HttpMessageHandler
     {
-        internal int StateReads, StateWrites, RatingReads, CollectionsReads, LayoutReads, LibraryId = 11;
+        internal int StateReads, StateWrites, RatingReads, CollectionsReads, LayoutReads, CatalogReads, LibraryId = 11;
         internal bool Remember = true, PutStarted, FailHeldRead, FailPut;
         internal string Search = "?tab=library";
         internal string LastCatalogRequest = "", ErrorMessage = "Retired synthetic settings failure";
         internal string PutErrorMessage = "Synthetic save failure";
-        internal TaskCompletionSource? ReadGate, PutGate, CollectionsGate, RatingsGate, GroupGate;
+        internal TaskCompletionSource? ReadGate, PutGate, CollectionsGate, RatingsGate, GroupGate, CatalogGate;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host is not ("retained-library.invalid" or "retained-next.invalid")) throw new InvalidOperationException("External fixture request.");
@@ -342,6 +342,8 @@ internal static partial class RetainedLibraryNativeFixture
             else if (path is "/api/v2/catalog" or "/api/v2/catalog/query")
             {
                 LastCatalogRequest = request.RequestUri.Query + (request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct));
+                CatalogReads++;
+                if (CatalogGate is { } gate) await gate.Task;
                 body = new { items = Enumerable.Range(0, 30).Select(i => new { content_id = "item-" + i, title = "Fixture " + i, type = "movie" }), total = 30, page = new { has_more = false } };
             }
             else if (path.EndsWith("/layout") || path.EndsWith("/sections")) { LayoutReads++; body = new { sections = Array.Empty<object>() }; }
