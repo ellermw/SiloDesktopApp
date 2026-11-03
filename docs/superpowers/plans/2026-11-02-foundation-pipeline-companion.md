@@ -22,3 +22,12 @@ Thread `PRRT_kwDOS5hFiM6y7E74`, comment 4449386207 reports restart menus bypassi
 - [x] Commit locally and append exact refs, hashes, red/green and limits to the companion report for new scoped review.
 
 Product `64bd63e00231fa93e5d23ea33d282f3be01679a5`, fixtures `620cd53660b80b4200751023e4c91ad4cd4dca1d`: focused **414/414**, corrected full **3,124/3,124**, fresh Release and all four native routes pass. New DLL SHA256 is `BB82FAFBC565F7A169EEA7AA9ACCE75A4C2BCCE845951659B51B1C5C3268C8E0`. Actual popup commands retain library/file/profile/zero restart; recycled/scope-changed/departed/other-profile menus do not prepare playback, while the same viewer's access refresh remains valid. Initial full failure was a source-text assertion requiring exactly two playback arguments; actual native behavior now verifies that contract. All original evidence remains frozen. Parent owns new scoped review and remote gates.
+
+## Captured identity through ordinary restart admission
+
+The subsequent scoped Spec review found that the pre-click guard did not cross the authority/request gates or preparation awaits. Continue from clean `6398d021`; preserve the BB82 candidate and all previous evidence.
+
+- [ ] Reproduce actual held-authority popup → profile-change playback on BB82, and capture baseline ordinary menu accepted-unload, active-room and queue-behind-scoped controls.
+- [ ] Add a focused ordinary restart interface carrying captured identity through admission/preparation, independent of quick-play supersession and no-active-room policy.
+- [ ] Verify authority/request/watch/settings/capability retirement, same-viewer access refresh and ordinary controls; full units, fresh Release, actual menu/foundation/room and existing quick-play lifecycle regressions.
+- [ ] Freeze source/app/evidence, commit locally and return for scoped re-review.
