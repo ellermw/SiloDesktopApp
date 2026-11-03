@@ -58,7 +58,7 @@ internal static partial class ArtworkMotionNativeFixture
             await Until(() => page.IsLoaded && page.ViewModel.Library is not null);
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "artwork-review")
             {
-                await RecommendedCasesAsync(page, frame, wire);
+                await RecommendedCasesAsync(page, frame, wire, client);
                 frame.Navigate(typeof(Page)); parent.Children.Remove(frame); frame = null; await Task.Delay(200);
                 await BlurStageCasesAsync(parent, client, spoilers);
                 if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
@@ -117,11 +117,20 @@ internal static partial class ArtworkMotionNativeFixture
             frame.Navigate(typeof(Page));
             await Task.Delay(400);
             Check(!wire.Requests.ContainsKey("/art/library-retained"), "Library departure cancels a pending current bind.");
-            frame.GoBack();
-            await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded);
-            await Until(() => slots.Any(card => card.MediaItem?.PosterUrl == retainedItem.PosterUrl && CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+            var heldReads = wire.HeldLibraryStateReads;
+            var stateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.LibraryStateReadGate = stateGate;
+            try
+            {
+                frame.GoBack();
+                await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && wire.HeldLibraryStateReads > heldReads);
+                await Until(() => slots.Any(card => card.MediaItem?.PosterUrl == retainedItem.PosterUrl && CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+                Check(!stateGate.Task.IsCompleted, "Retained library slots resume before server-backed state restoration completes.");
+            }
+            finally { wire.LibraryStateReadGate = null; stateGate.TrySetResult(); }
+            await Task.Delay(300); // Drain restoration before the next tab interaction.
             Program.Log("PASS artwork cached LibraryPage resumes missing current bind.");
-            await RecommendedCasesAsync(page, frame, wire);
+            await RecommendedCasesAsync(page, frame, wire, client);
             frame.Navigate(typeof(LibraryPage), new LibraryPage.NavigationArgs(new Library { Id = 12, Name = "Synthetic audiobook library", Type = "audiobook" }, "Library"));
             page = (LibraryPage)frame.Content;
             await Until(() => page.IsLoaded && page.ViewModel.Library?.Id == 12);
@@ -312,7 +321,8 @@ internal static partial class ArtworkMotionNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int InvalidCursors, LibraryId = 11;
-        internal int ImageRequests;
+        internal int ImageRequests, HeldLibraryStateReads;
+        internal TaskCompletionSource? LibraryStateReadGate;
         internal ConcurrentDictionary<string, int> Requests = new();
         internal ConcurrentDictionary<string, TaskCompletionSource> Gates = new();
         internal List<int> Seeks { get; } = [];
@@ -358,7 +368,15 @@ internal static partial class ArtworkMotionNativeFixture
                     page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) } });
             }
             if (path == "/api/v2/settings/contract/capabilities") return Reply(new { api_version = 1, manifest_revision = 17, supports_batched_effective = true });
-            if (path == "/api/v2/settings/values/effective") return Reply(new { items = new[] { new { key = "catalog.hide_unwatched_episode_images", value = true }, new { key = "catalog.hide_unwatched_episode_overviews", value = true } } });
+            if (path == "/api/v2/settings/values/effective")
+            {
+                if (LibraryStateReadGate is { } stateGate && request.RequestUri.Query.Contains("ui.library_page_state", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref HeldLibraryStateReads);
+                    return CompleteLibraryStateReadAsync(stateGate, ct);
+                }
+                return EffectiveSettingsReply();
+            }
             if (path == "/api/v2/library/11/layout") return Reply(new { sections = new[] { new { id = "poster", title = "Posters", section_type = "recently_added", item_limit = 30 }, new { id = "landscape", title = "Wide", section_type = "next_up", item_limit = 30 } } });
             if (path.StartsWith("/api/v2/library/11/sections/"))
             {
@@ -370,6 +388,10 @@ internal static partial class ArtworkMotionNativeFixture
             if (path.EndsWith("/filters")) return Reply(new { genres = Array.Empty<string>() });
             return Reply(new { status = 404, detail = "No isolated fixture value" }, HttpStatusCode.NotFound);
         }
+        private static Task<HttpResponseMessage> EffectiveSettingsReply()
+            => Reply(new { items = new[] { new { key = "catalog.hide_unwatched_episode_images", value = true }, new { key = "catalog.hide_unwatched_episode_overviews", value = true } } });
+        private static async Task<HttpResponseMessage> CompleteLibraryStateReadAsync(TaskCompletionSource gate, CancellationToken ct)
+        { await gate.Task.WaitAsync(ct); return await EffectiveSettingsReply(); }
         private static async Task<HttpResponseMessage> CompleteImageAsync(HttpResponseMessage response, TaskCompletionSource gate)
         { await gate.Task; return response; }
         private static Task<HttpResponseMessage> Reply(object body, HttpStatusCode status = HttpStatusCode.OK)

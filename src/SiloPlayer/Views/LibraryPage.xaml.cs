@@ -347,6 +347,12 @@ public sealed partial class LibraryPage : Page,
                 _libraryCatalogLoaded = false;
             }
 
+            // Departure suspension ends on return, not after server-backed state
+            // restoration. Retained current binds must also resume if that work
+            // exits early because only the access/request context changed.
+            ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
+            UpdateLibraryArtworkActivity();
+
             _activeLibraryId = library.Id;
             LibraryTitle.Text = library.Name;
             LibraryEyebrowName.Text = library.Name.ToUpperInvariant();

@@ -25,7 +25,7 @@ internal static partial class ArtworkMotionNativeFixture
     }
     private static void Tab(LibraryPage page, string name) =>
         ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName(name + "Tab")).GetPattern(PatternInterface.Invoke)).Invoke();
-    private static async Task RecommendedCasesAsync(LibraryPage page, Frame frame, Wire wire)
+    private static async Task RecommendedCasesAsync(LibraryPage page, Frame frame, Wire wire, SiloApiClient client)
     {
         Tab(page, "Recommended");
         var panel = (Panel)page.FindName("RecommendedSectionsPanel");
@@ -60,6 +60,60 @@ internal static partial class ArtworkMotionNativeFixture
             Bind(card, "recommended-fresh-hidden-" + kind); await Task.Delay(400);
             Check(!wire.Requests.ContainsKey("/art/recommended-fresh-hidden-" + kind), kind + " explicit bind while Recommended hidden stays suspended");
             Tab(page, "Recommended"); await Until(() => image.Source is BitmapImage { PixelWidth: > 0 });
+        }
+        await RecommendedReturnWhileSettingsPendingAsync(page, frame, wire, client, changeAccessContext: false);
+        await RecommendedReturnWhileSettingsPendingAsync(page, frame, wire, client, changeAccessContext: true);
+    }
+
+    private static async Task RecommendedReturnWhileSettingsPendingAsync(LibraryPage page, Frame frame, Wire wire,
+        SiloApiClient client, bool changeAccessContext)
+    {
+        var panel = (Panel)page.FindName("RecommendedSectionsPanel");
+        var cards = panel.Children.OfType<SectionRow>()
+            .Select(row => Descendants<FrameworkElement>(row).First(card => card is PosterCard or LandscapeCard)).ToArray();
+        Check(cards.Length == 2, "Retained Recommended return covers both poster and landscape rows.");
+        var currentTab = typeof(LibraryPage).GetField("_currentTab", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await Until(() => cards.All(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+        var requests = cards.Select(card =>
+        {
+            var item = card is PosterCard poster ? poster.MediaItem! : ((LandscapeCard)card).MediaItem!;
+            var path = new Uri(item.PosterUrl!).AbsolutePath;
+            return (Path: path, Count: wire.Requests.GetValueOrDefault(path));
+        }).ToArray();
+        frame.Navigate(typeof(Page));
+        await Until(() => !page.IsLoaded && cards.All(card => CardImage(card).Source == null));
+        await Task.Delay(200); // Drain departure state writes before holding the return read.
+        var heldReads = wire.HeldLibraryStateReads;
+        var stateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.LibraryStateReadGate = stateGate;
+        try
+        {
+            frame.GoBack();
+            await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && wire.HeldLibraryStateReads > heldReads);
+            if (changeAccessContext) client.InvalidateAccessContext();
+            // Deliberately do not click a tab: Loaded must recover these retained
+            // poster and landscape binds using decoded/disk cache while settings wait.
+            await Until(() => cards.All(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+            Check(!stateGate.Task.IsCompleted && requests.All(request => wire.Requests.GetValueOrDefault(request.Path) == request.Count),
+                $"Cached Recommended artwork resumes without network before settings complete (access race={changeAccessContext}).");
+        }
+        finally { wire.LibraryStateReadGate = null; stateGate.TrySetResult(); }
+        await Task.Delay(300); // Let restoration reach ShowTab or its stale-context early exit.
+        if (changeAccessContext)
+        {
+            foreach (var card in cards)
+                Bind(card, "recommended-after-access-refresh-" + card.GetType().Name);
+            await Until(() => cards.All(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+            Check((string)currentTab.GetValue(page)! == "Recommended",
+                "Recommended activity remains live after state restoration exits on an access-context change.");
+        }
+        else
+        {
+            // The original navigation parameter requests Library once restoration
+            // completes; wait for that correction before starting the next return.
+            await Until(() => (string)currentTab.GetValue(page)! == "Library");
+            Tab(page, "Recommended");
+            await Until(() => cards.All(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
         }
     }
 
