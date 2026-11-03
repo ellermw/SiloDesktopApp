@@ -141,6 +141,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await BoxSetSearchNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-unscoped")
+            {
+                await BoxSetUnscopedNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxsets-write")
             {
                 await BoxSetNativeFixture.RunAsync(parent, invalidMemberChecks: false);
@@ -154,6 +159,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxsets")
             {
                 await BoxSetNativeFixture.RunAsync(parent);
+                await BoxSetUnscopedNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")

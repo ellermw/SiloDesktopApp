@@ -7,6 +7,19 @@ namespace SiloPlayer.Tests;
 public sealed class BoxSetSearchTests
 {
     [Fact]
+    public async Task SearchKeepsVisibleLibraryPolicySeparateFromDetailDiscovery()
+    {
+        using var wire = new Wire();
+        var catalog = new CatalogApi(wire.Client());
+        var detailLibraries = await catalog.GetBoxSetLibraryIdsAsync();
+        var searchLibraries = await catalog.GetSearchBoxSetLibraryIdsAsync();
+
+        Assert.Contains(99, detailLibraries);
+        Assert.Equal("12", Assert.Single(searchLibraries));
+        Assert.Equal(new[] { "?include_hidden=true", "" }, wire.LibraryQueries);
+    }
+
+    [Fact]
     public async Task SearchReaderTrimsAndEscapesQueryAndUsesReturnedLibraryIdentity()
     {
         using var wire = new Wire(); var client = wire.Client();
@@ -83,6 +96,7 @@ public sealed class BoxSetSearchTests
     private sealed class Wire : HttpMessageHandler
     {
         public string? LastSearch, LastCatalog; public int SearchReads; public bool Hold;
+        public List<string> LibraryQueries { get; } = [];
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient Client() { var client = new SiloApiClient(new HttpClient(this)); client.SetBaseUrl("https://boxset-search.invalid"); client.SetProfile("alpha"); return client; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -90,7 +104,13 @@ public sealed class BoxSetSearchTests
             var path = request.RequestUri!.AbsolutePath;
             var body = "{\"items\":[],\"page\":{\"has_more\":false}}";
             if (path == "/api/v2/catalog/search/capabilities") body = "{\"box_sets\":true,\"people_media_scope\":true}";
-            if (path == "/api/v2/user/libraries") body = "{\"items\":[{\"id\":12,\"enabled\":true,\"box_sets_enabled\":true}]}";
+            if (path == "/api/v2/user/libraries")
+            {
+                LibraryQueries.Add(request.RequestUri.Query);
+                body = request.RequestUri.Query.Contains("include_hidden=true")
+                    ? "{\"items\":[{\"id\":12,\"enabled\":true,\"box_sets_enabled\":true},{\"id\":99,\"enabled\":true,\"box_sets_enabled\":true}]}"
+                    : "{\"items\":[{\"id\":12,\"enabled\":true,\"box_sets_enabled\":true}]}";
+            }
             if (path == "/api/v2/catalog") { LastCatalog = request.RequestUri.Query; body = "{\"items\":[{\"content_id\":\"film\",\"title\":\"Film\",\"type\":\"movie\"}],\"total\":60,\"page\":{\"has_more\":true}}"; }
             if (path == "/api/v2/requests/status") body = "{\"requests_enabled\":false}";
             if (path == "/api/v2/catalog/box-sets")

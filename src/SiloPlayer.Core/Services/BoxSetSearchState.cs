@@ -63,7 +63,7 @@ public sealed class BoxSetSearchState(CatalogApi catalog) : ObservableObject
         {
             // Recheck viewer policy even for fresh cache data. The server owns
             // box_sets_in_search; that admin flag is absent from viewer libraries.
-            var libraries = await catalog.GetBoxSetLibraryIdsAsync(libraryId, ct).WaitAsync(ct);
+            var libraries = await catalog.GetSearchBoxSetLibraryIdsAsync(libraryId, ct).WaitAsync(ct);
             if (!Current()) return;
             if (libraries.Count == 0) { _cache = null; Replace([]); return; }
             _policyValidated = true;
