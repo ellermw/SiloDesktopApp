@@ -74,8 +74,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         var revision = ++_overviewRevision;
         var item = Item;
-        var refreshItem = ReferenceEquals(item, _overviewEpisode) && !IsOverviewScopeCurrent &&
-            item != null && (item.Type != "episode" || !string.IsNullOrWhiteSpace(item.Overview));
+        var refreshItem = item != null && ReferenceEquals(item, _overviewEpisode) && !IsOverviewScopeCurrent;
         if (!ReferenceEquals(item, _overviewEpisode))
         {
             _seriesOverview = null;

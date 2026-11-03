@@ -125,6 +125,31 @@ internal static class EpisodeOverviewNativeFixture
 
             foreach (var mode in new[] { "button", "auto" })
             {
+                wire.Reset(); wire.StatusFailuresRemaining = 2; wire.OnView = mode;
+                await vm.LoadInLibraryAsync("episode", 42); Call(page, "UpdateUI");
+                await Until(() => wire.Paths.Count(path => path == "/api/v2/capabilities/metadata-ai") == 1 &&
+                    Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
+                Check(overview.Text == Wire.SeriesText && overview.Visibility == Visibility.Visible &&
+                    button.Visibility == Visibility.Collapsed && wire.Posts.Count == 0,
+                    "A capability failure retains the series description and schedules recovery without translating");
+                Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => wire.Paths.Count(path => path == "/api/v2/capabilities/metadata-ai") == 2 &&
+                    Field<DateTimeOffset?>(page, "_overviewRetryAt") != null);
+                Check(Field<TimeSpan>(page, "_overviewRetryDelay") == TimeSpan.FromSeconds(4),
+                    "Repeated capability failures retain the same owner's exponential backoff");
+                Set(page, "_overviewRetryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
+                Call(page, "RefreshRetiredOverviewScope");
+                await Until(() => wire.Paths.Count(path => path == "/api/v2/capabilities/metadata-ai") == 3 &&
+                    overview.Text == (mode == "auto" ? Wire.TranslatedText : Wire.SeriesText) &&
+                    button.Visibility == (mode == "auto" ? Visibility.Collapsed : Visibility.Visible));
+                Check(mode == "auto" ? wire.Posts.Single() == "/api/v2/catalog/items/series/translate-description|fr" : button.IsEnabled,
+                    "A successful capability retry restores automatic or manual series translation on the same page");
+            }
+            Program.Log("PASS: metadata-AI capability failures retry with backoff and recover manual/automatic series translation.");
+
+            foreach (var mode in new[] { "button", "auto" })
+            {
                 wire.Reset(); wire.SeriesFailuresRemaining = 1; wire.OnView = mode;
                 await Load();
                 await Until(() => overview.Text == (mode == "auto" ? Wire.TranslatedText : Wire.SeriesText) &&
@@ -413,14 +438,14 @@ internal static class EpisodeOverviewNativeFixture
         internal string[] OwnMachineTranslatedFields = [];
         internal string SeriesOverview = SeriesText;
         internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem;
-        internal int PollReads, SeriesFailuresRemaining;
+        internal int PollReads, SeriesFailuresRemaining, StatusFailuresRemaining;
         internal TaskCompletionSource StatusEntered = NewGate(), ReleaseStatus = NewGate(), PostEntered = NewGate(), ReleasePost = NewGate(),
             PollEntered = NewGate(), ReleasePoll = NewGate(), ItemReadEntered = NewGate(), ReleaseItemRead = NewGate();
         private static TaskCompletionSource NewGate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void Reset()
         {
             Paths.Clear(); Posts.Clear(); OwnOverview = " \t "; SeriesId = "series"; OnView = "button";
-            SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
+            SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = StatusFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
             FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = false;
             StatusEntered = NewGate(); ReleaseStatus = NewGate(); PostEntered = NewGate(); ReleasePost = NewGate();
             PollEntered = NewGate(); ReleasePoll = NewGate(); ItemReadEntered = NewGate(); ReleaseItemRead = NewGate();
@@ -452,6 +477,8 @@ internal static class EpisodeOverviewNativeFixture
                 return new(HttpStatusCode.InternalServerError);
             if (request.RequestUri.AbsolutePath == "/api/v2/capabilities/metadata-ai" && HoldStatus)
             { StatusEntered.TrySetResult(); await ReleaseStatus.Task; }
+            if (request.RequestUri.AbsolutePath == "/api/v2/capabilities/metadata-ai" && StatusFailuresRemaining > 0)
+            { --StatusFailuresRemaining; return new(HttpStatusCode.ServiceUnavailable); }
             if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && SeriesFailuresRemaining > 0)
             { --SeriesFailuresRemaining; return new(HttpStatusCode.InternalServerError); }
             if (request.RequestUri.AbsolutePath == "/api/v2/catalog/items/series" && FailSeries) return new(HttpStatusCode.NotFound);

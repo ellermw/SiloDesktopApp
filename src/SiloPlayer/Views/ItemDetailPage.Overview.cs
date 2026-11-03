@@ -124,7 +124,14 @@ public sealed partial class ItemDetailPage
         }
         catch
         {
-            if (Current()) TranslateOverviewButton.Visibility = Visibility.Collapsed;
+            if (Current())
+            {
+                TranslateOverviewButton.Visibility = Visibility.Collapsed;
+                // Capability failures must also retry, even after the source was configured.
+                _overviewPendingOwner = owner;
+                _overviewRetryAt = DateTimeOffset.UtcNow.Add(_overviewRetryDelay);
+                _overviewRetryDelay = TimeSpan.FromSeconds(Math.Min(30, _overviewRetryDelay.TotalSeconds * 2));
+            }
         }
     }
 

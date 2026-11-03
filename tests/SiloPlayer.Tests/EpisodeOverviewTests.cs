@@ -268,6 +268,61 @@ public sealed class EpisodeOverviewTests
     }
 
     [Fact]
+    public async Task LanguageRoundTripRestoresOwnOverviewAfterSeriesFallback()
+    {
+        using var scope = new Scope { Own = "English episode plot", TargetLanguage = "en" };
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var episode = await scope.Vm.ResolveOverviewAsync();
+        scope.Own = " "; scope.TargetLanguage = "fr";
+        scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        var series = await scope.Vm.ResolveOverviewAsync();
+        Assert.Equal("series", series!.ContentId);
+        Assert.Equal(" ", episode!.Overview);
+
+        scope.Own = "English episode plot"; scope.TargetLanguage = "en";
+        scope.OwnMachineTranslatedFields = ["overview"];
+        scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        Assert.Same(series, scope.Vm.OverviewDisplaySource);
+        Assert.Same(episode, await scope.Vm.ResolveOverviewAsync());
+        Assert.Same(episode, scope.Vm.Item);
+        Assert.Equal("English episode plot", episode.Overview);
+        Assert.Equal("en", episode.PendingTranslationLanguage);
+        Assert.Equal(new[] { "overview" }, episode.MachineTranslatedFields);
+        Assert.Equal(3, scope.Paths.Count(path => path == "/api/v2/catalog/items/episode?library_id=42"));
+        Assert.Single(scope.Paths, path => path == "/api/v2/catalog/items/series?library_id=42");
+    }
+
+    [Theory]
+    [InlineData("language")] [InlineData("access")]
+    public async Task RetiredBlankEpisodePreservesSeriesUntilOwnReadSucceeds(string change)
+    {
+        using var scope = new Scope();
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var episode = scope.Vm.Item;
+        var series = await scope.Vm.ResolveOverviewAsync();
+        scope.Own = "New episode plot"; scope.TargetLanguage = "de"; scope.FailItem = true;
+        if (change == "access") scope.Client.InvalidateAccessContext();
+        else scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        Assert.Null(await scope.Vm.ResolveOverviewAsync());
+        Assert.True(scope.Vm.OverviewResolutionFailed);
+        Assert.Null(scope.Vm.OverviewSource);
+        Assert.Same(series, scope.Vm.OverviewDisplaySource);
+        Assert.Equal("", episode!.Overview);
+
+        scope.FailItem = false; scope.HoldItem = true;
+        var pending = scope.Vm.ResolveOverviewAsync();
+        await scope.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(scope.Vm.OverviewSource);
+        Assert.Same(series, scope.Vm.OverviewDisplaySource);
+        scope.Release.TrySetResult();
+        Assert.Same(episode, await pending);
+        Assert.Same(episode, scope.Vm.OverviewDisplaySource);
+        Assert.Equal("New episode plot", episode.Overview);
+        Assert.Equal("de", episode.PendingTranslationLanguage);
+        Assert.Single(scope.Paths, path => path == "/api/v2/catalog/items/series?library_id=42");
+    }
+
+    [Fact]
     public async Task TransientSeriesReadFailureCanBeRetriedInTheSameScope()
     {
         using var scope = new Scope { FailSeries = true };
