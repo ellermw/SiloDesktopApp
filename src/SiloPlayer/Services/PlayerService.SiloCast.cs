@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Player;
 
 namespace SiloPlayer.Services;
 
@@ -20,13 +22,26 @@ public partial class PlayerService
             audio.Add(new JsonObject { ["kind"] = "audio", ["trackId"] = index + 1,
                 ["title"] = t.Title ?? t.Language ?? $"Audio {index + 1}", ["detail"] = t.Codec });
         var subtitles = new JsonArray();
-        foreach (var t in (_playbackManager?.CurrentSession?.SubtitleUrls ?? []).Where(HasSubtitleSelectionRoute))
+        var mpv = _mpv;
+        var subtitleTracks = _playbackManager?.CurrentSession?.SubtitleUrls ?? [];
+        // A capture runs twice a second on the UI dispatcher. Read the native
+        // inventory/attestation and build authorized URLs once, not per row.
+        var inspectNative = mpv != null && CanUseNativeEmbeddedSubtitleTrack() &&
+            subtitleTracks.Any(t => !t.Unplayable && string.Equals(t.Source, "embedded", StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<NativeSubtitleTrack> nativeTracks = inspectNative ? mpv!.GetEmbeddedSubtitleTracks() : [];
+        var trustworthyStreamIndex = inspectNative && mpv!.HasFfmpegTrackIndices();
+        var trustworthyContainerTrackId = inspectNative && mpv!.HasContainerTrackIds();
+        var sidecarIndices = (_playbackManager?.GetSubtitleUrls() ?? [])
+            .Where(pair => Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
+            .Select(pair => pair.Track.Index).ToHashSet();
+        Func<SubtitleTrackInfo, int> resolveNativeSid = track =>
+            ResolveNativeEmbeddedSid(track, nativeTracks, trustworthyStreamIndex, trustworthyContainerTrackId);
+        foreach (var t in subtitleTracks.Where(t => HasSubtitleSelectionRoute(t, resolveNativeSid, sidecarIndices)))
             subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
                 ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
         var qualities = new JsonArray();
         foreach (var q in AvailableQualities)
             qualities.Add(new JsonObject { ["id"] = q.Label, ["label"] = q.DisplayName ?? q.Label });
-        var mpv = _mpv;
         var volume = mpv?.GetPropertyDouble("volume") ?? Volume;
         var speed = mpv?.GetPropertyDouble("speed") ?? 1;
         return new JsonObject
