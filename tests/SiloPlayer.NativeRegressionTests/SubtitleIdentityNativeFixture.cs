@@ -43,6 +43,21 @@ internal static class SubtitleIdentityNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE") == "legacy-preplay")
+            {
+                session.SubtitleUrls = [];
+                var watch = new WatchDetailResponse();
+                var version = new FileVersion { FileId = 42 };
+                Call(service, "ResolveInitialSubtitleSelection", watch, version, session, null, 1, null);
+                Call(service, "ApplyPendingSubtitleSelection");
+                var owner = new CancellationTokenSource();
+                Set(service, "_loadedMediaInitCts", owner);
+                await (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
+                Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused && wire.PreferenceWrites == 0,
+                    "Legacy explicit pre-play ordinal was discarded when both response and watch metadata inventories were absent.");
+                Program.Log("PASS: legacy pre-play ordinal executes only against the loaded file, preserving viewer pause and avoiding invented server preference indices.");
+                return;
+            }
             if (regionalOnly)
             {
                 var initial = session.SubtitleUrls.Single(t => t.Index == 4);

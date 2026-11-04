@@ -240,7 +240,8 @@ public sealed class SubtitleIdentityTests
         Assert.True(start >= 0 && end > start);
         var method = source[start..end];
         Assert.Contains("var subtitleTracks = _playerService.Manager?.CurrentSession?.SubtitleUrls ?? [];", method, StringComparison.Ordinal);
-        Assert.Contains("new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault(t => t.Index == activeSubtitleIndex)?.Language)", method, StringComparison.Ordinal);
+        Assert.Contains("var searchAuthority = _playerService.ActiveAuthority;", method, StringComparison.Ordinal);
+        Assert.Contains("new SubtitleSearchDialog(searchAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault(t => t.Index == activeSubtitleIndex)?.Language)", method, StringComparison.Ordinal);
         Assert.DoesNotContain("subtitleUrls", method, StringComparison.Ordinal);
     }
 

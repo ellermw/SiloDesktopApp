@@ -319,7 +319,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     Require(manager.CurrentSession!.MediaFileId == target.FileId && mpv.GetPropertyDouble("duration") > 0 &&
                         (expected == Spanish ? NativeSidMatches(service, mpv, Spanish) : mpv.GetPropertyDouble("sid") <= 0) &&
                         mpv.IsPaused && service.IsPaused && Get(service, "_playbackTerminalState") == null &&
-                        !manager.CurrentSession.SubtitleReconciliationFailed && wire.PreferenceWrites == writes &&
+                        typeof(PlaybackStartResponse).GetProperty("SubtitleReconciliationFailed")?.GetValue(manager.CurrentSession) is false && wire.PreferenceWrites == writes &&
                         Get(service, "_pendingSubtitlePreferenceIndex") == null,
                         "A rejected replacement refinement discarded playable video, retried the choice, lost pause or saved an unexecuted preference.");
                 }
