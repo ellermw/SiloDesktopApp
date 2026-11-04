@@ -59,7 +59,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             await CheckBusyAsync(parent, scenario);
             Program.Log("PASS: busy sidecar " + scenario);
         }
-        foreach (var scenario in new[] { "busy-external", "busy-missing-native", "busy-extensionless-mov-text", "error", "error-recovered", "sync-stop" })
+        foreach (var scenario in new[] { "busy-external", "busy-missing-native", "busy-extensionless-mov-text", "error", "error-recovered", "extensionless-unknown-codec", "sync-stop" })
         {
             await CheckLoadedSidecarFailureAsync(scenario);
             Program.Log("PASS: loaded sidecar " + scenario);
@@ -279,11 +279,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
 
     private static async Task CheckLoadedSidecarFailureAsync(string scenario)
     {
-        var urlFallbackRecovers = scenario == "error-recovered";
+        var skipsPrefetch = scenario == "extensionless-unknown-codec";
+        var urlFallbackRecovers = scenario == "error-recovered" || skipsPrefetch;
+        var expectedRequests = skipsPrefetch ? 1 : 2;
         using var subtitles = new HeldSubtitleServer(false)
         {
             BusyResponses = scenario.StartsWith("busy-", StringComparison.Ordinal) ? 100 : 0,
-            ReadFailure = scenario == "error" ? "not-found" : urlFallbackRecovers ? "fallback-recovered" : null,
+            ReadFailure = scenario == "error" ? "not-found" : scenario == "error-recovered" ? "fallback-recovered" : null,
         };
         using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
@@ -298,9 +300,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         {
             track.Source = "embedded"; track.StreamIndex = 99; track.ContainerTrackId = "99";
         }
-        if (scenario == "busy-extensionless-mov-text")
+        if (scenario == "busy-extensionless-mov-text" || skipsPrefetch)
         {
-            track.Codec = "mov_text";
+            // Unknown server metadata must still let mpv probe the actual sidecar bytes.
+            track.Codec = skipsPrefetch ? "fixture-unknown" : "mov_text";
             track.Url = subtitles.Origin + "/api/v2/stream/fixture/subtitles/2";
         }
         using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
@@ -375,8 +378,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 mpv.SendScriptMessage("silo-loaded-sidecar-pending");
                 Call(service, "StopSubtitleSync");
             }
+            if (skipsPrefetch)
+                Require(subtitles.EngRequests == 1 && subtitles.SyncRequests == 1 && wire.PreferenceWrites == 0,
+                    "An extensionless unknown codec did not reach the held native URL reader without a managed request or preference write.");
             subtitles.Release.TrySetResult();
-            if (urlFallbackRecovers)
+            if (urlFallbackRecovers && !skipsPrefetch)
             {
                 await subtitles.FallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 Require(!pending.IsCompleted && service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
@@ -389,12 +395,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             {
                 Require(await drained.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "0" &&
                     service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") > 0 &&
-                    wire.RequestedPreferences.SequenceEqual(new[] { 0 }) && subtitles.EngRequests == 2 && subtitles.SyncRequests == 1,
+                    wire.RequestedPreferences.SequenceEqual(new[] { 0 }) && subtitles.EngRequests == expectedRequests && subtitles.SyncRequests == 1,
                     "Loaded-file fallback did not select the verified URL SID and save the queued choice exactly once.");
                 Require(!notices.Any(n => n.Contains("could not be loaded", StringComparison.Ordinal)),
                     "Successful loaded-file fallback reported refusal.");
                 await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, false)!;
-                Require(wire.RequestedPreferences.SequenceEqual(new[] { 0 }) && subtitles.EngRequests == 2,
+                Require(wire.RequestedPreferences.SequenceEqual(new[] { 0 }) && subtitles.EngRequests == expectedRequests,
                     "Repeated initialization redownloaded or saved the URL fallback twice.");
                 return;
             }

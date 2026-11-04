@@ -33,6 +33,7 @@ public sealed partial class MpvPlayer
         long fileGeneration, selectionRevision;
         int previousSid;
         HashSet<int> previousIds;
+        var submissionError = 0;
         lock (_asyncSubtitleGate)
         {
             ThrowIfNotInitialized();
@@ -42,6 +43,8 @@ public sealed partial class MpvPlayer
             previousIds = GetSubtitleTrackIds(externalOnly: true).ToHashSet();
             id = ++_asyncSubtitleCommandId;
             _asyncSubtitleCommands.Add(id, completion);
+            // auto is supported; completion below preserves the applied SID
+            // even if mpv's default-selection rule temporarily selects the add.
             var args = new[] { "sub-add", url, "auto", title ?? "", language ?? "" };
             var pointers = new IntPtr[args.Length + 1];
             try
@@ -50,7 +53,7 @@ public sealed partial class MpvPlayer
                 using var lease = EnterNative();
                 // mpv copies the arguments before returning. Only submission,
                 // not the network read, owns this lock/native lease.
-                if (!lease.Active || mpv_command_async(_mpvHandle, id, pointers) < 0)
+                if (!lease.Active || (submissionError = mpv_command_async(_mpvHandle, id, pointers)) < 0)
                 {
                     _asyncSubtitleCommands.Remove(id);
                     completion.TrySetResult(false);
@@ -67,6 +70,8 @@ public sealed partial class MpvPlayer
                     if (pointer != IntPtr.Zero) Marshal.FreeCoTaskMem(pointer);
             }
         }
+        if (submissionError < 0)
+            ReportErrorSafely($"mpv_command_async(sub-add) failed: {GetErrorString(submissionError)}");
         using var cancellation = ct.Register(() =>
         {
             using var lease = EnterNative();
@@ -140,9 +145,13 @@ public sealed partial class MpvPlayer
 
     private void CompleteAsyncSubtitleCommand(MpvEvent reply)
     {
+        TaskCompletionSource<bool>? completion;
         lock (_asyncSubtitleGate)
-            if (_asyncSubtitleCommands.Remove(reply.ReplyUserdata, out var completion))
-                completion.TrySetResult(reply.Error >= 0);
+            _asyncSubtitleCommands.Remove(reply.ReplyUserdata, out completion);
+        if (completion == null) return;
+        if (reply.Error < 0)
+            ReportErrorSafely($"mpv sub-add reply failed: {GetErrorString(reply.Error)}");
+        completion.TrySetResult(reply.Error >= 0);
     }
 
     private void CancelAsyncSubtitleCommands()

@@ -186,6 +186,21 @@ internal static class SubtitleIdentityNativeFixture
                 }
                 else if (closeout == "async-lifecycle")
                 {
+                    var nativeErrors = new System.Collections.Concurrent.ConcurrentQueue<string>();
+                    void ObserveNativeError(string message) => nativeErrors.Enqueue(message);
+                    mpv.Error += ObserveNativeError;
+                    try
+                    {
+                        mpv.SetSubtitleTrack(2);
+                        var missing = Path.Combine(Program.ResultDirectory, "missing-native-subtitle.srt");
+                        Require(!File.Exists(missing), "Native error diagnostic requires an absent isolated file.");
+                        var rejected = await mpv.AddSubtitleUnselectedAsync(missing, "Missing owned fixture", null, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+                        Require(rejected == 0 && nativeErrors.Any(message => message.StartsWith("mpv sub-add reply failed:", StringComparison.Ordinal)) &&
+                            mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused,
+                            "Failed async native command lost its safe diagnostic or changed the previous SID/pause.");
+                        Program.Log("PASS: actual negative async native reply reports a safe error and retains applied SID/pause.");
+                    }
+                    finally { mpv.Error -= ObserveNativeError; }
                     foreach (var scenario in new[] { "newer-off", "newer-track", "cancel", "file", "dispose" })
                     {
                         mpv.SetSubtitleTrack(1);
