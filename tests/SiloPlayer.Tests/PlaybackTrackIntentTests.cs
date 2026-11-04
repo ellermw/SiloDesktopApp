@@ -196,6 +196,53 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal("sub:42:2", scope.Wire.Replans[1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString());
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SubtitleReplanRetryResolvesLatestIdentityAfterInventoryReplacement(bool automatic, bool missing)
+    {
+        using var scope = new Fixture();
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(1, isAutomatic: automatic);
+        scope.Wire.BlockNext = true;
+        var first = scope.Manager.ReplanCurrentSubtitleAsync(30);
+        await scope.Wire.Entered.Task;
+        scope.Manager.RecordLocalSubtitleSelection(2, isAutomatic: automatic);
+        var latestIntent = scope.Manager.CaptureLocalSubtitleIntent();
+        scope.Wire.SubtitleIndexOffset = 10;
+        scope.Wire.Release.SetResult();
+        var accepted = await first;
+        Assert.Same(accepted, scope.Manager.CurrentSession);
+        Assert.DoesNotContain(scope.Manager.CurrentSession!.SubtitleUrls, track => track.Index == 2);
+        Assert.Equal(12, scope.Manager.SubtitleSelectionForLoad);
+        if (missing) scope.Manager.CurrentSession.SubtitleUrls.RemoveAll(track => track.Index == 12);
+
+        var retry = await scope.Manager.ReplanCurrentSubtitleAsync(31);
+
+        Assert.Equal(latestIntent, scope.Manager.CaptureLocalSubtitleIntent());
+        Assert.Equal(automatic, scope.Manager.IsSubtitleSelectionAutomatic);
+        if (missing)
+        {
+            Assert.Null(retry);
+            Assert.Same(accepted, scope.Manager.CurrentSession);
+            Assert.Single(scope.Wire.Replans); // No implicit Off or failure recovery.
+        }
+        else
+        {
+            Assert.NotNull(retry);
+            Assert.Equal(2, scope.Wire.Replans.Count);
+            var request = scope.Wire.Replans[^1];
+            Assert.Equal("track_change", request.GetProperty("operation").GetString());
+            Assert.Equal("sub:42:2", request.GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString());
+            Assert.Equal(12, request.GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+            Assert.False(request.TryGetProperty("failure", out _));
+            Assert.Equal(12, retry.SelectedSubtitleTrackIndex);
+            Assert.Equal(12, scope.Manager.SubtitleSelectionForLoad);
+        }
+    }
+
     [Fact]
     public async Task MissingVersionSubtitleDoesNotEraseIntentWhenReturningToSource()
     {
@@ -579,6 +626,7 @@ public sealed class PlaybackTrackIntentTests
         public bool BurnInSubtitles;
         public bool OmitTrackIds;
         public int InitialSubtitleSelection;
+        public int SubtitleIndexOffset;
         public int? ReplanSubtitleSelection;
         public string SubtitleIdSuffix = "";
         public string? UnlabelledSubtitleLanguage;
@@ -615,7 +663,11 @@ public sealed class PlaybackTrackIntentTests
                     if (failure == "timeout") throw new TaskCanceledException("Synthetic request timeout.");
                     throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
                 }
-                if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selected)) _selected = selected.GetProperty("index").GetInt32();
+                if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selected))
+                {
+                    _selected = selected.GetProperty("index").GetInt32();
+                    if (_selected >= SubtitleIndexOffset) _selected -= SubtitleIndexOffset;
+                }
                 else if (body.GetProperty("operation").GetString() == "track_change") _selected = -1;
                 if (ReplanSubtitleSelection is int granted) _selected = granted;
             }
@@ -627,9 +679,9 @@ public sealed class PlaybackTrackIntentTests
                     track.Title = null;
                 }
             var inventory = (version.SubtitleTracks ?? []).OrderByDescending(t => t.External == true)
-                .Select((t, index) => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{index}{SubtitleIdSuffix}", combined_index = (int?)index, language = t.Language, codec = t.Codec, label = t.Title, source = t.External == true ? "external" : "embedded", delivery = "native" })
-                .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : $"sub:42:2{SubtitleIdSuffix}", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
-            var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", index = _selected };
+                .Select((t, index) => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{index}{SubtitleIdSuffix}", combined_index = (int?)(index + SubtitleIndexOffset), language = t.Language, codec = t.Codec, label = t.Title, source = t.External == true ? "external" : "embedded", delivery = "native" })
+                .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : $"sub:42:2{SubtitleIdSuffix}", combined_index = (int?)(2 + SubtitleIndexOffset), language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
+            var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", index = _selected + SubtitleIndexOffset };
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "session",

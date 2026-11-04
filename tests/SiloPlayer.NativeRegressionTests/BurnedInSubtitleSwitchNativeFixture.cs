@@ -438,6 +438,65 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             wire.DeclineTrackChanges = false;
             Program.Log("PASS: declined manual/Auto bitmap, Off and text changes settle after exactly one replan without saving unexecuted choices or changing viewer pause.");
 
+            // A newer pick made during the first burn-in replan still refers
+            // to the outgoing inventory. Its retry must use the accepted row's
+            // TrackId, not send that outgoing combined index to the manager.
+            foreach (var latest in new[] { Spanish, Dvd })
+            {
+                if (!manager.CurrentSession!.IsSubtitleBurnedIn)
+                {
+                    var baseline = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == Dvd);
+                    await Loaded(() => service.SetSubtitleTrackAndPersistAsync(Dvd + 1, baseline.Language, baseline));
+                }
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetPaused(true);
+                await Until(() => mpv.IsPaused && service.IsPaused);
+                var latestTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == latest);
+                var replans = wire.Replans.Count;
+                var starts = wire.Starts.Count;
+                var writes = wire.PreferenceWrites;
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.BeforeTrackChange = ct => { entered.TrySetResult(); return release.Task.WaitAsync(ct); };
+                try
+                {
+                    await Loaded(async () =>
+                    {
+                        var off = service.SetSubtitleTrackAndPersistAsync(0, null, null);
+                        Task? newer = null;
+                        try
+                        {
+                            await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                            newer = service.SetSubtitleTrackAndPersistAsync(latest + 1, latestTrack.Language, latestTrack);
+                            Require(manager.CaptureLocalSubtitleIntent().Track?.TrackId == latestTrack.TrackId,
+                                "The held burn-in replan did not record the newer pick before adoption.");
+                            wire.ReindexSpanish = wire.ReindexDvd = true;
+                        }
+                        finally { release.TrySetResult(); }
+                        await off.WaitAsync(TimeSpan.FromSeconds(6));
+                        if (newer != null) await newer.WaitAsync(TimeSpan.FromSeconds(6));
+                    });
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading &&
+                        service.ActiveSubtitleServerIndex == latest + 10 && Get(service, "_pendingSubtitlePreferenceIndex") == null);
+                    Require(wire.Replans.Count == replans + 2 && wire.Starts.Count == starts &&
+                        wire.Replans.Skip(replans).All(p => p.GetProperty("operation").GetString() == "track_change") &&
+                        SelectedSubtitle(wire.Replans[^1]) == latest + 10 &&
+                        wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString() == latestTrack.TrackId &&
+                        manager.SubtitleSelectionForLoad == latest + 10 &&
+                        (latest == Dvd ? manager.CurrentSession!.IsSubtitleBurnedIn && mpv.GetPropertyDouble("sid") <= 0 :
+                            !manager.CurrentSession!.IsSubtitleBurnedIn && NativeSidMatches(service, mpv, latest + 10)) &&
+                        wire.PreferenceWrites == writes + 1 && wire.LastSubtitlePreferenceIndex == latest + 10 &&
+                        mpv.IsPaused && service.IsPaused && !(bool)Get(service, "_prematureEofRecoveryActive")! &&
+                        Get(service, "_playbackTerminalState") == null,
+                        "A newer reindexed subtitle pick lost identity, pause or its preference, or escalated to playback recovery.");
+                }
+                finally { release.TrySetResult(); wire.BeforeTrackChange = null; }
+                wire.ReindexSpanish = wire.ReindexDvd = false;
+                await Loaded(() => (Task)Call(service, "SwitchQualityTierAsync", "480p", null, null)!);
+                await Until(() => Get(service, "_loadedMediaInitCts") == null && service.ActiveSubtitleServerIndex == latest);
+            }
+            Program.Log("PASS: newer text/bitmap picks during burn-in replans retry by retained TrackId against reindexed inventories without session recovery, saving only the executed rebound preference.");
+
             // A server may retain TrackId while rebuilding combined indices.
             // Both text-after-burn and burn-in loads must consume that accepted
             // identity, including the preference saved only after execution.
@@ -601,6 +660,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         public bool FailNextTrackChange;
         public bool RejectTrackChanges, TerminalTrackRejection, TimeoutTrackRejection;
         public Func<CancellationToken, Task>? BeforeTrackRejection;
+        public Func<CancellationToken, Task>? BeforeTrackChange;
         public bool DeclineTrackChanges;
         public bool ReindexSpanish, ReindexDvd;
         public int PreferenceWrites;
@@ -635,6 +695,11 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             else
             {
                 Replans.Add(body.Clone());
+                if (body.GetProperty("operation").GetString() == "track_change" && BeforeTrackChange is { } beforeChange)
+                {
+                    BeforeTrackChange = null;
+                    await beforeChange(ct);
+                }
                 if ((FailNextTrackChange || RejectTrackChanges) && body.GetProperty("operation").GetString() == "track_change")
                 {
                     FailNextTrackChange = false;
@@ -647,10 +712,13 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 if (!DeclineTrackChanges || body.GetProperty("operation").GetString() != "track_change")
                 {
                     var selected = SelectedSubtitle(body);
-                    _subtitle = selected == CombinedIndex(Spanish) ? Spanish : selected == CombinedIndex(Dvd) ? Dvd : selected;
-                    // The first request uses the pre-replan index; subsequent
-                    // requests use the combined index from the accepted reply.
-                    if (selected is Spanish or Dvd) _subtitle = selected;
+                    var selectedId = body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selection)
+                        ? selection.GetProperty("id").GetString() : null;
+                    // Stable IDs take precedence over outgoing/rebound combined
+                    // indices, including when restoring the fixture inventory.
+                    _subtitle = selectedId == $"sub:{_file}:{Spanish}" ? Spanish :
+                        selectedId == $"sub:{_file}:{Dvd}" ? Dvd :
+                        selected == CombinedIndex(Spanish) ? Spanish : selected == CombinedIndex(Dvd) ? Dvd : selected;
                 }
             }
             var burned = _subtitle == Dvd;

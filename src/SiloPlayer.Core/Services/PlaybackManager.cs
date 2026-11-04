@@ -404,6 +404,34 @@ public partial class PlaybackManager : IDisposable
             ct);
     }
 
+    /// <summary>Replans recorded subtitle identity against the accepted inventory, never an outgoing index.</summary>
+    public async Task<PlaybackStartResponse?> ReplanCurrentSubtitleAsync(
+        double positionSeconds,
+        CancellationToken ct = default)
+    {
+        await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            lock (_trackIntentGate)
+            {
+                // An unmatched row is a superseded pick, not an explicit Off
+                // request and not a failure of the healthy video transport.
+                if (!_hasViewerSubtitle || _viewerSubtitle != null && MatchCurrentSubtitle() == null)
+                    return null;
+                // Even an acknowledged local choice needs a track_change when
+                // the loaded video's composited subtitles differ from it.
+                ++_subtitleRevision;
+            }
+            EnsureBufferingReplanOwner();
+            return await ReplanCoreAsync("track_change", positionSeconds, _qualityPreferenceV3,
+                selectedTracks => { }, failure: null, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _replanGuard.Release();
+        }
+    }
+
     public Task<PlaybackStartResponse> ReplanSeekAsync(
         double positionSeconds,
         CancellationToken ct = default)

@@ -14,10 +14,18 @@ public sealed class SubtitleIdentityTests
         var end = source.IndexOf("private async Task ReconcileDeferredSubtitleSelectionAsync(", start, StringComparison.Ordinal);
         var method = source[start..end];
         var failure = method.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
-        var retained = method.IndexOf("if (ReferenceEquals(manager.CurrentSession, session))", failure, StringComparison.Ordinal);
+        var retained = method.IndexOf("if (!transportPreparationAttempted)", failure, StringComparison.Ordinal);
         var recovery = method.IndexOf("_ = RunStreamRecoveryAsync(", failure, StringComparison.Ordinal);
         Assert.True(retained > failure && recovery > retained);
-        var rollback = method[retained..recovery];
+        var refusal = method[retained..recovery];
+        Assert.Contains("RefuseTentativeSubtitleSelection();", refusal);
+        Assert.Contains("return SubtitleTransportResult.Failed;", refusal);
+        Assert.DoesNotContain("BeginMpvLoad(", refusal);
+        Assert.DoesNotContain("EnterPlaybackTerminalState(", refusal);
+        var rollbackStart = method.IndexOf("void RefuseTentativeSubtitleSelection()", StringComparison.Ordinal);
+        var rollbackEnd = method.IndexOf("        try\n", rollbackStart, StringComparison.Ordinal);
+        Assert.True(rollbackStart >= 0 && rollbackEnd > rollbackStart);
+        var rollback = method[rollbackStart..rollbackEnd];
         Assert.Contains("RestoreExecutedSubtitleSelection(reapply: false);", rollback);
         Assert.Contains("manager.CaptureLocalSubtitleIntent() == selectionIntent", rollback);
         Assert.Contains("_prematureEofRecoveryActive = false;", rollback);
@@ -32,9 +40,16 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("RestorePlaybackStateAfterSubtitleChange(restorePaused, CurrentMediaPosition, allowSeek: false);", rollback);
         Assert.DoesNotContain("RestorePlaybackStateAfterSubtitleChange(wasPaused,", rollback);
         Assert.Contains("ShowSubtitleSelectionUnavailable();", rollback);
-        Assert.Contains("return SubtitleTransportResult.Failed;", rollback);
         Assert.DoesNotContain("BeginMpvLoad(", rollback);
         Assert.DoesNotContain("EnterPlaybackTerminalState(", rollback);
+        var superseded = method.IndexOf("if (replacement == null)", StringComparison.Ordinal);
+        var adopted = method.IndexOf("replanned = replacement;", superseded, StringComparison.Ordinal);
+        Assert.True(superseded > rollbackEnd && adopted > superseded);
+        Assert.Contains("RefuseTentativeSubtitleSelection();", method[superseded..adopted]);
+        Assert.Contains("return SubtitleTransportResult.Superseded;", method[superseded..adopted]);
+        Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", method);
+        Assert.DoesNotContain("manager.ReplanSubtitleAsync(requestedIndex", method);
+        Assert.Contains("track != null && !session.SubtitleUrls.Contains(track)", method);
     }
 
     [Fact]

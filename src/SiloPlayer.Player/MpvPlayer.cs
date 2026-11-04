@@ -783,8 +783,8 @@ public sealed partial class MpvPlayer : IDisposable
         ThrowIfNotInitialized();
 
         // Always supply flags, even without a title: mpv defaults to selecting
-        // the new track, and "auto" can select it while subtitles are Off.
-        var args = new List<string> { "sub-add", url, select ? "select" : "no" };
+        // the new track. "auto" adds it without changing the selected SID.
+        var args = new List<string> { "sub-add", url, select ? "select" : "auto" };
         if (!string.IsNullOrEmpty(title))
         {
             args.Add(title);

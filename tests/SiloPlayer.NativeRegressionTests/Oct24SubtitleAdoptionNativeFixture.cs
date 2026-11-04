@@ -137,8 +137,8 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     wire.PreferenceWrites == writes + 1 && Get(service, "_pendingSubtitlePreferenceIndex") == null,
                     "The replacement did not execute Off and save its preference exactly once.");
             }
-            // A local CC cycle is not a saved preference change. Startup Auto
-            // -> loaded English -> cycle Off must let the next version run Auto.
+            // A local CC cycle is explicit viewer intent, but not a saved
+            // preference change. Cycled Off must survive the next Auto grant.
             await manager.StartSessionAsync(42, subtitleTrackIndex: 0);
             var automaticWatch = new WatchDetailResponse { EffectiveSubtitleMode = "always", EffectiveSubtitleLanguage = "eng" };
             Call(service, "ResolveInitialSubtitleSelection", automaticWatch, Version(42), manager.CurrentSession, null, null, null);
@@ -149,17 +149,21 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             Require(manager.IsSubtitleSelectionAutomatic, "Cycle fixture did not establish startup Auto.");
             Call(service, "CycleSubtitleBackward");
             Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
-                manager.IsSubtitleSelectionAutomatic && wire.PreferenceWrites == cycleWrites,
-                "The local caption cycle converted automatic Off into an explicit viewer preference.");
+                !manager.IsSubtitleSelectionAutomatic && !manager.CaptureLocalSubtitleIntent().IsAutomatic &&
+                manager.SubtitleSelectionForLoad == -1 && wire.PreferenceWrites == cycleWrites,
+                "The local caption cycle did not record explicit Off without saving a preference.");
             wire.AutomaticSubtitleSelection = 0;
             await manager.StartReplacementSessionAsync(44, 0);
-            Require(wire.Replans.Count == cycleReplans && manager.SubtitleSelectionForLoad == 0 &&
-                manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0).Language == "spa",
-                "A version switch forced cycled Off instead of accepting the new file's Auto grant.");
-            await Load(0, 0);
+            Require(wire.Replans.Count == cycleReplans + 1 && manager.SubtitleSelectionForLoad == -1 &&
+                !manager.IsSubtitleSelectionAutomatic &&
+                wire.Replans[^1].GetProperty("operation").GetString() == "track_change" &&
+                !wire.Replans[^1].GetProperty("selected_tracks").TryGetProperty("subtitle", out _) &&
+                manager.CurrentSession!.SubtitleMode == "off",
+                "A version switch lost cycled explicit Off to the new file's Auto grant.");
+            await Load(-1, 0);
             Require(wire.PreferenceWrites == cycleWrites && mpv.IsPaused,
-                "Automatic caption cycling/version adoption saved a preference or resumed playback.");
-            Program.Log("PASS: actual libmpv sid and PlayerService adopt subtitle identity across quality/version changes, refuse outgoing next-item indices until publication, preserve Auto through local caption cycling and persist only executed viewer choices.");
+                "Local caption cycling/version adoption saved a preference or resumed playback.");
+            Program.Log("PASS: actual libmpv sid and PlayerService adopt subtitle identity across quality/version changes, refuse outgoing next-item indices until publication, retain explicit local caption cycling across Auto grants and persist only executed viewer choices.");
         }
         finally
         {
