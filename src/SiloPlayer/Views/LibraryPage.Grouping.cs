@@ -178,10 +178,10 @@ public sealed partial class LibraryPage
         catch (Exception ex)
         {
             if (!_isNavigated || visit != _groupedLibraryVisit || read != _libraryFlagsRead || !catalog.IsCurrentContext(context)) return;
-            _libraryFlagsDirty = true;
+            _libraryFlagsDirty = false;
             LocalLog.AppendException("catalog_errors.txt", ex, "library_flags_refresh");
-            // Retain the previous window and retry when the Library tab is
-            // selected again, on the next visit or on policy invalidation.
+            // Retain the previous window without retrying and toasting twice
+            // in this visit. The next visit or policy invalidation retries.
             App.Services.GetRequiredService<ToastService>().Error(ex);
         }
     }
