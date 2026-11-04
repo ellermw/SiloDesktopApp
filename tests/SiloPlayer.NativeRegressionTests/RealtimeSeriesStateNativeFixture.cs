@@ -19,7 +19,7 @@ using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
-internal static class RealtimeSeriesStateNativeFixture
+internal static partial class RealtimeSeriesStateNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent)
     {
@@ -41,6 +41,11 @@ internal static class RealtimeSeriesStateNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_REALTIME_CASE") == "companion-read-races")
             {
                 await VerifyPageCompanionReadRacesAsync(parent, wire, client);
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_REALTIME_CASE") == "party-membership")
+            {
+                await VerifyPartyMembershipAsync(parent, wire);
                 return;
             }
             foreach (var type in new[] { "series", "season" })
@@ -325,6 +330,7 @@ internal static class RealtimeSeriesStateNativeFixture
             await VerifyRemappedSeasonRowsAsync(parent, wire, client);
             await VerifyInitialSeasonRemapAsync(parent, wire, client);
             await VerifyPrimarySeasonReadOwnershipAsync(parent, wire);
+            await VerifyPartyMembershipAsync(parent, wire);
             foreach (var type in new[] { "series", "season" })
             {
                 await VerifyTranslationReconnectAsync(parent, wire, client, type);
@@ -1354,9 +1360,13 @@ internal static class RealtimeSeriesStateNativeFixture
         internal byte[] CompanionArtwork = [];
         internal TaskCompletionSource? CompanionStarted;
         internal TaskCompletionSource? ReleaseCompanion;
+        internal Func<HttpRequestMessage, Task<HttpResponseMessage>?>? PartyResponse;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (request.RequestUri.Host != "realtime-native.invalid")
+                throw new InvalidOperationException("Only the synthetic realtime host is authorized.");
+            if (PartyResponse?.Invoke(request) is { } partyResponse) return partyResponse;
             if (path.StartsWith("/api/v2/watch/", StringComparison.Ordinal)) ++WatchReads;
             var translate = request.Method == HttpMethod.Post && path is "/api/v2/catalog/items/season/translate-description" or "/api/v2/catalog/items/series/translate-description";
             if (request.RequestUri.Host != "realtime-native.invalid" || (request.Method != HttpMethod.Get && !translate))

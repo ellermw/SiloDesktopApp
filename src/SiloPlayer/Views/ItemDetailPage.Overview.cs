@@ -170,8 +170,9 @@ public sealed partial class ItemDetailPage
         finally
         {
             --_overviewTranslationStatusReads;
-            if (ReferenceEquals(navigation, _navigationCts) && ReferenceEquals(ViewModel.Item, item)
-                && ViewModel.LibraryId == library && (!configurationCompleted || !api.IsCurrentContext(context)))
+            if (revision == _overviewConfigurationRevision && ReferenceEquals(navigation, _navigationCts) && ReferenceEquals(ViewModel.Item, item)
+                && ViewModel.LibraryId == library && (!configurationCompleted || !api.IsCurrentContext(context)
+                    || api.LocalizedReadGeneration != language))
                 _overviewTranslationInterrupted = true;
         }
     }
@@ -269,7 +270,7 @@ public sealed partial class ItemDetailPage
             var restoreControls = ControlsCurrent();
             if (restoreControls)
             {
-                if (!api.IsCurrentContext(context)) _overviewTranslationInterrupted = true;
+                if (!api.IsCurrentContext(context) || api.LocalizedReadGeneration != language) _overviewTranslationInterrupted = true;
                 OverviewText.Opacity = 1;
                 TranslateOverviewButton.Visibility = _translateButtonMode && !IsOverviewHidden(item) &&
                     !string.IsNullOrWhiteSpace(ViewModel.OverviewSource?.PendingTranslationLanguage)

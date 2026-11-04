@@ -3367,8 +3367,12 @@ public sealed partial class ItemDetailPage : Page
         var libraryId = ViewModel.LibraryId;
         // Realtime refreshes can replace the mounted season list during a read.
         var seasons = ViewModel.Seasons.ToArray();
+        var seasonMembership = seasons.Select(season => (season.ContentId, season.SeasonNumber)).ToArray();
+        (string ContentId, int EpisodeNumber)[]? episodeMembership = null;
         bool Current() => client.IsCurrentContext(authority) && ReferenceEquals(_navigationCts, navigation)
-            && ReferenceEquals(ViewModel.Item, item) && ViewModel.LibraryId == libraryId && IsCurrentDetail(item.ContentId);
+            && ReferenceEquals(ViewModel.Item, item) && ViewModel.LibraryId == libraryId && IsCurrentDetail(item.ContentId)
+            && (item.Type != "series" || ViewModel.Seasons.Select(season => (season.ContentId, season.SeasonNumber)).SequenceEqual(seasonMembership))
+            && (episodeMembership == null || ViewModel.Episodes.Select(episode => (episode.ContentId, episode.EpisodeNumber)).SequenceEqual(episodeMembership));
         if (!Current()) return;
         try
         {
@@ -3377,6 +3381,10 @@ public sealed partial class ItemDetailPage : Page
             if (!capabilities.Allowed || capabilities.State != "available" || !capabilities.StagedSelection) { App.Services.GetRequiredService<ToastService>().Error("Watch Together is unavailable on this server."); return; }
             var target = await ResolvePlayableContentIdForPlaybackAsync();
             if (!Current()) return;
+            // Resolving a season target may populate its canonical episode list.
+            var seasonEpisodes = ViewModel.Episodes.ToArray();
+            if (item.Type == "season")
+                episodeMembership = seasonEpisodes.Select(episode => (episode.ContentId, episode.EpisodeNumber)).ToArray();
             var panel = new StackPanel { Spacing = 14, Width = Math.Min(400, Math.Max(240, XamlRoot.Size.Width - 100)) };
             panel.Children.Add(new TextBlock { Text = item.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             var targetChoice = new ComboBox { Header = "Episode", HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -3393,7 +3401,7 @@ public sealed partial class ItemDetailPage : Page
                     }
                 }
                 else
-                    foreach (var ep in ViewModel.Episodes) targetChoice.Items.Add(new ComboBoxItem { Content = $"E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
+                    foreach (var ep in seasonEpisodes) targetChoice.Items.Add(new ComboBoxItem { Content = $"E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
                 targetChoice.SelectedItem = targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(e => Equals(e.Tag, target)) ?? targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault();
                 panel.Children.Add(targetChoice);
             }
@@ -3407,7 +3415,12 @@ public sealed partial class ItemDetailPage : Page
                 args.Cancel = true; var deferral = args.GetDeferral(); dialog.IsPrimaryButtonEnabled = false;
                 try
                 {
-                    if (!client.IsCurrentContext(authority)) return;
+                    if (!Current())
+                    {
+                        error.Text = "This title changed. Close this window and choose an episode again.";
+                        error.Visibility = Visibility.Visible;
+                        return;
+                    }
                     target = targetChoice.SelectedItem is ComboBoxItem { Tag: string chosen } ? chosen : target;
                     var response = await api.CreateWatchTogetherRoomAsync(mode.SelectedIndex == 1 ? "vote" : "host_pick");
                     if (!client.IsCurrentContext(authority) || response.RoomAccessToken == null) return;

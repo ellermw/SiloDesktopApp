@@ -40,6 +40,13 @@ internal static class EpisodeOverviewNativeFixture
             page = new ItemDetailPage { Width = 960, Height = 700 };
             parent.Children.Add(page); await Task.Delay(100);
             Set(page, "_navigationCts", navigation); Set(page, "_currentContentId", "episode");
+            var overviewCase = Environment.GetEnvironmentVariable("SILO_NATIVE_OVERVIEW_CASE");
+            if (!string.IsNullOrEmpty(overviewCase) && overviewCase != "late-configuration")
+                throw new InvalidOperationException("Unknown overview fixture case.");
+            await VerifyLateConfigurationAsync(page, vm, wire);
+            if (overviewCase == "late-configuration") return;
+            wire.Reset(); wire.HoldSpoilers = true; wire.OwnOverview = "First-paint episode plot.";
+            Set(page, "_currentContentId", "episode");
             await vm.LoadInLibraryAsync("episode", 42);
             var firstSiblings = Field<List<Episode>>(page, "_siblingEpisodes");
             firstSiblings.Add(new Episode { ContentId = "first-sibling", Title = "Sibling", Overview = "First-paint sibling plot." });
@@ -835,6 +842,28 @@ internal static class EpisodeOverviewNativeFixture
             CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(vm);
         }
     }
+    private static async Task VerifyLateConfigurationAsync(ItemDetailPage page, ItemDetailViewModel vm, Wire wire)
+    {
+        wire.Reset(); wire.HoldStatus = true;
+        Set(page, "_currentContentId", "series");
+        vm.Item = new() { ContentId = "series", Type = "series", Overview = "Synthetic owned description.", PendingTranslationLanguage = "fr" };
+        var retired = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item)!;
+        try
+        {
+            await wire.StatusEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            wire.HoldStatus = false; wire.OnView = "off";
+            await (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item)!;
+            Check(!Field<bool>(page, "_overviewTranslationInterrupted"), "Successful current configuration already inherited an interruption.");
+            wire.StatusFailuresRemaining = 1;
+            wire.ReleaseStatus.TrySetResult(); await retired.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(!Field<bool>(page, "_overviewTranslationInterrupted") &&
+                Field<int>(page, "_overviewTranslationStatusReads") == 0 && vm.OverviewSource != null,
+                "A superseded same-item configuration failure retired the successful successor.");
+            Program.Log("PASS: actual obsolete overview status failure cannot mark the successful current configuration interrupted.");
+        }
+        finally { wire.ReleaseStatus.TrySetResult(); await retired.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
