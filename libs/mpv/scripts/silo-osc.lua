@@ -5024,6 +5024,7 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
+                if item.name == "btn_audio" and open_native_audio_menu(false) then return end
                 consume_video_click(); state.controller_focus_name = "overflow_" .. item.name; activate_controller_focus(); return
             end
         end

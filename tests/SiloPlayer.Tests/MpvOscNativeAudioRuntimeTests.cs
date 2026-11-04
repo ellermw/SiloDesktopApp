@@ -2,6 +2,42 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Fact]
+    public void NativeAudioCompactPointerCloseAllowsImmediateFreshVideoClick()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            native_probe_time = 10
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = {{index=0,title='English'}, {index=1,title='Japanese'}}
+            native_handlers['osc-native-audio-scope']('11111111111111111111111111111111')
+            osc_test_layout()
+            local more = assert(s.layout.btn_more)
+            native_handlers['osc-mouse-down'](tostring(more.cx), tostring(more.cy))
+            native_handlers['osc-mouse-up'](tostring(more.cx), tostring(more.cy))
+            osc_test_tick()
+            native_probe_time = 11 -- More's unrelated opening gesture has expired.
+            local audio
+            for _, item in ipairs(s.compact_menu_items) do if item.name == 'btn_audio' then audio = item end end
+            assert(audio, 'compact Audio row missing')
+            native_handlers['osc-mouse-down'](tostring(audio.x + audio.w / 2), tostring(audio.y + audio.h / 2))
+            local request = assert(native_requests[1])
+            native_handlers['osc-native-menu-closed'](request[3], request[4], 'false')
+            native_probe_time = 11.01
+            native_handlers['osc-mouse-up']('100','100')
+            native_handlers['osc-video-click']('100','100')
+            local release = #native_intents
+            native_handlers['osc-mouse-down']('100','100')
+            native_handlers['osc-mouse-up']('100','100')
+            native_handlers['osc-video-click']('100','100')
+            mp.set_property('user-data/native-audio-result', tostring(release)..':'..tostring(#native_intents))
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
+            windowWidth: 460, windowHeight: 700);
+        Assert.True(!output.StartsWith("Lua error:", StringComparison.Ordinal), output);
+        Assert.Equal("0:1", output);
+    }
+
     [Theory]
     [InlineData("opening")]
     [InlineData("outside")]

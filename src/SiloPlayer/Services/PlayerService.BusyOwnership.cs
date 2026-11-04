@@ -38,22 +38,29 @@ public partial class PlayerService
         }
     }
 
-    private void ReleasePlaybackBusy(PlaybackBusyOwner owner)
+    private bool OwnsPlaybackBusy(PlaybackBusyOwner owner)
+    {
+        lock (_playbackBusyLock)
+            return owner.Revision == _playbackBusyRevision && !_closing &&
+                ReferenceEquals(owner.Authority, _activeAuthority) &&
+                ReferenceEquals(owner.Manager, _playbackManager) &&
+                ReferenceEquals(owner.Session, _playbackManager?.CurrentSession) &&
+                ReferenceEquals(owner.Mpv, _mpv) && ReferenceEquals(owner.Video, _videoWindow) &&
+                ReferenceEquals(owner.LoadingToken, _playbackCts) &&
+                owner.PlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
+                owner.FileGeneration == Volatile.Read(ref _playbackFileGeneration);
+    }
+
+    private void ReleasePlaybackBusy(PlaybackBusyOwner owner, Action? releaseState = null)
     {
         lock (_playbackBusyLock)
         {
             // A profile change retires publication but can leave this same
             // operation's flags behind. A successor's flags are never ours.
-            if (owner.Revision != _playbackBusyRevision || _closing ||
-                !ReferenceEquals(owner.Authority, _activeAuthority) ||
-                !ReferenceEquals(owner.Manager, _playbackManager) ||
-                !ReferenceEquals(owner.Session, _playbackManager?.CurrentSession) ||
-                !ReferenceEquals(owner.Mpv, _mpv) || !ReferenceEquals(owner.Video, _videoWindow) ||
-                !ReferenceEquals(owner.LoadingToken, _playbackCts) ||
-                owner.PlayGeneration != Volatile.Read(ref _playRequestGeneration) ||
-                owner.FileGeneration != Volatile.Read(ref _playbackFileGeneration)) return;
+            if (!OwnsPlaybackBusy(owner)) return;
             SetSwitchingContent(false);
             IsLoading = false;
+            releaseState?.Invoke();
         }
     }
 }

@@ -2637,7 +2637,8 @@ public partial class PlayerService : IDisposable
     private void BeginMpvLoad(PreparedPlaybackTransport prepared, bool restorePaused)
         => BeginOwnedMpvLoad(prepared, restorePaused, null);
 
-    private void BeginOwnedMpvLoad(PreparedPlaybackTransport prepared, bool restorePaused, Action<long>? acceptLoad)
+    private void BeginOwnedMpvLoad(PreparedPlaybackTransport prepared, bool restorePaused, Action<long>? acceptLoad,
+        Action<PlaybackBusyOwner>? acceptBusy = null)
     {
         // Hand this attempt's exact identity to the initiating operation before
         // any preparation/native call can fail. A different load invalidates it.
@@ -2666,8 +2667,8 @@ public partial class PlayerService : IDisposable
         _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
             prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
             prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
-        SetSwitchingContent(true);
-        IsLoading = true;
+        var loadBusyOwner = BeginPlaybackBusy();
+        acceptBusy?.Invoke(loadBusyOwner);
         SetConnectionMediaActive(true);
         if (loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
@@ -4865,7 +4866,7 @@ public partial class PlayerService : IDisposable
             {
                 var session = await manager.ReplanAudioAsync(trackIndex, currentPos, ct).ConfigureAwait(false);
                 busyOwner = busyOwner with { Session = session };
-                if (!CurrentSwitch()) return;
+                if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner)) return;
                 var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                     ?? throw new InvalidOperationException("No active version is available for the audio switch.");
                 var streamUrl = manager.StreamUrl
@@ -4877,7 +4878,7 @@ public partial class PlayerService : IDisposable
                     currentPos,
                     ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
-                if (!CurrentSwitch() ||
+                if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner) ||
                     !ReferenceEquals(manager.CurrentSession, session))
                     return;
                 PlayMethod = session.PlayMethod;
@@ -4885,7 +4886,12 @@ public partial class PlayerService : IDisposable
                 // The callback adopts only this attempt, including an owned
                 // load failure. Never borrow a later global generation.
                 BeginOwnedMpvLoad(prepared, restorePaused: wasPaused,
-                    acceptLoad: generation => selectionFileGeneration = generation);
+                    acceptLoad: generation =>
+                    {
+                        selectionFileGeneration = generation;
+                        busyOwner = busyOwner with { FileGeneration = generation };
+                    },
+                    acceptBusy: owner => busyOwner = owner);
                 if (!CurrentSwitch()) return;
                 await PersistAudioPreferenceAsync(audioPreference);
                 if (!CurrentSwitch()) return;
@@ -4898,13 +4904,15 @@ public partial class PlayerService : IDisposable
             catch (Exception ex)
             {
                 if (!CurrentSwitch()) return;
-                SetSwitchingContent(false);
-                IsLoading = false;
-                LogToFile("player_audio_switch_error.txt", ex.ToString());
-                var (title, detail) = DescribePlaybackError(ex);
-                ErrorMessage = detail;
-                ShowNotice(title, detail, "error");
-                SendAudioTrackListToOsc();
+                ReleasePlaybackBusy(busyOwner, () =>
+                {
+                    if (!CurrentSwitch()) return;
+                    LogToFile("player_audio_switch_error.txt", ex.ToString());
+                    var (title, detail) = DescribePlaybackError(ex);
+                    ErrorMessage = detail;
+                    ShowNotice(title, detail, "error");
+                    SendAudioTrackListToOsc();
+                });
             }
             finally
             {

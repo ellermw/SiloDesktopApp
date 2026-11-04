@@ -145,8 +145,9 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 var selectedAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
                 var audioCases = string.IsNullOrEmpty(selectedAudioCase)
-                    ? new[] { "", "keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
-                        "successor-seek", "successor-recovery", "retired-presentation", "own-load-failure" }
+                    ? new[] { "", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
+                        "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
+                        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure" }
                     : new[] { selectedAudioCase };
                 try
                 {

@@ -38,6 +38,8 @@ internal static class PlaybackAudioMenuNativeFixture
         using var foreground = new ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(owner));
         if (owner.AppWindow.Presenter is OverlappedPresenter presenter) presenter.SetBorderAndTitleBar(false, false);
         owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
+        var compactClickCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "compact-keyboard-click";
+        if (compactClickCase) owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 460, 700));
         using var media = new MediaServer();
         var directFailureCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "own-load-failure";
         var mediaPath = directFailureCase ? "/stream/direct/synthetic-video.y4m" : "/video.y4m";
@@ -100,12 +102,18 @@ internal static class PlaybackAudioMenuNativeFixture
                     compute_layout()
                     local r = state.layout.btn_audio or state.layout.btn_more or {}
                     local pending = state.native_menu_request or {}
+                    local compactAudio = {}
+                    for _, item in ipairs(state.compact_menu_items or {}) do
+                        if item.name == 'btn_audio' then compactAudio = item end
+                    end
                     mp.commandv('script-message','silo-audio-fixture-state',request,require('mp.utils').format_json({
                         x=r.cx or 0,y=r.cy or 0,w=r.w or 0,h=r.h or 0,
                         width=state.osd_width,height=state.osd_height,scope=state.native_audio_scope or '',
                         sequence=pending.sequence or 0,legacy=state.audio_menu_visible or false,
                         notice=state.notice_visible or false,noticeTitle=state.notice_title or '',
-                        closeConsume=fixture_close_consume}))
+                        closeConsume=fixture_close_consume,
+                        compactX=(compactAudio.x or 0)+(compactAudio.w or 0)/2,
+                        compactY=(compactAudio.y or 0)+(compactAudio.h or 0)/2}))
                 end)
                 mp.commandv('script-message','silo-audio-fixture-ready')
                 """);
@@ -125,7 +133,7 @@ internal static class PlaybackAudioMenuNativeFixture
             var menu = await OpenFromOsc();
             var hwnd = MenuHwnd(menu);
             var list = (ListView)Get(menu, "_list")!;
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "keyboard-click")
+            if (compactClickCase || Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "keyboard-click")
             {
                 Call(menu, "Input", "cancel");
                 await Until(() => Menu(service) == null, "Keyboard cancel did not dismiss Audio.");
@@ -355,17 +363,18 @@ internal static class PlaybackAudioMenuNativeFixture
 
             var retirementCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (retirementCase is "retired-replan" or "retired-success" or "retired-cancellation"
-                or "successor-seek" or "successor-recovery")
+                or "successor-seek" or "successor-recovery" or "live-successor-seek" or "live-successor-recovery"
+                or "live-successor-success-seek")
             {
                 service.SetPaused(false);
                 await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
                 var initialError = service.ErrorMessage;
                 var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
-                wire.HoldFailedReplan = retirementCase != "retired-success";
-                wire.HoldSuccessfulReplan = retirementCase == "retired-success";
+                wire.HoldSuccessfulReplan = retirementCase is "retired-success" or "live-successor-success-seek";
+                wire.HoldFailedReplan = !wire.HoldSuccessfulReplan;
                 using var cancellation = new CancellationTokenSource();
                 if (retirementCase == "retired-cancellation") Set(service, "_playbackCts", cancellation);
-                if (retirementCase is "successor-seek" or "successor-recovery")
+                if (retirementCase!.Contains("successor", StringComparison.Ordinal))
                 {
                     var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", manager.CurrentSession,
                         version, manager.StreamUrl, 0d, CancellationToken.None)!;
@@ -378,26 +387,26 @@ internal static class PlaybackAudioMenuNativeFixture
                 Require(wire.AudioPicks.Single() == 71, "Actual native keyboard selection did not retain the source index.");
                 var originalScope = (await Query()).GetProperty("scope").GetString();
                 Task? successor = null;
-                if (retirementCase is "successor-seek" or "successor-recovery")
+                if (retirementCase!.Contains("successor", StringComparison.Ordinal))
                 {
                     wire.HoldSuccessorReplan = true;
-                    successor = retirementCase == "successor-seek"
+                    successor = retirementCase.EndsWith("seek", StringComparison.Ordinal)
                         ? (Task)Call(service, "RestartTransportForSeekAsync", 2d, false,
                             (long)Get(service, "_seekRestartGeneration")!, cancellation)!
                         : (Task)Call(service, "RecoverInterruptedStreamAsync", 2d, "playback-error", null)!;
-                    await Until(() => retirementCase == "successor-seek"
+                    await Until(() => retirementCase.EndsWith("seek", StringComparison.Ordinal)
                         ? ((SemaphoreSlim)Get(service, "_transportRestartGate")!).CurrentCount == 0
                         : (bool)Get(service, "_prematureEofRecoveryActive")!, "Successor did not enter its actual busy flow.");
                 }
                 if (retirementCase == "retired-cancellation") cancellation.Cancel();
-                else if (successor != null)
+                else if (successor != null && !retirementCase!.StartsWith("live-", StringComparison.Ordinal))
                 {
                     // Retire only Audio's inventory while keeping the queued
                     // real seek/recovery's API session authorized. A profile
                     // switch correctly cancels both operations in PlaybackApi.
                     version.AudioTracks = version.AudioTracks!.Take(2).ToList();
                 }
-                else api.SetProfile("retired-during-replan");
+                else if (successor == null) api.SetProfile("retired-during-replan");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 // Observe the actual asynchronous error publication, including a
@@ -436,6 +445,8 @@ internal static class PlaybackAudioMenuNativeFixture
             // replan caller, with native audio IDs deliberately irrelevant.
             service.SetPaused(false);
             await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
+            var latePreferenceCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "late-preference";
+            wire.HoldPreference = latePreferenceCase;
             menu = await OpenFromOsc(); list = (ListView)Get(menu, "_list")!;
             Call(menu, "Input", "end");
             var last = (ListViewItem)list.Items[71];
@@ -469,6 +480,18 @@ internal static class PlaybackAudioMenuNativeFixture
             foreground.Observe("accepted-replan-observed");
             Require(wire.AudioPicks.Single() == 71, "Native Audio reinterpreted a source index as an mpv track ID.");
             await Until(() => !service.IsLoading && !mpv.IsPaused && !service.IsPaused, "Accepted Audio replan did not preserve playing intent.");
+            if (latePreferenceCase)
+            {
+                await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.Delay(100); // FILE_LOADED initialization has its own publication.
+                var publication = (long)Get(service, "_nativeAudioPublication")!;
+                wire.ReleasePreference.TrySetResult();
+                await Until(() => (long)Get(service, "_nativeAudioPublication")! > publication,
+                    "Accepted Audio did not finish publication after FILE_LOADED and a late preference failure.");
+                Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")! &&
+                    !(await Query()).GetProperty("notice").GetBoolean(),
+                    "Late optional preference failure changed accepted playback busy/error state.");
+            }
             foreground.Observe("accepted-replan-loaded");
             Require(Menu(service) == null && Gate(service).CurrentCount == 1, "Accepted Audio selection stranded a menu or gate.");
             Require((await Query()).GetProperty("closeConsume").GetString() == "false",
@@ -489,6 +512,7 @@ internal static class PlaybackAudioMenuNativeFixture
         {
             wire.ReleaseReplan.TrySetResult();
             wire.ReleaseSuccessor.TrySetResult();
+            wire.ReleasePreference.TrySetResult();
             mpv.ScriptMessageReceived -= Message;
             if (Menu(service) is { } menu) Call(menu, "Input", "cancel");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");
@@ -522,12 +546,32 @@ internal static class PlaybackAudioMenuNativeFixture
         }
         async Task<object> OpenFromOsc()
         {
-            await TriggerOsc();
+            if (compactClickCase)
+            {
+                var opener = await Query();
+                NativeClick(opener.GetProperty("x").GetDouble(), opener.GetProperty("y").GetDouble());
+                await Task.Delay(600); // Isolate Audio from More's existing gesture timer.
+                var compact = await Query();
+                Require(compact.GetProperty("compactX").GetDouble() > 0, "Compact Audio row was unavailable.");
+                NativeClick(compact.GetProperty("compactX").GetDouble(), compact.GetProperty("compactY").GetDouble());
+            }
+            else await TriggerOsc();
             await Until(() => Menu(service) is { } shown && ((ListView)Get(shown, "_list")!).XamlRoot != null,
                 "Actual OSC Audio gesture produced no native Audio menu.");
             foreground.WatchMenu((Window)Get(Menu(service)!, "_window")!, MenuHwnd(Menu(service)!));
             foreground.Observe("menu-opened", MenuHwnd(Menu(service)!), "audio-menu");
             return Menu(service)!;
+        }
+        void NativeClick(double x, double y)
+        {
+            // Deliver the actual OSC pointer protocol without Windows
+            // capture/focus changes on an offscreen interactive desktop.
+            var px = x.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var py = y.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            mpv.SendScriptMessage("osc-mouse-move", px, py);
+            mpv.SendScriptMessage("osc-mouse-down", px, py);
+            mpv.SendScriptMessage("osc-mouse-up", px, py);
+            mpv.SendScriptMessage("osc-video-click", px, py);
         }
         void Host(params string[] args) => Call(service, "OnScriptMessage", (object)args);
     }
@@ -590,6 +634,9 @@ internal static class PlaybackAudioMenuNativeFixture
         internal bool HoldFailedReplan;
         internal bool HoldSuccessfulReplan;
         internal bool HoldSuccessorReplan;
+        internal bool HoldPreference;
+        internal readonly TaskCompletionSource PreferenceStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleasePreference = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool SuccessorEntered;
         internal readonly TaskCompletionSource SuccessorStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseSuccessor = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -601,6 +648,12 @@ internal static class PlaybackAudioMenuNativeFixture
         {
             Require(request.RequestUri?.Host == "native-audio.fixture.invalid", "Synthetic Audio API attempted external networking.");
             var path = request.RequestUri!.AbsolutePath;
+            if (HoldPreference && request.Method == HttpMethod.Put && path.Contains("/audio-prefs/", StringComparison.Ordinal))
+            {
+                PreferenceStarted.TrySetResult();
+                await ReleasePreference.Task;
+                return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}") };
+            }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
