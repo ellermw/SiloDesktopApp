@@ -6949,7 +6949,7 @@ public partial class PlayerService : IDisposable
                     dialog.XamlRoot = xamlRoot;
                     dialog.HostWindowHandle = hostHwnd;
                     if (snapshot.IsCurrent())
-                        await PlaybackDialogHost.ShowContentDialogAsync(dialog, PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd));
+                        await ShowOwnedSubtitleDialogAsync(dialog, snapshot, hostHwnd);
                 }, PlaybackDialogHost.IsForegroundOwnedBy(_videoWindow?.Hwnd ?? IntPtr.Zero), snapshot.IsCurrent);
         }
         finally
@@ -6991,7 +6991,7 @@ public partial class PlayerService : IDisposable
                 {
                     dialog.XamlRoot = xamlRoot;
                     if (snapshot.IsCurrent())
-                        await PlaybackDialogHost.ShowContentDialogAsync(dialog, PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd));
+                        await ShowOwnedSubtitleDialogAsync(dialog, snapshot, hostHwnd);
                 }, PlaybackDialogHost.IsForegroundOwnedBy(_videoWindow?.Hwnd ?? IntPtr.Zero), snapshot.IsCurrent);
         }
         finally
@@ -7045,7 +7045,8 @@ public partial class PlayerService : IDisposable
         {
             restorePlayerInput = await PlaybackDialogHost.ShowAsync(
                 _videoWindow?.Hwnd ?? IntPtr.Zero,
-                (xamlRoot, hostHwnd) => mainWindow.ShowSubtitleAiDialogAsync(xamlRoot, snapshot.IsCurrent, PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd)),
+                (xamlRoot, hostHwnd) => mainWindow.ShowSubtitleAiDialogAsync(xamlRoot, snapshot.IsCurrent, PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd),
+                    dialog => ShowOwnedSubtitleDialogAsync(dialog, snapshot, hostHwnd)),
                 PlaybackDialogHost.IsForegroundOwnedBy(_videoWindow?.Hwnd ?? IntPtr.Zero), snapshot.IsCurrent);
         }
         finally
@@ -7065,10 +7066,13 @@ public partial class PlayerService : IDisposable
         var authority = _activeAuthority; var context = authority.ApiClient.CaptureContext();
         var manager = _playbackManager; var session = manager?.CurrentSession; var mpv = _mpv; var video = _videoWindow;
         var generation = Volatile.Read(ref _playRequestGeneration); var file = Volatile.Read(ref _fileLoadGeneration);
+        var roomGeneration = Volatile.Read(ref _roomPlaybackGeneration);
+        var playbackFile = Volatile.Read(ref _playbackFileGeneration);
         bool Current() => !_closing && ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) &&
-            generation == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration);
+            generation == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration) &&
+            roomGeneration == Volatile.Read(ref _roomPlaybackGeneration) && playbackFile == Volatile.Read(ref _playbackFileGeneration);
         return new(authority, manager, video?.IsFullscreen == true, CaptureUserPausedState(), CurrentMediaPosition, Current);
     }
 

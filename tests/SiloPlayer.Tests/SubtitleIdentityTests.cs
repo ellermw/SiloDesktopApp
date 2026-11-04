@@ -21,7 +21,7 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("RestoreExecutedSubtitleSelection(reapply: false);", rollback);
         Assert.Contains("manager.CaptureLocalSubtitleIntent() == selectionIntent", rollback);
         Assert.Contains("_prematureEofRecoveryActive = false;", rollback);
-        Assert.Contains("_switchingContent = false;", rollback);
+        Assert.Contains("SetSwitchingContent(false);", rollback);
         Assert.Contains("IsLoading = false;", rollback);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
         Assert.Contains("RestorePlaybackStateAfterSubtitleChange(wasPaused, CurrentMediaPosition, allowSeek: false);", rollback);

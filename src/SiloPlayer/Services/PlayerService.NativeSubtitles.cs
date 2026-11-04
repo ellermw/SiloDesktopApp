@@ -12,10 +12,27 @@ namespace SiloPlayer.Services;
 public partial class PlayerService
 {
     // This presentation draft never replaces the backend's selection owner.
-    private sealed record NativeSubtitlePending(NativeMenuOwner Owner, int Index, int Previous);
+    private sealed record NativeSubtitlePending(NativeMenuOwner Owner, int Index);
     private NativeSubtitlePending? _nativeSubtitlePending;
     private int ExecutedSubtitleIndex => _playbackManager?.CurrentSession?.MediaFileId == _executedSubtitleFileId
         ? _executedSubtitleTrack?.Index ?? -1 : -1;
+    private ContentDialog? _nativeSubtitleDialog;
+    private async Task ShowOwnedSubtitleDialogAsync(ContentDialog dialog, PlaybackUiSnapshot owner, IntPtr hwnd)
+    {
+        if (!owner.IsCurrent()) return;
+        _nativeSubtitleDialog = dialog;
+        var watch = _nativeMenuDispatcher!.CreateTimer();
+        watch.Interval = TimeSpan.FromMilliseconds(100);
+        watch.Tick += (_, _) => { if (!owner.IsCurrent()) dialog.Hide(); };
+        watch.Start();
+        try { await PlaybackDialogHost.ShowContentDialogAsync(dialog, PlaybackDialogHost.IsForegroundOwnedBy(hwnd)); }
+        finally
+        {
+            watch.Stop();
+            if (ReferenceEquals(_nativeSubtitleDialog, dialog)) _nativeSubtitleDialog = null;
+        }
+    }
+
     private Action<string>? _nativeSubtitleAction;
     private bool _nativeSubtitleAiAvailable;
     private PlaybackStartResponse? _nativeSubtitleAiSession;
@@ -172,7 +189,7 @@ public partial class PlayerService
     private async Task SelectNativeSubtitleAsync(NativeMenuOwner owner, int index)
     {
         if (!owner.IsCurrent()) return;
-        var pending = new NativeSubtitlePending(owner, index, _nativeSubtitlePending?.Previous ?? ActiveSubtitleServerIndex);
+        var pending = new NativeSubtitlePending(owner, index);
         _nativeSubtitlePending = pending;
         try { await SelectSubtitleByServerIndexAsync(index); }
         catch (Exception) { if (owner.IsCurrent()) ShowNotice("Subtitle unavailable", "Please try selecting the subtitle again.", "error"); }

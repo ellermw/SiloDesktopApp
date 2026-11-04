@@ -199,6 +199,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-subtitle-dialogs")
+            {
+                await PlaybackAudioMenuNativeFixture.RunSubtitleDialogsAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-subtitle-menu" or "native-subtitle-failure" or "subtitle-exact-failed-sidecar")
             {
                 await PlaybackAudioMenuNativeFixture.RunSubtitleAsync(_window, Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-subtitle-failure");
