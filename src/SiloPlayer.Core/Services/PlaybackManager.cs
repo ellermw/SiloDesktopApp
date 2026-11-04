@@ -399,14 +399,18 @@ public partial class PlaybackManager : IDisposable
         bool isAutomatic = false)
     {
         RecordLocalSubtitleSelection(subtitleTrackIndex, isAutomatic);
-        return ReplanAsync(
+        return ReplanRecordedSubtitleSelectionAsync(positionSeconds, ct);
+    }
+
+    /// <summary>Submits the recorded identity after an accepted inventory replacement.</summary>
+    public Task<PlaybackStartResponse> ReplanRecordedSubtitleSelectionAsync(double positionSeconds, CancellationToken ct = default)
+        => ReplanAsync(
             "track_change",
             positionSeconds,
             _qualityPreferenceV3,
             selectedTracks => { },
             failure: null,
             ct);
-    }
 
     public Task<PlaybackStartResponse> ReplanSeekAsync(
         double positionSeconds,

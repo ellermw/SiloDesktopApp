@@ -395,38 +395,6 @@ public sealed class PlaybackTrackIntentTests
         var tracks = scope.Wire.Replans[0].GetProperty("selected_tracks");
         if (selected < 0) Assert.False(tracks.TryGetProperty("subtitle", out _));
         else Assert.Equal(selected, tracks.GetProperty("subtitle").GetProperty("index").GetInt32());
-    [Fact]
-    public async Task SubmittingRecordedChoicePreservesItsOriginalVariantAcrossAReorderedGrant()
-    {
-        using var scope = new Fixture(); scope.Wire.SubtitleVariants = true;
-        var source = scope.Manager.WatchDetail!.Versions.Single(v => v.FileId == 42).SubtitleTracks!;
-        source[0].Language = "spa"; source[0].Title = "Generic"; source[1].Title = "Specific variant";
-        scope.Manager.WatchDetail.Versions.Single(v => v.FileId == 44).SubtitleTracks![0].Title = "Generic";
-        await scope.Manager.StartSessionAsync(42);
-        scope.Manager.RecordLocalSubtitleSelection(1);
-        await scope.Manager.StartReplacementSessionAsync(44, 12);
-        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
-        await scope.Manager.ReplanRecordedSubtitleSelectionAsync(12);
-        Assert.Equal("sub:44:0", scope.Wire.Replans.Single().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString());
-        await scope.Manager.StartReplacementSessionAsync(42, 14);
-        Assert.Equal(1, scope.Wire.Starts.Last().GetProperty("subtitle_track_index").GetInt32());
-    }
-
-    [Theory]
-    [InlineData(null, "")]
-    [InlineData("", "und")]
-    [InlineData(null, "und")]
-    public async Task SameFileReloadPreservesIdentitylessUnknownLanguageChoice(string? trackId, string language)
-    {
-        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
-        var track = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
-        track.TrackId = trackId; track.Language = language;
-        scope.Manager.RecordLocalSubtitleSelection(1);
-        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
-
-        await scope.Manager.StartReplacementSessionAsync(42, 14);
-        Assert.Equal(1, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
-        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
     }
 
     [Theory]
@@ -481,6 +449,45 @@ public sealed class PlaybackTrackIntentTests
             Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
             Assert.Equal("eng", scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1).Language);
         }
+    }
+
+    [Fact]
+    public async Task SubmittingRecordedChoicePreservesItsOriginalVariantAcrossAReorderedGrant()
+    {
+        using var scope = new Fixture(); scope.Wire.SubtitleVariants = true;
+        var source = scope.Manager.WatchDetail!.Versions.Single(v => v.FileId == 42).SubtitleTracks!;
+        source[0].Language = "spa"; source[0].Title = "Generic"; source[1].Title = "Specific variant";
+        scope.Manager.WatchDetail.Versions.Single(v => v.FileId == 44).SubtitleTracks![0].Title = "Generic";
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        await scope.Manager.StartReplacementSessionAsync(44, 12);
+        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+        await scope.Manager.ReplanRecordedSubtitleSelectionAsync(12);
+        Assert.Equal("sub:44:0", scope.Wire.Replans.Single().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString());
+        await scope.Manager.StartReplacementSessionAsync(42, 14);
+        Assert.Equal(1, scope.Wire.Starts.Last().GetProperty("subtitle_track_index").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData("", "und")]
+    [InlineData(null, "und")]
+    public async Task SameFileReloadPreservesIdentitylessUnknownLanguageChoice(string? trackId, string language)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var track = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+        track.TrackId = trackId; track.Language = language;
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+
+        await scope.Manager.StartReplacementSessionAsync(42, 14);
+        Assert.Equal(1, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("und")]
     public async Task QualityReplanSendsIdentitylessUnknownLanguageChoiceInsteadOfOff(string language)
     {
         using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
@@ -552,13 +559,13 @@ public sealed class PlaybackTrackIntentTests
         public List<string> Paths = [];
         public bool BlockNext;
         public bool FailNextReplan;
+        public bool SubtitleVariants;
         public bool OmitTrackIds;
         public int InitialSubtitleSelection;
         public int? ReplanSubtitleSelection;
         public string SubtitleIdSuffix = "";
         public string? UnlabelledSubtitleLanguage;
         public List<FileVersion>? Versions;
-        public bool SubtitleVariants;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _file = 42, _selected = 0;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -594,20 +601,16 @@ public sealed class PlaybackTrackIntentTests
                     track.Language = language;
                     track.Title = null;
                 }
-            var inventory = (version.SubtitleTracks ?? []).OrderByDescending(t => t.External == true)
-                .Select((t, index) => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{index}{SubtitleIdSuffix}", combined_index = (int?)index, language = t.Language, codec = t.Codec, label = t.Title, source = t.External == true ? "external" : "embedded", delivery = "native" })
-                .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : $"sub:42:2{SubtitleIdSuffix}", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
-            var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", index = _selected };
-            var version = Version(_file, _file == 44, _file == 43);
             if (SubtitleVariants && _file == 42)
             {
                 version.SubtitleTracks![0].Language = "spa"; version.SubtitleTracks[0].Title = "Generic";
                 version.SubtitleTracks[1].Title = "Specific variant";
             }
             if (SubtitleVariants && _file == 44) version.SubtitleTracks![0].Title = "Generic";
-            var inventory = (version.SubtitleTracks ?? []).Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, label = t.Title, source = "embedded", delivery = "native" })
-                .Concat(_file == 42 ? new[] { new { track_id = "sub:42:2", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
-            var subtitleIdentity = _selected < 0 ? null : new { id = $"sub:{_file}:{_selected}", index = _selected };
+            var inventory = (version.SubtitleTracks ?? []).OrderByDescending(t => t.External == true)
+                .Select((t, index) => new { track_id = OmitTrackIds ? "" : $"sub:{_file}:{index}{SubtitleIdSuffix}", combined_index = (int?)index, language = t.Language, codec = t.Codec, label = t.Title, source = t.External == true ? "external" : "embedded", delivery = "native" })
+                .Concat(_file == 42 ? new[] { new { track_id = OmitTrackIds ? "" : $"sub:42:2{SubtitleIdSuffix}", combined_index = (int?)2, language = (string?)"fra", codec = (string?)"pgs", label = (string?)"French", source = "embedded", delivery = "native" } } : []).ToArray();
+            var subtitleIdentity = _selected < 0 ? null : new { id = OmitTrackIds ? "" : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", index = _selected };
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "session",
