@@ -21,9 +21,13 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("RestoreExecutedSubtitleSelection(reapply: false);", rollback);
         Assert.Contains("manager.CaptureLocalSubtitleIntent() == selectionIntent", rollback);
         Assert.Contains("_prematureEofRecoveryActive = false;", rollback);
-        Assert.Contains("SetSwitchingContent(false);", rollback);
-        Assert.Contains("IsLoading = false;", rollback);
-        Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
+        Assert.Contains("ReleasePlaybackBusy(busyOwner!)", rollback);
+        var busy = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.BusyOwnership.cs"));
+        var release = busy[busy.IndexOf("private PlaybackBusyRelease? ReleasePlaybackBusy(", StringComparison.Ordinal)..];
+        release = release[..release.IndexOf("private bool BusyPlaybackMatches(", StringComparison.Ordinal)];
+        Assert.Contains("SetSwitchingContent(false);", release);
+        Assert.Contains("IsLoading = false;", release);
+        Assert.Contains("HideLoadingOverlay(loadingOwner,", rollback);
         Assert.Contains("RestorePlaybackStateAfterSubtitleChange(wasPaused, CurrentMediaPosition, allowSeek: false);", rollback);
         Assert.Contains("ShowSubtitleSelectionUnavailable();", rollback);
         Assert.Contains("return SubtitleTransportResult.Failed;", rollback);
