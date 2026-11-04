@@ -189,7 +189,7 @@ public sealed class SubtitleIdentityTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void DownloadedIdentityBoundaryRequiresUniqueMetadataNotAReusedIndex(bool reverse)
+    public void SameFileDownloadedIdentityCannotBeReplacedByMetadataOrAReusedIndex(bool reverse)
     {
         WithManager(manager =>
         {
@@ -207,8 +207,42 @@ public sealed class SubtitleIdentityTests
             desired.Label = "Selected release";
             session.SubtitleUrls[0].Label = "Other release";
             session.SubtitleUrls[1].Label = desired.Label;
-            Assert.Equal(8, manager.SubtitleSelectionForLoad);
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            Assert.True(manager.IsRetainedSubtitleUnavailable);
             Assert.Same(desired, manager.CaptureLocalSubtitleIntent().Track);
+        });
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void SameFileDownloadRequiresItsStoredKeyAcrossThePlanIdentityBoundary(bool hasTrackId, bool useSyncKey)
+    {
+        WithManager(manager =>
+        {
+            var desired = new SubtitleTrackInfo { Index = 2, TrackId = hasTrackId ? "download:100" : null,
+                Id = useSyncKey ? null : 100, SyncKey = useSyncKey ? "stored-100" : null,
+                Source = "downloaded", Language = "en", Codec = "srt", Label = "Selected release" };
+            var session = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [desired] };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+            manager.RecordLocalSubtitleSelection(2);
+            var replacement = new SubtitleTrackInfo { Index = 2, Id = 200, SyncKey = "stored-200",
+                Source = "downloaded", Language = "en", Codec = "srt", Label = desired.Label };
+            session.SubtitleUrls = [replacement];
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            Assert.True(manager.IsRetainedSubtitleUnavailable);
+            Assert.Same(desired, manager.CaptureLocalSubtitleIntent().Track);
+
+            var retained = new SubtitleTrackInfo { Index = 8, Id = 100, SyncKey = "stored-100",
+                Source = "downloaded", Language = "en", Codec = "subrip" };
+            session.SubtitleUrls.Add(retained);
+            Assert.Equal(8, manager.SubtitleSelectionForLoad);
+            Assert.False(manager.IsRetainedSubtitleUnavailable);
+            retained.Unplayable = true;
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            Assert.True(manager.IsRetainedSubtitleUnavailable);
         });
     }
 

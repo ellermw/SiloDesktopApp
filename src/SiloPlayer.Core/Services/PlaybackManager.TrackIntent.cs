@@ -227,9 +227,12 @@ public partial class PlaybackManager
                 if (stored.Length > 0)
                     return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
             }
+            // Same-file downloads require their stored identity. Metadata (or
+            // a reused index) must not substitute a different subtitle file.
+            return null;
         }
         var candidates = inventory.Where(t => !t.Unplayable &&
-            (!sameFile || !hasIdentity || Equal(_viewerSubtitle.Source, "downloaded") && string.IsNullOrWhiteSpace(t.TrackId)) &&
+            (!sameFile || !hasIdentity) &&
             Equal(t.Source, _viewerSubtitle.Source) && SubtitleCodec(t.Codec) == SubtitleCodec(_viewerSubtitle.Codec) &&
             MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
             t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();

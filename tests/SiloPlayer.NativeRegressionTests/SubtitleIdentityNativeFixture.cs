@@ -171,7 +171,11 @@ internal static class SubtitleIdentityNativeFixture
                         "Failed sidecar add cached or persisted an unchanged native SID.");
 
                     var castTracks = service.CaptureSiloCastState()["subtitleTracks"]!.AsArray();
-                    Require(castTracks.All(t => t!["trackId"]!.GetValue<int>() != 4), "SiloCast advertised an explicitly unplayable subtitle.");
+                    Require(castTracks.All(t => t!["trackId"]!.GetValue<int>() is not (4 or 10)),
+                        "SiloCast advertised an explicitly unplayable or unresolved native-only subtitle.");
+                    Require(castTracks.Any(t => t!["trackId"]!.GetValue<int>() == previousIndex + 1) &&
+                        castTracks.Any(t => t!["trackId"]!.GetValue<int>() == busy.Index + 1),
+                        "SiloCast hid an executable native or supported sidecar route.");
                     foreach (var sid in new[] { 4, 10, 11 })
                         await ExpectUnavailableAsync(() => service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = sid }));
                     Require(service.ActiveSubtitleServerIndex == previousIndex && wire.PreferenceWrites == preferenceWrites,
