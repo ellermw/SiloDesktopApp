@@ -25,16 +25,16 @@ public partial class PlayerService
     private SubtitleSelectionOperation? _subtitleSelectionOperation;
     private SubtitleSelectionOperation? _subtitleReadOperation;
     private sealed record PreparedSubtitleReload(SubtitleSelectionOperation? Owner, int MediaFileId, int Index,
-        string TrackId, string? SyncKey, string Path, long PlayRequest, string? Content,
+        string? TrackId, string? SyncKey, long? Id, string Path, long PlayRequest, string? Content,
         SiloPlayer.Core.Api.ApiRequestContext Context);
     private PreparedSubtitleReload? _preparedSubtitleReload;
 
     private void PrepareSubtitleFileForReload(PlaybackStartResponse previous, PlaybackStartResponse granted, int? index)
     {
         var after = granted.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.Index == index);
-        var before = after == null || string.IsNullOrEmpty(after.TrackId) ? null :
-            previous.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.TrackId == after.TrackId);
-        PrepareSubtitleReload(previous.MediaFileId, before, granted, after);
+        var matches = after == null ? Array.Empty<SubtitleTrackInfo>() : previous.SubtitleUrls.Where(t => !t.Unplayable &&
+            HasSameSubtitleReloadIdentity(after.TrackId, after.SyncKey, after.Id, t)).Take(2).ToArray();
+        PrepareSubtitleReload(previous.MediaFileId, matches.Length == 1 ? matches[0] : null, granted, after);
     }
 
     private void PrepareAppliedSubtitleFileForReload()
@@ -58,13 +58,24 @@ public partial class PlayerService
         // An automatic applied selection has no manual owner, but owns bytes.
         if (context is not { } captured || !_activeAuthority.ApiClient.IsCurrentContext(captured) ||
             before == null || after == null || previousFileId != granted.MediaFileId ||
-            string.IsNullOrEmpty(before.TrackId) || before.TrackId != after.TrackId || before.SyncKey != after.SyncKey) return;
+            before.Unplayable || after.Unplayable ||
+            !HasSameSubtitleReloadIdentity(before.TrackId, before.SyncKey, before.Id, after)) return;
         lock (_subtitleTrackStateLock)
         {
             if (!_prefetchedSubtitleFiles.TryGetValue(before.Index, out var path)) return;
-            _preparedSubtitleReload = new(owner, granted.MediaFileId, after.Index, after.TrackId!, after.SyncKey, path,
+            _preparedSubtitleReload = new(owner, granted.MediaFileId, after.Index, after.TrackId, after.SyncKey, after.Id, path,
                 Volatile.Read(ref _playRequestGeneration), ContentId, captured);
         }
+    }
+
+    private static bool HasSameSubtitleReloadIdentity(string? trackId, string? syncKey, long? id, SubtitleTrackInfo track)
+    {
+        // Refreshed downloads can acquire a v3 TrackId later. A shared stored
+        // identity is sufficient, but conflicting identities must never carry.
+        if ((!string.IsNullOrEmpty(trackId) && !string.IsNullOrEmpty(track.TrackId) && trackId != track.TrackId) ||
+            syncKey != track.SyncKey || (id is > 0 && track.Id is > 0 && id != track.Id)) return false;
+        return (!string.IsNullOrEmpty(trackId) && trackId == track.TrackId) ||
+            !string.IsNullOrEmpty(syncKey) || (id is > 0 && id == track.Id);
     }
 
     // Called under the subtitle file-state lock. This cache handoff is consumed
@@ -76,7 +87,8 @@ public partial class PlayerService
             prepared.Owner?.Token.IsCancellationRequested == true || prepared.PlayRequest != Volatile.Read(ref _playRequestGeneration) ||
             prepared.Content != ContentId || !_activeAuthority.ApiClient.IsCurrentContext(prepared.Context) ||
             _playbackManager?.CurrentSession is not { } session || session.MediaFileId != prepared.MediaFileId ||
-            !session.SubtitleUrls.Any(t => !t.Unplayable && t.Index == prepared.Index && t.TrackId == prepared.TrackId && t.SyncKey == prepared.SyncKey) ||
+            !session.SubtitleUrls.Any(t => !t.Unplayable && t.Index == prepared.Index &&
+                HasSameSubtitleReloadIdentity(prepared.TrackId, prepared.SyncKey, prepared.Id, t)) ||
             !File.Exists(prepared.Path)) return null;
         return prepared;
     }

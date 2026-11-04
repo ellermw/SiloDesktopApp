@@ -134,8 +134,9 @@ public sealed class PlayerServiceSourceTests
         // position/duration, and nothing slides a window during playback
         // (the XAML overlay tick that once did is never activated). A windowed
         // sidecar therefore lost every cue ~10 minutes after selection.
-        // The complete-track URL is added directly, or downloaded whole first.
-        Assert.Contains("var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
+        // Synchronous sub-add consumes only a complete, prefetched local file.
+        Assert.Contains("if (!_prefetchedSubtitleFiles.TryGetValue(track.Index, out var source) || !File.Exists(source))", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("? local : pair.Value.FullUrl", source, StringComparison.Ordinal);
         Assert.Contains("_mpv.AddSubtitle(source, label, track.Language, select: true);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
         Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
@@ -1355,7 +1356,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("await pending.ConfigureAwait(false)", native);
         Assert.Contains("sid > 0 && fileGeneration == _asyncSubtitleFileGeneration", native);
         Assert.Contains("Command(\"sub-remove\", sid.ToString", native);
-        Assert.Contains("if (ct.IsCancellationRequested || !added)", native);
+        Assert.Contains("if (ct.IsCancellationRequested || fileRequest != _asyncSubtitleFileRequest || !added)", native);
     }
 
     [Fact]
@@ -1387,10 +1388,17 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("selectionRevision == _explicitSubtitleRevision", nativeFallback);
         Assert.Contains("FindExternalSubtitleSid(url, previousIds)", nativeFallback);
         Assert.Contains("!previousIds.Contains", nativeFallback);
-        Assert.Contains("if (ct.IsCancellationRequested || !added)", nativeFallback);
+        Assert.Contains("if (ct.IsCancellationRequested || fileRequest != _asyncSubtitleFileRequest || !added)", nativeFallback);
         Assert.DoesNotContain("mpv_command(", nativeFallback);
-        Assert.Contains("if (!_prefetchedSubtitleFiles.ContainsKey(track.Index) &&", source);
-        Assert.Contains("remote.Scheme is \"http\" or \"https\") return false;", source);
+        Assert.Contains("if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;", prefetch);
+        var sidecarStart = source.IndexOf("private bool SelectSubtitleSidecar(", StringComparison.Ordinal);
+        Assert.True(sidecarStart >= 0 && sidecarStart < prefetchStart);
+        var sidecar = source[sidecarStart..prefetchStart];
+        Assert.Contains("remote.Scheme is not (\"http\" or \"https\"))", sidecar);
+        Assert.Contains("if (!_prefetchedSubtitleFiles.TryGetValue(track.Index, out var source) || !File.Exists(source))", sidecar);
+        Assert.Contains("_mpv.AddSubtitle(source, label, track.Language, select: true)", sidecar);
+        Assert.DoesNotContain("AddSubtitle(pair.Value.FullUrl", sidecar);
+        Assert.DoesNotContain("? local : pair.Value.FullUrl", sidecar);
         Assert.DoesNotContain("SubtitleSidecarFile.Extension(null, remote, track.Codec)", source);
         Assert.DoesNotContain("SubtitleSidecarFile.Extension(null, parsed, track.Codec)", prefetch);
         Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Fallback)\n                return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;", prefetch.Replace("\r", ""));

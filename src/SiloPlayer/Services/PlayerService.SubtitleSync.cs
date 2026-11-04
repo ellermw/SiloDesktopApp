@@ -235,6 +235,7 @@ public partial class PlayerService
         if (!existed || entry.State.Sync?.Id != state.Sync?.Id) { entry.Started = DateTimeOffset.UtcNow; entry.PollStopped = false; }
         entry.State = state; entry.Revision++;
         _subtitleSyncEntries[state.Key] = entry;
+        if (changed) InvalidateSubtitleTimingCache(state.Key);
         var job = state.Sync;
         var watched = job != null && job.Id == entry.WatchedJobId;
         if (watched && SubtitleSyncPolicy.InProgress(job))
@@ -255,6 +256,28 @@ public partial class PlayerService
         if (changed && IsActiveSyncKey(state.Key) && !(watched && job?.Status == "synced"))
             _ = ReloadCorrectedSubtitleAsync(entry, ct, own: false);
         SendSubtitleSyncState();
+    }
+
+    // Called under the sync gate, before a changed timing can be carried into
+    // another load. Keep the applied SID until its replacement is ready.
+    private void InvalidateSubtitleTimingCache(string key)
+    {
+        lock (_subtitleTrackStateLock)
+        {
+            var indices = (_playbackManager?.CurrentSession?.SubtitleUrls ?? [])
+                .Where(track => SubtitleSyncPolicy.Key(track) == key).Select(track => track.Index).ToHashSet();
+            if (_preparedSubtitleReload is { } prepared &&
+                (prepared.SyncKey == key || indices.Contains(prepared.Index)))
+                _preparedSubtitleReload = null;
+            foreach (var index in indices)
+                if (_prefetchedSubtitleFiles.Remove(index, out var path))
+                {
+                    _subtitleSyncFiles.Remove(path);
+                    try { File.Delete(path); } catch { }
+                }
+            // A pre-change read must not register old bytes after invalidation.
+            _subtitleSidecarGeneration++;
+        }
     }
 
     private bool IsActiveSyncKey(string key) => _playbackManager?.CurrentSession?.SubtitleUrls?
@@ -423,6 +446,8 @@ public partial class PlayerService
                 if (newSid <= 0 || newSid == oldSid) throw new InvalidDataException("Corrected subtitle did not load.");
                 _loadedExternalSubtitleSids[index] = newSid;
                 if (oldSid > 0) _mpv.RemoveSubtitle(oldSid);
+                InvalidateSubtitleTimingCache(state.Key);
+                _prefetchedSubtitleFiles[index] = path;
                 _subtitleSyncFiles.Add(path); path = null;
                 entry.LastAppliedTiming = timing;
                 if (IsApplyingOwnedTiming(entry, timing)) SendSubtitleSyncOutcome(entry.State);
