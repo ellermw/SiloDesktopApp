@@ -1552,7 +1552,7 @@ public partial class PlayerService : IDisposable
         {
             lock (_playbackBusyLock)
             {
-                ++_playbackBusyRevision;
+                if (value) ++_playbackBusyRevision;
                 _isLoading = value;
             }
         }
@@ -4298,6 +4298,7 @@ public partial class PlayerService : IDisposable
         _videoWindow?.Show();
         _mpv?.SendScriptMessage("osc-set-post-roll", "false");
         _mpv?.SendScriptMessage("osc-set-visibility", "true");
+        PublishNativeMenuScopes();
         InvokeSubscribersSafely(PostRollReturnRequested, nameof(PostRollReturnRequested));
     }
 
@@ -5264,6 +5265,7 @@ public partial class PlayerService : IDisposable
             var currentPos = CurrentMediaPosition;
             var previousSession = manager.CurrentSession;
             var replacementAccepted = false;
+            CloseNativeActionMenuForPlaybackSwitch();
             var busyOwner = BeginPlaybackBusy(loading: false, claimState: () =>
             {
                 _qualitySwitchActive = false;
@@ -5290,7 +5292,7 @@ public partial class PlayerService : IDisposable
                     forceStartPosition: true,
                     previousFinalPosition: currentPos,
                     ct: ct);
-                if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner)) return;
+                if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner)) return;
                 InvokeSubscribersSafely(SessionStarted, session.SessionId, nameof(SessionStarted));
                 var streamUrl = manager.StreamUrl;
                 if (string.IsNullOrWhiteSpace(streamUrl))
@@ -5304,7 +5306,7 @@ public partial class PlayerService : IDisposable
                     ct);
 
                 ct.ThrowIfCancellationRequested();
-                if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner) ||
+                if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner) ||
                     !ReferenceEquals(manager.CurrentSession, session))
                     return;
 
@@ -5384,6 +5386,7 @@ public partial class PlayerService : IDisposable
 
     private async Task SwitchAudioTrackCoreAsync(int trackIndex, Func<bool>? acceptSelection = null)
     {
+        if (_playbackTerminalState != null) return;
         if (acceptSelection != null && !acceptSelection()) return;
         var authority = _activeAuthority;
         var manager = _playbackManager;
@@ -5408,7 +5411,7 @@ public partial class PlayerService : IDisposable
         var audioPreference = CaptureAudioPreference(trackIndex);
         using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(_playbackCts?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
         var ct = switchCts.Token;
-        bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
+        bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && _playbackTerminalState == null &&
             ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager) && CurrentSelection();
         await CancelAndDrainTransportRestartsAsync(ct);
         if (!CurrentSwitch() || (acceptSelection != null && !acceptSelection())) return;
@@ -5416,12 +5419,13 @@ public partial class PlayerService : IDisposable
         var currentPos = CurrentMediaPosition;
         if (manager.CurrentSession is { } survivingSession)
         {
+            CloseNativeActionMenuForPlaybackSwitch();
             var busyOwner = BeginPlaybackBusy();
             try
             {
                 var session = await manager.ReplanAudioAsync(trackIndex, currentPos, ct).ConfigureAwait(false);
                 busyOwner = busyOwner with { Session = session };
-                if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner)) return;
+                if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner)) return;
                 var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                     ?? throw new InvalidOperationException("No active version is available for the audio switch.");
                 var streamUrl = manager.StreamUrl
@@ -5433,7 +5437,7 @@ public partial class PlayerService : IDisposable
                     currentPos,
                     ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
-                if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner) ||
+                if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner) ||
                     !ReferenceEquals(manager.CurrentSession, session))
                     return;
                 PlayMethod = session.PlayMethod;
@@ -7100,6 +7104,7 @@ public partial class PlayerService : IDisposable
         // The session has ended; there is nothing to switch.
         var survivingSession = manager.CurrentSession;
         if (survivingSession is null) return;
+        CloseNativeActionMenuForPlaybackSwitch();
         var busyOwner = BeginPlaybackBusy(claimState: () => _qualitySwitchActive = true);
         if (loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
@@ -7114,7 +7119,7 @@ public partial class PlayerService : IDisposable
                 ? await manager.ReplanQualityAsync(quality, currentPos, ct).ConfigureAwait(false)
                 : await manager.ReplanBufferingQualityAsync(bufferingReplan, currentPos, ct, bufferingExpectedSession).ConfigureAwait(false);
             busyOwner = busyOwner with { Session = session };
-            if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner)) return;
+            if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner)) return;
             var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? throw new InvalidOperationException("No active version is available for the quality switch.");
             var streamUrl = manager.StreamUrl
@@ -7126,7 +7131,7 @@ public partial class PlayerService : IDisposable
                 currentPos,
                 ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner) ||
+            if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner) ||
                 !ReferenceEquals(manager.CurrentSession, session))
                 return;
             PlayMethod = session.PlayMethod;

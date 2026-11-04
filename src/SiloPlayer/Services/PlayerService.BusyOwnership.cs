@@ -19,14 +19,14 @@ public partial class PlayerService
         catch (ObjectDisposedException) { }
     }
 
-    // Every assignment, including true -> true, retires an earlier claim.
-    // Switching-only writers include pre-dispatch quality/version, EOF and
-    // plan invalidation; they can take ownership before any new file is loaded.
+    // Only a new busy claim, including true -> true, retires an earlier one.
+    // FILE_LOADED may release an older load's flags while a replan is awaiting
+    // the server; that release is not a successor taking transport ownership.
     private void SetSwitchingContent(bool value)
     {
         lock (_playbackBusyLock)
         {
-            ++_playbackBusyRevision;
+            if (value) ++_playbackBusyRevision;
             _switchingContent = value;
         }
     }
@@ -53,7 +53,20 @@ public partial class PlayerService
     private bool OwnsPlaybackBusy(PlaybackBusyOwner owner)
     {
         lock (_playbackBusyLock)
-            return owner.Revision == _playbackBusyRevision && BusyPlaybackMatches(owner);
+            return _playbackTerminalState == null && owner.Revision == _playbackBusyRevision && BusyPlaybackMatches(owner);
+    }
+
+    private bool ResumePlaybackBusy(PlaybackBusyOwner owner)
+    {
+        lock (_playbackBusyLock)
+        {
+            if (!OwnsPlaybackBusy(owner)) return false;
+            // An earlier FILE_LOADED may release flags without claiming a
+            // successor. Reassert only this exact operation's ownership.
+            _switchingContent = true;
+            _isLoading = true;
+            return true;
+        }
     }
 
     private PlaybackBusyRelease? ReleasePlaybackBusy(PlaybackBusyOwner owner, Action? releaseState = null)
@@ -63,6 +76,7 @@ public partial class PlayerService
             // A profile change retires publication but can leave this same
             // operation's flags behind. A successor's flags are never ours.
             if (owner.Revision != _playbackBusyRevision || !BusyPlaybackMatches(owner)) return null;
+            ++_playbackBusyRevision;
             SetSwitchingContent(false);
             IsLoading = false;
             var releasedRevision = _playbackBusyRevision;

@@ -75,10 +75,23 @@ public partial class PlayerService
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
 
+    private void CloseNativeActionMenuForPlaybackSwitch()
+    {
+        if (_nativeMenuRequest?.Kind == "stats") return;
+        var menu = _nativeMenu;
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
+        void Close()
+        {
+            if (ReferenceEquals(menu, _nativeMenu)) menu?.Close(PlaybackMenuCloseReason.OwnerRetired);
+        }
+        if (dispatcher?.HasThreadAccess == true) Close(); else dispatcher?.TryEnqueue(Close);
+    }
+
     private void RetireNativeMenus()
     {
         Interlocked.Increment(ref _nativeMenuEpoch); Interlocked.Increment(ref _nativeMenuPublication);
         var owner = _nativeMenuOwner;
+        var mpv = owner?.Mpv ?? _mpv;
         var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
         void Retire()
         {
@@ -86,7 +99,7 @@ public partial class PlayerService
             _nativePartyEndDialog?.Hide();
             _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
-            owner?.Mpv.SendScriptMessage("osc-native-audio-scope", "");
+            mpv?.SendScriptMessage("osc-native-audio-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-subtitle-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-quality-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-chapters-scope", "");
@@ -187,7 +200,7 @@ public partial class PlayerService
 
     private static PlaybackAudioChoice DescribeAudioMenuChoice(AudioTrackInfo track, int index, int current)
     {
-        var language = LanguageCodeToName(track.Language);
+        var language = string.IsNullOrWhiteSpace(track.Language) ? "" : LanguageCodeToName(track.Language.Trim());
         var title = AudioMenuText(track.Title, track.EmbeddedTitle, language.Length > 0 ? language : $"Track {index + 1}");
         var channels = track.Channels switch
         {
