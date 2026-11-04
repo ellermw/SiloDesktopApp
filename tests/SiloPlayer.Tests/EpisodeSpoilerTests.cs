@@ -35,6 +35,37 @@ public class EpisodeSpoilerTests
     }
 
     [Fact]
+    public void SettingsOnlyOffersEpisodeSpoilersWhenTheDetailReaderSupportsThem()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "ViewModels", "SettingsViewModel.cs"));
+        Assert.Contains("EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17 && capability.SupportsBatchedEffective;", source);
+    }
+
+    [Theory]
+    [InlineData(1, 16, false, false)]
+    [InlineData(1, 16, true, false)]
+    [InlineData(1, 17, false, false)]
+    [InlineData(1, 17, true, true)]
+    [InlineData(1, 18, false, false)]
+    [InlineData(1, 18, true, true)]
+    [InlineData(0, 17, true, false)]
+    [InlineData(2, 17, true, false)]
+    public async Task CapabilityMatrixOnlyReadsSupportedEpisodeSpoilerPreferences(int apiVersion, int revision, bool supportsBatchedEffective, bool supported)
+    {
+        using var wire = new Wire { ApiVersion = apiVersion, Revision = revision, SupportsBatchedEffective = supportsBatchedEffective };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test");
+        using var prefs = new EpisodeSpoilerPreferences(new SettingsApi(client));
+        await prefs.EnsureLoadedAsync();
+        Assert.True(prefs.IsLoadedForCurrentContext);
+        Assert.Equal(supported, prefs.HideImages);
+        Assert.Equal(supported, prefs.HideOverviews);
+        Assert.Equal(supported, prefs.ShouldHideOverviews);
+        Assert.Equal(supported ? 1 : 0, wire.EffectiveReads);
+        Assert.Equal(1, wire.CapabilityReads);
+    }
+
+    [Fact]
     public async Task ValuesAreProfileScopedAndSharedAcrossConcurrentCardLoads()
     {
         var wire = new Wire();
@@ -214,7 +245,8 @@ public class EpisodeSpoilerTests
 
     private sealed class Wire : HttpMessageHandler
     {
-        public int Revision = 17; public bool Hide = true; public bool Hold; public int EffectiveReads, CapabilityReads;
+        public int ApiVersion = 1, Revision = 17; public bool SupportsBatchedEffective = true;
+        public bool Hide = true; public bool Hold; public int EffectiveReads, CapabilityReads;
         public string? Failure; public bool FailEffective;
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -225,7 +257,8 @@ public class EpisodeSpoilerTests
             {
                 CapabilityReads++;
                 if (!FailEffective && Failure != null) return FailedResponse();
-                json = "{\"api_version\":1,\"manifest_revision\":" + Revision + ",\"supports_batched_effective\":true}";
+                json = "{\"api_version\":" + ApiVersion + ",\"manifest_revision\":" + Revision +
+                    ",\"supports_batched_effective\":" + (SupportsBatchedEffective ? "true" : "false") + "}";
             }
             else
             {
