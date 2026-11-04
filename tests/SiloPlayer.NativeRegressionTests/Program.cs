@@ -147,7 +147,8 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 var audioCases = string.IsNullOrEmpty(selectedAudioCase)
                     ? new[] { "", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
                         "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
-                        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure" }
+                        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure",
+                        "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor" }
                     : new[] { selectedAudioCase };
                 try
                 {

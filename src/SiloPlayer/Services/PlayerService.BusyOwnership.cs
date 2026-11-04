@@ -10,14 +10,14 @@ public partial class PlayerService
     private long _playbackBusyRevision;
     private volatile bool _isLoading;
 
-    // Every assignment, including true -> true, retires an earlier claim.
-    // Switching-only writers include pre-dispatch quality/version, EOF and
-    // plan invalidation; they can take ownership before any new file is loaded.
+    // Only a new busy claim, including true -> true, retires an earlier one.
+    // FILE_LOADED may release an older load's flags while a replan is awaiting
+    // the server; that release is not a successor taking transport ownership.
     private void SetSwitchingContent(bool value)
     {
         lock (_playbackBusyLock)
         {
-            ++_playbackBusyRevision;
+            if (value) ++_playbackBusyRevision;
             _switchingContent = value;
         }
     }
@@ -41,7 +41,7 @@ public partial class PlayerService
     private bool OwnsPlaybackBusy(PlaybackBusyOwner owner)
     {
         lock (_playbackBusyLock)
-            return owner.Revision == _playbackBusyRevision && !_closing &&
+            return owner.Revision == _playbackBusyRevision && !_closing && _playbackTerminalState == null &&
                 ReferenceEquals(owner.Authority, _activeAuthority) &&
                 ReferenceEquals(owner.Manager, _playbackManager) &&
                 ReferenceEquals(owner.Session, _playbackManager?.CurrentSession) &&
@@ -51,16 +51,31 @@ public partial class PlayerService
                 owner.FileGeneration == Volatile.Read(ref _playbackFileGeneration);
     }
 
-    private void ReleasePlaybackBusy(PlaybackBusyOwner owner, Action? releaseState = null)
+    private bool ResumePlaybackBusy(PlaybackBusyOwner owner)
+    {
+        lock (_playbackBusyLock)
+        {
+            if (!OwnsPlaybackBusy(owner)) return false;
+            // Reassert this claim after an earlier FILE_LOADED released flags.
+            // Do not create a new claim or adopt a successor's identities.
+            _switchingContent = true;
+            _isLoading = true;
+            return true;
+        }
+    }
+
+    private bool ReleasePlaybackBusy(PlaybackBusyOwner owner, Action? releaseState = null)
     {
         lock (_playbackBusyLock)
         {
             // A profile change retires publication but can leave this same
             // operation's flags behind. A successor's flags are never ours.
-            if (!OwnsPlaybackBusy(owner)) return;
+            if (!OwnsPlaybackBusy(owner)) return false;
+            ++_playbackBusyRevision;
             SetSwitchingContent(false);
             IsLoading = false;
             releaseState?.Invoke();
+            return true;
         }
     }
 }

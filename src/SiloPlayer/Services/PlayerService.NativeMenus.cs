@@ -38,7 +38,7 @@ public partial class PlayerService
         var playbackFileGeneration = Volatile.Read(ref _playbackFileGeneration);
         var epoch = Volatile.Read(ref _nativeAudioEpoch);
         var publication = Interlocked.Increment(ref _nativeAudioPublication);
-        bool Current() => !_closing && !_postRollActive &&
+        bool Current() => !_closing && !_postRollActive && !_switchingContent && !IsLoading &&
             State is PlayerState.Expanded or PlayerState.Fullscreen &&
             epoch == Volatile.Read(ref _nativeAudioEpoch) &&
             playGeneration == Volatile.Read(ref _playRequestGeneration) &&
@@ -73,6 +73,7 @@ public partial class PlayerService
         Interlocked.Increment(ref _nativeAudioEpoch);
         Interlocked.Increment(ref _nativeAudioPublication);
         var owner = _nativeAudioOwner;
+        var mpv = owner?.Mpv ?? _mpv;
         var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
         void Retire()
         {
@@ -80,7 +81,9 @@ public partial class PlayerService
             _nativeAudioMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeAudioOwner = null;
             _nativeAudioGate.ResetOwner("");
-            owner?.Mpv.SendScriptMessage("osc-native-audio-scope", "");
+            // An empty scope still advertises host capability. Lua must not
+            // fall back to legacy Audio while this surface is unavailable.
+            mpv?.SendScriptMessage("osc-native-audio-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire();
         else dispatcher?.TryEnqueue(Retire);
@@ -176,7 +179,7 @@ public partial class PlayerService
 
     private static PlaybackAudioChoice DescribeAudioMenuChoice(AudioTrackInfo track, int index, int current)
     {
-        var language = LanguageCodeToName(track.Language);
+        var language = string.IsNullOrWhiteSpace(track.Language) ? "" : LanguageCodeToName(track.Language.Trim());
         var title = AudioMenuText(track.Title, track.EmbeddedTitle, language.Length > 0 ? language : $"Track {index + 1}");
         var channels = track.Channels switch
         {
@@ -187,7 +190,7 @@ public partial class PlayerService
         {
             !string.Equals(language, title, StringComparison.OrdinalIgnoreCase) ? language : "",
             AudioMenuText(track.Layout, "", ""),
-            track.Bitrate is > 0 ? $"{track.Bitrate.Value / 1000d:0.#} kbps" : "",
+            track.Bitrate is > 0 ? $"{track.Bitrate.Value:0.#} kbps" : "",
             track.SampleRate is > 0 ? $"{track.SampleRate.Value / 1000d:0.#} kHz" : "",
             track.BitDepth is > 0 ? $"{track.BitDepth}-bit" : "",
         }.Where(text => text.Length > 0));

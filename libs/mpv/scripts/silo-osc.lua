@@ -157,6 +157,7 @@ local state = {
     -- Audio track menu
     audio_tracks = {},
     active_audio = -1,
+    native_audio_capable = false,
     native_audio_scope = nil,
     native_menu_sequence = 0,
     native_menu_request = nil,
@@ -2125,6 +2126,7 @@ local function render_osc()
             {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
             {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
             {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}
+        if #state.audio_tracks <= 1 then table.remove(entries, 1) end
         local row_h = math.floor(40 * sc)
         local width = math.min(W - 24 * sc, math.floor(280 * sc))
         -- Compact touch surfaces use a generous sheet above the transport row.
@@ -3628,8 +3630,9 @@ local function render_audio_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(56 * sc)
     local menu_w = math.min(math.floor(360 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_audio or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_audio.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3638,7 +3641,6 @@ local function render_audio_menu()
     state.audio_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_audio
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -3771,8 +3773,9 @@ local function render_chapter_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(64 * sc)
     local menu_w = math.min(math.floor(300 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_chapters or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_chapters.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3781,7 +3784,6 @@ local function render_chapter_menu()
     state.chapter_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_chapters
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -4681,8 +4683,8 @@ local function set_keyboard_transport_menu(kind, visible)
 end
 
 local function open_native_audio_menu(keyboard)
-    if not state.native_audio_scope then return false end
-    if state.native_menu_request or #state.audio_tracks <= 1 or state.osc_disabled
+    if not state.native_audio_capable then return false end
+    if not state.native_audio_scope or state.native_menu_request or #state.audio_tracks <= 1 or state.osc_disabled
         or state.playback_loading or state.post_roll_active
         or state.native_menu_sequence >= 9007199254740991 then return true end
     compute_layout()
@@ -4831,6 +4833,7 @@ end
 local function open_transport_menu_from_controller(kind)
     close_transport_menus(kind)
     if kind == "audio" then
+        if #state.audio_tracks <= 1 then return end
         if open_native_audio_menu(true) then return end
         state.audio_menu_visible = not state.audio_menu_visible
         set_keyboard_transport_menu(kind, state.audio_menu_visible)
@@ -6209,6 +6212,9 @@ end
 
 local function setup_script_messages()
     mp.register_script_message("osc-native-audio-scope", function(token)
+        -- Capability persists through scope revocation, including before the
+        -- first inventory is ready. Only older hosts use the legacy menu.
+        state.native_audio_capable = true
         local scope = token and #token == 32 and token:match("^%x+$") and token or nil
         if scope ~= state.native_audio_scope then
             state.native_menu_request = nil

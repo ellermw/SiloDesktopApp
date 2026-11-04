@@ -148,6 +148,16 @@ internal static class PlaybackAudioMenuNativeFixture
                 return;
             }
             Require(list.Items.Count == 72, "Native menu omitted source audio tracks.");
+            var technical = (ListViewItem)list.Items[0];
+            var technicalText = string.Join(" ", Descendants<TextBlock>(technical.Content as DependencyObject ?? technical).Select(text => text.Text));
+            Require(technicalText.Contains("640 kbps", StringComparison.Ordinal)
+                && technicalText.Contains("48 kHz", StringComparison.Ordinal)
+                && AutomationProperties.GetName(technical).Contains("640 kbps", StringComparison.Ordinal),
+                "Native Audio did not preserve source kbps and sample-rate metadata in its row and accessible label.");
+            var untitled = (ListViewItem)list.Items[1];
+            Require(AutomationProperties.GetName(untitled).StartsWith("Track 2,", StringComparison.Ordinal)
+                && Descendants<TextBlock>((DependencyObject)untitled.Content).Any(text => text.Text == "Track 2"),
+                "An untitled track without a language did not use its numbered fallback.");
             Require(list.SelectedIndex == 37, "The current source track was not selected on open.");
             Require(GetWindow(hwnd, 4) == video.Hwnd && (GetWindowLongPtrW(hwnd, -20).ToInt64() & 0x40000) == 0
                 && (GetWindowLongPtrW(hwnd, -20).ToInt64() & 0x80) != 0, "Native menu is not an owned tool window without an extra taskbar entry.");
@@ -184,6 +194,13 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(Gate(service).CurrentCount == 1, "Audio close did not release exactly its dialog lease.");
             Require(Get(video, "SurfaceChanged") == null && Get(video, "_menuDismissal") == null,
                 "Audio close retained its native owner subscription or dismissal hook.");
+
+            Set(service, "_postRollActive", true);
+            Call(service, "RetireNativeAudioMenu");
+            mpv.SendScriptMessage("osc-set-post-roll", "true");
+            Call(service, "ReturnFromPostRollPreview");
+            Require(!string.IsNullOrEmpty((await Query()).GetProperty("scope").GetString()),
+                "Returning from post-roll preview did not republish native Audio availability.");
 
             // A second request replaces the first. Its late close/selection cannot
             // clear the new request or choose a track.
@@ -330,6 +347,79 @@ internal static class PlaybackAudioMenuNativeFixture
                     if (Get(mpv, "_directOpen") is { } attemptedOpen) retainedDirectCallbacks.Add(attemptedOpen);
                     Set(mpv, "_directOpen", originalOpen);
                 }
+                return;
+            }
+
+            var overlapCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (overlapCase is "earlier-file-loaded" or "earlier-file-loaded-failure")
+            {
+                var failure = overlapCase == "earlier-file-loaded-failure";
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var initialError = service.ErrorMessage;
+                wire.HoldFailedReplan = failure;
+                wire.HoldSuccessfulReplan = !failure;
+                menu = await OpenFromOsc();
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                // Deliver the production FILE_LOADED callback while the server
+                // still holds Audio's replan. This is a predecessor releasing
+                // flags, not a seek/recovery claiming the transport.
+                ((Action)Get(service, "_mpvFileLoadedHandler")!)();
+                Call(service, "StopPlaybackStallWatchdog");
+                Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
+                    "The earlier FILE_LOADED unexpectedly began a successor load.");
+                wire.ReleaseReplan.TrySetResult();
+                await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (failure)
+                {
+                    await Until(() => service.ErrorMessage != initialError, "An Audio failure after an earlier FILE_LOADED was silent.");
+                    Require((await Query()).GetProperty("notice").GetBoolean(), "Current Audio failure omitted its retry notice.");
+                    Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
+                        "A failed Audio replan loaded another transport.");
+                }
+                else
+                {
+                    await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad,
+                        "An earlier FILE_LOADED abandoned the accepted Audio replan.");
+                    Require(manager.CurrentSession?.AudioTrackIndex == 71, "Accepted Audio lost its source index.");
+                }
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Audio did not complete its busy lifecycle after the earlier FILE_LOADED.");
+                Require(Menu(service) == null && Gate(service).CurrentCount == 1, "Audio overlap stranded native presentation ownership.");
+                Program.Log($"PASS: {overlapCase}: an earlier FILE_LOADED does not retire the current Audio replan or silence its failure.");
+                return;
+            }
+
+            if (overlapCase == "quality-audio-successor")
+            {
+                wire.HoldFailedReplan = true;
+                Set(manager, "_connectionFeatures", new[] { "buffering_quality_v1" });
+                menu = await OpenFromOsc();
+                var initialError = service.ErrorMessage;
+                var quality = (Task)Call(service, "SwitchQualityTierAsync", "auto",
+                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession)!;
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => Menu(service) == null, "Buffering quality replacement left Audio live.");
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                Require(wire.AudioPicks.Count == 1, "A retired Audio menu dispatched against the outgoing quality plan.");
+                wire.HoldSuccessorReplan = true;
+                var previousClaim = (long)Get(service, "_playbackBusyRevision")!;
+                var audio = service.SwitchAudioTrackAsync(71);
+                await Until(() => (long)Get(service, "_playbackBusyRevision")! > previousClaim,
+                    "Successor Audio did not claim busy state.");
+                wire.ReleaseReplan.TrySetResult();
+                await quality.WaitAsync(TimeSpan.FromSeconds(5));
+                await wire.SuccessorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(service.IsLoading && (bool)Get(service, "_switchingContent")! && !audio.IsCompleted,
+                    "Failed buffering quality cleared its successor Audio's busy flags.");
+                Require(service.ErrorMessage == initialError && !(await Query()).GetProperty("notice").GetBoolean(),
+                    "Failed predecessor quality published over its successor Audio.");
+                wire.ReleaseSuccessor.TrySetResult();
+                await audio.WaitAsync(TimeSpan.FromSeconds(8));
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Successor Audio did not finish after predecessor quality failure.");
+                Require(manager.CurrentSession?.AudioTrackIndex == 71, "Successor Audio lost the accepted source index.");
+                Program.Log("PASS: buffering quality retires an open Audio menu and cannot release a newer Audio operation's busy ownership.");
                 return;
             }
 
@@ -624,7 +714,8 @@ internal static class PlaybackAudioMenuNativeFixture
         FileId = 42, Duration = 60, AudioTracks = Enumerable.Range(0, 72).Select(i => new AudioTrackInfo
         {
             Title = i == 71 ? "A deliberately long multilingual audio label — 日本語 — " + new string('x', 180) : i == 1 ? "" : i == 2 ? "Duplicate title" : $"Audio source {i}",
-            Language = i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
+            Language = i == 1 ? "" : i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
+            Bitrate = i == 0 ? 640 : null, SampleRate = i == 0 ? 48000 : null,
         }).ToList(),
     };
 
