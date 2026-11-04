@@ -681,9 +681,12 @@ public sealed partial class LibraryPage : Page,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var owner = message.Identity ?? catalog.CaptureIdentityContext();
+        if (!catalog.IsCurrentIdentityContext(owner)) return;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated) return;
+            if (!_isNavigated || !catalog.IsCurrentIdentityContext(owner)) return;
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item =>
                 MediaItemStateUpdater.SetPlaybackProgress(
                     item,

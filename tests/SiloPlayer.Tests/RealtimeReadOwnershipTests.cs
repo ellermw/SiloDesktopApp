@@ -158,13 +158,13 @@ public sealed class RealtimeReadOwnershipTests
             Assert.Equal(fail, f.Vm.InWatchlist);
             Assert.Equal(currentRating, f.Vm.UserRating);
             Assert.Equal(currentRating, mounted!.UserRating);
-            if (!fail && departure is ("cancel" or "navigation" or "same-id"))
+            if (!fail && departure is ("cancel" or "navigation" or "same-id" or "context"))
             {
                 // Accepted viewer writes still notify app-lifetime recipients,
                 // without applying their old feedback to this replacement viewer.
                 var message = Assert.Single(messages);
                 Assert.Equal(Series, message.ContentId);
-                Assert.Equal(context, message.Context);
+                Assert.Equal(f.Client.CaptureContext(), message.Context);
                 Assert.Equal(mutation == "rating" ? MediaSurfaceChangeKind.RatingChanged
                     : mutation == "favorite" ? MediaSurfaceChangeKind.FavoriteAdded : MediaSurfaceChangeKind.WatchlistAdded, message.Kind);
                 if (mutation == "rating") Assert.Equal(4, message.Rating);
@@ -172,6 +172,171 @@ public sealed class RealtimeReadOwnershipTests
             else Assert.Empty(messages);
         }
         finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
+    }
+
+    [Theory]
+    [InlineData("context", false)]
+    [InlineData("profile", false)]
+    [InlineData("context", true)]
+    public async Task AcceptedWatchedWritePublishesAcrossReconnectButNeverAcrossProfiles(string departure, bool fail)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Wire.WriteMethod = HttpMethod.Post;
+        f.Wire.PendingWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Wire.WriteStatus = fail ? HttpStatusCode.Forbidden : HttpStatusCode.NoContent;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Wire.OnWrite = () => started.TrySetResult();
+        var recipient = new object();
+        var messages = new List<MediaSurfaceChanged>();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) =>
+        {
+            if (message.ContentId == Series) messages.Add(message);
+        });
+        try
+        {
+            var write = f.Vm.ToggleWatchedCommand.ExecuteAsync(null);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (departure == "profile") f.Client.SetProfile("other-profile");
+            else f.Client.InvalidateAccessContext();
+            f.Vm.IsWatched = false;
+            f.Wire.PendingWrite.SetResult();
+            await write.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(f.Vm.IsWatched);
+            Assert.False(f.Vm.Item!.UserData!.Played);
+            if (departure == "context" && !fail)
+            {
+                var message = Assert.Single(messages);
+                Assert.Equal(MediaSurfaceChangeKind.WatchedMarked, message.Kind);
+                Assert.Equal(f.Client.CaptureContext(), message.Context);
+            }
+            else Assert.Empty(messages);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
+    }
+
+    [Theory]
+    [InlineData("same-identity")]
+    [InlineData("other-profile")]
+    [InlineData("returning-profile")]
+    [InlineData("legacy")]
+    public async Task ProgressCallbacksAdmitOnlyTheirOriginalIdentityOrLegacyMessages(string ownerKind)
+    {
+        using var f = new Fixture(); f.Seed();
+        var owner = f.Client.CaptureIdentityContext();
+        if (ownerKind is "other-profile" or "returning-profile") f.Client.SetProfile("other-profile");
+        if (ownerKind == "returning-profile") f.Client.SetProfile("profile");
+        var allowed = ownerKind is "same-identity" or "legacy";
+        var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var beforeRevision = f.Vm.WatchedStateRevision;
+        try
+        {
+            f.Vm.Receive(new PlaybackProgressUpdated(EpisodeA, 900, 1000, false)
+            {
+                SeriesId = Series, Persisted = allowed ? Task.CompletedTask : saved.Task,
+                Identity = ownerKind == "legacy" ? null : owner
+            });
+            Assert.Equal(allowed ? 900 : 31, f.Vm.Episodes[0].UserData!.PositionSeconds);
+            Assert.Equal(beforeRevision + (allowed ? 1 : 0), f.Vm.WatchedStateRevision);
+            // A rejected old-profile save must not own the current visit's read barrier.
+            await f.Vm.RefreshMediaStateAsync(f.Change()).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(f.Wire.DetailReads > 0);
+        }
+        finally { saved.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData("rating", "remote")]
+    [InlineData("rating", "local")]
+    [InlineData("rating", "replacement")]
+    [InlineData("lists", "remote")]
+    [InlineData("lists", "replacement")]
+    public async Task LegacyViewerReadsCannotOverwriteNewerState(string readKind, string successor)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Wire.Rating = 1;
+        f.Wire.HoldViewerReads = true;
+        f.Wire.OmitViewerState = readKind == "lists";
+        var loading = readKind == "rating" ? f.Vm.LoadRatingCommand.ExecuteAsync(null) : f.Vm.LoadCommand.ExecuteAsync(Series);
+        var first = await f.Wire.NextAsync();
+        var second = readKind == "lists" ? await f.Wire.NextAsync() : null;
+        if (successor == "remote")
+        {
+            f.Wire.OmitViewerState = false;
+            f.Wire.Favorite = f.Wire.Watchlist = true; f.Wire.Rating = 4;
+            await f.Vm.RefreshMediaStateAsync(f.Change(Series)).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        else if (successor == "local")
+        {
+            f.Wire.OnWrite = () => { };
+            await f.Vm.SetRatingCommand.ExecuteAsync(4);
+        }
+        else
+        {
+            f.Vm.Item = new() { ContentId = Series, Type = "series", UserState = new() { IsFavorite = true, InWatchlist = true }, UserRating = 4 };
+            f.Vm.UserRating = 4; f.Vm.IsFavorite = f.Vm.InWatchlist = true;
+        }
+        first.Release(); second?.Release();
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        if (readKind == "rating") Assert.Equal(4, f.Vm.UserRating);
+        else { Assert.True(f.Vm.IsFavorite); Assert.True(f.Vm.InWatchlist); }
+    }
+
+    [Theory]
+    [InlineData(true, "context")]
+    [InlineData(false, "context")]
+    [InlineData(true, "profile")]
+    [InlineData(false, "profile")]
+    [InlineData(true, "replacement")]
+    [InlineData(false, "replacement")]
+    public async Task RetiredInitialCompanionMarksOnlyItsReconnectOwnedFailure(bool seasons, string departure)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Vm.Episodes.Clear(); if (seasons) f.Vm.Seasons.Clear();
+        f.Wire.HoldSeasons = seasons; f.Wire.HoldEpisodes = !seasons;
+        var loading = seasons ? f.Vm.LoadSeasonsCommand.ExecuteAsync(null) : f.Vm.SelectSeasonCommand.ExecuteAsync(1);
+        var read = await f.Wire.NextAsync();
+        if (departure == "context") f.Client.InvalidateAccessContext();
+        else if (departure == "profile") f.Client.SetProfile("other-profile");
+        else f.Vm.Item = new() { ContentId = Series, Type = "series" };
+        read.Release();
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(departure == "context", seasons ? f.Vm.SeasonsLoadFailed : f.Vm.EpisodesLoadFailed);
+        Assert.Empty(f.Vm.Episodes); if (seasons) Assert.Empty(f.Vm.Seasons);
+        Assert.False(seasons ? f.Vm.IsSeasonsLoading : f.Vm.IsEpisodesLoading);
+        if (departure != "context") return;
+        f.Wire.HoldSeasons = f.Wire.HoldEpisodes = false;
+        await (seasons ? f.Vm.LoadSeasonsCommand.ExecuteAsync(null) : f.Vm.SelectSeasonCommand.ExecuteAsync(1))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(seasons ? f.Vm.SeasonsLoadFailed : f.Vm.EpisodesLoadFailed);
+        Assert.Single(f.Vm.Episodes);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task InitialCompanionRetirementAfterApiAcceptanceKeepsItsOwnedRecoveryMarker(bool seasons, bool changeProfile)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Vm.Episodes.Clear(); if (seasons) f.Vm.Seasons.Clear();
+        f.Wire.HoldSeasons = seasons; f.Wire.HoldEpisodes = !seasons;
+        var queue = new ControlledStateContext();
+        var previous = SynchronizationContext.Current;
+        Task loading;
+        SynchronizationContext.SetSynchronizationContext(queue);
+        try { loading = seasons ? f.Vm.LoadSeasonsCommand.ExecuteAsync(null) : f.Vm.SelectSeasonCommand.ExecuteAsync(1); }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        var read = await f.Wire.NextAsync();
+        read.Release();
+        await queue.RunNextAsync(installContext: false); // Release the HTTP handler's held response.
+        await queue.WaitUntilPostedAsync(); // The API has accepted it; the VM has not resumed.
+        if (changeProfile) f.Client.SetProfile("other-profile");
+        else f.Client.InvalidateAccessContext();
+        await queue.RunUntilCompleteAsync(loading);
+        Assert.Equal(!changeProfile, seasons ? f.Vm.SeasonsLoadFailed : f.Vm.EpisodesLoadFailed);
+        Assert.Empty(f.Vm.Episodes); if (seasons) Assert.Empty(f.Vm.Seasons);
+        Assert.False(seasons ? f.Vm.IsSeasonsLoading : f.Vm.IsEpisodesLoading);
     }
 
     [Theory]
@@ -226,12 +391,14 @@ public sealed class RealtimeReadOwnershipTests
     [InlineData("episode", "watched", "favorite", true)]
     [InlineData("episode", "progress", "rating", false)]
     [InlineData("episode", "progress", "rating", true)]
-    public async Task SameLeafMixedBatchesAndMergedPlaybackScopeReconcilePlayback(
+    public async Task SameLeafMixedBatchesPreserveMountedPlaybackWhileReconcilingViewerState(
         string type, string playbackChange, string viewerChange, bool trailing)
     {
         using var f = new Fixture(); f.Seed();
         var item = f.Vm.Item!;
         item.ContentId = EpisodeA; item.Type = f.Wire.DetailType = type;
+        item.UserData!.PositionSeconds = 31;
+        var mountedPlayback = item.UserData;
         f.Vm.IsSeries = false;
         f.Vm.Seasons.Clear(); f.Vm.Episodes.Clear();
         f.Wire.Played = true; f.Wire.Count = 2; f.Wire.DetailPosition = 900;
@@ -239,15 +406,14 @@ public sealed class RealtimeReadOwnershipTests
         var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         f.Vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(f.Vm.Item) && f.Vm.IsWatched && item.UserData!.PositionSeconds == 900)
+            if (e.PropertyName == nameof(f.Vm.Item) && f.Vm.IsFavorite && f.Vm.UserRating == 4)
                 applied.TrySetResult();
         };
         if (trailing)
         {
-            // A full targeted sweep already owns playback scope. A viewer
-            // batch queued during that read must not turn its trailing work
-            // into viewer-only scope, including for legacy untyped messages.
-            f.Wire.Played = false; f.Wire.Count = 0; f.Wire.DetailPosition = 0;
+            // Keep the first independently targeted read consistent with the
+            // mounted /watch state; the later mixed batch owns viewer state.
+            f.Wire.Played = false; f.Wire.Count = 0; f.Wire.DetailPosition = 31;
             f.Wire.Target = EpisodeA; f.Wire.Favorite = false; f.Wire.Rating = null;
             f.Wire.HoldDetails = true;
             var active = f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA) with { CatchUp = true });
@@ -266,10 +432,11 @@ public sealed class RealtimeReadOwnershipTests
         await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Same(item, f.Vm.Item);
-        Assert.True(f.Vm.IsWatched);
-        Assert.True(item.UserData!.Played);
-        Assert.Equal(900, item.UserData.PositionSeconds);
-        Assert.Equal(EpisodeB, item.PlayContentId);
+        Assert.Same(mountedPlayback, item.UserData);
+        Assert.False(f.Vm.IsWatched);
+        Assert.False(item.UserData!.Played);
+        Assert.Equal(31, item.UserData.PositionSeconds);
+        Assert.Equal(EpisodeA, item.PlayContentId);
         Assert.True(f.Vm.IsFavorite);
         Assert.Equal(4, f.Vm.UserRating);
         Assert.Equal(trailing ? 2 : 1, f.Wire.DetailReads);
@@ -499,7 +666,42 @@ public sealed class RealtimeReadOwnershipTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task InitialCompanionSettlesAfterOneTrailingReadDuringSustainedInvalidations(bool seasons)
+    public async Task InitialCompanionRejectsAnInvalidatedCorrectiveReadAndCanRetry(bool seasons)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Vm.Episodes.Clear();
+        if (seasons) f.Vm.Seasons.Clear();
+        f.Wire.HoldSeasons = seasons; f.Wire.HoldEpisodes = !seasons;
+        var loading = seasons ? f.Vm.LoadSeasonsCommand.ExecuteAsync(null) : f.Vm.SelectSeasonCommand.ExecuteAsync(1);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var read = await f.Wire.NextAsync();
+            f.Wire.Count++;
+            f.Wire.Position += 100;
+            await f.Vm.RefreshMediaStateAsync(f.Change()).WaitAsync(TimeSpan.FromSeconds(5));
+            read.Release();
+        }
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(f.Vm.IsSeasonsLoading);
+        Assert.False(f.Vm.IsEpisodesLoading);
+        Assert.Empty(f.Vm.Episodes);
+        if (seasons) Assert.Empty(f.Vm.Seasons);
+        Assert.True(seasons ? f.Vm.SeasonsLoadFailed : f.Vm.EpisodesLoadFailed);
+        Assert.Equal(3, seasons ? f.Wire.SeasonReads : f.Wire.EpisodeReads);
+
+        f.Wire.HoldSeasons = f.Wire.HoldEpisodes = false;
+        await (seasons ? f.Vm.LoadSeasonsCommand.ExecuteAsync(null) : f.Vm.SelectSeasonCommand.ExecuteAsync(1))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(seasons ? f.Vm.SeasonsLoadFailed : f.Vm.EpisodesLoadFailed);
+        Assert.Equal(f.Wire.Position, Assert.Single(f.Vm.Episodes).UserData!.PositionSeconds);
+        if (seasons) Assert.Equal(f.Wire.Count, Assert.Single(f.Vm.Seasons).UserData!.WatchedCount);
+        Assert.Equal(4, seasons ? f.Wire.SeasonReads : f.Wire.EpisodeReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InitialCompanionQueuesOneOwnedCorrectionAfterTwoInvalidatedReads(bool seasons)
     {
         using var f = new Fixture(); f.Seed();
         f.Vm.Episodes.Clear();
@@ -510,14 +712,26 @@ public sealed class RealtimeReadOwnershipTests
         {
             var read = await f.Wire.NextAsync();
             f.Wire.Count++;
+            f.Wire.Position += 100;
             await f.Vm.RefreshMediaStateAsync(f.Change()).WaitAsync(TimeSpan.FromSeconds(5));
             read.Release();
         }
+
+        var correctiveRead = f.Wire.NextAsync();
+        Assert.Same(correctiveRead, await Task.WhenAny(loading, correctiveRead));
+        var correction = await correctiveRead;
+        Assert.Empty(f.Vm.Episodes);
+        if (seasons) Assert.Empty(f.Vm.Seasons);
+        Assert.True(seasons ? f.Vm.IsSeasonsLoading : f.Vm.IsEpisodesLoading);
+        correction.Release();
         await loading.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(3, seasons ? f.Wire.SeasonReads : f.Wire.EpisodeReads);
+        Assert.Equal(f.Wire.Position, Assert.Single(f.Vm.Episodes).UserData!.PositionSeconds);
+        if (seasons) Assert.Equal(f.Wire.Count, Assert.Single(f.Vm.Seasons).UserData!.WatchedCount);
+        Assert.False(seasons ? f.Vm.SeasonsLoadFailed : f.Vm.EpisodesLoadFailed);
         Assert.False(f.Vm.IsSeasonsLoading);
         Assert.False(f.Vm.IsEpisodesLoading);
-        Assert.Single(f.Vm.Episodes);
-        Assert.Equal(2, seasons ? f.Wire.SeasonReads : f.Wire.EpisodeReads);
     }
 
     [Theory]
@@ -554,11 +768,13 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
-    [InlineData("movie", true)]
-    [InlineData("episode", true)]
-    [InlineData("movie", false)]
-    [InlineData("episode", false)]
-    public async Task OnlyPlaybackOwningSweepsSupersedeAnInFlightPostPlaybackRead(string type, bool viewerOnly)
+    [InlineData("movie", false, false)]
+    [InlineData("movie", false, true)]
+    [InlineData("movie", true, false)]
+    [InlineData("episode", false, false)]
+    [InlineData("episode", false, true)]
+    [InlineData("episode", true, false)]
+    public async Task OnlyPlaybackOwningSweepsSupersedeAnInFlightPostPlaybackRead(string type, bool viewerOnly, bool mixed)
     {
         using var f = new Fixture(); f.Seed();
         var mounted = f.Vm.Item!;
@@ -571,26 +787,27 @@ public sealed class RealtimeReadOwnershipTests
         var postPlayback = f.Vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
         var localRead = await f.Wire.NextAsync();
 
-        // The later snapshot owns viewer fields in either case, but owns
-        // playback only when the batch explicitly includes that scope.
+        // A standalone targeted playback read can supersede the older owner;
+        // viewer batches, including mixed leaf batches, preserve mounted /watch.
         f.Wire.Count = 3; f.Wire.Played = false;
         f.Wire.DetailPosition = 111; f.Wire.Target = EpisodeA; f.Wire.Favorite = true;
         f.Wire.HoldDetails = false;
         await f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA) with
         {
             CatchUp = !viewerOnly,
-            ViewerStateContentIds = new HashSet<string>([EpisodeA]),
+            ViewerStateContentIds = new HashSet<string>(viewerOnly || mixed ? [EpisodeA] : []),
             PlaybackStateContentIds = new HashSet<string>(viewerOnly ? [] : [EpisodeA])
         }).WaitAsync(TimeSpan.FromSeconds(5));
         localRead.Release();
         await postPlayback.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Same(mounted, f.Vm.Item);
-        Assert.Equal(viewerOnly, f.Vm.IsWatched);
-        Assert.Equal(viewerOnly, mounted.UserData!.Played);
-        Assert.Equal(viewerOnly ? 2 : 3, mounted.UserData.WatchedCount);
-        Assert.Equal(viewerOnly ? 999 : 111, mounted.UserData.PositionSeconds);
-        Assert.Equal(viewerOnly ? EpisodeB : EpisodeA, mounted.PlayContentId);
+        var preservesPostPlayback = viewerOnly || mixed;
+        Assert.Equal(preservesPostPlayback, f.Vm.IsWatched);
+        Assert.Equal(preservesPostPlayback, mounted.UserData!.Played);
+        Assert.Equal(preservesPostPlayback ? 2 : 3, mounted.UserData.WatchedCount);
+        Assert.Equal(preservesPostPlayback ? 999 : 111, mounted.UserData.PositionSeconds);
+        Assert.Equal(preservesPostPlayback ? EpisodeB : EpisodeA, mounted.PlayContentId);
         Assert.True(f.Vm.IsFavorite);
         Assert.True(mounted.UserState!.IsFavorite);
         Assert.Equal(2, f.Wire.DetailReads);
@@ -1475,6 +1692,94 @@ public sealed class RealtimeReadOwnershipTests
         finally { save.TrySetResult(); }
     }
 
+    [Fact]
+    public async Task SaveJoiningAfterInnerSettlementStillBlocksSnapshotRevisionOwnership()
+    {
+        var queue = new ControlledStateContext();
+        var priorContext = SynchronizationContext.Current;
+        Fixture f;
+        SynchronizationContext.SetSynchronizationContext(queue);
+        try { f = new Fixture(); f.Seed(); }
+        finally { SynchronizationContext.SetSynchronizationContext(priorContext); }
+        using (f)
+        {
+            var firstSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var secondSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.Vm.Receive(new PlaybackProgressUpdated(EpisodeA, 100, 1000, false) { Persisted = firstSave.Task, SeriesId = Series });
+            // Receive queues both the raw invalidation and the local coalescer
+            // separately from the sweep. Retire both setup callbacks before
+            // controlling the actual settlement await boundary.
+            await queue.RunNextAsync(installContext: true);
+            await queue.RunNextAsync(installContext: true);
+            Task refresh;
+            SynchronizationContext.SetSynchronizationContext(queue);
+            try
+            {
+                using (ExecutionContext.SuppressFlow())
+                    refresh = f.Vm.RefreshMediaStateAsync(f.Change());
+            }
+            finally { SynchronizationContext.SetSynchronizationContext(priorContext); }
+            try
+            {
+                // Begin the sweep under its captured context and suspend the
+                // inner settlement helper on the first real progress write.
+                await queue.RunNextAsync(installContext: true);
+                Assert.Equal(0, f.Wire.DetailReads);
+                firstSave.SetResult();
+                // Let the helper finish, but hold its caller's continuation.
+                await queue.RunNextAsync(installContext: false);
+                Assert.Equal(0, f.Wire.DetailReads);
+                f.Vm.Receive(new PlaybackProgressUpdated(EpisodeA, 900, 1000, false) { Persisted = secondSave.Task, SeriesId = Series });
+                await queue.RunNextAsync(installContext: false);
+                Assert.Equal(0, f.Wire.DetailReads);
+                Assert.False(refresh.IsCompleted);
+            }
+            finally
+            {
+                firstSave.TrySetResult(); secondSave.TrySetResult();
+                while (!refresh.IsCompleted) await queue.RunNextAsync(installContext: true);
+                await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            Assert.True(f.Wire.DetailReads > 0);
+        }
+    }
+
+    private sealed class ControlledStateContext : SynchronizationContext
+    {
+        private readonly Channel<(SendOrPostCallback Callback, object? State)> _queue = Channel.CreateUnbounded<(SendOrPostCallback, object?)>();
+        public override void Post(SendOrPostCallback callback, object? state) => _queue.Writer.TryWrite((callback, state));
+        internal async Task WaitUntilPostedAsync() => Assert.True(await _queue.Reader.WaitToReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        internal async Task RunUntilCompleteAsync(Task operation)
+        {
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                while (!operation.IsCompleted)
+                {
+                    var posted = _queue.Reader.WaitToReadAsync(budget.Token).AsTask();
+                    if (await Task.WhenAny(operation, posted) == operation) break;
+                    Assert.True(await posted);
+                    await RunNextAsync(installContext: false);
+                }
+                await operation.WaitAsync(budget.Token);
+            }
+            finally { budget.Cancel(); }
+        }
+        internal async Task RunNextAsync(bool installContext)
+        {
+            var work = await _queue.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            var previous = Current;
+            SetSynchronizationContext(installContext ? this : null);
+            try
+            {
+                // The fixture controls context installation explicitly; a
+                // captured ExecutionContext must not inline the next await.
+                using (ExecutionContext.SuppressFlow()) work.Callback(work.State);
+            }
+            finally { SetSynchronizationContext(previous); }
+        }
+    }
+
     private sealed class QueuedStateContext : SynchronizationContext
     {
         private readonly Queue<(SendOrPostCallback Callback, object? State)> _queue = new();
@@ -1550,7 +1855,7 @@ public sealed class RealtimeReadOwnershipTests
         internal string? DetailSeriesId;
         internal bool Played;
         internal string? Target = EpisodeA;
-        internal bool HoldDetails, HoldSeasons, HoldEpisodes;
+        internal bool HoldDetails, HoldSeasons, HoldEpisodes, HoldViewerReads, OmitViewerState;
         internal bool Favorite, Watchlist, NotInterested;
         internal int? Rating;
         internal Action? OnWrite;
@@ -1578,7 +1883,8 @@ public sealed class RealtimeReadOwnershipTests
                 {
                     $"/api/v2/favorites/{Uri.EscapeDataString(Series)}",
                     $"/api/v2/watchlist/{Uri.EscapeDataString(Series)}",
-                    $"/api/v2/ratings/{Uri.EscapeDataString(Series)}"
+                    $"/api/v2/ratings/{Uri.EscapeDataString(Series)}",
+                    $"/api/v2/watched/{Uri.EscapeDataString(Series)}"
                 });
                 write();
                 if (PendingWrite != null) await PendingWrite.Task.WaitAsync(ct);
@@ -1588,7 +1894,19 @@ public sealed class RealtimeReadOwnershipTests
             var path = request.RequestUri.AbsolutePath;
             object body;
             var hold = false;
-            if (path == "/api/v2/catalog/search/capabilities")
+            if (path == "/api/v2/capabilities/personal-lists")
+            {
+                body = new { membership_supported = true };
+            }
+            else if (path.StartsWith("/api/v2/ratings/"))
+            {
+                hold = HoldViewerReads; body = new { rating = Rating };
+            }
+            else if (path.EndsWith("/membership"))
+            {
+                hold = HoldViewerReads; body = new { is_member = path.StartsWith("/api/v2/favorites/") ? Favorite : Watchlist };
+            }
+            else if (path == "/api/v2/catalog/search/capabilities")
             {
                 // Movie details probe optional box sets. Capabilities are global;
                 // only the actual detail/season/episode reads carry library scope.
@@ -1625,7 +1943,7 @@ public sealed class RealtimeReadOwnershipTests
                     BeforeDetailResponse?.Invoke();
                     body = new { content_id = Uri.UnescapeDataString(path.Split('/').Last()), type = DetailType, series_id = DetailSeriesId,
                         episode_count = 8, play_content_id = Target,
-                        user_state = new { is_favorite = Favorite, in_watchlist = Watchlist, not_interested = NotInterested },
+                        user_state = OmitViewerState ? null : new { is_favorite = Favorite, in_watchlist = Watchlist, not_interested = NotInterested },
                         user_rating = Rating, user_data = new { watched_count = Count, played = Played, position_seconds = DetailPosition } };
                 }
             }

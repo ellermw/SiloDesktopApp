@@ -184,7 +184,8 @@ public partial class PlayerService : IDisposable
         _localAuthority = new PlaybackAuthorityScope(apiClient, authService, playbackApi, catalogApi, settingsApi);
         _activeAuthority = _localAuthority;
         _settingsService = settingsService;
-        _userStateRevision = DetailCacheInvalidation.AttachUserStateRevision();
+        _userStateRevision = DetailCacheInvalidation.AttachUserStateRevision(
+            isCurrentIdentity: _localAuthority.ApiClient.IsCurrentIdentityContext);
         _watchDetailFreshness = new(_userStateRevision, finalSaveBarrier: TimeSpan.FromSeconds(5),
             contentOf: detail => detail.ContentId, seriesOf: detail => detail.SeriesId);
         ObserveSubtitlePreferences();
@@ -1375,8 +1376,37 @@ public partial class PlayerService : IDisposable
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
     public event Action? PlaybackEnded;
-    /// <summary>Outstanding final writes from closed and autoplay-retired sessions.</summary>
-    public Task PendingProgressSave { get; private set; } = Task.CompletedTask;
+    private sealed record PlaybackProgressOwner(PlaybackManager Manager, ApiIdentityContext Identity);
+    private PlaybackProgressOwner? _playbackProgressOwner;
+    private readonly object _progressSaveGate = new();
+    private readonly List<(Task Save, ApiIdentityContext? Identity)> _profileProgressSaves = [];
+    private Task _pendingProgressSave = Task.CompletedTask;
+    /// <summary>Outstanding final writes belonging to the current local playback identity.</summary>
+    public Task PendingProgressSave
+    {
+        get
+        {
+            lock (_progressSaveGate)
+            {
+                _profileProgressSaves.RemoveAll(entry => entry.Save.IsCompletedSuccessfully);
+                return Task.WhenAll(_profileProgressSaves.Where(entry => entry.Identity is not { } owner
+                    || _localAuthority.ApiClient.IsCurrentIdentityContext(owner)).Select(entry => entry.Save));
+            }
+        }
+    }
+
+    private ApiIdentityContext? ProgressIdentityFor(PlaybackManager? manager) =>
+        _playbackProgressOwner is { } owner && ReferenceEquals(owner.Manager, manager) ? owner.Identity : null;
+
+    private void TrackFinalProgressSave(Task save, ApiIdentityContext? identity, bool local)
+    {
+        lock (_progressSaveGate)
+        {
+            _pendingProgressSave = _pendingProgressSave.IsCompleted ? save : Task.WhenAll(_pendingProgressSave, save);
+            _profileProgressSaves.RemoveAll(entry => entry.Save.IsCompleted);
+            if (local) _profileProgressSaves.Add((save, identity));
+        }
+    }
     public event Action? ContentLoaded; // fired when file is loaded and decoding starts
     public event Action? MarkersChanged;
     public event Action? ChaptersChanged;
@@ -1981,7 +2011,7 @@ public partial class PlayerService : IDisposable
                 if (!ReferenceEquals(_activeAuthority, nextAuthority))
                 {
                     await CloseAsync();
-                    try { await PendingProgressSave; } catch { /* The outgoing manager reports final-write failures. */ }
+                    try { await _pendingProgressSave; } catch { /* The outgoing manager reports final-write failures. */ }
                     cancellationToken.ThrowIfCancellationRequested();
                     if (expectedOwner.HasValue && !IsCurrentOwner()) return;
                     _activeAuthority = nextAuthority;
@@ -2069,6 +2099,9 @@ public partial class PlayerService : IDisposable
         App.Services.GetService<ThemeMusicService>()?.Interrupt();
         var connectionObserver = PlaybackConnectionService.For(_activeAuthority.PlaybackApi);
         var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _authorityLifetimeCts.Token);
+        // A successor can cancel and dispose the published source while this
+        // request waits for the gate. Its token remains safe to observe.
+        var ownerToken = ownerCts.Token;
         var previous = Interlocked.Exchange(ref _playRequestCts, ownerCts);
         try { previous?.Cancel(); }
         catch (ObjectDisposedException) { }
@@ -2078,12 +2111,12 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            await _playRequestGate.WaitAsync(ownerCts.Token);
+            await _playRequestGate.WaitAsync(ownerToken);
             gateEntered = true;
             if (expectedOwner is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner)) return;
             ResetStartupTelemetry();
             SetConnectionMediaActive(true);
-            ownerCts.Token.ThrowIfCancellationRequested();
+            ownerToken.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _playRequestGeneration))
                 return;
 
@@ -2098,7 +2131,7 @@ public partial class PlayerService : IDisposable
                 prefetchedWatchDetail,
                 libraryId,
                 shuffleId,
-                ownerCts.Token,
+                ownerToken,
                 sourceVersionPinned, expectedOwner);
         }
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested ||
@@ -2229,6 +2262,7 @@ public partial class PlayerService : IDisposable
         {
             lock (_bufferingGate) FlushBufferingSummaryCore();
             var retiringManager = _playbackManager;
+            var retiringIdentity = ProgressIdentityFor(retiringManager);
             var finalPosition = CurrentMediaPosition;
             var retiringContentId = ContentId;
             var retiringDuration = CurrentMediaDuration;
@@ -2236,6 +2270,7 @@ public partial class PlayerService : IDisposable
             retiringSessionTask = retiringManager.TryRetireSessionAsync(
                 finalPosition > 0 ? ToSessionPosition(finalPosition) : null,
                 isPaused: true);
+            TrackFinalProgressSave(retiringSessionTask, retiringIdentity, local: !HasRemoteAuthority);
             // Switching straight to another item (next/previous episode, a new
             // title) retires this session without CloseCoreAsync; publish the
             // same invalidation so its prefetched detail/watch data is dropped.
@@ -2243,21 +2278,21 @@ public partial class PlayerService : IDisposable
             {
                 // Only a replay of this same item waits for this stop; the
                 // next item's preparation proceeds immediately.
-                _watchDetailFreshness.TrackFinalSave(retiringContentId, retiringSessionTask);
+                if (retiringIdentity is not { } owner || _localAuthority.ApiClient.IsCurrentIdentityContext(owner))
+                    _watchDetailFreshness.TrackFinalSave(retiringContentId, retiringSessionTask,
+                        () => retiringIdentity is not { } identity || _localAuthority.ApiClient.IsCurrentIdentityContext(identity));
                 try
                 {
                     WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(
                         retiringContentId, finalPosition, retiringDuration,
                         retiringDuration > 0 && finalPosition >= retiringDuration * 0.9)
-                    { Persisted = retiringSessionTask, SeriesId = retiringManager.WatchDetail?.SeriesId });
+                    { Persisted = retiringSessionTask, SeriesId = retiringManager.WatchDetail?.SeriesId, Identity = retiringIdentity });
                 }
                 catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
             }
-            PendingProgressSave = PendingProgressSave.IsCompleted
-                ? retiringSessionTask
-                : Task.WhenAll(PendingProgressSave, retiringSessionTask);
             retiringManager.ProgressReportingFailed -= OnProgressReportingFailed;
             _playbackManager = null;
+            if (ReferenceEquals(_playbackProgressOwner?.Manager, retiringManager)) _playbackProgressOwner = null;
             _ = FinishClosingSessionAsync(retiringManager, retiringSessionTask);
         }
 
@@ -2312,7 +2347,9 @@ public partial class PlayerService : IDisposable
                     MaxChannels = 8,
                 }
                 : null;
+            var progressIdentity = expectedOwner?.Identity ?? authority.ApiClient.CaptureIdentityContext();
             _playbackManager = requestManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough);
+            _playbackProgressOwner = new(_playbackManager, progressIdentity);
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
 
             // Start the network request before initializing libmpv. The native
@@ -2422,7 +2459,7 @@ public partial class PlayerService : IDisposable
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
                     preferences: qualityPreferences,
-                    expectedIdentityContext: expectedOwner?.Identity);
+                    expectedIdentityContext: progressIdentity);
             }
             catch (Exception ex) when (
                 ((ex is ApiException api && api.StatusCode == 429 &&
@@ -2444,7 +2481,7 @@ public partial class PlayerService : IDisposable
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
                     preferences: qualityPreferences,
-                    expectedIdentityContext: expectedOwner?.Identity);
+                    expectedIdentityContext: progressIdentity);
             }
             EnsureCurrentOwner();
             var bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
@@ -6426,13 +6463,14 @@ public partial class PlayerService : IDisposable
             ? ReportAudiobookProgressAsync(closedPosition, force: true)
             : Task.CompletedTask;
         var closingManager = _playbackManager;
+        var closingIdentity = ProgressIdentityFor(closingManager);
         var sessionStopTask = closingManager != null
             ? closingManager.StopSessionAsync(
                 closedPosition > 0 ? ToSessionPosition(closedPosition) : null,
                 isPaused: true)
             : Task.CompletedTask;
         var closedFinalSave = Task.WhenAll(sessionStopTask, audiobookProgressTask);
-        PendingProgressSave = Task.WhenAll(PendingProgressSave, closedFinalSave);
+        TrackFinalProgressSave(closedFinalSave, closingIdentity, local: !HasRemoteAuthority);
 
         // B15 + F4: publish PlaybackProgressUpdated so Home / History /
         // ItemDetail view models reflect the new position without waiting
@@ -6440,14 +6478,16 @@ public partial class PlayerService : IDisposable
         // matching the webui `isCompleted` heuristic.
         if (!HasRemoteAuthority && !string.IsNullOrEmpty(closedContentId) && closedPosition > 0)
         {
-            _watchDetailFreshness.TrackFinalSave(closedContentId, closedFinalSave);
+            if (closingIdentity is not { } owner || _localAuthority.ApiClient.IsCurrentIdentityContext(owner))
+                _watchDetailFreshness.TrackFinalSave(closedContentId, closedFinalSave,
+                    () => closingIdentity is not { } identity || _localAuthority.ApiClient.IsCurrentIdentityContext(identity));
             bool completed = closedDuration > 0 && closedPosition >= closedDuration * 0.9;
             try
             {
                 WeakReferenceMessenger.Default.Send(
                     new PlaybackProgressUpdated(
                         closedContentId, closedPosition, closedDuration, completed)
-                    { Persisted = closedFinalSave, SeriesId = closingManager?.WatchDetail?.SeriesId });
+                    { Persisted = closedFinalSave, SeriesId = closingManager?.WatchDetail?.SeriesId, Identity = closingIdentity });
             }
             catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
         }
@@ -6475,6 +6515,7 @@ public partial class PlayerService : IDisposable
             closingManager.ProgressReportingFailed -= OnProgressReportingFailed;
             if (ReferenceEquals(_playbackManager, closingManager))
                 _playbackManager = null;
+            if (ReferenceEquals(_playbackProgressOwner?.Manager, closingManager)) _playbackProgressOwner = null;
             _ = FinishClosingSessionAsync(closingManager, sessionStopTask);
         }
         await audiobookProgressTask.ConfigureAwait(false);
@@ -6531,7 +6572,7 @@ public partial class PlayerService : IDisposable
         SetState(PlayerState.Idle);
         if (!ReferenceEquals(closingAuthority, _localAuthority))
         {
-            try { await PendingProgressSave; } catch { /* Final writes are best effort. */ }
+            try { await _pendingProgressSave; } catch { /* Final writes are best effort. */ }
             _activeAuthority = _localAuthority;
             _shuffleController = null;
             _watchDetailPrefetches.Clear();

@@ -11,6 +11,40 @@ namespace SiloPlayer.Tests;
 
 public sealed class RealtimeMediaStateRefreshTests
 {
+    [Theory]
+    [InlineData(1000)]
+    [InlineData(1500)]
+    public void FirstAvailableDispatcherTurnHonorsTheReceiptDeadline(int blockedMilliseconds)
+    {
+        using var fixture = new Fixture();
+        fixture.Send("episode", "series");
+        fixture.Clock.Advance(blockedMilliseconds);
+        fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(message => message.RefreshDetails));
+        Assert.Contains("episode", batch.ContentIds);
+        Assert.Contains("series", batch.SeriesIds);
+    }
+
+    [Fact]
+    public async Task MountedReplayDoesNotInvalidateAReadAlreadyRefreshedAfterReceipt()
+    {
+        using var fixture = new Fixture();
+        var reads = 0;
+        var cache = new ItemDetailPrefetchCache((id, _) =>
+        {
+            reads++;
+            return Task.FromResult(new MediaItemDetail { ContentId = id });
+        });
+        DetailCacheInvalidation.Attach(cache, fixture.Messenger);
+        await cache.GetAsync("series", CancellationToken.None);
+        fixture.Send("episode", "series");
+        var current = await cache.GetAsync("series", CancellationToken.None);
+        Assert.Equal(2, reads);
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Same(current, await cache.GetAsync("series", CancellationToken.None));
+        Assert.Equal(2, reads);
+    }
+
     [Fact]
     public void BurstRetainsEveryNamedSeriesIncludingEarlierNamesOmittedByLaterEvents()
     {

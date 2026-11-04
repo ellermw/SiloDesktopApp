@@ -30,7 +30,8 @@ public sealed partial class ItemDetailPage : Page
     public bool CanPreserveOnReconnect => ViewModel.Item != null
         && (ViewModel.Item.Type is "series" or "season")
         && ViewModel.FailureKind == DetailFailureKind.None
-        && !ViewModel.IsLoading && !ViewModel.IsMetadataRefreshing && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
+        && !ViewModel.IsLoading && !ViewModel.IsMetadataRefreshing && string.IsNullOrEmpty(ViewModel.MetadataRefreshErrorMessage)
+        && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
         && _seasonEpisodesLoads == 0 && _seriesPrimaryEpisodesTask is not { IsCompleted: false }
         && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
         && !_isTranslatingOverview && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
@@ -3004,9 +3005,11 @@ public sealed partial class ItemDetailPage : Page
         var context = api.CaptureContext();
         var navigation = _navigationCts;
         ++_overviewTranslationStatusReads;
+        var statusRead = false;
         try
         {
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
+            statusRead = true;
             if (!api.IsCurrentContext(context) || !IsCurrentDetail(item.ContentId)) return;
             if (!status.Enabled)
             {
@@ -3040,7 +3043,7 @@ public sealed partial class ItemDetailPage : Page
         finally
         {
             --_overviewTranslationStatusReads;
-            if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+            if (ReferenceEquals(_navigationCts, navigation) && (!statusRead || !api.IsCurrentContext(context)))
                 _overviewTranslationInterrupted = true;
         }
     }
@@ -3675,12 +3678,13 @@ public sealed partial class ItemDetailPage : Page
                 reset.IsEnabled = false;
                 var api = App.Services.GetRequiredService<CatalogApi>();
                 var context = api.CaptureContext();
+                var identity = api.CaptureIdentityContext();
                 try
                 {
                     await api.ClearResumePositionAsync(item.ContentId);
                     if (!api.IsCurrentContext(context) || !IsCurrentDetail(item.ContentId)) return;
                     App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
-                    WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(item.ContentId, 0, item.UserData?.DurationSeconds ?? 0, item.UserData?.Played == true));
+                    WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(item.ContentId, 0, item.UserData?.DurationSeconds ?? 0, item.UserData?.Played == true) { Identity = identity });
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, item.ContentId, item.SeriesId));
                     await ViewModel.ReloadAsync(item.ContentId);
                     if (api.IsCurrentContext(context) && IsCurrentDetail(item.ContentId)) UpdateUI();
@@ -7182,7 +7186,8 @@ public sealed partial class ItemDetailPage : Page
                     || !ReferenceEquals(ViewModel.Item, item) || item?.SeriesId != parentId
                     || ViewModel.ParentPlaybackRevision != parentRevision
                     || !catalogApi.IsCurrentContext(context)) return false;
-                if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                if (++attempt == 3) return false;
             }
             if (response?.Episodes != null)
             {
@@ -7532,16 +7537,23 @@ public sealed partial class ItemDetailPage : Page
     {
         var client = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
         var authority = client.CaptureContext();
+        var completed = false;
         try
         {
-            var bytes = await App.Services.GetRequiredService<ImageService>().GetImageAsync(
+            var images = App.Services.GetRequiredService<ImageService>();
+            var bytes = await images.GetImageAsync(
                 contentId,
                 "logo",
                 logoUrl,
                 App.Services.GetRequiredService<HttpClient>(),
                 ct);
             if (ct.IsCancellationRequested || revision != _titleArtRevision || !client.IsCurrentContext(authority)) return;
-            if (bytes == null) { TitleText.Visibility = Visibility.Visible; return; }
+            if (bytes == null)
+            {
+                completed = images.IsKnownUnavailable(contentId, "logo", logoUrl);
+                TitleText.Visibility = Visibility.Visible;
+                return;
+            }
 
             var bitmap = new BitmapImage
             {
@@ -7555,12 +7567,18 @@ public sealed partial class ItemDetailPage : Page
             HeroLogoImage.Source = bitmap;
             HeroLogoImage.Visibility = Visibility.Visible;
             TitleText.Visibility = Visibility.Collapsed;
+            completed = true;
         }
         catch (OperationCanceledException) { }
         catch
         {
             if (!ct.IsCancellationRequested && revision == _titleArtRevision && client.IsCurrentContext(authority) && ViewModel.Item?.ContentId == contentId)
                 TitleText.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            if (!completed && !ct.IsCancellationRequested && revision == _titleArtRevision
+                && ViewModel.Item?.ContentId == contentId) _detailArtworkInterrupted = true;
         }
     }
 
@@ -8219,9 +8237,11 @@ public sealed partial class ItemDetailPage : Page
         var context = api.CaptureContext();
         var navigation = _navigationCts;
         ++_episodesTranslationStatusReads;
+        var statusRead = false;
         try
         {
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
+            statusRead = true;
             if (!api.IsCurrentContext(context) || owner == null || !IsCurrentDetail(owner) || key != _episodesTranslationKey || !status.Enabled) return;
             if (status.OnView == "auto") await TranslateEpisodesAsync();
             else if (status.OnView == "button")
@@ -8235,7 +8255,8 @@ public sealed partial class ItemDetailPage : Page
         finally
         {
             --_episodesTranslationStatusReads;
-            if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+            if (ReferenceEquals(_navigationCts, navigation) && key == _episodesTranslationKey
+                && (!statusRead || !api.IsCurrentContext(context)))
                 _episodesTranslationInterrupted = true;
         }
     }
@@ -8866,6 +8887,7 @@ public sealed partial class ItemDetailPage : Page
             return _seriesPrimaryEpisodesTask;
 
         var generation = ++_seriesPrimaryEpisodesGeneration;
+        ViewModel.EpisodesLoadFailed = false;
         var item = ViewModel.Item;
         var parentId = item?.SeriesId;
         var parentRevision = ViewModel.ParentPlaybackRevision;
@@ -8897,7 +8919,8 @@ public sealed partial class ItemDetailPage : Page
                     var remoteRevision = ViewModel.RemoteStateRevision;
                     response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, token);
                     if (!Current()) return;
-                    if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                    if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                    if (++attempt == 3) { ViewModel.EpisodesLoadFailed = true; return; }
                 }
                 ViewModel.EpisodesSeasonContentId = seasonContentId;
                 ViewModel.Episodes.Clear();

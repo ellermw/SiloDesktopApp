@@ -75,20 +75,26 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.PlaybackProgress or MediaSurfaceChangeKind.ItemMetadataRefreshed) Refresh();
         });
     }
-    public void Receive(PlaybackProgressUpdated message) => DispatcherQueue.TryEnqueue(async () =>
+    public void Receive(PlaybackProgressUpdated message)
     {
-        // A pre-save access refresh can read old progress; this visit still
-        // needs its post-write refresh even when that read context was retired.
-        var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureIdentityContext();
-        // Until the first read completes we cannot rule out membership. Keep
-        // the final-save refresh rather than dropping a close during loading.
-        if (!_active || (detail != null && !detail.Items.Any(x => x.ContentId == message.ContentId))) return;
-        try { await message.Persisted; } catch { return; }
-        DispatcherQueue.TryEnqueue(() =>
+        var owner = message.Identity ?? _catalog.CaptureIdentityContext();
+        if (!_catalog.IsCurrentIdentityContext(owner)) return;
+        DispatcherQueue.TryEnqueue(async () =>
         {
-            if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner)) Refresh();
+            // A pre-save access refresh can read old progress; this visit still
+            // needs its post-write refresh even when that read context was retired.
+            var detail = _knownMembership; var visit = _visit;
+            // Until the first read completes we cannot rule out membership. Keep
+            // the final-save refresh rather than dropping a close during loading.
+            if (!_active || !_catalog.IsCurrentIdentityContext(owner)
+                || (detail != null && !detail.Items.Any(x => x.ContentId == message.ContentId))) return;
+            try { await message.Persisted; } catch { return; }
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner)) Refresh();
+            });
         });
-    });
+    }
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e); _knownMembership = null; _visit++;

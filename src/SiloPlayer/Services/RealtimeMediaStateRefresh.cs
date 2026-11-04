@@ -74,6 +74,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
         string[]? viewerStateItems = null, string[]? playbackStateItems = null)
     {
         if (string.IsNullOrEmpty(context.ProfileId)) return;
+        var received = _time.GetUtcNow();
         playbackStateItems ??= items.Except(viewerStateItems ?? [], StringComparer.Ordinal).ToArray();
         long epoch;
         lock (_gate)
@@ -98,7 +99,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
                     _context = context;
                 }
                 if (_items.Count == 0 && _series.Count == 0 && !_catchUp)
-                    _deadline = _time.GetUtcNow() + TimeSpan.FromSeconds(1);
+                    _deadline = received + TimeSpan.FromSeconds(1);
                 _items.UnionWith(items); _series.UnionWith(series); _catchUp |= catchUp;
                 if (viewerStateItems != null) _viewerStateItems.UnionWith(viewerStateItems);
                 _playbackStateItems.UnionWith(playbackStateItems);

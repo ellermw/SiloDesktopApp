@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
 using System.Text;
@@ -30,6 +31,16 @@ internal static class RealtimeSeriesStateNativeFixture
         slot.SetValue(null, new Services(original, client, auth, catalog));
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_REALTIME_CASE") == "settled-failures")
+            {
+                await VerifySettledOptionalFailuresAsync(parent, wire);
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_REALTIME_CASE") == "companion-read-races")
+            {
+                await VerifyPageCompanionReadRacesAsync(parent, wire, client);
+                return;
+            }
             foreach (var type in new[] { "series", "season" })
             {
                 wire.Count = 2; wire.Target = "new-target"; wire.LoadedPlayed = false; wire.LoadedPosition = 0; wire.Favorite = false;
@@ -60,6 +71,10 @@ internal static class RealtimeSeriesStateNativeFixture
                         ((UIElement)page.FindName("SeasonsScrollViewer")).Visibility = Visibility.Visible;
                         ((UIElement)page.FindName("SeasonsLoadingSkeleton")).Visibility = Visibility.Collapsed;
                     }
+                    // Establish the canonical season ownership through the real reader before retaining cards.
+                    var loadedEpisodes = await (Task<bool>)typeof(ItemDetailPage).GetMethod("LoadSeasonEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(page, ["season", 1, navigation.Token])!;
+                    Check(loadedEpisodes && vm.EpisodesSeasonContentId == "season", "Canonical fixture episode ownership did not settle.");
                     Call(page, "BuildSeasonCards"); Call(page, "BuildEpisodeRows"); Call(page, "UpdateWatchedButton");
                     page.UpdateLayout();
                     await Task.Delay(100); // Settle initial responsive reflow before retaining card identities.
@@ -300,6 +315,8 @@ internal static class RealtimeSeriesStateNativeFixture
                 finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
             }
             await VerifySeriesLayoutRefreshAsync(parent, wire, client);
+            await VerifyPageCompanionReadRacesAsync(parent, wire, client);
+            await VerifySettledOptionalFailuresAsync(parent, wire);
             await VerifyLegacySeriesActionAsync(parent, wire, client);
             await VerifyCardArtworkRecoveryAsync(parent, wire, client);
             await VerifyMatchedParentBreadcrumbAsync(parent, wire, client);
@@ -845,6 +862,140 @@ internal static class RealtimeSeriesStateNativeFixture
         }
     }
 
+    private static async Task VerifyPageCompanionReadRacesAsync(StackPanel parent, Wire wire, SiloApiClient client)
+    {
+        var failures = new List<string>();
+        foreach (var primary in new[] { false, true })
+        foreach (var invalidateFinal in new[] { false, true })
+        {
+            var key = (primary ? "primary" : "canonical") + (invalidateFinal ? "-continuous" : "-corrective");
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            var vm = page.ViewModel;
+            var id = primary ? "series" : "season";
+            vm.Item = new() { ContentId = id, Type = id, Title = "Companion read ownership" };
+            vm.IsSeries = primary;
+            vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, EpisodeCount = 6, UserData = new() { UnplayedCount = 6 } });
+            using var navigation = new CancellationTokenSource();
+            Set(page, "_currentContentId", id); Set(page, "_navigationCts", navigation);
+            parent.Children.Add(page);
+            var reads = Enumerable.Range(0, 3).Select(_ =>
+                (Started: new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+                 Response: new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously))).ToArray();
+            wire.QueuedEpisodeReads = new(reads); wire.OmitTarget = true; wire.SeasonCount = 1;
+            Task? operation = null;
+            HttpResponseMessage Response(int position) => new(HttpStatusCode.OK) { Content = new StringContent(
+                JsonSerializer.Serialize(new { items = new[] { new { content_id = "latest", season_number = 1, user_data = new { position_seconds = position } } } }), Encoding.UTF8, "application/json") };
+            async Task InvalidateAsync() => await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>([id]), new HashSet<string>(["series"])));
+            try
+            {
+                operation = primary ? (Task)typeof(ItemDetailPage).GetMethod("LoadSeriesPrimaryEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, ["season"])!
+                    : (Task<bool>)typeof(ItemDetailPage).GetMethod("LoadSeasonEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, ["season", 1, navigation.Token])!;
+                for (var index = 0; index < 2; index++)
+                {
+                    await reads[index].Started.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    await InvalidateAsync();
+                    reads[index].Response.TrySetResult(Response(10 + index));
+                }
+                await UntilAsync(() => operation.IsCompleted || reads[2].Started.Task.IsCompleted);
+                Check(reads[2].Started.Task.IsCompleted && vm.Episodes.Count == 0,
+                    "A second invalidated page response committed instead of entering one corrective read.");
+                if (invalidateFinal) await InvalidateAsync();
+                reads[2].Response.TrySetResult(Response(600));
+                await operation.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(invalidateFinal ? vm.Episodes.Count == 0 : vm.Episodes.Single().UserData?.PositionSeconds == 600,
+                    "A page companion committed stale rows or lost its revision-current corrective response.");
+                if (!primary) Check(((Task<bool>)operation).Result == !invalidateFinal, "Canonical companion did not return its actual commit result.");
+                Check(wire.QueuedEpisodeReads.Count == 0, "Page companion did not keep the three-read bound.");
+                Program.Log($"PASS: page companion {key} keeps revision-current rows within three owned reads.");
+            }
+            catch (Exception ex) { failures.Add(key); Program.Log($"CASE FAIL: page companion {key}: {ex.Message}"); }
+            finally
+            {
+                navigation.Cancel(); wire.QueuedEpisodeReads = null; wire.OmitTarget = false;
+                foreach (var read in reads) read.Response.TrySetResult(Response(0));
+                if (operation != null) try { await operation.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+            }
+        }
+        foreach (var type in new[] { "series", "season" })
+        {
+            using var navigation = new CancellationTokenSource();
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            page.ViewModel.Item = new() { ContentId = type, Type = type, Title = "Metadata read owner" };
+            Set(page, "_currentContentId", type); Set(page, "_navigationCts", navigation);
+            parent.Children.Add(page);
+            wire.HeldCompanion = type;
+            wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task? read = null;
+            try
+            {
+                read = (Task)typeof(ItemDetailViewModel).GetMethod("ReloadContainerMetadataAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(page.ViewModel, [page.ViewModel.Item])!;
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                client.InvalidateAccessContext();
+                wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult();
+                await read.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(!page.ViewModel.IsMetadataRefreshing && !page.CanPreserveOnReconnect,
+                    "A settled interrupted metadata read became preservable before reconnect recovery.");
+                Program.Log($"PASS: interrupted {type} metadata remains recoverable after its read settles.");
+            }
+            catch (Exception ex) { failures.Add(type + "-metadata"); Program.Log($"CASE FAIL: {type} metadata: {ex.Message}"); }
+            finally
+            {
+                wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult(); navigation.Cancel();
+                if (read != null) try { await read.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+                page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel); parent.Children.Remove(page);
+            }
+        }
+        Check(failures.Count == 0, "Page companion read failures: " + string.Join(", ", failures));
+    }
+
+    private static async Task VerifySettledOptionalFailuresAsync(StackPanel parent, Wire wire)
+    {
+        var failures = new List<string>();
+        foreach (var type in new[] { "series", "season" })
+        foreach (var phase in new[] { "logo-transient", "logo-decode", "logo-missing", "logo-success", "overview-status", "episodes-status" })
+        {
+            var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var original = (IServiceProvider)slot.GetValue(null)!;
+            var cache = Path.Combine(Program.ResultDirectory, "settled-" + type + "-" + phase);
+            using var images = new ImageService(cache);
+            using var http = new HttpClient(wire, disposeHandler: false);
+            slot.SetValue(null, new TitleArtServices(original, images, http));
+            using var navigation = new CancellationTokenSource();
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            page.ViewModel.Item = new() { ContentId = type, Type = type, Title = "Settled optional read",
+                LogoUrl = "https://realtime-native.invalid/title-art-logo.png", PendingTranslationLanguage = "fr" };
+            page.ViewModel.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1 });
+            page.ViewModel.Episodes.Add(new() { ContentId = "loaded", PendingTranslationLanguage = "fr" });
+            Set(page, "_currentContentId", type); Set(page, "_navigationCts", navigation);
+            parent.Children.Add(page);
+            wire.TitleLogoStatus = phase == "logo-transient" ? HttpStatusCode.ServiceUnavailable : phase == "logo-missing" ? HttpStatusCode.NotFound : HttpStatusCode.OK;
+            wire.TitleLogoInvalid = phase == "logo-decode";
+            wire.MetadataStatus = phase.EndsWith("status", StringComparison.Ordinal) ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
+            try
+            {
+                Task read = phase.StartsWith("logo", StringComparison.Ordinal)
+                    ? (Task)typeof(ItemDetailPage).GetMethod("LoadTitleArtPreferenceAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [page.ViewModel.Item, navigation.Token])!
+                    : (Task)typeof(ItemDetailPage).GetMethod(phase == "overview-status" ? "ConfigureOnViewTranslationAsync" : "ConfigureEpisodesTranslationAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, phase == "overview-status" ? [page.ViewModel.Item] : null)!;
+                await read.WaitAsync(TimeSpan.FromSeconds(5));
+                var healthy = phase is "logo-missing" or "logo-success";
+                Check(page.CanPreserveOnReconnect == healthy, $"Settled {type}/{phase} lost failed-read recovery or rejected a completed placeholder.");
+                if (phase == "logo-success") Check(((Image)page.FindName("HeroLogoImage")).Source != null, "Successful logo control did not decode.");
+                Program.Log($"PASS: settled {type}/{phase} preservation={page.CanPreserveOnReconnect}.");
+            }
+            catch (Exception ex) { failures.Add(type + "/" + phase); Program.Log($"CASE FAIL: settled {type}/{phase}: {ex.Message}"); }
+            finally
+            {
+                wire.TitleLogoStatus = HttpStatusCode.NotFound; wire.TitleLogoInvalid = false; wire.MetadataStatus = HttpStatusCode.OK;
+                navigation.Cancel(); page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel);
+                parent.Children.Remove(page); slot.SetValue(null, original);
+            }
+        }
+        Check(failures.Count == 0, "Settled optional-read cases failed: " + string.Join(", ", failures));
+    }
+
     private static async Task VerifyTranslationReconnectAsync(StackPanel parent, Wire wire, SiloApiClient client, string type, bool overview = false)
     {
         foreach (var phase in overview ? new[] { "status", "polling", "auto", "timeout" } : new[] { "status", "polling", "auto" })
@@ -1166,6 +1317,10 @@ internal static class RealtimeSeriesStateNativeFixture
         internal string? ParentSeries;
         internal bool LoadedPlayed;
         internal string TranslationOnView = "button";
+        internal HttpStatusCode MetadataStatus = HttpStatusCode.OK;
+        internal HttpStatusCode TitleLogoStatus = HttpStatusCode.NotFound;
+        internal bool TitleLogoInvalid;
+        internal ConcurrentQueue<(TaskCompletionSource Started, TaskCompletionSource<HttpResponseMessage> Response)>? QueuedEpisodeReads;
         internal double LoadedPosition = 31;
         internal string? HeldCompanion;
         internal string? HeldTitleArt;
@@ -1182,12 +1337,19 @@ internal static class RealtimeSeriesStateNativeFixture
             if (request.RequestUri.Host != "realtime-native.invalid" || (request.Method != HttpMethod.Get && !translate))
                 throw new InvalidOperationException("Only synthetic fixture reads and episode translations are authorized.");
             if (translate) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            if (path.EndsWith("/episodes", StringComparison.Ordinal) && QueuedEpisodeReads?.TryDequeue(out var queued) == true)
+            {
+                queued.Started.TrySetResult();
+                return queued.Response.Task;
+            }
             var titleArtPhase = path == "/title-art-logo.png" ? "logo"
                 : path == "/api/v2/settings/values/effective" && request.RequestUri.Query.Contains("keys=ui.title_art", StringComparison.Ordinal) ? "settings" : null;
             if (titleArtPhase != null)
             {
-                var titleArtResponse = titleArtPhase == "logo" ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                var titleArtResponse = titleArtPhase == "logo" ? new HttpResponseMessage(TitleLogoStatus)
                     : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"items\":[{\"key\":\"ui.title_art\",\"value\":true}]}", Encoding.UTF8, "application/json") };
+                if (titleArtPhase == "logo" && TitleLogoStatus == HttpStatusCode.OK)
+                    titleArtResponse.Content = new ByteArrayContent(TitleLogoInvalid ? [1, 2, 3, 4] : CompanionArtwork);
                 if (HeldTitleArt == titleArtPhase && ReleaseCompanion is { } titleArtRelease)
                 {
                     CompanionStarted?.TrySetResult();
@@ -1222,6 +1384,8 @@ internal static class RealtimeSeriesStateNativeFixture
             if (FailEpisodes && path.EndsWith("/episodes"))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
+            if (path == "/api/v2/capabilities/metadata-ai" && MetadataStatus != HttpStatusCode.OK)
+                return Task.FromResult(new HttpResponseMessage(MetadataStatus) { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic status failure\"}}", Encoding.UTF8, "application/json") });
             object body = path == "/api/v2/capabilities/metadata-ai" ? new { state = "available", allowed = true, on_view = TranslationOnView } :
                 path.EndsWith("/episodes") && EmptyEpisodes ? new { items = Array.Empty<object>() } :
                 path.EndsWith("/episodes") ? new { items = new[] {

@@ -332,7 +332,9 @@ internal static class AppUpdateNativeFixture
         var heldSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var save = scenario == "staged-drain-held" ? heldSave.Task : scenario == "staged-drain-faulted"
             ? Task.FromException(new IOException("Synthetic progress save failed.")) : Task.CompletedTask;
-        typeof(PlayerService).GetProperty(nameof(PlayerService.PendingProgressSave))!.SetValue(services.GetRequiredService<PlayerService>(), save);
+        typeof(PlayerService).GetMethod("TrackFinalProgressSave", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(services.GetRequiredService<PlayerService>(),
+                [save, services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().CaptureIdentityContext(), true]);
         try
         {
             SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(window), 0x10, IntPtr.Zero, IntPtr.Zero);

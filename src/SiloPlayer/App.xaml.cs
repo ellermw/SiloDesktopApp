@@ -372,7 +372,8 @@ public partial class App : Application
             var cache = new ItemDetailPrefetchCache(
                 provider.GetRequiredService<CatalogApi>(),
                 provider.GetRequiredService<AuthService>());
-            DetailCacheInvalidation.Attach(cache);
+            DetailCacheInvalidation.Attach(cache,
+                isCurrentIdentity: provider.GetRequiredService<SiloApiClient>().IsCurrentIdentityContext);
             return cache;
         });
         services.AddSingleton<EpisodeSpoilerPreferences>();
