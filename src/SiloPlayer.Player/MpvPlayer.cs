@@ -537,6 +537,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void LoadFile(string url, string? authHeader = null, double startSeconds = 0)
     {
         ThrowIfNotInitialized();
+        lock (_asyncSubtitleGate) _asyncSubtitleFileGeneration++;
         ResetUpscalingForLoad();
 
         // Original files use a seekable HTTP reader directly through mpv's
@@ -579,6 +580,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void Stop()
     {
         ThrowIfNotInitialized();
+        lock (_asyncSubtitleGate) _asyncSubtitleFileGeneration++;
         _diagnostics?.Record("stop_requested", new { position = Position });
         Command("stop");
         // Keep the flight recorder through stop/reload recovery and episode changes.
@@ -1272,6 +1274,17 @@ public sealed partial class MpvPlayer : IDisposable
     /// <summary>Sets a string property; silently skipped once teardown has begun.</summary>
     private void SetNativeString(string name, string value)
     {
+        if (name == "sid")
+        {
+            lock (_asyncSubtitleGate)
+            {
+                _explicitSubtitleRevision++;
+                _explicitSubtitleSid = value;
+                using var subtitleLease = EnterNative();
+                if (subtitleLease.Active) mpv_set_property_string(_mpvHandle, name, value);
+            }
+            return;
+        }
         using var lease = EnterNative();
         if (lease.Active) mpv_set_property_string(_mpvHandle, name, value);
     }

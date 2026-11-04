@@ -8,6 +8,10 @@ public sealed partial class MpvPlayer
     private readonly object _asyncSubtitleGate = new();
     private readonly Dictionary<ulong, TaskCompletionSource<bool>> _asyncSubtitleCommands = [];
     private ulong _asyncSubtitleCommandId;
+    private readonly SemaphoreSlim _asyncSubtitleAddLane = new(1, 1);
+    private long _asyncSubtitleFileGeneration;
+    private long _explicitSubtitleRevision;
+    private string _explicitSubtitleSid = "no";
 
     /// <summary>
     /// Downloads through mpv's existing URL reader without blocking the caller
@@ -16,15 +20,29 @@ public sealed partial class MpvPlayer
     /// </summary>
     public async Task<int> AddSubtitleUnselectedAsync(string url, string? title, string? language, CancellationToken ct)
     {
+        await _asyncSubtitleAddLane.WaitAsync(ct).ConfigureAwait(false);
+        try { return await AddSubtitleUnselectedCoreAsync(url, title, language, ct).ConfigureAwait(false); }
+        finally { _asyncSubtitleAddLane.Release(); }
+    }
+
+    private async Task<int> AddSubtitleUnselectedCoreAsync(string url, string? title, string? language, CancellationToken ct)
+    {
         ct.ThrowIfCancellationRequested();
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         ulong id;
+        long fileGeneration, selectionRevision;
+        int previousSid;
+        HashSet<int> previousIds;
         lock (_asyncSubtitleGate)
         {
             ThrowIfNotInitialized();
+            fileGeneration = _asyncSubtitleFileGeneration;
+            selectionRevision = _explicitSubtitleRevision;
+            previousSid = (int)Math.Round(GetPropertyDouble("sid"));
+            previousIds = GetSubtitleTrackIds(externalOnly: true).ToHashSet();
             id = ++_asyncSubtitleCommandId;
             _asyncSubtitleCommands.Add(id, completion);
-            var args = new[] { "sub-add", url, "no", title ?? "", language ?? "" };
+            var args = new[] { "sub-add", url, "auto", title ?? "", language ?? "" };
             var pointers = new IntPtr[args.Length + 1];
             try
             {
@@ -57,8 +75,36 @@ public sealed partial class MpvPlayer
         try
         {
             var added = await completion.Task.ConfigureAwait(false);
+            var sid = 0;
+            lock (_asyncSubtitleGate)
+            {
+                // An ordinal from the previous file must never remove or
+                // select a successor file's equally numbered native track.
+                if (fileGeneration == _asyncSubtitleFileGeneration)
+                {
+                    sid = FindExternalSubtitleSid(url, previousIds);
+                    if (sid > 0)
+                    {
+                        if ((int)Math.Round(GetPropertyDouble("sid")) == sid)
+                        {
+                            // auto may select a new default while Off. Preserve
+                            // a newer explicit choice instead of replaying ours.
+                            var restore = selectionRevision == _explicitSubtitleRevision
+                                ? previousSid > 0 ? previousSid.ToString(System.Globalization.CultureInfo.InvariantCulture) : "no"
+                                : _explicitSubtitleSid;
+                            using var lease = EnterNative();
+                            if (lease.Active) mpv_set_property_string(_mpvHandle, "sid", restore);
+                        }
+                        if (ct.IsCancellationRequested || !added)
+                        {
+                            Command("sub-remove", sid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                            sid = 0;
+                        }
+                    }
+                }
+            }
             ct.ThrowIfCancellationRequested();
-            return added ? FindExternalSubtitleSid(url) : 0;
+            return added ? sid : 0;
         }
         finally
         {
@@ -66,20 +112,23 @@ public sealed partial class MpvPlayer
         }
     }
 
-    private int FindExternalSubtitleSid(string url)
+    private int FindExternalSubtitleSid(string url, HashSet<int> previousIds)
     {
         using var lease = EnterNative();
         if (!lease.Active || mpv_get_property_int(_mpvHandle, "track-list/count", MPV_FORMAT_INT64, out var count) < 0) return 0;
-        var sid = 0;
+        var matches = new List<int>();
         for (var i = 0; i < count; i++)
         {
             var prefix = $"track-list/{i}/";
             if (Read(prefix + "type") == "sub" && Read(prefix + "external") == "yes" &&
                 Read(prefix + "external-filename") == url &&
-                mpv_get_property_int(_mpvHandle, prefix + "id", MPV_FORMAT_INT64, out var trackId) >= 0 && trackId > sid)
-                sid = checked((int)trackId);
+                mpv_get_property_int(_mpvHandle, prefix + "id", MPV_FORMAT_INT64, out var trackId) >= 0 && trackId > 0 &&
+                !previousIds.Contains(checked((int)trackId)))
+                matches.Add(checked((int)trackId));
         }
-        return sid;
+        // Concurrent cue/AI adds do not share our lane. Never treat every new
+        // inventory ID, or an ambiguous same-URL pair, as this command's SID.
+        return matches.Count == 1 ? matches[0] : 0;
 
         string? Read(string name)
         {

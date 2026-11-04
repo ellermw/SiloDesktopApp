@@ -2917,6 +2917,7 @@ public partial class PlayerService : IDisposable
             async Task SelectInitialSubtitleAsync()
             {
                 if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+                if (TryApplyLegacyInitialSubtitleChoice()) return;
                 var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
                     (_playbackManager?.CurrentSession?.ProtocolVersion >= 3 ? _playbackManager.SubtitleSelectionForLoad : (int?)null);
                 var owner = Volatile.Read(ref _subtitleSelectionOperation);
@@ -3654,6 +3655,7 @@ public partial class PlayerService : IDisposable
         int? explicitSelection,
         SubtitleTrackSignature? explicitSignature)
     {
+        _legacySubtitleChoice = null;
         SubtitleTrackInfo? selectedTrack = null;
 
         if (explicitSignature != null)
@@ -3762,6 +3764,11 @@ public partial class PlayerService : IDisposable
         {
             _pendingSubtitleSelection = explicitSelection;
             _pendingInitialServerSubtitleIndex = null;
+            if (session.SubtitleUrls.Count == 0 && !session.IsSubtitleBurnedIn && _playbackManager is { } manager)
+                _legacySubtitleChoice = new(explicitSelection.Value, _activeAuthority,
+                    _activeAuthority.ApiClient.CaptureIdentityContext(), manager, session,
+                    Volatile.Read(ref _playRequestGeneration), ContentId,
+                    Volatile.Read(ref _subtitleSelectionOperation), _authorityLifetimeCts.Token);
             return;
         }
 

@@ -20,7 +20,7 @@ public partial class PlayerService
             audio.Add(new JsonObject { ["kind"] = "audio", ["trackId"] = index + 1,
                 ["title"] = t.Title ?? t.Language ?? $"Audio {index + 1}", ["detail"] = t.Codec });
         var subtitles = new JsonArray();
-        foreach (var t in (_playbackManager?.CurrentSession?.SubtitleUrls ?? []).Where(t => !t.Unplayable))
+        foreach (var t in (_playbackManager?.CurrentSession?.SubtitleUrls ?? []).Where(HasSubtitleSelectionRoute))
             subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
                 ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
         var qualities = new JsonArray();
@@ -79,7 +79,12 @@ public partial class PlayerService
                 await SwitchAudioTrackAsync(aid - 1);
                 break;
             case "select_subtitle_track":
-                if (command["trackId"] == null) throw new ArgumentException("Missing subtitle track.");
+                if (command["trackId"] == null)
+                {
+                    if (!await SelectSubtitleByServerIndexAsync(-1))
+                        throw new ArgumentException("The subtitle choice is unavailable.");
+                    break;
+                }
                 if (command["trackId"] is not JsonValue subtitleId || !subtitleId.TryGetValue<int>(out var sid))
                     throw new ArgumentException("Invalid subtitle track.");
                 var subtitleTrack = _playbackManager?.CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index + 1 == sid);

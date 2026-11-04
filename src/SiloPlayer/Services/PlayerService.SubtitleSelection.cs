@@ -116,12 +116,25 @@ public partial class PlayerService
     private SubtitleTrackInfo? ResolveReloadSubtitleChoice(SubtitleTrackInfo requested, int? sourceFile)
     {
         var session = _playbackManager?.CurrentSession;
-        var tracks = session?.SubtitleUrls.Where(t => !t.Unplayable).ToList();
+        var tracks = session?.SubtitleUrls.ToList();
         if (tracks == null) return null;
-        var exact = tracks.FirstOrDefault(t => !string.IsNullOrEmpty(requested.TrackId) && t.TrackId == requested.TrackId);
-        if (exact != null) return exact;
+        if (!string.IsNullOrEmpty(requested.TrackId))
+        {
+            var exact = tracks.Where(t => t.TrackId == requested.TrackId).ToList();
+            if (exact.Count > 0) return exact.Count == 1 && !exact[0].Unplayable ? exact[0] : null;
+            if (session!.MediaFileId == sourceFile) return null;
+        }
         if (session!.MediaFileId == sourceFile)
-            return tracks.FirstOrDefault(t => t.Index == requested.Index);
+        {
+            // Stored/downloaded identities must not borrow a reused ordinal.
+            if (requested.Id is > 0 || !string.IsNullOrEmpty(requested.SyncKey))
+            {
+                var exact = tracks.Where(t => requested.Id is > 0 ? t.Id == requested.Id : t.SyncKey == requested.SyncKey).ToList();
+                return exact.Count == 1 && !exact[0].Unplayable ? exact[0] : null;
+            }
+            return tracks.FirstOrDefault(t => !t.Unplayable && t.Index == requested.Index);
+        }
+        tracks = tracks.Where(t => !t.Unplayable).ToList();
         var index = SubtitleAutoSelect.Resolve(new("always", SubtitleAutoSelect.BuildCandidates(tracks),
             requested.Language, null, null, true, new SubtitleTrackSignature
             {
