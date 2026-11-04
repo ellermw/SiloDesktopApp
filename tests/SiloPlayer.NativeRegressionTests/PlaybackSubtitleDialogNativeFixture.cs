@@ -99,6 +99,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
             await Until(() => Get(service, "_nativeSubtitleDialog") is ContentDialog,
                 "Profile-retirement Search dialog did not open.");
             api.SetProfile("replacement-profile");
+            Require(!(bool)typeof(PlayerService).GetProperty("NativeSubtitleAiAvailable", Private)!.GetValue(service)!,
+                "AI capability from the previous profile remained available in the replacement context.");
             await Until(() => Get(service, "_nativeSubtitleDialog") == null && Gate(service).CurrentCount == 1,
                 "Profile replacement left a native Subtitle dialog or its lease alive.");
             Program.Log("PASS: profile replacement retires the actual native Subtitle modal without reviving its opener.");

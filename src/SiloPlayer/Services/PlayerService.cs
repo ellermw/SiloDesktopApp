@@ -7214,7 +7214,7 @@ public partial class PlayerService : IDisposable
             !authority.ApiClient.IsCurrentContext(context) || !ReferenceEquals(manager, _playbackManager) ||
             !ReferenceEquals(capabilitySession, manager?.CurrentSession) || generation != Volatile.Read(ref _playRequestGeneration) ||
             fileGeneration != Volatile.Read(ref _playbackFileGeneration)) return;
-        _nativeSubtitleAiAvailable = available; _nativeSubtitleAiSession = capabilitySession;
+        _nativeSubtitleAiCapability = new(authority, context, capabilitySession, fileGeneration, available);
         _mpv?.SendScriptMessage("osc-set-subtitle-ai-available", available ? "true" : "false");
     }
 
