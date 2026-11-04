@@ -3175,6 +3175,7 @@ public partial class PlayerService : IDisposable
                     }
                 }
             }
+            var requestedSubtitleExecutedLocally = false;
             if (applyInitialSubtitleSelection)
             {
                 var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
@@ -3183,7 +3184,16 @@ public partial class PlayerService : IDisposable
                 {
                     _pendingInitialServerSubtitleIndex = null;
                     if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-                    await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
+                    var subtitleIntent = _playbackManager?.CaptureLocalSubtitleIntent();
+                    var selectionExecuted = await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
+                    // A rejected server refinement need not prevent local execution.
+                    // Off only satisfies the request when it was really Off, not
+                    // when an unmatched subtitle identity resolved to -1.
+                    requestedSubtitleExecutedLocally = selectionExecuted &&
+                        subtitleFailureSession is { IsSubtitleBurnedIn: false } &&
+                        _executedSubtitleFileId == subtitleFailureSession.MediaFileId &&
+                        (_executedSubtitleTrack?.Index ?? -1) == initialSubtitleIndex &&
+                        (initialSubtitleIndex >= 0 || subtitleIntent?.Track == null);
                 }
             }
 
@@ -3192,7 +3202,7 @@ public partial class PlayerService : IDisposable
                 ReferenceEquals(subtitleFailureSession, _playbackManager?.CurrentSession))
             {
                 subtitleFailureSession.SubtitleReconciliationFailed = false;
-                ShowSubtitleSelectionUnavailable();
+                if (!requestedSubtitleExecutedLocally) ShowSubtitleSelectionUnavailable();
             }
             // Effective playback settings are profile/device scoped and may
             // change between sessions; they must not gate subtitle execution.
@@ -5856,7 +5866,7 @@ public partial class PlayerService : IDisposable
             _pendingSubtitlePreferenceOwner = null;
             _activeSubtitleServerIndex = selected.Track?.Index ?? -1;
             if (session.ProtocolVersion >= 3) manager!.RecordLocalSubtitleSelection(selected.Track?.Index,
-                isAutomatic: manager.IsSubtitleSelectionAutomatic);
+                isAutomatic: false);
             CommitExecutedSubtitleSelection(selected.Track);
             mpv.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
