@@ -77,6 +77,29 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
             Call(service, "SendQualityInfoToOsc");
+            if (mode == "version-room-race")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var originalSession = manager.CurrentSession;
+                var originalFile = (long)Get(service, "_playbackFileGeneration")!;
+                var originalError = service.ErrorMessage;
+                wire.HoldReplacementStart = true;
+                var versionMenu = await Open();
+                Call(versionMenu, "Input", "home"); Call(versionMenu, "Input", "down"); Call(versionMenu, "Input", "activate");
+                await wire.ReplacementStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                service.SetWatchTogetherPlayback(true);
+                wire.ReleaseReplacement.TrySetResult();
+                await wire.ReplacementReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.Delay(300); await Query();
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "A retired solo version switch stranded busy state after joining the room.");
+                Require((long)Get(service, "_playbackFileGeneration")! == originalFile && ReferenceEquals(manager.CurrentSession, originalSession),
+                    "A solo version accepted before room attachment replaced the room's session/file afterward.");
+                Require(service.IsWatchTogetherPlayback && mpv.IsPaused && service.ErrorMessage == originalError,
+                    "A retired solo version switch changed room pause intent or published a stale error.");
+                Program.Log("PASS: actual held native version replacement is canceled by same-file room attachment; late reply preserves the room session/file and pause.");
+                return;
+            }
             if (mode.StartsWith("legacy-", StringComparison.Ordinal))
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -300,6 +323,7 @@ internal static class PlaybackQualityMenuNativeFixture
         {
             wire.ReleaseReplan.TrySetResult();
             wire.ReleaseSuccessor.TrySetResult();
+            wire.ReleaseReplacement.TrySetResult();
             mpv.ScriptMessageReceived -= Message;
             if (Menu(service) is { } menu) Call(menu, "Input", "cancel");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");
@@ -336,6 +360,10 @@ internal static class PlaybackQualityMenuNativeFixture
         internal bool HoldFailedReplan;
         internal bool HoldSuccessfulReplan;
         internal bool HoldSuccessorReplan;
+        internal bool HoldReplacementStart;
+        internal readonly TaskCompletionSource ReplacementStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseReplacement = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReplacementReplied = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource SuccessorStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseSuccessor = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReplanStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -351,6 +379,10 @@ internal static class PlaybackQualityMenuNativeFixture
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
             using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); var body = json.RootElement;
             var quality = body.TryGetProperty("quality_preference", out var value) ? value.GetString() ?? "auto" : "auto";
+            if (path.EndsWith("/start") && HoldReplacementStart)
+            {
+                ReplacementStarted.TrySetResult(); await ReleaseReplacement.Task; ReplacementReplied.TrySetResult();
+            }
             if (path.EndsWith("/replan"))
             {
                 Qualities.Enqueue(quality);

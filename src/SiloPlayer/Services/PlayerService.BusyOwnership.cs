@@ -9,6 +9,15 @@ public partial class PlayerService
     private readonly object _playbackBusyLock = new();
     private long _playbackBusyRevision;
     private volatile bool _isLoading;
+    private long _roomPlaybackGeneration;
+    private CancellationTokenSource? _soloVersionSwitchCts;
+
+    private void CancelPendingSoloVersionSwitch()
+    {
+        var pending = Volatile.Read(ref _soloVersionSwitchCts);
+        try { pending?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
 
     // Every assignment, including true -> true, retires an earlier claim.
     // Switching-only writers include pre-dispatch quality/version, EOF and

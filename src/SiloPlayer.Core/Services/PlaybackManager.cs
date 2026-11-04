@@ -193,6 +193,7 @@ public partial class PlaybackManager : IDisposable
 
         await ConfigureConnectionStartAsync(request, preferences, ct, owner).ConfigureAwait(false);
         var decision = await _playbackApi.StartPlaybackV3Async(request, ct, owner).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
         _connectionFeatures = request.ClientFeatures.ToArray();
         var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
         _recoveryAttemptHistory.Reset();

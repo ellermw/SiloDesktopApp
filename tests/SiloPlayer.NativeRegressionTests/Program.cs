@@ -161,7 +161,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-review")
             {
                 var failures = new List<Exception>();
-                foreach (var mode in new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal" })
+                foreach (var mode in new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race" })
                 {
                     try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
                     catch (Exception error) { Program.Log($"FAIL [{mode}]: {error.Message}"); failures.Add(error); }
