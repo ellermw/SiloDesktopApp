@@ -265,8 +265,8 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             // the predecessor's still-pending FILE_LOADED pause slot intact.
             if (service.ActiveSubtitleServerIndex != Dvd)
             {
-                var dvd = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Dvd);
-                await Loaded(() => service.SetSubtitleTrackAndPersistAsync(Dvd + 1, dvd.Language, dvd));
+                var predecessorDvd = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Dvd);
+                await Loaded(() => service.SetSubtitleTrackAndPersistAsync(Dvd + 1, predecessorDvd.Language, predecessorDvd));
             }
             await Until(() => Get(service, "_loadedMediaInitCts") == null);
             service.SetPaused(true);
