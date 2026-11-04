@@ -165,20 +165,23 @@ public partial class LibraryViewModel
                 if (!IsCurrent()) return;
                 if (index is null)
                 {
-                    if (contextChanged)
+                    if (_letterJumpRetiredScope && WindowStartIndex < 0)
                     {
-                        // An unsupported optional index in the new context is
-                        // quiet, but the reset catalog still needs fresh cards.
+                        // A reset catalog still needs fresh cards, including on
+                        // Retry after a failed load or signed-scope retirement.
                         var initialLoad = new LetterWindowLoad(IsCurrent);
                         await LoadWindowForOwnerAsync(0, PageSize, force: true, initialLoad);
                         if (!IsCurrent()) return;
                         if (initialLoad.Failed || initialLoad.CursorRejected || !initialLoad.Received)
+                        {
                             SetLetterJumpFailure(letter);
-                        else _letterJumpRetiredScope = false;
+                            return;
+                        }
+                        _letterJumpRetiredScope = false;
                     }
-                    // Unsupported optional indexes stay quiet. A failed refresh of
-                    // a previously offered choice must keep its scoped Retry alive.
-                    if (knownIndex) SetLetterJumpFailure(letter);
+                    // A cached null means unsupported, not a failed refresh.
+                    // Only failed refreshes of an offered choice retain Retry.
+                    if (knownIndex && _letterIndexKey != key) SetLetterJumpFailure(letter);
                     return;
                 }
                 var entry = index.Letters.FirstOrDefault(x => x.Letter == letter);

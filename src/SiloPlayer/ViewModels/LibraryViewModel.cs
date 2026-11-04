@@ -334,7 +334,16 @@ public partial class LibraryViewModel : ObservableObject
 
     public async Task EnsureRangeLoadedAsync(int startIndex, int endIndex)
     {
-        if (Library == null || TotalCount <= 0 || startIndex > endIndex) return;
+        if (Library == null || startIndex > endIndex) return;
+        if (TotalCount <= 0)
+        {
+            // Retiring a jump after a context reset can leave no extent yet.
+            // Bootstrap ordinary browsing, but never re-read a known empty result
+            // or bypass the scoped Retry that still owns a failed reset load.
+            if (!_hasExactTotal && _catalogEndTotal is null && !IsLetterJumpViewportBlocked)
+                await LoadWindowAsync(0, PageSize);
+            return;
+        }
 
         startIndex = Math.Clamp(startIndex, 0, TotalCount - 1);
         endIndex = Math.Clamp(endIndex, startIndex, TotalCount - 1);

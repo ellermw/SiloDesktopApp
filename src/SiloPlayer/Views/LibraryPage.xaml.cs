@@ -2321,10 +2321,10 @@ public sealed partial class LibraryPage : Page,
 
     private async Task EnsureVisibleRangeLoadedAsync(bool force = false)
     {
-        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
+        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible)
             return;
 
-        // Only a failed signed-scope recovery holds an empty, retired viewport.
+        // A failed scope-reset load holds an empty, retired viewport.
         // Ordinary letter errors keep Retry without blocking newly exposed rows.
         if (ViewModel.IsLetterJumpViewportBlocked)
         {
@@ -2338,6 +2338,17 @@ public sealed partial class LibraryPage : Page,
             // Recompute the latest viewport after the jump scrolls (or restores
             // its old cards), without letting this debounce cancel the seek.
             ScheduleVisibleRangeLoad(force);
+            return;
+        }
+
+        if (ViewModel.TotalCount <= 0)
+        {
+            // Manual input or a tab return may retire a jump before its reset
+            // catalog has any extent. Load initial cards, then fill the actual
+            // visible range under the latest navigation/letter authority.
+            await ViewModel.EnsureRangeLoadedAsync(0, 0);
+            if (ViewModel.TotalCount > 0)
+                ScheduleVisibleRangeLoad(force: true);
             return;
         }
 

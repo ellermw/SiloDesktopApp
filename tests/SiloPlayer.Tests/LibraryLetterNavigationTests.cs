@@ -841,6 +841,129 @@ public sealed class LibraryLetterNavigationTests
         Assert.NotSame(previous, model.GetWindowItem(0));
     }
 
+    [Fact]
+    public async Task UnsupportedIndexRetryReloadsTheFailedContextResetCatalog()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var previous = model.GetWindowItem(0);
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.Client.SetProfile("other-synthetic-profile");
+        wire.Supported = false; wire.FailCatalog = true;
+
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+
+        Assert.Null(model.LetterIndex); Assert.Null(model.GetWindowItem(0));
+        Assert.Equal(0, model.TotalCount); Assert.Equal(-1, model.WindowStartIndex);
+        Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+        Assert.True(model.IsLetterJumpViewportBlocked);
+        var reads = wire.Seeks.Count;
+        await model.EnsureRangeLoadedAsync(0, 0);
+        Assert.Equal(reads, wire.Seeks.Count); // Automatic browsing cannot consume Retry.
+
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+
+        Assert.True(wire.Seeks.Count > reads);
+        Assert.NotNull(model.LetterJumpError);
+        Assert.True(model.IsLetterJumpViewportBlocked);
+        reads = wire.Seeks.Count;
+        wire.FailCatalog = false;
+
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+
+        Assert.True(wire.Seeks.Count > reads);
+        Assert.All(wire.Seeks.Skip(reads), seek => Assert.Equal(0, seek));
+        Assert.NotNull(model.GetWindowItem(0));
+        Assert.NotSame(previous, model.GetWindowItem(0));
+        Assert.Null(model.LetterIndex); Assert.Null(model.LetterJumpError);
+        Assert.Null(model.PendingLetter); Assert.Null(model.ErrorMessage);
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        Assert.False(model.IsLetterJumpInProgress);
+        Assert.Empty(jumps); // Unsupported indexes never guess a target.
+        Assert.Equal(1, wire.IndexRequests);
+        Assert.Equal(2, wire.CapabilityRequests);
+    }
+
+    [Fact]
+    public async Task ManualBrowsingReloadsAFailedContextResetWithoutAnExtent()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        wire.Client.SetProfile("other-synthetic-profile");
+        wire.Supported = false; wire.FailCatalog = true;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.Equal(0, model.TotalCount);
+        Assert.True(model.IsLetterJumpViewportBlocked);
+        wire.FailCatalog = false;
+
+        model.RetireLetterJump();
+        await model.EnsureRangeLoadedAsync(0, 0);
+
+        Assert.NotNull(model.GetWindowItem(0));
+        Assert.True(model.TotalCount > 0);
+        Assert.Null(model.LetterJumpError); Assert.Null(model.ErrorMessage);
+        Assert.False(model.IsLetterJumpViewportBlocked);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BrowsingRetiresAContextResetWhileItsOptionalIndexIsPending(bool supported)
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.Client.SetProfile("other-synthetic-profile"); wire.Supported = supported;
+        wire.CapabilityGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = model.JumpToLetterCommand.ExecuteAsync("M");
+        try
+        {
+            await wire.CapabilityStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(0, model.TotalCount);
+            Assert.Equal("M", model.PendingLetter);
+            model.RetireLetterJump(); // Manual input or leaving the Library tab.
+            await model.EnsureRangeLoadedAsync(0, 0).WaitAsync(TimeSpan.FromSeconds(5));
+            var current = model.GetWindowItem(0);
+            Assert.NotNull(current);
+            wire.CapabilityGate.TrySetResult(); await pending;
+            Assert.Same(current, model.GetWindowItem(0));
+            Assert.Empty(jumps); Assert.Null(model.PendingLetter);
+            Assert.Null(model.LetterJumpError); Assert.Null(model.ErrorMessage);
+            Assert.False(model.IsLetterJumpInProgress);
+        }
+        finally { wire.CapabilityGate.TrySetResult(); await pending; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OrdinaryRangeLoadingDoesNotReloadAKnownEmptyCatalog(bool exact)
+    {
+        using var wire = new Wire { Supported = false, CatalogTotal = 0, CatalogExact = exact };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var reads = wire.Seeks.Count;
+
+        await model.EnsureRangeLoadedAsync(0, 0);
+
+        Assert.Equal(reads, wire.Seeks.Count);
+        Assert.Equal(0, model.TotalCount); Assert.Null(model.ErrorMessage);
+    }
+
+    [Fact]
+    public void PageLoadsAnUnknownEmptyExtentOnlyAfterCheckingLetterOwnership()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "LibraryPage.xaml.cs"));
+        var start = source.IndexOf("private async Task EnsureVisibleRangeLoadedAsync", StringComparison.Ordinal);
+        var end = source.IndexOf("var range = GetVisibleItemRange", start, StringComparison.Ordinal);
+        var guard = source[start..end];
+        var empty = guard.IndexOf("if (ViewModel.TotalCount <= 0)", StringComparison.Ordinal);
+        Assert.True(empty > guard.IndexOf("if (ViewModel.IsLetterJumpViewportBlocked)", StringComparison.Ordinal));
+        Assert.True(empty > guard.IndexOf("if (ViewModel.IsLetterJumpInProgress)", StringComparison.Ordinal));
+        Assert.Contains("await ViewModel.EnsureRangeLoadedAsync(0, 0);", guard[empty..]);
+        Assert.Contains("ScheduleVisibleRangeLoad(force: true);", guard[empty..]);
+    }
+
     [Theory]
     [InlineData("profile", false)]
     [InlineData("profile", true)]
@@ -1077,6 +1200,8 @@ public sealed class LibraryLetterNavigationTests
         internal readonly TaskCompletionSource ReleaseCatalog = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource IndexStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseIndex = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource? CapabilityGate;
+        internal readonly TaskCompletionSource CapabilityStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<int> Seeks = [];
         private readonly System.Collections.Concurrent.ConcurrentQueue<ReadGate> heldReads = new();
         internal sealed class ReadGate(bool fail)
@@ -1095,6 +1220,11 @@ public sealed class LibraryLetterNavigationTests
             if (path.EndsWith("/search/capabilities"))
             {
                 CapabilityRequests++;
+                if (CapabilityGate is { } gate)
+                {
+                    CapabilityStarted.TrySetResult();
+                    await gate.Task; // Deliberately late optional-index capability response.
+                }
                 return FailCapabilities ? Reply(new { detail = "Synthetic unavailable capability probe" }, HttpStatusCode.ServiceUnavailable)
                     : Reply(new { letter_index = Supported });
             }
