@@ -266,6 +266,17 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
     }
 
+    internal static async Task RunBitmapOwnershipAsync(StackPanel parent)
+    {
+        var failures = new List<string>();
+        foreach (var choice in new[] { "bitmap-stolen-busy", "bitmap-retired-profile" })
+        {
+            try { await CheckAcceptedReloadAsync(parent, choice); Program.Log("PASS: bitmap callback ownership " + choice); }
+            catch (Exception ex) { failures.Add(choice + ": " + ex.Message); Program.Log("CASE FAIL: bitmap ownership " + choice + ": " + ex); }
+        }
+        if (failures.Count > 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
+
     internal static async Task RunBurnReadinessAsync(StackPanel parent)
     {
         var failures = new List<string>();
@@ -284,7 +295,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     private static async Task CheckAcceptedReloadAsync(StackPanel parent, string choice)
     {
         using var subtitles = new HeldSubtitleServer(false);
-        using var wire = new Wire(subtitles.Origin) { SupportBurnInReplan = true, StartsBurned = choice != "bitmap", HoldNextReplan = true };
+        using var wire = new Wire(subtitles.Origin) { SupportBurnInReplan = true, StartsBurned = choice != "bitmap" && !choice.StartsWith("bitmap-", StringComparison.Ordinal), HoldNextReplan = true };
         using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
         using var auth = new AuthService(api, new AuthApi(api));
@@ -304,7 +315,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         service.SetPaused(true); Call(service, "SendSubtitleListToOsc"); Call(service, "WireMpvEvents");
         var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void Loaded() => loaded.TrySetResult(); service.ContentLoaded += Loaded;
-        var selected = choice == "bitmap" ? 2 : choice == "off" ? -1 : 0;
+        var selected = choice == "bitmap" || choice.StartsWith("bitmap-", StringComparison.Ordinal) ? 2 : choice == "off" ? -1 : 0;
         var track = selected < 0 ? null : manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == selected);
         if (choice is "busy-text" or "ready-then-busy" or "changed-file-busy" or "changed-file-newer")
         {
@@ -397,6 +408,57 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             {
                 service.ContentLoaded -= Loaded;
                 wire.ReplanRelease.TrySetResult();
+                Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
+                Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+                Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+            }
+            return;
+        }
+        if (choice.StartsWith("bitmap-", StringComparison.Ordinal))
+        {
+            var notices = new ConcurrentQueue<string>();
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Observe(string[] message)
+            {
+                if (message.FirstOrDefault() == "silo-bitmap-ready") ready.TrySetResult();
+                if (message.FirstOrDefault() == "silo-bitmap-notice" && message.Length > 1) notices.Enqueue(message[1]);
+                if (message.FirstOrDefault() == "silo-bitmap-drained") drained.TrySetResult();
+            }
+            mpv.ScriptMessageReceived += Observe;
+            var script = Path.Combine(Program.ResultDirectory, choice + "-probe.lua");
+            await File.WriteAllTextAsync(script, """
+                local mp = require 'mp'
+                mp.register_script_message('osc-show-notice', function(payload) mp.commandv('script-message','silo-bitmap-notice',payload) end)
+                mp.register_script_message('bitmap-drain', function() mp.commandv('script-message','silo-bitmap-drained') end)
+                mp.commandv('script-message','silo-bitmap-ready')
+                """);
+            Call(mpv, "Command", (object)new[] { "load-script", script });
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            var beforeFile = (long)Get(service, "_playbackFileGeneration")!;
+            try
+            {
+                var bitmapPending = service.SetSubtitleTrackAndPersistAsync(3, track!.Language, track);
+                await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                if (choice == "bitmap-stolen-busy") Call(service, "BeginPlaybackBusy", true, null);
+                else api.SetProfile("replacement-profile");
+                var successorRevision = (long)Get(service, "_playbackBusyRevision")!;
+                wire.ReplanRelease.TrySetResult();
+                await bitmapPending.WaitAsync(TimeSpan.FromSeconds(8));
+                mpv.SendScriptMessage("bitmap-drain"); await drained.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Require((long)Get(service, "_playbackFileGeneration")! == beforeFile && wire.PreferenceWrites == 0,
+                    "Retired bitmap callback loaded a transport or persisted a choice after its owner departed.");
+                if (choice == "bitmap-stolen-busy")
+                    Require((long)Get(service, "_playbackBusyRevision")! == successorRevision && service.IsLoading &&
+                        (bool)Get(service, "_switchingContent")!, "Old bitmap completion replaced or released its successor's busy claim.");
+                else
+                    Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")! && notices.IsEmpty,
+                        "Profile-retired bitmap work stranded its own flags or published feedback to the replacement profile.");
+            }
+            finally
+            {
+                wire.ReplanRelease.TrySetResult(); subtitles.MediaRelease.TrySetResult();
+                service.ContentLoaded -= Loaded; mpv.ScriptMessageReceived -= Observe;
                 Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
                 Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
                 Set(service, "_mpv", null); Set(service, "_playbackManager", null);
