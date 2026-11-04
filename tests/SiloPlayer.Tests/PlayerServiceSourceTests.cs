@@ -3,6 +3,30 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void ReplacementLoadPublishesOwnedBusyBeforeRetiringOutgoingSubtitleReads()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private void BeginOwnedMpvLoad(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void ConfigureAudioOutput(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var claim = method.IndexOf("var loadBusyOwner = BeginPlaybackBusy();", StringComparison.Ordinal);
+        var retire = method.IndexOf("CancelPendingLoadedMediaInitialization();", StringComparison.Ordinal);
+        Assert.InRange(claim, 0, retire - 1);
+        Assert.InRange(method.IndexOf("acceptBusy?.Invoke(loadBusyOwner);", StringComparison.Ordinal), claim, retire - 1);
+        var failure = method[method.IndexOf("catch", StringComparison.Ordinal)..];
+        Assert.Contains("ReleasePlaybackBusy(loadBusyOwner", failure);
+    }
+
+    [Fact]
+    public void SiloCastSubtitleInventoryUsesTheSameSelectionRouteAsItsControls()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SiloCast.cs"));
+        var capture = source[..source.IndexOf("public async Task ApplySiloCastControlAsync", StringComparison.Ordinal)];
+        Assert.Contains(".Where(HasSubtitleSelectionRoute)", capture);
+        Assert.Contains("!HasSubtitleSelectionRoute(subtitleTrack)", source);
+    }
+
+    [Fact]
     public void SubtitleReadAdmissionReleasesStateBeforeCancellationAndPrefetch()
     {
         var root = FindRepositoryRoot();

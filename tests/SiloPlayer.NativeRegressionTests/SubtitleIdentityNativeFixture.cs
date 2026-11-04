@@ -207,6 +207,9 @@ internal static class SubtitleIdentityNativeFixture
 
                     var castTracks = service.CaptureSiloCastState()["subtitleTracks"]!.AsArray();
                     Require(castTracks.All(t => t!["trackId"]!.GetValue<int>() != 4), "SiloCast advertised an explicitly unplayable subtitle.");
+                    Require(castTracks.All(t => t!["trackId"]!.GetValue<int>() != noRoute.Index + 1) &&
+                        castTracks.Any(t => t!["trackId"]!.GetValue<int>() == previousTrack.Index + 1),
+                        "SiloCast advertised an unrouteable subtitle that its selector rejects, or hid the verified native choice.");
                     foreach (var sid in new[] { 4, 10, 11 })
                         await ExpectUnavailableAsync(() => service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = sid }));
                     Require(service.ActiveSubtitleServerIndex == previousIndex && wire.PreferenceWrites == preferenceWrites,

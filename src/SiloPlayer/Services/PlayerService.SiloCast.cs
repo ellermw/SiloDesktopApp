@@ -20,7 +20,7 @@ public partial class PlayerService
             audio.Add(new JsonObject { ["kind"] = "audio", ["trackId"] = index + 1,
                 ["title"] = t.Title ?? t.Language ?? $"Audio {index + 1}", ["detail"] = t.Codec });
         var subtitles = new JsonArray();
-        foreach (var t in (_playbackManager?.CurrentSession?.SubtitleUrls ?? []).Where(t => !t.Unplayable))
+        foreach (var t in (_playbackManager?.CurrentSession?.SubtitleUrls ?? []).Where(HasSubtitleSelectionRoute))
             subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
                 ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
         var qualities = new JsonArray();

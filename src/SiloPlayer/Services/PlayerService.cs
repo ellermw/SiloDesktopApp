@@ -2949,28 +2949,31 @@ public partial class PlayerService : IDisposable
             ?? throw new InvalidOperationException("The playback session ended before media loading began.");
         var loadingOwner = _playbackCts;
         RetireForeignSubtitleSelections();
-
-        // Retire the outgoing file's asynchronous subtitle work before loadfile:
-        // the next FILE_LOADED can be delayed by the replacement HTTP stream.
-        CancelPendingLoadedMediaInitialization();
-        CancelPendingFileLoadTimeout();
-        var playbackToken = _playbackCts?.Token ?? CancellationToken.None;
-        var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(playbackToken);
-        var generation = Interlocked.Increment(ref _fileLoadGeneration);
-        _fileLoadTimeoutCts = ownerCts;
-        _restorePausedAfterLoad = IsWatchTogetherPlayback ? _roomPlaybackPaused : restorePaused;
-        _transportHasFirstOutput = false;
-        _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
-            prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
-            prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
         var loadBusyOwner = BeginPlaybackBusy();
-        acceptBusy?.Invoke(loadBusyOwner);
-        SetConnectionMediaActive(true);
-        if (loadingOwner != null)
-            App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
-
+        var busyTransferred = false;
+        CancellationTokenSource ownerCts;
+        long generation;
         try
         {
+            acceptBusy?.Invoke(loadBusyOwner);
+            busyTransferred = acceptBusy != null;
+            // Cancellation can synchronously resume the outgoing subtitle
+            // choice. Publish the replacement's loading owner first so that
+            // choice waits for this file's initialization before applying.
+            CancelPendingLoadedMediaInitialization();
+            CancelPendingFileLoadTimeout();
+            var playbackToken = _playbackCts?.Token ?? CancellationToken.None;
+            ownerCts = CancellationTokenSource.CreateLinkedTokenSource(playbackToken);
+            generation = Interlocked.Increment(ref _fileLoadGeneration);
+            _fileLoadTimeoutCts = ownerCts;
+            _restorePausedAfterLoad = IsWatchTogetherPlayback ? _roomPlaybackPaused : restorePaused;
+            _transportHasFirstOutput = false;
+            _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
+                prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
+                prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
+            SetConnectionMediaActive(true);
+            if (loadingOwner != null)
+                App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
             mpv.SendScriptMessage("osc-set-loading", "true");
             ConfigureAudioOutput(mpv);
             var bufferProfile = prepared.Plan.IsHls
@@ -2996,9 +2999,21 @@ public partial class PlayerService : IDisposable
         }
         catch
         {
-            mpv.SendScriptMessage("osc-set-loading", "false");
-            mpv.SendScriptMessage("osc-set-buffering", "false");
-            CancelPendingFileLoadTimeout();
+            void ClearFailedLoad()
+            {
+                mpv.SendScriptMessage("osc-set-loading", "false");
+                mpv.SendScriptMessage("osc-set-buffering", "false");
+                CancelPendingFileLoadTimeout();
+            }
+            // A track/version operation that accepted the claim owns its
+            // failure recovery and release. Do not retire that caller's claim
+            // before its catch can report or reconcile the failed load.
+            if (!busyTransferred) ReleasePlaybackBusy(loadBusyOwner, ClearFailedLoad);
+            else
+            {
+                lock (_playbackBusyLock)
+                    if (OwnsPlaybackBusy(loadBusyOwner)) ClearFailedLoad();
+            }
             throw;
         }
 
