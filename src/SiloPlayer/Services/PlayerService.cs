@@ -138,7 +138,8 @@ public partial class PlayerService : IDisposable
         double Position,
         string Trigger,
         bool WasPaused,
-        bool CanRetry);
+        bool CanRetry,
+        PlaybackStartResponse? RestartSession);
     private PlaybackTerminalState? _playbackTerminalState;
     private bool? _recoveryPauseIntentOverride;
     private CancellationTokenSource? _playbackCts;
@@ -843,6 +844,34 @@ public partial class PlayerService : IDisposable
         catch (OperationCanceledException)
         {
             // Superseded by a newer seek or playback teardown.
+        }
+        catch (Exception ex) when (
+            (ex is PlaybackPlanTerminalException terminal && PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason)) ||
+            (ex is ApiException api && PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode)))
+        {
+            if (generation == Volatile.Read(ref _seekRestartGeneration))
+            {
+                LogToFile("player_seek_error.txt", ex.ToString());
+                if (_idleRemuxResume.IsReopening)
+                {
+                    // The idle response is no longer usable, unlike a refused
+                    // seek on a healthy stream. Keep the explicit retry surface.
+                    EnterPlaybackTerminalState(ex, mediaPosition, "idle-remux-resume", _idleRemuxResume.DesiredPaused);
+                }
+                else
+                {
+                    // A refused replan leaves the current transport and its
+                    // pause state intact. Retrying the seek must not report
+                    // that healthy plan as a playback failure.
+                    _switchingContent = false;
+                    IsLoading = false;
+                    if (loadingOwner != null)
+                        App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
+                    var (title, detail) = DescribePlaybackError(ex);
+                    ErrorMessage = detail;
+                    ShowNotice(title, detail, "error");
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -1840,7 +1869,7 @@ public partial class PlayerService : IDisposable
     /// -1 = off (no subtitles); 0+ = explicit embedded track index
     /// (0-based, will be translated to mpv's 1-based sid).
     /// </param>
-    public async Task PlayAsync(
+    public Task PlayAsync(
         string contentId,
         bool fromStart = false,
         int? fileId = null,
@@ -1856,21 +1885,52 @@ public partial class PlayerService : IDisposable
         bool? sourceVersionPinned = null,
         ApiRequestContext? expectedContext = null,
         ApiIdentityContext? expectedIdentityContext = null)
+        => PlayWithOwnerAsync(contentId, fromStart, fileId, audioTrackIndex, subtitleSelection,
+            startPositionOverride, prefetchedWatchDetail, subtitleTrackSignature, libraryId, shuffleId,
+            authority, cancellationToken, sourceVersionPinned, expectedContext, expectedIdentityContext);
+
+    // Ordinary restarts keep their accepted identity without acquiring the
+    // quick-play policy that supersedes preparation and requires no active room.
+    public Task RestartAsync(string contentId, int? libraryId, ApiIdentityContext identity)
+        => PlayWithOwnerAsync(contentId, fromStart: true, libraryId: libraryId, ordinaryIdentity: identity);
+
+    private readonly record struct ViewerPlayOwner(ApiIdentityContext Identity, bool SupersedesPreparation);
+
+    private async Task PlayWithOwnerAsync(
+        string contentId,
+        bool fromStart = false,
+        int? fileId = null,
+        int? audioTrackIndex = null,
+        int? subtitleSelection = null,
+        double? startPositionOverride = null,
+        WatchDetailResponse? prefetchedWatchDetail = null,
+        SubtitleTrackSignature? subtitleTrackSignature = null,
+        int? libraryId = null,
+        string? shuffleId = null,
+        PlaybackAuthorityScope? authority = null,
+        CancellationToken cancellationToken = default,
+        bool? sourceVersionPinned = null,
+        ApiRequestContext? expectedContext = null,
+        ApiIdentityContext? expectedIdentityContext = null,
+        ApiIdentityContext? ordinaryIdentity = null)
     {
         var closeGeneration = Volatile.Read(ref _closeGeneration);
         var nextAuthority = authority ?? _localAuthority;
         // Cards carry their original identity, not an access revision. Preserve
         // the strict entry check for callers supplying only a legacy read owner.
         ApiIdentityContext? expectedIdentity = expectedIdentityContext ?? (expectedContext.HasValue
-            ? nextAuthority.ApiClient.CaptureIdentityContext() : null);
+            ? nextAuthority.ApiClient.CaptureIdentityContext() : ordinaryIdentity);
+        ViewerPlayOwner? expectedOwner = expectedIdentity is { } identity
+            ? new(identity, SupersedesPreparation: ordinaryIdentity == null) : null;
+        var supersedesPreparation = expectedOwner?.SupersedesPreparation == true;
         if (!expectedIdentityContext.HasValue && expectedContext is { } expected && !nextAuthority.ApiClient.IsCurrentContext(expected)) return;
         bool IsCurrentOwner() => !cancellationToken.IsCancellationRequested &&
-            (expectedIdentity is not { } owner || IsCurrentViewerPlayOwner(nextAuthority, owner));
+            (expectedOwner is not { } owner || IsCurrentViewerPlayOwner(nextAuthority, owner));
         // A scoped UI action may wait behind another authority switch. Do not
         // cancel current playback until that action still owns its request.
-        if (expectedIdentity.HasValue && !IsCurrentOwner()) return;
+        if (expectedOwner.HasValue && !IsCurrentOwner()) return;
         CancellationTokenSource? scopedIntent = null;
-        if (expectedIdentity.HasValue)
+        if (supersedesPreparation)
         {
             scopedIntent = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cancellationToken = scopedIntent.Token;
@@ -1887,7 +1947,7 @@ public partial class PlayerService : IDisposable
         }
         try
         {
-            if (!expectedIdentity.HasValue)
+            if (!supersedesPreparation)
             {
                 _ = FlushSubtitleOffsetAsync();
                 // Ordinary starts queue behind accepted still actions; only a
@@ -1908,9 +1968,8 @@ public partial class PlayerService : IDisposable
                 // Close retires queued still actions even after _closing resets.
                 // Check before canceling playback or preparing the replacement;
                 // an intentional authority-switch close below is not a queued wait.
-                if (expectedIdentity.HasValue &&
-                    (closeGeneration != Volatile.Read(ref _closeGeneration) || !IsCurrentOwner())) return;
-                if (expectedIdentity.HasValue)
+                if (expectedOwner.HasValue && (!IsCurrentOwner() || (supersedesPreparation && closeGeneration != Volatile.Read(ref _closeGeneration)))) return;
+                if (supersedesPreparation)
                 {
                     _ = FlushSubtitleOffsetAsync();
                     CancelPendingPlayRequest();
@@ -1918,14 +1977,13 @@ public partial class PlayerService : IDisposable
                 if (_closing)
                     await CloseAsync();
                 cancellationToken.ThrowIfCancellationRequested();
-                if (expectedIdentity.HasValue &&
-                    (closeGeneration != Volatile.Read(ref _closeGeneration) || !IsCurrentOwner())) return;
+                if (expectedOwner.HasValue && (!IsCurrentOwner() || (supersedesPreparation && closeGeneration != Volatile.Read(ref _closeGeneration)))) return;
                 if (!ReferenceEquals(_activeAuthority, nextAuthority))
                 {
                     await CloseAsync();
                     try { await PendingProgressSave; } catch { /* The outgoing manager reports final-write failures. */ }
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (expectedIdentity.HasValue && !IsCurrentOwner()) return;
+                    if (expectedOwner.HasValue && !IsCurrentOwner()) return;
                     _activeAuthority = nextAuthority;
                     _shuffleController = null;
                     _watchDetailPrefetches.Clear();
@@ -1941,7 +1999,7 @@ public partial class PlayerService : IDisposable
                 }
                 await PlayRequestAsync(contentId, fromStart, fileId, audioTrackIndex,
                     subtitleSelection, startPositionOverride, HasRemoteAuthority ? null : prefetchedWatchDetail,
-                    subtitleTrackSignature, libraryId, shuffleId, cancellationToken, sourceVersionPinned, expectedIdentity);
+                    subtitleTrackSignature, libraryId, shuffleId, cancellationToken, sourceVersionPinned, expectedOwner);
             }
             finally { _authoritySwitchGate.Release(); }
         }
@@ -1995,15 +2053,15 @@ public partial class PlayerService : IDisposable
         SetConnectionMediaActive(false);
     }
 
-    private bool IsCurrentViewerPlayOwner(PlaybackAuthorityScope authority, ApiIdentityContext owner) =>
-        authority.ApiClient.IsCurrentIdentityContext(owner) &&
-        App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom == null;
+    private bool IsCurrentViewerPlayOwner(PlaybackAuthorityScope authority, ViewerPlayOwner owner) =>
+        authority.ApiClient.IsCurrentIdentityContext(owner.Identity) &&
+        (!owner.SupersedesPreparation || App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom == null);
 
     private async Task PlayRequestAsync(string contentId, bool fromStart, int? fileId,
         int? audioTrackIndex, int? subtitleSelection, double? startPositionOverride,
         WatchDetailResponse? prefetchedWatchDetail, SubtitleTrackSignature? subtitleTrackSignature,
         int? libraryId, string? shuffleId, CancellationToken cancellationToken, bool? sourceVersionPinned,
-        ApiIdentityContext? expectedIdentity)
+        ViewerPlayOwner? expectedOwner)
     {
         if (_closing)
             return;
@@ -2022,7 +2080,7 @@ public partial class PlayerService : IDisposable
         {
             await _playRequestGate.WaitAsync(ownerCts.Token);
             gateEntered = true;
-            if (expectedIdentity is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner)) return;
+            if (expectedOwner is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner)) return;
             ResetStartupTelemetry();
             SetConnectionMediaActive(true);
             ownerCts.Token.ThrowIfCancellationRequested();
@@ -2041,10 +2099,10 @@ public partial class PlayerService : IDisposable
                 libraryId,
                 shuffleId,
                 ownerCts.Token,
-                sourceVersionPinned, expectedIdentity);
+                sourceVersionPinned, expectedOwner);
         }
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested ||
-            expectedIdentity is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner))
+            expectedOwner is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner))
         {
             LogToFile("state_trace.txt", $"Play request superseded: contentId={contentId}");
         }
@@ -2081,17 +2139,14 @@ public partial class PlayerService : IDisposable
         string? shuffleId,
         CancellationToken requestToken,
         bool? sourceVersionPinned,
-        ApiIdentityContext? expectedIdentity = null)
+        ViewerPlayOwner? expectedOwner = null)
     {
         var authority = _activeAuthority;
-        var identity = expectedIdentity ?? authority.ApiClient.CaptureIdentityContext();
         var requestGeneration = Volatile.Read(ref _playRequestGeneration);
         var scopedIntent = Volatile.Read(ref _scopedViewerPlayCts);
         // Access revisions retire reads, not the accepted account/profile's
         // playback intent. Each preparation attempt captures a fresh read context.
-        bool IsCurrentOwner() => !expectedIdentity.HasValue ||
-            authority.ApiClient.IsCurrentIdentityContext(identity) &&
-            App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom == null;
+        bool IsCurrentOwner() => expectedOwner is not { } owner || IsCurrentViewerPlayOwner(authority, owner);
         void EnsureCurrentOwner()
         {
             requestToken.ThrowIfCancellationRequested();
@@ -2102,7 +2157,7 @@ public partial class PlayerService : IDisposable
             for (var attempt = 0; ; attempt++)
             {
                 EnsureCurrentOwner();
-                ApiRequestContext? context = expectedIdentity.HasValue ? authority.ApiClient.CaptureContext() : null;
+                ApiRequestContext? context = expectedOwner.HasValue ? authority.ApiClient.CaptureContext() : null;
                 EnsureCurrentOwner();
                 try
                 {
@@ -2168,7 +2223,8 @@ public partial class PlayerService : IDisposable
         // The stop endpoint releases the live session before that slower work;
         // if an account has a one-stream limit, the guarded retry below waits
         // for retirement only when the server actually reports that limit.
-        Task retiringSessionTask = Task.CompletedTask;
+        Task<bool> retiringSessionTask = Task.FromResult(false);
+        var retiringTranscode = _playbackManager?.CurrentSession?.PlayMethod == "transcode";
         if (_playbackManager != null)
         {
             lock (_bufferingGate) FlushBufferingSummaryCore();
@@ -2177,7 +2233,7 @@ public partial class PlayerService : IDisposable
             var retiringContentId = ContentId;
             var retiringDuration = CurrentMediaDuration;
             _mpv?.Stop();
-            retiringSessionTask = retiringManager.StopSessionAsync(
+            retiringSessionTask = retiringManager.TryRetireSessionAsync(
                 finalPosition > 0 ? ToSessionPosition(finalPosition) : null,
                 isPaused: true);
             // Switching straight to another item (next/previous episode, a new
@@ -2267,7 +2323,7 @@ public partial class PlayerService : IDisposable
             WatchDetailResponse watchDetail;
             // A page can hold its /watch snapshot across a Reset Progress or
             // watched toggle; only trust it when no mutation happened since.
-            if (expectedIdentity.HasValue)
+            if (expectedOwner.HasValue)
             {
                 EnsureMpvInitialized();
                 watchDetail = await PrepareReadAsync(context => GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: true,
@@ -2366,16 +2422,19 @@ public partial class PlayerService : IDisposable
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
                     preferences: qualityPreferences,
-                    expectedIdentityContext: expectedIdentity);
+                    expectedIdentityContext: expectedOwner?.Identity);
             }
-            catch (ApiException ex) when (
-                ex.StatusCode == 429 &&
-                ex.ErrorCode == "too_many_streams" &&
-                !retiringSessionTask.IsCompleted)
+            catch (Exception ex) when (
+                ((ex is ApiException api && api.StatusCode == 429 &&
+                    PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)) ||
+                 (ex is PlaybackPlanTerminalException terminal && terminal.Retryable &&
+                    PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason, includeTranscode: retiringTranscode))))
             {
-                LogToFile("state_trace.txt", "Next playback session reached a one-stream limit; waiting for the retiring session and retrying once.");
-                await retiringSessionTask.WaitAsync(requestToken);
+                var retired = await retiringSessionTask.WaitAsync(requestToken);
                 EnsureCurrentOwner();
+                if (!retired)
+                    throw;
+                LogToFile("state_trace.txt", "Next playback session reached an account limit; server confirmed retirement, retrying once.");
                 session = await _playbackManager.StartSessionAsync(
                     candidateVersion.FileId,
                     startPosition,
@@ -2385,7 +2444,7 @@ public partial class PlayerService : IDisposable
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
                     preferences: qualityPreferences,
-                    expectedIdentityContext: expectedIdentity);
+                    expectedIdentityContext: expectedOwner?.Identity);
             }
             EnsureCurrentOwner();
             var bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
@@ -2535,10 +2594,6 @@ public partial class PlayerService : IDisposable
             var transportDescription = PlaybackFailureDescription.DescribeTransport(api);
             if (transportDescription != null)
                 return (transportDescription.Title, transportDescription.Message);
-            if (api.StatusCode == 429 && api.ErrorCode == "too_many_streams")
-                return ("Stream limit reached", "This account has reached its active stream limit. Stop another stream and try again.");
-            if (api.StatusCode == 429 && api.ErrorCode == "too_many_transcodes")
-                return ("Transcode limit reached", "This account has reached its active transcode limit. Try direct play or stop another transcode.");
             return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
         }
         if (ex is UserStateChangedException)
@@ -2563,7 +2618,7 @@ public partial class PlayerService : IDisposable
         var dispatcher = App.MainWindowInstance?.DispatcherQueue;
         Action handle = () =>
         {
-            if (_closing || State == PlayerState.Idle || _playbackManager?.CurrentSession == null)
+            if (_closing || State == PlayerState.Idle || _playbackTerminalState != null || _playbackManager?.CurrentSession == null)
                 return;
 
             ErrorMessage = message;
@@ -2910,6 +2965,8 @@ public partial class PlayerService : IDisposable
                 _switchingContent ||
                 _qualitySwitchActive ||
                 _prematureEofRecoveryActive ||
+                _playbackTerminalState != null ||
+                manager?.SessionRetirementPending == true ||
                 manager?.CurrentSession == null;
 
             if (mpv == null)
@@ -2958,11 +3015,12 @@ public partial class PlayerService : IDisposable
         finally { Volatile.Write(ref _stallWatchdogChecking, 0); }
     }
 
-    private Task RecoverInterruptedStreamAsync(double currentPosition, string reason)
-        => RunStreamRecoveryAsync(currentPosition, reason, null, null, default);
+    private Task RecoverInterruptedStreamAsync(double currentPosition, string reason, PlaybackStartResponse? restartSession = null)
+        => RunStreamRecoveryAsync(currentPosition, reason, null, null, default, restartSession);
 
     private async Task RunStreamRecoveryAsync(double currentPosition, string reason,
-        PlaybackManager? queuedOwner, bool? pauseIntent, CancellationToken ownerToken)
+        PlaybackManager? queuedOwner, bool? pauseIntent, CancellationToken ownerToken,
+        PlaybackStartResponse? restartSession = null)
     {
         // Keep recovery decisions in the same bounded timeline as the reader and
         // decoder. Only fixed classifications belong here, never error messages.
@@ -2975,10 +3033,15 @@ public partial class PlayerService : IDisposable
         };
         _mpv?.Diagnostics?.Record("recovery_requested", new { reason = diagnosticReason, position = currentPosition });
         _mpv?.Diagnostics?.Incident(diagnosticReason);
-        if (queuedOwner != null)
+        var retryOwner = restartSession != null ? _playbackManager : null;
+        var retryTerminal = restartSession != null ? _playbackTerminalState : null;
+        var waitToken = restartSession != null ? _playbackCts?.Token ?? CancellationToken.None : ownerToken;
+        if (queuedOwner != null || restartSession != null)
         {
-            try { await _streamRecoveryGate.WaitAsync(ownerToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (ownerToken.IsCancellationRequested) { return; }
+            // A viewer retry must not disappear if the previous recovery is
+            // still unwinding after publishing its terminal state.
+            try { await _streamRecoveryGate.WaitAsync(waitToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (waitToken.IsCancellationRequested) { return; }
         }
         else if (!await _streamRecoveryGate.WaitAsync(0).ConfigureAwait(false))
         {
@@ -2988,6 +3051,9 @@ public partial class PlayerService : IDisposable
 
         try
         {
+            if (restartSession != null && (_closing || waitToken.IsCancellationRequested || State == PlayerState.Idle ||
+                !ReferenceEquals(retryOwner, _playbackManager) ||
+                !ReferenceEquals(retryTerminal, _playbackTerminalState))) return;
             if (queuedOwner != null)
             {
                 if (_closing || ownerToken.IsCancellationRequested || State == PlayerState.Idle ||
@@ -2996,7 +3062,7 @@ public partial class PlayerService : IDisposable
                 _recoveryPauseIntentOverride = pauseIntent;
                 currentPosition = CurrentMediaPosition;
             }
-            await RecoverInterruptedStreamCoreAsync(currentPosition, reason).ConfigureAwait(false);
+            await RecoverInterruptedStreamCoreAsync(currentPosition, reason, restartSession).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ownerToken.IsCancellationRequested || _closing || _playbackCts?.IsCancellationRequested == true)
         {
@@ -3009,7 +3075,8 @@ public partial class PlayerService : IDisposable
                 ex,
                 Math.Max(0, currentPosition),
                 reason,
-                CaptureUserPausedState());
+                CaptureUserPausedState(),
+                restartSession);
         }
         finally
         {
@@ -3017,18 +3084,18 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    private async Task RecoverInterruptedStreamCoreAsync(double currentPosition, string reason)
+    private async Task RecoverInterruptedStreamCoreAsync(double currentPosition, string reason, PlaybackStartResponse? restartSession)
     {
         await CancelAndDrainTransportRestartsAsync();
         var manager = _playbackManager;
-        var session = manager?.CurrentSession;
+        var session = manager?.CurrentSession ?? restartSession;
         if (_mpv == null || manager == null || session == null)
-        {
-            LogToFile("state_trace.txt", $"Stream recovery skipped ({reason}): player/session unavailable");
-            return;
-        }
+            throw new PlaybackPlanTerminalException("session_expired",
+                "The playback session is no longer available. Exit the player and start this item again.", retryable: false);
 
-        var fileId = _requestedMediaFileId ?? session.MediaFileId;
+        var fileId = manager.CurrentSession == null || manager.SessionRetirementPending
+            ? session.MediaFileId
+            : _requestedMediaFileId ?? session.MediaFileId;
         int? audioTrackIndex = session.AudioTrackIndex >= 0 ? session.AudioTrackIndex : null;
         var previousPlan = _activeTransportPlan;
         // A keepalive failure can happen while the user has intentionally
@@ -3048,13 +3115,16 @@ public partial class PlayerService : IDisposable
         _prematureEofRecoveryPosition = resumePosition;
         _switchingContent = true;
         IsLoading = true;
+        if (restartSession != null)
+            ClearPlaybackTerminalState();
 
         if (loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
 
         try
         {
-            if (session.ProtocolVersion >= 3 &&
+            if (manager.CurrentSession != null && !manager.SessionRetirementPending &&
+                session.ProtocolVersion >= 3 &&
                 !string.Equals(reason, "progress-reporting-failed", StringComparison.Ordinal) &&
                 !string.Equals(reason, "viewer-retry", StringComparison.Ordinal))
             {
@@ -3096,7 +3166,8 @@ public partial class PlayerService : IDisposable
                 return;
             }
 
-            if (previousPlan != null &&
+            if (manager.CurrentSession != null && !manager.SessionRetirementPending &&
+                previousPlan != null &&
                 PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(
                     previousPlan.TransportKind,
                     reason))
@@ -3144,6 +3215,7 @@ public partial class PlayerService : IDisposable
                 forceDirectAudioSelection:
                     previousPlan?.TransportKind == PlaybackTransportKind.DirectProgressive,
                 previousFinalPosition: resumePosition,
+                qualityPreference: manager.QualityPreference,
                 ct: ct);
             InvokeSubscribersSafely(SessionStarted, newSession.SessionId, nameof(SessionStarted));
             PlayMethod = newSession.PlayMethod;
@@ -3178,7 +3250,7 @@ public partial class PlayerService : IDisposable
         {
             CancelPendingFileLoadTimeout();
             LogToFile("player_recovery_error.txt", ex.ToString());
-            EnterPlaybackTerminalState(ex, resumePosition, reason, restorePaused);
+            EnterPlaybackTerminalState(ex, resumePosition, reason, restorePaused, manager.CurrentSession ?? session);
         }
     }
 
@@ -3186,7 +3258,8 @@ public partial class PlayerService : IDisposable
         Exception error,
         double position,
         string trigger,
-        bool wasPaused)
+        bool wasPaused,
+        PlaybackStartResponse? restartSession = null)
     {
         var loadingOwner = _playbackCts;
         if (_idleRemuxResume.IsReopening) wasPaused = _idleRemuxResume.DesiredPaused;
@@ -3210,6 +3283,9 @@ public partial class PlayerService : IDisposable
                         ? "Playback could not continue. Try reconnecting or exit the player."
                         : error.Message,
                     CanRetry: true);
+        var retainedSession = _playbackManager?.CurrentSession ?? restartSession;
+        if (retainedSession == null || _playbackManager == null || _mpv == null)
+            description = description with { CanRetry = false };
         ErrorMessage = description.Message;
         // Before first output mpv has no usable video/ASS surface. Sending an
         // OSC error to that surface leaves a blank native popup over the shell.
@@ -3223,7 +3299,8 @@ public partial class PlayerService : IDisposable
             Math.Max(0, position),
             terminal?.Reason == "direct_recovery_exhausted" ? "viewer-retry" : trigger,
             wasPaused,
-            description.CanRetry);
+            description.CanRetry,
+            retainedSession);
         SetConnectionMediaActive(false);
 
         _mpv?.Pause();
@@ -3286,7 +3363,6 @@ public partial class PlayerService : IDisposable
         if (terminal == null || !terminal.CanRetry || _closing || State == PlayerState.Idle)
             return;
 
-        ClearPlaybackTerminalState();
         _recoveryPauseIntentOverride = terminal.WasPaused;
         ShowNotice(
             "Reconnecting playback",
@@ -3295,7 +3371,7 @@ public partial class PlayerService : IDisposable
         LogToFile(
             "state_trace.txt",
             $"Viewer requested playback retry after trigger={terminal.Trigger}");
-        await RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger)
+        await RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger, terminal.RestartSession)
             .ConfigureAwait(false);
     }
 
@@ -4165,9 +4241,9 @@ public partial class PlayerService : IDisposable
     private void HandleMpvEndSignal(string trigger)
     {
         LogToFile("state_trace.txt", $"{trigger} fired: _switchingContent={_switchingContent} _qualitySwitchActive={_qualitySwitchActive} _prematureEofRecoveryActive={_prematureEofRecoveryActive} _closing={_closing} nextEpisode={NextEpisodeContentId ?? "none"} State={State} thread={Environment.CurrentManagedThreadId}");
-        if (_switchingContent || _qualitySwitchActive || _prematureEofRecoveryActive)
+        if (_switchingContent || _qualitySwitchActive || _prematureEofRecoveryActive || _playbackTerminalState != null)
         {
-            LogToFile("state_trace.txt", $"  -> Suppressed {trigger} (switching content)");
+            LogToFile("state_trace.txt", $"  -> Suppressed {trigger} (switching content or terminal failure)");
             return;
         }
 
@@ -4597,7 +4673,7 @@ public partial class PlayerService : IDisposable
             $"PlaybackError: {message} _switchingContent={_switchingContent} " +
             $"_prematureEofRecoveryActive={_prematureEofRecoveryActive}");
 
-        if (_closing || State == PlayerState.Idle)
+        if (_closing || State == PlayerState.Idle || _playbackTerminalState != null)
             return;
 
         var mediaPosition = PlaybackRecoveryPosition;
@@ -4670,6 +4746,7 @@ public partial class PlayerService : IDisposable
         var ct = _playbackCts?.Token ?? CancellationToken.None;
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
+        var previousSession = manager.CurrentSession;
         var replacementAccepted = false;
         _switchingContent = true;
         // Don't call _mpv.Stop() — let current stream keep playing while we set up the new one
@@ -4715,7 +4792,14 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("player_quality_switch_error.txt", ex.ToString());
             ErrorMessage = $"Failed to switch quality: {ex.Message}";
-            if (replacementAccepted && !_closing && ReferenceEquals(_playbackManager, manager))
+            if (!_closing && ReferenceEquals(_playbackManager, manager) &&
+                (manager.CurrentSession == null || manager.SessionRetirementPending))
+            {
+                // Retirement is the point of no return: the old transport may
+                // no longer run, even when the replacement was never accepted.
+                EnterPlaybackTerminalState(ex, currentPos, "version-switch-failed", wasPaused, previousSession);
+            }
+            else if (replacementAccepted && !_closing && ReferenceEquals(_playbackManager, manager))
             {
                 _prematureEofRecoveryActive = true;
                 _switchingContent = true;
