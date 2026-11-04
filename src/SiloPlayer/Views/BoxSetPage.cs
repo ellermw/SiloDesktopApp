@@ -35,7 +35,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         _catalog = catalog; _client = client; ViewModel = new(catalog);
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition());
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var back = new Button { Name = "BoxSetBack", Content = new FontIcon { Glyph = "\uE72B" }, Width = 40, Height = 40, Margin = new Thickness(24, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(back, "Go back");
         ToolTipService.SetToolTip(back, "Go back");
@@ -45,7 +45,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             if (navigation.CanGoBack) navigation.GoBack(); else navigation.Navigate<HomePage>();
         };
         root.Children.Add(back);
-        var scroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var scroll = new ScrollViewer { Content = Body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 1); root.Children.Add(scroll); Content = root;
         ViewModel.PropertyChanged += (_, _) => Render();
         Loaded += (_, _) =>
@@ -127,8 +127,10 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         }
         if (ViewModel.Detail == null && ViewModel.Failure != DetailFailureKind.None)
         {
-            Body.Children.Add(new TextBlock { Text = ViewModel.Failure == DetailFailureKind.NotFound ? "Box set unavailable" : "Could not load box set", FontSize = 24, TextWrapping = TextWrapping.Wrap });
-            if (ViewModel.Failure != DetailFailureKind.NotFound) { var retry = new Button { Content = "Try again" }; retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
+            var unavailable = ViewModel.Failure is DetailFailureKind.NotFound or DetailFailureKind.AccessDenied;
+            Body.Children.Add(new TextBlock { Text = unavailable ? "Box set unavailable" : "Could not load box set", FontSize = 24, TextWrapping = TextWrapping.Wrap });
+            if (ViewModel.Failure == DetailFailureKind.AccessDenied) Body.Children.Add(new TextBlock { Text = DetailFailurePolicy.Message(ViewModel.Failure), TextWrapping = TextWrapping.Wrap });
+            if (ViewModel.Failure == DetailFailureKind.Transient) { var retry = new Button { Content = "Try again" }; retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
         }
         if (ViewModel.Detail is not {} set) return;
         var hero = new Grid { MinHeight = 220 };

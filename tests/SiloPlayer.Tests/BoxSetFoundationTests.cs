@@ -41,7 +41,7 @@ public sealed class BoxSetFoundationTests
         using var wire = new Wire { Status = (HttpStatusCode)status }; using var http = new HttpClient(wire);
         Assert.False(await new CatalogApi(Client(http)).SupportsBoxSetsAsync());
     }
-    [Theory] [InlineData(404, DetailFailureKind.NotFound)] [InlineData(503, DetailFailureKind.Transient)]
+    [Theory] [InlineData(403, DetailFailureKind.AccessDenied)] [InlineData(404, DetailFailureKind.NotFound)] [InlineData(503, DetailFailureKind.Transient)]
     public async Task DedicatedReaderPreservesFailureKind(int status, DetailFailureKind expected)
     {
         using var wire = new Wire { Status = (HttpStatusCode)status }; using var http = new HttpClient(wire);
