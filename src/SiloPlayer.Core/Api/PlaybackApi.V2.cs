@@ -24,15 +24,23 @@ public partial class PlaybackApi
         public Dictionary<string, object?>? StopBody;
     }
 
-    private async Task<PlaybackDecisionResponseV3> StartV2Async(PlaybackStartRequestV3 request, CancellationToken ct)
+    private async Task<PlaybackDecisionResponseV3> StartV2Async(PlaybackStartRequestV3 request, CancellationToken ct,
+        ApiIdentityContext? expectedIdentityContext)
     {
-        var authority = client.CaptureIdentityContext();
+        var authority = expectedIdentityContext ?? client.CaptureIdentityContext();
+        if (!client.IsCurrentIdentityContext(authority))
+            throw new OperationCanceledException("Playback start owner changed.", ct);
+        // Validate the accepted identity at entry, then bind delivery and retries
+        // atomically to this identity. An access/cache refresh is not an account
+        // or profile departure and must not abandon an accepted start.
+        Task<T> SendOwnedAsync<T>(HttpMethod method, string path, object? body, CancellationToken token) =>
+            client.SendIdentityBoundRequestAsync<T>(authority, method, path, body, token);
         foreach (var entry in _sessions)
             if (entry.Value.Context != authority) _sessions.TryRemove(entry.Key, out _);
         for (var attempt = 0; ; attempt++)
         {
             var capability = attempt == 0 && request.CapabilitySnapshot is { } snapshot && snapshot.Owner == authority
-                ? snapshot.Capability : await GetPlaybackCapabilityAsync(ct).ConfigureAwait(false);
+                ? snapshot.Capability : await SendOwnedAsync<PlaybackCapabilityV3>(HttpMethod.Get, "/api/v2/playback/capabilities", null, ct).ConfigureAwait(false);
             EnsureAuthority(authority);
             if (!capability.Allowed || capability.State != "available" ||
                 !capability.ProtocolVersions.Contains(3) || string.IsNullOrEmpty(capability.InstallationId))
@@ -47,7 +55,7 @@ public partial class PlaybackApi
             try
             {
                 var decision = await RetryDeliveryAsync(
-                    token => client.SendIdentityBoundRequestAsync<PlaybackDecisionResponseV3>(authority, HttpMethod.Post, "/api/v2/playback/start", body, token),
+                    token => SendOwnedAsync<PlaybackDecisionResponseV3>(HttpMethod.Post, "/api/v2/playback/start", body, token),
                     authority, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(45), ct).ConfigureAwait(false);
                 EnsureAuthority(authority);
                 var session = decision.PlaybackPlan?.SessionId ?? decision.SessionId;
@@ -249,7 +257,8 @@ public partial class PlaybackApi
             request.CancelAfter(perRequest);
             try { return await deliver(request.Token).ConfigureAwait(false); }
             catch (Exception ex) when (attempt < 2 && !deadline.IsCancellationRequested &&
-                ex is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException)
+                (ex is HttpRequestException or IOException or System.Text.Json.JsonException ||
+                    ex is OperationCanceledException && (request.IsCancellationRequested || ex.InnerException is TimeoutException)))
             {
                 EnsureAuthority(authority);
                 await Task.Delay(TimeSpan.FromMilliseconds(300 * (attempt + 1)), deadline.Token).ConfigureAwait(false);

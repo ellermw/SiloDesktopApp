@@ -55,10 +55,18 @@ public partial class ItemDetailViewModel : ObservableObject,
     // Companion loads retry coalesced remote changes without retiring local write feedback.
     public long RemoteStateRevision => Volatile.Read(ref _remoteStateGeneration);
     public int? LibraryId { get; private set; }
-    public Task LoadInLibraryAsync(string contentId, int? libraryId)
+    public async Task LoadInLibraryAsync(string contentId, int? libraryId, Task? pendingProgressSave = null)
     {
+        // A new page can miss the close message while the final write is still pending.
+        var refreshAfterSave = pendingProgressSave is { IsCompleted: false };
+        var owner = _catalogApi.CaptureIdentityContext();
         LibraryId = libraryId;
-        return LoadAsync(contentId);
+        var loading = LoadAsync(contentId);
+        var lifetime = _boxSetLifetime;
+        await loading;
+        if (refreshAfterSave && !_boxSetRetired && _boxSetLifetime == lifetime
+            && Item?.ContentId == contentId && LibraryId == libraryId && _catalogApi.IsCurrentIdentityContext(owner))
+            _ = RefreshBoxSetAfterProgressSaveAsync(pendingProgressSave!);
     }
     private Task<MediaItemDetail> ReadDetailAsync(string contentId, CancellationToken ct) => LibraryId.HasValue
         ? _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct) : _detailPrefetchCache.GetAsync(contentId, ct);
@@ -126,10 +134,13 @@ public partial class ItemDetailViewModel : ObservableObject,
                     ++_initialStateRevision;
                 }
             }
-            return;
+            // Retained box-set membership also needs watched changes while
+            // the detail snapshot is temporarily null during a reload.
         }
+        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
         {
+            if (IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
             ApplyWatchedChange(message);
             return;
         }
@@ -735,6 +746,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        if (Item is { Type: "movie" } movie && (movie.ContentId == message.ContentId || _boxSetMembership?.Items.Any(x => x.ContentId == message.ContentId) == true)) _ = RefreshBoxSetAfterProgressSaveAsync(message.Persisted);
         _detailPrefetchCache.Invalidate(message.ContentId);
         // Retain scope until the initial snapshot supplies its series ID. An
         // unrelated save must not hold this page's loading state or retry.
@@ -952,6 +964,12 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void CancelPendingLoads()
     {
+        RetireBoxSet();
+        CancelDetailLoad();
+    }
+
+    private void CancelDetailLoad()
+    {
         _localProgressRefresh.Reset();
         _metadataLoadCts?.Cancel();
         _metadataLoadCts = null;
@@ -980,8 +998,13 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task LoadAsync(string contentId)
     {
-        CancelPendingLoads();
+        // Translation polling reloads the same movie; it does not retire its
+        // visible membership row or detach focused controls below that row.
+        if (!CanPreserveBoxSet(contentId)) RetireBoxSet();
+        else CancelBoxSetRead();
+        CancelDetailLoad();
         _stateRefreshActive = true;
+        _boxSetRetired = false;
         var loadCts = new CancellationTokenSource();
         _loadCts = loadCts;
         var ct = loadCts.Token;
@@ -1097,6 +1120,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                     .Append(_pendingLocalProgressSave));
                 _initialProgressSaves.Clear();
             }
+            _ = RefreshBoxSetAsync();
 
             // Server commit 4172a16 inlines favorite/watchlist/rating on the item
             // detail response via `user_state` + `user_rating`. Prefer those over

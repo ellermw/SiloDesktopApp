@@ -74,6 +74,11 @@ public static class HomeSectionReconciler
             || current.IsCustom != incoming.IsCustom
             || current.Customized != incoming.Customized
             || current.LoadFailed != incoming.LoadFailed
+            || current.HasMore != incoming.HasMore
+            || current.HasReadWhole != incoming.HasReadWhole
+            || current.ShownCount != incoming.ShownCount
+            || current.CompletedOrder != incoming.CompletedOrder
+            || current.ReadLanguageGeneration != incoming.ReadLanguageGeneration
             || current.LoadCompleted != incoming.LoadCompleted;
 
         current.Id = incoming.Id;
@@ -86,6 +91,11 @@ public static class HomeSectionReconciler
         current.Customized = incoming.Customized;
         current.LoadFailed = incoming.LoadFailed;
         current.LoadCompleted = incoming.LoadCompleted;
+        current.HasMore = incoming.HasMore;
+        current.HasReadWhole = incoming.HasReadWhole;
+        current.ShownCount = incoming.ShownCount;
+        current.CompletedOrder = incoming.CompletedOrder;
+        current.ReadLanguageGeneration = incoming.ReadLanguageGeneration;
         return changed;
     }
 

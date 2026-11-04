@@ -14,6 +14,14 @@ public class HomeSectionWithItems
     public bool Featured { get; set; }
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }
+    public bool HasMore { get; set; }
+    // An uncapped read exhausts carousel completion, even when has_more
+    // reports catalog matches beyond the recipe budget (reachable via Explore all).
+    [JsonIgnore] public bool HasReadWhole { get; set; }
+    [JsonIgnore] public bool CanComplete => HasMore && !HasReadWhole;
+    [JsonIgnore] public int? ShownCount { get; set; }
+    [JsonIgnore] public long CompletedOrder { get; set; }
+    [JsonIgnore] public long? ReadLanguageGeneration { get; set; }
     public bool IsCustom { get; set; }
     public bool Customized { get; set; }
     [JsonIgnore]
@@ -32,6 +40,7 @@ public class HomeSectionWithItems
 }
 public class MediaItem
 {
+    public SiloPlayer.Core.Models.Catalog.BoxSetSummary? BoxSet { get; set; }
     public int? AdvisoryAge { get; set; }
     public event EventHandler? ArtworkUrlsChanged;
 

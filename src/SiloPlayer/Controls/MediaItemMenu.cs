@@ -38,6 +38,7 @@ public static class MediaItemMenu
         FrameworkElement? owner = null)
     {
         var flyout = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
+        if (item.Type == "box_set") return flyout;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         var authService = App.Services.GetRequiredService<AuthService>();
@@ -57,15 +58,21 @@ public static class MediaItemMenu
         // manga details, permission-gated maintenance, then surface-specific dismissal.
         if (isLeaf)
         {
+            var restartLibrary = owner != null ? MediaNavigationContext.LibraryId(owner) : null;
+            var restartIdentity = client.CaptureIdentityContext();
+            bool OwnsRestart() => client.IsCurrentIdentityContext(restartIdentity)
+                && (owner == null || (owner.IsLoaded && MediaNavigationContext.LibraryId(owner) == restartLibrary
+                    && (owner is not IMediaItemOwner itemOwner || ReferenceEquals(itemOwner.MediaItem, item))));
             var restart = BuildItem(
                 item.Type == "audiobook" ? "Listen from Beginning" : "Play from Beginning",
                 "\uE768",
                 async () =>
                 {
+                    if (!OwnsRestart()) return;
                     try
                     {
                         await App.Services.GetRequiredService<PlayerService>()
-                            .PlayAsync(item.ContentId, fromStart: true);
+                            .RestartAsync(item.ContentId, restartLibrary, restartIdentity);
                     }
                     catch (Exception ex) { toast.Error(ex); }
                 });
@@ -302,7 +309,8 @@ public static class MediaItemMenu
                     WeakReferenceMessenger.Default.Send(new HomeDismissalApplied(surfaceKey, item, context));
                     stage = "surface_update";
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                        MediaSurfaceChangeKind.HomeDismissed, item.ContentId, item.SeriesId));
+                        MediaSurfaceChangeKind.HomeDismissed, item.ContentId,
+                        item.SeriesId ?? (item.Type == "series" ? item.ContentId : null), context: context));
                     stage = "success_toast";
                     toast.Success(dropsShow ? "Removed from Continue Watching and Next Up" : label);
                     LocalLog.AppendLine("home_actions.txt",

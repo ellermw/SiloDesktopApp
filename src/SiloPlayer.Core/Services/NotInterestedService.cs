@@ -61,7 +61,7 @@ public static class NotInterestedPolicy
     {
         if (!HidingTypes.Contains(section.SectionType)) return;
         for (var index = section.Items.Count - 1; index >= 0; index--)
-            if (section.Items[index].UserState?.NotInterested == true) section.Items.RemoveAt(index);
+            if (section.Items[index].UserState?.NotInterested == true) HomeRowWindow.RemoveAt(section, index);
     }
 
     private static readonly HashSet<string> HidingTypes = new(StringComparer.Ordinal)
@@ -82,7 +82,7 @@ public static class NotInterestedPolicy
                 var item = section.Items[index];
                 if (item.ContentId != itemId) continue;
                 (item.UserState ??= new()).NotInterested = marked;
-                if (marked && HidingTypes.Contains(section.SectionType)) { section.Items.RemoveAt(index); changed = true; }
+                if (marked && HidingTypes.Contains(section.SectionType)) { HomeRowWindow.RemoveAt(section, index); changed = true; }
             }
         }
         return changed;

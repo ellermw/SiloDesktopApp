@@ -1271,11 +1271,15 @@
                                         Style="{StaticResource SecondaryButtonStyle}" Padding="12,6" />
                             </StackPanel>
                         </Border>
-                        <ScrollViewer
+                        <ScrollView
                             x:Name="SiblingEpisodesScrollViewer"
                             IsTabStop="True"
-                            KeyDown="HorizontalCarousel_KeyDown"
+                            KeyDown="SiblingEpisodesScrollViewer_KeyDown"
                             ViewChanged="SiblingEpisodesScrollViewer_ViewChanged"
+                            ScrollCompleted="SiblingEpisodesScrollViewer_ScrollCompleted"
+                            StateChanged="SiblingEpisodesScrollViewer_StateChanged"
+                            ExtentChanged="SiblingEpisodesScrollViewer_ExtentChanged"
+                            PointerWheelChanged="SiblingEpisodesScrollViewer_PointerWheelChanged"
                             SizeChanged="SiblingEpisodesScrollViewer_SizeChanged"
                             PointerPressed="SiblingEpisodesScrollViewer_PointerPressed"
                             PointerMoved="SiblingEpisodesScrollViewer_PointerMoved"
@@ -1283,14 +1287,24 @@
                             PointerCanceled="SiblingEpisodesScrollViewer_PointerCanceled"
                             PointerCaptureLost="SiblingEpisodesScrollViewer_PointerCaptureLost"
                             HorizontalScrollBarVisibility="Hidden"
-                            VerticalScrollBarVisibility="Disabled"
-                            HorizontalScrollMode="Disabled"
-                            VerticalScrollMode="Disabled">
+                            VerticalScrollBarVisibility="Hidden"
+                            HorizontalScrollMode="Enabled"
+                            VerticalScrollMode="Disabled"
+                            ContentOrientation="Horizontal"
+                            ZoomMode="Disabled"
+                            IgnoredInputKinds="MouseWheel,Keyboard">
                             <StackPanel
                                 x:Name="SiblingEpisodesPanel"
                                 Orientation="Horizontal"
                                 Spacing="12"
                                 Margin="16,0,0,0" />
+                        </ScrollView>
+                    </StackPanel>
+
+                    <StackPanel x:Name="BoxSetSection" Visibility="Collapsed" Spacing="12">
+                        <Grid><TextBlock x:Name="BoxSetTitle" FontSize="20" TextWrapping="Wrap" Margin="0,0,100,0"/><Button Content="View all" HorizontalAlignment="Right" Click="BoxSetViewAll_Click"/></Grid>
+                        <ScrollViewer x:Name="BoxSetScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="BoxSetMovies" Orientation="Horizontal" Spacing="16"/>
                         </ScrollViewer>
                     </StackPanel>
 

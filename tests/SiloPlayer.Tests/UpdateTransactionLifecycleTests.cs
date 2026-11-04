@@ -523,13 +523,15 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
             { UseShellExecute = false, CreateNoWindow = true, ArgumentList = { "-n", "60", "127.0.0.1" }, RedirectStandardOutput = true })!;
             try
             {
-                // Match the production readiness boundary: the process has
-                // actually loaded its image before it can send ready identity.
+                // A non-null MainModule can still be a loader module during
+                // startup. Wait for the exact image used by the identity checks;
+                // Refresh clears any module cached before loading completed.
                 Assert.True(SpinWait.SpinUntil(() =>
                 {
                     process.Refresh();
-                    return !process.HasExited && process.MainModule is not null;
-                }, TimeSpan.FromSeconds(2)), "Synthetic native client did not load its image");
+                    return !process.HasExited && string.Equals(process.MainModule?.FileName,
+                        executable, StringComparison.OrdinalIgnoreCase);
+                }, TimeSpan.FromSeconds(2)), "Synthetic native client did not load its expected image");
                 return process;
             }
             catch { if (!process.HasExited) { process.Kill(); process.WaitForExit(); } process.Dispose(); throw; }

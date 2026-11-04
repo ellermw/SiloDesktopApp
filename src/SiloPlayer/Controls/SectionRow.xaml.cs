@@ -31,6 +31,8 @@ public sealed partial class SectionRow : UserControl
     private bool _hasKeyboardFocus;
     private bool _canScrollPrev;
     private bool _canScrollNext;
+    private bool _completionDemandArmed;
+    private double _lastHorizontalOffset;
     private bool _isPinned;
     private int? _libraryId;
     private bool _useTitleViewLink;
@@ -40,9 +42,9 @@ public sealed partial class SectionRow : UserControl
     private double _dragStartX;
     private double _dragStartOffset;
     private bool _isDragging;
+    private bool _dragCompletionDemandStarted;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
     private string? _lastRenderedSectionId;
-    private string? _lastRenderedTemplateKey;
     private long _activationGeneration;
     private const double DragThreshold = 7;
 
@@ -97,6 +99,18 @@ public sealed partial class SectionRow : UserControl
     }
 
     public Action<HomeSectionWithItems>? OnRetry { get; set; }
+    private Action<HomeSectionWithItems>? _onNearEnd;
+    public Action<HomeSectionWithItems>? OnNearEnd
+    {
+        get => _onNearEnd;
+        set
+        {
+            if (_onNearEnd == value) return;
+            _onNearEnd = value;
+            _completionDemandArmed = false;
+            UpdateScrollBounds();
+        }
+    }
 
     public SectionRow()
     {
@@ -225,12 +239,15 @@ public sealed partial class SectionRow : UserControl
             : allCoverMedia ? "ContinuePosterCardTemplate"
             : useLandscape ? "LandscapeCardTemplate"
             : "PosterCardTemplate";
-        var templateChanged = !string.Equals(_lastRenderedTemplateKey, templateKey, StringComparison.Ordinal);
+        if (!isSameSection)
+        {
+            _completionDemandArmed = false;
+            _lastHorizontalOffset = CardsScrollViewer.HorizontalOffset;
+        }
         var template = (DataTemplate)this.Resources[templateKey];
         if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
         if (!ReferenceEquals(CardsRepeater.ItemsSource, section.Items)) CardsRepeater.ItemsSource = section.Items;
         _lastRenderedSectionId = section.Id;
-        _lastRenderedTemplateKey = templateKey;
 
         // F6: show a skeleton row while items are still loading (empty list
         // during F12 per-section fetch). Replaced by the real cards as soon
@@ -268,12 +285,11 @@ public sealed partial class SectionRow : UserControl
             CardsScrollViewer.Visibility = Visibility.Collapsed;
         }
 
-        // The current WebUI keeps carousel state mounted while section items
-        // update. Preserve horizontal position for the same section/template
-        // so background refreshes, progress updates, and item dismissals don't
-        // snap the user back to the first card. New sections or card-shape
-        // changes still reset to the beginning.
-        RestoreScrollPositionAfterRebind(isSameSection && !templateChanged, previousOffset);
+        // Keep the mounted position and demand latch for the same section,
+        // even when completion changes its card shape. The deferred restore
+        // clamps against the rebound extent and re-evaluates near-end demand
+        // without treating the restored offset as forward navigation.
+        RestoreScrollPositionAfterRebind(isSameSection, previousOffset);
         UpdateScrollBounds();
     }
 
@@ -295,6 +311,8 @@ public sealed partial class SectionRow : UserControl
         {
             if (!IsLoaded || activation != _activationGeneration || !ReferenceEquals(section, Section)) return;
             var clamped = Math.Clamp(targetOffset, 0, CardsScrollViewer.ScrollableWidth);
+            // Restoring the mounted position is not new forward navigation.
+            _lastHorizontalOffset = clamped;
             CardsScrollViewer.ChangeView(clamped, null, null, disableAnimation: true);
             UpdateScrollBounds();
         });
@@ -342,6 +360,12 @@ public sealed partial class SectionRow : UserControl
 
     private void CardsScrollViewer_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
+        // Initial layout can already be within one viewport of the tail on
+        // wide displays. Wait for forward movement or explicit navigation.
+        var offset = CardsScrollViewer.HorizontalOffset;
+        // Custom drags arm once in PointerMoved, not on each scroll update.
+        if (_dragPointerId == null && offset > _lastHorizontalOffset + 1) _completionDemandArmed = true;
+        _lastHorizontalOffset = offset;
         UpdateScrollBounds();
     }
 
@@ -379,7 +403,9 @@ public sealed partial class SectionRow : UserControl
                 e.Handled = true;
                 break;
             case VirtualKey.End:
+                _completionDemandArmed = true;
                 CardsScrollViewer.ChangeView(CardsScrollViewer.ScrollableWidth, null, null);
+                UpdateScrollBounds();
                 e.Handled = true;
                 break;
         }
@@ -391,6 +417,7 @@ public sealed partial class SectionRow : UserControl
         if (!point.Properties.IsLeftButtonPressed && !point.IsInContact)
             return;
 
+        ResetDragState();
         _dragPointerId = e.Pointer.PointerId;
         _dragStartX = point.Position.X;
         _dragStartOffset = CardsScrollViewer.HorizontalOffset;
@@ -421,7 +448,11 @@ public sealed partial class SectionRow : UserControl
             _dragStartOffset - delta,
             0,
             CardsScrollViewer.ScrollableWidth);
+        if (delta < 0) ArmDragCompletionDemand();
+        // A deferred ViewChanged after release is still part of this drag.
+        _lastHorizontalOffset = target;
         CardsScrollViewer.ChangeView(target, null, null, disableAnimation: true);
+        UpdateScrollBounds();
         e.Handled = true;
     }
 
@@ -443,10 +474,19 @@ public sealed partial class SectionRow : UserControl
     private void CardsScrollViewer_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
         => ResetDragState();
 
+    private void ArmDragCompletionDemand()
+    {
+        if (_dragCompletionDemandStarted) return;
+        _dragCompletionDemandStarted = true;
+        _completionDemandArmed = true;
+    }
+
     private void ResetDragState()
     {
         _dragPointerId = null;
         _isDragging = false;
+        _dragCompletionDemandStarted = false;
+        _completionDemandArmed = false;
     }
 
     private void UpdateScrollBounds()
@@ -456,7 +496,10 @@ public sealed partial class SectionRow : UserControl
         double offset = CardsScrollViewer.HorizontalOffset;
 
         _canScrollPrev = offset > 1;
-        _canScrollNext = offset < extent - viewport - 1 && extent > viewport + 1;
+        // Only callers with a completion consumer can navigate beyond the
+        // loaded tail. Library rows share the model but have no such consumer.
+        _canScrollNext = (offset < extent - viewport - 1 && extent > viewport + 1)
+            || (OnNearEnd != null && Section is { CanComplete: true, LoadCompleted: true });
 
         ScrollLeftBtn.IsEnabled = _canScrollPrev;
         ScrollRightBtn.IsEnabled = _canScrollNext;
@@ -466,6 +509,15 @@ public sealed partial class SectionRow : UserControl
         // only when there's more content in that direction.
         LeftFadeGradient.Opacity = _canScrollPrev ? 1.0 : 0.0;
         RightFadeGradient.Opacity = _canScrollNext ? 1.0 : 0.0;
+        if (IsLoaded && _completionDemandArmed && OnNearEnd is { } onNearEnd
+            && Section is { CanComplete: true, LoadCompleted: true } section && viewport > 0 && extent > 0
+            && extent - viewport - offset <= viewport)
+        {
+            // Consume this gesture. Size/presentation changes at the same offset
+            // are not fresh demand after a completion cycle has failed.
+            _completionDemandArmed = false;
+            onNearEnd(section);
+        }
     }
 
     // ─── Hover-reveal ───────────────────────────────────────────────────
@@ -661,11 +713,14 @@ public sealed partial class SectionRow : UserControl
 
     private void ScrollByPage(int direction)
     {
+        if (direction > 0) _completionDemandArmed = true;
         var page = Math.Max(240, CardsScrollViewer.ViewportWidth * 0.82);
         var target = Math.Clamp(
             CardsScrollViewer.HorizontalOffset + (page * direction),
             0,
             CardsScrollViewer.ScrollableWidth);
         CardsScrollViewer.ChangeView(target, null, null);
+        // ChangeView need not raise ViewChanged when already at the end.
+        UpdateScrollBounds();
     }
 }

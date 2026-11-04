@@ -451,6 +451,7 @@ public sealed partial class MainWindow : Window
         _realtimeMediaStateRefresh.Dispose();
         _windowClosed = true;
         if (ContentFrame.Content is ItemDetailPage detail) detail.ViewModel.CancelPendingLoads();
+        Interlocked.Exchange(ref _loadingOverlayOwner, null);
         if (!_updateSessionEnding)
             try { App.Services.GetService<IAppUpdateInstaller>()?.ConfirmNormalClose(); }
             catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "confirm_update_close"); }
@@ -1525,7 +1526,9 @@ public sealed partial class MainWindow : Window
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
         // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
-        if (!preserveDetail)
+        // Box sets consume LibraryCacheInvalidated in place. Re-navigation would
+        // retire the visit (and accepted playback still preparing in Idle/Minimized).
+        if (!preserveDetail && ContentFrame.Content is not BoxSetPage)
             TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
     }
 
@@ -2128,6 +2131,7 @@ public sealed partial class MainWindow : Window
     private void OnNavigated_SynchronizeShellChrome(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         _sidebarPresentation.Navigate(e.SourcePageType == typeof(ItemDetailPage)
+            || e.SourcePageType == typeof(BoxSetPage)
             || e.SourcePageType == typeof(PersonDetailPage)
             || e.SourcePageType == typeof(RequestDetailPage));
         _lastShellPageType = e.SourcePageType;
@@ -2645,19 +2649,38 @@ public sealed partial class MainWindow : Window
         ApplyPendingAccessRefresh();
     }
 
-    public void ShowLoadingOverlay()
+    private object? _loadingOverlayOwner;
+    private readonly object _legacyLoadingOverlayOwner = new();
+
+    public void ShowLoadingOverlay(object? owner = null)
     {
+        var currentOwner = owner ?? _legacyLoadingOverlayOwner;
+        // Legacy callers may reuse their own surface, never take a request's
+        // loading surface (or replace a playback error).
+        if (owner == null)
+        {
+            var previousOwner = Interlocked.CompareExchange(ref _loadingOverlayOwner, currentOwner, null);
+            if (previousOwner != null && !ReferenceEquals(previousOwner, currentOwner)) return;
+        }
+        else
+            Interlocked.Exchange(ref _loadingOverlayOwner, currentOwner);
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Visible;
             ErrorState.Visibility = Visibility.Collapsed;
             LoadingOverlay.Visibility = Visibility.Visible;
         });
     }
 
-    public void HideLoadingOverlay()
+    public void HideLoadingOverlay(object? owner = null)
     {
-        DispatcherQueue.TryEnqueue(() => LoadingOverlay.Visibility = Visibility.Collapsed);
+        var currentOwner = owner ?? _legacyLoadingOverlayOwner;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
+            LoadingOverlay.Visibility = Visibility.Collapsed;
+        });
     }
 
     public void ShowPlaybackError(string message)
@@ -2665,8 +2688,11 @@ public sealed partial class MainWindow : Window
 
     public void ShowPlaybackError(string title, string detail)
     {
+        var currentOwner = new object();
+        Interlocked.Exchange(ref _loadingOverlayOwner, currentOwner);
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Collapsed;
             ErrorState.Visibility = Visibility.Visible;
             ErrorTitle.Text = title;
@@ -2677,6 +2703,7 @@ public sealed partial class MainWindow : Window
 
     private void ErrorDismiss_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
+        Interlocked.Exchange(ref _loadingOverlayOwner, null);
         LoadingOverlay.Visibility = Visibility.Collapsed;
     }
 

@@ -95,6 +95,8 @@ public sealed partial class ItemDetailPage : Page
     private double _siblingEpisodesDragStartX;
     private double _siblingEpisodesDragStartOffset;
     private bool _siblingEpisodesDragging;
+    private double? _siblingEpisodesScrollTarget;
+    private int _siblingEpisodesScrollRequest = -1;
     private uint? _detailCarouselDragPointerId;
     private ScrollViewer? _detailCarouselDragScroller;
     private double _detailCarouselDragStartX;
@@ -143,6 +145,7 @@ public sealed partial class ItemDetailPage : Page
         UpdateThemeGradientColors();
 
         this.Loaded += OnPageLoaded;
+        Unloaded += (_, _) => { if (!IsLoaded) RetireSiblingEpisodeScrollRequest(); };
         Loaded += (_, _) => ViewModel.SimilarItems.CollectionChanged += OnSimilarItemsChanged;
         Unloaded += (_, _) => ViewModel.SimilarItems.CollectionChanged -= OnSimilarItemsChanged;
         Loaded += (_, _) =>
@@ -550,11 +553,74 @@ public sealed partial class ItemDetailPage : Page
             UpdateDetailCarouselButtons(scroller, CastPrevButton, CastNextButton);
     }
 
-    private void SiblingEpisodesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    private void SiblingEpisodesScrollViewer_ViewChanged(ScrollView sender, object args)
         => UpdateSiblingEpisodeScrollButtons();
+
+    private void SiblingEpisodesScrollViewer_ScrollCompleted(ScrollView sender, ScrollingScrollCompletedEventArgs args)
+    {
+        if (_siblingEpisodesScrollRequest < 0 || args.CorrelationId != _siblingEpisodesScrollRequest) return;
+        RetireSiblingEpisodeScrollRequest();
+        UpdateSiblingEpisodeScrollButtons();
+    }
+
+    private void SiblingEpisodesScrollViewer_StateChanged(ScrollView sender, object args)
+    {
+        if (sender.State is ScrollingInteractionState.Interaction or ScrollingInteractionState.Inertia)
+            RetireSiblingEpisodeScrollRequest();
+    }
+
+    private double SiblingEpisodeNavigationOffset => Math.Clamp(
+        _siblingEpisodesScrollTarget ?? SiblingEpisodesScrollViewer.HorizontalOffset,
+        0, Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
+
+    private void RetireSiblingEpisodeScrollRequest()
+    {
+        _siblingEpisodesScrollTarget = null;
+        _siblingEpisodesScrollRequest = -1;
+    }
+
+    private void SiblingEpisodesScrollViewer_ExtentChanged(ScrollView sender, object args)
+    {
+        TryAlignSiblingEpisodeToStart();
+        UpdateSiblingEpisodeScrollButtons();
+    }
+
+    private void SiblingEpisodesScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var properties = e.GetCurrentPoint(SiblingEpisodesScrollViewer).Properties;
+        var delta = EpisodeRailNavigation.HorizontalWheelDelta(properties.MouseWheelDelta,
+            properties.IsHorizontalMouseWheel, e.KeyModifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift),
+            SiblingEpisodeCardWidth() + SiblingEpisodesPanel.Spacing);
+        // The presenter excludes native wheel redirection. Upright wheel is
+        // left unhandled for ContentScroll, including bursts during inertia.
+        if (delta == 0) return;
+        ApplySiblingHorizontalDelta(delta);
+        e.Handled = true;
+    }
+
+    private void ApplySiblingHorizontalDelta(double delta)
+        => ScrollSiblingEpisodesTo(SiblingEpisodeNavigationOffset + delta, animate: false);
+
+    private void SiblingEpisodesScrollViewer_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        var direction = e.Key switch
+        {
+            Windows.System.VirtualKey.Left => -1,
+            Windows.System.VirtualKey.Right => 1,
+            _ => 0,
+        };
+        if (direction == 0) return;
+        // Card actions bubble arrow keys too. Only page when the rail owns
+        // focus, so a focused Play/Resume or menu action stays in view.
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(SiblingEpisodesScrollViewer.XamlRoot), SiblingEpisodesScrollViewer))
+            return;
+        ScrollSiblingEpisodes(direction);
+        e.Handled = true;
+    }
 
     private void SiblingEpisodesScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        RetireSiblingEpisodeScrollRequest();
         UpdateSiblingEpisodeCardSizes();
         TryAlignSiblingEpisodeToStart();
         UpdateSiblingEpisodeScrollButtons();
@@ -606,12 +672,31 @@ public sealed partial class ItemDetailPage : Page
 
     private void ScrollSiblingEpisodes(int direction)
     {
-        var delta = Math.Max(252d, SiblingEpisodesScrollViewer.ViewportWidth * 0.82d) * direction;
-        var target = Math.Clamp(
-            SiblingEpisodesScrollViewer.HorizontalOffset + delta,
-            0,
-            Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
-        SiblingEpisodesScrollViewer.ChangeView(target, null, null);
+        var stride = SiblingEpisodeCardWidth() + SiblingEpisodesPanel.Spacing;
+        var cardsPerPage = Math.Max(1, Math.Floor(SiblingEpisodesScrollViewer.ViewportWidth / stride));
+        var position = SiblingEpisodeNavigationOffset / stride;
+        // A drag or horizontal wheel can leave a partial card at the leading
+        // edge. Start the next page from a whole-card index in either direction.
+        var index = direction > 0 ? Math.Floor(position + .001) + cardsPerPage
+            : Math.Ceiling(position - .001) - cardsPerPage;
+        ScrollSiblingEpisodesTo(index * stride);
+    }
+
+    private void ScrollSiblingEpisodesTo(double offset, bool animate = true)
+    {
+        var target = Math.Clamp(offset, 0, Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
+        var request = SiblingEpisodesScrollViewer.ScrollTo(target, 0, new ScrollingScrollOptions(
+            animate ? ScrollingAnimationMode.Auto : ScrollingAnimationMode.Disabled,
+            ScrollingSnapPointsMode.Ignore));
+        // Offset notifications lag queued requests. Retain the clamped target
+        // until this operation ends, and ignore older interrupted completions.
+        if (request >= 0)
+        {
+            _siblingEpisodesScrollTarget = target;
+            _siblingEpisodesScrollRequest = request;
+        }
+        else if (_siblingEpisodesScrollTarget is not { } pending || Math.Abs(pending - target) > .001)
+            RetireSiblingEpisodeScrollRequest();
         UpdateSiblingEpisodeScrollButtons();
     }
 
@@ -637,6 +722,7 @@ public sealed partial class ItemDetailPage : Page
         if (!point.Properties.IsLeftButtonPressed && !point.IsInContact)
             return;
 
+        RetireSiblingEpisodeScrollRequest();
         _siblingEpisodesDragPointerId = e.Pointer.PointerId;
         _siblingEpisodesDragStartX = point.Position.X;
         _siblingEpisodesDragStartOffset = SiblingEpisodesScrollViewer.HorizontalOffset;
@@ -667,7 +753,7 @@ public sealed partial class ItemDetailPage : Page
             _siblingEpisodesDragStartOffset - delta,
             0,
             Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
-        SiblingEpisodesScrollViewer.ChangeView(target, null, null, disableAnimation: true);
+        ScrollSiblingEpisodesTo(target, animate: false);
         UpdateSiblingEpisodeScrollButtons();
         e.Handled = true;
     }
@@ -899,7 +985,9 @@ public sealed partial class ItemDetailPage : Page
         var navigation = _navigationCts;
         bool Current() => client.IsCurrentContext(context) && ReferenceEquals(ViewModel.Item, item)
             && ReferenceEquals(_navigationCts, navigation) && navigation?.IsCancellationRequested != true;
-        if (args.PropertyName == nameof(ViewModel.UserRating))
+        if (args.PropertyName == nameof(ViewModel.BoxSet))
+            DispatcherQueue.TryEnqueue(BuildBoxSetRow);
+        else if (args.PropertyName == nameof(ViewModel.UserRating))
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateStarRating(); });
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateWatchedButton(); });
@@ -985,6 +1073,10 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
     {
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated -= RefreshBoxSetRow;
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated += RefreshBoxSetRow;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated -= BoxSetLanguageChanged;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated += BoxSetLanguageChanged;
         SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged;
         SettingsViewModel.TitleArtPreferenceChanged += OnTitleArtPreferenceChanged;
         UpdateBackdropHeight();
@@ -1043,6 +1135,7 @@ public sealed partial class ItemDetailPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        RetireSiblingEpisodeScrollRequest();
         var music = App.Services.GetService<SiloPlayer.Services.ThemeMusicService>();
         if (e.SourcePageType == typeof(ItemDetailPage)) music?.Suspend(); else music?.Stop();
         if (TrailerOverlay.Visibility == Visibility.Visible)
@@ -1061,6 +1154,8 @@ public sealed partial class ItemDetailPage : Page
         _singleSeasonEpisodesCts = null;
         _singleSeasonEpisodesTask = null;
         _singleSeasonEpisodesContentId = null;
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated -= RefreshBoxSetRow;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated -= BoxSetLanguageChanged;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         if (_rootElement != null)
         {
@@ -1111,6 +1206,7 @@ public sealed partial class ItemDetailPage : Page
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
+        RetireSiblingEpisodeScrollRequest();
         base.OnNavigatedTo(e);
         // Navigation away removes this subscription; cached revisits need it too.
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
@@ -1156,7 +1252,8 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrEmpty(contentId))
         {
             _currentContentId = contentId;
-            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId);
+            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
+                _playerService?.PendingProgressSave ?? Task.CompletedTask);
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
                 return;
             if (ViewModel.Item == null)
@@ -1923,6 +2020,7 @@ public sealed partial class ItemDetailPage : Page
             SiblingEpisodesSection,
             CastSection,
             CrewSection,
+            BoxSetSection,
             SimilarSection,
             SubtitlesSection,
             StudiosText,
@@ -1951,7 +2049,7 @@ public sealed partial class ItemDetailPage : Page
             "movie" =>
             [
                 MediaLocationsSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, SimilarSection,
+                CastSection, CrewSection, BoxSetSection, SimilarSection,
             ],
             "series" =>
             [
@@ -7231,6 +7329,7 @@ public sealed partial class ItemDetailPage : Page
 
     private void HideSiblingEpisodes()
     {
+        RetireSiblingEpisodeScrollRequest();
         _siblingEpisodes.Clear();
         SiblingEpisodesSection.Visibility = Visibility.Collapsed;
         SiblingEpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
@@ -7270,7 +7369,7 @@ public sealed partial class ItemDetailPage : Page
             0,
             Math.Max(0, SiblingEpisodesScrollViewer.ScrollableWidth));
         _pendingSiblingEpisodeIndex = -1;
-        SiblingEpisodesScrollViewer.ChangeView(targetOffset, null, null, disableAnimation: true);
+        ScrollSiblingEpisodesTo(targetOffset, animate: false);
         UpdateSiblingEpisodeScrollButtons();
     }
 
@@ -8262,6 +8361,31 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private FrameworkElement CreateEpisodeCard(Episode episode, bool isCurrent = false)
     {
+        var api = App.Services.GetRequiredService<SiloApiClient>();
+        var identity = api.CaptureIdentityContext();
+        var ownerItem = ViewModel.Item;
+        var libraryId = ViewModel.LibraryId;
+        var contentId = episode.ContentId;
+        var navigationToken = _navigationCts?.Token ?? CancellationToken.None;
+        var actionLifetime = CancellationTokenSource.CreateLinkedTokenSource(navigationToken);
+        var actionToken = actionLifetime.Token;
+        var retired = false;
+        bool IsCurrentPageOwner() => !navigationToken.IsCancellationRequested && IsLoaded &&
+            api.IsCurrentIdentityContext(identity) && ReferenceEquals(ViewModel.Item, ownerItem) && ViewModel.LibraryId == libraryId;
+        bool IsCurrentCardOwner() => !retired && !actionToken.IsCancellationRequested && IsCurrentPageOwner();
+        void RetireAction()
+        {
+            if (retired) return;
+            retired = true;
+            ViewModel.PropertyChanged -= OnOwnerChanged;
+            actionLifetime.Cancel();
+            actionLifetime.Dispose();
+        }
+        void OnOwnerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+        {
+            if (!ReferenceEquals(ViewModel.Item, ownerItem) || ViewModel.LibraryId != libraryId) RetireAction();
+        }
+        ViewModel.PropertyChanged += OnOwnerChanged;
         var presentation = EpisodeCardPresentation.Create(
             episode.UserData?.Played == true,
             episode.UserData?.PositionSeconds ?? 0,
@@ -8425,18 +8549,90 @@ public sealed partial class ItemDetailPage : Page
             stateChanged: RefreshActionState,
             owner: button);
 
-        var actionLayer = new Grid
+        var root = new Grid();
+        var actionLayer = new EpisodeCardActionLayer(root)
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Top,
             Opacity = 0,
             IsHitTestVisible = false,
         };
-        void SetActionLayerVisibility(bool reveal)
+        var quickPlayButton = new Button
         {
-            actionLayer.Opacity = reveal ? 1 : 0;
-            actionLayer.IsHitTestVisible = reveal;
-        }
+            Width = 36,
+            Height = 36,
+            MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            CornerRadius = new CornerRadius(18),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xDD, 0, 0, 0)),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x60, 0xFF, 0xFF, 0xFF)),
+            Content = new FontIcon { Glyph = "\uE768", FontSize = 15, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) },
+        };
+        quickPlayButton.Click += async (_, _) =>
+        {
+            if (!quickPlayButton.IsEnabled || !IsCurrentCardOwner() || episode.Files?.Any(file => file.Unreadable != true) != true) return;
+            quickPlayButton.IsEnabled = false;
+            // A rendered card may outlive an access revision, but not its
+            // account/profile. Preparation captures fresh read contexts under
+            // this original identity, including while the start is queued.
+            // Cosmetic grid rebuilds retire the old button, not an accepted
+            // start. Only navigation or a real page owner change cancels it.
+            using var acceptedLifetime = CancellationTokenSource.CreateLinkedTokenSource(navigationToken);
+            var acceptedToken = acceptedLifetime.Token;
+            bool IsCurrentOwner() => !acceptedToken.IsCancellationRequested && IsCurrentPageOwner();
+            void OnAcceptedOwnerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+            {
+                if (!IsCurrentPageOwner()) acceptedLifetime.Cancel();
+            }
+            ViewModel.PropertyChanged += OnAcceptedOwnerChanged;
+            try
+            {
+                var player = App.Services.GetRequiredService<Services.PlayerService>();
+                var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+                if (coordinator.ActiveRoom is { } room)
+                {
+                    // Keep viewer intent within the room's existing authority
+                    // path. An unrelated still must not replace its local media.
+                    if (room.Room?.Phase == "playing" && room.Room.SelectedContentId == contentId &&
+                        player.ContentId == contentId && room.AttachedSessionId == player.Manager?.SessionId)
+                    {
+                        coordinator.RequestTransport("play", player.UserSeekPosition, isPaused: false);
+                        return;
+                    }
+                    if (room.RoomId == null || room.RoomToken == null) return;
+                    var playback = App.Services.GetRequiredService<PlaybackApi>();
+                    if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
+                    {
+                        var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, contentId, libraryId: libraryId, ct: acceptedToken);
+                        if (!IsCurrentOwner() || !ReferenceEquals(coordinator.ActiveRoom, room)) return;
+                        room.Room = response.Room;
+                    }
+                    else
+                        await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, "episode", episode.Title,
+                            posterUrl: episode.StillUrl, ct: acceptedToken);
+                    if (IsCurrentOwner() && ReferenceEquals(coordinator.ActiveRoom, room))
+                        App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
+                        { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
+                    return;
+                }
+                await player.PlayAsync(
+                    contentId, libraryId: libraryId, cancellationToken: acceptedToken, expectedIdentityContext: identity);
+            }
+            catch (OperationCanceledException) when (!IsCurrentOwner()) { }
+            catch (Exception ex)
+            {
+                if (IsCurrentOwner()) App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+            }
+            finally
+            {
+                ViewModel.PropertyChanged -= OnAcceptedOwnerChanged;
+                quickPlayButton.IsEnabled = true;
+            }
+        };
         var quickWatchedIcon = new FontIcon { FontSize = 18, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
         var quickWatchedButton = new Button
         {
@@ -8486,6 +8682,9 @@ public sealed partial class ItemDetailPage : Page
             var label = current.WatchedActionLabel;
             AutomationProperties.SetName(quickWatchedButton, label);
             ToolTipService.SetToolTip(quickWatchedButton, label);
+            var playLabel = (mediaItem.PositionSeconds > 0 ? "Resume " : "Play ") + caption.Presentation.SpokenTitle;
+            AutomationProperties.SetName(quickPlayButton, playLabel);
+            ToolTipService.SetToolTip(quickPlayButton, playLabel);
             RefreshActionState();
         }
 
@@ -8523,15 +8722,16 @@ public sealed partial class ItemDetailPage : Page
             owner: moreButton).ShowAt(moreButton);
         actionLayer.Children.Add(quickWatchedButton);
         actionLayer.Children.Add(moreButton);
+        if (episode.Files?.Any(file => file.Unreadable != true) == true) actionLayer.Children.Add(quickPlayButton);
 
-        var root = new Grid();
         root.Children.Add(button);
         root.Children.Add(actionLayer);
-        root.SizeChanged += (_, args) => actionLayer.Height = args.NewSize.Width * 9d / 16d;
-        root.PointerEntered += (_, _) => SetActionLayerVisibility(true);
-        root.PointerExited += (_, _) => SetActionLayerVisibility(false);
-        root.GotFocus += (_, _) => SetActionLayerVisibility(true);
-        root.LostFocus += (_, _) => SetActionLayerVisibility(false);
+        root.SizeChanged += (_, args) =>
+        {
+            actionLayer.Height = args.NewSize.Width * 9d / 16d;
+            quickPlayButton.Width = quickPlayButton.Height = Math.Clamp(args.NewSize.Width - 104, 24, 36);
+        };
+        root.Unloaded += (_, _) => RetireAction();
         UpdateQuickAction();
         (bool?, bool?, double?, double?, bool, bool)? lastState = null;
         var hideStill = EpisodeSpoilerPolicy.HideImage("episode", episode.StillIsEpisodeStill,

@@ -107,6 +107,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 .AddSingleton(new SettingsService(Program.ResultDirectory))
                 .AddSingleton(imageService)
                 .AddSingleton(http)
+                .AddSingleton(api)
                 .AddSingleton(new CatalogApi(api))
                 .AddSingleton(new MediaMaintenanceApi(api))
                 .AddSingleton(new AuthService(api, new AuthApi(api)))
@@ -135,6 +136,101 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-admission")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyMenuAdmissionAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-lifecycle")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyMenuAdmissionAsync(parent, controls: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetMenuScopeAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-owner")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetMenuScopeAsync(parent, retiredOwnerChecks: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-unscoped")
+            {
+                await BoxSetUnscopedNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxsets-write")
+            {
+                await BoxSetNativeFixture.RunAsync(parent, invalidMemberChecks: false);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-room")
+            {
+                await BoxSetRoomNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-shell")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetShellRefreshAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-pointer")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxsets")
+            {
+                await BoxSetNativeFixture.RunAsync(parent);
+                await BoxSetUnscopedNativeFixture.RunAsync(parent);
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetShellRefreshAsync();
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
+            {
+                await CollectionsAcceptanceNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
+            {
+                await HomeRowReviewNativeFixture.RunAsync(parent);
+                await HomeRowWindowNativeFixture.RunAsync(parent);
+                await HomeCurrentNativeFixture.RunAsync(parent);
+                await HomeDismissalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-window")
+            {
+                await HomeRowWindowNativeFixture.RunAsync(parent);
+                await HomeCurrentNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-rail")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyRailNavigationAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay-review")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyReviewAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay-owner")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyQueuedOwnerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay")
+            {
+                await EpisodeQuickPlayNativeFixture.RunAsync(parent);
+                await EpisodeQuickPlayNativeFixture.VerifyQueuedOwnerAsync();
+                await WatchPartyNativeFixture.RunAsync();
+                await EpisodeQuickPlayNativeFixture.VerifyReviewAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-online")
             {
                 await MatchSplitScopeNativeFixture.RunAsync(parent, onlineOnly: true);
