@@ -91,9 +91,9 @@ public sealed partial class ItemDetailPage
 
     private bool IsOverviewHidden(MediaItemDetail owner) =>
         owner.Type == "episode" && !string.IsNullOrWhiteSpace(owner.Overview) &&
-        // Match episode cards: use the current viewer's last known preference, or the visible default.
+        // Protect the hero while preferences are unknown; a failed optional read may use the visible default.
         ((_episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>()) is { } preferences &&
-            preferences.HideOverviews) &&
+            preferences.ShouldHideOverviews) &&
         EpisodeSpoilerPolicy.IsUnwatched(owner.UserData?.Played, owner.UserData?.IsInProgress, owner.UserData?.PositionSeconds) &&
         _revealedEpisodeOverviewId != owner.ContentId;
 
@@ -232,14 +232,15 @@ public sealed partial class ItemDetailPage
                 if (string.IsNullOrWhiteSpace(source.PendingTranslationLanguage)) break;
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
             if (Current())
             {
                 // Auto mode must leave a recovery action after a failed POST or poll.
                 _translateButtonMode = true;
-                App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+                App.Services.GetRequiredService<Services.ToastService>().Error(ex,
+                    ex is OperationCanceledException ? "Description translation timed out. Try again." : null);
             }
         }
         finally

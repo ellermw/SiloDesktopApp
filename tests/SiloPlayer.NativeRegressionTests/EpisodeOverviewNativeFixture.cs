@@ -30,7 +30,9 @@ internal static class EpisodeOverviewNativeFixture
         wire.HoldSpoilers = true; wire.OwnOverview = "First-paint episode plot.";
         var vm = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException("Unexpected unscoped read")));
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "episode-overview-images"));
-        slot.SetValue(null, new Services(original, client, api, vm, spoilers, http, images));
+        var toastService = new ToastService();
+        var toasts = new ToastContainer();
+        slot.SetValue(null, new Services(original, client, api, vm, spoilers, http, images, toastService));
         ItemDetailPage? page = null;
         using var navigation = new CancellationTokenSource();
         try
@@ -50,11 +52,12 @@ internal static class EpisodeOverviewNativeFixture
             var overview = (ExpandableDescription)page.FindName("OverviewText");
             var firstRail = (StackPanel)page.FindName("SiblingEpisodesPanel");
             await Until(() => Descendants(firstRail).OfType<EpisodeCardCaption>().Count() == 1);
-            Check(!spoilers.IsLoadedForCurrentContext && overview.Text == wire.OwnOverview &&
-                overview.Visibility == Visibility.Visible &&
-                ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed &&
+            Check(!spoilers.IsLoadedForCurrentContext && spoilers.ShouldHideOverviews && overview.Text == wire.OwnOverview &&
+                overview.Visibility == Visibility.Collapsed &&
+                ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Visible &&
+                ((Button)page.FindName("TranslateOverviewButton")).Visibility == Visibility.Collapsed && wire.Posts.Count == 0 &&
                 Descendants(firstRail).OfType<EpisodeCardCaption>().Single().Presentation.Overview == "First-paint sibling plot.",
-                "First paint uses the same visible-default policy for the episode plot and sibling captions while preferences are unknown");
+                "First paint protects the own episode plot and its translation while preferences are unknown, without changing sibling captions");
             wire.HoldSpoilers = false; wire.ReleaseSpoilers.TrySetResult();
             await spoilers.EnsureLoadedAsync();
             Check(spoilers.HideOverviews, "Fixture must enable actual episode spoiler preferences");
@@ -62,7 +65,7 @@ internal static class EpisodeOverviewNativeFixture
                 Descendants(firstRail).OfType<EpisodeCardCaption>().SingleOrDefault()?.Presentation.Overview == "");
             firstSiblings.Clear(); Call(page, "BuildSiblingEpisodeCards");
             wire.Reset();
-            Program.Log("PASS: first-paint own plot and sibling captions share the visible default, then both apply the loaded spoiler preference.");
+            Program.Log("PASS: first-paint own plot is protected while preferences are unknown; sibling captions retain their existing policy and both honor the loaded preference.");
 
             await vm.LoadInLibraryAsync("episode", 42);
             Call(page, "UpdateUI");
@@ -429,16 +432,29 @@ internal static class EpisodeOverviewNativeFixture
             }
             Program.Log("PASS: metadata-AI capability failures retry with backoff and recover manual/automatic series translation.");
 
+            parent.Children.Add(toasts);
+            toastService.Register(toasts, page.DispatcherQueue);
+            foreach (var mode in new[] { "button", "auto" })
+            foreach (var failure in new[] { "503", "timeout" })
             foreach (var stage in new[] { "post", "poll" })
             {
-                wire.Reset(); wire.OnView = "auto";
+                ((StackPanel)toasts.FindName("ToastStack")).Children.Clear();
+                wire.Reset(); wire.OnView = mode; wire.TranslationTimeout = failure == "timeout";
                 wire.PostFailuresRemaining = stage == "post" ? 1 : 0;
                 wire.PollFailuresRemaining = stage == "poll" ? 1 : 0;
                 await vm.LoadInLibraryAsync("episode", 42); Call(page, "UpdateUI");
+                if (mode == "button")
+                {
+                    await Until(() => button.Visibility == Visibility.Visible && button.IsEnabled);
+                    ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                }
                 await Until(() => wire.Posts.Count == 1 && button.Visibility == Visibility.Visible && button.IsEnabled && overview.Opacity == 1);
                 Check(overview.Text == Wire.SeriesText && vm.OverviewSource!.PendingTranslationLanguage == "fr" &&
                     (string)button.Content == "Translate description" && Field<bool>(page, "_translateButtonMode"),
-                    $"A failed automatic {stage} retains the description and offers a manual retry");
+                    $"A {mode} {stage} {failure} retains the description and offers a manual retry");
+                if (failure == "timeout")
+                    await Until(() => Descendants(toasts).OfType<TextBlock>().Any(text =>
+                        text.Text == "Description translation timed out. Try again."));
                 await Task.Delay(600);
                 Check(wire.Posts.Count == 1 && button.Visibility == Visibility.Visible && button.IsEnabled,
                     "The scope watcher preserves the recovery action without repeating automatic writes");
@@ -446,9 +462,10 @@ internal static class EpisodeOverviewNativeFixture
                 await Until(() => wire.Posts.Count == 2 && overview.Text == Wire.TranslatedText && button.Visibility == Visibility.Collapsed);
                 Check(wire.Posts.All(post => post == "/api/v2/catalog/items/series/translate-description|fr") &&
                     vm.Item!.ContentId == "episode" && string.IsNullOrWhiteSpace(vm.Item.Overview),
-                    "Manual recovery after an automatic failure still translates only the scoped series source");
+                    "Manual recovery after a translation failure still translates only the scoped series source");
             }
-            Program.Log("PASS: automatic translation POST/poll failures expose a working manual recovery action.");
+            toastService.Unregister(); parent.Children.Remove(toasts);
+            Program.Log("PASS: manual/automatic translation POST/poll failures, including uncancelled-token transport timeouts, show readable feedback and a working manual recovery action.");
 
             wire.Reset(); wire.OnView = "auto"; wire.HoldPost = wire.KeepPending = true;
             await vm.LoadInLibraryAsync("episode", 42);
@@ -812,6 +829,7 @@ internal static class EpisodeOverviewNativeFixture
         finally
         {
             navigation.Cancel(); vm.CancelPendingLoads();
+            toastService.Unregister(); parent.Children.Remove(toasts);
             if (page != null) parent.Children.Remove(page);
             slot.SetValue(null, original);
             CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(vm);
@@ -840,11 +858,11 @@ internal static class EpisodeOverviewNativeFixture
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready) { for (var n = 0; n < 240 && !ready(); n++) await Task.Delay(25); Check(ready(), "Native overview state did not settle"); }
     private sealed class Services(IServiceProvider original, SiloApiClient client, CatalogApi api, ItemDetailViewModel vm,
-        EpisodeSpoilerPreferences spoilers, HttpClient http, ImageService images) : IServiceProvider
+        EpisodeSpoilerPreferences spoilers, HttpClient http, ImageService images, ToastService toasts) : IServiceProvider
     {
         public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(CatalogApi) ? api :
             type == typeof(ItemDetailViewModel) ? vm : type == typeof(EpisodeSpoilerPreferences) ? spoilers :
-            type == typeof(HttpClient) ? http : type == typeof(ImageService) ? images :
+            type == typeof(HttpClient) ? http : type == typeof(ImageService) ? images : type == typeof(ToastService) ? toasts :
             type == typeof(UICustomizationService) ? new UICustomizationService(new SettingsApi(client)) : original.GetService(type);
     }
     private sealed class Wire : HttpMessageHandler
@@ -858,7 +876,7 @@ internal static class EpisodeOverviewNativeFixture
         internal string OnView = "button", TargetLanguage = "fr";
         internal string[] OwnMachineTranslatedFields = [];
         internal string SeriesOverview = SeriesText;
-        internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem, HoldSpoilers;
+        internal bool FailSeries, FailItem, Translated, HoldStatus, HoldPost, HoldPoll, KeepPending, HoldItem, HoldSpoilers, TranslationTimeout;
         internal bool HideOverviews = true, HideImages = true, FailSpoilerEffective;
         internal string? SpoilerFailure;
         internal int PollReads, SeriesFailuresRemaining, StatusFailuresRemaining, PostFailuresRemaining, PollFailuresRemaining;
@@ -870,7 +888,7 @@ internal static class EpisodeOverviewNativeFixture
         {
             Paths.Clear(); Posts.Clear(); OwnOverview = " \t "; SeriesId = "series"; OnView = "button";
             SeriesOverview = SeriesText; PollReads = SeriesFailuresRemaining = StatusFailuresRemaining = PostFailuresRemaining = PollFailuresRemaining = 0; TargetLanguage = "fr"; OwnMachineTranslatedFields = [];
-            FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = HoldSpoilers = false;
+            FailSeries = FailItem = Translated = HoldStatus = HoldPost = HoldPoll = KeepPending = HoldItem = HoldSpoilers = TranslationTimeout = false;
             HideOverviews = HideImages = true; FailSpoilerEffective = false; SpoilerFailure = null;
             StatusEntered = NewGate(); ReleaseStatus = NewGate(); PostEntered = NewGate(); ReleasePost = NewGate();
             PollEntered = NewGate(); ReleasePoll = NewGate(); ItemReadEntered = NewGate(); ReleaseItemRead = NewGate();
@@ -892,14 +910,32 @@ internal static class EpisodeOverviewNativeFixture
             {
                 using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 Posts.Add(path + "|" + payload.RootElement.GetProperty("target_language").GetString());
-                if (PostFailuresRemaining > 0) { --PostFailuresRemaining; return new(HttpStatusCode.ServiceUnavailable); }
+                if (PostFailuresRemaining > 0)
+                {
+                    --PostFailuresRemaining;
+                    if (TranslationTimeout)
+                    {
+                        Check(!ct.IsCancellationRequested, "A transport timeout must not cancel the request token");
+                        throw new TaskCanceledException("Synthetic POST connect timeout", new TimeoutException(), ct);
+                    }
+                    return new(HttpStatusCode.ServiceUnavailable);
+                }
                 if (HoldPost) { PostEntered.TrySetResult(); await ReleasePost.Task; }
                 Translated = !KeepPending; return new(HttpStatusCode.NoContent);
             }
             if ((request.RequestUri.AbsolutePath is "/api/v2/catalog/items/series" or "/api/v2/catalog/items/episode" or "/api/v2/catalog/items/movie") && Posts.Count > 0)
             {
                 Interlocked.Increment(ref PollReads);
-                if (PollFailuresRemaining > 0) { --PollFailuresRemaining; return new(HttpStatusCode.ServiceUnavailable); }
+                if (PollFailuresRemaining > 0)
+                {
+                    --PollFailuresRemaining;
+                    if (TranslationTimeout)
+                    {
+                        Check(!ct.IsCancellationRequested, "A transport timeout must not cancel the request token");
+                        throw new TaskCanceledException("Synthetic poll connect timeout", new TimeoutException(), ct);
+                    }
+                    return new(HttpStatusCode.ServiceUnavailable);
+                }
                 if (HoldPoll) { HoldPoll = false; PollEntered.TrySetResult(); await ReleasePoll.Task; }
             }
             if ((request.RequestUri.AbsolutePath is "/api/v2/catalog/items/episode" or "/api/v2/catalog/items/movie") && HoldItem)
