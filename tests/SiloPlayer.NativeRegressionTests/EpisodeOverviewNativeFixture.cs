@@ -309,17 +309,22 @@ internal static class EpisodeOverviewNativeFixture
                     DecodePixelType = protectedSource.DecodePixelType,
                     UriSource = new Uri(Path.Combine(Program.AppDirectory, "Assets", "silo-icon-1024.png"))
                 };
+                var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                RoutedEventHandler onOpened = (_, _) => opened.TrySetResult();
+                still.ImageOpened += onOpened;
                 try
                 {
                     still.Source = unprotected;
-                    await Until(() => unprotected.PixelWidth > 0); page.UpdateLayout();
+                    await opened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    page.UpdateLayout();
+                    await RenderedFrameAsync(page);
                     var unprotectedPixels = await Pixels(still);
                     File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"spoiler-{change}-unprotected.bgra"), unprotectedPixels);
                     Check(unprotectedPixels.Length == protectedPixels.Length &&
                         protectedPixels.Zip(unprotectedPixels).Any(pair => Math.Abs(pair.First - pair.Second) > 1),
                         "The protected-still pixel bound did not reject the actual unblurred source.");
                 }
-                finally { still.Source = protectedSource; page.UpdateLayout(); }
+                finally { still.ImageOpened -= onOpened; still.Source = protectedSource; page.UpdateLayout(); }
                 wire.SpoilerFailure = null; Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
                 await spoilers.EnsureLoadedAsync();
             }
@@ -918,6 +923,20 @@ internal static class EpisodeOverviewNativeFixture
         var pixels = (await bitmap.GetPixelsAsync()).ToArray();
         Check(pixels.Length > 0 && pixels.Any(value => value != 0), "Spoiler still must actually render before comparing pixels");
         return pixels;
+    }
+    private static async Task RenderedFrameAsync(FrameworkElement element)
+    {
+        var rendered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<object>? frame = null;
+        frame = (_, _) =>
+        {
+            CompositionTarget.Rendering -= frame;
+            if (!element.DispatcherQueue.TryEnqueue(() => rendered.TrySetResult()))
+                rendered.TrySetException(new InvalidOperationException("The native image frame dispatcher was retired."));
+        };
+        CompositionTarget.Rendering += frame;
+        try { await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { CompositionTarget.Rendering -= frame; }
     }
     private static object? Call(object owner, string method, params object[] args) => owner.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(owner, args);
     private static void Set(object owner, string field, object? value) => owner.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(owner, value);
