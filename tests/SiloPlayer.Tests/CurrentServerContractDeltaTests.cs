@@ -34,7 +34,8 @@ public sealed class CurrentServerContractDeltaTests
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);
         Assert.Contains("int? requestedIndex = track?.Index ?? postLoadSubtitleIndex", player);
-        Assert.Matches(@"manager\.ReplanSubtitleAsync\(requestedIndex, position, ct,\s*isAutomatic: manager\.IsSubtitleSelectionAutomatic\)", player);
+        Assert.Contains("manager.RecordLocalSubtitleSelection(requestedIndex, manager.IsSubtitleSelectionAutomatic);", player);
+        Assert.Contains("manager.ReplanRecordedSubtitleSelectionAsync(position, ct)", player);
         Assert.Contains("Pgs deliberately does not use this", player, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -43,7 +44,7 @@ public sealed class CurrentServerContractDeltaTests
     {
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("postLoadSubtitleIndex: track.Index", player);
-        Assert.Contains("var resolvedIndex = manager.SubtitleSelectionForLoad;", player);
+        Assert.Contains("resolvedIndex = manager.SubtitleSelectionForLoad;", player);
         Assert.Contains("_pendingInitialServerSubtitleIndex = resolvedIndex;", player);
         Assert.Contains("candidate.Index == resolvedIndex", player);
         Assert.DoesNotContain("_pendingInitialServerSubtitleIndex = postLoadSubtitleIndex", player);

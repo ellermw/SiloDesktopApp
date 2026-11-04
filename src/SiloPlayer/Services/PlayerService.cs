@@ -5635,8 +5635,14 @@ public partial class PlayerService : IDisposable
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
         try
         {
-            if (!CurrentOwner() || manager?.CurrentSession != session || _mpv == null ||
-                _activeSubtitleServerIndex != (requestedIndex ?? -1)) return SubtitleTransportResult.Superseded;
+            lock (_subtitleTrackStateLock)
+            {
+                if (!CurrentOwner() || manager.CurrentSession != session || _mpv == null ||
+                    _activeSubtitleServerIndex != (requestedIndex ?? -1)) return SubtitleTransportResult.Superseded;
+                // Admit the initial file-local choice exactly once. Subsequent
+                // grants can change files and must reuse this retained identity.
+                manager.RecordLocalSubtitleSelection(requestedIndex, manager.IsSubtitleSelectionAutomatic);
+            }
             var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? Versions.FirstOrDefault(v => v.FileId == (_requestedMediaFileId ?? 0))
                 ?? throw new InvalidOperationException("The subtitle source version is unavailable.");
@@ -5649,21 +5655,21 @@ public partial class PlayerService : IDisposable
 
             PlaybackStartResponse replanned;
             PreparedPlaybackTransport preparedV3;
+            int resolvedIndex;
             while (true)
             {
-                replanned = await manager.ReplanSubtitleAsync(requestedIndex, position, ct,
-                    isAutomatic: manager.IsSubtitleSelectionAutomatic).ConfigureAwait(false);
+                var submittedIntent = manager.CaptureLocalSubtitleIntent();
+                replanned = await manager.ReplanRecordedSubtitleSelectionAsync(position, ct).ConfigureAwait(false);
                 busyOwner = busyOwner! with { Session = replanned };
                 ct.ThrowIfCancellationRequested();
                 if (!CurrentOwner() || !CurrentBusy() || manager.CurrentSession != replanned) return SubtitleTransportResult.Superseded;
                 // The returned inventory may have rebound the same intent to a
                 // different combined index. Bound retries using that inventory.
                 _subtitleReplanAttempt = new(replanned, manager.SubtitleSelectionForLoad);
-                if (_activeSubtitleServerIndex != (requestedIndex ?? -1))
+                if (manager.CaptureLocalSubtitleIntent() != submittedIntent)
                 {
-                    // The server accepted the old request. Bring its plan to
-                    // the latest choice before loading any burned-in pixels.
-                    requestedIndex = _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex;
+                    // The manager resolves the newer choice against the grant's
+                    // inventory. An outgoing combined index is no longer valid.
                     continue;
                 }
                 var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId) ?? version;
@@ -5672,24 +5678,42 @@ public partial class PlayerService : IDisposable
                 preparedV3 = await PreparePlaybackTransportAsync(replanned, replannedVersion, streamUrl, position, ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 if (!CurrentOwner() || !CurrentBusy() || manager.CurrentSession != replanned) return SubtitleTransportResult.Superseded;
-                if (_activeSubtitleServerIndex == (requestedIndex ?? -1)) break;
+                var retry = false;
+                lock (_playbackBusyLock)
+                lock (_subtitleTrackStateLock)
+                {
+                    if (!CurrentOwner() || !CurrentBusy() || manager.CurrentSession != replanned)
+                        return SubtitleTransportResult.Superseded;
+                    retry = manager.CaptureLocalSubtitleIntent() != submittedIntent;
+                    resolvedIndex = manager.SubtitleSelectionForLoad;
+                    if (!retry)
+                    {
+                        var resolvedTracks = replanned.SubtitleUrls.Where(t => !t.Unplayable && t.Index == resolvedIndex).Take(2).ToArray();
+                        var pendingOwner = _pendingSubtitlePreferenceOwner;
+                        // Transfer only a still-live save claim for this exact
+                        // retained choice. Exhausted reads never gain one again.
+                        if (pendingOwner != null && !pendingOwner.Token.IsCancellationRequested &&
+                            ReferenceEquals(pendingOwner.Authority, authority) && ReferenceEquals(pendingOwner.Manager, manager) &&
+                            authority.ApiClient.IsCurrentContext(pendingOwner.Context) &&
+                            pendingOwner.MediaFileId == submittedIntent.MediaFileId &&
+                            _pendingSubtitlePreferenceIndex == (submittedIntent.Track?.Index ?? -1) &&
+                            (submittedIntent.Track == null ? resolvedIndex < 0 : resolvedTracks.Length == 1))
+                        {
+                            _pendingSubtitlePreferenceOwner = pendingOwner with { MediaFileId = replanned.MediaFileId };
+                            _pendingSubtitlePreferenceIndex = resolvedIndex;
+                        }
+                        _activeSubtitleServerIndex = resolvedIndex;
+                        _pendingInitialServerSubtitleIndex = resolvedIndex;
+                        _pendingInitialSubtitleFileId = replanned.MediaFileId;
+                    }
+                }
+                if (!retry) break;
                 // Only this still-current accepted plan owns these unused
                 // proxies. A replacement owner retires its own resources.
                 StopDirectStreamProxy(); StopHlsProxy();
-                requestedIndex = _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex;
             }
             ApplyPreparedTransport(preparedV3);
             PlayMethod = replanned.PlayMethod;
-            var resolvedIndex = manager.SubtitleSelectionForLoad;
-            lock (_subtitleTrackStateLock)
-            {
-                _pendingInitialServerSubtitleIndex = resolvedIndex;
-                _pendingInitialSubtitleFileId = replanned.MediaFileId;
-                // Preference execution must follow the same rebound identity,
-                // not wait for the outgoing inventory's now-obsolete index.
-                if (_pendingSubtitlePreferenceIndex == (requestedIndex ?? -1))
-                    _pendingSubtitlePreferenceIndex = resolvedIndex;
-            }
             PrepareSubtitleFileForReload(session, replanned, resolvedIndex);
             BeginOwnedMpvLoad(preparedV3, restorePaused: wasPaused,
                 acceptLoad: generation =>

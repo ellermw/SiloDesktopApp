@@ -3,6 +3,23 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void BitmapFollowupUsesRecordedIdentityAndRebindsOnlyLivePreferenceAuthority()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<SubtitleTransportResult> SetBitmapSubtitleBurnInAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task ReconcileDeferredSubtitleSelectionAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var loop = method.IndexOf("while (true)", StringComparison.Ordinal);
+        Assert.Contains("manager.RecordLocalSubtitleSelection(requestedIndex, manager.IsSubtitleSelectionAutomatic);", method[..loop]);
+        Assert.Contains("manager.ReplanRecordedSubtitleSelectionAsync(position, ct)", method[loop..]);
+        Assert.DoesNotContain("manager.ReplanSubtitleAsync(", method[loop..]);
+        Assert.Contains("manager.CaptureLocalSubtitleIntent() != submittedIntent", method[loop..]);
+        Assert.Contains("pendingOwner.MediaFileId == submittedIntent.MediaFileId", method[loop..]);
+        Assert.Contains("_pendingSubtitlePreferenceOwner = pendingOwner with { MediaFileId = replanned.MediaFileId };", method[loop..]);
+        Assert.Contains("_pendingSubtitlePreferenceIndex = resolvedIndex;", method[loop..]);
+    }
+
+    [Fact]
     public void ReplacementLoadPublishesOwnedBusyBeforeRetiringOutgoingSubtitleReads()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));

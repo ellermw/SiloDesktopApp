@@ -592,6 +592,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 }
                 else
                 {
+                    typeof(PlayerService).GetMethod("FlushLogs", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null);
+                    Program.Log($"Changed-file convergence: requests={string.Join(',', wire.ReplanSelections)}, file={manager.CurrentSession!.MediaFileId}, active={service.ActiveSubtitleServerIndex}, desired={manager.SubtitleSelectionForLoad}, prefs={string.Join(',', wire.RequestedPreferences)}, sid={mpv.GetPropertyDouble("sid")}.");
                     using var recoveryLog = new FileStream(Path.Combine(Program.ResultDirectory, "mpv_log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     recoveryLog.Seek(noticeLogStart, SeekOrigin.Begin);
                     using var recoveryReader = new StreamReader(recoveryLog);
