@@ -54,7 +54,7 @@ public sealed class FullscreenStateSyncSourceTests
 
         var transitionPrefix = service[coreStart..loadingStart];
         Assert.True(
-            transitionPrefix.IndexOf("_switchingContent = true;", StringComparison.Ordinal) <
+            transitionPrefix.IndexOf("SetSwitchingContent(true);", StringComparison.Ordinal) <
             transitionPrefix.IndexOf("PrepareEpisodeNavigationForContent(contentId);", StringComparison.Ordinal));
 
         var continueStart = service.IndexOf("public async Task ContinuePlayingNextAsync()", StringComparison.Ordinal);

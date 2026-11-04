@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace SiloPlayer.Tests;
 
-public sealed class MpvOscRuntimeTests
+public sealed partial class MpvOscRuntimeTests
 {
     [Theory]
     [InlineData("content")]
