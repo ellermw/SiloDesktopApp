@@ -5016,7 +5016,12 @@ local function activate_transport_control(name, keyboard)
     if not hud_control_enabled(name) then return true end
 
     if name:sub(1, 9) == "overflow_" then name = name:sub(10); state.compact_menu_visible = false end
-    if activate_utility_control(name, keyboard) then return true end
+    if activate_utility_control(name, keyboard) then
+        -- The native request owns only this opening gesture. A legacy action
+        -- still needs the ordinary video-click suppression interval.
+        if not keyboard and not state.native_menu_request then consume_video_click() end
+        return true
+    end
     if name == "btn_party" then
         open_native_menu("party", keyboard)
     elseif name == "btn_more" then
@@ -5043,6 +5048,7 @@ local function activate_transport_control(name, keyboard)
     elseif name == "btn_fullscreen" then
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end
+    if not keyboard and not state.native_menu_request then consume_video_click() end
     show_osc()
     request_tick()
     return true
@@ -5192,14 +5198,14 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
-                consume_video_click(); activate_transport_control("overflow_" .. item.name, false); return
+                activate_transport_control("overflow_" .. item.name, false); return
             end
         end
         state.compact_menu_visible = false
         consume_video_click(); request_tick(); return
     end
     if hud_input_available() and state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
-        consume_video_click(); activate_transport_control("btn_more", false); return
+        activate_transport_control("btn_more", false); return
     end
     if hud_input_available() and state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
         state.pressed_control = "btn_fill"
