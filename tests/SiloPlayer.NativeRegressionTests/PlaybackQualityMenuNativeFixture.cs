@@ -217,7 +217,10 @@ internal static class PlaybackQualityMenuNativeFixture
                 wire.HoldSuccessfulReplan = !wire.HoldFailedReplan;
                 var initialFile = (long)Get(service, "_playbackFileGeneration")!;
                 var initialError = service.ErrorMessage;
-                var heldMenu = await Open(); Call(heldMenu, "Input", "end"); Call(heldMenu, "Input", "activate");
+                var heldMenu = await Open(); Call(heldMenu, "Input", "end"); Call(heldMenu, "Input", "up");
+                Require(((ListView)Get(heldMenu, "_list")!).SelectedItem is ListViewItem { Tag: "quality:720p" },
+                    "Held successor case did not select the real server quality.");
+                Call(heldMenu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 wire.HoldSuccessorReplan = true;
                 var successor = (Task)Call(service, "RestartTransportForSeekAsync", 2d, false,
@@ -277,7 +280,10 @@ internal static class PlaybackQualityMenuNativeFixture
             {
                 wire.HoldFailedReplan = true;
                 var initialFile = (long)Get(service, "_playbackFileGeneration")!;
-                var pendingMenu = await Open(); Call(pendingMenu, "Input", "end"); Call(pendingMenu, "Input", "activate");
+                var pendingMenu = await Open(); Call(pendingMenu, "Input", "end"); Call(pendingMenu, "Input", "up");
+                Require(((ListView)Get(pendingMenu, "_list")!).SelectedItem is ListViewItem { Tag: "quality:720p" },
+                    "Retirement case did not select the real server quality.");
+                Call(pendingMenu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 Require(service.IsLoading && service.IsQualitySwitchActive, "The held quality action did not own busy state.");
                 api.SetProfile("replacement"); wire.ReleaseReplan.TrySetResult();
