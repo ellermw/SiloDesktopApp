@@ -640,6 +640,26 @@ internal static partial class SidebarReviewNativeFixture
             }
             finally { HeldMenuWrite?.TrySetResult(new { }); HeldMenuWrite = null; }
         }
+
+        await customization.EnsureLoadedAsync();
+        var pendingDraft = (List<PrimaryMenuItem>)draftField.GetValue(settingsPage)!;
+        pendingDraft.Clear();
+        pendingDraft.AddRange([PrimaryMenuItem.Builtin("home"), new() { Type = "library", LibraryId = 2, Label = "Unsaved navigation" }]);
+        dirtyField.SetValue(settingsPage, true);
+        typeof(SettingsPage).GetMethod("SyncInterfaceControls", Instance)!.Invoke(settingsPage, null);
+        var pendingItems = pendingDraft.ToArray();
+        var cardWrites = MenuWrites;
+        await (Task)typeof(SettingsPage).GetMethod("ClearInterfaceDeviceOverrideAsync", Instance)!
+            .Invoke(settingsPage, [UICustomizationSettingKeys.CardPresentation, "Card layout"])!;
+        Check(MenuWrites == cardWrites + 1 && pendingItems.SequenceEqual(pendingDraft) &&
+            pendingDraft.Last().Label == "Unsaved navigation" && (bool)dirtyField.GetValue(settingsPage)! &&
+            ((Button)settingsPage.FindName("SaveInterfaceMenuButton")).IsEnabled,
+            "successful card-only override clear preserves the unsaved navigation draft, dirty state and Save action");
+        await (Task)typeof(SettingsPage).GetMethod("ClearInterfaceDeviceOverrideAsync", Instance)!
+            .Invoke(settingsPage, [UICustomizationSettingKeys.PrimaryMenu, "Navigation"])!;
+        Check(!(bool)dirtyField.GetValue(settingsPage)! && pendingDraft.Last().Label == customization.PrimaryMenu!.Items.Last().Label &&
+            !((Button)settingsPage.FindName("SaveInterfaceMenuButton")).IsEnabled,
+            "successful navigation override clear still replaces the menu draft and clears its dirty state");
     }
 
     private static IEnumerable<ContentDialog> Dialogs(FrameworkElement owner) => VisualTreeHelper.GetOpenPopupsForXamlRoot(owner.XamlRoot).SelectMany(popup => All<ContentDialog>(popup.Child));

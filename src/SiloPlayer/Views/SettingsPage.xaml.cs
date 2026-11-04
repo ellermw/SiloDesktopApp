@@ -1566,11 +1566,14 @@ _webhookPlexAuthCts?.Cancel();
         {
             if (!await _uiCustomizationService.ClearDeviceOverrideAsync(key)) return;
             if (!ownerApi.IsCurrentContext(ownerContext)) return;
-            _interfaceMenuDraft.Clear();
-            _interfaceMenuDraft.AddRange(
-                (_uiCustomizationService.PrimaryMenu?.Items ?? UICustomizationService.DefaultDesktopMenu())
-                .Select(item => item.Clone()));
-            _interfaceMenuDirty = false;
+            if (key == UICustomizationSettingKeys.PrimaryMenu)
+            {
+                _interfaceMenuDraft.Clear();
+                _interfaceMenuDraft.AddRange(
+                    (_uiCustomizationService.PrimaryMenu?.Items ?? UICustomizationService.DefaultDesktopMenu())
+                    .Select(item => item.Clone()));
+                _interfaceMenuDirty = false;
+            }
             SyncInterfaceControls();
             App.Services.GetRequiredService<ToastService>().Success($"{label} now follows the desktop-family preference");
         }

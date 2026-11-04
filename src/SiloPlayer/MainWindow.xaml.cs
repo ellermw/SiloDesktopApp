@@ -2968,6 +2968,7 @@ public sealed partial class MainWindow : Window
     }
 
     private Dictionary<string, List<SidebarPinRow>> _sidebarPins = [];
+    private readonly SemaphoreSlim _sidebarPinsMutationGate = new(1, 1);
     private long _sidebarPinsWriteEpoch;
 
     private Grid BuildPinnedSidebarContent(
@@ -3186,44 +3187,53 @@ public sealed partial class MainWindow : Window
         var shellKey = _hydratedShellKey;
         var context = _apiClient.CaptureContext();
         if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
-        var settingsApi = App.Services.GetRequiredService<SettingsApi>();
-        var entry = await settingsApi.GetSettingAsync("sidebar_pins");
-        if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
-        var map = ParseSidebarPins(entry.Value);
-        var key = libraryId.ToString();
-        var pins = map.TryGetValue(key, out var existing) ? existing : [];
-        var index = pins.FindIndex(pin =>
-            string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
-        bool nowPinned;
-        if (index >= 0)
+        await _sidebarPinsMutationGate.WaitAsync();
+        try
         {
-            pins.RemoveAt(index);
-            if (pins.Count == 0) map.Remove(key);
-            else map[key] = pins;
-            nowPinned = false;
-        }
-        else
-        {
-            pins.Add(new SidebarPinRow { Type = pinType, Id = pinId, Label = label });
-            map[key] = pins;
-            nowPinned = true;
-        }
-
-        var serializable = map.ToDictionary(
-            pair => pair.Key,
-            pair => pair.Value.Select(pin => new Dictionary<string, string>
+            if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
+            var settingsApi = App.Services.GetRequiredService<SettingsApi>();
+            var entry = await settingsApi.GetSettingAsync("sidebar_pins");
+            if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
+            var map = ParseSidebarPins(entry.Value, out var complete);
+            if (!complete) throw new InvalidDataException("Saved sidebar pins could not be read completely; no changes were saved.");
+            var key = libraryId.ToString();
+            var pins = map.TryGetValue(key, out var existing) ? existing : [];
+            var index = pins.FindIndex(pin =>
+                string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
+            bool nowPinned;
+            if (index >= 0)
             {
-                ["type"] = pin.Type,
-                ["id"] = pin.Id,
-                ["label"] = pin.Label,
-            }).ToList());
-        await settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
-        if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
-        Interlocked.Increment(ref _sidebarPinsWriteEpoch);
-        _sidebarPins = map;
-        UpdateLibraryNavItems();
-        return nowPinned;
+                pins.RemoveAt(index);
+                if (pins.Count == 0) map.Remove(key);
+                else map[key] = pins;
+                nowPinned = false;
+            }
+            else
+            {
+                pins.Add(new SidebarPinRow { Type = pinType, Id = pinId, Label = label });
+                map[key] = pins;
+                nowPinned = true;
+            }
+
+            var serializable = map.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.Select(pin => new Dictionary<string, string>
+                {
+                    ["type"] = pin.Type,
+                    ["id"] = pin.Id,
+                    ["label"] = pin.Label,
+                }).ToList());
+            await settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
+            // An acknowledged write survives request-only catch-up, but never
+            // a change of shell/profile ownership.
+            if (!IsCurrentSidebarMutationOwner(shellKey)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
+            Interlocked.Increment(ref _sidebarPinsWriteEpoch);
+            _sidebarPins = map;
+            UpdateLibraryNavItems();
+            return nowPinned;
+        }
+        finally { _sidebarPinsMutationGate.Release(); }
     }
 
     private async Task RemoveSidebarPinAsync(
@@ -3234,37 +3244,47 @@ public sealed partial class MainWindow : Window
         var shellKey = _hydratedShellKey;
         var context = _apiClient.CaptureContext();
         if (!IsCurrentSidebarMutation(shellKey, context)) return;
-        var entry = await _settingsApi.GetSettingAsync("sidebar_pins");
-        if (!IsCurrentSidebarMutation(shellKey, context)) return;
-        var map = ParseSidebarPins(entry.Value);
-        var key = libraryId.ToString();
-        if (!map.TryGetValue(key, out var pins))
-            return;
+        await _sidebarPinsMutationGate.WaitAsync();
+        try
+        {
+            if (!IsCurrentSidebarMutation(shellKey, context)) return;
+            var entry = await _settingsApi.GetSettingAsync("sidebar_pins");
+            if (!IsCurrentSidebarMutation(shellKey, context)) return;
+            var map = ParseSidebarPins(entry.Value, out var complete);
+            if (!complete) throw new InvalidDataException("Saved sidebar pins could not be read completely; no changes were saved.");
+            var key = libraryId.ToString();
+            if (!map.TryGetValue(key, out var pins))
+                return;
 
-        pins.RemoveAll(pin =>
-            string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
-        if (pins.Count == 0)
-            map.Remove(key);
+            pins.RemoveAll(pin =>
+                string.Equals(pin.Type, pinType, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(pin.Id, pinId, StringComparison.Ordinal));
+            if (pins.Count == 0)
+                map.Remove(key);
 
-        var serializable = map.ToDictionary(
-            pair => pair.Key,
-            pair => pair.Value.Select(pin => new Dictionary<string, string>
-            {
-                ["type"] = pin.Type,
-                ["id"] = pin.Id,
-                ["label"] = pin.Label,
-            }).ToList());
-        await _settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
-        if (!IsCurrentSidebarMutation(shellKey, context)) return;
-        Interlocked.Increment(ref _sidebarPinsWriteEpoch);
-        _sidebarPins = map;
-        UpdateLibraryNavItems();
+            var serializable = map.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.Select(pin => new Dictionary<string, string>
+                {
+                    ["type"] = pin.Type,
+                    ["id"] = pin.Id,
+                    ["label"] = pin.Label,
+                }).ToList());
+            await _settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
+            if (!IsCurrentSidebarMutationOwner(shellKey)) return;
+            Interlocked.Increment(ref _sidebarPinsWriteEpoch);
+            _sidebarPins = map;
+            UpdateLibraryNavItems();
+        }
+        finally { _sidebarPinsMutationGate.Release(); }
     }
 
+    // The shell key includes API identity generations, not request generations.
+    private bool IsCurrentSidebarMutationOwner(string? shellKey) =>
+        shellKey != null && IsCurrentShellHydration(shellKey, CancellationToken.None);
+
     private bool IsCurrentSidebarMutation(string? shellKey, ApiRequestContext context) =>
-        shellKey != null && _apiClient.IsCurrentContext(context) &&
-        IsCurrentShellHydration(shellKey, CancellationToken.None);
+        _apiClient.IsCurrentContext(context) && IsCurrentSidebarMutationOwner(shellKey);
 
     /// <summary>
     /// Reloads the cached sidebar pins from the server setting and rebuilds
@@ -3293,8 +3313,8 @@ public sealed partial class MainWindow : Window
             if (writeEpoch != Volatile.Read(ref _sidebarPinsWriteEpoch) ||
                 !_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
                 return;
-            _sidebarPins = ParseSidebarPins(entry.Value);
-            _sidebarPinsReady = true;
+            _sidebarPins = ParseSidebarPins(entry.Value, out var complete);
+            _sidebarPinsReady = complete;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -3315,34 +3335,56 @@ public sealed partial class MainWindow : Window
         UpdateLibraryNavItems();
     }
 
-    private static Dictionary<string, List<SidebarPinRow>> ParseSidebarPins(string? raw)
+    private static Dictionary<string, List<SidebarPinRow>> ParseSidebarPins(string? raw, out bool complete)
     {
+        static bool ReadString(System.Text.Json.JsonElement row, string name, out string value)
+        {
+            value = "";
+            if (!row.TryGetProperty(name, out var field) || field.ValueKind == System.Text.Json.JsonValueKind.Null) return true;
+            if (field.ValueKind != System.Text.Json.JsonValueKind.String) return false;
+            value = field.GetString() ?? "";
+            return true;
+        }
+
         var map = new Dictionary<string, List<SidebarPinRow>>();
+        complete = true;
         if (string.IsNullOrWhiteSpace(raw)) return map;
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(raw);
-            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return map;
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+            {
+                complete = false;
+                return map;
+            }
             foreach (var prop in doc.RootElement.EnumerateObject())
             {
-                if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Array) continue;
+                if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
+                {
+                    complete = false;
+                    continue;
+                }
                 var entries = new List<SidebarPinRow>();
                 var seen = new HashSet<(string Type, string Id)>();
                 foreach (var el in prop.Value.EnumerateArray())
                 {
-                    if (el.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
-                    var row = new SidebarPinRow
+                    if (el.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                        !ReadString(el, "type", out var type) || !ReadString(el, "id", out var id) ||
+                        !ReadString(el, "label", out var label) || string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(id))
                     {
-                        Type = el.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "",
-                        Id = el.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
-                        Label = el.TryGetProperty("label", out var lb) ? lb.GetString() ?? "" : "",
-                    };
-                    if (seen.Add((row.Type.ToLowerInvariant(), row.Id))) entries.Add(row);
+                        complete = false;
+                        continue;
+                    }
+                    if (seen.Add((type.ToLowerInvariant(), id)))
+                        entries.Add(new SidebarPinRow { Type = type, Id = id, Label = label });
+                    else complete = false;
                 }
-                if (entries.Count > 0) map[prop.Name] = entries;
+                if (!map.TryAdd(prop.Name, entries)) complete = false;
             }
         }
-        catch { }
+        catch (System.Text.Json.JsonException) { complete = false; }
+        // Valid rows remain useful for display. Mutations must reject incomplete
+        // snapshots rather than writing a filtered map over the stored value.
         return map;
     }
 

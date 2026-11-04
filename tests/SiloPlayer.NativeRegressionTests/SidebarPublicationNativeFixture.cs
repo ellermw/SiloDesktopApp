@@ -82,6 +82,9 @@ internal static class SidebarPublicationNativeFixture
         HeldPins.SetResult(Json(new { value = Pins })); HeldPins = null; await pinLoad; await Drain();
         Check(changes == 0 && childChanges == 0, "unchanged pin arrival does not churn either vector");
         await CheckPinWriteRetiresReadAsync(window, first);
+        await CheckMalformedPinSnapshotsAsync(window);
+        await CheckSerializedPinMutationsAsync(window);
+        await CheckCommittedPinCatchUpAsync(window, provider.GetRequiredService<SiloApiClient>());
 
         Libraries = [Lib(2, "Renamed series", "audiobooks"), Lib(1, "Renamed movies", "series"), Lib(4, "Added")];
         Libraries[1].MetadataLanguage = "fr";
@@ -285,6 +288,119 @@ internal static class SidebarPublicationNativeFixture
         Check((bool)ready.GetValue(window)!, "fresh post-write pin read completes hydration readiness");
         LastWrite = null;
     }
+    private static Task RemovePinAsync(MainWindow window, int libraryId, string type, string id) =>
+        (Task)typeof(MainWindow).GetMethod("RemoveSidebarPinAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [libraryId, type, id])!;
+
+    private static async Task CheckMalformedPinSnapshotsAsync(MainWindow window)
+    {
+        var original = Pins;
+        var good = new { type = "collection", id = "pin-a", label = "First pin" };
+        var later = new { type = "section", id = "later", label = "Later pin" };
+        try
+        {
+            foreach (var bad in new object[] {
+                new { type = "section", id = 7, label = "Bad id" },
+                new { type = 7, id = "bad", label = "Bad type" },
+                new { type = "section", id = "bad", label = false },
+                7,
+            })
+            {
+                Pins = new Dictionary<string, object> { ["1"] = new object[] { good, bad, later }, ["2"] = new[] { good } };
+                await window.RefreshSidebarPinsAsync(); await Drain();
+                Check(window.IsSidebarPin(1, "collection", "pin-a") && window.IsSidebarPin(1, "section", "later") &&
+                    window.IsSidebarPin(2, "collection", "pin-a") && window.GetSidebarPins(1, "section").Count == 1,
+                    "malformed pin row leaves valid preceding, following and other-library pins visible");
+                LastWrite = null;
+                var blocked = 0;
+                try { await window.ToggleSidebarPinAsync(1, "collection", "new", "New"); }
+                catch (InvalidDataException) { blocked++; }
+                try { await RemovePinAsync(window, 1, "collection", "pin-a"); }
+                catch (InvalidDataException) { blocked++; }
+                Check(blocked == 2 && LastWrite == null, "toggle and unpin refuse to overwrite a partially parsed pin map");
+            }
+            foreach (var invalid in new object[] { "{invalid", new object[0], new Dictionary<string, object> { ["1"] = 7 },
+                new Dictionary<string, object> { ["1"] = new[] { good, good } } })
+            {
+                Pins = invalid; LastWrite = null;
+                var blocked = false;
+                try { await window.ToggleSidebarPinAsync(1, "collection", "new", "New"); }
+                catch (InvalidDataException) { blocked = true; }
+                Check(blocked && LastWrite == null, "invalid or lossy pin snapshot is never written back");
+            }
+        }
+        finally { Pins = original; await window.RefreshSidebarPinsAsync(); await Drain(); LastWrite = null; }
+    }
+
+    private static async Task CheckSerializedPinMutationsAsync(MainWindow window)
+    {
+        var original = Pins;
+        try
+        {
+            foreach (var remove in new[] { false, true })
+            {
+                HeldWrite = NewHeld(); LastWrite = null;
+                Task first = remove ? RemovePinAsync(window, 1, "collection", "serial-a")
+                    : window.ToggleSidebarPinAsync(1, "collection", "serial-a", "Serialized A");
+                await Until(() => LastWrite != null);
+                var reads = PinReadCount;
+                var second = window.ToggleSidebarPinAsync(2, "section", remove ? "serial-c" : "serial-b", "Serialized next");
+                await Drain();
+                Check(PinReadCount == reads && !second.IsCompleted, "overlapping pin mutation waits for the complete GET-to-PUT transaction");
+                HeldWrite.SetResult(Json(new { })); HeldWrite = null;
+                await Task.WhenAll(first, second);
+                await window.RefreshSidebarPinsAsync(); await Drain();
+                Check(window.IsSidebarPin(1, "collection", "serial-a") == !remove && window.IsSidebarPin(2, "section", "serial-b") &&
+                    (!remove || window.IsSidebarPin(2, "section", "serial-c")) && window.IsSidebarPin(1, "collection", "pin-a"),
+                    "overlapping toggle/toggle and unpin/toggle preserve all independent server pins");
+            }
+        }
+        finally
+        {
+            HeldWrite?.TrySetResult(Json(new { })); HeldWrite = null;
+            Pins = original; await window.RefreshSidebarPinsAsync(); await Drain(); LastWrite = null;
+        }
+    }
+
+    private static async Task CheckCommittedPinCatchUpAsync(MainWindow window, SiloApiClient api)
+    {
+        var original = Pins;
+        var epoch = typeof(MainWindow).GetField("_sidebarPinsWriteEpoch", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        try
+        {
+            foreach (var remove in new[] { false, true })
+            {
+                var snapshot = Pins;
+                var before = (long)epoch.GetValue(window)!;
+                HeldWrite = NewHeld(); LastWrite = null;
+                Task mutation = remove ? RemovePinAsync(window, 1, "collection", "committed")
+                    : window.ToggleSidebarPinAsync(1, "collection", "committed", "Committed pin");
+                await Until(() => LastWrite != null);
+                api.InvalidateAccessContext();
+                // A new-context read can still have captured the pre-commit map.
+                HeldPins = NewHeld(); PinRead = false;
+                var refresh = window.RefreshSidebarPinsAsync();
+                await Until(() => PinRead);
+                var heldRead = HeldPins; HeldPins = null;
+                HeldWrite.SetResult(Json(new { })); HeldWrite = null;
+                var canceled = false;
+                try { await mutation; } catch (OperationCanceledException) { canceled = true; }
+                Check(!canceled && (long)epoch.GetValue(window)! > before && window.IsSidebarPin(1, "collection", "committed") == !remove,
+                    "acknowledged pin/unpin applies locally and advances write epoch across request-only invalidation");
+                heldRead.SetResult(Json(new { value = snapshot }));
+                await refresh; await Drain();
+                Check(window.IsSidebarPin(1, "collection", "committed") == !remove,
+                    "late new-context pre-commit snapshot cannot invert the acknowledged pin state");
+            }
+        }
+        finally
+        {
+            HeldWrite?.TrySetResult(Json(new { })); HeldWrite = null;
+            HeldPins?.TrySetResult(Json(new { value = Pins })); HeldPins = null;
+            Pins = original; await window.RefreshSidebarPinsAsync(); await Drain(); LastWrite = null;
+        }
+    }
+
     internal static async Task RunDetachedAsync(MainWindow window, IServiceProvider provider)
     {
         var nav = (NavigationView)((FrameworkElement)window.Content).FindName("NavView");
