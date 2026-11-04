@@ -352,6 +352,46 @@ public sealed class GroupedLibraryTests
         model.CancelCatalogLoads();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StructuralRefreshKeepsPublishedAlphabetUntilReplacementArrives(bool stateOnly)
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        if (stateOnly) model.SelectedWatchStatus = "watched"; // State now affects offsets too.
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var index = model.LetterIndex;
+        Assert.NotNull(index);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeLettersResponse = async ct =>
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(ct);
+        };
+        var cleared = false;
+        model.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(model.LetterIndex) && model.LetterIndex is null) cleared = true;
+        };
+        try
+        {
+            var result = stateOnly ? await model.RefreshGroupedCatalogStateAsync(120, 20)
+                : await model.RefreshGroupedCatalogAsync(120, 20);
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed, result);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.True(model.IsLetterIndexLoading);
+            Assert.Same(index, model.LetterIndex);
+            Assert.False(cleared);
+            release.TrySetResult();
+            await model.EnsureLetterIndexAsync();
+            Assert.NotNull(model.LetterIndex);
+            Assert.NotSame(index, model.LetterIndex);
+            Assert.False(cleared);
+        }
+        finally { release.TrySetResult(); model.CancelCatalogLoads(); }
+    }
+
     [Fact]
     public async Task StructuralRefreshRetiresSparsePages()
     {
@@ -574,6 +614,7 @@ public sealed class GroupedLibraryTests
         public bool HoldCapabilities;
         public string? CapabilityFailure;
         public Func<int, bool, CancellationToken, Task>? BeforeCatalogResponse;
+        public Func<CancellationToken, Task>? BeforeLettersResponse;
         public Func<int, bool, HttpResponseMessage, Task>? AfterCatalogSnapshot;
         public readonly TaskCompletionSource CapabilitiesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseCapabilities = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient? Client;
@@ -602,6 +643,7 @@ public sealed class GroupedLibraryTests
             if (path.EndsWith("letters"))
             {
                 var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement.Clone(); Letters.Add(body);
+                if (BeforeLettersResponse is not null) await BeforeLettersResponse(ct);
                 return Json("""{"total":1000,"letters":[{"letter":"A","count":742,"position":0},{"letter":"M","count":258,"position":742}],"runs":[{"letter":"A","count":742,"position":0},{"letter":"M","count":258,"position":742}]}""");
             }
             if (path is "/api/v2/catalog" or "/api/v2/catalog/query")

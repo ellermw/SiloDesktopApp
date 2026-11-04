@@ -578,7 +578,7 @@ public partial class LibraryViewModel : ObservableObject
             {
                 // Retain mounted cards until the read succeeds, then retire all
                 // old offsets and continuations together before publishing.
-                StartNewCatalogQuery(preserveExtent: true);
+                StartNewCatalogQuery(preserveExtent: true, preserveLetters: true);
                 // The retained extent is provisional in the new catalog. Its
                 // previous exact count must not clip newly inserted tail rows.
                 _hasExactTotal = false;
@@ -1087,19 +1087,21 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
+    internal string CatalogQueryScopeKey() => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        library = Library?.Id, group = _catalogGroup, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
+        SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution, SelectedAudioLanguage,
+        SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
+        groups = BuildAdvancedGroups(), AdvancedRulesMatch,
+    });
+
     private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct, bool publishState = true, CatalogRangeRead? read = null)
     {
         if (read?.Retired == true) throw new OperationCanceledException("Catalog range was refreshed.", ct);
         using var operation = SiloPlayer.Core.Services.LocalLog.BeginOperation("catalog-" + Guid.NewGuid().ToString("N"));
         var context = _catalogApi.CaptureContext();
         var version = _queryVersion;
-        var queryKey = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            library = Library!.Id, group = _catalogGroup, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
-            SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution, SelectedAudioLanguage,
-            SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
-            groups = BuildAdvancedGroups(), AdvancedRulesMatch,
-        });
+        var queryKey = CatalogQueryScopeKey();
         var nextCursor = publishState && _completedBoundaries.TryGetValue(startIndex, out var boundary)
             && boundary.QueryVersion == version && boundary.Context == context && boundary.QueryKey == queryKey
             && boundary.Snapshot == snapshot ? boundary.NextCursor : null;

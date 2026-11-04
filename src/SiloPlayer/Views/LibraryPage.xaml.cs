@@ -330,6 +330,9 @@ public sealed partial class LibraryPage : Page,
             if (!_isNavigated || visit != _groupedLibraryVisit) return;
             library = ViewModel.Library;
             _groupedCatalogDirty = IsBoxSetLibrary;
+            // Catalog subscriptions were detached while away. Without proof
+            // that changes were state-only, retire adjacent offsets on return.
+            if (_groupedCatalogDirty) _groupedStructureRequested++;
         }
 
         LibraryUnavailableState.Visibility = library == null
@@ -392,6 +395,7 @@ public sealed partial class LibraryPage : Page,
                 state.Genres = [requestedGenre];
             }
 
+            var retainedQueryScope = ViewModel.CatalogQueryScopeKey();
             _suppressFilterEvents = true;
             UpdateSortOptions(library.Type, state.Sort, state.MediaType);
             ConfigureBrowseTypeSelector(library.Type, state.MediaType);
@@ -436,9 +440,6 @@ public sealed partial class LibraryPage : Page,
             ViewModel.SelectedSort = restoredSort;
             Controls.PosterCard.CurrentSortKey = restoredSort;
             ViewModel.SelectedOrder = state.Order;
-            // A changed restored type retires the retained query and its extent.
-            // Do not let the cached-page path skip loading the replacement.
-            if (ViewModel.SelectedType != state.MediaType) _libraryCatalogLoaded = false;
             ViewModel.SelectedType = state.MediaType;
             ViewModel.SelectedGenre = state.Genre;
             ViewModel.SelectedGenres = _selectedGenres.ToList();
@@ -477,6 +478,16 @@ public sealed partial class LibraryPage : Page,
             if (ViewModel.AdvancedGroups.Count == 0) ViewModel.AdvancedGroups.Add(new());
             ViewModel.UseAdvancedRules = state.QueryGroups.Any(group => group.Rules.Count > 0);
             ViewModel.AdvancedRulesMatch = state.Match;
+            if (retainedQueryScope != ViewModel.CatalogQueryScopeKey())
+            {
+                // Saved state can change on another client while this page is
+                // cached. No cursor or card may cross the restored query scope.
+                _libraryCatalogLoaded = false;
+                CancelGroupedCatalogRefresh();
+                ViewModel.CancelCatalogLoads();
+                ViewModel.Items.Clear();
+                ClearVirtualCards();
+            }
             if (ViewModel.UseAdvancedRules) { BuildAdvancedRulesPanel(); GuidedFiltersScroll.Visibility = Visibility.Collapsed; AdvancedFiltersScroll.Visibility = Visibility.Visible; }
             _suppressFilterEvents = false;
             UpdateAudiobookAxisButtons();

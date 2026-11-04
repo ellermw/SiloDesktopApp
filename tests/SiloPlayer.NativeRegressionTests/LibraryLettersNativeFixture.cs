@@ -236,8 +236,10 @@ internal static class LibraryLettersNativeFixture
                 wire.FailIndex = false;
                 if (grouped)
                 {
+                    await VerifyStructuralRefreshLetterRailAsync(page, wire);
                     await VerifyGroupedRefreshViewportAsync(page, wire, client);
                     await VerifyStructuralGroupedRefreshAsync(page, wire, client);
+                    await VerifyCachedGroupedReturnAsync(frame, page, wire);
                     if (type == "mixed") await VerifyRestoredBrowseTypeAsync(frame, page, wire);
                     wire.Grouped = false; catalog.InvalidateLibraryCache();
                     await Until(() => page.ViewModel.Library is { BoxSetsEnabled: false } && page.ViewModel.GetWindowItem(0)?.Type == "movie");
@@ -258,6 +260,69 @@ internal static class LibraryLettersNativeFixture
             await Task.Delay(150); navigation.Frame = null; field.SetValue(null, previous);
         }
     }
+    private static async Task VerifyStructuralRefreshLetterRailAsync(LibraryPage page, Wire wire)
+    {
+        var model = page.ViewModel;
+        model.SelectedSort = "title";
+        await model.EnsureLetterIndexAsync();
+        var rail = (Border)page.FindName("LibraryLetterRail");
+        var letters = (Grid)page.FindName("LibraryLetterButtons");
+        await Until(() => rail.Visibility == Visibility.Visible);
+        var button = letters.Children.Cast<Button>().Single(item => (string)item.Tag == "M");
+        if (!button.Focus(FocusState.Keyboard)) throw new InvalidOperationException("Could not focus the retained alphabet rail.");
+        var index = model.LetterIndex;
+        wire.LetterIndexGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            if (await model.RefreshGroupedCatalogAsync(model.WindowStartIndex, 60) != LibraryViewModel.GroupedRefreshResult.Completed)
+                throw new InvalidOperationException("Structural alphabet refresh did not complete its cards.");
+            await Until(() => model.IsLetterIndexLoading);
+            await Task.Delay(150); page.UpdateLayout();
+            if (!ReferenceEquals(index, model.LetterIndex) || rail.Visibility != Visibility.Visible || !button.IsEnabled ||
+                !ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), button))
+                throw new InvalidOperationException("Structural refresh hid the alphabet rail or lost its focused letter while the replacement index was held.");
+            Program.Log("PASS: structural grouped refresh retains the native alphabet rail, enabled letters and keyboard focus while its replacement index is held.");
+        }
+        finally { wire.LetterIndexGate.TrySetResult(); }
+        await model.EnsureLetterIndexAsync();
+    }
+
+    private static async Task VerifyCachedGroupedReturnAsync(Frame frame, LibraryPage page, Wire wire)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var model = page.ViewModel;
+        model.SelectedSort = "title"; model.SelectedOrder = "asc";
+        model.SelectedGenre = null; model.SelectedGenres = []; model.UseAdvancedRules = false;
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var scroll = (ScrollViewer)page.FindName("LibraryScroller");
+        var layout = typeof(LibraryPage).GetMethod("GetGridLayout", flags)!.Invoke(page, null)!;
+        var columns = (int)layout.GetType().GetProperty("Columns")!.GetValue(layout)!;
+        var rowHeight = (double)layout.GetType().GetProperty("RowHeight")!.GetValue(layout)!;
+        scroll.ChangeView(null, (600 / columns) * rowHeight, null, true);
+        await Until(() => scroll.VerticalOffset > 10000 && model.GetWindowItem(600) is not null && !model.IsLoading);
+        if (model.GetWindowItem(0) is null) throw new InvalidOperationException("Cached-return fixture requires an earlier cached window.");
+        var applied = (long)typeof(LibraryPage).GetField("_groupedStructureApplied", flags)!.GetValue(page)!;
+        try
+        {
+            frame.Navigate(typeof(Page)); await Until(() => !page.IsLoaded);
+            wire.SavedSearch = "?tab=library&sort=title";
+            wire.CatalogIndexShift = 1; // Removal while no Library subscriptions are attached.
+            var reads = wire.CatalogScopes.Count;
+            frame.GoBack();
+            await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded &&
+                (long)typeof(LibraryPage).GetField("_groupedStructureApplied", flags)!.GetValue(page)! > applied &&
+                typeof(LibraryPage).GetField("_groupedRefreshCts", flags)!.GetValue(page) == null);
+            if (!wire.CatalogScopes.Skip(reads).Any(scope => scope.Cursor is null))
+                throw new InvalidOperationException("Cached grouped return refreshed only under the old cursor.");
+            reads = wire.CatalogScopes.Count;
+            await model.EnsureRangeLoadedAsync(0, 59);
+            if (wire.CatalogScopes.Count <= reads || model.GetWindowItem(0)?.ContentId != "item-1")
+                throw new InvalidOperationException("Cached grouped return retained earlier offsets after a missed catalog removal.");
+            Program.Log("PASS: cached title-sorted grouped return uses a fresh structural read and retires adjacent windows after a catalog change while away.");
+        }
+        finally { wire.SavedSearch = null; wire.CatalogIndexShift = 0; }
+    }
+
     private static async Task VerifyStructuralGroupedRefreshAsync(LibraryPage page, Wire wire, SiloApiClient client)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -383,7 +448,28 @@ internal static class LibraryLettersNativeFixture
                 if (((TextBlock)page.FindName("LibraryEmptyText")).Visibility == Visibility.Visible)
                     throw new InvalidOperationException("Changed restored browse type displayed an empty Library instead of reloaded cards.");
             }
-            Program.Log("PASS: cached mixed Library returns reload movies/episodes/default scope under a non-title sort and render non-empty cards.");
+            foreach (var (sort, order, genre) in new (string Sort, string Order, string? Genre)[]
+            {
+                ("title", "asc", null), // Sort only; media type remains unchanged.
+                ("title", "desc", null), // Direction only.
+                ("title", "desc", "Drama"), // Guided filter only.
+            })
+            {
+                var oldItem = page.ViewModel.GetWindowItem(0);
+                frame.Navigate(typeof(Page)); await Until(() => !page.IsLoaded);
+                wire.SavedSearch = $"?tab=library&sort={sort}&order={order}" + (genre is null ? "" : "&genre=" + genre);
+                var reads = wire.CatalogScopes.Count;
+                frame.GoBack();
+                await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded &&
+                    page.ViewModel.SelectedSort == sort && page.ViewModel.SelectedOrder == order && page.ViewModel.SelectedGenre == genre &&
+                    wire.CatalogScopes.Count > reads && page.ViewModel.GetWindowItem(0) is not null && !page.ViewModel.IsLoading);
+                var expectedSort = order == "desc" ? "-" + sort : sort;
+                var requests = wire.CatalogScopes.Skip(reads).ToArray();
+                if (requests[0].Cursor is not null || requests.Any(scope => scope.Sort != expectedSort || scope.Genre != genre || scope.Type is not null) ||
+                    ReferenceEquals(oldItem, page.ViewModel.GetWindowItem(0)))
+                    throw new InvalidOperationException("Cached Library return reused cards/cursors from before a restored sort, direction or genre change.");
+            }
+            Program.Log("PASS: cached mixed Library returns reload changed type, sort, direction and guided filters without reusing the previous query's cursor or cards.");
         }
         finally { wire.SavedSearch = null; }
     }
@@ -422,7 +508,7 @@ internal static class LibraryLettersNativeFixture
         internal TaskCompletionSource? LetterIndexGate, CatalogWindowGate, CountGate, CatalogWindowStarted;
         internal List<int> Seeks { get; } = [];
         internal string? SavedSearch;
-        internal List<(string? Type, string? Group)> CatalogScopes { get; } = [];
+        internal List<(string? Type, string? Group, string? Sort, string? Genre, string? Cursor)> CatalogScopes { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -449,7 +535,8 @@ internal static class LibraryLettersNativeFixture
                 var query = request.RequestUri.Query.TrimStart('?').Split('&').Select(pair => pair.Split('=', 2))
                     .ToDictionary(pair => Uri.UnescapeDataString(pair[0]), pair => Uri.UnescapeDataString(pair[1]));
                 LastOrder = query.GetValueOrDefault("sort"); LastGenre = query.GetValueOrDefault("genre");
-                CatalogScopes.Add((query.GetValueOrDefault("type"), query.GetValueOrDefault("group")));
+                CatalogScopes.Add((query.GetValueOrDefault("type"), query.GetValueOrDefault("group"),
+                    LastOrder, LastGenre, query.GetValueOrDefault("cursor")));
                 var grouped = query.GetValueOrDefault("group") == "box_set";
                 if (Grouped && (query.GetValueOrDefault("type") is null or "" or "movie" or "video") && !grouped) MissingGroup++;
                 var limit = int.Parse(query["limit"]); var offset = query.TryGetValue("seek", out var seek) ? int.Parse(seek) : 0;
