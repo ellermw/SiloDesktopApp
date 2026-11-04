@@ -79,7 +79,13 @@ public partial class PlayerService
                 await SwitchAudioTrackAsync(aid - 1);
                 break;
             case "select_subtitle_track":
-                if (command["trackId"] == null) throw new ArgumentException("Missing subtitle track.");
+                // Optional track IDs encode Off as either an omitted key or JSON null.
+                if (command["trackId"] == null)
+                {
+                    if (!await SelectSubtitleByServerIndexAsync(-1))
+                        throw new ArgumentException("Subtitles could not be turned off.");
+                    break;
+                }
                 if (command["trackId"] is not JsonValue subtitleId || !subtitleId.TryGetValue<int>(out var sid))
                     throw new ArgumentException("Invalid subtitle track.");
                 var subtitleTrack = _playbackManager?.CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index + 1 == sid);

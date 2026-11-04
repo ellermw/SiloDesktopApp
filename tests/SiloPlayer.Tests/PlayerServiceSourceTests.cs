@@ -1313,8 +1313,8 @@ public sealed class PlayerServiceSourceTests
         var nativeFallback = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Player", "MpvPlayer.AsyncSubtitle.cs"));
         Assert.Contains("mpv_command_async(_mpvHandle, id, pointers)", nativeFallback);
         Assert.Contains("mpv_abort_async_command(_mpvHandle, id)", nativeFallback);
-        Assert.Contains("\"sub-add\", url, \"no\"", nativeFallback);
-        Assert.DoesNotContain("\"sub-add\", url, \"auto\"", nativeFallback);
+        Assert.Contains("\"sub-add\", url, \"auto\"", nativeFallback);
+        Assert.DoesNotContain("\"sub-add\", url, \"no\"", nativeFallback);
         Assert.DoesNotContain("mpv_command(", nativeFallback);
         Assert.Contains("if (!_prefetchedSubtitleFiles.ContainsKey(track.Index) &&", source);
         Assert.Contains("remote.Scheme is \"http\" or \"https\") return false;", source);
