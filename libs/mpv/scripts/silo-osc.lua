@@ -4837,6 +4837,10 @@ local function open_transport_menu_from_controller(kind)
     end
 end
 
+local function toggle_video_fit()
+    mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
+end
+
 local function activate_controller_focus()
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
@@ -4856,7 +4860,7 @@ local function activate_controller_focus()
     if name == "btn_more" then
         state.compact_menu_visible = not state.compact_menu_visible
     elseif name == "btn_fill" then
-        mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
+        toggle_video_fit()
     elseif name == "btn_volume_down" or name == "btn_volume_up" then
         local volume = clamp(mp.get_property_number("volume", 100) + (name == "btn_volume_up" and 10 or -10), 0, 100)
         mp.set_property_number("volume", volume)
@@ -4899,6 +4903,7 @@ end
 
 local function handle_mouse_down()
     state.pressed_control = nil
+    state.controller_focus_name = nil
     local mx = state.mouse_x
     local my = state.mouse_y
 
@@ -5021,7 +5026,11 @@ local function handle_mouse_down()
     end
     if hud_input_available() and state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
         state.pressed_control = "btn_fill"
-        consume_video_click(); state.controller_focus_name = "btn_fill"; activate_controller_focus(); return
+        consume_video_click()
+        toggle_video_fit()
+        show_osc()
+        request_tick()
+        return
     end
 
     -- Audio menu click handling
@@ -5219,10 +5228,9 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check minimize
-    if L.btn_minimize and point_in_rect(mx, my, L.btn_minimize) then
+    -- Window actions retire the surface. Hold it until the same button's release.
+    if state.pressed_control == "btn_minimize" or state.pressed_control == "btn_exit" then
         consume_video_click()
-        mp.commandv("script-message", "silo-minimize")
         return
     end
 
@@ -5237,12 +5245,6 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check exit
-    if L.btn_exit and point_in_rect(mx, my, L.btn_exit) then
-        consume_video_click()
-        mp.commandv("script-message", "silo-exit")
-        return
-    end
 end
 
 local function handle_mouse_down_right()
@@ -5264,8 +5266,18 @@ local function handle_mouse_down_right()
 end
 
 local function handle_mouse_up()
+    local held = state.pressed_control
     state.pressed_control = nil
     request_tick()
+    if held == "btn_exit" or held == "btn_minimize" then
+        consume_video_click()
+        compute_layout()
+        local button = state.layout[held]
+        if hud_input_available() and button and point_in_rect(state.mouse_x, state.mouse_y, button) then
+            mp.commandv("script-message", held == "btn_exit" and "silo-exit" or "silo-minimize")
+        end
+        return
+    end
     if state.playback_failure_visible then
         state.dragging_seek = false
         state.dragging_volume = false
@@ -6196,6 +6208,7 @@ local function setup_script_messages()
         if not mx or not my then return end
         state.mouse_x = mx
         state.mouse_y = my
+        state.controller_focus_name = nil
         -- WM_MOUSEMOVE is the desktop host's authoritative enter signal.
         -- A hidden/post-roll popup may never receive a separate mpv
         -- mouse_enter binding when it is expanded again.

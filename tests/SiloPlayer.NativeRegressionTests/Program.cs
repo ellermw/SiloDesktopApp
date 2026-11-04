@@ -143,7 +143,10 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")
             {
-                await OscHudStatesNativeFixture.RunAsync(_window);
+                var reviewCase = Environment.GetEnvironmentVariable("SILO_HUD_REVIEW_CASE");
+                if (string.IsNullOrEmpty(reviewCase))
+                    await OscHudStatesNativeFixture.RunAsync(_window);
+                await OscHudStatesNativeFixture.RunAsync(_window, reviewCase ?? "all");
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
