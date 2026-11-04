@@ -380,11 +380,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     {
         var skipsPrefetch = scenario == "extensionless-unknown-codec";
         var urlFallbackRecovers = scenario == "error-recovered" || skipsPrefetch;
-        var expectedRequests = skipsPrefetch ? 1 : 2;
+        var expectedRequests = 2;
         using var subtitles = new HeldSubtitleServer(false)
         {
             BusyResponses = scenario.StartsWith("busy-", StringComparison.Ordinal) ? 100 : 0,
             ReadFailure = scenario == "error" ? "not-found" : scenario == "error-recovered" ? "fallback-recovered" : null,
+            OpaqueEnglish = skipsPrefetch,
         };
         using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
@@ -478,10 +479,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 Call(service, "StopSubtitleSync");
             }
             if (skipsPrefetch)
-                Require(subtitles.EngRequests == 1 && subtitles.SyncRequests == 1 && wire.PreferenceWrites == 0,
-                    "An extensionless unknown codec did not reach the held native URL reader without a managed request or preference write.");
+                Require(subtitles.EngRequests == 1 && subtitles.SyncRequests == 0 && wire.PreferenceWrites == 0,
+                    "An opaque extensionless codec bypassed its held managed header probe or wrote a preference prematurely.");
             subtitles.Release.TrySetResult();
-            if (urlFallbackRecovers && !skipsPrefetch)
+            if (urlFallbackRecovers)
             {
                 await subtitles.FallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 Require(!pending.IsCompleted && service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
@@ -1522,7 +1523,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         public int MediaRequests;
         public int BusyResponses, EngRequests, SyncRequests;
         public int BusyAfter = int.MaxValue;
-        public bool BusyChangedFile;
+        public bool BusyChangedFile, OpaqueEnglish;
         public string? ReadFailure;
         public HeldSubtitleServer(bool oversized)
         {
@@ -1558,11 +1559,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                             if (request.Request.HttpMethod != "HEAD") await request.Response.OutputStream.WriteAsync(ReplacementMedia.AsMemory(from, to - from + 1));
                             request.Response.Close(); return;
                         }
-                        if (request.Request.Url!.AbsolutePath is "/eng.srt" or "/changed-eng.srt" or "/api/v2/stream/fixture/subtitles/2")
+                        var english = request.Request.Url!.AbsolutePath is "/eng.srt" or "/changed-eng.srt" or "/api/v2/stream/fixture/subtitles/2";
+                        if (english)
                         {
                             var count = Interlocked.Increment(ref EngRequests);
-                            if (request.Request.UserAgent?.Contains("mpv", StringComparison.OrdinalIgnoreCase) == true || request.Request.UserAgent?.Contains("Lavf", StringComparison.OrdinalIgnoreCase) == true) Interlocked.Increment(ref SyncRequests);
+                            var native = request.Request.UserAgent?.Contains("mpv", StringComparison.OrdinalIgnoreCase) == true || request.Request.UserAgent?.Contains("Lavf", StringComparison.OrdinalIgnoreCase) == true;
+                            if (native) Interlocked.Increment(ref SyncRequests);
                             Entered.TrySetResult(); await Release.Task;
+                            if (OpaqueEnglish && native) { FallbackEntered.TrySetResult(); await FallbackRelease.Task; }
                             if (count <= BusyResponses || count > BusyAfter || BusyChangedFile && request.Request.Url.AbsolutePath == "/changed-eng.srt") { request.Response.StatusCode = 503; request.Response.Headers["Retry-After"] = "1"; request.Response.Close(); return; }
                             var fallbackCase = ReadFailure is "timeout" or "oversized-recovered" || ReadFailure?.StartsWith("fallback-", StringComparison.Ordinal) == true;
                             if (fallbackCase && count > 1) { FallbackEntered.TrySetResult(); await FallbackRelease.Task; }
@@ -1588,7 +1592,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                             request.Response.Close(); return;
                         }
                         var bytes = Encoding.UTF8.GetBytes("1\n00:00:00,000 --> 00:00:59,000\nNative ownership fixture\n");
-                        request.Response.ContentType = "application/x-subrip"; request.Response.ContentLength64 = bytes.Length;
+                        request.Response.ContentType = OpaqueEnglish && english ? "application/octet-stream" : "application/x-subrip";
+                        request.Response.ContentLength64 = bytes.Length;
                         await request.Response.OutputStream.WriteAsync(bytes); request.Response.Close();
                     }
                     catch (Exception ex) when (!listener.IsListening || ex is IOException or HttpListenerException) { }

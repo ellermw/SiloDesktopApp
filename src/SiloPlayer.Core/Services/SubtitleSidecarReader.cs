@@ -21,7 +21,7 @@ public static class SubtitleSidecarReader
 
     public static async Task<SubtitleSidecarRead> ReadAsync(HttpClient http, Uri url, string? codec, CancellationToken ct)
     {
-        if (!url.IsAbsoluteUri || url.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, url, codec) == null)
+        if (!url.IsAbsoluteUri || url.Scheme is not ("http" or "https"))
             return new(SubtitleSidecarReadOutcome.Fallback);
         var wasBusy = false;
         // Any busy history suppresses the URL fallback, even if a later
@@ -53,7 +53,10 @@ public static class SubtitleSidecarReader
                 }
                 if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes) return Failure();
                 var extension = SubtitleSidecarFile.Extension(response.Content.Headers.ContentType?.MediaType, url, codec);
-                if (extension == null) return Failure();
+                // Missing path/codec metadata must not bypass MIME discovery or
+                // 503 handling. Opaque formats still use the owned native route,
+                // but never after this read has observed a busy response.
+                if (extension == null) return wasBusy ? Failure() : new(SubtitleSidecarReadOutcome.Fallback);
                 using var buffer = new MemoryStream();
                 await using var body = await response.Content.ReadAsStreamAsync(bounded.Token).ConfigureAwait(false);
                 var chunk = new byte[81920];

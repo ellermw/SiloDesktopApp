@@ -13,7 +13,7 @@ internal static class SubtitleCueAuthorityNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE") ?? "";
-        var modes = new[] { "integrated", "worker", "redirect", "declared", "stream" };
+        var modes = new[] { "integrated", "worker", "redirect", "declared", "stream", "worker-redirect", "worker-redirect-declared", "worker-redirect-stream" };
         if (mode.Length > 0 && !modes.Contains(mode)) throw new InvalidOperationException("Unknown cue authority scope.");
         foreach (var scenario in mode.Length == 0 ? modes : [mode]) await CheckAsync(scenario);
     }
@@ -22,9 +22,13 @@ internal static class SubtitleCueAuthorityNativeFixture
     {
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
         var bytes = await File.ReadAllBytesAsync(Path.Combine(assets, "english.srt"));
-        using var integrated = new CueServer(bytes) { Mode = scenario is "declared" or "stream" ? scenario : "normal" };
+        var declared = scenario.EndsWith("declared", StringComparison.Ordinal);
+        var streamed = scenario.EndsWith("stream", StringComparison.Ordinal);
+        var workerRedirect = scenario.StartsWith("worker-redirect", StringComparison.Ordinal);
+        using var integrated = new CueServer(bytes) { Mode = declared ? "declared" : streamed ? "stream" : "normal" };
         using var worker = new CueServer(bytes);
         if (scenario == "redirect") { integrated.Mode = "redirect"; integrated.Redirect = worker.Origin + "/captions.srt"; worker.Mode = "normal"; }
+        if (workerRedirect) { worker.Mode = "redirect"; worker.Redirect = integrated.Origin + "/captions.srt"; }
         using var http = new HttpClient(new Wire());
         var api = new SiloApiClient(http); api.SetBaseUrl(integrated.Origin);
         // Generated proofs belong only to this isolated fixture; only header
@@ -38,7 +42,7 @@ internal static class SubtitleCueAuthorityNativeFixture
         using var manager = new PlaybackManager(playback, catalog, auth, api);
         var key = "external-" + new string('a', 64);
         var track = new SubtitleTrackInfo { Index = 0, Source = "external", Codec = "srt", Language = "en", SyncKey = key,
-            Url = scenario == "worker" ? worker.Origin + "/captions.srt" : integrated.Origin + "/api/v2/stream/fixture/subtitles/0" };
+            Url = scenario == "worker" || workerRedirect ? worker.Origin + "/captions.srt" : integrated.Origin + "/api/v2/stream/fixture/subtitles/0" };
         var session = new PlaybackStartResponse { SessionId = "cue-session", ProtocolVersion = 3, MediaFileId = 42, PlayMethod = "direct", SubtitleUrls = [track] };
         typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
         Set(manager, "_sessionId", session.SessionId);
@@ -75,15 +79,15 @@ internal static class SubtitleCueAuthorityNativeFixture
         try
         {
             reload = (Task)Call(service, "ReloadCorrectedSubtitleAsync", entry, lifetime.Token, false)!;
-            if (scenario is "declared" or "stream")
+            if (declared || streamed)
             {
                 await integrated.GateReached.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                Require(integrated.AttemptedBytes >= (scenario == "declared" ? 1 : SubtitleSidecarFile.MaxBytes + 1), "The body-limit probe did not reach its structural HTTP boundary.");
+                Require(integrated.AttemptedBytes >= (declared ? 1 : SubtitleSidecarFile.MaxBytes + 1), "The body-limit probe did not reach its structural HTTP boundary.");
                 try { await reload.WaitAsync(TimeSpan.FromSeconds(1)); }
                 catch (TimeoutException ex) { throw new InvalidOperationException("Corrected cue read waited for an oversized held body instead of enforcing its declared/stream limit.", ex); }
             }
             else await reload.WaitAsync(TimeSpan.FromSeconds(5));
-            var succeeds = scenario is "integrated" or "worker";
+            var succeeds = scenario is "integrated" or "worker" or "worker-redirect";
             var mappedSid = ((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!)[0];
             var error = entryType.GetField("Error")!.GetValue(entry) as string;
             Program.Log($"Cue boundary {scenario}: integratedRequests={integrated.Headers.Count}, workerRequests={worker.Headers.Count}, workerProofPresent={worker.Headers.Any(h => h.Proof)}, errorPresent={error != null}.");
@@ -97,8 +101,11 @@ internal static class SubtitleCueAuthorityNativeFixture
                 Require(mappedSid == previousSid && mpv.GetPropertyDouble("sid") == previousSid && error != null &&
                     ((List<string>)Get(service, "_subtitleSyncFiles")!).Count == 0,
                     "A refused redirect/oversized cue replaced the applied subtitle or left an attached file.");
-            if (scenario == "worker") Require(worker.Headers.TryPeek(out var workerHeaders) && !workerHeaders.Authorization && !workerHeaders.Profile && !workerHeaders.Proof,
+            if (scenario == "worker" || workerRedirect) Require(worker.Headers.TryPeek(out var workerHeaders) && !workerHeaders.Authorization && !workerHeaders.Profile && !workerHeaders.Proof,
                 "A corrected worker cue request received account/profile credentials.");
+            if (workerRedirect) Require(worker.Headers.Count == 1 && integrated.Headers.Count == 1 &&
+                integrated.Headers.All(headers => !headers.Authorization && !headers.Profile && !headers.Proof),
+                "A worker redirect failed to reach its target or introduced account/profile credentials at the next origin.");
             if (scenario == "integrated") Require(integrated.Headers.TryPeek(out var integratedHeaders) && integratedHeaders.Authorization && integratedHeaders.Profile && integratedHeaders.Proof,
                 "An integrated cue request lost its captured account/profile authority.");
             Program.Log($"PASS: actual corrected cue {scenario} authority/body boundary retains native selection and pause.");

@@ -29,9 +29,11 @@ public partial class PlayerService
     private bool _subtitleSyncInventoryError;
     private string? _subtitleSyncApplyingKey, _subtitleSyncApplyingJob;
     private readonly List<string> _subtitleSyncFiles = [];
-    // Refuse redirects so an integrated cue route cannot forward profile proof
-    // to another origin.
-    private static readonly HttpClient SubtitleSyncDownloadClient = new(new HttpClientHandler { AllowAutoRedirect = false })
+    // Worker/CDN reads never carry account headers, including on redirect hops.
+    private static readonly HttpClient SubtitleSyncDownloadClient = new(new HttpClientHandler { MaxAutomaticRedirections = 5 })
+        { Timeout = TimeSpan.FromSeconds(8) };
+    // Integrated requests carry profile proof and must never follow redirects.
+    private static readonly HttpClient AuthenticatedSubtitleSyncDownloadClient = new(new HttpClientHandler { AllowAutoRedirect = false })
         { Timeout = TimeSpan.FromSeconds(8) };
 
     private bool SyncCurrent(CancellationToken ct) => !ct.IsCancellationRequested && !_closing &&
@@ -384,12 +386,14 @@ public partial class PlayerService
             bounded.CancelAfter(TimeSpan.FromSeconds(8));
             // Share the selection path's URL authority rule: never add account
             // headers to an advertised worker/CDN URL, even on a cue reload.
-            using var request = PlaybackManager.RequiresSubtitleAccountAuthentication(authority.BaseUrl, pair.Value.FullUrl)
+            var authenticated = PlaybackManager.RequiresSubtitleAccountAuthentication(authority.BaseUrl, pair.Value.FullUrl);
+            using var request = authenticated
                 ? scope.ApiClient.CreateAuthenticatedRequest(authority, HttpMethod.Get, pair.Value.FullUrl)
                 : new HttpRequestMessage(HttpMethod.Get, pair.Value.FullUrl);
             if (!SyncCurrent(ct) || !scope.ApiClient.IsCurrentContext(authority)) return;
             request.Headers.CacheControl = new() { NoCache = true, NoStore = true };
-            using var response = await SubtitleSyncDownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
+            var downloadClient = authenticated ? AuthenticatedSubtitleSyncDownloadClient : SubtitleSyncDownloadClient;
+            using var response = await downloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes)
                 throw new InvalidDataException("Subtitle cues exceed the size limit.");

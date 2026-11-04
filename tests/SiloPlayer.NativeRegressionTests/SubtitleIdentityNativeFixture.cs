@@ -58,9 +58,57 @@ internal static class SubtitleIdentityNativeFixture
                 : embedded.Any(t => t.Id == 1 && t.StreamIndex == 1) && embedded.Any(t => t.Id == 2 && t.StreamIndex == 2)),
                 "Loaded Matroska subtitle identities do not match the attested demuxer namespace.");
             var closeout = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
-            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "async-service" or "async-core-probe" or "retired-read-cache")
+            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "async-service" or "async-core-probe" or "retired-read-cache" or "mime-busy" or "mime-ready" or "refresh-raw-labels")
             {
-                if (closeout == "cast-off")
+                if (closeout == "refresh-raw-labels")
+                {
+                    var cases = new (string? Release, string? Provider, string? Title, string Expected)[]
+                    {
+                        ("Release A", "Provider A", "Display title", "Release A (Provider A)"),
+                        ("Release B", "", null, "Release B ()"),
+                        ("", "Provider C", "Display C", " (Provider C)"),
+                        ("", "", "Display only", ""),
+                        (null, null, null, ""),
+                        (" ", "Provider D", null, "  (Provider D)"),
+                    };
+                    for (var offset = 0; offset < cases.Length; offset++)
+                    {
+                        var item = cases[offset]; var id = 70 + offset;
+                        wire.SubtitleList = JsonSerializer.Serialize(new { subtitles = new[] { new { id, media_file_id = 42,
+                            language = "en", format = "srt", release_name = item.Release, provider = item.Provider, title = item.Title } } });
+                        await service.RefreshSubtitlesAfterAiAsync(42).WaitAsync(TimeSpan.FromSeconds(5));
+                        var track = session.SubtitleUrls.Single(value => value.Id == id);
+                        track.Url = subtitles.Origin + "/raw-label-" + id + ".srt";
+                        await service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track).WaitAsync(TimeSpan.FromSeconds(5));
+                        Require(service.ActiveSubtitleServerIndex == track.Index && mpv.GetPropertyDouble("sid") > 0 && mpv.IsPaused &&
+                            wire.PreferenceWrites == offset + 1,
+                            "The raw label fixture did not execute and save its current downloaded subtitle before checking its signature.");
+                        Require(wire.SavedLabels.Last() == item.Expected && track.NativeTitle == item.Expected,
+                            "A refreshed downloaded subtitle lost its exact server v3 raw label or persisted a display/language fallback.");
+                    }
+                    session.ProtocolVersion = 2;
+                    wire.SubtitleList = """{"subtitles":[{"id":99,"media_file_id":42,"language":"en","format":"srt","title":"Legacy display"}]}""";
+                    await service.RefreshSubtitlesAfterAiAsync(42).WaitAsync(TimeSpan.FromSeconds(5));
+                    var legacy = session.SubtitleUrls.Single(value => value.Id == 99);
+                    legacy.Url = subtitles.Origin + "/legacy-label.srt";
+                    await service.SetSubtitleTrackAndPersistAsync(legacy.Index + 1, legacy.Language, legacy).WaitAsync(TimeSpan.FromSeconds(5));
+                    Require(wire.SavedLabels.Last() == "Legacy display" && mpv.IsPaused,
+                        "Raw v3 downloaded labels changed the existing legacy display-label preference contract.");
+                    Program.Log("PASS: actual refresh/select/save preserves six raw v3 label shapes and a legacy display-label control.");
+                }
+                else if (closeout is "mime-busy" or "mime-ready")
+                {
+                    subtitles.BusyResponses = closeout == "mime-busy" ? 2 : 0;
+                    var track = new SubtitleTrackInfo { Index = 30, TrackId = closeout, Source = "external", Language = "en", Codec = null,
+                        Url = subtitles.Origin + "/captions" };
+                    session.SubtitleUrls.Add(track);
+                    await service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track).WaitAsync(TimeSpan.FromSeconds(5));
+                    Require(subtitles.Requests == subtitles.BusyResponses + 1 && subtitles.NativeRequests == 0 &&
+                        service.ActiveSubtitleServerIndex == track.Index && mpv.GetPropertyDouble("sid") > 0 && mpv.IsPaused && wire.PreferenceWrites == 1,
+                        "An extensionless missing-codec sidecar bypassed MIME/503 reads, failed its real native selection, or changed pause/preferences.");
+                    Program.Log($"PASS: actual service {closeout} uses bounded MIME reads with requests={subtitles.Requests}, nativeRequests={subtitles.NativeRequests}.");
+                }
+                else if (closeout == "cast-off")
                 {
                     foreach (var json in new[] { """{"name":"select_subtitle_track","trackId":null}""", """{"name":"select_subtitle_track"}""" })
                     {
@@ -160,6 +208,7 @@ internal static class SubtitleIdentityNativeFixture
                         api.SetProfile("fixture");
                         await service.SetSubtitleTrackAndPersistAsync(0, null, null);
                         var beforeFallbackWrites = wire.PreferenceWrites;
+                        var beforeReads = subtitles.Requests; var beforeNativeReads = subtitles.NativeRequests;
                         var track = new SubtitleTrackInfo { Index = 30 + session.SubtitleUrls.Count, TrackId = retirement,
                             Source = "external", Codec = "unknown-probe", Language = "en", Url = subtitles.Origin + "/" + retirement + ".probe" };
                         session.SubtitleUrls.Add(track);
@@ -175,11 +224,13 @@ internal static class SubtitleIdentityNativeFixture
                             var cached = ((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).TryGetValue(track.Index, out var sid);
                             if (retirement == "positive")
                                 Require(cached && sid > 2 && mpv.GetPropertyDouble("sid") == sid && service.ActiveSubtitleServerIndex == track.Index &&
-                                    wire.PreferenceWrites == beforeFallbackWrites + 1 && mpv.IsPaused,
+                                    wire.PreferenceWrites == beforeFallbackWrites + 1 && mpv.IsPaused &&
+                                    subtitles.Requests == beforeReads + 2 && subtitles.NativeRequests == beforeNativeReads + 1,
                                     "Supported asynchronous format fallback did not execute/persist its actual native SID under current service ownership.");
                             else
                                 Require(!cached && mpv.GetPropertyDouble("sid") <= 0 && service.ActiveSubtitleServerIndex == -1 &&
-                                    wire.PreferenceWrites == beforeFallbackWrites && mpv.IsPaused,
+                                    wire.PreferenceWrites == beforeFallbackWrites && mpv.IsPaused &&
+                                    subtitles.Requests == beforeReads + 1 && subtitles.NativeRequests == beforeNativeReads,
                                     "Retired profile/ABA URL fallback enabled captions, cached its SID or persisted a stale choice.");
                             Program.Log($"PASS: actual service unknown-format async fallback {retirement} ownership/pause/preference.");
                         }
@@ -695,7 +746,7 @@ internal static class SubtitleIdentityNativeFixture
         private readonly HttpListener _listener = new();
         public string Origin { get; }
         public volatile bool Fail;
-        public int Requests;
+        public int Requests, NativeRequests, BusyResponses;
         public SubtitleServer(byte[] bytes)
         {
             var reserve = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0); reserve.Start();
@@ -707,21 +758,27 @@ internal static class SubtitleIdentityNativeFixture
                 {
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
-                    Interlocked.Increment(ref Requests);
+                    var count = Interlocked.Increment(ref Requests);
+                    if (request.Request.UserAgent?.Contains("mpv", StringComparison.OrdinalIgnoreCase) == true ||
+                        request.Request.UserAgent?.Contains("Lavf", StringComparison.OrdinalIgnoreCase) == true)
+                        Interlocked.Increment(ref NativeRequests);
                     if (Interlocked.Exchange(ref next, null) is { } held)
                     {
                         held.Started.TrySetResult();
                         await held.Release.Task;
                     }
-                    if (Fail)
+                    if (Fail || count <= BusyResponses)
                     {
                         request.Response.StatusCode = 503;
+                        request.Response.Headers["Retry-After"] = "0";
                         request.Response.Close();
                         continue;
                     }
                     try
                     {
-                        request.Response.ContentType = "application/x-subrip"; request.Response.ContentLength64 = bytes.Length;
+                        request.Response.ContentType = request.Request.Url!.AbsolutePath.EndsWith(".probe", StringComparison.Ordinal)
+                            ? "application/octet-stream" : "application/x-subrip";
+                        request.Response.ContentLength64 = bytes.Length;
                         await request.Response.OutputStream.WriteAsync(bytes); request.Response.Close();
                     }
                     catch (Exception ex) when (ex is HttpListenerException or IOException or ObjectDisposedException)
@@ -738,9 +795,13 @@ internal static class SubtitleIdentityNativeFixture
     {
         public int PreferenceWrites, Replans;
         public string? LastSubtitleMode;
+        public string? SubtitleList;
+        public System.Collections.Concurrent.ConcurrentQueue<string?> SavedLabels = new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "subtitle-identity.invalid") throw new InvalidOperationException("Unexpected fixture networking.");
+            if (request.RequestUri.AbsolutePath == "/api/v2/subtitles/42" && SubtitleList is { } list)
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(list) };
             if (request.RequestUri.AbsolutePath.Contains("-prefs/"))
             {
                 PreferenceWrites++;
@@ -748,6 +809,8 @@ internal static class SubtitleIdentityNativeFixture
                 {
                     using var body = JsonDocument.Parse(await request.Content.ReadAsStringAsync(ct));
                     LastSubtitleMode = body.RootElement.GetProperty("subtitle_mode").GetString();
+                    if (body.RootElement.TryGetProperty("track_signature", out var signature) && signature.ValueKind == JsonValueKind.Object)
+                        SavedLabels.Enqueue(signature.GetProperty("label").GetString());
                 }
             }
             if (request.RequestUri.AbsolutePath.EndsWith("/replan")) Replans++;

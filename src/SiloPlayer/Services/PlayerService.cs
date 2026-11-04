@@ -7235,6 +7235,10 @@ public partial class PlayerService : IDisposable
                 MediaFileId = mediaFileId,
                 Language = entry.Language,
                 Codec = string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format,
+                // Match downloadedSubtitleLabelV3 exactly. Display fallbacks
+                // below are not the server's saved-signature identity.
+                NativeTitle = string.IsNullOrEmpty(entry.ReleaseName) && string.IsNullOrEmpty(entry.Provider)
+                    ? "" : $"{entry.ReleaseName} ({entry.Provider})",
                 Label = string.IsNullOrWhiteSpace(entry.ReleaseName)
                     ? (entry.Title ?? entry.Language)
                     : $"{entry.ReleaseName} ({entry.Provider})",
