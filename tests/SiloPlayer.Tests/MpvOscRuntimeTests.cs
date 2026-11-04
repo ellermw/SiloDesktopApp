@@ -4,6 +4,11 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    // Match the application's P/Invoke library lifetime. Keep the module loaded
+    // while still creating and destroying a fresh mpv context for every case.
+    private static readonly Lazy<IntPtr> SharedLibrary = new(() =>
+        NativeLibrary.Load(Path.Combine(FindRepositoryRoot(), "libs", "mpv", "libmpv-2.dll")));
+
     [Fact]
     public void CaptionShortcutRemembersARowOnlyWithinItsMediaFile()
     {
@@ -1182,7 +1187,7 @@ public sealed partial class MpvOscRuntimeTests
                 mp.commandv('script-message', 'osc-toggle-stats')
             end)
             """);
-        var library = NativeLibrary.Load(Path.Combine(root, "libs", "mpv", "libmpv-2.dll"));
+        var library = SharedLibrary.Value;
         var handle = LoadDelegate<MpvCreate>(library, "mpv_create")();
         try
         {
@@ -1211,7 +1216,6 @@ public sealed partial class MpvOscRuntimeTests
         finally
         {
             LoadDelegate<MpvTerminateDestroy>(library, "mpv_terminate_destroy")(handle);
-            NativeLibrary.Free(library);
             File.Delete(probe);
         }
     }
@@ -1238,7 +1242,7 @@ public sealed partial class MpvOscRuntimeTests
 
         try
         {
-            library = NativeLibrary.Load(libraryPath);
+            library = SharedLibrary.Value;
             var create = LoadDelegate<MpvCreate>(library, "mpv_create");
             var setOption = LoadDelegate<MpvSetOptionString>(library, "mpv_set_option_string");
             var initialize = LoadDelegate<MpvInitialize>(library, "mpv_initialize");
@@ -1275,8 +1279,6 @@ public sealed partial class MpvOscRuntimeTests
         {
             if (handle != IntPtr.Zero)
                 terminate?.Invoke(handle);
-            if (library != IntPtr.Zero)
-                NativeLibrary.Free(library);
         }
 
         try
