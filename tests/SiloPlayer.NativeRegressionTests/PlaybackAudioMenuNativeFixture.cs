@@ -133,6 +133,24 @@ internal static partial class PlaybackAudioMenuNativeFixture
             var menu = await OpenFromOsc();
             var hwnd = MenuHwnd(menu);
             var list = (ListView)Get(menu, "_list")!;
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "access-refresh")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial Audio media publication did not settle.");
+                wire.HoldSuccessfulReplan = true;
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var identity = api.CaptureIdentityContext();
+                Require(api.TryInvalidateAccessContext(api.CaptureContext(), out _) && api.IsCurrentIdentityContext(identity),
+                    "Held Audio switch did not receive a stable-identity access refresh.");
+                wire.ReleaseReplan.TrySetResult();
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad && !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Access refresh discarded an accepted native Audio decision before loading it.");
+                Require(manager.CurrentSession?.AudioTrackIndex == 71 && mpv.IsPaused && service.IsPaused && Gate(service).CurrentCount == 1,
+                    "Access-refresh Audio continuation lost source identity, genuine pause or dialog lease cleanup.");
+                Program.Log("PASS: actual held native Audio source71 replan survives read/access refresh, loads the accepted decision and preserves genuine pause and lease cleanup.");
+                return;
+            }
             if (compactClickCase || Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "keyboard-click")
             {
                 Call(menu, "Input", "cancel");
