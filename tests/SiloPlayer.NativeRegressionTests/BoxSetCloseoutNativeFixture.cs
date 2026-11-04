@@ -19,6 +19,11 @@ internal static partial class BoxSetNativeFixture
     private static async Task RunCloseoutAsync(StackPanel parent, CatalogApi catalog, SiloApiClient api,
         Wire wire, NavigationService navigation, string scenario)
     {
+        if (scenario == "play-reentry")
+        {
+            await EpisodeQuickPlayNativeFixture.VerifyBoxSetPlayReentryAsync();
+            return;
+        }
         if (scenario == "artwork-identity")
         {
             const string poster = "AAAAAAAAAAAAAAAAAAAAAA==", backdrop = "AQEBAQEBAQEBAQEBAQEBAQ==";

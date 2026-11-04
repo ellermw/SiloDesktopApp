@@ -76,9 +76,17 @@ internal static partial class EpisodeQuickPlayNativeFixture
         await VerifyBoxSetDepartureAsync(scope);
     }
 
-    private static async Task VerifyBoxSetDepartureAsync(LifecycleScope scope)
+    internal static async Task VerifyBoxSetPlayReentryAsync()
     {
-        foreach (var boundary in new[] { "authority", "request", "watch", "revalidation-return" })
+        await using var scope = new LifecycleScope();
+        scope.Wire.BoxSetsEnabled = true;
+        await scope.ShowAsync();
+        await VerifyBoxSetDepartureAsync(scope, reentryOnly: true);
+    }
+
+    private static async Task VerifyBoxSetDepartureAsync(LifecycleScope scope, bool reentryOnly = false)
+    {
+        foreach (var boundary in reentryOnly ? new[] { "revalidation-return" } : new[] { "authority", "request", "watch", "revalidation-return" })
         {
             await scope.ResetAsync(); scope.Window.ShowMainNavigation(); scope.Wire.AcceptStart = true;
             var navigation = scope.Services.GetRequiredService<NavigationService>();
@@ -99,7 +107,6 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 if (boundary == "watch") scope.Wire.HoldWatch = "boxset-film";
                 if (boundary == "revalidation-return")
                 {
-                    page.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
                     scope.Client.InvalidateAccessContext(); scope.Wire.HoldBoxSet = true;
                 }
                 Invoke(play);
@@ -110,10 +117,23 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 await Until(() => !page.IsLoaded);
                 if (boundary == "revalidation-return")
                 {
-                    // Let the old read complete only after the same page is active
-                    // in a new visit. !_active alone cannot recognize that owner.
+                    // Production box-set pages are uncached. A late Required
+                    // assignment cannot enable WinUI caching outside a constructor.
+                    // Keep the original read held until the real return route loads.
                     scope.Wire.HoldBoxSet = false; scope.Frame.GoBack();
-                    await Until(() => ReferenceEquals(scope.Frame.Content, page) && page.IsLoaded && page.ViewModel.Detail != null && !page.ViewModel.IsLoading);
+                    try { await Until(() => scope.Frame.Content is BoxSetPage returned && returned.IsLoaded && returned.ViewModel.Detail != null && !returned.ViewModel.IsLoading); }
+                    catch
+                    {
+                        Program.Log($"TRACE: return same={ReferenceEquals(scope.Frame.Content, page)} oldLoaded={page.IsLoaded} frame={scope.Frame.Content?.GetType().Name} oldDetail={page.ViewModel.Detail != null} oldLoading={page.ViewModel.IsLoading} oldFailure={page.ViewModel.Failure} reads={scope.Wire.BoxSetReads} oldPending={GetField(page, "_playPending")}.");
+                        throw;
+                    }
+                    var returnedPage = (BoxSetPage)scope.Frame.Content;
+                    Check(!ReferenceEquals(returnedPage, page) && returnedPage.NavigationCacheMode == Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Disabled,
+                        "The production uncached box-set return must load a new page.");
+                    Check(!scope.Wire.ReleaseBoundary.Task.IsCompleted,
+                        "The outgoing Play request must still be held while the new page returns.");
+                    Check(!(bool)GetField(returnedPage, "_playPending")! && Descendants<Button>(returnedPage).Single(button => button.Name == "BoxSetPlay").IsEnabled,
+                        "A retired visit's held Play must not keep the returned page's current Play disabled.");
                 }
             }
             finally
