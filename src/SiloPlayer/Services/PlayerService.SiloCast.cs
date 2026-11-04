@@ -79,10 +79,11 @@ public partial class PlayerService
                 await SwitchAudioTrackAsync(aid - 1);
                 break;
             case "select_subtitle_track":
+                // Optional track IDs encode Off as either an omitted key or JSON null.
                 if (command["trackId"] == null)
                 {
                     if (!await SelectSubtitleByServerIndexAsync(-1))
-                        throw new ArgumentException("The subtitle choice is unavailable.");
+                        throw new ArgumentException("Subtitles could not be turned off.");
                     break;
                 }
                 if (command["trackId"] is not JsonValue subtitleId || !subtitleId.TryGetValue<int>(out var sid))

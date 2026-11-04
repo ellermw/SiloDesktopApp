@@ -866,7 +866,8 @@ public partial class PlaybackManager : IDisposable
         }).ToList();
     }
 
-    private static bool RequiresSubtitleAccountAuthentication(string baseUrl, string resource)
+    /// <summary>Only integrated subtitle routes use account credentials; advertised worker/CDN URLs carry their own authority.</summary>
+    public static bool RequiresSubtitleAccountAuthentication(string baseUrl, string resource)
     {
         if (!Uri.TryCreate(resource, UriKind.Absolute, out var absolute) ||
             (absolute.Scheme != Uri.UriSchemeHttp && absolute.Scheme != Uri.UriSchemeHttps))

@@ -8,6 +8,45 @@ namespace SiloPlayer.Tests;
 
 public class SubtitleSyncBehaviorTests
 {
+    [Theory]
+    [InlineData("https://subtitle-sync-fixture.invalid/api/v2/stream/session/subtitles/0?st=signed", true)]
+    [InlineData("https://subtitle-sync-fixture.invalid/api/v2/stream/session/subtitles/0/fonts", true)]
+    [InlineData("https://worker.invalid/api/v2/stream/session/subtitles/0?st=signed", false)]
+    [InlineData("https://cdn.invalid/captions.srt?signature=a%2Fb", false)]
+    [InlineData("https://subtitle-sync-fixture.invalid/captions.srt?signature=a%2Fb", false)]
+    [InlineData("http://subtitle-sync-fixture.invalid/api/v2/stream/session/subtitles/0", false)]
+    [InlineData("https://subtitle-sync-fixture.invalid:8443/api/v2/stream/session/subtitles/0", false)]
+    [InlineData("https://user@subtitle-sync-fixture.invalid/api/v2/stream/session/subtitles/0", false)]
+    public void SubtitleAccountAuthenticationIsLimitedToIntegratedOriginRoutes(string url, bool authenticated)
+    {
+        var client = Client(new SyncWire());
+        var authority = client.CaptureContext();
+        Assert.Equal(authenticated, PlaybackManager.RequiresSubtitleAccountAuthentication(authority.BaseUrl, url));
+        using var request = PlaybackManager.RequiresSubtitleAccountAuthentication(authority.BaseUrl, url)
+            ? client.CreateAuthenticatedRequest(authority, HttpMethod.Get, url)
+            : new HttpRequestMessage(HttpMethod.Get, url);
+        Assert.Equal(new Uri(url), request.RequestUri);
+        Assert.Equal(authenticated, request.Headers.Authorization != null);
+        Assert.Equal(authenticated, request.Headers.Contains("X-Profile-Id"));
+    }
+
+    [Fact]
+    public void CorrectedCueReloadUsesDeliveryAuthorityAndCapsDeclaredAndStreamedBodies()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.SubtitleSync.cs"));
+        var start = source.IndexOf("private async Task ReloadCorrectedSubtitleAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void SendSubtitleSyncState()", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var reload = source[start..end];
+        Assert.Contains("PlaybackManager.RequiresSubtitleAccountAuthentication(authority.BaseUrl, pair.Value.FullUrl)", reload);
+        Assert.Contains("? scope.ApiClient.CreateAuthenticatedRequest(authority, HttpMethod.Get, pair.Value.FullUrl)", reload);
+        Assert.Contains(": new HttpRequestMessage(HttpMethod.Get, pair.Value.FullUrl)", reload);
+        Assert.Contains("response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes", reload);
+        Assert.Contains("buffer.Length + read > SubtitleSidecarFile.MaxBytes", reload);
+        Assert.Contains("body.ReadAsync(chunk, bounded.Token)", reload);
+        Assert.DoesNotContain("ReadAsByteArrayAsync", reload);
+    }
+
     [Fact]
     public void PollingHasDeadlineAndRealtimeFreshnessBoundary()
     {

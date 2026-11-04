@@ -415,14 +415,25 @@ internal static class SubtitleIdentityNativeFixture
                             wire.PreferenceWrites == preferenceWrites && manager.SubtitleSelectionForLoad == previousIndex,
                             "A malformed SiloCast subtitle command disabled captions or changed their saved preference.");
                     }
-                    foreach (var off in new[] { """{"name":"select_subtitle_track"}""", """{"name":"select_subtitle_track","trackId":null}""" })
+                    foreach (var off in new[]
                     {
-                        await service.ApplySiloCastControlAsync(System.Text.Json.Nodes.JsonNode.Parse(off)!.AsObject());
-                        Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && mpv.IsPaused,
-                            "Valid SiloCast Off changed genuine pause or failed to disable subtitles.");
+                        """{"name":"select_subtitle_track"}""",
+                        """{"name":"select_subtitle_track","trackId":null}""",
+                    })
+                    {
                         await service.SetSubtitleTrackAndPersistAsync(3, previousTrack.Language, previousTrack);
+                        Require(mpv.GetPropertyDouble("sid") == previousSid && service.ActiveSubtitleServerIndex == previousIndex,
+                            "The SiloCast Off fixture did not establish enabled captions.");
+                        preferenceWrites = wire.PreferenceWrites;
+                        await service.ApplySiloCastControlAsync(System.Text.Json.Nodes.JsonNode.Parse(off)!.AsObject());
+                        Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                            manager.SubtitleSelectionForLoad == -1 && service.CaptureSiloCastState()["selectedSubtitleTrackId"] == null &&
+                            wire.PreferenceWrites == preferenceWrites + 1 && wire.LastSubtitleMode == "off" && mpv.IsPaused,
+                            "SiloCast Off did not clear the native SID and persist mode off exactly once.");
+                        await (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, false)!;
+                        Require(wire.PreferenceWrites == preferenceWrites + 1,
+                            "Reinitializing SiloCast Off duplicated its preference write.");
                     }
-                    await service.SetSubtitleTrackAndPersistAsync(0, null, null);
                     preferenceWrites = wire.PreferenceWrites;
                     await (Task)Call(service, "SelectSubtitleByServerIndexAsync", busy.Index, true)!;
                     Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
@@ -660,12 +671,21 @@ internal static class SubtitleIdentityNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public int PreferenceWrites, Replans;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public string? LastSubtitleMode;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "subtitle-identity.invalid") throw new InvalidOperationException("Unexpected fixture networking.");
-            if (request.RequestUri.AbsolutePath.Contains("-prefs/")) PreferenceWrites++;
+            if (request.RequestUri.AbsolutePath.Contains("-prefs/"))
+            {
+                PreferenceWrites++;
+                if (request.Content != null)
+                {
+                    using var body = JsonDocument.Parse(await request.Content.ReadAsStringAsync(ct));
+                    LastSubtitleMode = body.RootElement.GetProperty("subtitle_mode").GetString();
+                }
+            }
             if (request.RequestUri.AbsolutePath.EndsWith("/replan")) Replans++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
         }
     }
 }

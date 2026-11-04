@@ -29,7 +29,10 @@ public partial class PlayerService
     private bool _subtitleSyncInventoryError;
     private string? _subtitleSyncApplyingKey, _subtitleSyncApplyingJob;
     private readonly List<string> _subtitleSyncFiles = [];
-    private static readonly HttpClient SubtitleSyncDownloadClient = new() { Timeout = TimeSpan.FromSeconds(8) };
+    // Refuse redirects so an integrated cue route cannot forward profile proof
+    // to another origin.
+    private static readonly HttpClient SubtitleSyncDownloadClient = new(new HttpClientHandler { AllowAutoRedirect = false })
+        { Timeout = TimeSpan.FromSeconds(8) };
 
     private bool SyncCurrent(CancellationToken ct) => !ct.IsCancellationRequested && !_closing &&
         _subtitleSyncOwner is { } owner && ReferenceEquals(owner, _activeAuthority) &&
@@ -379,12 +382,28 @@ public partial class PlayerService
             if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl)) return;
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
             bounded.CancelAfter(TimeSpan.FromSeconds(8));
-            using var request = scope.ApiClient.CreateAuthenticatedRequest(HttpMethod.Get, pair.Value.FullUrl);
+            // Share the selection path's URL authority rule: never add account
+            // headers to an advertised worker/CDN URL, even on a cue reload.
+            using var request = PlaybackManager.RequiresSubtitleAccountAuthentication(authority.BaseUrl, pair.Value.FullUrl)
+                ? scope.ApiClient.CreateAuthenticatedRequest(authority, HttpMethod.Get, pair.Value.FullUrl)
+                : new HttpRequestMessage(HttpMethod.Get, pair.Value.FullUrl);
             if (!SyncCurrent(ct) || !scope.ApiClient.IsCurrentContext(authority)) return;
             request.Headers.CacheControl = new() { NoCache = true, NoStore = true };
             using var response = await SubtitleSyncDownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
             response.EnsureSuccessStatusCode();
-            var bytes = await response.Content.ReadAsByteArrayAsync(bounded.Token);
+            if (response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes)
+                throw new InvalidDataException("Subtitle cues exceed the size limit.");
+            using var buffer = new MemoryStream();
+            await using var body = await response.Content.ReadAsStreamAsync(bounded.Token);
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await body.ReadAsync(chunk, bounded.Token)) > 0)
+            {
+                if (buffer.Length + read > SubtitleSidecarFile.MaxBytes)
+                    throw new InvalidDataException("Subtitle cues exceed the size limit.");
+                buffer.Write(chunk, 0, read);
+            }
+            var bytes = buffer.ToArray();
             if (bytes.Length == 0) throw new InvalidDataException("Empty subtitle cues.");
             var extension = state.Format.ToLowerInvariant() switch { "ass" => ".ass", "ssa" => ".ssa", "vtt" => ".vtt", _ => ".srt" };
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-sync-" + Guid.NewGuid().ToString("N") + extension);
