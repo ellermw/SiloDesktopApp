@@ -189,6 +189,19 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-party-refreshed")
+            {
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, "menu");
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, "stale");
+                var failures = new List<Exception>();
+                foreach (var mode in new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality" })
+                {
+                    try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
+                    catch (Exception error) { Program.Log($"FAIL [{mode}]: {error.Message}"); failures.Add(error); }
+                }
+                if (failures.Count > 0) throw new AggregateException("Combined Party/Quality checks failed.", failures);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-party-actions")
             {
                 await NativePartyActionsFixture.RunAsync();
@@ -221,10 +234,13 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                     await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-review")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-quality-review" or "native-quality-terminal-legacy")
             {
                 var failures = new List<Exception>();
-                foreach (var mode in new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race" })
+                var modes = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-terminal-legacy"
+                    ? new[] { "terminal-legacy-version", "terminal-legacy-quality" }
+                    : new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality" };
+                foreach (var mode in modes)
                 {
                     try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
                     catch (Exception error) { Program.Log($"FAIL [{mode}]: {error.Message}"); failures.Add(error); }

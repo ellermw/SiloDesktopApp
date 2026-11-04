@@ -253,7 +253,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(ReferenceEquals(Menu(service), menu), "Stale cancel closed a newer menu.");
             Call(menu, "Input", "cancel");
             // The synthetic newer request deliberately bypassed Lua's local
-            // counter. Rotate the published inventory before a fresh UI open.
+            // counter. Retire that synthetic owner explicitly; unchanged
+            // metadata publication correctly retains a live menu owner.
+            Call(service, "RetireNativeMenus");
             Call(service, "SendAudioTrackListToOsc");
 
             // Native activation dismissal is consumed before a video down/up can

@@ -91,10 +91,12 @@ public partial class PlayerService
     private void DispatchLegacyPlaybackSwitch(Microsoft.UI.Dispatching.DispatcherQueue dispatcher,
         bool quality, Func<Func<bool>, Task> selection)
     {
+        if (_playbackTerminalState != null) return;
         var authority = _activeAuthority;
         var context = authority.ApiClient.CaptureContext();
         var claim = BeginPlaybackBusy(loading: false, claimState: () => _qualitySwitchActive = quality);
-        bool ContextCurrent() => ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context);
+        bool ContextCurrent() => _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) &&
+            authority.ApiClient.IsCurrentContext(context);
         bool Current() => ContextCurrent() && OwnsPlaybackBusy(claim);
         async Task InvokeSelectionAsync()
         {

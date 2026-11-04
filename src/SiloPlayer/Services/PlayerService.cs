@@ -4783,6 +4783,7 @@ public partial class PlayerService : IDisposable
 
     private async Task SwitchVersionCoreAsync(FileVersion version, Func<bool>? acceptSelection = null)
     {
+        if (_playbackTerminalState != null) return;
         if (acceptSelection != null && !acceptSelection()) return;
         if (IsWatchTogetherPlayback)
         {
@@ -4805,7 +4806,7 @@ public partial class PlayerService : IDisposable
         try { previousSwitch?.Cancel(); } catch (ObjectDisposedException) { }
         try
         {
-            bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && !IsWatchTogetherPlayback &&
+            bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && _playbackTerminalState == null && !IsWatchTogetherPlayback &&
                 roomGeneration == Volatile.Read(ref _roomPlaybackGeneration) &&
                 ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
                 ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) && content == ContentId &&
@@ -6143,6 +6144,7 @@ public partial class PlayerService : IDisposable
     private async Task SwitchQualityTierAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
         PlaybackStartResponse? bufferingExpectedSession = null, Func<bool>? acceptSelection = null)
     {
+        if (_playbackTerminalState != null) return;
         if (acceptSelection != null && !acceptSelection()) return;
         var authority = _activeAuthority;
         var manager = _playbackManager;
@@ -6156,7 +6158,7 @@ public partial class PlayerService : IDisposable
         using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(loadingOwner?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
         var ct = switchCts.Token;
         bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
-            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(selectionContext) &&
+            _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(selectionContext) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(selectionMpv, _mpv) && selectionContent == ContentId &&
             selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
             selectionFileGeneration == Volatile.Read(ref _playbackFileGeneration);
