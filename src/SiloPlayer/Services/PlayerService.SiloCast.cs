@@ -20,9 +20,21 @@ public partial class PlayerService
             audio.Add(new JsonObject { ["kind"] = "audio", ["trackId"] = index + 1,
                 ["title"] = t.Title ?? t.Language ?? $"Audio {index + 1}", ["detail"] = t.Codec });
         var subtitles = new JsonArray();
-        foreach (var t in (_playbackManager?.CurrentSession?.SubtitleUrls ?? []).Where(HasSubtitleSelectionRoute))
-            subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
-                ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
+        int? selectedSubtitleTrackId = null;
+        var manager = _playbackManager;
+        if (manager != null)
+        {
+            lock (manager.SubtitleInventorySyncRoot)
+            {
+                var subtitleInventory = manager.CurrentSession?.SubtitleUrls ?? [];
+                var routes = CaptureSubtitleSelectionRoutes(subtitleInventory);
+                foreach (var t in subtitleInventory.Where(t => HasSubtitleSelectionRoute(t, routes)))
+                    subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
+                        ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
+                selectedSubtitleTrackId = State == PlayerState.Idle || _activeSubtitleServerIndex < 0
+                    ? null : _activeSubtitleServerIndex + 1;
+            }
+        }
         var qualities = new JsonArray();
         foreach (var q in AvailableQualities)
             qualities.Add(new JsonObject { ["id"] = q.Label, ["label"] = q.DisplayName ?? q.Label });
@@ -38,7 +50,7 @@ public partial class PlayerService
             ["currentTime"] = CurrentMediaPosition, ["duration"] = CurrentMediaDuration,
             ["audioTracks"] = audio, ["subtitleTracks"] = subtitles,
             ["selectedAudioTrackId"] = _playbackManager?.CurrentSession is { } session ? session.AudioTrackIndex + 1 : null,
-            ["selectedSubtitleTrackId"] = State == PlayerState.Idle || _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex + 1,
+            ["selectedSubtitleTrackId"] = selectedSubtitleTrackId,
             ["qualityOptions"] = qualities, ["activeQualityId"] = SelectedQualityMenuId,
             ["isQualitySwitching"] = IsQualitySwitchActive, ["playbackSpeed"] = speed > 0 ? speed : 1,
             ["videoGravity"] = _castVideoGravity, ["hdrEnabled"] = ActiveVersion?.Hdr ?? false,

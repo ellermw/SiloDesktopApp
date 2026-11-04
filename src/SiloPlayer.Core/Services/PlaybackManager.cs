@@ -895,23 +895,27 @@ public partial class PlaybackManager : IDisposable
         // API v2 stop already persists and synchronizes the final sample.
     }
 
-    public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls()
+    public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls(IEnumerable<SubtitleTrackInfo>? inventory = null)
     {
-        if (CurrentSession == null) return [];
-        var baseUrl = _apiClient.BaseUrl;
-        var token = _apiClient.AccessToken;
-        return CurrentSession.SubtitleUrls
-            .Where(s => !string.IsNullOrWhiteSpace(s.Url))
-            .Select(s =>
+        lock (_trackIntentGate)
         {
-            var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
-            // Integrated sidecars require account/viewer authentication even
-            // with a reconstruction reference (st). Worker/CDN URLs carry their
-            // own authority and must never receive the account credential.
-            if (RequiresSubtitleAccountAuthentication(baseUrl, s.Url))
-                url = UrlHelper.AppendToken(url, token);
-            return (s, url);
-        }).ToList();
+            inventory ??= CurrentSession?.SubtitleUrls;
+            if (inventory == null) return [];
+            var baseUrl = _apiClient.BaseUrl;
+            var token = _apiClient.AccessToken;
+            return inventory
+                .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+                .Select(s =>
+            {
+                var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
+                // Integrated sidecars require account/viewer authentication even
+                // with a reconstruction reference (st). Worker/CDN URLs carry their
+                // own authority and must never receive the account credential.
+                if (RequiresSubtitleAccountAuthentication(baseUrl, s.Url))
+                    url = UrlHelper.AppendToken(url, token);
+                return (s, url);
+            }).ToList();
+        }
     }
 
     private static bool RequiresSubtitleAccountAuthentication(string baseUrl, string resource)

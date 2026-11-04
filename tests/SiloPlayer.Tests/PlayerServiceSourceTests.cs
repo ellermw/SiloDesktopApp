@@ -1322,7 +1322,9 @@ public sealed class PlayerServiceSourceTests
         Assert.InRange(invalidate, stop.IndexOf("lock (_subtitleSyncGate)", StringComparison.Ordinal), stop.IndexOf("_subtitleSyncFiles.Clear();", StringComparison.Ordinal));
 
         var persist = source[source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
-        AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != selected");
+        // A subtitle_ready refresh can reindex the retained row while prefetch
+        // is in flight; ownership follows that row, not its original ordinal.
+        AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != track.Index");
         var persistSelect = persist.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
         var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", persistSelect, StringComparison.Ordinal);
         // Restoration uses the state from just before the sub-add, not from before the download.

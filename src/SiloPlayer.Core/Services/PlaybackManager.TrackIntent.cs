@@ -39,6 +39,9 @@ public partial class PlaybackManager
         }
     }
 
+    /// <summary>Shared with inventory refresh/presentation; acquire after the service's subtitle locks.</summary>
+    public object SubtitleInventorySyncRoot => _trackIntentGate;
+
     public bool IsSubtitleSelectionAutomatic
     {
         get { lock (_trackIntentGate) return !_hasViewerSubtitle || _subtitleSelectionIsAutomatic; }
@@ -216,6 +219,10 @@ public partial class PlaybackManager
         }
         if (sameFile && Equal(_viewerSubtitle.Source, "downloaded"))
         {
+            // The exact accepted row needs no identity bridge. Legacy servers
+            // may omit both TrackId and the stored key until the next plan.
+            if (SubtitleStoredKey(_viewerSubtitle) == null && inventory.Contains(_viewerSubtitle))
+                return _viewerSubtitle.Unplayable ? null : _viewerSubtitle;
             // Refreshed downloads and plan rows share a stored ID/sync key even
             // when only one inventory supplies TrackId. Never use list position
             // to bridge that identity boundary.

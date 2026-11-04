@@ -388,6 +388,11 @@ public partial class PlayerService
             var extension = state.Format.ToLowerInvariant() switch { "ass" => ".ass", "ssa" => ".ssa", "vtt" => ".vtt", _ => ".srt" };
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-sync-" + Guid.NewGuid().ToString("N") + extension);
             await File.WriteAllBytesAsync(path, bytes, bounded.Token);
+            // Notifications may start this worker while holding the sync gate.
+            // Even if every I/O await completed synchronously, leave that caller
+            // before taking the outer add gate (add -> sync -> track state).
+            await Task.Yield();
+            lock (_subtitleAddGate)
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             {

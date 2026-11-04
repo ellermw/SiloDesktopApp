@@ -1214,13 +1214,16 @@ public partial class PlayerService : IDisposable
             }
             else
             {
+                var sidecarGeneration = CurrentSubtitleSidecarGeneration();
                 var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
                 await PrefetchSubtitleSidecarAsync(track);
                 // A newer selection owns the subtitle state and its preference.
                 if (_activeSubtitleServerIndex != track.Index || !ReferenceEquals(manager, _playbackManager) ||
                     !ReferenceEquals(mpv, _mpv) || _closing || ownerToken.IsCancellationRequested ||
-                    !ReferenceEquals(authority, _activeAuthority)) return false;
-                if (Volatile.Read(ref _loadedMediaInitGeneration) != loadedMediaGeneration)
+                    !ReferenceEquals(authority, _activeAuthority) ||
+                    manager?.CurrentSession?.SubtitleUrls.Contains(track) != true) return false;
+                if (CurrentSubtitleSidecarGeneration() != sidecarGeneration ||
+                    Volatile.Read(ref _loadedMediaInitGeneration) != loadedMediaGeneration)
                 {
                     // A file load replaced the subtitle tracks during the download. It
                     // applies the recorded selection and restores playback itself;
@@ -1275,7 +1278,8 @@ public partial class PlayerService : IDisposable
             // A same-file refresh can move this row without changing its identity.
             selectedSubtitleIndex = track?.Index ?? -1;
             if (!ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) ||
-                _activeSubtitleServerIndex != selectedSubtitleIndex) return false;
+                _activeSubtitleServerIndex != selectedSubtitleIndex ||
+                track != null && manager?.CurrentSession?.SubtitleUrls.Contains(track) != true) return false;
             if (!selectionExecuted)
             {
                 RestoreExecutedSubtitleSelection(reapply: false);
@@ -3009,24 +3013,27 @@ public partial class PlayerService : IDisposable
             // settings round trip can delay (or prevent) subtitle selection.
             LoadSubtitles();
             var applyInitialSubtitleSelection = true;
-            if (_pendingAutomaticSubtitleSelection is { } automatic && _playbackManager?.CurrentSession is { } session)
+            var subtitleManager = _playbackManager;
+            if (_pendingAutomaticSubtitleSelection is { } automatic && subtitleManager?.CurrentSession is { } session)
             {
                 // Only the loaded file can attest native identity. Re-resolve the
                 // automatic choice over executable routes, retaining candidate priority.
-                var automaticIndex = SubtitleAutoSelect.Resolve(automatic with
-                {
-                    Tracks = SubtitleAutoSelect.BuildCandidates(session.SubtitleUrls.Where(HasSubtitleSelectionRoute)),
-                });
                 if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
                 lock (_subtitleTrackStateLock)
+                lock (subtitleManager.SubtitleInventorySyncRoot)
                 {
                     applyInitialSubtitleSelection = ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic);
                     if (applyInitialSubtitleSelection)
                     {
+                        var routes = CaptureSubtitleSelectionRoutes(session.SubtitleUrls);
+                        var automaticIndex = SubtitleAutoSelect.Resolve(automatic with
+                        {
+                            Tracks = SubtitleAutoSelect.BuildCandidates(session.SubtitleUrls.Where(t => HasSubtitleSelectionRoute(t, routes))),
+                        });
                         _pendingAutomaticSubtitleSelection = null;
                         _pendingInitialServerSubtitleIndex = automaticIndex ?? -1;
                         if (session.ProtocolVersion >= 3)
-                            _playbackManager.RecordLocalSubtitleSelection(automaticIndex, isAutomatic: true);
+                            subtitleManager.RecordLocalSubtitleSelection(automaticIndex, isAutomatic: true);
                     }
                 }
             }
@@ -5576,12 +5583,13 @@ public partial class PlayerService : IDisposable
                 !IsSubtitleMenuCurrent() || session.IsSubtitleBurnedIn) return;
             var generation = Volatile.Read(ref _loadedMediaInitGeneration);
             var externalIds = mpv.GetSubtitleTrackIds(externalOnly: true).ToHashSet();
+            var routes = CaptureSubtitleSelectionRoutes();
             var choices = new List<(SubtitleTrackInfo? Track, int Sid)> { (null, 0) };
             foreach (var track in session.SubtitleUrls.Where(t => !t.Unplayable && !IsUnsupportedBitmapSubtitle(t)))
             {
                 var sid = _loadedExternalSubtitleSids.TryGetValue(track.Index, out var cached) && externalIds.Contains(cached)
                     ? cached : string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase)
-                        ? ResolveNativeEmbeddedSid(track) : 0;
+                        ? ResolveNativeEmbeddedSidFromSnapshot(track, routes) : 0;
                 if (sid > 0) choices.Add((track, sid));
             }
             if (_closing || _switchingContent || IsLoading || !IsSubtitleMenuCurrent() ||
@@ -5606,14 +5614,41 @@ public partial class PlayerService : IDisposable
         }
     }
 
+    private sealed record SubtitleRouteSnapshot(IReadOnlyList<NativeSubtitleTrack> EmbeddedTracks,
+        bool TrustworthyStreamIndex, bool TrustworthyContainerTrackId, bool LegacyTitles, HashSet<int> SidecarIndices);
+
+    private SubtitleRouteSnapshot CaptureSubtitleSelectionRoutes(IEnumerable<SubtitleTrackInfo>? inventory = null)
+    {
+        var mpv = _mpv;
+        var manager = _playbackManager;
+        if (manager == null) return new([], false, false, false, []);
+        lock (manager.SubtitleInventorySyncRoot)
+        {
+            var native = mpv != null && CanUseNativeEmbeddedSubtitleTrack();
+            return new(native ? mpv!.GetEmbeddedSubtitleTracks() : [],
+                native && mpv!.HasFfmpegTrackIndices(), native && mpv!.HasContainerTrackIds(),
+                manager.CurrentSession?.ProtocolVersion < 3,
+                manager.GetSubtitleUrls(inventory).Where(pair =>
+                    Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
+                    .Select(pair => pair.Track.Index).ToHashSet());
+        }
+    }
+
     private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track)
+    {
+        var manager = _playbackManager;
+        if (manager == null) return false;
+        lock (manager.SubtitleInventorySyncRoot)
+            return HasSubtitleSelectionRoute(track, CaptureSubtitleSelectionRoutes());
+    }
+
+    private static bool HasSubtitleSelectionRoute(SubtitleTrackInfo track, SubtitleRouteSnapshot routes)
     {
         if (track.Unplayable) return false;
         if (IsUnsupportedBitmapSubtitle(track)) return true;
         if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
-            CanUseNativeEmbeddedSubtitleTrack() && ResolveNativeEmbeddedSid(track) > 0) return true;
-        return _playbackManager?.GetSubtitleUrls().Any(pair => pair.Track.Index == track.Index &&
-            Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https") == true;
+            ResolveNativeEmbeddedSidFromSnapshot(track, routes) > 0) return true;
+        return routes.SidecarIndices.Contains(track.Index);
     }
 
     private void CommitExecutedSubtitleSelection(SubtitleTrackInfo? track)
@@ -5874,13 +5909,21 @@ public partial class PlayerService : IDisposable
 
     private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track)
     {
-        if (_mpv == null || track.Unplayable || !CanUseNativeEmbeddedSubtitleTrack()) return 0;
+        var manager = _playbackManager;
+        if (manager == null) return 0;
+        lock (manager.SubtitleInventorySyncRoot)
+            return ResolveNativeEmbeddedSidFromSnapshot(track, CaptureSubtitleSelectionRoutes());
+    }
+
+    private static int ResolveNativeEmbeddedSidFromSnapshot(SubtitleTrackInfo track, SubtitleRouteSnapshot routes)
+    {
+        if (track.Unplayable) return 0;
         // Pre-v3 rows carry their raw label directly; adapted v3 display labels
         // may instead be synthesized from the language and are not identity.
-        var title = track.NativeTitle ?? (_playbackManager?.CurrentSession?.ProtocolVersion < 3 ? track.Label : null);
+        var title = track.NativeTitle ?? (routes.LegacyTitles ? track.Label : null);
         return NativeSubtitleSelection.Resolve(new(0, track.StreamIndex, track.ContainerTrackId,
             track.Codec, track.Language, title, track.Forced, track.HearingImpaired),
-            _mpv.GetEmbeddedSubtitleTracks(), _mpv.HasFfmpegTrackIndices(), _mpv.HasContainerTrackIds());
+            routes.EmbeddedTracks, routes.TrustworthyStreamIndex, routes.TrustworthyContainerTrackId);
     }
 
     private void SendTitleToOsc()
@@ -7467,6 +7510,9 @@ public partial class PlayerService : IDisposable
             cuesElement.ValueKind != JsonValueKind.Array) return;
 
         var receivedCue = false;
+        // Use the same add gate as sidecars and corrected cues: their SID
+        // discovery/rollback must never claim this live track.
+        lock (_subtitleAddGate)
         lock (_liveSubtitleLock)
         {
             if (_liveSubtitleJobId != jobId || _mpv == null || string.IsNullOrWhiteSpace(_liveSubtitlePath)) return;
@@ -7576,45 +7622,47 @@ public partial class PlayerService : IDisposable
             var response = await _playbackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
             if (!ReferenceEquals(_playbackManager, manager) || manager.CurrentSession != session) return;
 
-            var previousInventory = session.SubtitleUrls;
-            var previousDownloads = previousInventory
-                .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
-            var existing = previousInventory.Except(previousDownloads).ToList();
-            var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
-            var downloaded = response.Subtitles.Select((entry, offset) =>
-            {
-                var syncKey = "stored-" + entry.Id;
-                var matches = previousDownloads.Where(track => track.Id == entry.Id || track.SyncKey == syncKey).Take(2).ToArray();
-                var previous = matches.Length == 1 ? matches[0] : null;
-                return new SubtitleTrackInfo
-                {
-                    TrackId = previous?.TrackId,
-                    SyncKey = previous?.SyncKey ?? syncKey,
-                    Id = entry.Id,
-                    Unplayable = previous?.Unplayable ?? false,
-                    Delivery = previous?.Delivery,
-                    Index = baseIndex + offset,
-                    MediaFileId = mediaFileId,
-                    Language = entry.Language,
-                    Codec = previous?.Codec ?? (string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format),
-                    Label = string.IsNullOrWhiteSpace(entry.ReleaseName)
-                        ? (entry.Title ?? entry.Language)
-                        : $"{entry.ReleaseName} ({entry.Provider})",
-                    Source = "downloaded",
-                    HearingImpaired = entry.HearingImpaired,
-                    Forced = entry.Forced,
-                    Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
-                };
-            }).ToList();
+            List<SubtitleTrackInfo> downloaded;
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
+            lock (manager.SubtitleInventorySyncRoot)
             {
-                if (!ReferenceEquals(_playbackManager, manager) || manager.CurrentSession != session ||
-                    !ReferenceEquals(session.SubtitleUrls, previousInventory)) return;
+                if (!ReferenceEquals(_playbackManager, manager) || manager.CurrentSession != session) return;
 
-                // Keep row objects for uniquely identified downloads. Awaiting
-                // selections follow that identity (including a changed Index),
-                // while removed rows fail the inventory membership guards.
+                var previousInventory = session.SubtitleUrls;
+                var previousDownloads = previousInventory
+                    .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
+                var existing = previousInventory.Except(previousDownloads).ToList();
+                var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
+                downloaded = response.Subtitles.Select((entry, offset) =>
+                {
+                    var syncKey = "stored-" + entry.Id;
+                    var matches = previousDownloads.Where(track => track.Id == entry.Id || track.SyncKey == syncKey).Take(2).ToArray();
+                    var previous = matches.Length == 1 ? matches[0] : null;
+                    return new SubtitleTrackInfo
+                    {
+                        TrackId = previous?.TrackId,
+                        SyncKey = previous?.SyncKey ?? syncKey,
+                        Id = entry.Id,
+                        Unplayable = previous?.Unplayable ?? false,
+                        Delivery = previous?.Delivery,
+                        Index = baseIndex + offset,
+                        MediaFileId = mediaFileId,
+                        Language = entry.Language,
+                        Codec = previous?.Codec ?? (string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format),
+                        Label = string.IsNullOrWhiteSpace(entry.ReleaseName)
+                            ? (entry.Title ?? entry.Language)
+                            : $"{entry.ReleaseName} ({entry.Provider})",
+                        Source = "downloaded",
+                        HearingImpaired = entry.HearingImpaired,
+                        Forced = entry.Forced,
+                        Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
+                    };
+                }).ToList();
+
+                // MatchCurrentSubtitle, SubtitleSelectionForLoad and presentation
+                // readers share the inventory gate, so retained identities and
+                // their indices are updated as one transaction.
                 // Snapshot index-keyed state before updating any retained row.
                 var previousRows = previousInventory.Select(track => (Track: track, Index: track.Index)).ToArray();
                 var loaded = previousDownloads.Select(track =>
