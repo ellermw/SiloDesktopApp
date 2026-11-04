@@ -20,7 +20,10 @@ public sealed partial class MpvOscRuntimeTests
         end
         local modal_timeout=mp.add_timeout
         mp.add_timeout=function(delay,callback)
-            if delay==3 then modal_idle_hide=callback end
+            if delay==3 then
+                modal_idle_hide=callback
+                modal_idle_arms=(modal_idle_arms or 0)+1
+            end
             if delay==.5 then modal_leave_hide=callback end
             return modal_timeout(delay,callback)
         end
@@ -130,8 +133,9 @@ public sealed partial class MpvOscRuntimeTests
             native_handlers['osc-show']()
             if {{leave.ToString().ToLowerInvariant()}} then native_handlers['osc-mouse-leave']() end
             local timer={{(leave ? "modal_leave_hide" : "modal_idle_hide")}}
+            local prior_arms=modal_idle_arms or 0
             assert(timer,'actual hide callback missing')()
-            local held=s.target_alpha==1
+            local held=s.target_alpha==1 and (modal_idle_arms or 0)>prior_arms
             s.native_menu_request,s.native_dialog_request,s.native_subtitle_dialog_request=nil,nil,nil
             s.controller_focus_name,s.pressed_control=nil,nil
             assert(modal_idle_hide,'owned timer did not re-arm')()
