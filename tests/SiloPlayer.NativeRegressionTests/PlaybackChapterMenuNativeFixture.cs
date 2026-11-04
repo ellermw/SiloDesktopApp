@@ -30,6 +30,10 @@ internal static class PlaybackChapterMenuNativeFixture
     internal static Task RunMoreAsync(Window owner) => RunAsync(owner, true);
     private static async Task RunAsync(Window owner, bool more)
     {
+        var pointerSelection = Environment.GetEnvironmentVariable("SILO_NATIVE_MENU_POINTER_SELECTION") == "1";
+        var previousCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+        Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", (more ? "more" : "chapters") + (pointerSelection ? "-pointer" : "-keyboard"));
+        using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(owner));
         var appServices = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var oldServices = appServices.GetValue(null);
         using var wire = new ChapterWire();
@@ -135,7 +139,7 @@ internal static class PlaybackChapterMenuNativeFixture
                     // Home skips the explicitly unavailable Audio row.
                     for (var i = list.SelectedIndex; i < index; i++) Call(menu, "Input", "down");
                     Require(list.SelectedIndex == index, "More keyboard navigation did not reach the selected action.");
-                    Call(menu, "Input", "activate");
+                    Activate(menu);
                     await Until(() => !ReferenceEquals(Menu(service), menu), "More selection did not release its presentation.");
                 }
                 await Choose(1);
@@ -163,6 +167,16 @@ internal static class PlaybackChapterMenuNativeFixture
                 await Choose(7);
                 await Until(mpv.GetMute, "More mute did not change actual native state.");
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
+                // The real PiP route positions its video on the monitor. Keep
+                // only this owned fixture HWND visually empty while still
+                // exercising the service command and native mode transition.
+                var region = CreateRectRgn(0, 0, 0, 0);
+                Require(region != IntPtr.Zero, "Cannot isolate the synthetic PiP surface.");
+                if (SetWindowRgn(video.Hwnd, region, false) == 0)
+                {
+                    DeleteObject(region);
+                    throw new InvalidOperationException("Cannot isolate the synthetic PiP surface.");
+                }
                 await Choose(3);
                 await Until(() => service.State == PlayerState.PictureInPicture, "More PiP bypassed existing native mode transition.");
                 Require(mpv.IsPaused, "More utility actions changed genuine pause.");
@@ -204,12 +218,12 @@ internal static class PlaybackChapterMenuNativeFixture
 
             // Actual caller selects the sparse server index's canonical time.
             menu = await Open();
-            Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+            Call(menu, "Input", "end"); Activate(menu);
             await Until(() => Math.Abs(mpv.Position - 71 / 3d) < 1.5, "Native chapter selected row index instead of server chapter time.");
             Require(mpv.IsPaused, "Selecting a chapter resumed genuinely paused playback.");
             service.SetPaused(false);
             await Until(() => !mpv.IsPaused, "Generated playback did not resume.");
-            menu = await Open(); Call(menu, "Input", "home"); Call(menu, "Input", "activate");
+            menu = await Open(); Call(menu, "Input", "home"); Activate(menu);
             await Until(() => mpv.Position < 3 && !mpv.IsPaused, "Chapter seek did not retain playing intent.");
 
             service.SetPaused(true);
@@ -256,6 +270,7 @@ internal static class PlaybackChapterMenuNativeFixture
             var guestDown = list.SelectedIndex;
             var downVisible = SelectedRowVisible(list);
             mpv.SendScriptMessage("osc-controller-activate");
+            if (pointerSelection) Activate(menu);
             await Task.Delay(80);
             var guestInert = roomRequests == 0 && mpv.IsPaused && Math.Abs(mpv.Position - guestPosition) < .1;
             Program.Log($"Guest Chapters navigation: End={guestEnd}, visible={endVisible}, scroll={endOffset:0.#}; Home={guestHome}, visible={homeVisible}; controller Down={guestDown}, visible={downVisible}; inert={guestInert}.");
@@ -280,6 +295,18 @@ internal static class PlaybackChapterMenuNativeFixture
             mpv.ScriptMessageReceived -= Message;
             Set(service, "_videoWindow", null); Set(service, "_mpv", null); Set(service, "_playbackManager", null);
             appServices.SetValue(null, oldServices);
+            video.Dispose(); mpv.Dispose();
+            await Task.Delay(40);
+            try { foreground.Complete(); }
+            finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", previousCase); }
+        }
+        void Activate(object target)
+        {
+            if (!pointerSelection) { Call(target, "Input", "activate"); return; }
+            var selectedRow = ((ListView)Get(target, "_list")!).SelectedItem as ListViewItem;
+            Require(selectedRow?.Tag is string, "The pointer selection fixture has no current native row.");
+            Program.Log("Fixture invokes actual shared pointer-selection route: " + selectedRow!.Tag);
+            Call(target, "Select", (string)selectedRow.Tag, true);
         }
         async Task<JsonElement> Query()
         {
@@ -320,7 +347,9 @@ internal static class PlaybackChapterMenuNativeFixture
                 Program.Log($"Native opener after failure: {after.GetProperty("width")}x{after.GetProperty("height")}, x={after.GetProperty("x")}, y={after.GetProperty("y")}, More={after.GetProperty("more_available")}, scope={after.GetProperty("scope_present")}.");
                 throw;
             }
-            return Menu(service)!;
+                var opened = Menu(service)!;
+                foreground.WatchMenu((Window)Get(opened, "_window")!, Hwnd(opened));
+                return opened;
         }
     }
 
@@ -424,5 +453,8 @@ internal static class PlaybackChapterMenuNativeFixture
     [StructLayout(LayoutKind.Sequential)] private struct Rect { internal int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr value);
+    [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr hwnd, IntPtr region, bool redraw);
 }
 
