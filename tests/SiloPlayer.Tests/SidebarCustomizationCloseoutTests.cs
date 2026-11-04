@@ -127,10 +127,6 @@ public sealed class SidebarCustomizationCloseoutTests
         Assert.True(service.IsSupported);
         Assert.False(service.IsUnavailable);
         Assert.Equal(1, changes);
-        var reads = wire.EffectiveReads;
-        await service.EnsureLoadedAsync();
-        Assert.Equal(reads, wire.EffectiveReads);
-
         wire.EffectiveStatus = 200;
         wire.MenuLabel = "Fresh";
         wire.PosterSize = "standard";
@@ -138,6 +134,45 @@ public sealed class SidebarCustomizationCloseoutTests
         Assert.Equal("Fresh", service.PrimaryMenu!.Items.Last().Label);
         Assert.Equal("standard", service.CardPresentation.PosterSize);
         Assert.Equal(2, changes);
+    }
+
+    [Theory]
+    [InlineData(false, 200)] [InlineData(true, 200)]
+    [InlineData(false, 404)] [InlineData(true, 404)]
+    public async Task DiscardedBatchIsRetriedWithoutLosingTheAcceptedSave(bool saveMenu, int oldStatus)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var service = new UICustomizationService(new SettingsApi(Client(http)));
+        await service.EnsureLoadedAsync();
+        wire.HoldEffectiveRead = true; wire.EffectiveStatus = oldStatus;
+        var refresh = service.RefreshAsync();
+        await wire.EffectiveReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        try
+        {
+            var saved = saveMenu
+                ? await service.SavePrimaryMenuAsync([PrimaryMenuItem.Builtin("home"), new() { Type = "library", LibraryId = 1, Label = "Saved" }])
+                : await service.SaveCardPresentationAsync(new() { PosterSize = "large" });
+            Assert.True(saved);
+            // The next response reflects the committed write plus independently
+            // changed fields. The held response remains the old snapshot.
+            wire.EffectiveStatus = 200;
+            wire.MenuLabel = saveMenu ? "Saved" : "Remote menu";
+            wire.PosterSize = saveMenu ? "standard" : "large";
+            wire.ShortcutLabel = "Remote shortcut";
+        }
+        finally { wire.EffectiveReadRelease.TrySetResult(); }
+        await refresh.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(saveMenu ? "Saved" : "Accepted", service.PrimaryMenu!.Items.Last().Label);
+        Assert.Equal(saveMenu ? "compact" : "large", service.CardPresentation.PosterSize);
+        var reads = wire.EffectiveReads;
+        await service.EnsureLoadedAsync();
+        Assert.Equal(reads + 1, wire.EffectiveReads);
+        Assert.Equal(saveMenu ? "Saved" : "Remote menu", service.PrimaryMenu!.Items.Last().Label);
+        Assert.Equal(saveMenu ? "standard" : "large", service.CardPresentation.PosterSize);
+        Assert.Equal("Remote shortcut", Assert.Single(service.Shortcuts.Items).Label);
+        reads = wire.EffectiveReads;
+        await service.EnsureLoadedAsync();
+        Assert.Equal(reads, wire.EffectiveReads);
     }
 
     [Fact]
@@ -166,7 +201,7 @@ public sealed class SidebarCustomizationCloseoutTests
     private sealed class Wire : HttpMessageHandler
     {
         public int CapabilityStatus = 200, EffectiveStatus = 200, EffectiveReads, Writes;
-        public string MenuLabel = "Accepted";
+        public string MenuLabel = "Accepted", ShortcutLabel = "Original shortcut";
         public string PosterSize = "compact", MenuSource = "profile_client", CardSource = "profile_client";
         public bool HoldWrite, HoldEffectiveRead;
         public readonly TaskCompletionSource EffectiveReadEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -188,6 +223,7 @@ public sealed class SidebarCustomizationCloseoutTests
                 {
                     new { key = "nav.primary_menu", value = new { items = new object[] { new { type = "builtin", destination = "home" }, new { type = "library", library_id = 1, label = MenuLabel } } }, source = MenuSource },
                     new { key = "ui.card_presentation", value = new { poster_size = PosterSize, caption = "title_metadata" }, source = CardSource },
+                    new { key = "nav.shortcuts", value = new { items = new[] { new { type = "library", library_id = 1, label = ShortcutLabel } } }, source = "profile_client" },
                 } });
                 if (HoldEffectiveRead)
                 {

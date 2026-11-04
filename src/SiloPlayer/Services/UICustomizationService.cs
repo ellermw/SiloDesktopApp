@@ -149,6 +149,13 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         }
         finally
         {
+            lock (_stateGate)
+            {
+                // A save preserves its accepted field, but retires this whole
+                // batch. Other fields still need a current effective read.
+                if (IsCurrent(context, generation) && writeEpoch != Volatile.Read(ref _writeEpoch))
+                    _loaded = false;
+            }
             _loadGate.Release();
         }
     }

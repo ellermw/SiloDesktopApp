@@ -259,6 +259,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 await ProfileMenuNavigationNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed.");
+                Exit();
                 return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-menu-navigation")
