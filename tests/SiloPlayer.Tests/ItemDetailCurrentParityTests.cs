@@ -516,12 +516,16 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("_detailPrefetchCache.GetAsync(contentId, ct)", viewModel);
         Assert.Contains("ReferenceEquals(_loadCts, loadCts)", viewModel);
         Assert.Contains("catch (OperationCanceledException)", viewModel);
-        Assert.Contains("var contentId = Item?.ContentId;", viewModel);
-        Assert.Contains("if (Item?.ContentId != contentId) return;", viewModel);
-        Assert.Contains("MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, context)", viewModel);
+        Assert.Contains("var item = Item;", viewModel);
+        Assert.Contains("var contentId = item?.ContentId;", viewModel);
+        Assert.Contains("bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context);", viewModel);
+        Assert.Contains("var identity = _catalogApi.CaptureIdentityContext();", viewModel);
+        Assert.Contains("if (!_catalogApi.IsCurrentIdentityContext(identity)) return;", viewModel);
+        Assert.Contains("var publicationContext = _catalogApi.CaptureContext();", viewModel);
+        Assert.Contains("MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, publicationContext)", viewModel);
         Assert.Contains("if (!Current()) _suppressedViewerFeedback = message;", viewModel);
         Assert.Contains("WeakReferenceMessenger.Default.Send(message)", viewModel);
-        Assert.Contains("seriesId, context: context)", viewModel);
+        Assert.Contains("seriesId, context: publicationContext)", viewModel);
         Assert.Contains("bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)", viewModel);
         Assert.Contains("if (Current())\n                IsWatched = wasWatched;", viewModel.Replace("\r\n", "\n"));
     }
