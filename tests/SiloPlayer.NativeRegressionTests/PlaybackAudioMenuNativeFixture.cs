@@ -633,7 +633,7 @@ internal static class PlaybackAudioMenuNativeFixture
         string? RequestKind()
         {
             var request = Get(service, "_nativeMenuRequest");
-            return request?.GetType().GetProperty("Kind")?.GetValue(request) as string;
+            return request?.GetType().GetProperty("Kind", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(request) as string;
         }
         void NativeClick(double x, double y)
         {
