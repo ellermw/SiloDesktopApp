@@ -1283,11 +1283,15 @@ public sealed class PlayerServiceSourceTests
     public void RemoteSidecarsAreDownloadedBeforeTheSynchronousSubAdd()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        var prefetch = source[source.IndexOf("private async Task<bool> PrefetchSubtitleSidecarAsync(", StringComparison.Ordinal)..];
-        prefetch = prefetch[..prefetch.IndexOf("private int ResolveNativeEmbeddedSid(", StringComparison.Ordinal)];
+        var prefetchStart = source.IndexOf("private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(", StringComparison.Ordinal);
+        Assert.True(prefetchStart >= 0, "Subtitle prefetch method was not found.");
+        var prefetchEnd = source.IndexOf("private int ResolveNativeEmbeddedSid(", prefetchStart, StringComparison.Ordinal);
+        Assert.True(prefetchEnd > prefetchStart, "Subtitle prefetch method boundary was not found.");
+        var prefetch = source[prefetchStart..prefetchEnd];
         Assert.Contains("SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url,", prefetch);
         Assert.DoesNotContain("CreateAuthenticatedRequest", prefetch);
-        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return false;", prefetch);
+        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;", prefetch);
+        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Error) return SubtitlePrefetchOutcome.Error;", prefetch);
         Assert.Contains("generation != _subtitleSidecarGeneration", prefetch);
         Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch);
         Assert.Contains("authority.ApiClient.IsCurrentContext(context)", prefetch);

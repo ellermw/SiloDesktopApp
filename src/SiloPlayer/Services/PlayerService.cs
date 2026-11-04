@@ -1131,7 +1131,13 @@ public partial class PlayerService : IDisposable
                     selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
                     continue;
                 }
-                if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
+                if (readOutcome == SubtitlePrefetchOutcome.Retired)
+                {
+                    // Sync cleanup can retire the read without superseding the
+                    // manual choice or loading a replacement file.
+                    ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);
+                    return false;
+                }
                 if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
                 {
                     ShowSubtitleReadFailure(readOutcome);

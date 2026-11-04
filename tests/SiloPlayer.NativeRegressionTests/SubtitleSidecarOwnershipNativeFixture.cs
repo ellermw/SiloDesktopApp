@@ -90,22 +90,29 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
         var notices = new ConcurrentQueue<string>();
         var noticeReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var noticeDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var noticeDrained = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         void ObserveNotice(string[] message)
         {
             if (message.FirstOrDefault() == "busy-notice-ready") noticeReady.TrySetResult();
-            if (message.FirstOrDefault() == "busy-notice-drained") noticeDrained.TrySetResult();
+            if (message.FirstOrDefault() == "busy-notice-drained" && message.Length > 1) noticeDrained.TrySetResult(message[1]);
             if (message.FirstOrDefault() == "busy-notice" && message.Length > 1) notices.Enqueue(message[1]);
         }
         mpv.ScriptMessageReceived += ObserveNotice;
         var noticeProbe = Path.Combine(Program.ResultDirectory, "busy-notice-" + scenario + ".lua");
         await File.WriteAllTextAsync(noticeProbe, """
             local mp = require 'mp'
+            local active_subtitle = '-1'
+            mp.register_script_message('osc-set-active-subtitle', function(index)
+                active_subtitle = index
+            end)
+            mp.register_script_message('busy-set-pending-subtitle', function(index)
+                active_subtitle = index
+            end)
             mp.register_script_message('osc-show-notice', function(payload)
                 mp.commandv('script-message', 'busy-notice', payload)
             end)
             mp.register_script_message('busy-notice-barrier', function()
-                mp.commandv('script-message', 'busy-notice-drained')
+                mp.commandv('script-message', 'busy-notice-drained', active_subtitle)
             end)
             mp.commandv('script-message', 'busy-notice-ready')
             """);
@@ -175,6 +182,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 }
                 else
                 {
+                    // Model the OSC shortcut's optimistic pending highlight.
+                    mpv.SendScriptMessage("busy-set-pending-subtitle", "0");
                     await Task.Run(() => Call(service, "StopSubtitleSync"));
                     Require(cancellationGeneration == readGeneration, "Sync-stop regression unexpectedly changed the load generation.");
                 }
@@ -197,18 +206,20 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 mpv.SendScriptMessage("busy-notice-barrier");
                 await noticeDrained.Task.WaitAsync(TimeSpan.FromSeconds(4));
             }
-            if (readFailure)
+            if (readFailure || scenario == "no-context-sync-stop")
             {
                 Require(notices.Any(n => n.Contains("could not be loaded", StringComparison.Ordinal)) &&
                     !notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal)),
-                    "Permanent subtitle failure was missing actionable feedback or mislabeled as busy.");
+                    "Failed or interrupted subtitle read was missing actionable feedback or mislabeled as busy.");
             }
             if (scenario is "exhausted" or "missing-native-503")
                 Require(notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal)) &&
                     !notices.Any(n => n.Contains("could not be loaded", StringComparison.Ordinal)), "Busy exhaustion lost its distinct retry notice.");
-            if (noContext)
+            if (scenario == "no-context-sync-stop")
+                Require(await noticeDrained.Task == "1", "A still-current retired read did not restore the applied OSC highlight.");
+            if (scenario is "no-context-load" or "newer-off" or "newer-track" or "profile")
                 Require(!notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal) || n.Contains("could not be loaded", StringComparison.Ordinal)),
-                    "A retired read emitted a busy/error notice.");
+                    "A superseded or reload-retired read emitted a busy/error notice.");
             if (readFailure || translationCompleted || scenario is "exhausted" or "profile" or "superseded-exhausted" or "missing-native-503" or "no-context-sync-stop")
             {
                 Require(service.ActiveSubtitleServerIndex == 1, "Busy failure replaced the accepted server subtitle selection.");
