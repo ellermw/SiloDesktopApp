@@ -47,6 +47,126 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             await CheckBusyAsync(parent, scenario);
             Program.Log("PASS: busy sidecar " + scenario);
         }
+        foreach (var scenario in new[] { "busy-external", "busy-missing-native", "error", "sync-stop" })
+        {
+            await CheckLoadedSidecarFailureAsync(scenario);
+            Program.Log("PASS: loaded sidecar " + scenario);
+        }
+    }
+
+    private static async Task CheckLoadedSidecarFailureAsync(string scenario)
+    {
+        using var subtitles = new HeldSubtitleServer(false)
+        {
+            BusyResponses = scenario.StartsWith("busy-", StringComparison.Ordinal) ? 100 : 0,
+            ReadFailure = scenario == "error" ? "not-found" : null,
+        };
+        using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
+        using var service = new PlayerService(playback, catalog, auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "loaded-sidecar-" + scenario)), new SettingsApi(api));
+        using var manager = new PlaybackManager(playback, catalog, auth, api);
+        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [Version()] }); await manager.StartSessionAsync(42);
+        var track = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0);
+        if (scenario == "busy-missing-native")
+        {
+            track.Source = "embedded"; track.StreamIndex = 99; track.ContainerTrackId = "99";
+        }
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+        Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "movie");
+        var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
+        var media = Path.Combine(assets, "tracks.mkv");
+        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", media));
+        mpv.SetProperty("sub-auto", "no"); mpv.SetProperty("sid", "auto"); mpv.SetProperty("subs-fallback", "default");
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        mpv.FileLoaded += () => loaded.TrySetResult(); mpv.LoadFile(media);
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
+        var ready = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var drained = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var notices = new ConcurrentQueue<string>();
+        void Observe(string[] message)
+        {
+            if (message.Length < 2) return;
+            if (message[0] == "loaded-sidecar-ready") ready.TrySetResult(message[1]);
+            if (message[0] == "loaded-sidecar-drained") drained.TrySetResult(message[1]);
+            if (message[0] == "loaded-sidecar-notice") notices.Enqueue(message[1]);
+        }
+        mpv.ScriptMessageReceived += Observe;
+        try
+        {
+            var probe = Path.Combine(Program.ResultDirectory, "loaded-sidecar-" + scenario + ".lua");
+            await File.WriteAllTextAsync(probe, """
+                local mp = require 'mp'
+                local active = '-1'
+                local default_selected = false
+                for _, track in ipairs(mp.get_property_native('track-list', {})) do
+                    if track.type == 'sub' and track.default and track.id == mp.get_property_native('sid') then
+                        default_selected = true
+                    end
+                end
+                mp.register_script_message('osc-set-active-subtitle', function(index) active = index end)
+                mp.register_script_message('loaded-sidecar-pending', function() active = '0' end)
+                mp.register_script_message('osc-show-notice', function(payload)
+                    mp.commandv('script-message', 'loaded-sidecar-notice', payload)
+                end)
+                mp.register_script_message('loaded-sidecar-barrier', function()
+                    mp.commandv('script-message', 'loaded-sidecar-drained', active)
+                end)
+                mp.commandv('script-message', 'loaded-sidecar-ready', tostring(default_selected))
+                """);
+            Call(mpv, "Command", (object)new[] { "load-script", probe });
+            Require(await ready.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "true" && mpv.GetPropertyDouble("sid") > 0,
+                "The load regression must start with an actual auto-selected, default-flagged embedded subtitle.");
+            // Queue a manual choice before entering the real FILE_LOADED worker.
+            Property(service, "IsLoading", true);
+            await service.SetSubtitleTrackAndPersistAsync(1, track.Language, track).WaitAsync(TimeSpan.FromSeconds(1));
+            var choice = Get(service, "_subtitleSelectionOperation")!;
+            Require(wire.PreferenceWrites == 0, "A queued choice saved before execution.");
+            Property(service, "IsLoading", false);
+            var owner = new CancellationTokenSource(); Set(service, "_loadedMediaInitCts", owner);
+            var pending = (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
+            await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0,
+                "Default native captions remained visible during the loaded-file sidecar read.");
+            if (scenario == "sync-stop")
+            {
+                mpv.SendScriptMessage("loaded-sidecar-pending");
+                Call(service, "StopSubtitleSync");
+            }
+            subtitles.Release.TrySetResult();
+            await pending.WaitAsync(TimeSpan.FromSeconds(12));
+            mpv.SendScriptMessage("loaded-sidecar-barrier");
+            Require(await drained.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "-1" &&
+                service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
+                "Failed loaded-file read changed actual Off, the applied OSC highlight, or saved preferences.");
+            var busy = scenario.StartsWith("busy-", StringComparison.Ordinal);
+            Require(notices.Any(n => n.Contains(busy ? "still preparing" : "could not be loaded", StringComparison.Ordinal)),
+                "The current loaded-file read failed without actionable feedback.");
+            Require(subtitles.EngRequests == (busy ? 4 : 1) && subtitles.SyncRequests == 0,
+                "Loaded-file failure exceeded its read budget or fell through to remote sub-add.");
+            if (scenario == "sync-stop")
+            {
+                Require(ReferenceEquals(choice, Get(service, "_subtitleSelectionOperation")) &&
+                    (bool)choice.GetType().GetProperty("Accepted")!.GetValue(choice)! &&
+                    (int)choice.GetType().GetField("PreferenceClaimed")!.GetValue(choice)! == 0 && manager.SubtitleSelectionForLoad == 0,
+                    "Read-only retirement consumed the still-current queued manual preference authority.");
+                Call(service, "StartLoadedMediaInitialization");
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") > 0 &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 0 }), "Retry lost the queued choice or did not save it once after execution.");
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, false)!;
+                Require(wire.RequestedPreferences.SequenceEqual(new[] { 0 }), "Repeated initialization duplicated the manual preference.");
+            }
+        }
+        finally
+        {
+            subtitles.Release.TrySetResult();
+            Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "StopSubtitleSync");
+            mpv.ScriptMessageReceived -= Observe; Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+        }
     }
 
     private static async Task CheckBusyAsync(StackPanel parent, string scenario)

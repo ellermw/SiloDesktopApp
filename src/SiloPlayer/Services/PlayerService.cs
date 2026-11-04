@@ -2680,6 +2680,9 @@ public partial class PlayerService : IDisposable
             mpv.Pause();
             // Do not carry an original file's aid into a single-track remux/HLS load.
             mpv.SetProperty("aid", "auto");
+            // Only a verified native/sidecar selection may enable captions on
+            // the new file; mpv's default track is not the server's choice.
+            mpv.SetSubtitleTrack(0);
             Volatile.Write(ref _mpvLoadingOverlayOwner, loadingOwner);
             mpv.LoadFile(prepared.LocalUrl, null, prepared.MpvLoadStartSeconds);
         }
@@ -4895,6 +4898,7 @@ public partial class PlayerService : IDisposable
                 // The replacement file has loaded. Before an asynchronous
                 // sidecar succeeds its actual native captions are Off; burned
                 // pixels already belong to the newly granted transport.
+                _mpv.SetSubtitleTrack(0);
                 _activeSubtitleServerIndex = loadedSession.IsSubtitleBurnedIn
                     ? loadedSession.SubtitleUrls.FirstOrDefault(t => t.TrackId == loadedSession.SelectedSubtitleTrackId)?.Index ?? -1 : -1;
             }
@@ -5099,20 +5103,33 @@ public partial class PlayerService : IDisposable
         var context = authority.ApiClient.CaptureContext();
         var sidecarGeneration = CurrentSubtitleSidecarGeneration();
         var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
-        bool CurrentSelection() => ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) &&
+        bool CurrentSelectionOwner() => ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) &&
             !_closing && !_switchingContent && !IsLoading && ReferenceEquals(mpv, _mpv) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(authority, _activeAuthority) &&
-            authority.ApiClient.IsCurrentContext(context) && CurrentSubtitleSidecarGeneration() == sidecarGeneration &&
+            authority.ApiClient.IsCurrentContext(context) &&
             Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration;
+        bool CurrentSelection() => CurrentSelectionOwner() && CurrentSubtitleSidecarGeneration() == sidecarGeneration;
         if (track != null)
         {
             var readOutcome = await PrefetchSubtitleSidecarAsync(track);
-            if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
+            if (readOutcome == SubtitlePrefetchOutcome.Retired)
+            {
+                // Sync cleanup can retire just the read (and its sidecar
+                // generation). Keep a still-current queued manual save claim
+                // for verified execution on retry, but do not fail silently.
+                if (CurrentSelectionOwner())
+                {
+                    if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);
+                    ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);
+                }
+                return false;
+            }
             if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
             {
                 if (CurrentSelection())
                 {
                     if (manualChoice != null) manualChoice.Accepted = false;
+                    if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);
                     ShowSubtitleReadFailure(readOutcome);
                 }
                 return false;
