@@ -1613,7 +1613,7 @@ public sealed partial class PlayerOverlay : UserControl
 
     private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, PlayerService.SubtitleOperationOwner operationOwner)
     {
-        bool currentOwner() => operationOwner.IsCurrent;
+        bool currentOwner() => operationOwner.IsCurrentForAi;
         if (jobId <= 0) return;
         for (var attempt = 0; attempt < 3600; attempt++)
         {

@@ -184,6 +184,7 @@ public partial class PlayerService : IDisposable
     private int _liveSubtitleFileId;
     private string? _liveSubtitlePath;
     private int _liveSubtitleSid;
+    private long _liveSubtitleFileLoadGeneration;
     private int _preLiveSubtitleSid;
     private bool _resumeAfterLiveSubtitleBuffer;
 
@@ -672,6 +673,10 @@ public partial class PlayerService : IDisposable
     {
         // A subtitle replan's temporary native pause is not viewer intent.
         if (_subtitleReplanPauseIntent.HasValue) _subtitleReplanPauseIntent = paused;
+        lock (_liveSubtitleLock)
+        {
+            if (_liveSubtitleResumeCts != null) _resumeAfterLiveSubtitleBuffer = !paused;
+        }
         if (IsWatchTogetherPlayback)
         {
             _roomPlaybackPaused = paused;
@@ -1180,7 +1185,8 @@ public partial class PlayerService : IDisposable
                 FollowsVersionSwitch = selectedSubtitleIndex < 0 && _subtitleVersionSwitchActive,
                 RequestedTrack = track,
             };
-            if (manager != null && selectionSession?.ProtocolVersion >= 3)
+            if (manager != null && selectionSession != null &&
+                (selectionSession.ProtocolVersion >= 3 || manager.CaptureLocalSubtitleIntent().HasSelection))
             {
                 if (!manager.TryRecordLocalSubtitleSelection(selectionSession, track))
                 {
@@ -1481,7 +1487,11 @@ public partial class PlayerService : IDisposable
     /// was playing immediately before the operation.
     /// </summary>
     private bool CaptureUserPausedState()
-        => (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;
+    {
+        lock (_liveSubtitleLock)
+            if (_liveSubtitleResumeCts != null && _resumeAfterLiveSubtitleBuffer) return false;
+        return (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;
+    }
 
     // ── State ────────────────────────────────────────────────────────────
 
@@ -3133,7 +3143,9 @@ public partial class PlayerService : IDisposable
             if (applyInitialSubtitleSelection)
             {
                 var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
-                    (_playbackManager?.CurrentSession?.ProtocolVersion >= 3 ? _playbackManager.SubtitleSelectionForLoad : (int?)null);
+                    (_playbackManager is { } loadManager &&
+                        (loadManager.CurrentSession?.ProtocolVersion >= 3 || loadManager.CaptureLocalSubtitleIntent().HasSelection)
+                        ? loadManager.SubtitleSelectionForLoad : (int?)null);
                 if (resolvedSubtitleIndex is int initialSubtitleIndex)
                 {
                     _pendingInitialServerSubtitleIndex = null;
@@ -3993,8 +4005,10 @@ public partial class PlayerService : IDisposable
         if (selectedTrack == null && isExplicitTrack)
         {
             // Older servers may provide no playback inventory at all. Retain
-            // the explicit UI ordinal only for the incoming native file.
-            if (explicitSelection is >= 0 && explicitSignature == null &&
+            // the embedded row's metadata, never its ordinal as a native SID.
+            if (explicitSelection is >= 0 && explicitSignature == null && session.ProtocolVersion < 3 &&
+                version.FileId == session.MediaFileId &&
+                version.SubtitleTracks?.ElementAtOrDefault(explicitSelection.Value) is { External: not true } legacyTrack &&
                 session.SubtitleUrls.Count == 0 && !session.IsSubtitleBurnedIn && _playbackManager is { } legacyManager)
             {
                 lock (_subtitleTrackStateLock)
@@ -4003,7 +4017,14 @@ public partial class PlayerService : IDisposable
                     if (ReferenceEquals(legacyManager.CurrentSession, session) && session.SubtitleUrls.Count == 0)
                     {
                         var authority = _activeAuthority;
-                        _legacySubtitleChoice = new(explicitSelection.Value, authority,
+                        var title = string.IsNullOrWhiteSpace(legacyTrack.Title) ? legacyTrack.EmbeddedTitle : legacyTrack.Title;
+                        var legacySelection = new SubtitleTrackInfo
+                        {
+                            Index = explicitSelection.Value, MediaFileId = session.MediaFileId, Source = "embedded",
+                            Language = legacyTrack.Language ?? "", Codec = legacyTrack.Codec, Label = title ?? "", NativeTitle = title,
+                            Forced = legacyTrack.Forced == true, HearingImpaired = legacyTrack.HearingImpaired == true,
+                        };
+                        _legacySubtitleChoice = new(legacySelection, authority,
                             authority.ApiClient.CaptureIdentityContext(), legacyManager, session,
                             Volatile.Read(ref _playRequestGeneration), ContentId,
                             Volatile.Read(ref _legacySubtitleChoiceVersion), _authorityLifetimeCts.Token);
@@ -4025,8 +4046,9 @@ public partial class PlayerService : IDisposable
         {
             _pendingSubtitleSelection = -1;
             _pendingInitialServerSubtitleIndex = -1;
-            if (session.ProtocolVersion >= 3) _playbackManager?.RecordLocalSubtitleSelection(null,
-                isAutomatic: explicitSelection == null && explicitSignature == null);
+            if (session.ProtocolVersion >= 3 || _playbackManager?.CaptureLocalSubtitleIntent().HasSelection == true)
+                _playbackManager?.RecordLocalSubtitleSelection(null,
+                    isAutomatic: explicitSelection == null && explicitSignature == null);
             return;
         }
 
@@ -4034,8 +4056,9 @@ public partial class PlayerService : IDisposable
             _pendingExplicitInitialSubtitleOwner = new(_playbackManager, session.MediaFileId,
                 _playbackManager?.CaptureLocalSubtitleIntent());
         _pendingInitialServerSubtitleIndex = selectedTrack.Index;
-        if (session.ProtocolVersion >= 3) _playbackManager?.RecordLocalSubtitleSelection(selectedTrack.Index,
-            isAutomatic: explicitSelection == null && explicitSignature == null);
+        if (session.ProtocolVersion >= 3 || _playbackManager?.CaptureLocalSubtitleIntent().HasSelection == true)
+            _playbackManager?.RecordLocalSubtitleSelection(selectedTrack.Index,
+                isAutomatic: explicitSelection == null && explicitSignature == null);
         if (string.Equals(selectedTrack.Source, "embedded", StringComparison.OrdinalIgnoreCase))
         {
             var embedded = session.SubtitleUrls
@@ -5784,7 +5807,7 @@ public partial class PlayerService : IDisposable
             mpv.SetSubtitleTrack(selected.Sid);
             var actualSid = mpv.GetPropertyDouble("sid");
             if (selected.Sid == 0 ? actualSid > 0 : (int)Math.Round(actualSid) != selected.Sid) return;
-            if (session.ProtocolVersion >= 3 &&
+            if ((session.ProtocolVersion >= 3 || manager!.CaptureLocalSubtitleIntent().HasSelection) &&
                 !manager!.TryRecordLocalSubtitleSelection(session, selected.Track, isAutomatic: false)) return;
             Interlocked.Increment(ref _legacySubtitleChoiceVersion);
             _pendingAutomaticSubtitleSelection = null;
@@ -7665,7 +7688,7 @@ public partial class PlayerService : IDisposable
 
     internal void PrepareLiveSubtitleTranslationForOwner(long jobId, int mediaFileId, string language, string label, SubtitleOperationOwner owner)
     {
-        if (jobId <= 0 || mediaFileId <= 0 || !owner.IsCurrent) return;
+        if (jobId <= 0 || mediaFileId <= 0 || !owner.IsCurrentForAi) return;
         BeginLiveSubtitleTranslationForOwner(jobId, mediaFileId, language, label, owner);
     }
 
@@ -7685,11 +7708,11 @@ public partial class PlayerService : IDisposable
     private void BeginLiveSubtitleTranslationForOwner(long jobId, int fileId, string language, string label, SubtitleOperationOwner? owner)
     {
         var session = _playbackManager?.CurrentSession;
-        if (owner?.IsCurrent == false || _mpv == null || session == null || session.MediaFileId != fileId) return;
+        if (owner?.IsCurrentForAi == false || _mpv == null || session == null || session.MediaFileId != fileId) return;
 
         lock (_liveSubtitleLock)
         {
-            if (owner?.IsCurrent == false) return;
+            if (owner?.IsCurrentForAi == false) return;
             if (_liveSubtitleJobId == jobId)
             {
                 if (owner != null) _liveSubtitleOperationOwner = owner;
@@ -7699,6 +7722,7 @@ public partial class PlayerService : IDisposable
             _liveSubtitleJobId = jobId;
             _liveSubtitleOperationOwner = owner;
             _liveSubtitleFileId = fileId;
+            _liveSubtitleFileLoadGeneration = Volatile.Read(ref _fileLoadGeneration);
             _liveSubtitleCues.Clear();
             _preLiveSubtitleSid = Math.Max(0, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
             _resumeAfterLiveSubtitleBuffer = !_mpv.IsPaused;
@@ -7740,7 +7764,7 @@ public partial class PlayerService : IDisposable
         lock (_subtitleAddGate)
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrent == false || _mpv == null || string.IsNullOrWhiteSpace(_liveSubtitlePath)) return;
+            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false || _mpv == null || string.IsNullOrWhiteSpace(_liveSubtitlePath)) return;
             foreach (var cueElement in cuesElement.EnumerateArray())
             {
                 if (!cueElement.TryGetProperty("start", out var startEl) || !startEl.TryGetDouble(out var start) ||
@@ -7755,15 +7779,27 @@ public partial class PlayerService : IDisposable
 
             _liveSubtitleCues.Sort(static (a, b) => a.Start.CompareTo(b.Start));
             WriteLiveSubtitleFileLocked();
-            if (_liveSubtitleSid <= 0)
+            // Keep collecting cues during reloads, without attaching to an outgoing file.
+            if (!_switchingContent && !IsLoading)
             {
-                _mpv.AddSubtitle(_liveSubtitlePath, "AI translation", null, select: true);
-                _liveSubtitleSid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-            }
-            else
-            {
-                _mpv.ReloadSubtitle(_liveSubtitleSid);
-                _mpv.SetSubtitleTrack(_liveSubtitleSid);
+                var loadGeneration = Volatile.Read(ref _fileLoadGeneration);
+                if (_liveSubtitleFileLoadGeneration != loadGeneration)
+                {
+                    // Native IDs are file-local even when the AI job survives.
+                    _liveSubtitleSid = 0;
+                    _preLiveSubtitleSid = Math.Max(0, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
+                    _liveSubtitleFileLoadGeneration = loadGeneration;
+                }
+                if (_liveSubtitleSid <= 0)
+                {
+                    _mpv.AddSubtitle(_liveSubtitlePath, "AI translation", null, select: true);
+                    _liveSubtitleSid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
+                }
+                else
+                {
+                    _mpv.ReloadSubtitle(_liveSubtitleSid);
+                    _mpv.SetSubtitleTrack(_liveSubtitleSid);
+                }
             }
         }
 
@@ -7776,7 +7812,7 @@ public partial class PlayerService : IDisposable
         SubtitleOperationOwner? owner;
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrent == false) return;
+            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
             owner = _liveSubtitleOperationOwner;
         }
         ResumeAfterLiveSubtitleBuffer(jobId);
@@ -7793,7 +7829,7 @@ public partial class PlayerService : IDisposable
         var message = TryGetPayloadString(payload, "message");
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrent == false) return;
+            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
             ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: true);
         }
         try
@@ -7809,7 +7845,7 @@ public partial class PlayerService : IDisposable
         if (jobId <= 0) return;
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrent == false) return;
+            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
             ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: true);
         }
         try
@@ -7824,13 +7860,18 @@ public partial class PlayerService : IDisposable
     {
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrent == false) return;
+            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
             try { _liveSubtitleResumeCts?.Cancel(); } catch { }
             _liveSubtitleResumeCts?.Dispose();
             _liveSubtitleResumeCts = null;
             SendTranslationBufferingState(false, null);
-            if (_resumeAfterLiveSubtitleBuffer && _mpv?.IsPaused == true)
-                _mpv.Play();
+            if (_resumeAfterLiveSubtitleBuffer)
+            {
+                // A same-file reload may have captured the temporary buffer
+                // pause. Its eventual FILE_LOADED must not reinstate it.
+                if (_switchingContent || IsLoading) _restorePausedAfterLoad = false;
+                if (_mpv?.IsPaused == true) _mpv.Play();
+            }
             _resumeAfterLiveSubtitleBuffer = false;
         }
     }
@@ -7853,21 +7894,25 @@ public partial class PlayerService : IDisposable
         if (manager == null || session == null || session.MediaFileId != mediaFileId) return;
         var authority = _activeAuthority;
         var identity = authority.ApiClient.CaptureIdentityContext();
-        bool Current() => currentOwner?.IsCurrent != false && ReferenceEquals(authority, _activeAuthority) &&
+        bool Current() => currentOwner?.IsCurrentForAi != false && ReferenceEquals(authority, _activeAuthority) &&
             authority.ApiClient.IsCurrentIdentityContext(identity) && ReferenceEquals(manager, _playbackManager) &&
-            (currentOwner == null ? ReferenceEquals(session, manager.CurrentSession) : currentOwner.IsCurrent);
+            (currentOwner == null ? ReferenceEquals(session, manager.CurrentSession) : currentOwner.IsCurrentForAi);
         if (!Current()) return;
         try
         {
             var response = await authority.PlaybackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
-            if (!Current() || !ReferenceEquals(session, manager.CurrentSession)) return;
+            if (!Current()) return;
 
             List<SubtitleTrackInfo> downloaded;
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             lock (manager.SubtitleInventorySyncRoot)
             {
-                if (!Current() || !ReferenceEquals(session, manager.CurrentSession)) return;
+                if (!Current()) return;
+                // The file-scoped read is also valid for a same-file plan
+                // accepted while the request was in flight.
+                if (currentOwner != null) session = manager.CurrentSession!;
+                if (!ReferenceEquals(session, manager.CurrentSession)) return;
 
                 var previousInventory = session.SubtitleUrls;
                 var previousDownloads = previousInventory
@@ -8032,8 +8077,8 @@ public partial class PlayerService : IDisposable
                     : await TrySetSubtitleTrackAndPersistForOwnerAsync(
                         preferred.Index + 1, preferred.Language, preferred, currentOwner).ConfigureAwait(false);
                 if (!selected || !Current()) return;
-                // Only the typed receipt may advance across this operation's
-                // accepted grant; ordinary callers retain their original session.
+                // AI owners may follow accepted same-file plans; ordinary
+                // callers still retain their original response object.
                 if (currentOwner != null) session = manager.CurrentSession!;
                 // A superseded/deferred choice is not proof that the final
                 // subtitle replaced the live track.
@@ -8043,13 +8088,16 @@ public partial class PlayerService : IDisposable
                         !ReferenceEquals(manager, _playbackManager) || manager.CurrentSession != session ||
                         _executedSubtitleFileId != mediaFileId || _executedSubtitleTrack?.Id != preferred.Id ||
                         _activeSubtitleServerIndex != preferred.Index) return;
+                    _mpv.SendScriptMessage("osc-set-active-subtitle",
+                        _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var completedJobId = _liveSubtitleJobId;
                     if (completedJobId > 0) ResumeAfterLiveSubtitleBuffer(completedJobId);
                     lock (_liveSubtitleLock)
                     {
                         if (_liveSubtitleSid > 0)
                         {
-                            try { _mpv.RemoveSubtitle(_liveSubtitleSid); } catch { }
+                            if (_liveSubtitleFileLoadGeneration == Volatile.Read(ref _fileLoadGeneration))
+                                try { _mpv.RemoveSubtitle(_liveSubtitleSid); } catch { }
                             _liveSubtitleSid = 0;
                         }
                         DeleteLiveSubtitleFileLocked();
@@ -8098,11 +8146,12 @@ public partial class PlayerService : IDisposable
         SendTranslationBufferingState(false, null);
         if (_mpv != null)
         {
-            if (_liveSubtitleSid > 0)
+            var sameLoad = _liveSubtitleFileLoadGeneration == Volatile.Read(ref _fileLoadGeneration);
+            if (_liveSubtitleSid > 0 && sameLoad)
             {
                 try { _mpv.RemoveSubtitle(_liveSubtitleSid); } catch { }
             }
-            if (restorePreviousSubtitle)
+            if (restorePreviousSubtitle && sameLoad)
             {
                 try { _mpv.SetSubtitleTrack(_preLiveSubtitleSid); } catch { }
             }

@@ -21,6 +21,7 @@ public partial class PlayerService
         private readonly PlaybackManager _manager;
         private readonly long _playGeneration;
         private readonly string? _content;
+        private readonly int _mediaFileId;
         private readonly CancellationToken _token;
         private PlaybackStartResponse _session;
 
@@ -30,7 +31,8 @@ public partial class PlayerService
             _player = player; _authority = authority; _manager = manager; _session = session;
             _identity = authority.ApiClient.CaptureIdentityContext();
             _playGeneration = Volatile.Read(ref player._playRequestGeneration);
-            _content = player.ContentId; _token = player._authorityLifetimeCts.Token;
+            _content = player.ContentId; _mediaFileId = session.MediaFileId;
+            _token = player._authorityLifetimeCts.Token;
         }
 
         private bool Stable => !_player._closing && !_token.IsCancellationRequested &&
@@ -39,6 +41,23 @@ public partial class PlayerService
             _content == _player.ContentId;
 
         internal bool IsCurrent => Stable && ReferenceEquals(Volatile.Read(ref _session), _manager.CurrentSession);
+
+        // AI jobs belong to the media file, not one seek/quality/audio plan.
+        // Ordinary selections still require the exact accepted response below.
+        internal bool IsCurrentForAi
+        {
+            get
+            {
+                if (!Stable) return false;
+                var previous = Volatile.Read(ref _session);
+                var current = _manager.CurrentSession;
+                if (current == null || current.MediaFileId != _mediaFileId) return false;
+                Interlocked.CompareExchange(ref _session, current, previous);
+                return Stable && ReferenceEquals(current, _manager.CurrentSession) &&
+                    ReferenceEquals(current, Volatile.Read(ref _session));
+            }
+        }
+
         internal bool CanUseSession(PlaybackStartResponse session) => Stable &&
             ReferenceEquals(session, Volatile.Read(ref _session)) && ReferenceEquals(session, _manager.CurrentSession);
 
@@ -46,6 +65,7 @@ public partial class PlayerService
         // No UI/state gate is taken while the manager's publication gate is held.
         internal bool TryAdoptSession(PlaybackStartResponse previous, PlaybackStartResponse replacement) => Stable &&
             ReferenceEquals(replacement, _manager.CurrentSession) &&
-            ReferenceEquals(Interlocked.CompareExchange(ref _session, replacement, previous), previous) && Stable;
+            (ReferenceEquals(Interlocked.CompareExchange(ref _session, replacement, previous), previous) ||
+             ReferenceEquals(Volatile.Read(ref _session), replacement)) && Stable;
     }
 }

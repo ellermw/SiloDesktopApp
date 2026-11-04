@@ -29,6 +29,7 @@ internal static class SubtitleIdentityNativeFixture
         if (!unresolvedOnly && !regionalOnly && !presentationOnly)
         {
             subtitles.MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv"));
+            await AiSameFileReplanAsync(assets);
             await RefreshedDownloadedSubtitlesAsync(assets);
             await RefreshedDownloadedSubtitlesAsync(assets, storedIdentity: false);
             await RefreshedDownloadedSubtitlesAsync(assets, storedIdentity: false, trackIdentity: false);
@@ -1015,7 +1016,7 @@ internal static class SubtitleIdentityNativeFixture
 
     private static async Task LegacyPrePlayAsync(string assets, bool retiredOnly = false)
     {
-        foreach (var change in retiredOnly ? new[] { "retired-initializer" } : new[] { "current", "access", "profile", "inventory", "manual", "manual-aba", "session", "play" })
+        foreach (var change in retiredOnly ? new[] { "retired-initializer" } : new[] { "current", "access", "profile", "inventory", "manual", "manual-aba", "session", "play", "mixed", "missing", "external", "unmatched" })
         {
             using var retiredInitializer = new CancellationTokenSource();
             using var currentInitializer = new CancellationTokenSource();
@@ -1037,7 +1038,14 @@ internal static class SubtitleIdentityNativeFixture
             Call(service, "WireMpvEvents");
             try
             {
-                Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse(), new FileVersion { FileId = 42 }, session, null, 1, null);
+                var version = new FileVersion { FileId = 42, SubtitleTracks =
+                    [new() { Language = "eng", Codec = "subrip" }, new() { Language = "jpn", Codec = "subrip" }] };
+                if (change == "mixed") version.SubtitleTracks =
+                    [new() { Language = "deu", Codec = "subrip", External = true }, new() { Language = "eng", Codec = "subrip" }, new() { Language = "jpn", Codec = "subrip" }];
+                if (change == "missing") version.SubtitleTracks.RemoveAt(1);
+                if (change == "external") version.SubtitleTracks[1].External = true;
+                if (change == "unmatched") version.SubtitleTracks[1].Language = "fra";
+                Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse(), version, session, null, 1, null);
                 Call(service, "ApplyPendingSubtitleSelection");
                 Require(mpv.GetPropertyDouble("sid") <= 0, "Legacy pre-play choice selected an outgoing SID before FILE_LOADED.");
                 if (change == "retired-initializer")
@@ -1078,10 +1086,24 @@ internal static class SubtitleIdentityNativeFixture
                         service.IsLoading || Get(service, "_loadedMediaInitCts") != null)) await Task.Delay(20);
                     Require((long)Get(service, "_loadedMediaInitGeneration")! > generation && !service.IsLoading && Get(service, "_loadedMediaInitCts") == null,
                         "Actual legacy FILE_LOADED initialization did not finish within its bound.");
-                    var expected = change is "current" or "access" or "retired-initializer" ? mpv.GetEmbeddedSubtitleTracks()[1].Id : 0;
+                    var expected = change == "mixed" ? mpv.GetEmbeddedSubtitleTracks()[0].Id :
+                        change is "current" or "access" or "retired-initializer" ? mpv.GetEmbeddedSubtitleTracks()[1].Id : 0;
+                    if (expected > 0)
+                        Require(service.ActiveSubtitleServerIndex == 1 && manager.SubtitleSelectionForLoad == 1 &&
+                            manager.CaptureLocalSubtitleIntent().HasSelection && !manager.IsSubtitleSelectionAutomatic &&
+                            ReferenceEquals(Get(service, "_executedSubtitleTrack"), session.SubtitleUrls.Single()) &&
+                            (int?)Get(service, "_executedSubtitleFileId") == 42,
+                            "Executed legacy metadata selection was not recorded for presentation and subsequent loads.");
                     Require((int)Math.Round(mpv.GetPropertyDouble("sid")) == expected && mpv.IsPaused && wire.PreferenceWrites == writes && wire.Replans == 0,
                         $"Legacy empty-inventory {change} FILE_LOADED selected SID {mpv.GetPropertyDouble("sid")}, expected {expected}, or changed pause/preferences/transport.");
-                    Program.Log($"PASS: legacy empty-inventory {change} actual FILE_LOADED SID={expected}, pause retained, no preference/replan.");
+                    if (expected > 0)
+                    {
+                        await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+                        Require(manager.SubtitleSelectionForLoad == -1 && manager.CaptureLocalSubtitleIntent().Track == null &&
+                            service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && mpv.IsPaused,
+                            "A newer explicit Off did not replace the recorded legacy choice for subsequent loads.");
+                    }
+                    Program.Log($"PASS: legacy empty-inventory {change} actual FILE_LOADED SID={expected}, initial pause/preferences retained, newer Off supersedes its intent.");
                 }
                 finally { mpv.FileLoaded -= Loaded; }
             }
@@ -1090,6 +1112,119 @@ internal static class SubtitleIdentityNativeFixture
                 Call(service, "StopPlaybackStallWatchdog");
                 Call(service, "StopSubtitleSync");
                 await service.CloseAsync();
+                Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+            }
+        }
+    }
+
+    private static async Task AiSameFileReplanAsync(string assets)
+    {
+        foreach (var afterBuffer in new[] { false, true })
+        {
+            using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt")))
+                { MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv")) };
+            using var wire = new Wire { InitialPlaybackUrl = subtitles.Origin + "/media.mkv",
+                InventoryHost = new Uri(subtitles.Origin).Host,
+                DownloadedInventory = new() { Subtitles = [new() { Id = 91, Language = "fr", Format = "srt" }] } };
+            using var http = new HttpClient(wire);
+            var api = new SiloApiClient(http); api.SetBaseUrl(subtitles.Origin); api.SetProfile("fixture");
+            using var auth = new AuthService(api, new AuthApi(api));
+            using var manager = new PlaybackManager(new(api), new(api), auth, api);
+            using var service = new PlayerService(new(api), new(api), auth, api,
+                new SettingsService(Path.Combine(Program.ResultDirectory, "ai-replan-" + afterBuffer)), new SettingsApi(api));
+            var version = new FileVersion { FileId = 42, Duration = 60, Container = "mkv", AudioTracks = [new() { Language = "eng", Default = true }] };
+            manager.UseWatchDetail(new() { ContentId = "movie", Versions = [version] });
+            var session = await manager.StartSessionAsync(42);
+            using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+            var initialLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void InitiallyLoaded() => initialLoad.TrySetResult();
+            mpv.FileLoaded += InitiallyLoaded; mpv.LoadFile(Path.Combine(assets, "tracks.mkv"));
+            await initialLoad.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.FileLoaded -= InitiallyLoaded;
+            Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+            typeof(PlayerService).GetProperty("ContentId")!.SetValue(service, "movie");
+            typeof(PlayerService).GetProperty("State")!.SetValue(service, PlayerState.Expanded);
+            typeof(PlayerService).GetProperty("Versions")!.SetValue(service, new List<FileVersion> { version });
+            Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", Path.Combine(assets, "tracks.mkv")));
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var cleared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var active = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var bufferingSeen = false;
+            void Observe(string[] message)
+            {
+                if (message.FirstOrDefault() == "silo-ai-replan-ready") ready.TrySetResult();
+                if (message.FirstOrDefault() == "silo-ai-replan-buffer" && message.Length > 1)
+                {
+                    if (message[1] != "false") bufferingSeen = true;
+                    else if (bufferingSeen) cleared.TrySetResult();
+                }
+                if (message.FirstOrDefault() == "silo-ai-replan-active" && message.ElementAtOrDefault(1) == "10") active.TrySetResult();
+            }
+            mpv.ScriptMessageReceived += Observe;
+            try
+            {
+                var probe = Path.Combine(Program.ResultDirectory, "ai-replan-" + afterBuffer + ".lua");
+                await File.WriteAllTextAsync(probe, """
+                    local mp = require 'mp'
+                    mp.register_script_message('osc-set-translation-buffering', function(value)
+                        mp.commandv('script-message', 'silo-ai-replan-buffer', value)
+                    end)
+                    mp.register_script_message('osc-set-active-subtitle', function(index)
+                        mp.commandv('script-message', 'silo-ai-replan-active', index)
+                    end)
+                    mp.commandv('script-message', 'silo-ai-replan-ready')
+                    """);
+                Call(mpv, "Command", (object)new[] { "load-script", probe });
+                await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                mpv.Play();
+                var owner = Call(service, "CaptureSubtitleOperationOwner", session)!;
+                Call(service, "PrepareLiveSubtitleTranslationForOwner", 77L, 42, "fr", "French AI", owner);
+                Require(mpv.IsPaused && (bool)Get(service, "_resumeAfterLiveSubtitleBuffer")!, "AI replan fixture did not establish its temporary buffering pause.");
+                using var cues = JsonDocument.Parse("""{"job_id":77,"cues":[{"start":0,"end":5,"text":"AI replan cue"}]}""");
+                if (afterBuffer) Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+                var wasPaused = (bool)Call(service, "CaptureUserPausedState")!;
+                Require(!wasPaused, "An AI buffering pause was captured as viewer pause intent.");
+                var replacement = await manager.ReplanQualityAsync("720p", 0);
+                Require(!ReferenceEquals(session, replacement), "Quality replan did not replace its response object.");
+                Call(service, "WireMpvEvents");
+                var initializationGeneration = (long)Get(service, "_loadedMediaInitGeneration")!;
+                var reloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void Reloaded() => reloaded.TrySetResult();
+                service.ContentLoaded += Reloaded;
+                try
+                {
+                    var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", replacement, version,
+                        subtitles.Origin + "/media.mkv", 0d, CancellationToken.None)!;
+                    await prepare;
+                    var prepared = prepare.GetType().GetProperty("Result")!.GetValue(prepare)!;
+                    Call(service, "ApplyPreparedTransport", prepared); Call(service, "BeginMpvLoad", prepared, wasPaused);
+                    await reloaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                    var deadline = DateTime.UtcNow.AddSeconds(5);
+                    while (((long)Get(service, "_loadedMediaInitGeneration")! <= initializationGeneration ||
+                        Get(service, "_loadedMediaInitCts") != null) && DateTime.UtcNow < deadline) await Task.Delay(20);
+                    Require((long)Get(service, "_loadedMediaInitGeneration")! > initializationGeneration &&
+                        Get(service, "_loadedMediaInitCts") == null, "AI replacement initialization did not finish.");
+                }
+                finally { service.ContentLoaded -= Reloaded; }
+                Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+                await cleared.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Require(!mpv.IsPaused && Get(service, "_liveSubtitleResumeCts") == null,
+                    "Same-file replan stranded the AI buffer pause or timer.");
+                await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, (long?)91, owner)!;
+                await active.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                var selected = manager.CurrentSession!.SubtitleUrls.Single(track => track.Id == 91);
+                var sids = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                Require(service.ActiveSubtitleServerIndex == selected.Index && ReferenceEquals(Get(service, "_executedSubtitleTrack"), selected) &&
+                    sids.TryGetValue(selected.Index, out var sid) && mpv.GetPropertyDouble("sid") == sid &&
+                    wire.PreferenceWrites == 1 && !mpv.IsPaused,
+                    "AI completion after a same-file replan lost its subtitle, OSC selection, preference or play intent.");
+                Program.Log($"PASS: AI quality replan afterBuffer={afterBuffer} retains file ownership, clears buffering, and executes/publishes the completed subtitle.");
+            }
+            finally
+            {
+                mpv.ScriptMessageReceived -= Observe;
+                Call(service, "ClearLiveSubtitleTranslation", false); Call(service, "StopSubtitleSync");
+                Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");
+                Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
                 Set(service, "_mpv", null); Set(service, "_playbackManager", null);
             }
         }
