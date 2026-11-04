@@ -31,6 +31,9 @@ public sealed partial class MainWindow
         if (retireCustomization)
         {
             _sidebarCustomizationReady = false;
+            HomeNavItem.Visibility = Visibility.Visible;
+            RecommendationsNavItem.Visibility = Visibility.Visible;
+            CalendarNavItem.Visibility = Visibility.Visible;
             BuildPluginApps([]);
             AppsHeader.Visibility = Visibility.Collapsed;
         }

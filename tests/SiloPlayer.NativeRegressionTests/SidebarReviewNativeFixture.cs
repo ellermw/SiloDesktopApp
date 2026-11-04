@@ -74,6 +74,12 @@ internal static class SidebarReviewNativeFixture
         window.ShowMainNavigation();
         await Until(() => LibraryRows(nav).Length == 2);
         if (HeldMenuRead == null && !mode.EndsWith("duplicates", StringComparison.Ordinal)) await Until(() => PrimaryRows(nav).Length == 2);
+        if (mode == "sidebar-review-closeout")
+        {
+            await CheckCloseoutAsync(window, provider, nav);
+            if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
+            return;
+        }
         if (IsSettingsProfileRoute)
         {
             await CheckSettingsProfileChangeAsync(window, provider, nav, mode.EndsWith("edit", StringComparison.Ordinal));
@@ -467,6 +473,73 @@ internal static class SidebarReviewNativeFixture
             foreach (var dialog in Dialogs(root).ToArray()) dialog.Hide();
         }
     }
+    private static async Task CheckCloseoutAsync(MainWindow window, IServiceProvider provider, NavigationView nav)
+    {
+        var root = (FrameworkElement)window.Content;
+        var auth = provider.GetRequiredService<AuthService>();
+        var client = provider.GetRequiredService<SiloApiClient>();
+        var customization = provider.GetRequiredService<UICustomizationService>();
+        var navigation = provider.GetRequiredService<NavigationService>();
+        var fixedRoutes = new[] { "HomeNavItem", "RecommendationsNavItem", "CalendarNavItem" }
+            .Select(name => (NavigationViewItem)root.FindName(name)).ToArray();
+        Check(fixedRoutes.All(item => item.Visibility == Visibility.Collapsed), "closeout fixture establishes customized primary navigation");
+        Call(window, "RetireSidebarNavigation", true);
+        Check(fixedRoutes.All(item => item.Visibility == Visibility.Visible) && PrimaryRows(nav).Length == 0,
+            "retiring custom navigation immediately reveals fixed Home For You and Calendar routes");
+        auth.SelectProfile("first", profile: new() { Id = "first", Name = "After retirement", IsPrimary = true });
+        window.ShowMainNavigation();
+        await Until(() => PrimaryRows(nav).Length == 2 && LibraryRows(nav).Length == 2);
+
+        var context = client.CaptureContext();
+        var oldKey = typeof(MainWindow).GetField("_hydratedShellKey", Instance)!.GetValue(window);
+        HeldLibraries = Hold();
+        try
+        {
+            auth.RefreshSelectedProfile(new() { Id = "first", Name = "Refreshed metadata", IsPrimary = true, MaxContentRating = "PG" });
+            await Drain();
+            var currentKey = typeof(MainWindow).GetMethod("GetAuthenticatedShellKey", Instance)!.Invoke(window, null);
+            Check(!Equals(oldKey, currentKey) && Equals(typeof(MainWindow).GetField("_hydratedShellKey", Instance)!.GetValue(window), currentKey) &&
+                client.CaptureContext() == context,
+                "refreshing selected profile metadata rehydrates the current shell without changing request authority");
+            // Recover the uncorrected baseline explicitly after recording the
+            // failed automatic-hydration assertion, so later checks are useful.
+            window.ShowMainNavigation();
+            HeldLibraries.TrySetResult(Libraries()); HeldLibraries = null;
+            await Until(() => LibraryRows(nav).Length == 2 && PrimaryRows(nav).Length == 2);
+        }
+        finally { HeldLibraries?.TrySetResult(Libraries()); HeldLibraries = null; }
+
+        navigation.Navigate<SettingsPage>();
+        await Until(() => navigation.Frame!.Content is SettingsPage page && page.IsLoaded && !page.ViewModel.IsLoading);
+        var settingsPage = (SettingsPage)navigation.Frame!.Content;
+        settingsPage.SelectSettingsSection("Interface"); await Drain();
+        var draftField = typeof(SettingsPage).GetField("_interfaceMenuDraft", Instance)!;
+        var dirtyField = typeof(SettingsPage).GetField("_interfaceMenuDirty", Instance)!;
+        foreach (var method in new[] { "SaveInterfaceMenu_Click", "ResetInterfaceMenu_Click", "ClearInterfaceMenuDeviceOverride_Click" })
+        {
+            await customization.EnsureLoadedAsync();
+            var draft = (List<PrimaryMenuItem>)draftField.GetValue(settingsPage)!;
+            draft.Clear(); draft.AddRange([PrimaryMenuItem.Builtin("home"), new() { Type = "library", LibraryId = 1, Label = "Uncommitted draft" }]);
+            dirtyField.SetValue(settingsPage, true);
+            typeof(SettingsPage).GetMethod("SyncInterfaceControls", Instance)!.Invoke(settingsPage, null);
+            var writes = MenuWrites;
+            HeldMenuWrite = Hold();
+            try
+            {
+                typeof(SettingsPage).GetMethod(method, Instance)!.Invoke(settingsPage, [settingsPage, new RoutedEventArgs()]);
+                await Until(() => MenuWrites > writes);
+                var ownerContext = client.CaptureContext();
+                customization.Invalidate(); // Same API context, replacement shell metadata generation.
+                HeldMenuWrite.TrySetResult(new { }); HeldMenuWrite = null;
+                await Drain();
+                Check(client.CaptureContext() == ownerContext && (bool)dirtyField.GetValue(settingsPage)! &&
+                    draft.Last().Label == "Uncommitted draft",
+                    method + " retains the unsaved draft when its customization generation did not commit");
+            }
+            finally { HeldMenuWrite?.TrySetResult(new { }); HeldMenuWrite = null; }
+        }
+    }
+
     private static IEnumerable<ContentDialog> Dialogs(FrameworkElement owner) => VisualTreeHelper.GetOpenPopupsForXamlRoot(owner.XamlRoot).SelectMany(popup => All<ContentDialog>(popup.Child));
     private static IEnumerable<T> All<T>(DependencyObject root) where T : DependencyObject
     {

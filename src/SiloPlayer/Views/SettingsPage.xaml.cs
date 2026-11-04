@@ -1564,7 +1564,7 @@ _webhookPlexAuthCts?.Cancel();
         var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.ClearDeviceOverrideAsync(key);
+            if (!await _uiCustomizationService.ClearDeviceOverrideAsync(key)) return;
             if (!ownerApi.IsCurrentContext(ownerContext)) return;
             _interfaceMenuDraft.Clear();
             _interfaceMenuDraft.AddRange(
@@ -1719,7 +1719,7 @@ _webhookPlexAuthCts?.Cancel();
         var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.SavePrimaryMenuAsync(_interfaceMenuDraft);
+            if (!await _uiCustomizationService.SavePrimaryMenuAsync(_interfaceMenuDraft)) return;
             if (!ownerApi.IsCurrentContext(ownerContext)) return;
             _interfaceMenuDirty = false;
             SyncInterfaceControls();
@@ -1738,7 +1738,7 @@ _webhookPlexAuthCts?.Cancel();
         var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.ResetPrimaryMenuAsync();
+            if (!await _uiCustomizationService.ResetPrimaryMenuAsync()) return;
             if (!ownerApi.IsCurrentContext(ownerContext)) return;
             _interfaceMenuDraft.Clear();
             _interfaceMenuDraft.AddRange(UICustomizationService.DefaultDesktopMenu());

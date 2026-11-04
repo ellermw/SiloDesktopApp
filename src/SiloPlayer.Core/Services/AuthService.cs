@@ -175,8 +175,18 @@ public class AuthService : IDisposable
     /// <summary>Refresh profile metadata without changing the PIN grant or selected profile.</summary>
     public void RefreshSelectedProfile(Profile profile)
     {
+        var refreshed = false;
         lock (_stateGate)
-            if (SelectedProfileId == profile.Id) SelectedProfile = profile;
+        {
+            if (SelectedProfileId == profile.Id)
+            {
+                SelectedProfile = profile;
+                refreshed = true;
+            }
+        }
+        // Metadata participates in the shell hydration key even when the
+        // selected profile and its PIN/request authority remain unchanged.
+        if (refreshed) RaiseSafely(ProfileChanged);
     }
 
     public void SelectProfile(string profileId, string? profileToken = null, Profile? profile = null)

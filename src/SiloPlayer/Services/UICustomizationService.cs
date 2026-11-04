@@ -61,11 +61,13 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     {
         var identity = settingsApi.CaptureIdentityContext();
         await _loadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var capabilityReadSucceeded = false;
         try
         {
             if (!IsCurrent(context, generation)) return;
             var capability = await settingsApi.GetContractCapabilitiesAsync(context, cancellationToken)
                 .ConfigureAwait(false);
+            capabilityReadSucceeded = true;
 
             if (!IsCurrent(context, generation)) return;
             if (!capability.SupportsRevision5Customization)
@@ -116,7 +118,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         {
             throw;
         }
-        catch (ApiException ex) when (ex.StatusCode is 404 or 405)
+        catch (ApiException ex) when (!capabilityReadSucceeded && ex.StatusCode is 404 or 405)
         {
             Reset(context, generation, supported: false, unavailable: false);
         }
@@ -193,7 +195,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
                 _loadedContext == context && _loadedGeneration == generation && IsSupported && !IsUnavailable;
     }
 
-    public async Task ClearDeviceOverrideAsync(string key, CancellationToken cancellationToken = default)
+    public async Task<bool> ClearDeviceOverrideAsync(string key, CancellationToken cancellationToken = default)
     {
         if (key is not (UICustomizationSettingKeys.CardPresentation or UICustomizationSettingKeys.PrimaryMenu))
             throw new ArgumentOutOfRangeException(nameof(key));
@@ -204,12 +206,15 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             key,
             "profile_device",
             ct: cancellationToken).ConfigureAwait(false);
-        if (!IsCurrent(context, generation)) return;
+        if (!IsCurrent(context, generation)) return false;
         _loaded = false;
         await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
+        lock (_stateGate)
+            return IsCurrent(context, generation) && _loaded &&
+                _loadedContext == context && _loadedGeneration == generation && IsSupported && !IsUnavailable;
     }
 
-    public async Task SavePrimaryMenuAsync(
+    public async Task<bool> SavePrimaryMenuAsync(
         IEnumerable<PrimaryMenuItem> items,
         CancellationToken cancellationToken = default)
     {
@@ -223,10 +228,10 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             "profile_client",
             document,
             ct: cancellationToken).ConfigureAwait(false);
-        if (!IsCurrent(context, generation)) return;
+        if (!IsCurrent(context, generation)) return false;
         lock (_stateGate)
         {
-            if (!IsCurrent(context, generation)) return;
+            if (!IsCurrent(context, generation)) return false;
             PrimaryMenu = document;
             PrimaryMenuSource = "profile_client";
             _loaded = true;
@@ -234,9 +239,10 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             _loadedGeneration = generation;
         }
         Changed?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
-    public async Task ResetPrimaryMenuAsync(CancellationToken cancellationToken = default)
+    public async Task<bool> ResetPrimaryMenuAsync(CancellationToken cancellationToken = default)
     {
         var context = settingsApi.CaptureContext();
         var generation = Volatile.Read(ref _generation);
@@ -245,9 +251,12 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             UICustomizationSettingKeys.PrimaryMenu,
             "profile_client",
             ct: cancellationToken).ConfigureAwait(false);
-        if (!IsCurrent(context, generation)) return;
+        if (!IsCurrent(context, generation)) return false;
         _loaded = false;
         await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
+        lock (_stateGate)
+            return IsCurrent(context, generation) && _loaded &&
+                _loadedContext == context && _loadedGeneration == generation && IsSupported && !IsUnavailable;
     }
 
     public static List<PrimaryMenuItem> DefaultDesktopMenu() =>
