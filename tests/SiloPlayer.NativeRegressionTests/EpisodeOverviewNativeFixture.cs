@@ -206,7 +206,10 @@ internal static class EpisodeOverviewNativeFixture
                     (string)button.Content == "Translating…" && overview.Opacity == 0.55 &&
                     !translation.IsCancellationRequested && ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts")) &&
                     Field<long>(page, "_overviewConfigurationRevision") == revision && wire.Posts.Count == 1,
-                    $"A {change} transition during a held automatic {stage} retains the original translation and restores its busy presentation");
+                    $"A {change} transition during a held automatic {stage} retains the original translation and restores its busy presentation: " +
+                    $"overview={overview.Visibility}, button={button.Visibility}, enabled={button.IsEnabled}, text={button.Content}, opacity={overview.Opacity}, " +
+                    $"canceled={translation.IsCancellationRequested}, sameOwner={ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts"))}, " +
+                    $"revision={Field<long>(page, "_overviewConfigurationRevision")}/{revision}, posts={wire.Posts.Count}");
 
                 wire.ReleasePost.TrySetResult(); wire.ReleasePoll.TrySetResult();
                 await configuration;

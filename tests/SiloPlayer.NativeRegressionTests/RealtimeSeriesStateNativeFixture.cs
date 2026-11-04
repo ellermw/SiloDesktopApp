@@ -1037,8 +1037,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
             var page = new ItemDetailPage { Width = 900, Height = 720 };
             var vm = page.ViewModel;
             using var navigation = new CancellationTokenSource();
-            vm.Item = new() { ContentId = type, Type = type, Title = "Translation reconnect fixture",
-                PendingTranslationLanguage = overview ? "fr" : null };
+            vm.Item = new() { ContentId = type, Type = type, Title = "Translation reconnect fixture" };
             vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1 });
             vm.Episodes.Add(new() { ContentId = "loaded", PendingTranslationLanguage = overview ? null : "fr" });
             Set(page, "_currentContentId", type); Set(page, "_navigationCts", navigation);
@@ -1050,6 +1049,9 @@ internal static partial class RealtimeSeriesStateNativeFixture
             {
                 await Task.Delay(60);
                 Check(page.CanPreserveOnReconnect, "An idle translation surface should allow preservation.");
+                // Loaded configures the current surface. Introduce this case's
+                // pending work only after its idle owner has been established.
+                if (overview) vm.Item.PendingTranslationLanguage = "fr";
                 if (phase == "status")
                 {
                     wire.HeldCompanion = "metadata-ai";
@@ -1080,8 +1082,8 @@ internal static partial class RealtimeSeriesStateNativeFixture
                     // without making the native fixture wait for the full window.
                     ((CancellationTokenSource)typeof(ItemDetailPage).GetField("_translationCts", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).Cancel();
                     await operation.WaitAsync(TimeSpan.FromSeconds(5));
-                    Check(button.IsEnabled && button.Visibility == Visibility.Collapsed && (string)button.Content == "Translate description",
-                        "An auto-mode timeout retained the disabled Translating control.");
+                    Check(button.IsEnabled && button.Visibility == Visibility.Visible && (string)button.Content == "Translate description",
+                        "An auto-mode timeout did not expose its working manual recovery action.");
                     Check(page.CanPreserveOnReconnect, "A settled auto-mode timeout should not require a reconnect remount.");
                     continue;
                 }
