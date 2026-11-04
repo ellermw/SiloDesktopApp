@@ -17,7 +17,7 @@ public partial class PlayerService
             BufferingQualityPlaybackInfo);
         var choices = options.Select(row => new PlaybackMenuChoice(row.Id, row.Title, row.Metadata,
             row.Badges, row.IsCurrent, row.IsEnabled,
-            row.Kind == PlaybackQualityMenuOptionKind.Information ? row.Metadata : row.DisabledReason.Length > 0
+            row.Kind == PlaybackQualityMenuOptionKind.Information ? "" : row.DisabledReason.Length > 0
                 ? row.DisabledReason : row.IsEnabled ? "" : "A playback change is already in progress.",
             IsPending: row.IsPending)).ToArray();
         return new PlaybackChoiceMenu(owner.Video, request.Anchor, "Quality", choices,
