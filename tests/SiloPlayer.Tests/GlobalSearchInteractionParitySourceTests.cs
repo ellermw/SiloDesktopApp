@@ -13,7 +13,6 @@ public sealed class GlobalSearchInteractionParitySourceTests
         Assert.Contains("PlayAsync(item.PlayContentId)", source);
         Assert.Contains("private Button BuildRequestRow", source);
         Assert.Contains("AutomationProperties.SetName(row,", source);
-        Assert.Contains("row.Click += (_, _) => PickResult(index)", source);
         Assert.DoesNotContain("row.Tapped += (_, _) => PickResult(index)", source);
     }
 

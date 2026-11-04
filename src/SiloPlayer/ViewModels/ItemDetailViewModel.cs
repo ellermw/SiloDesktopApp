@@ -71,6 +71,124 @@ public partial class ItemDetailViewModel : ObservableObject,
     private Task<MediaItemDetail> ReadDetailAsync(string contentId, CancellationToken ct) => LibraryId.HasValue
         ? _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct) : _detailPrefetchCache.GetAsync(contentId, ct);
 
+    private long _overviewRevision;
+    private MediaItemDetail? _overviewEpisode, _seriesOverview;
+    private int? _overviewLibrary;
+    private ApiRequestContext? _overviewContext;
+    private long _overviewLanguage;
+    public bool OverviewResolutionFailed { get; private set; }
+
+    // Keep description ownership separate from episode identity and playback actions.
+    private bool IsOverviewScopeCurrent => LibraryId == _overviewLibrary &&
+        _overviewLanguage == _catalogApi.LocalizedReadGeneration && _overviewContext is { } context &&
+        _catalogApi.IsCurrentContext(context);
+    public MediaItemDetail? OverviewSource
+    {
+        get
+        {
+            if (Item is not { } item) return null;
+            if (ReferenceEquals(item, _overviewEpisode) && !IsOverviewScopeCurrent) return null;
+            if (item.Type != "episode" || !string.IsNullOrWhiteSpace(item.Overview)) return item;
+            return ReferenceEquals(item, _overviewEpisode) && IsOverviewScopeCurrent ? _seriesOverview : null;
+        }
+    }
+
+    // A retired description may remain visible, but must never be used for translation.
+    public MediaItemDetail? OverviewDisplaySource
+    {
+        get
+        {
+            if (OverviewSource is { } source) return source;
+            if (!ReferenceEquals(Item, _overviewEpisode) || LibraryId != _overviewLibrary ||
+                _overviewContext is not { } previous) return null;
+            var current = _catalogApi.CaptureContext();
+            if (previous.AuthenticationGeneration != current.AuthenticationGeneration ||
+                previous.BaseUrl != current.BaseUrl || previous.ProfileId != current.ProfileId) return null;
+            return !string.IsNullOrWhiteSpace(Item?.Overview) ? Item :
+                Item?.Type == "episode" ? _seriesOverview : null;
+        }
+    }
+
+    public async Task<MediaItemDetail?> ResolveOverviewAsync(CancellationToken ct = default)
+    {
+        var revision = ++_overviewRevision;
+        var item = Item;
+        var refreshItem = item != null && ReferenceEquals(item, _overviewEpisode) && !IsOverviewScopeCurrent;
+        if (!ReferenceEquals(item, _overviewEpisode))
+        {
+            _seriesOverview = null;
+            _overviewContext = null;
+        }
+        _overviewEpisode = item;
+        OverviewResolutionFailed = false;
+        var library = LibraryId;
+        var context = _catalogApi.CaptureContext();
+        var language = _catalogApi.LocalizedReadGeneration;
+        // Do not revalidate a retired source until its new-scope read has succeeded.
+        OnPropertyChanged(nameof(OverviewSource));
+        if (item == null) return null;
+        bool Current() => !ct.IsCancellationRequested && revision == _overviewRevision && ReferenceEquals(Item, item) &&
+            LibraryId == library && _catalogApi.IsCurrentContext(context) && language == _catalogApi.LocalizedReadGeneration;
+        try
+        {
+            MediaItemDetail? refreshed = null, series = null;
+            if (refreshItem)
+            {
+                refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, library, ct);
+                if (!Current()) return null;
+                if (refreshed.ContentId != item.ContentId) { OverviewResolutionFailed = true; return null; }
+            }
+            if (!Current()) return null;
+            var source = refreshed ?? item;
+            if (source.Type == "episode" && string.IsNullOrWhiteSpace(source.Overview) &&
+                !string.IsNullOrWhiteSpace(source.SeriesId))
+            {
+                series = await _catalogApi.GetItemDetailAsync(source.SeriesId, library, ct);
+                if (!Current()) return null;
+                if (series.ContentId != source.SeriesId) { OverviewResolutionFailed = true; return null; }
+            }
+            // Publish text, provenance and scope together, only after all required reads succeed.
+            if (refreshed != null)
+            {
+                item.Overview = refreshed.Overview;
+                item.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
+                item.MachineTranslatedFields = refreshed.MachineTranslatedFields;
+                item.SeriesId = refreshed.SeriesId;
+                item.SeriesTitle = refreshed.SeriesTitle;
+            }
+            _seriesOverview = series;
+            _overviewLibrary = library;
+            _overviewContext = context;
+            _overviewLanguage = language;
+            OnPropertyChanged(nameof(OverviewSource));
+            return OverviewSource;
+        }
+        catch (Exception)
+        {
+            // Optional description reads must not fail the detail page; preserve the last published text.
+            if (Current()) OverviewResolutionFailed = true;
+            return null;
+        }
+    }
+
+    public async Task RefreshOverviewAsync(MediaItemDetail source, CancellationToken ct)
+    {
+        var item = Item;
+        var revision = _overviewRevision;
+        var library = LibraryId;
+        var context = _catalogApi.CaptureContext();
+        var language = _catalogApi.LocalizedReadGeneration;
+        if (!ReferenceEquals(OverviewSource, source)) return;
+        var refreshed = await _catalogApi.GetItemDetailAsync(source.ContentId, library, ct);
+        if (ct.IsCancellationRequested || revision != _overviewRevision || !ReferenceEquals(Item, item) ||
+            !ReferenceEquals(OverviewSource, source) || LibraryId != library || !_catalogApi.IsCurrentContext(context) ||
+            language != _catalogApi.LocalizedReadGeneration || refreshed.ContentId != source.ContentId) return;
+        source.Overview = refreshed.Overview;
+        source.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
+        source.MachineTranslatedFields = refreshed.MachineTranslatedFields;
+        OnPropertyChanged(nameof(OverviewSource));
+    }
+
     public ItemDetailViewModel(
         CatalogApi catalogApi,
         ItemDetailPrefetchCache detailPrefetchCache)
@@ -990,6 +1108,9 @@ public partial class ItemDetailViewModel : ObservableObject,
         Interlocked.Increment(ref _watchedStateGeneration);
         Interlocked.Increment(ref _watchedWriteGeneration);
         Interlocked.Increment(ref _localStateGeneration);
+        ++_overviewRevision;
+        _seriesOverview = null;
+        _overviewContext = null;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
