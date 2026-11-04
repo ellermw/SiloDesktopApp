@@ -23,11 +23,10 @@ public static class SubtitleSidecarReader
     {
         if (!url.IsAbsoluteUri || url.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, url, codec) == null)
             return new(SubtitleSidecarReadOutcome.Fallback);
-        var busy = false;
         var wasBusy = false;
-        // Failures describe the final attempt, not earlier retryable responses.
-        // Successful reads still retain their busy history.
-        SubtitleSidecarRead Failure() => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: busy);
+        // Any busy history suppresses the URL fallback, even if a later
+        // attempt fails differently: mpv cannot honor 503/Retry-After.
+        SubtitleSidecarRead Failure() => new(wasBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: wasBusy);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(Budget);
         var clock = Stopwatch.StartNew();
@@ -35,13 +34,12 @@ public static class SubtitleSidecarReader
         {
             for (var attempt = 0; attempt < MaxAttempts; attempt++)
             {
-                busy = false;
                 // Use the advertised URL verbatim. Account headers belong to
                 // API requests, never to a server-advertised CDN/worker URL.
                 using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
                 {
-                    busy = wasBusy = true;
+                    wasBusy = true;
                     if (attempt == MaxAttempts - 1) return Failure();
                     var retry = response.Headers.RetryAfter;
                     var delay = retry?.Delta ?? (retry?.Date is { } date ? date - DateTimeOffset.UtcNow : DefaultDelay);
