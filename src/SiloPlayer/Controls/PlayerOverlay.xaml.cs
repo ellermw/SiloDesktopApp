@@ -1503,19 +1503,26 @@ public sealed partial class PlayerOverlay : UserControl
     private void OnSubtitlePreferencesChanged() => DispatcherQueue?.TryEnqueue(() => { if (_isActive) PopulateSubtitleFlyout(); });
     private void SetSubtitleDelay(int milliseconds) => _ = _playerService.SetSubtitleOffsetAsync(milliseconds);
 
-    public async Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
+    public async Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null, Func<bool>? isCurrent = null, bool activate = true)
     {
         var activeXamlRoot = dialogXamlRoot ?? XamlRoot;
         var session = _playerService.Manager?.CurrentSession;
         if (session == null) return;
         var authority = _playerService.ActiveAuthority;
+        var context = authority.ApiClient.CaptureContext();
+        var manager = _playerService.Manager;
+        bool Current() => (isCurrent?.Invoke() ?? true) && ReferenceEquals(authority, _playerService.ActiveAuthority) &&
+            authority.ApiClient.IsCurrentContext(context) && ReferenceEquals(manager, _playerService.Manager) &&
+            ReferenceEquals(session, manager?.CurrentSession) && _playerService.State != PlayerState.Idle;
+        if (!Current()) return;
         var api = authority.PlaybackApi;
         SubtitleAiStatus capability;
         try { capability = await api.GetSubtitleAiStatusAsync(); }
-        catch (Exception ex) { await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot); return; }
+        catch (Exception ex) { if (Current()) await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot, activate); return; }
+        if (!Current()) return;
         if (!capability.Enabled && !capability.TranscribeEnabled)
         {
-            await ShowPlayerDialogAsync("AI subtitles unavailable", "This Silo server has not enabled subtitle translation or transcription.", activeXamlRoot);
+            await ShowPlayerDialogAsync("AI subtitles unavailable", "This Silo server has not enabled subtitle translation or transcription.", activeXamlRoot, activate);
             return;
         }
 
@@ -1541,6 +1548,7 @@ public sealed partial class PlayerOverlay : UserControl
         {
             try { quota = await api.GetSubtitleAiQuotaAsync(); } catch { }
         }
+        if (!Current()) return;
         var dialog = new SubtitleAiDialog(
             subtitleTracks,
             audioTracks,
@@ -1549,7 +1557,7 @@ public sealed partial class PlayerOverlay : UserControl
             quota,
             async selection =>
             {
-                if (!ReferenceEquals(authority, _playerService.ActiveAuthority) || !ReferenceEquals(session, _playerService.Manager?.CurrentSession))
+                if (!Current())
                     throw new InvalidOperationException(
                         "Playback changed while the subtitle tool was open. Open it again for the current item.");
 
@@ -1575,6 +1583,7 @@ public sealed partial class PlayerOverlay : UserControl
                 }
 
                 var started = await api.StartSubtitleAiAsync(request);
+                if (!Current()) return;
                 var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
                     ? request.SourceLanguage
                     : request.TargetLanguage;
@@ -1591,26 +1600,27 @@ public sealed partial class PlayerOverlay : UserControl
                         liveLanguage,
                         $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
                 }
-                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId);
+                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, Current);
             },
             async () =>
             {
-                try { return await api.GetSubtitleAiQuotaAsync(); }
+                try { if (!Current()) return null; var result = await api.GetSubtitleAiQuotaAsync(); return Current() ? result : null; }
                 catch { return null; }
             })
         {
             XamlRoot = activeXamlRoot,
+            FocusOnOpen = activate,
         };
-        await dialog.ShowAsync();
+        if (Current()) await PlaybackDialogHost.ShowContentDialogAsync(dialog, activate);
     }
 
-    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId)
+    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, Func<bool> isCurrent)
     {
         if (jobId <= 0) return;
         for (var attempt = 0; attempt < 3600; attempt++)
         {
             var activeSession = _playerService.Manager?.CurrentSession;
-            if (activeSession == null ||
+            if (!isCurrent() || activeSession == null ||
                 activeSession.MediaFileId != mediaFileId ||
                 _playerService.State == PlayerState.Idle)
             {
@@ -1618,26 +1628,28 @@ public sealed partial class PlayerOverlay : UserControl
             }
 
             await Task.Delay(TimeSpan.FromSeconds(2));
+            if (!isCurrent()) return;
             SubtitleAiJob job;
             try { job = await api.GetSubtitleAiJobAsync(jobId); }
             catch { continue; }
+            if (!isCurrent()) return;
             if (job.Status is "failed" or "cancelled")
             {
                 DispatcherQueue.TryEnqueue(() =>
-                    _playerService.FailLiveSubtitleTranslation(jobId, job.ErrorMessage));
+                    { if (isCurrent()) _playerService.FailLiveSubtitleTranslation(jobId, job.ErrorMessage); });
                 return;
             }
             if (job.Status != "completed") continue;
-            DispatcherQueue.TryEnqueue(() => _ = _playerService.RefreshSubtitlesAfterAiAsync(
-                mediaFileId, job.ResultSubtitleId));
+            DispatcherQueue.TryEnqueue(() => { if (isCurrent()) _ = _playerService.RefreshSubtitlesAfterAiAsync(
+                mediaFileId, job.ResultSubtitleId); });
             return;
         }
     }
 
-    private async Task ShowPlayerDialogAsync(string title, string message, XamlRoot? dialogXamlRoot = null)
+    private async Task ShowPlayerDialogAsync(string title, string message, XamlRoot? dialogXamlRoot = null, bool activate = true)
     {
         var dialog = new ContentDialog { XamlRoot = dialogXamlRoot ?? XamlRoot, Title = title, Content = message, CloseButtonText = "Close" };
-        await dialog.ShowAsync();
+        await PlaybackDialogHost.ShowContentDialogAsync(dialog, activate);
     }
 
     private static int SourceSortKey(string? source) => (source?.ToLowerInvariant()) switch

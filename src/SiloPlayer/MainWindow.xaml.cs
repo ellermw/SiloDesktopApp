@@ -2685,8 +2685,8 @@ public sealed partial class MainWindow : Window
         LocalLog.AppendLine("state_trace.txt", msg);
     }
 
-    public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
-        => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot);
+    public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null, Func<bool>? isCurrent = null, bool activate = true)
+        => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot, isCurrent, activate);
 
     public void NavigateToHome()
     {

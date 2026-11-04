@@ -6948,8 +6948,9 @@ public partial class PlayerService : IDisposable
                 {
                     dialog.XamlRoot = xamlRoot;
                     dialog.HostWindowHandle = hostHwnd;
-                    await dialog.ShowAsync();
-                });
+                    if (snapshot.IsCurrent())
+                        await PlaybackDialogHost.ShowContentDialogAsync(dialog, PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd));
+                }, PlaybackDialogHost.IsForegroundOwnedBy(_videoWindow?.Hwnd ?? IntPtr.Zero), snapshot.IsCurrent);
         }
         finally
         {
@@ -6959,7 +6960,7 @@ public partial class PlayerService : IDisposable
             PublishNativeMenuScopes();
         }
 
-        if (!changed || _closing || !ReferenceEquals(session, _playbackManager?.CurrentSession))
+        if (!changed || !snapshot.IsCurrent() || _closing || !ReferenceEquals(session, _playbackManager?.CurrentSession))
             return;
 
         // The refresh-and-select path snapshots the live state at the actual
@@ -6986,11 +6987,12 @@ public partial class PlayerService : IDisposable
         {
             restorePlayerInput = await PlaybackDialogHost.ShowAsync(
                 _videoWindow?.Hwnd ?? IntPtr.Zero,
-                async (xamlRoot, _) =>
+                async (xamlRoot, hostHwnd) =>
                 {
                     dialog.XamlRoot = xamlRoot;
-                    await dialog.ShowAsync();
-                });
+                    if (snapshot.IsCurrent())
+                        await PlaybackDialogHost.ShowContentDialogAsync(dialog, PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd));
+                }, PlaybackDialogHost.IsForegroundOwnedBy(_videoWindow?.Hwnd ?? IntPtr.Zero), snapshot.IsCurrent);
         }
         finally
         {
@@ -7043,7 +7045,8 @@ public partial class PlayerService : IDisposable
         {
             restorePlayerInput = await PlaybackDialogHost.ShowAsync(
                 _videoWindow?.Hwnd ?? IntPtr.Zero,
-                (xamlRoot, _) => mainWindow.ShowSubtitleAiDialogAsync(xamlRoot));
+                (xamlRoot, hostHwnd) => mainWindow.ShowSubtitleAiDialogAsync(xamlRoot, snapshot.IsCurrent, PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd)),
+                PlaybackDialogHost.IsForegroundOwnedBy(_videoWindow?.Hwnd ?? IntPtr.Zero), snapshot.IsCurrent);
         }
         finally
         {
