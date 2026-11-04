@@ -449,6 +449,15 @@ internal static class SubtitleIdentityNativeFixture
             await service.SetSubtitleTrackAndPersistAsync(3, english.Language, english);
             Require(mpv.GetPropertyDouble("sid") == 1, "Interleaved index-only inventory selected the wrong native SID instead of source container track 2.");
             Require(mpv.IsPaused, "Native subtitle selection resumed viewer-paused playback.");
+            var restoreLock = Get(service, "_subtitleTrackStateLock")!;
+            Func<bool> restoreOwner = () =>
+            {
+                Require(Monitor.IsEntered(restoreLock), "Subtitle restoration observed picker ownership without its state lock.");
+                return true;
+            };
+            Require((bool)Call(service, "RestoreExecutedSubtitleSelection", false, null, restoreOwner)! &&
+                service.ActiveSubtitleServerIndex == english.Index && mpv.GetPropertyDouble("sid") == 1,
+                "Locked subtitle restoration failed to retain the executed row.");
             var republishedActive = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
             void Republished(string[] message)
             {
@@ -1264,6 +1273,7 @@ internal static class SubtitleIdentityNativeFixture
                     wire.PreferenceWrites == 1 && !mpv.IsPaused,
                     "AI completion after a same-file replan lost its subtitle, OSC selection, preference or play intent.");
                 Program.Log($"PASS: AI quality replan afterBuffer={afterBuffer} retains file ownership, clears buffering, and executes/publishes the completed subtitle.");
+                await ConsecutiveAiJobsAsync(service, manager, mpv, wire, selected);
             }
             finally
             {
@@ -1274,6 +1284,66 @@ internal static class SubtitleIdentityNativeFixture
                 Set(service, "_mpv", null); Set(service, "_playbackManager", null);
             }
         }
+    }
+
+    private static async Task ConsecutiveAiJobsAsync(PlayerService service, PlaybackManager manager, MpvPlayer mpv,
+        Wire wire, SubtitleTrackInfo completed)
+    {
+        Require((long)Get(service, "_liveSubtitleJobId")! == 0 && (int)Get(service, "_liveSubtitleFileId")! == 0 &&
+            (long)Get(service, "_liveSubtitleFileLoadGeneration")! == 0 && (int)Get(service, "_preLiveSubtitleSid")! == 0 &&
+            Get(service, "_liveSubtitleOperationOwner") == null && Get(service, "_liveSubtitleResumeCts") == null &&
+            Get(service, "_liveSubtitlePath") == null && !(bool)Get(service, "_resumeAfterLiveSubtitleBuffer")!,
+            "Committing the final AI subtitle did not retire its live job and restore/buffering state.");
+        var native = new SubtitleTrackInfo { Index = manager.CurrentSession!.SubtitleUrls.Max(track => track.Index) + 1,
+            Source = "embedded", Language = "en", Codec = "subrip", ContainerTrackId = "2", StreamIndex = 1 };
+        manager.CurrentSession.SubtitleUrls.Add(native);
+        var jobId = 78L;
+        foreach (var scenario in new[] { "before-cues", "live", "start-native", "viewer-native", "viewer-off", "viewer-native-more-cues", "viewer-off-more-cues" })
+        {
+            var initial = scenario == "start-native" ? native : completed;
+            await service.SetSubtitleTrackAndPersistAsync(initial.Index + 1, initial.Language, initial);
+            var expectedSid = mpv.GetPropertyDouble("sid");
+            var expectedTrack = (SubtitleTrackInfo?)initial;
+            var owner = Call(service, "CaptureSubtitleOperationOwner", manager.CurrentSession)!;
+            Call(service, "PrepareLiveSubtitleTranslationForOwner", jobId, 42, "fr", "Second French AI", owner);
+            Require(mpv.GetPropertyDouble("sid") == expectedSid && service.ActiveSubtitleServerIndex == initial.Index &&
+                ReferenceEquals(Get(service, "_executedSubtitleTrack"), initial),
+                $"Starting a second AI job ({scenario}) replaced the current subtitle with a stale pre-translation SID.");
+            var livePath = (string)Get(service, "_liveSubtitlePath")!;
+            using var cues = JsonDocument.Parse(JsonSerializer.Serialize(new { job_id = jobId,
+                cues = new[] { new { start = 0, end = 5, text = "Second AI job cue" } } }));
+            if (scenario != "before-cues")
+            {
+                Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+                Require((int)Get(service, "_liveSubtitleSid")! > 0 &&
+                    mpv.GetPropertyDouble("sid") == (int)Get(service, "_liveSubtitleSid")!,
+                    "The second AI job did not attach its actual live track.");
+            }
+            if (scenario.StartsWith("viewer-", StringComparison.Ordinal))
+            {
+                expectedTrack = scenario.StartsWith("viewer-off", StringComparison.Ordinal) ? null : native;
+                await service.SetSubtitleTrackAndPersistAsync(expectedTrack == null ? 0 : expectedTrack.Index + 1,
+                    expectedTrack?.Language, expectedTrack);
+                expectedSid = mpv.GetPropertyDouble("sid");
+                if (scenario.EndsWith("-more-cues", StringComparison.Ordinal))
+                    Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+            }
+            var intent = manager.CaptureLocalSubtitleIntent();
+            var writes = wire.PreferenceWrites;
+            if (jobId % 2 == 0) service.FailLiveSubtitleTranslation(jobId, "Synthetic failure");
+            else
+            {
+                using var failed = JsonDocument.Parse(JsonSerializer.Serialize(new { job_id = jobId }));
+                Call(service, "ApplySubtitleTranslationFailed", failed.RootElement);
+            }
+            Require(mpv.GetPropertyDouble("sid") == expectedSid && service.ActiveSubtitleServerIndex == (expectedTrack?.Index ?? -1) &&
+                ReferenceEquals(Get(service, "_executedSubtitleTrack"), expectedTrack) && manager.CaptureLocalSubtitleIntent() == intent &&
+                manager.SubtitleSelectionForLoad == (expectedTrack?.Index ?? -1) && wire.PreferenceWrites == writes && !mpv.IsPaused &&
+                (long)Get(service, "_liveSubtitleJobId")! == 0 && Get(service, "_liveSubtitleResumeCts") == null && !File.Exists(livePath),
+                $"A failed second AI job ({scenario}) lost the executed SID, viewer choice, intent, preference or play state.");
+            jobId++;
+        }
+        Program.Log("PASS: consecutive same-load AI jobs retain the completed/current subtitle on start and restore the latest executed native/sidecar/Off choice on failure, before cues and after later live cues.");
     }
 
     private static async Task FreshPrePlayWithoutRouteAsync(string origin)
