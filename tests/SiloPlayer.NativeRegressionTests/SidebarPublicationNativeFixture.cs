@@ -81,6 +81,7 @@ internal static class SidebarPublicationNativeFixture
         Check(first.IsExpanded && ReferenceEquals(nav.SelectedItem, first) && first.FocusState != FocusState.Unfocused, "unchanged refresh retains expansion selection and keyboard focus");
         HeldPins.SetResult(Json(new { value = Pins })); HeldPins = null; await pinLoad; await Drain();
         Check(changes == 0 && childChanges == 0, "unchanged pin arrival does not churn either vector");
+        await CheckPinWriteRetiresReadAsync(window, first);
 
         Libraries = [Lib(2, "Renamed series", "audiobooks"), Lib(1, "Renamed movies", "series"), Lib(4, "Added")];
         Libraries[1].MetadataLanguage = "fr";
@@ -249,6 +250,40 @@ internal static class SidebarPublicationNativeFixture
         Check(LibraryNodes(nav).Length == 0 && PrimaryNodes(nav).Length == 0, "hide retires library and custom primary nodes");
         await Drain(); Check(LibraryNodes(nav).Length == 0 && PrimaryNodes(nav).Length == 0, "queued old publication cannot repopulate hidden shell");
         if (Failures.Count > 0) throw new InvalidOperationException("Sidebar publication failures: " + string.Join("; ", Failures));
+    }
+    private static async Task CheckPinWriteRetiresReadAsync(MainWindow window, NavigationViewItem library)
+    {
+        var ready = typeof(MainWindow).GetField("_sidebarPinsReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        foreach (var remove in new[] { false, true })
+        {
+            var snapshot = Pins;
+            var held = NewHeld(); HeldPins = held; PinRead = false;
+            ready.SetValue(window, false);
+            var refresh = window.RefreshSidebarPinsAsync();
+            await Until(() => PinRead);
+            HeldPins = null; // Only the older refresh is held, not the mutation's GET.
+            if (remove)
+            {
+                var row = library.MenuItems.OfType<NavigationViewItem>().Single(item =>
+                    ((Grid)item.Content).Children.OfType<TextBlock>().Single().Text == "Race pin");
+                var button = ((Grid)row.Content).Children.OfType<Button>().Single();
+                LastWrite = null;
+                ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Until(() => LastWrite != null && !window.GetSidebarPins(1, "collection").Any(pin => pin.Id == "race-pin"));
+            }
+            else Check(await window.ToggleSidebarPinAsync(1, "collection", "race-pin", "Race pin"), "pin write commits while an older refresh is held");
+            await Drain();
+            var accepted = window.GetSidebarPins(1, "collection").ToArray();
+            var nodes = library.MenuItems.ToArray();
+            held.SetResult(Json(new { value = snapshot }));
+            await refresh; await Drain();
+            Check(accepted.SequenceEqual(window.GetSidebarPins(1, "collection")) && nodes.SequenceEqual(library.MenuItems),
+                "late pre-write pin snapshot cannot revert accepted " + (remove ? "unpin" : "pin") + " data or native nodes");
+            Check(!(bool)ready.GetValue(window)!, "superseded pin read cannot mark unfinished hydration ready");
+        }
+        await window.RefreshSidebarPinsAsync(); await Drain();
+        Check((bool)ready.GetValue(window)!, "fresh post-write pin read completes hydration readiness");
+        LastWrite = null;
     }
     internal static async Task RunDetachedAsync(MainWindow window, IServiceProvider provider)
     {

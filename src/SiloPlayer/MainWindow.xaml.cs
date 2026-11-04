@@ -2968,6 +2968,7 @@ public sealed partial class MainWindow : Window
     }
 
     private Dictionary<string, List<SidebarPinRow>> _sidebarPins = [];
+    private long _sidebarPinsWriteEpoch;
 
     private Grid BuildPinnedSidebarContent(
         NavigationViewItem pinItem,
@@ -3219,6 +3220,7 @@ public sealed partial class MainWindow : Window
             }).ToList());
         await settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
         if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
+        Interlocked.Increment(ref _sidebarPinsWriteEpoch);
         _sidebarPins = map;
         UpdateLibraryNavItems();
         return nowPinned;
@@ -3255,6 +3257,7 @@ public sealed partial class MainWindow : Window
             }).ToList());
         await _settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
         if (!IsCurrentSidebarMutation(shellKey, context)) return;
+        Interlocked.Increment(ref _sidebarPinsWriteEpoch);
         _sidebarPins = map;
         UpdateLibraryNavItems();
     }
@@ -3281,11 +3284,14 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // A successful pin mutation supersedes snapshots already in flight.
+        var writeEpoch = Volatile.Read(ref _sidebarPinsWriteEpoch);
         try
         {
             var settingsApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.SettingsApi>();
             var entry = await settingsApi.GetSettingAsync("sidebar_pins", cancellationToken);
-            if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
+            if (writeEpoch != Volatile.Read(ref _sidebarPinsWriteEpoch) ||
+                !_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
                 return;
             _sidebarPins = ParseSidebarPins(entry.Value);
             _sidebarPinsReady = true;
@@ -3297,7 +3303,8 @@ public sealed partial class MainWindow : Window
         catch
         {
             // Retain accepted same-owner pins, but let a later Home catch-up retry.
-            if (_apiClient.IsCurrentContext(context) && shellKey != null && IsCurrentShellHydration(shellKey, cancellationToken))
+            if (writeEpoch == Volatile.Read(ref _sidebarPinsWriteEpoch) &&
+                _apiClient.IsCurrentContext(context) && shellKey != null && IsCurrentShellHydration(shellKey, cancellationToken))
                 _sidebarPinsReady = false;
             return;
         }
