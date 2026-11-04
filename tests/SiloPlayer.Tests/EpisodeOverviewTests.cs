@@ -61,7 +61,7 @@ public sealed class EpisodeOverviewTests
         Assert.False(scope.Vm.OverviewResolutionFailed);
         Assert.Same(episode, scope.Vm.Item);
         Assert.Equal(currentId, episode!.SeriesId);
-        Assert.Equal(scope.SeriesTitle, episode.SeriesTitle);
+        Assert.Equal(scope.SeriesTitle ?? "Original series", episode.SeriesTitle);
         Assert.DoesNotContain("/api/v2/catalog/items/series?library_id=42", scope.Paths.Skip(reads));
         if (currentId == null)
         {
@@ -79,6 +79,47 @@ public sealed class EpisodeOverviewTests
             Assert.Equal("Résumé traduit", source.Overview);
             Assert.Null(source.PendingTranslationLanguage);
         }
+    }
+
+    [Theory]
+    [InlineData("episode", "Episode plot", "access")]
+    [InlineData("episode", "Episode plot", "language")]
+    [InlineData("episode", "", "access")]
+    [InlineData("episode", "", "language")]
+    [InlineData("season", "Season plot", "access")]
+    [InlineData("season", "Season plot", "language")]
+    public async Task LegacyOverviewRefreshPreservesKnownParent(string type, string own, string change)
+    {
+        using var scope = new Scope { ItemType = type, Own = own };
+        await scope.Vm.LoadInLibraryAsync(type, 42);
+        var item = scope.Vm.Item;
+        await scope.Vm.ResolveOverviewAsync();
+        scope.Vm.Episodes.Add(new() { ContentId = "retained-episode" });
+        var row = scope.Vm.Episodes.Single();
+        var parentRevision = scope.Vm.ParentPlaybackRevision;
+        if (change == "access") scope.Client.InvalidateAccessContext();
+        else scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        scope.OmitSeriesLink = true;
+        scope.SeriesId = null; scope.SeriesTitle = null;
+        scope.Translated = true;
+        var reads = scope.Paths.Count;
+
+        var source = await scope.Vm.ResolveOverviewAsync();
+
+        Assert.False(scope.Vm.OverviewResolutionFailed);
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal("series", item!.SeriesId);
+        Assert.Equal("Original series", item.SeriesTitle);
+        Assert.True(item.HasAuthoritativeSeriesId);
+        Assert.Equal(parentRevision, scope.Vm.ParentPlaybackRevision);
+        Assert.Same(row, Assert.Single(scope.Vm.Episodes));
+        if (type == "episode" && own.Length == 0)
+        {
+            Assert.Equal("series", source!.ContentId);
+            Assert.Equal("Résumé traduit", source.Overview);
+            Assert.Contains("/api/v2/catalog/items/series?library_id=42", scope.Paths.Skip(reads));
+        }
+        else Assert.Same(item, source);
     }
 
     [Fact]
@@ -482,7 +523,7 @@ public sealed class EpisodeOverviewTests
         internal string? Own = "", SeriesId = "series", SeriesTitle = "Original series";
         internal string ItemType = "episode", TargetLanguage = "fr";
         internal string[] OwnMachineTranslatedFields = [];
-        internal bool HoldSeries, FailSeries, Translated, HoldItem, FailItem;
+        internal bool HoldSeries, FailSeries, Translated, HoldItem, FailItem, OmitSeriesLink;
         internal readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<string> Paths = [];
@@ -504,9 +545,13 @@ public sealed class EpisodeOverviewTests
                 return Json(new { content_id = request.RequestUri.AbsolutePath.Split('/').Last(), type = "series", overview = Translated ? "Résumé traduit" : "Series summary",
                     pending_translation_language = Translated ? null : "fr", machine_translated_fields = new[] { "overview" } });
             }
-            var value = new { content_id = request.RequestUri.AbsolutePath.Split('/').Last(), type = ItemType,
-                overview = Own, series_id = SeriesId, series_title = SeriesTitle, pending_translation_language = TargetLanguage,
-                machine_translated_fields = OwnMachineTranslatedFields, user_state = new { } };
+            var value = new Dictionary<string, object?>
+            {
+                ["content_id"] = request.RequestUri.AbsolutePath.Split('/').Last(), ["type"] = ItemType,
+                ["overview"] = Own, ["pending_translation_language"] = TargetLanguage,
+                ["machine_translated_fields"] = OwnMachineTranslatedFields, ["user_state"] = new { }
+            };
+            if (!OmitSeriesLink) { value["series_id"] = SeriesId; value["series_title"] = SeriesTitle; }
             if (HoldItem) { Entered.TrySetResult(); await Release.Task; }
             if (FailItem) return new(HttpStatusCode.InternalServerError);
             return Json(value);

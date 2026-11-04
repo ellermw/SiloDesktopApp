@@ -8,6 +8,7 @@ namespace SiloPlayer.Views;
 public sealed partial class ItemDetailPage
 {
     private long _overviewConfigurationRevision;
+    private bool _isTranslatingOverview;
     // Spoiler transitions may enable translation, but must not retire an active translation.
     private sealed record OverviewConfigurationOwner(MediaItemDetail Item, int? Library, ApiRequestContext Context,
         long Language, CancellationTokenSource? Navigation, bool Hidden);
@@ -124,6 +125,7 @@ public sealed partial class ItemDetailPage
         bool Current() => revision == _overviewConfigurationRevision && navigation?.IsCancellationRequested != true && ReferenceEquals(navigation, _navigationCts) &&
             ReferenceEquals(item, ViewModel.Item) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library &&
             api.IsCurrentContext(context) && api.LocalizedReadGeneration == language;
+        ++_overviewTranslationStatusReads;
         try
         {
             // Series fallback is not an episode spoiler and must not wait for optional settings.
@@ -161,6 +163,13 @@ public sealed partial class ItemDetailPage
                 TranslateOverviewButton.Visibility = Visibility.Collapsed;
                 ScheduleOverviewRetry(owner);
             }
+        }
+        finally
+        {
+            --_overviewTranslationStatusReads;
+            // A retired read still needs reconnect recovery after it settles.
+            if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+                _overviewTranslationInterrupted = true;
         }
     }
 
@@ -214,6 +223,7 @@ public sealed partial class ItemDetailPage
             ReferenceEquals(source, ViewModel.OverviewSource) && api.IsCurrentContext(context) &&
             api.LocalizedReadGeneration == language;
         bool Current() => !ct.IsCancellationRequested && OwnerCurrent();
+        _isTranslatingOverview = true;
         TranslateOverviewButton.Visibility = Visibility.Visible;
         TranslateOverviewButton.IsEnabled = false;
         TranslateOverviewButton.Content = "Translating…";
@@ -264,7 +274,13 @@ public sealed partial class ItemDetailPage
                 TranslateOverviewButton.IsEnabled = true;
                 TranslateOverviewButton.Content = "Translate description";
             }
-            if (ReferenceEquals(_translationCts, cts)) _translationCts = null;
+            if (ReferenceEquals(_translationCts, cts))
+            {
+                _translationCts = null;
+                _isTranslatingOverview = false;
+                if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+                    _overviewTranslationInterrupted = true;
+            }
             if (restoreControls)
             {
                 RenderOverview();
