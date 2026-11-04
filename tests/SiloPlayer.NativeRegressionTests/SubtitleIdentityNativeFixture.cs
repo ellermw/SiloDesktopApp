@@ -43,6 +43,21 @@ internal static class SubtitleIdentityNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE") == "legacy-preplay")
+            {
+                session.SubtitleUrls = [];
+                var watch = new WatchDetailResponse();
+                var version = new FileVersion { FileId = 42 };
+                Call(service, "ResolveInitialSubtitleSelection", watch, version, session, null, 1, null);
+                Call(service, "ApplyPendingSubtitleSelection");
+                var owner = new CancellationTokenSource();
+                Set(service, "_loadedMediaInitCts", owner);
+                await (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
+                Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused && wire.PreferenceWrites == 0,
+                    "Legacy explicit pre-play ordinal was discarded when both response and watch metadata inventories were absent.");
+                Program.Log("PASS: legacy pre-play ordinal executes only against the loaded file, preserving viewer pause and avoiding invented server preference indices.");
+                return;
+            }
             if (regionalOnly)
             {
                 var initial = session.SubtitleUrls.Single(t => t.Index == 4);
@@ -300,6 +315,39 @@ internal static class SubtitleIdentityNativeFixture
                             "Automatic startup did not skip unroutable candidates quietly and execute the next eligible track (or Off).");
                     }
 
+                    // A replacement's rejected server refinement is not a local
+                    // selection failure when native/sidecar/explicit Off executes.
+                    // Missing identities and unroutable rows still need feedback.
+                    foreach (var (requested, missing) in new[] { (2, false), (0, false), (-1, false), (9, false), (2, true) })
+                    {
+                        session.SubtitleUrls = [.. originalInventory, automaticNoRoute];
+                        manager.RecordLocalSubtitleSelection(requested < 0 ? null : requested);
+                        if (missing) session.SubtitleUrls = [originalInventory.Single(t => t.Index == 4)];
+                        session.SubtitleReconciliationFailed = true;
+                        var noticesBeforeLoad = Volatile.Read(ref notices);
+                        var owner = new CancellationTokenSource();
+                        Set(service, "_loadedMediaInitCts", owner);
+                        await (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
+                        ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        Call(mpv, "Command", (object)new[] { "script-message", "silo-identity-auto-drain" });
+                        await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        var expectUnavailableNotice = requested == 9 || missing;
+                        Require(!session.SubtitleReconciliationFailed &&
+                            Volatile.Read(ref notices) == noticesBeforeLoad + (expectUnavailableNotice ? 1 : 0),
+                            "Replacement reconciliation feedback did not reflect the actual local subtitle outcome.");
+                        if (!expectUnavailableNotice)
+                        {
+                            var loadedSidecars = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                            Require(service.ActiveSubtitleServerIndex == requested &&
+                                (requested == -1 ? mpv.GetPropertyDouble("sid") <= 0 :
+                                    requested == 2 ? mpv.GetPropertyDouble("sid") == 1 :
+                                    loadedSidecars.TryGetValue(requested, out var sid) && mpv.GetPropertyDouble("sid") == sid),
+                                "Rejected server refinement did not execute the requested local subtitle or Off.");
+                        }
+                        Require(wire.PreferenceWrites == 0 && mpv.IsPaused,
+                            "Replacement subtitle feedback changed preferences or viewer pause.");
+                    }
+
                     var playablePrePlay = originalInventory.Single(t => t.Index == 2);
                     var retainedPrePlay = originalInventory.Single(t => t.Index == 4);
                     var unavailablePrePlay = new SubtitleTrackInfo { Index = 1, Source = playablePrePlay.Source,
@@ -434,7 +482,13 @@ internal static class SubtitleIdentityNativeFixture
             var cycleRequests = Volatile.Read(ref subtitles.Requests);
             foreach (var (index, sid) in new[] { (4, 2), (2, 1), (-1, 0) })
             {
+                // Every cycle is a viewer gesture, even after an automatic pick
+                // (including automatic Off); it must not inherit Auto provenance.
+                manager.RecordLocalSubtitleSelection(service.ActiveSubtitleServerIndex < 0 ? null : service.ActiveSubtitleServerIndex,
+                    isAutomatic: true);
                 Call(service, "CycleSubtitleBackward");
+                Require(!manager.IsSubtitleSelectionAutomatic && !manager.CaptureLocalSubtitleIntent().IsAutomatic,
+                    "Local caption cycling retained the previous automatic selection's provenance.");
                 Require(service.ActiveSubtitleServerIndex == index && manager.SubtitleSelectionForLoad == index &&
                     (sid == 0 ? mpv.GetPropertyDouble("sid") <= 0 : mpv.GetPropertyDouble("sid") == sid),
                     "Local caption cycling did not map server rows to their actual loaded native SIDs.");

@@ -3127,6 +3127,25 @@ public partial class PlayerService : IDisposable
         {
             if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
             RetireForeignSubtitleSelections();
+            var subtitleFailureSession = _playbackManager?.CurrentSession;
+            if (subtitleFailureSession is { SubtitleReconciliationFailed: true, IsSubtitleBurnedIn: true })
+            {
+                lock (_subtitleTrackStateLock)
+                {
+                    // The manager kept the playable burn-in grant after rejection.
+                    // Do not let an outgoing initial slot reissue the failed pick,
+                    // or persist a deferred preference that was never executed.
+                    // A newer manager-owned choice still wins over that grant.
+                    _pendingInitialServerSubtitleIndex = null;
+                    _pendingAutomaticSubtitleSelection = null;
+                    if (_pendingSubtitlePreferenceIndex.HasValue &&
+                        _pendingSubtitlePreferenceIndex != _playbackManager!.SubtitleSelectionForLoad)
+                    {
+                        _pendingSubtitlePreferenceIndex = null;
+                        _pendingSubtitlePreferenceOwner = null;
+                    }
+                }
+            }
             // Clearing/replacing the initial choice also retires its automatic
             // refinement; it must not overwrite a newer manager-owned choice.
             if (!_pendingInitialServerSubtitleIndex.HasValue) _pendingAutomaticSubtitleSelection = null;
@@ -3166,6 +3185,7 @@ public partial class PlayerService : IDisposable
                     }
                 }
             }
+            var requestedSubtitleExecutedLocally = false;
             if (applyInitialSubtitleSelection)
             {
                 var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
@@ -3174,11 +3194,26 @@ public partial class PlayerService : IDisposable
                 {
                     _pendingInitialServerSubtitleIndex = null;
                     if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-                    await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
+                    var subtitleIntent = _playbackManager?.CaptureLocalSubtitleIntent();
+                    var selectionExecuted = await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
+                    // A rejected server refinement need not prevent local execution.
+                    // Off only satisfies the request when it was really Off, not
+                    // when an unmatched subtitle identity resolved to -1.
+                    requestedSubtitleExecutedLocally = selectionExecuted &&
+                        subtitleFailureSession is { IsSubtitleBurnedIn: false } &&
+                        _executedSubtitleFileId == subtitleFailureSession.MediaFileId &&
+                        (_executedSubtitleTrack?.Index ?? -1) == initialSubtitleIndex &&
+                        (initialSubtitleIndex >= 0 || subtitleIntent?.Track == null);
                 }
             }
 
             if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+            if (subtitleFailureSession?.SubtitleReconciliationFailed == true &&
+                ReferenceEquals(subtitleFailureSession, _playbackManager?.CurrentSession))
+            {
+                subtitleFailureSession.SubtitleReconciliationFailed = false;
+                if (!requestedSubtitleExecutedLocally) ShowSubtitleSelectionUnavailable();
+            }
             // Effective playback settings are profile/device scoped and may
             // change between sessions; they must not gate subtitle execution.
             await SendAutoSkipSettingsToOscAsync(ct);
@@ -5842,7 +5877,7 @@ public partial class PlayerService : IDisposable
             _pendingSubtitlePreferenceOwner = null;
             _activeSubtitleServerIndex = selected.Track?.Index ?? -1;
             if (session.ProtocolVersion >= 3) manager!.RecordLocalSubtitleSelection(selected.Track?.Index,
-                isAutomatic: manager.IsSubtitleSelectionAutomatic);
+                isAutomatic: false);
             CommitExecutedSubtitleSelection(selected.Track);
             mpv.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
