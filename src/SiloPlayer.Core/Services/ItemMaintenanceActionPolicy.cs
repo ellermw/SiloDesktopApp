@@ -16,6 +16,7 @@ public static class ItemMaintenanceActionPolicy
             return default;
 
         var normalizedType = itemType?.Trim().ToLowerInvariant();
+        if (normalizedType == "box_set") return default;
         return new ItemMaintenanceActions(
             CanMatch: normalizedType is "movie" or "series",
             CanRefreshMetadata: true);

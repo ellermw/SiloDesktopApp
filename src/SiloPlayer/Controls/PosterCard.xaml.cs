@@ -239,7 +239,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void PosterCard_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs args)
     {
-        if (MediaItem is not { } item) return;
+        if (MediaItem is not { } item || item.Type == "box_set") return;
         var flyout = MediaItemMenu.Build(
             item,
             MediaItemMenu.Surface.Default,
@@ -294,6 +294,9 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void ShowPlaceholder()
     {
+        if (_aggregateUnavailable) { _aggregateUnavailable = false; Visibility = Visibility.Visible; }
+        if (_ordinaryCardContent != null) Content = _ordinaryCardContent;
+        IsTabStop = true;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -322,8 +325,41 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         OverlayBottomRight.Children.Clear();
     }
 
+    private UIElement? _ordinaryCardContent;
+    private bool _preserveArtworkOnUpdate, _aggregateUnavailable;
+    /// <summary>Rebind refreshed member data without discarding unchanged artwork or focus.</summary>
+    public void RefreshItem(MediaItem item)
+    {
+        var old = MediaItem;
+        _preserveArtworkOnUpdate = old != null && item.Type == "movie" && old.ContentId == item.ContentId && old.Type == item.Type
+            && old.PosterUrl == item.PosterUrl && old.PosterThumbhash == item.PosterThumbhash
+            && old.BackdropUrl == item.BackdropUrl && old.BackdropThumbhash == item.BackdropThumbhash;
+        try { MediaItem = item; }
+        finally { _preserveArtworkOnUpdate = false; }
+    }
     private void UpdateContent(MediaItem item)
     {
+        _ordinaryCardContent ??= Content;
+        if (_aggregateUnavailable) { _aggregateUnavailable = false; Visibility = Visibility.Visible; }
+        if (item.Type == "box_set")
+        {
+            _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+            CancelPlaybackPrefetch();
+            if (item.BoxSet is not {} summary || string.IsNullOrWhiteSpace(summary.Id) || string.IsNullOrWhiteSpace(summary.LibraryId))
+            {
+                // An aggregate without a destination is not an empty, focusable button.
+                Content = null; IsTabStop = false; _aggregateUnavailable = true; Visibility = Visibility.Collapsed;
+                return;
+            }
+            var aggregate = new BoxSetCard();
+            aggregate.SetSummary(summary, item.PosterUrl, item.PosterThumbhash);
+            aggregate.Invoked += set => App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
+            IsTabStop = false;
+            Content = aggregate;
+            return;
+        }
+        Content = _ordinaryCardContent;
+        IsTabStop = true;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
@@ -353,17 +389,17 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         ApplyActionGeometry(item);
         UpdateQuickActionState(item);
 
-        PosterImage.Opacity = 0;
-
-        // Skip thumbhash -- go straight to loading the real image.
-        // Thumbhash decoding on UI thread for hundreds of cards causes jank.
-        ThumbhashImage.Source = null;
-
         string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        PosterImage.Source = null;
-        ArtworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
-        ArtworkFallback.Visibility = SuppressImageLoading || string.IsNullOrEmpty(imageUrl) ? Visibility.Visible : Visibility.Collapsed;
-        if (string.IsNullOrEmpty(imageUrl)) _ = ArtworkFallback.ShowThumbhashAsync();
+        if (!_preserveArtworkOnUpdate)
+        {
+            PosterImage.Opacity = 0;
+            // Skip thumbhash -- go straight to loading the real image.
+            ThumbhashImage.Source = null;
+            PosterImage.Source = null;
+            ArtworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
+            ArtworkFallback.Visibility = SuppressImageLoading || string.IsNullOrEmpty(imageUrl) ? Visibility.Visible : Visibility.Collapsed;
+            if (string.IsNullOrEmpty(imageUrl)) _ = ArtworkFallback.ShowThumbhashAsync();
+        }
 
         if (DeferOverlayLoading)
         {
@@ -392,7 +428,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         }
 
         _deferredPosterItem = null;
-        _ = LoadPosterAsync(item, ct);
+        if (!_preserveArtworkOnUpdate || (PosterImage.Source == null && !string.IsNullOrEmpty(imageUrl)))
+            _ = LoadPosterAsync(item, ct);
     }
 
     private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
@@ -807,6 +844,12 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     {
         if (MediaItem == null) return false;
 
+        if (MediaItem.Type == "box_set")
+        {
+            if (MediaItem.BoxSet is not {} set || string.IsNullOrWhiteSpace(set.Id) || string.IsNullOrWhiteSpace(set.LibraryId)) return false;
+            App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
+            return true;
+        }
         if (SelectionMode)
         {
             IsSelected = !IsSelected;
@@ -871,7 +914,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private async void QueuePlaybackPrefetch()
     {
         var item = MediaItem;
-        if (item == null || SelectionMode)
+        if (item == null || item.Type == "box_set" || SelectionMode)
             return;
 
         CancelPlaybackPrefetch();
