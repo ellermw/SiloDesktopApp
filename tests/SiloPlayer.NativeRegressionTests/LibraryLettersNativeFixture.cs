@@ -240,6 +240,7 @@ internal static class LibraryLettersNativeFixture
                     await VerifyGroupedRefreshViewportAsync(page, wire, client);
                     await VerifyStructuralGroupedRefreshAsync(page, wire, client);
                     await VerifyCachedGroupedReturnAsync(frame, page, wire);
+                    await VerifyFailedLibraryFlagsReadAsync(page, wire, catalog);
                     if (type == "mixed") await VerifyRestoredBrowseTypeAsync(frame, page, wire);
                     wire.Grouped = false; catalog.InvalidateLibraryCache();
                     await Until(() => page.ViewModel.Library is { BoxSetsEnabled: false } && page.ViewModel.GetWindowItem(0)?.Type == "movie");
@@ -321,6 +322,36 @@ internal static class LibraryLettersNativeFixture
             Program.Log("PASS: cached title-sorted grouped return uses a fresh structural read and retires adjacent windows after a catalog change while away.");
         }
         finally { wire.SavedSearch = null; wire.CatalogIndexShift = 0; }
+    }
+
+    private static async Task VerifyFailedLibraryFlagsReadAsync(LibraryPage page, Wire wire, CatalogApi catalog)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var refresh = typeof(LibraryPage).GetMethod("RefreshLibraryFlagsAsync", flags)!;
+        var ensure = typeof(LibraryPage).GetMethod("EnsureLibraryCatalogLoadedAsync", flags)!;
+        var dirty = typeof(LibraryPage).GetField("_libraryFlagsDirty", flags)!;
+        var reads = wire.LibraryReads;
+        try
+        {
+            wire.FailLibraries = true;
+            // Returning navigation awaits this same policy read before opening
+            // either the saved Library tab or another tab with a later selection.
+            await (Task)refresh.Invoke(page, [false])!;
+            if (!(bool)dirty.GetValue(page)! || wire.LibraryReads != reads + 1)
+                throw new InvalidOperationException("A failed policy read must remain dirty for a later visit.");
+            await (Task)ensure.Invoke(page, null)!;
+            await (Task)ensure.Invoke(page, null)!;
+            if (wire.LibraryReads != reads + 1)
+                throw new InvalidOperationException("Opening Library repeated this visit's failed policy read and error toast.");
+
+            wire.FailLibraries = false;
+            catalog.InvalidateLibraryCache();
+            await Until(() => !(bool)dirty.GetValue(page)!);
+            if (wire.LibraryReads != reads + 2)
+                throw new InvalidOperationException("A policy invalidation must still permit recovery in the same visit.");
+            Program.Log("PASS: opening Library does not repeat a failed policy read; dirty policy can still recover on invalidation.");
+        }
+        finally { wire.FailLibraries = false; }
     }
 
     private static async Task VerifyStructuralGroupedRefreshAsync(LibraryPage page, Wire wire, SiloApiClient client)
@@ -504,7 +535,8 @@ internal static class LibraryLettersNativeFixture
         internal int CatalogIndexShift;
         internal string CurrentType = "movie";
         internal string? LastOrder, LastGenre, LastIndexOrder;
-        internal bool FailIndex, OmitWindowTotals;
+        internal bool FailIndex, OmitWindowTotals, FailLibraries;
+        internal int LibraryReads;
         internal TaskCompletionSource? LetterIndexGate, CatalogWindowGate, CountGate, CatalogWindowStarted;
         internal List<int> Seeks { get; } = [];
         internal string? SavedSearch;
@@ -517,7 +549,12 @@ internal static class LibraryLettersNativeFixture
                     new { key = "ui.library_page_state", value = (object)new { version = 1, libraries = new Dictionary<string, object> { [CurrentLibraryId.ToString()] = new { search = SavedSearch } } } } } });
             if (SavedSearch != null && path.EndsWith("/settings/values/ui.library_page_state") && request.Method == HttpMethod.Put)
                 return Reply(new { key = "ui.library_page_state", value = new { } });
-            if (path == "/api/v2/user/libraries") return Reply(new { items = new[] { new { id = CurrentLibraryId, type = CurrentType, enabled = true, box_sets_enabled = Grouped } } });
+            if (path == "/api/v2/user/libraries")
+            {
+                LibraryReads++;
+                if (FailLibraries) return Reply(new { detail = "Synthetic unavailable libraries" }, HttpStatusCode.ServiceUnavailable);
+                return Reply(new { items = new[] { new { id = CurrentLibraryId, type = CurrentType, enabled = true, box_sets_enabled = Grouped } } });
+            }
             if (path == "/api/v2/catalog/search/capabilities") return Reply(new { letter_index = true, box_sets = Grouped });
             if (path == "/api/v2/catalog/letters")
             {
