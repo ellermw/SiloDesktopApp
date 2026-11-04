@@ -552,7 +552,13 @@ public partial class PlayerService : IDisposable
             CancelPendingSoloVersionSwitch();
         }
         IsWatchTogetherPlayback = active;
-        if (joining) SetPaused(true);
+        if (joining)
+        {
+            // Room time advances at 1×; retain the viewer's separate saved
+            // desire so drift correction never restores their solo rate.
+            NativePlaybackRate = 1;
+            SetPaused(true);
+        }
         if (!active) _offeredRoomQuality = _offeredFromQuality = null;
         UpdateRoomInputBindings();
         UpdateRoomSeekDisplay();
