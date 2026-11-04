@@ -65,6 +65,7 @@ public partial class PlayerService
             mpv.SendScriptMessage("osc-native-quality-scope", (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-more-scope", owner.Token);
+            mpv.SendScriptMessage("osc-native-stats-scope", owner.Token);
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -83,6 +84,7 @@ public partial class PlayerService
             owner?.Mpv.SendScriptMessage("osc-native-quality-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-chapters-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-more-scope", "");
+            owner?.Mpv.SendScriptMessage("osc-native-stats-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -94,7 +96,8 @@ public partial class PlayerService
             (owner?.Mpv ?? _mpv)?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
-        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
+        var busyAction = request.Kind != "stats" && (IsLoading || _switchingContent);
+        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || busyAction)
         { Ack(); return; }
         if (!_nativeMenuGate.TryOpen(request))
         {
@@ -123,6 +126,7 @@ public partial class PlayerService
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
                 "chapters" => CreateNativeChaptersMenu(owner, request, Finish),
                 "more" => CreateNativeMoreMenu(owner, request, Finish),
+                "stats" => CreateNativeStatsMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }

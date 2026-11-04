@@ -32,6 +32,8 @@ internal class PlaybackChoiceMenu
     private readonly FrameworkElement? _footer;
     private readonly Func<PlaybackMenuChoice, FrameworkElement?>? _leadingContent;
     private readonly bool _allowDisabledTraversal;
+    private readonly Func<PlaybackMenuChoice, FrameworkElement>? _choiceContent;
+    private readonly VirtualKey? _dismissKey;
     private int _footerIndex = -1;
     private bool _keepSelectionVisible = true;
     private bool _layoutQueued;
@@ -49,14 +51,15 @@ internal class PlaybackChoiceMenu
     internal PlaybackChoiceMenu(MpvVideoWindow owner, PlaybackMenuAnchor anchor, string title,
         IReadOnlyList<PlaybackMenuChoice> choices, Func<bool> isCurrent,
         Action<string> selected, Action<PlaybackMenuCloseReason> closed, Action<DependencyObject>? applyTypography = null, FrameworkElement? footer = null,
-        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null, bool allowDisabledTraversal = false)
+        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null, bool allowDisabledTraversal = false,
+        Func<PlaybackMenuChoice, FrameworkElement>? choiceContent = null, VirtualKey? dismissKey = null)
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(choices);
         if (choices.Count == 0) throw new ArgumentException("A menu requires a choice.", nameof(choices));
         _owner = owner; _anchor = anchor; _choices = choices;
         _isCurrent = isCurrent; _selected = selected; _closed = closed;
-        _applyTypography = applyTypography; _footer = footer; _leadingContent = leadingContent;
+        _applyTypography = applyTypography; _footer = footer; _leadingContent = leadingContent; _choiceContent = choiceContent; _dismissKey = dismissKey;
         _allowDisabledTraversal = allowDisabledTraversal;
         _dismiss = () => Close(PlaybackMenuCloseReason.OutsidePointer);
         _list = new ListView
@@ -118,30 +121,36 @@ internal class PlaybackChoiceMenu
         foreach (var choice in _choices) _list.Items.Add(BuildChoice(choice));
     }
 
+    private static FrameworkElement BuildDefaultContent(PlaybackMenuChoice choice)
+    {
+        var copy = new StackPanel { Spacing = 4, Margin = new Thickness(4, 8, 4, 8) };
+        copy.Children.Add(new TextBlock
+        {
+            Text = choice.Title, TextWrapping = TextWrapping.Wrap,
+            MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        if (choice.Metadata.Length > 0)
+            copy.Children.Add(new TextBlock { Text = choice.Metadata, Opacity = .7, TextWrapping = TextWrapping.Wrap,
+                MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 });
+        if (!choice.IsEnabled && choice.DisabledReason.Length > 0)
+            copy.Children.Add(new TextBlock { Text = choice.DisabledReason, FontSize = 12,
+                TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis });
+        var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var text in choice.Badges.Where(s => s.Length > 0))
+            badges.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(4), Padding = new Thickness(5, 2, 5, 2),
+                Background = ThemeBrush("SurfaceRaisedBrush", 0x28, 0x28, 0x2E),
+                Child = new TextBlock { Text = text, FontSize = 11 },
+            });
+        copy.Children.Add(badges);
+        return copy;
+    }
+
     private ListViewItem BuildChoice(PlaybackMenuChoice choice)
     {
-            var copy = new StackPanel { Spacing = 4, Margin = new Thickness(4, 8, 4, 8) };
-            copy.Children.Add(new TextBlock
-            {
-                Text = choice.Title, TextWrapping = TextWrapping.Wrap,
-                MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            });
-            if (choice.Metadata.Length > 0)
-                copy.Children.Add(new TextBlock { Text = choice.Metadata, Opacity = .7, TextWrapping = TextWrapping.Wrap,
-                    MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 });
-            if (!choice.IsEnabled && choice.DisabledReason.Length > 0)
-                copy.Children.Add(new TextBlock { Text = choice.DisabledReason, FontSize = 12,
-                    TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis });
-            var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            foreach (var text in choice.Badges.Where(s => s.Length > 0))
-                badges.Children.Add(new Border
-                {
-                    CornerRadius = new CornerRadius(4), Padding = new Thickness(5, 2, 5, 2),
-                    Background = ThemeBrush("SurfaceRaisedBrush", 0x28, 0x28, 0x2E),
-                    Child = new TextBlock { Text = text, FontSize = 11 },
-                });
-            copy.Children.Add(badges);
+            var copy = _choiceContent?.Invoke(choice) ?? BuildDefaultContent(choice);
             var row = new Grid { ColumnSpacing = 8, Opacity = choice.IsEnabled ? 1 : .55 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -173,20 +182,51 @@ internal class PlaybackChoiceMenu
         if (_choices.Count == choices.Count && _choices.Zip(choices).All(pair => Same(pair.First, pair.Second))) return;
         var sameIds = _choices.Count == choices.Count && _choices.Zip(choices).All(pair => pair.First.Id == pair.Second.Id);
         var previous = _choices; _choices = choices;
+        void UpdateContainer(ListViewItem row, PlaybackMenuChoice choice)
+        {
+            var replacement = BuildChoice(choice);
+            var content = replacement.Content; replacement.Content = null;
+            replacement.Loaded -= OnRowLoaded;
+            row.Content = content; row.IsEnabled = replacement.IsEnabled;
+            AutomationProperties.SetName(row, AutomationProperties.GetName(replacement));
+            ToolTipService.SetToolTip(row, AutomationProperties.GetName(replacement));
+            if (_shown) _applyTypography?.Invoke(row);
+        }
         if (sameIds)
         {
             // Preserve containers, focus and wheel position during status/stat updates.
             for (var i = 0; i < choices.Count; i++)
             {
                 if (Same(previous[i], choices[i])) continue;
-                var row = (ListViewItem)_list.Items[i]; var replacement = BuildChoice(choices[i]);
-                var content = replacement.Content; replacement.Content = null;
-                replacement.Loaded -= OnRowLoaded;
-                row.Content = content; row.IsEnabled = replacement.IsEnabled;
-                AutomationProperties.SetName(row, AutomationProperties.GetName(replacement));
-                ToolTipService.SetToolTip(row, AutomationProperties.GetName(replacement));
-                if (_shown) _applyTypography?.Invoke(row);
+                UpdateContainer((ListViewItem)_list.Items[i], choices[i]);
             }
+        }
+        else if (_choiceContent != null)
+        {
+            // A live diagnostic can gain or lose optional rows. Keep each surviving
+            // native container in the list so keyboard focus and wheel position survive.
+            var selected = (_list.SelectedItem as ListViewItem)?.Tag as string;
+            var next = choices.Select(choice => choice.Id).ToHashSet(StringComparer.Ordinal);
+            var prior = previous.ToDictionary(choice => choice.Id, StringComparer.Ordinal);
+            for (var i = _list.Items.Count - 1; i >= 0; i--)
+            {
+                var item = (ListViewItem)_list.Items[i];
+                if (next.Contains((string)item.Tag)) continue;
+                item.Loaded -= OnRowLoaded; _list.Items.RemoveAt(i);
+            }
+            for (var i = 0; i < choices.Count; i++)
+            {
+                var choice = choices[i];
+                if (!prior.TryGetValue(choice.Id, out var old)) { _list.Items.Insert(i, BuildChoice(choice)); continue; }
+                var item = (ListViewItem)_list.Items[i];
+                if ((string)item.Tag != choice.Id)
+                {
+                    item = _list.Items.OfType<ListViewItem>().First(row => (string)row.Tag == choice.Id);
+                    _list.Items.Remove(item); _list.Items.Insert(i, item);
+                }
+                if (!Same(old, choice)) UpdateContainer(item, choice);
+            }
+            _list.SelectedIndex = Math.Max(0, choices.ToList().FindIndex(choice => choice.Id == selected));
         }
         else
         {
@@ -339,7 +379,7 @@ internal class PlaybackChoiceMenu
     private bool HandleKeyboardInput(VirtualKey key)
     {
         var shift = key == VirtualKey.Tab && (GetKeyState((int)VirtualKey.Shift) & 0x8000) != 0;
-        var action = KeyboardAction(key, shift);
+        var action = key == _dismissKey ? "cancel" : KeyboardAction(key, shift);
         if (action == null) return false;
         Input(action);
         return true;
