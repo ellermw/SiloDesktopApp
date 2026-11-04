@@ -228,7 +228,8 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("osc-set-translation-buffering", source);
         Assert.Contains("if (_resumeAfterLiveSubtitleBuffer)", source);
         Assert.Contains("_mpv.Pause();", source);
-        Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && _liveSubtitleActivation?.Invoke() != false && _mpv?.IsPaused == true)", source);
+        Assert.Contains("var current = _liveSubtitleActivation?.Invoke() != false;", source);
+        Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && current && (!IsWatchTogetherPlayback || !_roomPlaybackPaused) && _mpv?.IsPaused == true)", source);
         Assert.Contains("public void ReloadSubtitle(int sid)", mpv);
 
         var refreshStart = source.IndexOf("public async Task RefreshSubtitlesAfterAiAsync", StringComparison.Ordinal);
@@ -243,7 +244,7 @@ public sealed class PlayerServiceSourceTests
             "RestorePlaybackStateAfterSubtitleChange(wasPaused, position",
             source[refreshStart..refreshEnd],
             StringComparison.Ordinal);
-        Assert.Contains("claimActivation: false).ConfigureAwait(false);", source[refreshStart..refreshEnd], StringComparison.Ordinal);
+        Assert.Contains("claimActivation: false, acceptActivation: activation).ConfigureAwait(false);", source[refreshStart..refreshEnd], StringComparison.Ordinal);
 
         var beginStart = source.IndexOf("private void BeginLiveSubtitleTranslation", StringComparison.Ordinal);
         var beginEnd = source.IndexOf("private void ApplySubtitleTranslationCues", beginStart, StringComparison.Ordinal);

@@ -684,6 +684,9 @@ public partial class PlayerService : IDisposable
     /// <summary>Pause / resume the local mpv player.</summary>
     public void SetPaused(bool paused)
     {
+        // Explicit viewer/room pause intent supersedes the AI helper's
+        // temporary first-cue pause, even when mpv is already paused.
+        lock (_liveSubtitleLock) _resumeAfterLiveSubtitleBuffer = false;
         if (IsWatchTogetherPlayback)
         {
             _roomPlaybackPaused = paused;
@@ -1161,7 +1164,7 @@ public partial class PlayerService : IDisposable
         => await TrySetSubtitleTrackAndPersistAsync(mpvTrackIndex, language, track);
 
     private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track,
-        bool claimActivation = true)
+        bool claimActivation = true, Func<bool>? acceptActivation = null)
     {
         _pendingLegacySubtitleSelection = null;
         if (_mpv == null || _closing) return false;
@@ -1186,7 +1189,9 @@ public partial class PlayerService : IDisposable
             ShowSubtitleSelectionUnavailable();
             return false;
         }
-        if (claimActivation) Interlocked.Exchange(ref _subtitleActivationIntent, new object());
+        // Retire the temporary helper pause before taking the subtitle state
+        // lock. No subtitle-state -> live-subtitle lock nesting is permitted.
+        if (claimActivation) RetireLiveSubtitleBufferForManualSelection();
         CancelSubtitleSelectionRead();
         var authority = _activeAuthority;
         var manager = _playbackManager;
@@ -1199,6 +1204,8 @@ public partial class PlayerService : IDisposable
         var deferLocalSelection = _switchingContent || IsLoading || _subtitleVersionSwitchActive;
         lock (_subtitleTrackStateLock)
         {
+            if (acceptActivation?.Invoke() == false) return false;
+            if (claimActivation) Interlocked.Exchange(ref _subtitleActivationIntent, new object());
             preferenceOwner = preferenceOwner with
             {
                 PreviousIntent = _pendingSubtitlePreferenceOwner?.PreviousIntent ?? manager?.CaptureLocalSubtitleIntent(),
@@ -1211,6 +1218,7 @@ public partial class PlayerService : IDisposable
 
         }
         bool CurrentReadChoice() => !_closing && !ownerToken.IsCancellationRequested &&
+            (acceptActivation?.Invoke() ?? true) &&
             ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) && ReferenceEquals(authority, _activeAuthority) &&
             authority.ApiClient.IsCurrentContext(preferenceOwner.Context) && ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv);
         void RetireReadChoice()
@@ -1352,7 +1360,7 @@ public partial class PlayerService : IDisposable
                     wasPaused = CaptureUserPausedState();
                     position = CurrentMediaPosition;
                     selectionExecuted = SelectSubtitleTrackForOwner(track,
-                        () => ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner));
+                        CurrentReadChoice);
                 }
             }
         }
@@ -5914,6 +5922,9 @@ public partial class PlayerService : IDisposable
         // Like mpv's local cycle, this gesture neither downloads subtitles nor
         // changes the saved series preference. Only demonstrated, loaded SIDs
         // participate; raw native cycling could select an unavailable row.
+        if (_mpv == null || _playbackManager?.CurrentSession == null || _closing || _switchingContent || IsLoading ||
+            !IsSubtitleMenuCurrent() || _playbackManager.CurrentSession.IsSubtitleBurnedIn) return;
+        RetireLiveSubtitleBufferForManualSelection();
         lock (_subtitleTrackStateLock)
         {
             var mpv = _mpv;
@@ -5940,6 +5951,7 @@ public partial class PlayerService : IDisposable
             mpv.SetSubtitleTrack(selected.Sid);
             var actualSid = mpv.GetPropertyDouble("sid");
             if (selected.Sid == 0 ? actualSid > 0 : (int)Math.Round(actualSid) != selected.Sid) return;
+            Interlocked.Exchange(ref _subtitleActivationIntent, new object());
             _pendingAutomaticSubtitleSelection = null;
             _pendingInitialServerSubtitleIndex = null;
             _pendingSubtitlePreferenceIndex = null;
@@ -8001,8 +8013,9 @@ public partial class PlayerService : IDisposable
             try { _liveSubtitleResumeCts?.Cancel(); } catch { }
             _liveSubtitleResumeCts?.Dispose();
             _liveSubtitleResumeCts = null;
-            SendTranslationBufferingState(false, null);
-            if (_resumeAfterLiveSubtitleBuffer && _liveSubtitleActivation?.Invoke() != false && _mpv?.IsPaused == true)
+            var current = _liveSubtitleActivation?.Invoke() != false;
+            if (current) SendTranslationBufferingState(false, null);
+            if (_resumeAfterLiveSubtitleBuffer && current && (!IsWatchTogetherPlayback || !_roomPlaybackPaused) && _mpv?.IsPaused == true)
                 _mpv.Play();
             _resumeAfterLiveSubtitleBuffer = false;
         }
@@ -8049,13 +8062,21 @@ public partial class PlayerService : IDisposable
 
     public Func<bool> BeginSubtitleActivationIntent()
     {
-        Interlocked.Exchange(ref _subtitleActivationIntent, new object());
-        return CaptureSubtitleActivationIntent();
+        RetireLiveSubtitleBufferForManualSelection();
+        var intent = new object();
+        lock (_subtitleTrackStateLock) Interlocked.Exchange(ref _subtitleActivationIntent, intent);
+        return CaptureSubtitleActivationIntent(intent);
     }
 
-    private Func<bool> CaptureSubtitleActivationIntent()
+    private void RetireLiveSubtitleBufferForManualSelection()
     {
-        var intent = Volatile.Read(ref _subtitleActivationIntent);
+        var job = Volatile.Read(ref _liveSubtitleJobId);
+        if (job > 0) ResumeAfterLiveSubtitleBuffer(job);
+    }
+
+    private Func<bool> CaptureSubtitleActivationIntent(object? expectedIntent = null)
+    {
+        var intent = expectedIntent ?? Volatile.Read(ref _subtitleActivationIntent);
         var authority = _activeAuthority; var identity = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager; var file = manager?.CurrentSession?.MediaFileId; var mpv = _mpv;
         var play = Volatile.Read(ref _playRequestGeneration);
@@ -8123,9 +8144,12 @@ public partial class PlayerService : IDisposable
                 Forced = entry.Forced,
                 Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
             }).ToList();
-            if (!Current()) return;
-            session.SubtitleUrls = [.. existing, .. downloaded];
-            SendSubtitleListToOsc();
+            lock (_subtitleTrackStateLock)
+            {
+                if (!Current()) return;
+                session.SubtitleUrls = [.. existing, .. downloaded];
+                SendSubtitleListToOsc();
+            }
 
             var preferred = preferredSubtitleId.HasValue
                 ? downloaded.FirstOrDefault(track => track.Id == preferredSubtitleId)
@@ -8136,7 +8160,7 @@ public partial class PlayerService : IDisposable
                     mediaFileId, play, nativeFile, content, liveJob, storedId) : null;
                 if (completion != null) _storedSubtitleCompletion = completion;
                 var executedOrQueued = await TrySetSubtitleTrackAndPersistAsync(1, preferred.Language, preferred,
-                    claimActivation: false).ConfigureAwait(false);
+                    claimActivation: false, acceptActivation: activation).ConfigureAwait(false);
                 if (executedOrQueued && Current()) mpv.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 if (!executedOrQueued && ReferenceEquals(_storedSubtitleCompletion, completion)) _storedSubtitleCompletion = null;
                 // The executor owns cleanup after actual SID execution. A busy

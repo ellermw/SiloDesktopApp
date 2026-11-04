@@ -52,7 +52,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAiRefreshOwnershipAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "translation-profile", "translation-newer-off", "translation-newer-track", "translation-before-completion-off" })
+        foreach (var scenario in new[] { "translation-profile", "translation-newer-off", "translation-newer-track", "translation-before-completion-off", "translation-cycle", "translation-newer-claim", "translation-buffer-off", "translation-buffer-user-pause" })
         {
             try { await CheckBusyAsync(parent, scenario); Program.Log("PASS: AI completion ownership " + scenario); }
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: AI completion " + scenario + ": " + ex); }
@@ -87,7 +87,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var wave = Path.Combine(Program.ResultDirectory, "busy-" + scenario + ".wav"); WriteWave(wave);
         Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", wave));
         mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0);
-        var startsPaused = scenario is not ("recovered-playing" or "viewer-pauses");
+        var startsPaused = scenario is not ("recovered-playing" or "viewer-pauses" or "translation-buffer-off" or "translation-buffer-user-pause");
         service.SetPaused(startsPaused); await Until(() => mpv.IsPaused == startsPaused);
         subtitles.Release.TrySetResult();
         object? replacement = null;
@@ -161,7 +161,43 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 Program.Log("PASS: held AI completion inventory GET cannot mutate replacement-profile inventory/SID/preferences/live cues.");
                 return;
             }
-            if (scenario is "translation-newer-off" or "translation-newer-track" or "translation-before-completion-off")
+            if (scenario is "translation-buffer-off" or "translation-buffer-user-pause")
+            {
+                var intent = service.BeginSubtitleActivationIntent();
+                service.RegisterSubtitleAiActivationIntent(73, 42, intent);
+                // Seed only this fixture's owned cue file/job, then perform the
+                // same real native helper pause as BeginLiveSubtitleTranslation.
+                Set(service, "_resumeAfterLiveSubtitleBuffer", true);
+                mpv.Pause();
+                await Until(() => mpv.IsPaused);
+                var genuinePause = scenario == "translation-buffer-user-pause";
+                if (genuinePause) service.SetPaused(true);
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!;
+                Require(mpv.IsPaused == genuinePause && service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0,
+                    "Manual Off retained the AI helper's temporary pause or discarded a genuine viewer pause.");
+                service.SetPaused(true);
+                Call(service, "ResumeAfterLiveSubtitleBuffer", 73L);
+                Require(mpv.IsPaused, "Retired AI buffer completion resumed the viewer's later genuine pause.");
+                Program.Log("PASS: actual native AI helper pause retires for manual Off while real viewer pause remains authoritative.");
+                return;
+            }
+            if (scenario == "translation-newer-claim")
+            {
+                var intent = service.BeginSubtitleActivationIntent();
+                service.RegisterSubtitleAiActivationIntent(73, 42, intent);
+                var refresh = service.RefreshSubtitlesAfterAiAsync(42, 73, mayActivate: intent);
+                await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                var newer = service.BeginSubtitleActivationIntent();
+                service.RegisterSubtitleAiActivationIntent(0, 42, newer);
+                subtitles.BusyResponses = 0;
+                await refresh.WaitAsync(TimeSpan.FromSeconds(8));
+                Require(service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") == priorSid &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1 }) && File.Exists(livePath),
+                    "An older stored subtitle read executed after a newer AI/download activation intent claimed ownership.");
+                Program.Log("PASS: a newer accepted AI/download intent retires an older pending stored-sidecar activation without cancelling its server job.");
+                return;
+            }
+            if (scenario is "translation-newer-off" or "translation-newer-track" or "translation-before-completion-off" or "translation-cycle")
             {
                 subtitles.BusyResponses = 0;
                 wire.HoldSubtitleList = true;
@@ -197,7 +233,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     };
                     refresh = (Task)method.Invoke(service, arguments)!;
                     await wire.SubtitleListEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", selected, true)!;
+                    if (scenario == "translation-cycle") Call(service, "CycleSubtitleBackward");
+                    else await (Task)Call(service, "SelectSubtitleByServerIndexAsync", selected, true)!;
                     LateCue();
                 }
                 var staleCompletionStartedRead = beforeCompletion && wire.SubtitleListEntered.Task.IsCompleted;
@@ -208,7 +245,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     service.ActiveSubtitleServerIndex == selected &&
                     (selected != 9 || manager.CurrentSession.SubtitleUrls.Single(t => t.Index == 9).Id == 88) &&
                     (selected < 0 ? selectedSid <= 0 : selectedSid > 0 && selectedSid != priorSid) &&
-                    wire.RequestedPreferences.SequenceEqual(new[] { 1, selected }) && mpv.IsPaused,
+                    wire.RequestedPreferences.SequenceEqual(scenario == "translation-cycle" ? new[] { 1 } : new[] { 1, selected }) && mpv.IsPaused,
                     "An older AI completion refresh overrode the later manual subtitle intent, applied SID, current checkmark or saved preference.");
                 Program.Log("PASS: older stored AI completion cannot supersede later manual selection before completion or during its held inventory GET.");
                 return;
