@@ -67,6 +67,10 @@ public partial class PlayerService : IDisposable
     /// before LoadFile. null = auto, -1 = off, 0+ = 0-based track index.
     /// </summary>
     private int? _pendingSubtitleSelection;
+    private sealed record LegacyInitialSubtitleSelection(int Ordinal, PlaybackAuthorityScope Authority,
+        ApiRequestContext Context, PlaybackManager Manager, PlaybackStartResponse Session, long PlayGeneration,
+        CancellationToken Token);
+    private LegacyInitialSubtitleSelection? _pendingLegacySubtitleSelection;
     private int? _pendingInitialServerSubtitleIndex;
     private int? _pendingInitialSubtitleFileId;
     private int? _subtitleMenuFileId;
@@ -1150,6 +1154,7 @@ public partial class PlayerService : IDisposable
 
     private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)
     {
+        _pendingLegacySubtitleSelection = null;
         if (_mpv == null || _closing) return false;
         // An open menu still belongs to the outgoing file until its inventory
         // is republished. Never interpret those indices in the replacement file.
@@ -3153,7 +3158,7 @@ public partial class PlayerService : IDisposable
             // Resolve against this file's inventory before any unrelated
             // settings round trip can delay (or prevent) subtitle selection.
             LoadSubtitles();
-            var applyInitialSubtitleSelection = true;
+            var applyInitialSubtitleSelection = !TryApplyLegacyInitialSubtitleSelection();
             if (_pendingAutomaticSubtitleSelection is { } automatic && _playbackManager?.CurrentSession is { } session)
             {
                 // Only the loaded file can attest native identity. Re-resolve the
@@ -3936,6 +3941,22 @@ public partial class PlayerService : IDisposable
         SubtitleTrackInfo? selectedTrack = null;
         _pendingInitialSubtitleFileId = session.MediaFileId;
         _pendingAutomaticSubtitleSelection = null;
+        _pendingLegacySubtitleSelection = null;
+
+        // Some legacy responses omit both subtitle inventories. Only that
+        // metadata-free contract retains its explicit embedded ordinal; never
+        // substitute an ordinal for a missing identity in a populated inventory.
+        if (explicitSignature == null && explicitSelection is >= 0 &&
+            version.SubtitleTracks is not { Count: > 0 } && session.SubtitleUrls.Count == 0 &&
+            !session.IsSubtitleBurnedIn && _playbackManager is { } legacyManager)
+        {
+            _pendingSubtitleSelection = explicitSelection;
+            _pendingInitialServerSubtitleIndex = null;
+            _pendingLegacySubtitleSelection = new(explicitSelection.Value, _activeAuthority,
+                _activeAuthority.ApiClient.CaptureContext(), legacyManager, session,
+                Volatile.Read(ref _playGeneration), _playbackCts?.Token ?? CancellationToken.None);
+            return;
+        }
 
         if (explicitSignature != null)
         {
@@ -4237,6 +4258,34 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("state_trace.txt", $"ApplyPendingSubtitleSelection failed: {ex.Message}");
         }
+    }
+
+    private bool TryApplyLegacyInitialSubtitleSelection()
+    {
+        var request = Interlocked.Exchange(ref _pendingLegacySubtitleSelection, null);
+        if (request == null) return false;
+        _pendingSubtitleSelection = null;
+        if (request.Token.IsCancellationRequested || _closing ||
+            !ReferenceEquals(request.Authority, _activeAuthority) ||
+            !request.Authority.ApiClient.IsCurrentContext(request.Context) ||
+            !ReferenceEquals(request.Manager, _playbackManager) ||
+            !ReferenceEquals(request.Session, request.Manager.CurrentSession) ||
+            request.PlayGeneration != Volatile.Read(ref _playGeneration) ||
+            _pendingInitialSubtitleFileId != request.Session.MediaFileId ||
+            request.Session.SubtitleUrls.Count != 0 || request.Session.IsSubtitleBurnedIn || _mpv == null)
+            return false;
+        var embedded = _mpv.GetEmbeddedSubtitleTracks();
+        if (request.Ordinal >= embedded.Count)
+        {
+            ShowSubtitleSelectionUnavailable();
+            return true;
+        }
+        // Actual IDs need not equal ordinal+1. Read the loaded file and avoid
+        // recording a server index or preference that this response cannot attest.
+        _mpv.SetSubtitleTrack(embedded[request.Ordinal].Id);
+        if (_mpv.GetPropertyDouble("sid") != embedded[request.Ordinal].Id)
+            ShowSubtitleSelectionUnavailable();
+        return true;
     }
 
     private static string FormatSubtitleSelection(int? sel)
@@ -5695,6 +5744,7 @@ public partial class PlayerService : IDisposable
 
     private async Task<bool> SelectSubtitleByServerIndexAsync(int serverTrackIndex, bool persist = true)
     {
+        _pendingLegacySubtitleSelection = null;
         var mpv = _mpv;
         if (mpv == null || _closing) return false;
         if (persist && serverTrackIndex >= 0 && !IsSubtitleMenuCurrent())
@@ -6283,6 +6333,7 @@ public partial class PlayerService : IDisposable
             var fileId = _playbackManager?.CurrentSession?.MediaFileId;
             if (_pendingInitialSubtitleFileId != fileId)
             {
+                _pendingLegacySubtitleSelection = null;
                 _pendingInitialServerSubtitleIndex = null;
                 _pendingAutomaticSubtitleSelection = null;
                 _pendingInitialSubtitleFileId = null;

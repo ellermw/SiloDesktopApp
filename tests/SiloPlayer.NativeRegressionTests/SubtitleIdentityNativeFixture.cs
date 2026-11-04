@@ -48,15 +48,38 @@ internal static class SubtitleIdentityNativeFixture
                 session.SubtitleUrls = [];
                 var watch = new WatchDetailResponse();
                 var version = new FileVersion { FileId = 42 };
+                foreach (var protocol in new[] { 2, 3 })
+                {
+                    session.ProtocolVersion = protocol;
+                    Call(service, "ResolveInitialSubtitleSelection", watch, version, session, null, 1, null);
+                    await Initialize();
+                    Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused && wire.PreferenceWrites == 0,
+                        "Legacy explicit pre-play ordinal was discarded when both response and watch metadata inventories were absent.");
+                }
+                Call(service, "ResolveInitialSubtitleSelection", watch, version, session, null, 99, null);
+                await Initialize();
+                Require(mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0 && mpv.IsPaused,
+                    "Legacy missing ordinal selected another track or persisted an invented server index.");
                 Call(service, "ResolveInitialSubtitleSelection", watch, version, session, null, 1, null);
-                Call(service, "ApplyPendingSubtitleSelection");
-                var owner = new CancellationTokenSource();
-                Set(service, "_loadedMediaInitCts", owner);
-                await (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
-                Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused && wire.PreferenceWrites == 0,
-                    "Legacy explicit pre-play ordinal was discarded when both response and watch metadata inventories were absent.");
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, false)!;
+                await Initialize();
+                Require(mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
+                    "Legacy pre-play fallback overwrote the later explicit Off choice.");
+                Call(service, "ResolveInitialSubtitleSelection", watch, version, session, null, 1, null);
+                api.SetProfile("legacy-retired");
+                await Initialize();
+                Require(mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0 && mpv.IsPaused,
+                    "Retired profile executed its earlier legacy subtitle ordinal.");
                 Program.Log("PASS: legacy pre-play ordinal executes only against the loaded file, preserving viewer pause and avoiding invented server preference indices.");
                 return;
+
+                async Task Initialize()
+                {
+                    Call(service, "ApplyPendingSubtitleSelection");
+                    var owner = new CancellationTokenSource();
+                    Set(service, "_loadedMediaInitCts", owner);
+                    await (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
+                }
             }
             if (regionalOnly)
             {
