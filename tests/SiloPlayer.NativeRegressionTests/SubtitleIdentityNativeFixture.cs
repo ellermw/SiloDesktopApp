@@ -531,6 +531,8 @@ internal static class SubtitleIdentityNativeFixture
 
     private static async Task VerifySubtitleCycleKeysAsync(string assets, PlayerService service, PlaybackManager manager, MpvPlayer mpv)
     {
+        await using var dispatcherShell = EpisodeQuickPlayNativeFixture.CreateOwnedDispatcherShell();
+        Require(SiloPlayer.App.MainWindowInstance != null, "Real subtitle-key routing requires the owned synthetic shell dispatcher.");
         // Load the production OSC into the same libmpv instance that has both
         // native subtitle streams. Japanese is demuxed but server-unplayable.
         // Use real keypresses with default bindings enabled, not Lua callbacks.
@@ -538,8 +540,33 @@ internal static class SubtitleIdentityNativeFixture
         var probe = Path.Combine(Program.ResultDirectory, "identity-cycle-keys.lua");
         await File.WriteAllTextAsync(probe, $$"""
             local mp = require 'mp'
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, callback)
+                if name == 'osc-set-active-subtitle' then
+                    register(name, function(index, ...)
+                        callback(index, ...)
+                        mp.commandv('script-message', 'silo-identity-key-active', index)
+                    end)
+                else
+                    register(name, callback)
+                end
+            end
             assert(loadfile([[{{script}}]]))()
-            mp.commandv('script-message', 'silo-identity-keys-ready')
+            mp.register_script_message = register
+            local readiness
+            readiness = mp.add_periodic_timer(0.01, function()
+                local forward, backward = false, false
+                for _, binding in ipairs(mp.get_property_native('input-bindings') or {}) do
+                    if (binding.priority or -1) >= 0 then
+                        if binding.key == 'j' and binding.cmd:find('/silo-subtitle-cycle-forward', 1, true) then forward = true end
+                        if binding.key == 'J' and binding.cmd:find('/silo-subtitle-cycle-backward', 1, true) then backward = true end
+                    end
+                end
+                if forward and backward then
+                    readiness:kill()
+                    mp.commandv('script-message', 'silo-identity-keys-ready')
+                end
+            end)
             """);
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var selected = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -547,7 +574,7 @@ internal static class SubtitleIdentityNativeFixture
         void Observe(string[] message)
         {
             if (message.FirstOrDefault() == "silo-identity-keys-ready") ready.TrySetResult();
-            if (message.FirstOrDefault() == "silo-identity-active" && message.Length > 1) selected.TrySetResult(message[1]);
+            if (message.FirstOrDefault() == "silo-identity-key-active" && message.Length > 1) selected.TrySetResult(message[1]);
             if (message.FirstOrDefault() == "silo-subtitle-cycle")
             {
                 Interlocked.Increment(ref gestures);

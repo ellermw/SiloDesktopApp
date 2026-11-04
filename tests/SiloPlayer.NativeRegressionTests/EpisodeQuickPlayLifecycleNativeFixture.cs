@@ -821,6 +821,8 @@ internal static partial class EpisodeQuickPlayNativeFixture
     private static object? GetField(object target, string name) => target.GetType().GetField(name, Private)!.GetValue(target);
     private static void SetField(object target, string name, object? value) => target.GetType().GetField(name, Private)!.SetValue(target, value);
 
+    internal static IAsyncDisposable CreateOwnedDispatcherShell() => new LifecycleScope();
+
     private sealed class LifecycleScope : IAsyncDisposable
     {
         private readonly FieldInfo _slot = typeof(App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
