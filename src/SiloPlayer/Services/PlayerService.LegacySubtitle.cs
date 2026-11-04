@@ -13,14 +13,17 @@ public partial class PlayerService
 
     // Only a metadata-free legacy response can retain a UI ordinal. Resolve
     // actual native IDs after FILE_LOADED; populated inventories use identity.
-    private bool TryApplyLegacyInitialSubtitleChoice()
+    private bool TryApplyLegacyInitialSubtitleChoice(long generation, CancellationTokenSource ownerCts)
     {
-        var choice = _legacySubtitleChoice;
-        if (choice is null) return false;
-        _legacySubtitleChoice = null;
-        _pendingSubtitleSelection = null;
         lock (_subtitleTrackStateLock)
         {
+            // A newer FILE_LOADED may install its choice after the caller's
+            // check. An old initializer must not even consume that new record.
+            if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return true;
+            var choice = _legacySubtitleChoice;
+            if (choice is null) return false;
+            _legacySubtitleChoice = null;
+            _pendingSubtitleSelection = null;
             if (choice.Token.IsCancellationRequested || _closing || _mpv is null ||
                 !ReferenceEquals(choice.Authority, _activeAuthority) ||
                 !choice.Authority.ApiClient.IsCurrentIdentityContext(choice.Identity) ||

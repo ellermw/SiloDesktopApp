@@ -99,31 +99,58 @@ internal static class SubtitleIdentityNativeFixture
                 }
                 else if (closeout == "preplay-legacy")
                 {
-                    var legacySession = new PlaybackStartResponse { SessionId = "legacy", ProtocolVersion = 2, MediaFileId = 42, PlayMethod = "direct" };
-                    typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, legacySession);
-                    Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse { ContentId = "movie" }, new FileVersion { FileId = 42 }, legacySession, null, (int?)1, null);
-                    Require(Get(service, "_pendingInitialServerSubtitleIndex") is null && Get(service, "_pendingSubtitleSelection") is int pending && pending == 1,
-                        "Legacy pre-play fixture did not establish its explicit unresolved ordinal.");
-                    Call(service, "ApplyPendingSubtitleSelection");
-                    // Pre-load holds Off; the real loaded-file executor resolves
-                    // native IDs, without guessing that an ID equals ordinal+1.
-                    Call(service, "TryApplyLegacyInitialSubtitleChoice");
-                    Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused && wire.PreferenceWrites == 0,
-                        "Explicit legacy pre-play ordinal was forced Off or changed pause/preferences.");
-                    foreach (var retire in new[] { "profile", "inventory", "manual", "access" })
+                    using var initializer = new CancellationTokenSource();
+                    using var retiredInitializer = new CancellationTokenSource();
+                    var generation = (long)Get(service, "_loadedMediaInitGeneration")!;
+                    Set(service, "_loadedMediaInitCts", initializer);
+                    try
                     {
-                        legacySession.SubtitleUrls.Clear();
+                        object? ApplyLegacy(long applyGeneration, CancellationTokenSource applyOwner)
+                        {
+                            var method = typeof(PlayerService).GetMethod("TryApplyLegacyInitialSubtitleChoice", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                            // The preserved pre-fix app has no private owner args;
+                            // run the identical behavioral assertion against it.
+                            return method.Invoke(service, method.GetParameters().Length == 0 ? [] : [applyGeneration, applyOwner]);
+                        }
+                        var legacySession = new PlaybackStartResponse { SessionId = "legacy", ProtocolVersion = 2, MediaFileId = 42, PlayMethod = "direct" };
+                        typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, legacySession);
                         Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse { ContentId = "movie" }, new FileVersion { FileId = 42 }, legacySession, null, (int?)1, null);
-                        mpv.SetSubtitleTrack(0);
-                        if (retire == "profile") api.SetProfile("replacement");
-                        else if (retire == "inventory") legacySession.SubtitleUrls.Add(new() { Index = 20, TrackId = "identified", Source = "embedded" });
-                        else if (retire == "manual") await service.SetSubtitleTrackAndPersistAsync(0, null, null);
-                        else { var captured = api.CaptureContext(); api.TryInvalidateAccessContext(captured, out _); }
-                        var beforeApplyWrites = wire.PreferenceWrites;
-                        Call(service, "TryApplyLegacyInitialSubtitleChoice");
-                        Require(mpv.GetPropertyDouble("sid") == (retire == "access" ? 2 : 0) && mpv.IsPaused && wire.PreferenceWrites == beforeApplyWrites,
-                            "Legacy pre-play execution did not retain identity-only access compatibility or reject retired/populated/newer-manual ownership.");
+                        Require(Get(service, "_pendingInitialServerSubtitleIndex") is null && Get(service, "_pendingSubtitleSelection") is int pending && pending == 1,
+                            "Legacy pre-play fixture did not establish its explicit unresolved ordinal.");
+                        var boundary = Environment.GetEnvironmentVariable("SILO_NATIVE_LEGACY_BOUNDARY") ?? "";
+                        Require(boundary is "" or "publisher" or "initializer", "Unknown legacy boundary scope.");
+                        if (boundary != "initializer") await VerifyLegacyPublisherGateAsync(service, legacySession);
+                        Call(service, "ApplyPendingSubtitleSelection");
+                        var pendingLegacy = Get(service, "_legacySubtitleChoice");
+                        foreach (var stale in boundary == "publisher" ? Array.Empty<(long, CancellationTokenSource)>() :
+                            new[] { (generation - 1, retiredInitializer), (generation, retiredInitializer), (generation - 1, initializer) })
+                        {
+                            ApplyLegacy(stale.Item1, stale.Item2);
+                            Require(ReferenceEquals(pendingLegacy, Get(service, "_legacySubtitleChoice")) && Get(service, "_pendingSubtitleSelection") is int retained && retained == 1 &&
+                                mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
+                                "A retired loaded-media initializer consumed or applied the successor's legacy subtitle choice.");
+                        }
+                        // Pre-load holds Off; the real loaded-file executor resolves
+                        // native IDs, without guessing that an ID equals ordinal+1.
+                        ApplyLegacy(generation, initializer);
+                        Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused && wire.PreferenceWrites == 0,
+                            "Explicit legacy pre-play ordinal was forced Off or changed pause/preferences.");
+                        foreach (var retire in new[] { "profile", "inventory", "manual", "access" })
+                        {
+                            legacySession.SubtitleUrls.Clear();
+                            Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse { ContentId = "movie" }, new FileVersion { FileId = 42 }, legacySession, null, (int?)1, null);
+                            mpv.SetSubtitleTrack(0);
+                            if (retire == "profile") api.SetProfile("replacement");
+                            else if (retire == "inventory") legacySession.SubtitleUrls.Add(new() { Index = 20, TrackId = "identified", Source = "embedded" });
+                            else if (retire == "manual") await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+                            else { var captured = api.CaptureContext(); api.TryInvalidateAccessContext(captured, out _); }
+                            var beforeApplyWrites = wire.PreferenceWrites;
+                            ApplyLegacy(generation, initializer);
+                            Require(mpv.GetPropertyDouble("sid") == (retire == "access" ? 2 : 0) && mpv.IsPaused && wire.PreferenceWrites == beforeApplyWrites,
+                                "Legacy pre-play execution did not retain identity-only access compatibility or reject retired/populated/newer-manual ownership.");
+                        }
                     }
+                    finally { Set(service, "_loadedMediaInitCts", null); }
                 }
                 else if (closeout == "async-service")
                 {
@@ -500,6 +527,67 @@ internal static class SubtitleIdentityNativeFixture
         try { await action(); }
         catch (ArgumentException) { return; }
         throw new InvalidOperationException("SiloCast reported success for an unavailable subtitle.");
+    }
+
+    private static async Task VerifyLegacyPublisherGateAsync(PlayerService service, PlaybackStartResponse session)
+    {
+        var gate = Get(service, "_subtitleTrackStateLock")!;
+        var before = Get(service, "_legacySubtitleChoice");
+        Require(before != null, "Legacy publication probe requires a pending choice.");
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var holder = Task.Run(() =>
+        {
+            lock (gate)
+            {
+                held.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Owned legacy publication gate was not released.");
+            }
+        });
+        Exception? failure = null;
+        var publisherStarted = false;
+        var publisher = new Thread(() =>
+        {
+            try
+            {
+                started.TrySetResult();
+                Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse { ContentId = "movie" },
+                    new FileVersion { FileId = 42 }, session, null, (int?)0, null);
+            }
+            catch (Exception ex) { failure = ex; }
+            finally { exited.TrySetResult(); }
+        }) { IsBackground = true, Name = "Owned legacy subtitle publisher" };
+        try
+        {
+            await held.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            publisher.Start();
+            publisherStarted = true;
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var deadline = DateTime.UtcNow.AddSeconds(4);
+            while (!exited.Task.IsCompleted && (publisher.ThreadState & System.Threading.ThreadState.WaitSleepJoin) == 0)
+            {
+                if (DateTime.UtcNow >= deadline) throw new TimeoutException("Legacy publisher reached no structural wait/exit boundary.");
+                await Task.Delay(1);
+            }
+            Require(!exited.Task.IsCompleted && ReferenceEquals(before, Get(service, "_legacySubtitleChoice")) &&
+                Get(service, "_pendingSubtitleSelection") is int ordinal && ordinal == 1,
+                "A legacy choice publisher mutated pending state outside the shared selection gate.");
+        }
+        finally
+        {
+            release.Set();
+            await holder.WaitAsync(TimeSpan.FromSeconds(5));
+            if (publisherStarted)
+                await exited.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        if (failure != null) throw new InvalidOperationException("Owned legacy publisher failed.", failure);
+        Require(!ReferenceEquals(before, Get(service, "_legacySubtitleChoice")) && Get(service, "_pendingSubtitleSelection") is int next && next == 0,
+            "The released legacy publisher did not publish its new choice.");
+        Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse { ContentId = "movie" },
+            new FileVersion { FileId = 42 }, session, null, (int?)1, null);
+        Program.Log("PASS: actual legacy choice publisher waits for the shared consumption gate before changing pending state.");
     }
 
     private static bool HasPendingPreference(PlayerService service)
