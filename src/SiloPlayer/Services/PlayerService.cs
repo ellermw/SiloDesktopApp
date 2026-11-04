@@ -2091,6 +2091,9 @@ public partial class PlayerService : IDisposable
         App.Services.GetService<ThemeMusicService>()?.Interrupt();
         var connectionObserver = PlaybackConnectionService.For(_activeAuthority.PlaybackApi);
         var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _authorityLifetimeCts.Token);
+        // A successor can cancel and dispose the published source while this
+        // request waits for the gate. Its token remains safe to observe.
+        var ownerToken = ownerCts.Token;
         var previous = Interlocked.Exchange(ref _playRequestCts, ownerCts);
         try { previous?.Cancel(); }
         catch (ObjectDisposedException) { }
@@ -2100,13 +2103,13 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            await _playRequestGate.WaitAsync(ownerCts.Token);
+            await _playRequestGate.WaitAsync(ownerToken);
             gateEntered = true;
             if (expectedOwner is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner))
             { ReportAbandonedPlayback(expectedOwner); return; }
             ResetStartupTelemetry();
             SetConnectionMediaActive(true);
-            ownerCts.Token.ThrowIfCancellationRequested();
+            ownerToken.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _playRequestGeneration))
             { ReportAbandonedPlayback(expectedOwner); return; }
 
@@ -2121,7 +2124,7 @@ public partial class PlayerService : IDisposable
                 prefetchedWatchDetail,
                 libraryId,
                 shuffleId,
-                ownerCts.Token,
+                ownerToken,
                 sourceVersionPinned, expectedOwner);
         }
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested ||
