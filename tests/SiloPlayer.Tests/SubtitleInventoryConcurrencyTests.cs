@@ -81,6 +81,51 @@ public sealed class SubtitleInventoryConcurrencyTests
     }
 
     [Fact]
+    public void ManualPickRevalidatesTheSessionAndExactRowBeforeChangingPendingState()
+    {
+        var selection = Between(Read("SiloPlayer", "PlayerService.cs"),
+            "private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", "private bool MatchesSubtitlePreference(");
+        var locked = selection[selection.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal)..];
+        var record = locked.IndexOf("if (!manager.TryRecordLocalSubtitleSelection(selectionSession, track))", StringComparison.Ordinal);
+        Assert.True(record >= 0);
+        var validate = locked[..record];
+        Assert.Contains("!ReferenceEquals(selectionSession, manager?.CurrentSession)", validate);
+        Assert.Contains("selectionSession?.SubtitleUrls.Contains(track) != true", validate);
+        Assert.Contains("selectedSubtitleIndex = track?.Index ?? -1;", validate);
+        var refuse = locked[record..locked.IndexOf("_pendingExplicitInitialSubtitleOwner = null;", StringComparison.Ordinal)];
+        Assert.Contains("return false;", refuse);
+        foreach (var mutation in new[] { "_pendingExplicitInitialSubtitleOwner = null;", "_pendingAutomaticSubtitleSelection = null;",
+            "_activeSubtitleServerIndex = selectedSubtitleIndex;", "_pendingSubtitlePreferenceIndex = selectedSubtitleIndex;",
+            "_pendingSubtitlePreferenceOwner = preferenceOwner;" })
+            Assert.True(locked.IndexOf(mutation, StringComparison.Ordinal) > record, $"State changed before row validation: {mutation}");
+        Assert.DoesNotContain("manager.RecordLocalSubtitleSelection(", selection);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RetiredClickedRowCannotRecordARemovedOrReusedIndex(bool reuseIndex)
+    {
+        using var http = new HttpClient();
+        var api = new SiloApiClient(http);
+        using var auth = new AuthService(api, new(api));
+        using var manager = new PlaybackManager(new(api), new(api), auth, api);
+        var retained = new SubtitleTrackInfo { Index = 1, TrackId = "retained" };
+        var clicked = new SubtitleTrackInfo { Index = 2, TrackId = "clicked" };
+        var session = new PlaybackStartResponse { MediaFileId = 42, ProtocolVersion = 3, SubtitleUrls = [retained, clicked] };
+        typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+        manager.RecordLocalSubtitleSelection(retained.Index, isAutomatic: true);
+        var intent = manager.CaptureLocalSubtitleIntent();
+        lock (manager.SubtitleInventorySyncRoot)
+            session.SubtitleUrls = reuseIndex ? [retained, new() { Index = 2, TrackId = "unrelated" }] : [retained];
+
+        Assert.False(manager.TryRecordLocalSubtitleSelection(session, clicked));
+        Assert.Equal(intent, manager.CaptureLocalSubtitleIntent());
+        Assert.Equal(retained.Index, manager.SubtitleSelectionForLoad);
+        Assert.True(manager.IsSubtitleSelectionAutomatic);
+    }
+
+    [Fact]
     public async Task UrlEnumerationHoldsTheInventoryGateUntilEveryRowIsRead()
     {
         using var http = new HttpClient();

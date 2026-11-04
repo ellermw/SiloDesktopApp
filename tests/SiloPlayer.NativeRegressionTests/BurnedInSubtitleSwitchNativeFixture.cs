@@ -301,6 +301,49 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             }
             Program.Log("PASS: persistent terminal/request rejection of bitmap, Off and text picks retains the executed stream, intent and pause without reloads, retries or preference writes.");
 
+            // A failed room replan can leave its pause slot populated without
+            // a pending native load. It must not make later rejection preserve
+            // this request's temporary freeze/loading state indefinitely.
+            foreach (var paused in new[] { false, true })
+            foreach (var requested in new[] { Dvd, -1 })
+            {
+                var baseline = requested == Dvd ? Spanish : Dvd;
+                if (service.ActiveSubtitleServerIndex != baseline)
+                {
+                    var baselineTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == baseline);
+                    await Loaded(() => service.SetSubtitleTrackAndPersistAsync(baseline + 1, baselineTrack.Language, baselineTrack));
+                }
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetWatchTogetherPlayback(true);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var retainedSession = manager.CurrentSession;
+                var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                var retainedSid = mpv.GetPropertyDouble("sid");
+                var generation = Get(service, "_fileLoadGeneration");
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                Require(!service.IsLoading && !service.IsSwitchingContent && Get(service, "_fileLoadTimeoutCts") == null,
+                    "The stale-pause fixture unexpectedly has a pending native load.");
+                Set(service, "_restorePausedAfterLoad", !paused);
+                wire.RejectTrackChanges = true;
+                try
+                {
+                    Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", requested, true)!,
+                        "A rejected subtitle with a stale pause slot was reported as executed.");
+                    Require(!service.IsLoading && !service.IsSwitchingContent && Get(service, "_restorePausedAfterLoad") == null,
+                        "A stale room pause slot preserved loading without a pending FILE_LOADED.");
+                    await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                    Require(ReferenceEquals(manager.CurrentSession, retainedSession) && manager.CaptureLocalSubtitleIntent() == retainedIntent &&
+                        service.ActiveSubtitleServerIndex == baseline && mpv.GetPropertyDouble("sid") == retainedSid &&
+                        Equals(Get(service, "_fileLoadGeneration"), generation) && Get(service, "_fileLoadTimeoutCts") == null &&
+                        Get(service, "_pendingSubtitlePreferenceOwner") == null && wire.PreferenceWrites == writes && wire.Replans.Count == replans + 1,
+                        "Rejected burn-in with a stale pause slot changed the stream, subtitle intent, pause or preference.");
+                }
+                finally { wire.RejectTrackChanges = false; service.SetWatchTogetherPlayback(false); }
+            }
+            Program.Log("PASS: rejected bitmap and Off replans ignore stale room pause slots without pending native loads and restore the surviving stream and room pause intent.");
+
             // Rejection must resolve transport intent at rollback, not from the
             // pause captured before the request. Hold the actual wire request
             // while room authority or the viewer changes that intent.

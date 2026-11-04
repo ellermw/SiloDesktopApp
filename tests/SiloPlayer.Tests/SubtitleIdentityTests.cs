@@ -32,10 +32,12 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("_switchingContent = false;", rollback);
         Assert.Contains("IsLoading = false;", rollback);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
-        var inheritedLoadCapture = method.IndexOf("var inheritedPendingLoad = _restorePausedAfterLoad.HasValue;", StringComparison.Ordinal);
+        var inheritedLoadCapture = method.IndexOf("var inheritedPendingLoad = Volatile.Read(ref _fileLoadTimeoutCts);", StringComparison.Ordinal);
         var beginReplanLoading = method.IndexOf("_switchingContent = true;", StringComparison.Ordinal);
         Assert.True(inheritedLoadCapture >= 0 && beginReplanLoading > inheritedLoadCapture);
-        Assert.Contains("var preservePendingLoad = !loadStarted && inheritedPendingLoad;", rollback);
+        Assert.Contains("var preservePendingLoad = !loadStarted && inheritedPendingLoad != null &&", rollback);
+        Assert.Contains("ReferenceEquals(inheritedPendingLoad, Volatile.Read(ref _fileLoadTimeoutCts))", rollback);
+        Assert.DoesNotContain("var inheritedPendingLoad = _restorePausedAfterLoad.HasValue;", method);
         var ownLoadingState = rollback.IndexOf("if (!preservePendingLoad)", StringComparison.Ordinal);
         var clearLoading = rollback.IndexOf("_switchingContent = false;", StringComparison.Ordinal);
         Assert.True(ownLoadingState >= 0 && clearLoading > ownLoadingState);

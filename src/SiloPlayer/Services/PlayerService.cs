@@ -1141,12 +1141,23 @@ public partial class PlayerService : IDisposable
         var ownerToken = _authorityLifetimeCts.Token;
         var mpv = _mpv;
         var selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
-        var selectionFileId = manager?.CurrentSession?.MediaFileId;
+        var selectionSession = manager?.CurrentSession;
+        var selectionFileId = selectionSession?.MediaFileId;
         var selectedSubtitleIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
         var preferenceOwner = new SubtitlePreferenceOwner(authority, authority.ApiClient.CaptureContext(), manager, selectionFileId, GetPrefsKey(), ownerToken);
         var deferLocalSelection = _switchingContent || IsLoading || _subtitleVersionSwitchActive;
         lock (_subtitleTrackStateLock)
         {
+            // A refresh can retire or reindex the clicked row while this call
+            // waits for the lock. Refuse before changing intent or pending state.
+            if (!ReferenceEquals(manager, _playbackManager) ||
+                !ReferenceEquals(selectionSession, manager?.CurrentSession) ||
+                track != null && (track.Unplayable || selectionSession?.SubtitleUrls.Contains(track) != true))
+            {
+                ShowSubtitleSelectionUnavailable();
+                return false;
+            }
+            selectedSubtitleIndex = track?.Index ?? -1;
             preferenceOwner = preferenceOwner with
             {
                 PreviousIntent = _pendingSubtitlePreferenceOwner?.PreviousIntent ??
@@ -1154,15 +1165,22 @@ public partial class PlayerService : IDisposable
                 FollowsVersionSwitch = selectedSubtitleIndex < 0 && _subtitleVersionSwitchActive,
                 RequestedTrack = track,
             };
+            if (manager != null && selectionSession?.ProtocolVersion >= 3)
+            {
+                if (!manager.TryRecordLocalSubtitleSelection(selectionSession, track))
+                {
+                    ShowSubtitleSelectionUnavailable();
+                    return false;
+                }
+                preferenceOwner = preferenceOwner with { RequestedIntent = manager.CaptureLocalSubtitleIntent() };
+            }
             _pendingExplicitInitialSubtitleOwner = null;
             _pendingAutomaticSubtitleSelection = null;
             _activeSubtitleServerIndex = selectedSubtitleIndex;
             _pendingSubtitlePreferenceIndex = selectedSubtitleIndex;
             _pendingInitialSubtitleFileId = selectionFileId;
-            if (manager?.CurrentSession?.ProtocolVersion >= 3)
+            if (selectionSession?.ProtocolVersion >= 3)
             {
-                manager.RecordLocalSubtitleSelection(selectedSubtitleIndex < 0 ? null : selectedSubtitleIndex);
-                preferenceOwner = preferenceOwner with { RequestedIntent = manager.CaptureLocalSubtitleIntent() };
                 // PlaybackManager retains identity and rebinds it to each accepted
                 // inventory. A raw pending index must not outrank that resolution.
                 _pendingInitialServerSubtitleIndex = null;
@@ -5250,16 +5268,17 @@ public partial class PlayerService : IDisposable
         var wasPaused = (_switchingContent || IsLoading) && _restorePausedAfterLoad is bool pendingPause
             ? pendingPause : CaptureUserPausedState();
         bool PauseIntent() => IsWatchTogetherPlayback ? _roomPlaybackPaused : _subtitleReplanPauseIntent ?? wasPaused;
-        // Room pause/play can populate the pause slot during this request even
-        // when no FILE_LOADED is pending. Only an inherited load owns that slot.
-        var inheritedPendingLoad = _restorePausedAfterLoad.HasValue;
+        // Room pause/play can leave a pause slot even when no FILE_LOADED is
+        // pending. Only an actual inherited load owns the loading state.
+        var inheritedPendingLoad = Volatile.Read(ref _fileLoadTimeoutCts);
         var selectionIntent = manager.CaptureLocalSubtitleIntent();
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
         void RefuseTentativeSubtitleSelection()
         {
             // A rejected request never owns an already pending FILE_LOADED.
             // Its loading state and pause slot still belong to that load.
-            var preservePendingLoad = !loadStarted && inheritedPendingLoad;
+            var preservePendingLoad = !loadStarted && inheritedPendingLoad != null &&
+                ReferenceEquals(inheritedPendingLoad, Volatile.Read(ref _fileLoadTimeoutCts));
             if (!preservePendingLoad)
             {
                 _prematureEofRecoveryActive = false;
