@@ -453,6 +453,32 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await MarkerDetailsNativeFixture.RunReviewAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-compatibility")
+            {
+                await SubtitleIdentityNativeFixture.RunAsync(parent);
+                await SubtitleIdentityNativeFixture.RunAsync(parent, unresolvedOnly: true);
+                await SubtitleIdentityNativeFixture.RunAsync(parent, regionalOnly: true);
+                await Oct24SubtitleAdoptionNativeFixture.RunAsync(parent);
+                await BurnedInSubtitleSwitchNativeFixture.RunAsync(parent);
+                await WatchPartyNativeFixture.RunAsync();
+                await WatchPartyTimingNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-regional")
+            {
+                await SubtitleIdentityNativeFixture.RunAsync(parent, regionalOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-unresolved")
+            {
+                await SubtitleIdentityNativeFixture.RunAsync(parent, unresolvedOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-identity")
+            {
+                await SubtitleIdentityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "burned-in-subtitle-switch")
             {
                 await BurnedInSubtitleSwitchNativeFixture.RunAsync(parent);

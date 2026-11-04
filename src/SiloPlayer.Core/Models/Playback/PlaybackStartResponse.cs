@@ -22,6 +22,7 @@ public class PlaybackStartResponse
     public double TimelineOffsetSeconds { get; set; }
     public bool CanSeekAnywhere { get; set; } = true;
     public string? SelectedSubtitleTrackId { get; set; }
+    public int? SelectedSubtitleTrackIndex { get; set; }
     public string SubtitleMode { get; set; } = "off";
 
     /// <summary>
@@ -39,6 +40,10 @@ public class PlaybackStartResponse
 
 public class SubtitleTrackInfo
 {
+    public int? StreamIndex { get; set; }
+    public string? ContainerTrackId { get; set; }
+    public bool? NativeSelectable { get; set; }
+    public bool Unplayable { get; set; }
     public string? SyncKey { get; set; }
     public string? TrackId { get; set; }
     public long? Id { get; set; }
@@ -47,6 +52,8 @@ public class SubtitleTrackInfo
     public string Language { get; set; } = "";
     public string? Codec { get; set; }
     public string Label { get; set; } = "";
+    // The unsynthesized server label, used only as a native-title hint.
+    public string? NativeTitle { get; set; }
     public string? Source { get; set; }
     public string Url { get; set; } = "";
     public string? Delivery { get; set; }

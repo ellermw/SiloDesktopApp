@@ -778,7 +778,7 @@ public sealed partial class MpvPlayer : IDisposable
         Command("show-text", text, durationMs.ToString());
     }
 
-    public void AddSubtitle(string url, string? title = null, string? lang = null, bool select = false)
+    public bool AddSubtitle(string url, string? title = null, string? lang = null, bool select = false)
     {
         ThrowIfNotInitialized();
 
@@ -791,7 +791,7 @@ public sealed partial class MpvPlayer : IDisposable
                 args.Add(lang);
         }
 
-        Command(args.ToArray());
+        return Command(args.ToArray());
     }
 
     /// <summary>Reloads an already-added subtitle track after its local file

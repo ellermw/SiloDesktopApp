@@ -118,14 +118,23 @@ public sealed class PlayerServiceSourceTests
 
         Assert.Contains("CanUseNativeEmbeddedSubtitleTrack()", source, StringComparison.Ordinal);
         Assert.Contains("TransportKind == PlaybackTransportKind.DirectProgressive", source, StringComparison.Ordinal);
-        Assert.Contains("SelectSubtitleSidecar(track)", source, StringComparison.Ordinal);
+        Assert.Contains("SelectSubtitleSidecar(track, CurrentSelection)", source, StringComparison.Ordinal);
         // The server windows embedded text extraction only for an explicit
         // position/duration, and nothing slides a window during playback
         // (the XAML overlay tick that once did is never activated). A windowed
         // sidecar therefore lost every cue ~10 minutes after selection.
         // The complete-track URL is added directly, or downloaded whole first.
-        Assert.Contains("var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
-        Assert.Contains("_mpv.AddSubtitle(source, label, track.Language, select: true);", source, StringComparison.Ordinal);
+        Assert.Contains("source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
+        var sidecar = source[source.IndexOf("private bool SelectSubtitleSidecar(", StringComparison.Ordinal)..];
+        sidecar = sidecar[..sidecar.IndexOf("private long CurrentSubtitleSidecarGeneration()", StringComparison.Ordinal)];
+        var add = sidecar.IndexOf("mpv.AddSubtitle(source, label, track.Language, select: false)", StringComparison.Ordinal);
+        var ownerCheck = sidecar.IndexOf("if (!currentSelection() || !added || newIds.Length != 1)", add, StringComparison.Ordinal);
+        var cleanup = sidecar.IndexOf("if (added && newIds.Length == 1) mpv.RemoveSubtitle(newIds[0]);", ownerCheck, StringComparison.Ordinal);
+        var select = sidecar.IndexOf("mpv.SetSubtitleTrack(sid);", cleanup, StringComparison.Ordinal);
+        Assert.True(add >= 0 && ownerCheck > add && cleanup > ownerCheck && select > cleanup,
+            "A complete sidecar add must verify its owner and actual new native ID, removing a retired owner's addition.");
+        Assert.Contains("fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", sidecar[ownerCheck..select]);
+        Assert.Contains("if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);", sidecar[cleanup..select]);
         Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
         Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TickSubtitleWindows", source, StringComparison.Ordinal);
@@ -186,9 +195,14 @@ public sealed class PlayerServiceSourceTests
         var method = source[methodStart..methodEnd];
 
         Assert.Contains("requested.External == true ? \"external\" : \"embedded\"", method, StringComparison.Ordinal);
-        Assert.Contains("sourceInventory.IndexOf(requested)", method, StringComparison.Ordinal);
-        Assert.Contains("ElementAtOrDefault(sourceOrdinal)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourceInventory.IndexOf(requested)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("ElementAtOrDefault(sourceOrdinal)", method, StringComparison.Ordinal);
         Assert.Contains("string.Equals(track.Source, requestedSource", method, StringComparison.Ordinal);
+        Assert.Contains("track.StreamIndex == streamIndex", method, StringComparison.Ordinal);
+        Assert.Contains("identities.Length == 1 && !identities[0].Unplayable", method, StringComparison.Ordinal);
+        Assert.Contains("if (matches.Length == 1) selectedTrack = matches[0];", method, StringComparison.Ordinal);
+        Assert.Contains("track.Forced == (requested.Forced == true)", method, StringComparison.Ordinal);
+        Assert.Contains("track.HearingImpaired == (requested.HearingImpaired == true)", method, StringComparison.Ordinal);
     }
 
 
@@ -539,14 +553,13 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        var methodStart = source.IndexOf("private async Task SelectSubtitleByServerIndexAsync", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("private void SelectSubtitleTrack", methodStart, StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private bool SelectSubtitleTrack", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0);
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
-        Assert.Contains("SetSubtitleTrackAndPersistAsync(0, null, null)", method);
-        Assert.Contains("SetSubtitleTrackAndPersistAsync(mpvTrackIndex, track.Language, track)", method);
+        Assert.Contains("TrySetSubtitleTrackAndPersistAsync(serverTrackIndex < 0 ? 0 : 1, track?.Language, track)", method);
         Assert.Contains("osc-set-active-subtitle", method);
     }
 
@@ -1428,9 +1441,9 @@ public sealed class PlayerServiceSourceTests
         var invalidate = stop.IndexOf("lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _subtitleSidecarGeneration++; }", StringComparison.Ordinal);
         Assert.InRange(invalidate, stop.IndexOf("lock (_subtitleSyncGate)", StringComparison.Ordinal), stop.IndexOf("_subtitleSyncFiles.Clear();", StringComparison.Ordinal));
 
-        var persist = source[source.IndexOf("public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
+        var persist = source[source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
         AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != selected");
-        var persistSelect = persist.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
+        var persistSelect = persist.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
         var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", persistSelect, StringComparison.Ordinal);
         // Restoration uses the state from just before the sub-add, not from before the download.
         Assert.InRange(persist.IndexOf("wasPaused = CaptureUserPausedState();", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
@@ -1441,13 +1454,17 @@ public sealed class PlayerServiceSourceTests
         Assert.InRange(handOff, loadChanged, persistSelect);
         Assert.DoesNotContain("return;", persist[loadChanged..persistSelect], StringComparison.Ordinal);
         Assert.True(persist.IndexOf("SaveSubtitlePrefsAsync(", persistSelect, StringComparison.Ordinal) > persistSelect);
-        var byIndex = source[source.IndexOf("private async Task SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
-        AssertPrefetchedThenCurrentBeforeSelection(byIndex, "_activeSubtitleServerIndex != serverTrackIndex");
+        var byIndex = source[source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
+        var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarAsync(track);", StringComparison.Ordinal);
+        var byIndexSelect = byIndex.IndexOf("SelectSubtitleTrackForOwner(track, CurrentSelection)", byIndexPrefetch, StringComparison.Ordinal);
+        Assert.InRange(byIndex.IndexOf("if (!CurrentSelection()) return false;", byIndexPrefetch, StringComparison.Ordinal), byIndexPrefetch, byIndexSelect);
+        Assert.Contains("CurrentSubtitleSidecarGeneration() == sidecarGeneration", byIndex);
+        Assert.Contains("Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration", byIndex);
     }
 
     private static void AssertPrefetchedThenCurrentBeforeSelection(string method, string currentCheck)
     {
-        var select = method.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
+        var select = method.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
         var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", select, StringComparison.Ordinal);
         var captured = method.LastIndexOf("var sidecarGeneration = CurrentSubtitleSidecarGeneration();", prefetch, StringComparison.Ordinal);
         var current = method.IndexOf(currentCheck, prefetch, StringComparison.Ordinal);
