@@ -8,7 +8,7 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Player;
 using SiloPlayer.Services;
 
-internal static class SubtitleIdentityNativeFixture
+internal static partial class SubtitleIdentityNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent, bool unresolvedOnly = false, bool regionalOnly = false)
     {
@@ -58,9 +58,13 @@ internal static class SubtitleIdentityNativeFixture
                 : embedded.Any(t => t.Id == 1 && t.StreamIndex == 1) && embedded.Any(t => t.Id == 2 && t.StreamIndex == 2)),
                 "Loaded Matroska subtitle identities do not match the attested demuxer namespace.");
             var closeout = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
-            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "async-service" or "async-core-probe" or "retired-read-cache" or "mime-busy" or "mime-ready" or "refresh-raw-labels")
+            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "async-service" or "async-core-probe" or "retired-read-cache" or "mime-busy" or "mime-ready" or "refresh-raw-labels" or "async-prompt-cancel" or "async-late-cleanup" or "fallback-deadline" or "cast-poll")
             {
-                if (closeout == "refresh-raw-labels")
+                if (closeout == "async-prompt-cancel") await CheckPromptCancellationAsync(mpv, subtitles);
+                else if (closeout == "async-late-cleanup") await CheckLateCleanupAsync(mpv, subtitles, assets);
+                else if (closeout == "fallback-deadline") await CheckFallbackDeadlineAsync(service, manager, mpv, subtitles, wire);
+                else if (closeout == "cast-poll") await CheckCastPollingAsync(service, manager, mpv, subtitles, wire);
+                else if (closeout == "refresh-raw-labels")
                 {
                     var cases = new (string? Release, string? Provider, string? Title, string Expected)[]
                     {
@@ -737,6 +741,13 @@ internal static class SubtitleIdentityNativeFixture
             public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         private Gate? next;
+        private Gate? nextNative;
+        public Gate HoldNextNative()
+        {
+            var gate = new Gate();
+            if (Interlocked.CompareExchange(ref nextNative, gate, null) is not null) throw new InvalidOperationException("A native subtitle response is already held.");
+            return gate;
+        }
         public Gate HoldNext()
         {
             var gate = new Gate();
@@ -759,10 +770,13 @@ internal static class SubtitleIdentityNativeFixture
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
                     var count = Interlocked.Increment(ref Requests);
-                    if (request.Request.UserAgent?.Contains("mpv", StringComparison.OrdinalIgnoreCase) == true ||
-                        request.Request.UserAgent?.Contains("Lavf", StringComparison.OrdinalIgnoreCase) == true)
+                    var native = request.Request.UserAgent?.Contains("mpv", StringComparison.OrdinalIgnoreCase) == true ||
+                        request.Request.UserAgent?.Contains("Lavf", StringComparison.OrdinalIgnoreCase) == true;
+                    if (native)
                         Interlocked.Increment(ref NativeRequests);
-                    if (Interlocked.Exchange(ref next, null) is { } held)
+                    var held = native ? Interlocked.Exchange(ref nextNative, null) : null;
+                    held ??= Interlocked.Exchange(ref next, null);
+                    if (held != null)
                     {
                         held.Started.TrySetResult();
                         await held.Release.Task;
