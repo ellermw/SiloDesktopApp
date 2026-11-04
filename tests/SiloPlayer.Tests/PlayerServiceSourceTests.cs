@@ -1302,14 +1302,13 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url,", prefetch);
         Assert.DoesNotContain("CreateAuthenticatedRequest", prefetch);
         Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;", prefetch);
-        Assert.Contains("return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;", prefetch);
-        Assert.Contains("allowUrlFallback = !read.WasBusy;", prefetch);
-        Assert.Contains("return allowUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;", prefetch);
-        var fallbackRead = prefetch.IndexOf("await mpv.AddSubtitleUnselectedAsync(", StringComparison.Ordinal);
-        var fallbackLock = prefetch.IndexOf("lock (_subtitleTrackStateLock)", fallbackRead, StringComparison.Ordinal);
-        var fallbackOwner = prefetch.IndexOf("if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;", fallbackLock, StringComparison.Ordinal);
-        var fallbackCache = prefetch.IndexOf("_loadedExternalSubtitleSids[track.Index] = sid;", fallbackOwner, StringComparison.Ordinal);
-        Assert.True(fallbackRead >= 0 && fallbackLock > fallbackRead && fallbackOwner > fallbackLock && fallbackCache > fallbackOwner);
+        Assert.Contains("if (read.Outcome != SubtitleSidecarReadOutcome.Ready) return SubtitlePrefetchOutcome.Error;", prefetch);
+        // Async sub-add still performs a remote read on mpv's core thread.
+        // Every remote failure must finish as a refusal, never a native fetch.
+        Assert.DoesNotContain("AddSubtitleUnselectedAsync", source);
+        Assert.DoesNotContain("ReadUrlFallbackAsync", prefetch);
+        Assert.DoesNotContain("_loadedExternalSubtitleSids[track.Index] = sid;", prefetch);
+        Assert.Contains("await File.WriteAllBytesAsync(path, read.Bytes!, bounded.Token);", prefetch);
         var nativeFallback = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Player", "MpvPlayer.AsyncSubtitle.cs"));
         Assert.Contains("mpv_command_async(_mpvHandle, id, pointers)", nativeFallback);
         Assert.Contains("mpv_abort_async_command(_mpvHandle, id)", nativeFallback);
@@ -1320,7 +1319,6 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("remote.Scheme is \"http\" or \"https\") return false;", source);
         Assert.DoesNotContain("SubtitleSidecarFile.Extension(null, remote, track.Codec)", source);
         Assert.DoesNotContain("SubtitleSidecarFile.Extension(null, parsed, track.Codec)", prefetch);
-        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Fallback)\n                return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;", prefetch.Replace("\r", ""));
         Assert.Contains("generation != _subtitleSidecarGeneration", prefetch);
         Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch);
         Assert.Contains("authority.ApiClient.IsCurrentContext(context)", prefetch);
@@ -1345,9 +1343,13 @@ public sealed class PlayerServiceSourceTests
         Assert.InRange(persist.IndexOf("position = CurrentMediaPosition;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
         Assert.Contains("CompleteExecutedSubtitleSelectionAsync(choice, track)", persist);
         var lifecycle = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SubtitleSelection.cs"));
-        Assert.Contains("Interlocked.Exchange(ref owner.PreferenceClaimed, 1)", lifecycle);
+        Assert.Contains("Interlocked.CompareExchange(ref owner.PreferenceClaimed, 1, 0)", lifecycle);
+        Assert.Contains("Volatile.Write(ref owner.PreferenceClaimed, 0)", lifecycle);
         Assert.Contains("ReferenceEquals(owner, Volatile.Read(ref _subtitleSelectionOperation))", lifecycle);
-        Assert.Contains("SaveExecutedSubtitlePreferenceAsync(owner.PreferenceOwner with { Token = sendLifetime.Token }, applied)", lifecycle);
+        Assert.Contains("SaveExecutedSubtitlePreferenceAsync(owner.PreferenceOwner, applied)", lifecycle);
+        Assert.DoesNotContain("CreateLinkedTokenSource(owner.Token", lifecycle);
+        Assert.Contains("await _subtitlePreferenceSaveGate.WaitAsync(owner.Token)", source);
+        Assert.Contains("ProtocolVersion >= 3 ? track.NativeTitle : track.Label", source);
         Assert.DoesNotContain("using var subtitleChoice", persist);
         var byIndex = source[source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
         var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarAsync(track)", StringComparison.Ordinal);

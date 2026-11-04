@@ -1233,13 +1233,22 @@ public partial class PlayerService : IDisposable
         return true;
     }
 
-    private async Task SaveExecutedSubtitlePreferenceAsync(SubtitlePreferenceOwner? owner, SubtitleTrackInfo? track)
+    private readonly SemaphoreSlim _subtitlePreferenceSaveGate = new(1, 1);
+
+    private async Task<bool> SaveExecutedSubtitlePreferenceAsync(SubtitlePreferenceOwner? owner, SubtitleTrackInfo? track)
     {
-        if (owner == null || string.IsNullOrEmpty(owner.Key) || owner.Token.IsCancellationRequested ||
-            !ReferenceEquals(owner.Authority, _activeAuthority) || !ReferenceEquals(owner.Manager, _playbackManager) ||
-            !owner.Authority.ApiClient.IsCurrentContext(owner.Context)) return;
+        bool CurrentOwner() => owner != null && !string.IsNullOrEmpty(owner.Key) && !owner.Token.IsCancellationRequested &&
+            ReferenceEquals(owner.Authority, _activeAuthority) && ReferenceEquals(owner.Manager, _playbackManager) &&
+            owner.Authority.ApiClient.IsCurrentContext(owner.Context);
+        if (owner == null || !CurrentOwner()) return false;
+        var entered = false;
         try
         {
+            // Once applied, a choice's save outlives newer pending picks. Keep
+            // dispatched saves ordered so an older response cannot overwrite B.
+            await _subtitlePreferenceSaveGate.WaitAsync(owner.Token);
+            entered = true;
+            if (!CurrentOwner()) return false;
             // Mirror derivePersistedSubtitleMode: index null ("Off") → "off";
             // any explicit track → "always". "auto" is never written here —
             // it's the default when no pref exists.
@@ -1254,14 +1263,22 @@ public partial class PlayerService : IDisposable
                     Source = track.Source ?? "embedded",
                     Language = track.Language,
                     Codec = track.Codec,
-                    Label = track.Label,
+                    Label = owner.Manager?.CurrentSession?.ProtocolVersion >= 3 ? track.NativeTitle : track.Label,
                     Forced = track.Forced,
                     HearingImpaired = track.HearingImpaired,
                 },
             };
-            await owner.Authority.PlaybackApi.SaveSubtitlePrefsAsync(owner.Context, owner.Key, req, owner.Token);
+            await owner.Authority.PlaybackApi.SaveSubtitlePrefsAsync(owner.Context, owner.Key!, req, owner.Token);
+            return true;
         }
-        catch (Exception ex) { LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}");
+            if (CurrentOwner() && ReferenceEquals(track, _executedSubtitleTrack))
+                ShowNotice("Subtitle preference not saved", "Captions are still applied, but your preference could not be saved. Select the subtitle again to retry.", "warning");
+            return false;
+        }
+        finally { if (entered) _subtitlePreferenceSaveGate.Release(); }
     }
 
     private void RestorePlaybackStateAfterSubtitleChange(bool wasPaused, double position, bool allowSeek)
@@ -3659,6 +3676,7 @@ public partial class PlayerService : IDisposable
         if (explicitSignature != null)
         {
             selectedTrack = session.SubtitleUrls.FirstOrDefault(track =>
+                !track.Unplayable &&
                 (string.IsNullOrWhiteSpace(explicitSignature.Source) ||
                     string.Equals(track.Source, explicitSignature.Source, StringComparison.OrdinalIgnoreCase)) &&
                 (string.IsNullOrWhiteSpace(explicitSignature.Language) ||
@@ -3677,7 +3695,7 @@ public partial class PlayerService : IDisposable
                 string.Equals(explicitSignature.Source, "downloaded", StringComparison.OrdinalIgnoreCase))
             {
                 selectedTrack = session.SubtitleUrls.FirstOrDefault(track =>
-                    string.Equals(track.Source, "external", StringComparison.OrdinalIgnoreCase) &&
+                    !track.Unplayable && string.Equals(track.Source, "external", StringComparison.OrdinalIgnoreCase) &&
                     (string.IsNullOrWhiteSpace(explicitSignature.Language) ||
                         string.Equals(track.Language, explicitSignature.Language, StringComparison.OrdinalIgnoreCase)) &&
                     (string.IsNullOrWhiteSpace(explicitSignature.Codec) ||
@@ -3709,10 +3727,14 @@ public partial class PlayerService : IDisposable
                         .Where(track => string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase))
                         .OrderBy(track => track.Index)
                         .ElementAtOrDefault(sourceOrdinal);
+                    // Keep source ordinals stable. If that exact row is
+                    // unavailable, resolve a playable signature match instead
+                    // of shifting the ordinal onto an unrelated subtitle.
+                    if (selectedTrack?.Unplayable == true) selectedTrack = null;
                 }
 
                 selectedTrack ??= session.SubtitleUrls.FirstOrDefault(track =>
-                    string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase) &&
+                    !track.Unplayable && string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Language, requested.Language, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Codec, requested.Codec, StringComparison.OrdinalIgnoreCase) &&
                     (string.IsNullOrWhiteSpace(requested.Title) ||
@@ -5331,7 +5353,7 @@ public partial class PlayerService : IDisposable
         }
 
         // Remux/HLS need the advertised complete sidecar, as do external tracks.
-        // mpv fetches it once; cached SIDs remain valid until the next file load.
+        // Add downloaded local bytes; cached SIDs last until the next file load.
         if (SelectSubtitleSidecar(track)) return true;
         _mpv.SetSubtitleTrack(previousSid);
         return false;
@@ -5361,8 +5383,8 @@ public partial class PlayerService : IDisposable
             var label = !string.IsNullOrWhiteSpace(track.Label) ? track.Label :
                 !string.IsNullOrWhiteSpace(track.Language) ? track.Language : "Unknown";
             // A read/cache can be retired between prefetch and selection.
-            // No remote format may restart its download synchronously here;
-            // unknown codecs use the owner-cancellable asynchronous URL reader.
+            // No remote format may restart its download through mpv here;
+            // even an async sub-add can block the native playback core.
             if (!_prefetchedSubtitleFiles.ContainsKey(track.Index) &&
                 Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var remote) &&
                 remote.Scheme is "http" or "https") return false;
@@ -5385,8 +5407,8 @@ public partial class PlayerService : IDisposable
     /// A synchronous libmpv sub-add of an HTTP URL blocks its caller for the
     /// whole download (the UI thread for player-overlay selections). Download a
     /// remote text sidecar off that thread first; SelectSubtitleSidecar then adds
-    /// the local file. Non-busy failures try mpv's asynchronous URL reader;
-    /// busy exhaustion never repeats the request through mpv.
+    /// the local file. Failed or unsupported reads retain the applied choice;
+    /// remote sub-add can block mpv's core even when submitted asynchronously.
     /// </summary>
     private long CurrentSubtitleSidecarGeneration()
     {
@@ -5446,26 +5468,6 @@ public partial class PlayerService : IDisposable
         }
         var watch = WatchOwnerAsync();
         string? path = null;
-        var allowUrlFallback = true;
-        async Task<SubtitlePrefetchOutcome> ReadUrlFallbackAsync()
-        {
-            if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
-            try
-            {
-                // Keep the applied SID until the download completes. No UI or
-                // subtitle-state lock is held while mpv reads the remote URL.
-                var sid = await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, track.Label, track.Language, bounded.Token);
-                lock (_subtitleTrackStateLock)
-                {
-                    if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
-                    if (sid <= 0 || !mpv.GetSubtitleTrackIds(externalOnly: true).Contains(sid)) return SubtitlePrefetchOutcome.Error;
-                    _loadedExternalSubtitleSids[track.Index] = sid;
-                }
-                return SubtitlePrefetchOutcome.Ready;
-            }
-            catch (OperationCanceledException) { return SubtitlePrefetchOutcome.Retired; }
-            catch (ObjectDisposedException) when (!CurrentOwner()) { return SubtitlePrefetchOutcome.Retired; }
-        }
         try
         {
             if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
@@ -5473,12 +5475,8 @@ public partial class PlayerService : IDisposable
             // to server-advertised CDN/worker sidecars.
             var read = await SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url, track.Codec, bounded.Token);
             if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
-            allowUrlFallback = !read.WasBusy;
             if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;
-            if (read.Outcome == SubtitleSidecarReadOutcome.Error)
-                return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;
-            if (read.Outcome == SubtitleSidecarReadOutcome.Fallback)
-                return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;
+            if (read.Outcome != SubtitleSidecarReadOutcome.Ready) return SubtitlePrefetchOutcome.Error;
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + read.Extension);
             await File.WriteAllBytesAsync(path, read.Bytes!, bounded.Token);
             lock (_subtitleSyncGate)
@@ -5497,7 +5495,7 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("state_trace.txt", $"Subtitle sidecar prefetch skipped: {ex.GetType().Name}");
             if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
-            return allowUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;
+            return SubtitlePrefetchOutcome.Error;
         }
         finally
         {
