@@ -24,7 +24,13 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("_switchingContent = false;", rollback);
         Assert.Contains("IsLoading = false;", rollback);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
-        Assert.Contains("RestorePlaybackStateAfterSubtitleChange(wasPaused, CurrentMediaPosition, allowSeek: false);", rollback);
+        Assert.Contains("bool PauseIntent() => IsWatchTogetherPlayback ? _roomPlaybackPaused : _subtitleReplanPauseIntent ?? wasPaused;", method);
+        Assert.Contains("_subtitleReplanPauseIntent = PauseIntent();", method);
+        Assert.Contains("if (_subtitleReplanPauseIntent.HasValue) _subtitleReplanPauseIntent = paused;", source);
+        Assert.Contains("var restorePaused = PauseIntent();", rollback);
+        Assert.Contains("_restorePausedAfterLoad = null;", rollback);
+        Assert.Contains("RestorePlaybackStateAfterSubtitleChange(restorePaused, CurrentMediaPosition, allowSeek: false);", rollback);
+        Assert.DoesNotContain("RestorePlaybackStateAfterSubtitleChange(wasPaused,", rollback);
         Assert.Contains("ShowSubtitleSelectionUnavailable();", rollback);
         Assert.Contains("return SubtitleTransportResult.Failed;", rollback);
         Assert.DoesNotContain("BeginMpvLoad(", rollback);
