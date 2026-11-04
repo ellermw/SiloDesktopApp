@@ -2916,8 +2916,25 @@ public partial class PlayerService : IDisposable
 
             async Task SelectInitialSubtitleAsync()
             {
+                if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
                 var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
                     (_playbackManager?.CurrentSession?.ProtocolVersion >= 3 ? _playbackManager.SubtitleSelectionForLoad : (int?)null);
+                var owner = Volatile.Read(ref _subtitleSelectionOperation);
+                if (owner is { Accepted: true } && IsCurrentSubtitleChoice(owner) &&
+                    Volatile.Read(ref owner.PreferenceClaimed) == 0)
+                {
+                    // A queued manual pick belongs to its source identity, not
+                    // the outgoing grant's combined inventory ordinal.
+                    var mapped = owner.RequestedTrack == null ? null :
+                        ResolveReloadSubtitleChoice(owner.RequestedTrack, owner.SourceFile);
+                    if (owner.RequestedTrack != null && mapped == null)
+                    {
+                        RestoreExecutedSubtitleSelection(reapply: true);
+                        ShowSubtitleSelectionUnavailable();
+                        return;
+                    }
+                    resolvedSubtitleIndex = mapped?.Index ?? -1;
+                }
                 if (resolvedSubtitleIndex is int initialSubtitleIndex)
                 {
                     _pendingInitialServerSubtitleIndex = null;
@@ -5343,11 +5360,12 @@ public partial class PlayerService : IDisposable
 
             var label = !string.IsNullOrWhiteSpace(track.Label) ? track.Label :
                 !string.IsNullOrWhiteSpace(track.Language) ? track.Language : "Unknown";
-            // A read/cache can be retired between prefetch and selection. Text
-            // must never restart its download synchronously under this lock.
+            // A read/cache can be retired between prefetch and selection.
+            // No remote format may restart its download synchronously here;
+            // unknown codecs use the owner-cancellable asynchronous URL reader.
             if (!_prefetchedSubtitleFiles.ContainsKey(track.Index) &&
                 Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var remote) &&
-                SubtitleSidecarFile.Extension(null, remote, track.Codec) != null) return false;
+                remote.Scheme is "http" or "https") return false;
             var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;
             var previousSid = (int)Math.Round(_mpv.GetPropertyDouble("sid"));
             var previousMaximum = _mpv.GetSubtitleTrackIds().DefaultIfEmpty(0).Max();
@@ -5398,7 +5416,7 @@ public partial class PlayerService : IDisposable
             if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
             var pair = manager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
             if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var parsed) ||
-                parsed.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, parsed, track.Codec) == null)
+                parsed.Scheme is not ("http" or "https"))
                 return SubtitlePrefetchOutcome.Fallback;
             url = parsed;
             generation = _subtitleSidecarGeneration;
@@ -5459,7 +5477,8 @@ public partial class PlayerService : IDisposable
             if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;
             if (read.Outcome == SubtitleSidecarReadOutcome.Error)
                 return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;
-            if (read.Outcome == SubtitleSidecarReadOutcome.Fallback) return SubtitlePrefetchOutcome.Fallback;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Fallback)
+                return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + read.Extension);
             await File.WriteAllBytesAsync(path, read.Bytes!, bounded.Token);
             lock (_subtitleSyncGate)
@@ -6071,7 +6090,7 @@ public partial class PlayerService : IDisposable
             case "silo-subtitle-select":
                 if (args.Length > 1 && int.TryParse(args[1], out var subIdx))
                 {
-                    _ = SelectSubtitleByServerIndexAsync(subIdx);
+                    dispatch.TryEnqueue(() => _ = SelectSubtitleByServerIndexAsync(subIdx));
                 }
                 break;
             case "silo-subtitle-search":

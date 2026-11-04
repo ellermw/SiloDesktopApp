@@ -176,6 +176,26 @@ internal static class SubtitleIdentityNativeFixture
                         await ExpectUnavailableAsync(() => service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = sid }));
                     Require(service.ActiveSubtitleServerIndex == previousIndex && wire.PreferenceWrites == preferenceWrites,
                         "A refused SiloCast command changed the selected subtitle or preference.");
+                    foreach (var malformed in new[]
+                    {
+                        """{"name":"select_subtitle_track"}""",
+                        """{"name":"select_subtitle_track","trackId":null}""",
+                        """{"name":"select_subtitle_track","trackId":"3"}""",
+                        """{"name":"select_subtitle_track","trackId":3.5}""",
+                        """{"name":"select_subtitle_track","trackId":true}""",
+                        """{"name":"select_subtitle_track","trackId":{}}""",
+                        """{"name":"select_subtitle_track","trackId":[]}""",
+                        """{"name":"select_subtitle_track","trackId":0}""",
+                        """{"name":"select_subtitle_track","trackId":-1}""",
+                        """{"name":"select_subtitle_track","trackId":2147483648}""",
+                    })
+                    {
+                        await ExpectUnavailableAsync(() => service.ApplySiloCastControlAsync(
+                            System.Text.Json.Nodes.JsonNode.Parse(malformed)!.AsObject()));
+                        Require(service.ActiveSubtitleServerIndex == previousIndex && mpv.GetPropertyDouble("sid") == previousSid &&
+                            wire.PreferenceWrites == preferenceWrites && manager.SubtitleSelectionForLoad == previousIndex,
+                            "A malformed SiloCast subtitle command disabled captions or changed their saved preference.");
+                    }
                     await service.SetSubtitleTrackAndPersistAsync(0, null, null);
                     preferenceWrites = wire.PreferenceWrites;
                     await (Task)Call(service, "SelectSubtitleByServerIndexAsync", busy.Index, true)!;
@@ -266,6 +286,11 @@ internal static class SubtitleIdentityNativeFixture
             Require(mpv.AddSubtitle(untitledAuto, null, "en", select: false) && mpv.GetPropertyDouble("sid") == untitledSid,
                 "sub-add without a title did not honor auto or lost the language argument slot.");
             mpv.SetSubtitleTrack(0);
+            var unselectedPath = Path.Combine(Program.ResultDirectory, "unselected-async.srt");
+            File.Copy(Path.Combine(assets, "english.srt"), unselectedPath, overwrite: true);
+            var unselectedSid = await mpv.AddSubtitleUnselectedAsync(unselectedPath, "Async unselected", "en", CancellationToken.None);
+            Require(unselectedSid > 0 && mpv.GetSubtitleTrackIds(externalOnly: true).Contains(unselectedSid) && mpv.GetPropertyDouble("sid") <= 0,
+                "An asynchronous unselected sub-add enabled captions while Off.");
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");
         }
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }

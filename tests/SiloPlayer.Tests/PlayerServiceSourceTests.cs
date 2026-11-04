@@ -58,6 +58,17 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void OscSubtitleSelectionUsesTheUiDispatcher()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("case \"silo-subtitle-select\":", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = source.IndexOf("case \"silo-subtitle-search\":", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        Assert.Contains("dispatch.TryEnqueue(() => _ = SelectSubtitleByServerIndexAsync(subIdx));", source[start..end]);
+    }
+
+    [Fact]
     public void SubtitleSlidingWindowState_IsProtectedAcrossMpvAndWorkerThreads()
     {
         var root = FindRepositoryRoot();
@@ -1302,10 +1313,14 @@ public sealed class PlayerServiceSourceTests
         var nativeFallback = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Player", "MpvPlayer.AsyncSubtitle.cs"));
         Assert.Contains("mpv_command_async(_mpvHandle, id, pointers)", nativeFallback);
         Assert.Contains("mpv_abort_async_command(_mpvHandle, id)", nativeFallback);
-        Assert.Contains("\"sub-add\", url, \"auto\"", nativeFallback);
+        Assert.Contains("\"sub-add\", url, \"no\"", nativeFallback);
+        Assert.DoesNotContain("\"sub-add\", url, \"auto\"", nativeFallback);
         Assert.DoesNotContain("mpv_command(", nativeFallback);
         Assert.Contains("if (!_prefetchedSubtitleFiles.ContainsKey(track.Index) &&", source);
-        Assert.Contains("SubtitleSidecarFile.Extension(null, remote, track.Codec) != null) return false;", source);
+        Assert.Contains("remote.Scheme is \"http\" or \"https\") return false;", source);
+        Assert.DoesNotContain("SubtitleSidecarFile.Extension(null, remote, track.Codec)", source);
+        Assert.DoesNotContain("SubtitleSidecarFile.Extension(null, parsed, track.Codec)", prefetch);
+        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Fallback)\n                return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;", prefetch.Replace("\r", ""));
         Assert.Contains("generation != _subtitleSidecarGeneration", prefetch);
         Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch);
         Assert.Contains("authority.ApiClient.IsCurrentContext(context)", prefetch);

@@ -79,11 +79,13 @@ public partial class PlayerService
                 await SwitchAudioTrackAsync(aid - 1);
                 break;
             case "select_subtitle_track":
-                var sid = command["trackId"]?.GetValue<int>();
+                if (command["trackId"] == null) throw new ArgumentException("Missing subtitle track.");
+                if (command["trackId"] is not JsonValue subtitleId || !subtitleId.TryGetValue<int>(out var sid))
+                    throw new ArgumentException("Invalid subtitle track.");
                 var subtitleTrack = _playbackManager?.CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index + 1 == sid);
-                if (sid.HasValue && (subtitleTrack == null || subtitleTrack.Unplayable || !HasSubtitleSelectionRoute(subtitleTrack)))
+                if (sid < 1 || subtitleTrack == null || subtitleTrack.Unplayable || !HasSubtitleSelectionRoute(subtitleTrack))
                     throw new ArgumentException("This subtitle track is unavailable.");
-                if (!await SelectSubtitleByServerIndexAsync(sid.HasValue ? sid.Value - 1 : -1))
+                if (!await SelectSubtitleByServerIndexAsync(sid - 1))
                     throw new ArgumentException("This subtitle track is unavailable.");
                 break;
             case "set_playback_speed":

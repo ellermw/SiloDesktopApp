@@ -24,7 +24,7 @@ public sealed partial class MpvPlayer
             ThrowIfNotInitialized();
             id = ++_asyncSubtitleCommandId;
             _asyncSubtitleCommands.Add(id, completion);
-            var args = new[] { "sub-add", url, "auto", title ?? "", language ?? "" };
+            var args = new[] { "sub-add", url, "no", title ?? "", language ?? "" };
             var pointers = new IntPtr[args.Length + 1];
             try
             {

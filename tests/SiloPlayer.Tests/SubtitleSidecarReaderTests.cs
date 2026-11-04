@@ -41,6 +41,25 @@ public sealed class SubtitleSidecarReaderTests
     }
 
     [Theory]
+    [InlineData("mov_text")]
+    [InlineData("ttml")]
+    [InlineData("subviewer")]
+    [InlineData("pjs")]
+    [InlineData("mpl2")]
+    [InlineData("jacosub")]
+    [InlineData("realtext")]
+    [InlineData("text")]
+    public async Task ExtensionlessTextCodecsUseBoundedBusyReads(string codec)
+    {
+        using var wire = new Wire((_, _) => Busy("0")); using var http = new HttpClient(wire);
+        var result = await SubtitleSidecarReader.ReadAsync(http, new("https://sidecar.invalid/captions/1"), codec, default);
+        Assert.Equal(SubtitleSidecarReadOutcome.Busy, result.Outcome);
+        Assert.True(result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
+        Assert.Equal(4, wire.Requests);
+    }
+
+    [Theory]
     [InlineData("60")]
     [InlineData("far-date")]
     public async Task RetryAfterOutsideDeadlineDoesNotRetryEarly(string retry)
