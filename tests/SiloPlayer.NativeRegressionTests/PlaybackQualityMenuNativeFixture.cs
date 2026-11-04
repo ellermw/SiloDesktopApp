@@ -91,7 +91,12 @@ internal static class PlaybackQualityMenuNativeFixture
                 {
                     Call(invalidMenu, "Input", "home"); Call(invalidMenu, "Input", "down");
                 }
-                else Call(invalidMenu, "Input", "end");
+                else
+                {
+                    Call(invalidMenu, "Input", "end");
+                    if (((ListView)Get(invalidMenu, "_list")!).SelectedItem is ListViewItem { Tag: "speed" })
+                        Call(invalidMenu, "Input", "up");
+                }
                 Call(invalidMenu, "Input", "activate");
                 await Until(() => mode == "version-invalid-url" ? wire.Files.Count > 1 : !wire.Qualities.IsEmpty,
                     "Native menu did not request its malformed playback decision.");
