@@ -263,9 +263,10 @@ public sealed class PlayerServiceSourceTests
         var cleanup = sidecar.IndexOf("if (added && newIds.Length == 1) mpv.RemoveSubtitle(newIds[0]);", ownerCheck, StringComparison.Ordinal);
         var select = sidecar.IndexOf("mpv.SetSubtitleTrack(sid);", cleanup, StringComparison.Ordinal);
         Assert.True(add >= 0 && ownerCheck > add && cleanup > ownerCheck && select > cleanup,
-            "A complete sidecar add must verify its owner and actual new native ID, removing a retired owner's addition.");
-        Assert.Contains("fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", sidecar[ownerCheck..select]);
-        Assert.Contains("if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);", sidecar[cleanup..select]);
+            "A complete sidecar add must verify its owner and uniquely owned native ID without deleting ambiguous concurrent additions.");
+        Assert.Contains("fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", sidecar[ownerCheck..cleanup]);
+        Assert.DoesNotContain("foreach (var addedSid in newIds)", sidecar[ownerCheck..select]);
+        Assert.DoesNotContain("if (_activeSubtitleServerIndex < 0)", sidecar[cleanup..select]);
         Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
         Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TickSubtitleWindows", source, StringComparison.Ordinal);
@@ -674,7 +675,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("var replacementAccepted = false;", source, StringComparison.Ordinal);
         Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"version-switch-failed\")", source, StringComparison.Ordinal);
         Assert.Contains("var transportMutationAttempted = false;", source, StringComparison.Ordinal);
-        Assert.Contains("RunStreamRecoveryAsync(CurrentMediaPosition, \"subtitle-switch-failed\", manager, wasPaused, ct)", source, StringComparison.Ordinal);
+        Assert.Contains("RunStreamRecoveryAsync(CurrentMediaPosition, \"subtitle-switch-failed\", manager, PauseIntent(), ct)", source, StringComparison.Ordinal);
     }
 
     [Fact]

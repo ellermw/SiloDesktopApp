@@ -105,6 +105,102 @@ public sealed partial class MpvOscRuntimeTests
     [Theory]
     [InlineData(960, 550)]
     [InlineData(1920, 1080)]
+    public void SubtitleInventoryForAnotherFileRetiresOpenMenuAndItsHitTargets(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            for _, replacement in ipairs({
+                {id='44', json='[{"index":1,"language":"es"}]'},
+                {id='45', json='[]'}
+            }) do
+                handlers['osc-set-subtitles']('[{"index":1,"language":"en"}]', '42')
+                state.subtitle_menu_visible = true
+                state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+                osc_test_layout(); osc_test_render_subtitles()
+                local stale
+                for _, item in ipairs(state.subtitle_menu_items) do if item.index == 1 then stale = item end end
+                assert(stale and state.subtitle_menu_overlay.data:find('English', 1, true), 'Missing original painted row')
+                handlers['osc-set-subtitles'](replacement.json, replacement.id)
+                assert(not state.subtitle_menu_visible and #state.subtitle_menu_items == 0
+                    and state.subtitle_menu_overlay.data == '' and state.keyboard_menu_kind == nil
+                    and state.keyboard_menu_index == 0, 'Previous file menu remained active')
+                osc_test_menu_activate()
+                state.mouse_x, state.mouse_y = stale.x + 5, stale.y + 5
+                osc_test_mouse_down()
+            end
+            mp.set_property('user-data/subtitle-file-menu', tostring(selections))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-file-menu", beforeScript: """
+            handlers, selections = {}, 0
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then selections = selections + 1; return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("0", output);
+    }
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
+    public void SameFileSubtitleRefreshRepaintsRowsAndClampsKeyboardFocus(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            handlers['osc-set-subtitles']('[{"index":1,"language":"en"}]', '42')
+            state.subtitle_menu_visible = true
+            state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+            osc_test_layout(); osc_test_render_subtitles()
+            handlers['osc-set-subtitles']('[{"index":1,"language":"es","unplayable":true}]', '42')
+            assert(state.subtitle_menu_visible and state.subtitle_menu_overlay.data:find('Spanish', 1, true)
+                and state.subtitle_menu_overlay.data:find('Unavailable', 1, true)
+                and not state.subtitle_menu_overlay.data:find('English', 1, true), 'Same-file refresh kept old paint')
+            local row
+            for _, item in ipairs(state.subtitle_menu_items) do if item.index == 1 then row = item end end
+            assert(row and row.disabled, 'Same-file refresh kept enabled hit targets')
+            osc_test_menu_activate()
+            state.mouse_x, state.mouse_y = row.x + 5, row.y + 5
+            osc_test_mouse_down()
+            state.keyboard_menu_index = 99
+            handlers['osc-set-subtitles']('[]', '42')
+            local count = #osc_test_menu_items('subtitles', state.subtitle_menu_items)
+            assert(state.subtitle_menu_visible and state.keyboard_menu_index == count
+                and count > 0 and not state.subtitle_menu_overlay.data:find('Spanish', 1, true), 'Focus or paint survived shrinking inventory')
+            mp.set_property('user-data/subtitle-refresh-menu', tostring(selections))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-refresh-menu", beforeScript: """
+            handlers, selections = {}, 0
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then selections = selections + 1; return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("0", output);
+    }
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
     public void UnavailableSubtitleRemainsVisibleButRefusesKeyboardAndPointer(int width, int height)
     {
         var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """

@@ -782,7 +782,7 @@ public sealed partial class MpvPlayer : IDisposable
     {
         ThrowIfNotInitialized();
 
-        var args = new List<string> { "sub-add", url, select ? "select" : "auto" };
+        var args = new List<string> { "sub-add", url, select ? "select" : "no" };
         if (!string.IsNullOrEmpty(title) || !string.IsNullOrEmpty(lang))
         {
             args.Add(title ?? "");

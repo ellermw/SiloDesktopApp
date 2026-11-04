@@ -201,6 +201,109 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             }
             Program.Log("PASS: persistent terminal/request rejection of bitmap, Off and text picks retains the executed stream, intent and pause without reloads, retries or preference writes.");
 
+            // Rejection must resolve transport intent at rollback, not from the
+            // pause captured before the request. Hold the actual wire request
+            // while room authority or the viewer changes that intent.
+            foreach (var room in new[] { false, true })
+            foreach (var paused in new[] { false, true })
+            foreach (var requested in new[] { Dvd, -1, Spanish })
+            {
+                var baseline = requested == Dvd ? Spanish : Dvd;
+                if (service.ActiveSubtitleServerIndex != baseline)
+                {
+                    var baselineTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == baseline);
+                    await Loaded(() => service.SetSubtitleTrackAndPersistAsync(baseline + 1, baselineTrack.Language, baselineTrack));
+                }
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetWatchTogetherPlayback(room);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var retainedSession = manager.CurrentSession;
+                var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                var retainedSid = mpv.GetPropertyDouble("sid");
+                var loadGeneration = Get(service, "_fileLoadGeneration");
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.RejectTrackChanges = true;
+                wire.TerminalTrackRejection = requested == Dvd;
+                wire.TimeoutTrackRejection = requested == -1;
+                wire.BeforeTrackRejection = ct => { entered.TrySetResult(); return release.Task.WaitAsync(ct); };
+                try
+                {
+                    var pick = (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", requested, true)!;
+                    try
+                    {
+                        await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        await Until(() => service.IsLoading && service.IsSwitchingContent && mpv.IsPaused && service.IsPaused);
+                        if (room) service.SetPaused(!paused); // newest host pause/play
+                        else service.RequestUserPauseToggle(); // ignore the temporary native freeze
+                    }
+                    finally { release.TrySetResult(); }
+                    Require(!await pick.WaitAsync(TimeSpan.FromSeconds(4)), "A rejected in-flight subtitle pick was reported as executed.");
+                    await Until(() => !service.IsLoading && mpv.IsPaused == !paused && service.IsPaused == !paused);
+                    Require(ReferenceEquals(manager.CurrentSession, retainedSession) &&
+                        manager.CaptureLocalSubtitleIntent() == retainedIntent && service.ActiveSubtitleServerIndex == baseline &&
+                        mpv.GetPropertyDouble("sid") == retainedSid && Equals(Get(service, "_fileLoadGeneration"), loadGeneration) &&
+                        wire.PreferenceWrites == writes && wire.Replans.Count == replans + 1 &&
+                        Get(service, "_restorePausedAfterLoad") == null && Get(service, "_subtitleReplanPauseIntent") == null &&
+                        Get(service, "_pendingSubtitlePreferenceOwner") == null && !service.IsSwitchingContent,
+                        "Rejected subtitle rollback lost current room/viewer pause intent, changed selection, reloaded or saved an unexecuted preference.");
+                }
+                finally
+                {
+                    release.TrySetResult();
+                    wire.BeforeTrackRejection = null;
+                    wire.RejectTrackChanges = wire.TerminalTrackRejection = wire.TimeoutTrackRejection = false;
+                    service.SetWatchTogetherPlayback(false);
+                }
+            }
+            Program.Log("PASS: room pause/play and viewer toggles during rejected bitmap/Off/text replans retain the latest intent without reloads or preference writes.");
+
+            // A rejected Off request owns no replacement load. It must leave
+            // the predecessor's still-pending FILE_LOADED pause slot intact.
+            if (service.ActiveSubtitleServerIndex != Dvd)
+            {
+                var dvd = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Dvd);
+                await Loaded(() => service.SetSubtitleTrackAndPersistAsync(Dvd + 1, dvd.Language, dvd));
+            }
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+            service.SetPaused(true);
+            var predecessor = manager.CurrentSession!;
+            var preparePending = (Task)Call(service, "PreparePlaybackTransportAsync", predecessor, Version(), manager.StreamUrl!, 0d, CancellationToken.None)!;
+            await preparePending;
+            var pendingTransport = preparePending.GetType().GetProperty("Result")!.GetValue(preparePending)!;
+            var predecessorLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void PendingLoaded() => predecessorLoaded.TrySetResult();
+            service.ContentLoaded += PendingLoaded;
+            media.HoldNextMedia = true;
+            try
+            {
+                Call(service, "ApplyPreparedTransport", pendingTransport);
+                Call(service, "BeginMpvLoad", pendingTransport, true);
+                await media.PendingMediaEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                var pendingGeneration = Get(service, "_fileLoadGeneration");
+                var writes = wire.PreferenceWrites;
+                wire.RejectTrackChanges = true;
+                var rejected = false;
+                try { await service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = null }); }
+                catch (ArgumentException) { rejected = true; }
+                Require(rejected && !predecessorLoaded.Task.IsCompleted && Equals(Get(service, "_restorePausedAfterLoad"), true) &&
+                    Equals(Get(service, "_fileLoadGeneration"), pendingGeneration) && wire.PreferenceWrites == writes,
+                    "Rejected SiloCast Off cleared or replaced its predecessor's pending paused load.");
+                media.PendingMediaRelease.TrySetResult();
+                await predecessorLoaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                await Until(() => Get(service, "_loadedMediaInitCts") == null && mpv.IsPaused && service.IsPaused);
+            }
+            finally
+            {
+                wire.RejectTrackChanges = false;
+                media.PendingMediaRelease.TrySetResult();
+                service.ContentLoaded -= PendingLoaded;
+            }
+            Program.Log("PASS: rejected SiloCast Off preserves an actual held predecessor load and its paused FILE_LOADED intent.");
+
             // Pre-play choices must change the composited video plan before
             // its first load, without saving an automatic/startup preference.
             await Until(() => Get(service, "_pendingSubtitlePreferenceIndex") == null);
@@ -496,6 +599,9 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         private readonly HttpListener _listener = new();
         public string Origin { get; }
         public int SubtitleRequests;
+        public bool HoldNextMedia;
+        public TaskCompletionSource PendingMediaEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource PendingMediaRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public MediaServer(string wavePath)
         {
             const int samples = 60 * 8000;
@@ -515,6 +621,12 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     HttpListenerContext context;
                     try { context = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
                     var isMedia = context.Request.Url!.AbsolutePath == "/media.wav";
+                    if (isMedia && HoldNextMedia)
+                    {
+                        HoldNextMedia = false;
+                        PendingMediaEntered.TrySetResult();
+                        await PendingMediaRelease.Task;
+                    }
                     if (!isMedia) Interlocked.Increment(ref SubtitleRequests);
                     // The origin ignores Range and returns the complete file.
                     var bytes = isMedia ? wave
@@ -530,7 +642,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 }
             });
         }
-        public void Dispose() => _listener.Close();
+        public void Dispose() { PendingMediaRelease.TrySetResult(); _listener.Close(); }
     }
 
     /// <summary>Synthetic v3 server: track_change and quality_change replans keep the requested subtitle.</summary>
@@ -540,6 +652,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         public int AutomaticSubtitle = -1;
         public bool FailNextTrackChange;
         public bool RejectTrackChanges, TerminalTrackRejection, TimeoutTrackRejection;
+        public Func<CancellationToken, Task>? BeforeTrackRejection;
         public bool DeclineTrackChanges;
         public bool ReindexSpanish, ReindexDvd;
         public int PreferenceWrites;
@@ -577,6 +690,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 if ((FailNextTrackChange || RejectTrackChanges) && body.GetProperty("operation").GetString() == "track_change")
                 {
                     FailNextTrackChange = false;
+                    if (BeforeTrackRejection is { } beforeRejection) await beforeRejection(ct);
                     if (TerminalTrackRejection)
                         return Json("""{"protocol_version":3,"outcome":"not_playable","terminal":{"reason":"subtitle_unavailable","message":"Synthetic persistent subtitle rejection.","retryable":true}}""");
                     if (TimeoutTrackRejection) throw new TaskCanceledException("Synthetic subtitle request timeout.");

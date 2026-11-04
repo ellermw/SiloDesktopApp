@@ -154,6 +154,7 @@ public partial class PlayerService : IDisposable
     private long _loadedMediaInitGeneration;
     private int _consecutiveFileLoadTimeouts;
     private bool? _restorePausedAfterLoad;
+    private bool? _subtitleReplanPauseIntent;
     private readonly ProgressiveRemuxIdleResume _idleRemuxResume = new();
     private PlaybackWebSocket? _webSocket;
     private sealed record PlaybackTerminalState(
@@ -595,7 +596,7 @@ public partial class PlayerService : IDisposable
     /// <summary>Only viewer input enters this boundary. Server commands use SetPaused/SeekRoomTarget.</summary>
     public void RequestUserPauseToggle()
     {
-        var paused = !IsPaused;
+        var paused = !(IsWatchTogetherPlayback ? IsPaused : _subtitleReplanPauseIntent ?? IsPaused);
         if (IsWatchTogetherPlayback)
             RoomTransportRequested?.Invoke(paused ? "pause" : "play", CurrentMediaPosition, paused);
         else SetPaused(paused);
@@ -690,6 +691,8 @@ public partial class PlayerService : IDisposable
     /// <summary>Pause / resume the local mpv player.</summary>
     public void SetPaused(bool paused)
     {
+        // A subtitle replan's temporary native pause is not viewer intent.
+        if (_subtitleReplanPauseIntent.HasValue) _subtitleReplanPauseIntent = paused;
         // Explicit viewer/room pause intent supersedes the AI helper's
         // temporary first-cue pause, even when mpv is already paused.
         lock (_liveSubtitleLock) _resumeAfterLiveSubtitleBuffer = false;
@@ -5651,10 +5654,6 @@ public partial class PlayerService : IDisposable
             _playbackTerminalState == null;
         await CancelAndDrainTransportRestartsAsync(ct);
         if (!CurrentOwner()) return SubtitleTransportResult.Superseded;
-        // BeginMpvLoad freezes the outgoing stream. A subtitle replan during
-        // that load must retain its viewer intent, not the temporary freeze.
-        var wasPaused = (_switchingContent || IsLoading) && _restorePausedAfterLoad is bool pendingPause
-            ? pendingPause : CaptureUserPausedState();
         int? requestedIndex = track?.Index ?? postLoadSubtitleIndex;
         var transportMutationAttempted = false;
         var reconcileDeferredSelection = false;
@@ -5662,6 +5661,11 @@ public partial class PlayerService : IDisposable
         PlaybackBusyOwner? busyOwner = null;
         bool CurrentBusy() => busyOwner is { } claim && OwnsPlaybackBusy(claim);
         await _transportRestartGate.WaitAsync(ct).ConfigureAwait(false);
+        // BeginMpvLoad freezes the outgoing stream. A subtitle replan during
+        // that load must retain its viewer intent, not the temporary freeze.
+        var wasPaused = (_switchingContent || IsLoading) && _restorePausedAfterLoad is bool pendingPause
+            ? pendingPause : CaptureUserPausedState();
+        bool PauseIntent() => IsWatchTogetherPlayback ? _roomPlaybackPaused : _subtitleReplanPauseIntent ?? wasPaused;
         var selectionIntent = manager.CaptureLocalSubtitleIntent();
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
         try
@@ -5679,6 +5683,7 @@ public partial class PlayerService : IDisposable
                 ?? throw new InvalidOperationException("The subtitle source version is unavailable.");
             var position = CurrentMediaPosition;
             transportMutationAttempted = true;
+            _subtitleReplanPauseIntent = PauseIntent();
             busyOwner = BeginPlaybackBusy(claimState: () => _qualitySwitchActive = false);
             _mpv.Pause();
             if (loadingOwner != null)
@@ -5746,7 +5751,7 @@ public partial class PlayerService : IDisposable
             ApplyPreparedTransport(preparedV3);
             PlayMethod = replanned.PlayMethod;
             PrepareSubtitleFileForReload(session, replanned, resolvedIndex);
-            BeginOwnedMpvLoad(preparedV3, restorePaused: wasPaused,
+            BeginOwnedMpvLoad(preparedV3, restorePaused: PauseIntent(),
                 acceptLoad: generation =>
                 {
                     fileGeneration = generation;
@@ -5799,7 +5804,8 @@ public partial class PlayerService : IDisposable
                             else reconcileDeferredSelection = true;
                         }
                         mpv.SendScriptMessage("osc-set-loading", "false");
-                        RestorePlaybackStateAfterSubtitleChange(wasPaused, CurrentMediaPosition, allowSeek: false);
+                        var restorePaused = PauseIntent();
+                        RestorePlaybackStateAfterSubtitleChange(restorePaused, CurrentMediaPosition, allowSeek: false);
                     });
                     if (loadingOwner != null)
                         App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
@@ -5815,7 +5821,7 @@ public partial class PlayerService : IDisposable
                     "warning");
                 // A concurrent recovery may own the gate. Queue this viewer
                 // change with its lifetime and pause intent instead of dropping it.
-                _ = RunStreamRecoveryAsync(CurrentMediaPosition, "subtitle-switch-failed", manager, wasPaused, ct);
+                _ = RunStreamRecoveryAsync(CurrentMediaPosition, "subtitle-switch-failed", manager, PauseIntent(), ct);
                 // Recovery now owns the transport; callers must not restore
                 // the outgoing stream's position or pause state.
                 return SubtitleTransportResult.ReloadScheduled;
@@ -5836,6 +5842,7 @@ public partial class PlayerService : IDisposable
                     App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
                         collapse => RunIfBusyReleaseCurrent(released, collapse));
             }
+            if (transportMutationAttempted) _subtitleReplanPauseIntent = null;
             _transportRestartGate.Release();
             if (reconcileDeferredSelection && CurrentOwner())
                 await ReconcileDeferredSubtitleSelectionAsync(manager, session);
@@ -6235,8 +6242,10 @@ public partial class PlayerService : IDisposable
                     if (!_closing && ReferenceEquals(mpv, _mpv) &&
                         fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration))
                     {
+                        // A live AI/sync add can bypass this gate. Only one
+                        // uniquely observed addition is ours to undo; preserve
+                        // the current SID and leave ambiguous additions alone.
                         if (added && newIds.Length == 1) mpv.RemoveSubtitle(newIds[0]);
-                        if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);
                     }
                     return false;
                 }

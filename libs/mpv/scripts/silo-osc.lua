@@ -6031,10 +6031,27 @@ local function observe_properties()
                 -- belong to one file, even when the new list reuses an index.
                 state.last_subtitle = -1
                 state.active_subtitle = -1
+                state.subtitle_menu_visible = false
+                state.subtitle_menu_items = {}
+                if state.keyboard_menu_kind == "subtitles" then
+                    state.keyboard_menu_kind = nil
+                    state.keyboard_menu_index = 0
+                end
             end
             state.subtitle_menu_file_id = file_id
             state.subtitle_tracks = data
             state.subtitle_menu_offset = 1
+            -- Menus have their own overlay and hit targets; the base OSC tick
+            -- cannot retire old rows or repaint a same-file inventory refresh.
+            render_subtitle_menu()
+            if state.subtitle_menu_visible and state.keyboard_menu_kind == "subtitles" then
+                local count = #keyboard_menu_items("subtitles", state.subtitle_menu_items)
+                local index = clamp(state.keyboard_menu_index, 1, math.max(1, count))
+                if index ~= state.keyboard_menu_index then
+                    state.keyboard_menu_index = index
+                    render_subtitle_menu()
+                end
+            end
         end
     end)
 
