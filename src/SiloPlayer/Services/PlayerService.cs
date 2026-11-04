@@ -521,12 +521,18 @@ public partial class PlayerService : IDisposable
 
     public void SetWatchTogetherPlayback(bool active)
     {
+        var changed = active != IsWatchTogetherPlayback;
         var joining = active && !IsWatchTogetherPlayback;
         IsWatchTogetherPlayback = active;
         if (joining) SetPaused(true);
         if (!active) _offeredRoomQuality = _offeredFromQuality = null;
         UpdateRoomInputBindings();
         UpdateRoomSeekDisplay();
+        if (changed)
+        {
+            RetireNativeMenus();
+            PublishNativeMenuScopes();
+        }
     }
 
     private void UpdateRoomInputBindings()
@@ -3263,6 +3269,7 @@ public partial class PlayerService : IDisposable
         bool wasPaused,
         PlaybackStartResponse? restartSession = null)
     {
+        RetireNativeMenus();
         var loadingOwner = _playbackCts;
         if (_idleRemuxResume.IsReopening) wasPaused = _idleRemuxResume.DesiredPaused;
         _idleRemuxResume.Reset();
@@ -4770,7 +4777,7 @@ public partial class PlayerService : IDisposable
         var currentPos = CurrentMediaPosition;
         var previousSession = manager.CurrentSession;
         var replacementAccepted = false;
-        var busyOwner = BeginPlaybackBusy(loading: false);
+        var busyOwner = BeginPlaybackBusy(loading: false, claimState: () => _qualitySwitchActive = false);
         // Don't call _mpv.Stop() — let current stream keep playing while we set up the new one
 
         try
@@ -4816,6 +4823,7 @@ public partial class PlayerService : IDisposable
             if (!CurrentSwitch()) return;
             SendQualityInfoToOsc();
             SendMediaInfoToOsc();
+            _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -6001,18 +6009,17 @@ public partial class PlayerService : IDisposable
                     var version = Versions.FirstOrDefault(v => v.FileId == vFileId);
                     if (version != null)
                     {
-                        SetSwitchingContent(true); // Set BEFORE dispatch — event thread may fire PlaybackEnded
-                        dispatch.TryEnqueue(() => _ = SwitchVersionAndNotifyAsync(version));
+                        DispatchLegacyPlaybackSwitch(dispatch, quality: false,
+                            current => SwitchVersionCoreAsync(version, current));
                     }
                 }
                 break;
             case "silo-quality-select":
                 if (args.Length > 1)
                 {
-                    SetSwitchingContent(true);
-                    _qualitySwitchActive = true;
-                    LogToFile("state_trace.txt", $"Quality select: tier={args[1]} flags set TRUE");
-                    dispatch.TryEnqueue(() => _ = SwitchQualityTierAsync(args[1]));
+                    var tier = args[1];
+                    DispatchLegacyPlaybackSwitch(dispatch, quality: true,
+                        current => SwitchQualityTierAsync(tier, acceptSelection: current));
                 }
                 break;
             case "silo-seek-absolute":
@@ -6087,16 +6094,6 @@ public partial class PlayerService : IDisposable
                 dispatch.TryEnqueue(() => _videoWindow?.SetCursorVisible(true));
                 break;
         }
-    }
-
-    private async Task SwitchVersionAndNotifyAsync(FileVersion version)
-    {
-        await SwitchVersionAsync(version);
-        if (_requestedMediaFileId != version.FileId)
-            return;
-        SendQualityInfoToOsc();
-        SendMediaInfoToOsc();
-        _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
     }
 
     private async Task SwitchQualityTierAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
