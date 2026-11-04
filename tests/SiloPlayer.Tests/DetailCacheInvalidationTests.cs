@@ -230,30 +230,46 @@ public sealed class DetailCacheInvalidationTests
         Assert.False(freshness.IsCurrent(episode));
         Assert.True(freshness.IsCurrent(movie));
 
-        // A season id without its series cannot be matched, so it invalidates everything.
-        var again = await freshness.ReadAsync("movie:other", server.Read("movie:other"), CancellationToken.None);
+        // Without a known series, only the container's own scope is retired.
+        var refreshedEpisode = await freshness.ReadAsync("episode:show-s01e01",
+            server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+        var stamp = revision.Current;
         messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show-S01"));
-        Assert.False(freshness.IsCurrent(again));
+        Assert.False(revision.IsCurrent(stamp, "series:show-S01", null));
+        Assert.True(freshness.IsCurrent(refreshedEpisode));
+        Assert.True(freshness.IsCurrent(movie));
+
+        // A series-root mutation still reaches its episodes without a parent id.
+        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show"));
+        Assert.False(freshness.IsCurrent(refreshedEpisode));
+        Assert.True(freshness.IsCurrent(movie));
         GC.KeepAlive(revision);
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task RemoteContainerWithoutSeriesScopeRetiresDescendantWatchSnapshots(bool coalesced)
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task RemoteContainerWithoutSeriesScopeRetiresOnlyItsOwnWatchScope(bool coalesced, bool explicitPlaybackScope)
     {
         var (freshness, messenger, revision) = CreateFreshness();
         var server = new FakeWatch { Position = 1200 };
         var held = await freshness.ReadAsync("episode:show-s01e01",
             server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+        var unrelated = await freshness.ReadAsync("movie:other", server.Read("movie:other"), CancellationToken.None);
         using var http = new HttpClient(new RejectingHandler());
         var client = new SiloPlayer.Core.Api.SiloApiClient(http);
         client.SetBaseUrl("https://container-scope.invalid");
         client.SetProfile("profile");
         var invalidation = new MediaStateInvalidated(client.CaptureContext(),
-            new HashSet<string>(["series:show-S01"]), new HashSet<string>(), RefreshDetails: false);
+            new HashSet<string>(["series:show-S01"]), new HashSet<string>(), RefreshDetails: false,
+            PlaybackStateContentIds: explicitPlaybackScope ? new HashSet<string>(["series:show-S01"]) : null);
+        var before = revision.Current;
         messenger.Send(invalidation);
-        Assert.False(freshness.IsCurrent(held));
+        Assert.False(revision.IsCurrent(before, "series:show-S01", null));
+        Assert.True(freshness.IsCurrent(held));
+        Assert.True(freshness.IsCurrent(unrelated));
 
         if (coalesced)
         {
@@ -263,8 +279,14 @@ public sealed class DetailCacheInvalidationTests
             messenger.Send(invalidation with { RefreshDetails = true });
             Assert.Equal(stamp, revision.Current);
             Assert.True(freshness.IsCurrent(refreshed));
-            Assert.False(freshness.IsCurrent(held));
+            Assert.True(freshness.IsCurrent(held));
+            Assert.True(freshness.IsCurrent(unrelated));
         }
+
+        // Supplying the parent does retire descendants, but not other titles.
+        messenger.Send(invalidation with { SeriesIds = new HashSet<string>(["series:show"]) });
+        Assert.False(freshness.IsCurrent(held));
+        Assert.True(freshness.IsCurrent(unrelated));
         GC.KeepAlive(revision);
     }
 

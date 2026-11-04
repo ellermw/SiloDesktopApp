@@ -2,6 +2,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using SiloPlayer.Services;
@@ -118,11 +119,16 @@ public sealed class RealtimeMediaStateRefreshTests
     public void CatchUpCoalescesWithEventsAndPreservesCapturedOwnership()
     {
         using var fixture = new Fixture();
+        var revision = DetailCacheInvalidation.AttachUserStateRevision(fixture.Messenger);
+        var stamp = revision.Current;
         var context = fixture.Client.CaptureContext();
         fixture.Refresh.CatchUp(context); fixture.Send("episode", "series"); fixture.Drain();
+        Assert.False(revision.IsCurrent(stamp, "unrelated", "other-series"));
+        var receivedRevision = revision.Current;
         fixture.Clock.Advance(200); fixture.Drain();
         var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
         Assert.True(batch.CatchUp); Assert.Equal(context, batch.Context);
+        Assert.Equal(receivedRevision, revision.Current);
         Assert.Contains("series", batch.SeriesIds);
         fixture.Client.SetProfile("replacement");
         fixture.Refresh.CatchUp(context); fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
@@ -152,13 +158,61 @@ public sealed class RealtimeMediaStateRefreshTests
         Assert.Equal(fixture.Client.CaptureContext(), batch.Context);
     }
 
+    [Theory]
+    [InlineData("favorite")]
+    [InlineData("watchlist")]
+    [InlineData("rating")]
+    [InlineData("not_interested")]
+    public async Task ViewerStateEventsInvalidateDetailsWithoutConsumingWatchRetries(string change)
+    {
+        using var fixture = new Fixture();
+        var revision = DetailCacheInvalidation.AttachUserStateRevision(fixture.Messenger);
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, TimeSpan.Zero,
+            detail => detail.ContentId, detail => detail.SeriesId);
+        var detailReads = 0;
+        var cache = new ItemDetailPrefetchCache((id, _) =>
+        {
+            detailReads++;
+            return Task.FromResult(new MediaItemDetail { ContentId = id });
+        });
+        DetailCacheInvalidation.Attach(cache, fixture.Messenger);
+        await cache.GetAsync("episode", CancellationToken.None);
+        var stamp = revision.Current;
+        var watchReads = 0;
+        var evictions = 0;
+        var watch = await freshness.GetCurrentAsync(ct => freshness.ReadAsync("episode", _ =>
+        {
+            watchReads++;
+            fixture.Send("episode", "series:show", change);
+            return Task.FromResult(new WatchDetailResponse { ContentId = "episode", SeriesId = "series:show" });
+        }, ct), _ => evictions++, CancellationToken.None);
+
+        Assert.Equal(1, watchReads);
+        Assert.Equal(0, evictions);
+        Assert.True(freshness.IsCurrent(watch));
+        Assert.Equal(stamp, revision.Current);
+        await cache.GetAsync("episode", CancellationToken.None);
+        Assert.Equal(2, detailReads);
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Single(fixture.Messages.Where(message => message.RefreshDetails));
+        Assert.Equal(stamp, revision.Current);
+        Assert.True(freshness.IsCurrent(watch));
+    }
+
     [Fact]
     public void MixedBatchesRetainOnlyTheViewerStateContentScopeAndResetItAfterFlush()
     {
         using var fixture = new Fixture();
+        var revision = DetailCacheInvalidation.AttachUserStateRevision(fixture.Messenger);
+        var stamp = revision.Current;
         fixture.Send("favorite-movie", null, "favorite");
         fixture.Send("playing-episode", "series", "progress");
+        var receivedRevision = revision.Current;
         fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Equal(receivedRevision, revision.Current);
+        Assert.True(revision.IsCurrent(stamp, "favorite-movie", null));
+        Assert.False(revision.IsCurrent(stamp, "playing-episode", "series"));
+        Assert.True(revision.IsCurrent(stamp, "sibling-episode", "series"));
         var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
         Assert.Equal(new[] { "favorite-movie", "playing-episode" }, batch.ContentIds.Order().ToArray());
         Assert.Equal(new[] { "favorite-movie" }, batch.ViewerStateContentIds);

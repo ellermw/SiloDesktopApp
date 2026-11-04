@@ -41,8 +41,17 @@ public static class DetailCacheInvalidation
         {
             // The coalesced delivery refreshes mounted details; its raw events
             // already retired /watch reads and must not consume another retry.
-            if (!message.RefreshDetails)
-                owner.Advance(message.CatchUp ? [] : WatchScope(message.ContentIds, message.SeriesIds));
+            if (message.RefreshDetails) return;
+            if (message.CatchUp)
+            {
+                owner.Advance();
+                return;
+            }
+            // An explicit empty playback scope is a viewer-only mutation, not
+            // an unknown-scope playback change. Legacy messages omit the split.
+            var playbackIds = message.PlaybackStateContentIds ?? message.ContentIds;
+            if (playbackIds.Count > 0)
+                owner.Advance(WatchScope(playbackIds, message.SeriesIds));
         });
         messenger.Register<UserStateRevision, MediaSurfaceChanged>(revision,
             static (owner, message) => owner.Advance(ScopeOf(message)));
@@ -51,20 +60,21 @@ public static class DetailCacheInvalidation
         return revision;
     }
 
-    // A season id ("series:show-S01") without its series id cannot be matched
-    // to episodes; treat it as affecting everything rather than nothing.
+    // Local messages carry their content and optional series directly,
+    // without the viewer/playback split used by remote invalidations.
     private static string?[] ScopeOf(MediaSurfaceChanged message)
         => WatchScope([message.ContentId], string.IsNullOrEmpty(message.SeriesId) ? [] : [message.SeriesId]);
 
     // A named series relates aggregate detail state, not every episode's
     // playback position. Only an actual series/season container mutation
     // invalidates its descendant /watch snapshots. Season IDs use series:.
+    // Without a known parent, keep the container's own scope rather than
+    // retiring unrelated leaves; detail-cache invalidation remains global.
     private static string?[] WatchScope(IEnumerable<string> contentIds, IEnumerable<string> seriesIds)
     {
         var items = contentIds.ToArray();
         var series = seriesIds.Where(id => !string.IsNullOrEmpty(id)).ToArray();
         var containerChanged = items.Any(id => id.StartsWith("series:", StringComparison.Ordinal));
-        if (containerChanged && series.Length == 0) return [];
         return (containerChanged ? items.Concat(series) : items).Cast<string?>().ToArray();
     }
 
