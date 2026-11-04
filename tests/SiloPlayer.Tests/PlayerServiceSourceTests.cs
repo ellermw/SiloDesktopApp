@@ -3,6 +3,20 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void FailedSubtitleReadCannotRollbackAnAcceptedFileToOutgoingIntent()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private bool RestoreExecutedSubtitleSelection(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void ShowSubtitleSelectionUnavailable(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var restore = method.IndexOf("_playbackManager!.RestoreLocalSubtitleIntent(previousIntent);", StringComparison.Ordinal);
+        var condition = method.LastIndexOf("if (session?.ProtocolVersion", restore, StringComparison.Ordinal);
+        Assert.Contains("previousIntent.MediaFileId == session.MediaFileId", method[condition..restore]);
+        Assert.Contains("_pendingSubtitlePreferenceOwner = null;", method);
+        Assert.DoesNotContain("RecordLocalSubtitleSelection(null", method);
+    }
+
+    [Fact]
     public void RemappedSubtitleReloadAcknowledgesOnlyItsAdmittedLogicalChoice()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));

@@ -6114,7 +6114,7 @@ public partial class PlayerService : IDisposable
         // Preserve the requested intent for the next load/transport when no
         // previous route could be restored. A tentative manual pick instead
         // restores its exact prior identity and automatic/explicit provenance.
-        if (session?.ProtocolVersion >= 3 && previousIntent != null)
+        if (session?.ProtocolVersion >= 3 && previousIntent != null && previousIntent.MediaFileId == session.MediaFileId)
             _playbackManager!.RestoreLocalSubtitleIntent(previousIntent);
         CommitExecutedSubtitleSelection(retained);
         return true;

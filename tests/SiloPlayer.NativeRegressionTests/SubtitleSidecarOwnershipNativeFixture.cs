@@ -532,7 +532,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             subtitles.BusyChangedFile = choice == "changed-file-busy";
             subtitles.MediaRelease.TrySetResult();
             Set(service, "_activeSubtitleServerIndex", 2); manager.RecordLocalSubtitleSelection(2);
+            typeof(PlayerService).GetMethod("FlushLogs", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null);
             var noticeLogStart = new FileInfo(Path.Combine(Program.ResultDirectory, "mpv_log.txt")).Length;
+            var subtitleErrorPath = Path.Combine(Program.ResultDirectory, "player_subtitle_error.txt");
+            var subtitleErrorStart = File.Exists(subtitleErrorPath) ? new FileInfo(subtitleErrorPath).Length : 0;
             try
             {
                 var originalChoice = castChoice
@@ -596,6 +599,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                         "A busy new-file read highlighted an obsolete index or persisted an unapplied preference.");
                     Require(Get(service, "_pendingSubtitlePreferenceOwner") == null && Get(service, "_pendingSubtitlePreferenceIndex") == null,
                         "Exhausted manual selection retained unapplied preference authority.");
+                    Require(manager.SubtitleSelectionForLoad == 7,
+                        "A busy granted-file read restored the outgoing file's previous bitmap intent over the accepted text identity.");
                     subtitles.BusyChangedFile = false;
                     // Re-run automatic selection from the retained valid grant,
                     // not a new viewer preference. It may execute successfully
@@ -629,7 +634,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                         "A stale old-file combined index forced recovery instead of direct latest-choice convergence.");
                     Require(wire.ReplanSelections.SequenceEqual(new[] { 0, 8 }) && wire.Replans == 2,
                         "The latest old-file choice did not converge directly using its remapped new-file identity.");
-                    Require(!File.Exists(Path.Combine(Program.ResultDirectory, "player_subtitle_error.txt")),
+                    Require((File.Exists(subtitleErrorPath) ? new FileInfo(subtitleErrorPath).Length : 0) == subtitleErrorStart,
                         "A stale old-file combined index triggered subtitle-switch recovery.");
                     Require(manager.CurrentSession!.MediaFileId == 43 && service.ActiveSubtitleServerIndex == 8 &&
                         manager.SubtitleSelectionForLoad == 8 && wire.RequestedPreferences.SequenceEqual(new[] { 8 }) && mpv.GetPropertyDouble("sid") > 0,
