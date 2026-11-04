@@ -27,7 +27,7 @@ Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo S
 No beta is newer than the current release right now. [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 <!-- beta-download:end -->
 
-See the [release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.519) for what's new in 1.2.519.
+See the [release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.587) for what's new in 1.2.587.
 
 The Silo icons, stable taskbar identity, centered keep-open updates and subtitle continuity are retained. For pins created before 1.2.514, unpin the old entry once, launch updated Silo and pin it again. The progress window uses the currently installed helper; updates started after 1.2.515's helper is installed use its corrected Silo icon. Legacy installations require one full installer migration; compatible versioned installations reuse unchanged files.
 
