@@ -22,7 +22,7 @@ public partial class PlayerService
     private void PublishNativeMenuScopes()
     {
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         var version = ActiveVersion;
@@ -42,10 +42,10 @@ public partial class PlayerService
             (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0) &&
             (version?.Chapters?.SequenceEqual(chapters) ?? chapters.Length == 0) &&
             (session?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
-            State is PlayerState.Expanded or PlayerState.Fullscreen && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
+            State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
             play == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration) &&
             playbackFile == Volatile.Read(ref _playbackFileGeneration) &&
-            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;

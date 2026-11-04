@@ -25,7 +25,8 @@ internal static class PlaybackQualityMenuNativeFixture
             WinRT.Interop.WindowNative.GetWindowHandle(window), "quality-" + mode);
         window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
         using var media = new PlaybackAudioMenuNativeFixture.MediaServer();
-        using var wire = new Wire(media.Origin);
+        var mediaPath = mode == "quality-load-retry" ? "/stream/direct/synthetic-quality.y4m" : "/video.y4m";
+        using var wire = new Wire(media.Origin, mediaPath);
         using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://native-quality.fixture.invalid"); api.SetProfile("synthetic");
         using var auth = new AuthService(api, new AuthApi(api));
@@ -49,6 +50,7 @@ internal static class PlaybackQualityMenuNativeFixture
         Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "synthetic-quality"); Property(service, "Versions", versions);
         Call(service, "WireMpvEvents");
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retainedDirectCallbacks = new List<object>();
         var queries = new ConcurrentDictionary<string, TaskCompletionSource<JsonElement>>();
         void Message(string[] args)
         {
@@ -73,11 +75,130 @@ internal static class PlaybackQualityMenuNativeFixture
             Command(mpv, "load-script", observed); await ready.Task.WaitAsync(TimeSpan.FromSeconds(8));
             var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void Loaded() => loaded.TrySetResult(); mpv.FileLoaded += Loaded;
-            try { mpv.LoadFile(media.Origin + "/video.y4m"); await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
+            try { mpv.LoadFile(media.Origin + mediaPath); await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
             finally { mpv.FileLoaded -= Loaded; }
             Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
             Call(service, "SendQualityInfoToOsc");
+            if (mode == "quality-load-retry")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var originalOpen = Get(mpv, "_directOpen");
+                Require(originalOpen != null, "Synthetic direct video did not register its native reader.");
+                retainedDirectCallbacks.Add(originalOpen!);
+                var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs> observe = (_, args) =>
+                {
+                    if (args.Exception is InvalidOperationException { Message: "Cannot register direct file reader." }) failed.TrySetResult();
+                };
+                var initialSession = manager.CurrentSession;
+                AppDomain.CurrentDomain.FirstChanceException += observe;
+                try
+                {
+                    Set(mpv, "_directOpen", null);
+                    var selection = await Open(); Call(selection, "Input", "end"); Call(selection, "Input", "activate");
+                    await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    await Until(() => !service.IsLoading && !service.IsQualitySwitchActive && !(bool)Get(service, "_switchingContent")!,
+                        "Quality load failure stranded its own busy state.");
+                    Require(!ReferenceEquals(initialSession, manager.CurrentSession) && !string.IsNullOrEmpty(service.ErrorMessage),
+                        "The controlled failure did not occur after real Quality decision adoption.");
+                }
+                finally
+                {
+                    AppDomain.CurrentDomain.FirstChanceException -= observe;
+                    if (Get(mpv, "_directOpen") is { } attempted) retainedDirectCallbacks.Add(attempted);
+                    Set(mpv, "_directOpen", originalOpen);
+                }
+                // No extra publication: reopening must use the failure path's new scope.
+                var retry = await Open();
+                Require(Gate(service).CurrentCount == 0 && mpv.IsPaused && service.IsPaused,
+                    "Retry menu did not retain its lease and genuine pause intent.");
+                Call(retry, "Input", "cancel");
+                Require(Gate(service).CurrentCount == 1, "Retry menu leaked its lease.");
+                Program.Log("PASS: actual accepted Quality synchronous native load failure republishes owned scopes and immediately reopens without another publication; genuine pause and lease cleanup remain intact.");
+                return;
+            }
+            if (mode is "access-menu" or "picture-in-picture")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                if (mode == "picture-in-picture")
+                {
+                    Call(service, "RetireNativeMenus");
+                    Property(service, "State", PlayerState.PictureInPicture);
+                    Call(service, "SendQualityInfoToOsc");
+                }
+                var retained = await Open();
+                var identity = api.CaptureIdentityContext(); var read = api.CaptureContext();
+                Require(api.TryInvalidateAccessContext(read, out var refreshed) && refreshed != read && api.IsCurrentIdentityContext(identity),
+                    "Fixture did not exercise a real access refresh with stable playback identity.");
+                Call(retained, "Input", "down");
+                await Task.Delay(150); await Query();
+                Require(ReferenceEquals(Menu(service), retained) && Gate(service).CurrentCount == 0,
+                    "Access refresh retired the open playback menu.");
+                Call(retained, "Input", "cancel");
+                var reopened = await Open();
+                api.SetProfile("retired-playback-profile"); Call(reopened, "Input", "activate");
+                await Until(() => Menu(service) == null, "A genuine profile change retained its menu.");
+                Require(wire.Qualities.IsEmpty && Gate(service).CurrentCount == 1 && mpv.IsPaused,
+                    "Retired profile dispatched a choice, leaked its lease or changed pause.");
+                Call(service, "SendQualityInfoToOsc");
+                var serverMenu = await Open();
+                api.SetBaseUrl("https://retired-quality.fixture.invalid"); Call(serverMenu, "Input", "activate");
+                await Until(() => Menu(service) == null, "A genuine server change retained its menu.");
+                Require(wire.Qualities.IsEmpty && Gate(service).CurrentCount == 1 && mpv.IsPaused,
+                    "Retired server dispatched a choice, leaked its lease or changed pause.");
+                Program.Log($"PASS: actual {mode} native Quality retains access-refresh ownership, reopens without republication, and rejects genuine profile/server retirement; no physical PiP transition is asserted.");
+                return;
+            }
+            if (mode is "legacy-access-version" or "legacy-access-quality")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var gate = (SemaphoreSlim)Get(service, "_transportRestartGate")!;
+                var initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                var drainGeneration = (long)Get(service, "_seekRestartGeneration")!;
+                await gate.WaitAsync();
+                try
+                {
+                    var quality = mode == "legacy-access-quality";
+                    mpv.SendScriptMessage(quality ? "silo-quality-select" : "silo-version-select", quality ? "720p" : "71");
+                    await Until(() => (bool)Get(service, "_switchingContent")! &&
+                        (long)Get(service, "_seekRestartGeneration")! > drainGeneration,
+                        "Legacy selection did not enter its held transport drain.");
+                    var identity = api.CaptureIdentityContext();
+                    Require(api.TryInvalidateAccessContext(api.CaptureContext(), out _) && api.IsCurrentIdentityContext(identity),
+                        "Legacy drain did not receive a stable-identity access refresh.");
+                }
+                finally { gate.Release(); }
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialFile && !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Access refresh discarded a legacy selection held before dispatch completion.");
+                Require(mpv.IsPaused && service.IsPaused && !service.IsQualitySwitchActive,
+                    "Legacy access-refresh selection lost pause or busy cleanup.");
+                Program.Log($"PASS: actual OSC {mode} survives stable-identity access refresh during its real transport drain, loads the chosen file/quality and retains pause.");
+                return;
+            }
+            if (mode is "access-version" or "access-quality")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                wire.HoldReplacementStart = mode == "access-version";
+                wire.HoldSuccessfulReplan = mode == "access-quality";
+                var selection = await Open();
+                if (mode == "access-version") { Call(selection, "Input", "home"); Call(selection, "Input", "down"); }
+                else Call(selection, "Input", "end");
+                Call(selection, "Input", "activate");
+                await (mode == "access-version" ? wire.ReplacementStarted.Task : wire.ReplanStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                var identity = api.CaptureIdentityContext();
+                Require(api.TryInvalidateAccessContext(api.CaptureContext(), out _) && api.IsCurrentIdentityContext(identity),
+                    "Held switch did not receive a real stable-identity access refresh.");
+                wire.ReleaseReplacement.TrySetResult(); wire.ReleaseReplan.TrySetResult();
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialFile && !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Access refresh discarded an accepted playback decision before loading it.");
+                Require(mpv.IsPaused && service.IsPaused && Gate(service).CurrentCount == 1 &&
+                    (mode == "access-version" ? manager.CurrentSession?.MediaFileId == 71 : service.SelectedQualityMenuId == "720p"),
+                    "Access-refresh continuation lost its accepted selection, pause or menu lease.");
+                Program.Log($"PASS: actual held native {mode} continues through access refresh and loads the accepted decision while retaining genuine pause and lease cleanup.");
+                return;
+            }
             if (mode is "version-invalid-url" or "quality-invalid-url")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -372,6 +493,7 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");
             Set(service, "_videoWindow", null); Set(service, "_mpv", null); Set(service, "_playbackManager", null);
             video.Dispose(); mpv.Dispose(); await Task.Delay(40); foreground.Complete();
+            GC.KeepAlive(retainedDirectCallbacks);
         }
 
         async Task<JsonElement> Query()
@@ -396,7 +518,7 @@ internal static class PlaybackQualityMenuNativeFixture
         }
     }
 
-    private sealed class Wire(string origin) : HttpMessageHandler
+    private sealed class Wire(string origin, string mediaPath) : HttpMessageHandler
     {
         internal readonly ConcurrentQueue<string> Qualities = new();
         internal readonly ConcurrentQueue<int> Files = new();
@@ -451,7 +573,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 {
                     protocol_version = 3, plan_id = "quality-plan-" + Qualities.Count + "-" + Files.Count,
                     plan_attempt_key = "synthetic", session_id = "native-quality-fixture", effective_media_file_id = _file,
-                    delivery = "original_http", stream = new { url = InvalidDeliveryUrl ? "" : origin + "/video.y4m" },
+                    delivery = "original_http", stream = new { url = InvalidDeliveryUrl ? "" : origin + mediaPath },
                     timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
                     selected_tracks = new { }, subtitle = new { mode = "off", inventory = Array.Empty<object>() },
                     active_quality = quality == "auto" ? "original" : quality,
