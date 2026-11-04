@@ -61,6 +61,7 @@ public sealed partial class SettingsPage : Page
     private readonly List<PrimaryMenuItem> _interfaceMenuDraft = [];
     private bool _interfaceMenuDirty;
     private bool _suppressInterfaceEvents;
+    private int _interfaceLoadGeneration;
     private CardOverlayPrefs? _cardOverlayDraft;
     private string _cardOverlayPreviewVariant = "movie";
     private CancellationTokenSource? _overlaySaveCts;
@@ -1395,6 +1396,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task LoadInterfaceCustomizationAsync()
     {
+        var loadGeneration = ++_interfaceLoadGeneration;
         var ownerApi = App.Services.GetRequiredService<SettingsApi>();
         var ownerContext = ownerApi.CaptureContext();
         InterfaceControls.IsHitTestVisible = false;
@@ -1405,7 +1407,7 @@ _webhookPlexAuthCts?.Cancel();
         try
         {
             await _uiCustomizationService.RefreshAsync();
-            if (!ownerApi.IsCurrentContext(ownerContext)) return;
+            if (loadGeneration != _interfaceLoadGeneration || !ownerApi.IsCurrentContext(ownerContext)) return;
             if (_uiCustomizationService.IsUnavailable)
             {
                 ShowInterfaceUnavailable(
@@ -1433,8 +1435,15 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            if (!ownerApi.IsCurrentContext(ownerContext)) return;
+            if (loadGeneration != _interfaceLoadGeneration || !ownerApi.IsCurrentContext(ownerContext)) return;
             ShowInterfaceUnavailable("Customization unavailable", ex.Message);
+        }
+        finally
+        {
+            if (loadGeneration == _interfaceLoadGeneration && !ownerApi.IsCurrentContext(ownerContext))
+                ShowInterfaceUnavailable(
+                    "Customization changed",
+                    "Your session or permissions changed while loading. Reopen Interface to load the current settings.");
         }
     }
 
@@ -1498,33 +1507,43 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task SaveInterfaceCardPresentationAsync(CardPresentation presentation)
     {
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
+        var loadGeneration = _interfaceLoadGeneration;
         InterfaceControls.IsHitTestVisible = false;
         try
         {
-            await _uiCustomizationService.SaveCardPresentationAsync(presentation);
+            var committed = await _uiCustomizationService.SaveCardPresentationAsync(presentation);
+            if (!committed || !IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             SyncInterfaceControls();
             App.Services.GetRequiredService<ToastService>().Success("Desktop card layout saved");
         }
         catch (Exception ex)
         {
+            if (!IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save card layout: {ex.Message}");
         }
         finally
         {
-            InterfaceControls.IsHitTestVisible = true;
+            if (IsLoaded && loadGeneration == _interfaceLoadGeneration && ownerApi.IsCurrentContext(ownerContext))
+                InterfaceControls.IsHitTestVisible = true;
         }
     }
 
     private async void ResetDesktopCardLayout_Click(object sender, RoutedEventArgs e)
     {
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.ResetCardPresentationAsync();
+            var committed = await _uiCustomizationService.ResetCardPresentationAsync();
+            if (!committed || !IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             SyncInterfaceControls();
             App.Services.GetRequiredService<ToastService>().Success("Desktop card layout reset");
         }
         catch (Exception ex)
         {
+            if (!IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset card layout: {ex.Message}");
         }
     }

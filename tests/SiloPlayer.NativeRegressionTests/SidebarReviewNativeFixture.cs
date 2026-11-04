@@ -27,6 +27,8 @@ internal static class SidebarReviewNativeFixture
     private static string MenuLabel = "Current menu";
     private static TaskCompletionSource<object>? HeldPins, HeldLibraries, HeldMenuRead, HeldMenuWrite;
     private static int PinReads, PinWrites, LibraryReads, MenuReads, MenuWrites;
+    private static bool FailSidebarReads;
+    private static string PosterSize = "standard";
     private static Profile FirstProfile = new() { Id = "first", Name = "First", IsPrimary = true };
     private static readonly Profile SecondProfile = new() { Id = "second", Name = "Second", IsChild = true, LibraryRestrictionsEnabled = true, AllowedLibraryIds = [1] };
     private static object? ProfileLibraries;
@@ -35,7 +37,9 @@ internal static class SidebarReviewNativeFixture
         ? new[] { new { type = "collection", id = "pin", label }, new { type = "collection", id = "pin", label = "Later duplicate label" } }
         : new[] { new { type = "collection", id = "pin", label } } };
     private static object Menu(string label) => new { items = new object[] { new { type = "builtin", destination = "home" }, new { type = "library", library_id = 1, label } } };
-    private static object EffectiveMenu() => new { items = new[] { new { key = "nav.primary_menu", value = Menu(MenuLabel), source = "profile_client" } } };
+    private static object EffectiveMenu() => new { items = new object[] {
+        new { key = "nav.primary_menu", value = Menu(MenuLabel), source = "profile_client" },
+        new { key = "ui.card_presentation", value = new { poster_size = PosterSize, caption = "title_metadata" }, source = "profile_client" } } };
     private static object Libraries() => new { items = new[] { new { id = 1, name = "One", type = "movies" }, new { id = 2, name = "Two", type = "series" } } };
     private static TaskCompletionSource<object> Hold() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static NavigationViewItem[] Rows(NavigationView nav) => nav.MenuItems.OfType<NavigationViewItem>().ToArray();
@@ -57,6 +61,12 @@ internal static class SidebarReviewNativeFixture
         var vm = provider.GetRequiredService<MainViewModel>();
         var service = provider.GetRequiredService<UICustomizationService>();
         typeof(MainWindow).GetField("_playerPrewarmed", Instance)!.SetValue(window, true);
+        if (mode is "sidebar-review-home-library-load" or "sidebar-review-home-pin-load")
+        {
+            await CheckHeldHomeNavigationAsync(window, provider, nav, mode.EndsWith("pin-load", StringComparison.Ordinal));
+            if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
+            return;
+        }
         if (mode.EndsWith("initial", StringComparison.Ordinal)) HeldMenuRead = Hold();
         if (mode.EndsWith("duplicates", StringComparison.Ordinal)) Pins = PinMap("Duplicate", duplicate: true);
         if (mode.EndsWith("move", StringComparison.Ordinal)) Pins = new Dictionary<string, object> { ["2"] = new[] { new { type = "section", id = "second-pin", label = "Second pin" } } };
@@ -66,6 +76,97 @@ internal static class SidebarReviewNativeFixture
         if (IsSettingsProfileRoute)
         {
             await CheckSettingsProfileChangeAsync(window, provider, nav, mode.EndsWith("edit", StringComparison.Ordinal));
+        }
+        else if (mode is "sidebar-review-card-save" or "sidebar-review-card-reset")
+        {
+            navigation.Navigate<SettingsPage>();
+            await Until(() => navigation.Frame!.Content is SettingsPage page && page.IsLoaded && !page.ViewModel.IsLoading);
+            var page = (SettingsPage)navigation.Frame!.Content;
+            page.SelectSettingsSection("Interface"); await Drain();
+            HeldMenuWrite = Hold();
+            var reset = mode.EndsWith("reset", StringComparison.Ordinal);
+            Task? save = null;
+            if (reset)
+                typeof(SettingsPage).GetMethod("ResetDesktopCardLayout_Click", Instance)!.Invoke(page, [page, new RoutedEventArgs()]);
+            else
+                save = (Task)typeof(SettingsPage).GetMethod("SaveInterfaceCardPresentationAsync", Instance)!.Invoke(page, [new CardPresentation { PosterSize = "compact" }])!;
+            await Until(() => MenuWrites > 0);
+            navigation.Navigate<Page>();
+            PosterSize = "large";
+            provider.GetRequiredService<AuthService>().SelectProfile("second", profile: new() { Id = "second", Name = "Second" });
+            await Until(() => service.CardPresentation.PosterSize == "large"); await Drain();
+            var reads = MenuReads;
+            var changes = 0;
+            service.Changed += (_, _) => changes++;
+            HeldMenuWrite.SetResult(new { }); HeldMenuWrite = null;
+            if (save != null) await save;
+            await Drain();
+            await service.EnsureLoadedAsync();
+            Check(service.CardPresentation.PosterSize == "large" && service.CardPresentationSource == "profile_client",
+                "retired actual Settings card save/reset cannot overwrite replacement profile presentation");
+            Check(MenuReads == reads && changes == 0, "retired card completion neither refreshes the new owner nor publishes singleton changes");
+            Check(((ComboBox)page.FindName("InterfacePosterSizeCombo")).SelectedItem is ComboBoxItem { Tag: "standard" },
+                "retired card caller does not sync replacement profile controls");
+        }
+        else if (mode == "sidebar-review-interface-load")
+        {
+            navigation.Navigate<SettingsPage>();
+            await Until(() => navigation.Frame!.Content is SettingsPage page && page.IsLoaded && !page.ViewModel.IsLoading);
+            var page = (SettingsPage)navigation.Frame!.Content;
+            var reads = MenuReads;
+            HeldMenuRead = Hold();
+            page.SelectSettingsSection("Interface");
+            await Until(() => MenuReads > reads);
+            api.InvalidateAccessContext();
+            HeldMenuRead.SetResult(EffectiveMenu()); HeldMenuRead = null;
+            await Until(() => ((TextBlock)page.FindName("InterfaceStatusTitle")).Text == "Customization changed");
+            Check(((TextBlock)page.FindName("InterfaceStatusText")).Text.Contains("Reopen Interface") &&
+                !((FrameworkElement)page.FindName("InterfaceControls")).IsHitTestVisible,
+                "stale Interface read ends loading with an explicit safe unavailable state and recovery instruction");
+            await (Task)typeof(SettingsPage).GetMethod("LoadInterfaceCustomizationAsync", Instance)!.Invoke(page, null)!;
+            Check(((FrameworkElement)page.FindName("InterfaceControls")).IsHitTestVisible &&
+                ((FrameworkElement)page.FindName("InterfaceStatusCard")).Visibility == Visibility.Collapsed,
+                "Interface can load and enable current settings after a stale read");
+        }
+        else if (mode == "sidebar-review-picker-back")
+        {
+            await Until(() => LibraryRows(nav)[0].MenuItems.Count == 1 && Rows(nav).Any(n => n.Tag?.GetType().Name == "PluginAppNavTag"));
+            var profile = provider.GetRequiredService<AuthService>().SelectedProfileId;
+            Call(window, "SwitchProfile_Click", window, new RoutedEventArgs());
+            await Until(() => navigation.Frame!.Content is ProfileSelectPage);
+            navigation.GoBack();
+            await Until(() => navigation.Frame!.Content is not ProfileSelectPage && LibraryRows(nav).Length == 2 &&
+                LibraryRows(nav)[0].MenuItems.Count == 1 && PrimaryRows(nav).Length == 2 &&
+                Rows(nav).Any(n => n.Tag?.GetType().Name == "PluginAppNavTag"));
+            Check(provider.GetRequiredService<AuthService>().SelectedProfileId == profile && vm.HasCurrentLibrarySnapshot,
+                "Back from Switch Profile restores libraries, pins, custom shortcuts and Apps without selecting a profile");
+            var writes = PinWrites;
+            Invoke(Unpin(LibraryRows(nav)[0]));
+            await Until(() => PinWrites == writes + 1 && LibraryRows(nav)[0].MenuItems.Count == 0);
+            Check(LibraryRows(nav)[0].MenuItems.Count == 0, "restored picker shell owns usable unpin callbacks");
+        }
+        else if (mode == "sidebar-review-nonhome-catchup")
+        {
+            navigation.Navigate<LibraryPage>(vm.Libraries[0]);
+            await Until(() => navigation.Frame!.Content is LibraryPage page && page.IsLoaded && !page.ViewModel.IsLoading);
+            var library = LibraryRows(nav)[0];
+            await Until(() => library.MenuItems.Count == 1);
+            var pin = library.MenuItems[0]; var primary = PrimaryRows(nav).Last();
+            library.IsExpanded = true; nav.SelectedItem = library; library.Focus(FocusState.Keyboard); await Drain();
+            var reads = LibraryReads; var pinReads = PinReads;
+            FailSidebarReads = true;
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext());
+            await Until(() => LibraryReads > reads && PinReads > pinReads); await Drain();
+            Check(ReferenceEquals(LibraryRows(nav)[0], library) && ReferenceEquals(library.MenuItems[0], pin) &&
+                PrimaryRows(nav).Contains(primary) && vm.HasCurrentLibrarySnapshot && library.IsExpanded &&
+                ReferenceEquals(nav.SelectedItem, library) && library.FocusState == FocusState.Keyboard,
+                "failed non-Home transport replacement preserves accepted native identity, data, selection, focus and expansion");
+            FailSidebarReads = false;
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext()); await Drain();
+            Check(ReferenceEquals(LibraryRows(nav)[0], library) && ReferenceEquals(library.MenuItems[0], pin),
+                "successful non-Home catch-up reconciles retained nodes in place");
+            var writes = PinWrites; Invoke(Unpin(library)); await Until(() => PinWrites == writes + 1);
+            Check(PinWrites == writes + 1, "transport catch-up retains useful pin callback ownership");
         }
         else if (mode.EndsWith("save", StringComparison.Ordinal) || mode.EndsWith("reset", StringComparison.Ordinal) || mode.EndsWith("clear", StringComparison.Ordinal))
         {
@@ -153,6 +254,20 @@ internal static class SidebarReviewNativeFixture
             Check(library.MenuItems.Count == 1 && ((Grid)((NavigationViewItem)library.MenuItems[0]).Content).Children.OfType<TextBlock>().Single().Text == "Recovered", "clean snapshot recovers actual already-duplicated old pin vector");
             var vectors = 0; ((Windows.Foundation.Collections.IObservableVector<object>)library.MenuItems).VectorChanged += (_, _) => vectors++;
             await window.RefreshSidebarPinsAsync(); await Drain(); Check(vectors == 0, "duplicate recovery remains stable on repeated publication");
+            vm.Libraries.Add(new Library { Id = 1, Name = "Later duplicate", Type = "series" }); await Drain();
+            Check(LibraryRows(nav).Length == 2 && ReferenceEquals(LibraryRows(nav)[0], library) && Equals(library.Content, "One"),
+                "duplicate library IDs keep the first snapshot occurrence and retained native node");
+            nav.MenuItems.Add(new NavigationViewItem { Tag = vm.Libraries[0], Content = "Old duplicate library" });
+            window.UpdateLibraryNavItems(); await Drain();
+            Check(LibraryRows(nav).Length == 2 && ReferenceEquals(LibraryRows(nav)[0], library), "publication recovers already-duplicated old library vectors");
+            vm.Libraries[0] = new Library { Id = 1, Name = "Current first", Type = "movies" }; await Drain();
+            Check(Equals(library.Content, "Current first"), "later publications still update after duplicate library recovery");
+            var pin = (NavigationViewItem)library.MenuItems[0];
+            pin.Icon = SiloPlayer.Controls.WebUiIcon.Navigation("layout-grid", 14);
+            Pins = new Dictionary<string, object> { ["1"] = new[] { new { type = "Collection", id = "pin", label = "Mixed case" } } };
+            await window.RefreshSidebarPinsAsync(); await Drain();
+            Check(ReferenceEquals(library.MenuItems[0], pin) && Equals(pin.Icon.Tag, "folder-open") && pin.Icon.Opacity == .6,
+                "retained pin refreshes its collection glyph case-insensitively");
         }
         else if (mode.EndsWith("move", StringComparison.Ordinal))
         {
@@ -192,6 +307,37 @@ internal static class SidebarReviewNativeFixture
             HeldLibraries.SetResult(Libraries()); HeldLibraries = null;
         }
         if (Failures.Count > 0) throw new InvalidOperationException("Sidebar review failures: " + string.Join("; ", Failures));
+    }
+    private static async Task CheckHeldHomeNavigationAsync(MainWindow window, IServiceProvider provider, NavigationView nav, bool holdPins)
+    {
+        var navigation = provider.GetRequiredService<NavigationService>();
+        var api = provider.GetRequiredService<SiloApiClient>();
+        var vm = provider.GetRequiredService<MainViewModel>();
+        var original = Hold();
+        if (holdPins) HeldPins = original;
+        else HeldLibraries = original;
+        navigation.Navigate<HomePage>();
+        window.ShowMainNavigation();
+        await Until(() => navigation.Frame!.Content is HomePage home && home.IsLoaded && !home.ViewModel.IsLoading &&
+            (holdPins ? PinReads > 0 : LibraryReads > 0));
+        var retainedLibrary = LibraryRows(nav).FirstOrDefault();
+        var replacement = Hold();
+        var reads = holdPins ? PinReads : LibraryReads;
+        if (holdPins) HeldPins = replacement;
+        else HeldLibraries = replacement;
+        Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext());
+        await Until(() => (holdPins ? PinReads : LibraryReads) > reads);
+        original.SetResult(holdPins ? new { value = Pins } : Libraries()); await Drain();
+        Check(holdPins ? window.GetSidebarPins(1, "collection").Count == 0 : !vm.HasCurrentLibrarySnapshot,
+            "stale held initial " + (holdPins ? "pin" : "library") + " response cannot publish after Home catch-up");
+        replacement.SetResult(holdPins ? new { value = Pins } : Libraries());
+        if (holdPins) HeldPins = null;
+        else HeldLibraries = null;
+        await Until(() => vm.HasCurrentLibrarySnapshot && LibraryRows(nav).Length == 2 && LibraryRows(nav)[0].MenuItems.Count == 1);
+        Check(!holdPins || ReferenceEquals(retainedLibrary, LibraryRows(nav)[0]), "automatic Home catch-up accepts replacement reads without retiring surviving libraries");
+        Check(window.GetSidebarPins(1, "collection").Count == 1, "automatic Home catch-up restores pins after an invalidated initial read");
+        var writes = PinWrites; Invoke(Unpin(LibraryRows(nav)[0])); await Until(() => PinWrites == writes + 1);
+        Check(PinWrites == writes + 1, "automatically recovered Home hydration owns a usable pin action");
     }
     private static async Task CheckSettingsProfileChangeAsync(MainWindow window, IServiceProvider provider, NavigationView nav, bool edit)
     {
@@ -315,19 +461,29 @@ internal static class SidebarReviewNativeFixture
                 AllowedLibraryIds = body.RootElement.GetProperty("allowed_library_ids").EnumerateArray().Select(id => int.Parse(id.GetString()!)).ToList() };
             return Json(FirstProfile);
         }
-        if (path == "/api/v2/user/libraries") { LibraryReads++; return Json(HeldLibraries == null ? ProfileLibraries ?? Libraries() : await HeldLibraries.Task); }
+        if (path == "/api/v2/user/libraries")
+        {
+            LibraryReads++;
+            if (FailSidebarReads) return new(HttpStatusCode.ServiceUnavailable);
+            return Json(HeldLibraries == null ? ProfileLibraries ?? Libraries() : await HeldLibraries.Task);
+        }
         if (path.Contains("sidebar_pins"))
         {
-            if (request.Method == HttpMethod.Get) { PinReads++; return Json(HeldPins == null ? new { value = Pins } : await HeldPins.Task); }
+            if (request.Method == HttpMethod.Get)
+            {
+                PinReads++;
+                if (FailSidebarReads) return new(HttpStatusCode.ServiceUnavailable);
+                return Json(HeldPins == null ? new { value = Pins } : await HeldPins.Task);
+            }
             PinWrites++;
-            if (IsSettingsProfileRoute)
+            if (IsSettingsProfileRoute || Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "sidebar-review-picker-back")
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 Pins = body.RootElement.GetProperty("value").Clone();
             }
             return Json(new { });
         }
-        if (path.Contains("nav.primary_menu") && request.Method != HttpMethod.Get)
+        if ((path.Contains("nav.primary_menu") || path.Contains("ui.card_presentation")) && request.Method != HttpMethod.Get)
         { MenuWrites++; return Json(HeldMenuWrite == null ? new { } : await HeldMenuWrite.Task); }
         if (path == "/api/v2/settings/values/effective" && request.RequestUri.Query.Contains("nav.primary_menu"))
         { MenuReads++; return Json(HeldMenuRead == null ? EffectiveMenu() : await HeldMenuRead.Task); }

@@ -1469,11 +1469,15 @@ public sealed partial class MainWindow : Window
                 _playerService.State is not (PlayerState.Expanded or PlayerState.Fullscreen))
             {
                 _ = home.CatchUpAfterReconnectAsync(context);
-                if (!_sidebarCustomizationReady && _hydratedShellKey is { } shellKey &&
+                if (_hydratedShellKey is { } shellKey &&
                     _shellHydrationCts is { IsCancellationRequested: false } owner)
                 {
-                    _ = RunShellWorkAsync("home_catchup_ui_customization",
-                        () => LoadSidebarCustomizationAsync(shellKey, owner.Token));
+                    if (!_sidebarCustomizationReady)
+                        _ = RunShellWorkAsync("home_catchup_ui_customization",
+                            () => LoadSidebarCustomizationAsync(shellKey, owner.Token));
+                    if (!_viewModel.HasCurrentLibrarySnapshot || !_sidebarPinsReady)
+                        _ = RunShellWorkAsync("home_catchup_library_navigation",
+                            () => LoadShellNavigationAsync(shellKey, owner.Token));
                 }
                 return;
             }
@@ -1521,7 +1525,8 @@ public sealed partial class MainWindow : Window
         var shellKey = GetAuthenticatedShellKey();
         _hydratedShellKey = shellKey;
         var token = _shellHydrationCts.Token;
-        RetireSidebarNavigation(retireCustomization: false);
+        // AccessChanged already retires authorized data. Transport-only catch-up
+        // keeps the accepted same-identity snapshot until replacement reads succeed.
         _ = RunShellWorkAsync("access_ui_customization", () => LoadSidebarCustomizationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
@@ -2157,6 +2162,20 @@ public sealed partial class MainWindow : Window
         ApplyResponsiveShellLayout();
         SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
         QueueSettingsSidebarSynchronization();
+        if (e.SourcePageType != typeof(ProfileSelectPage) &&
+            !string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal))
+        {
+            // Navigated may run inside a NavigationView callback. Rehydrate only
+            // after that callback unwinds, and only if this route still owns the frame.
+            var destination = e.Content;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (ReferenceEquals(ContentFrame.Content, destination) &&
+                    CanExposeAuthenticatedNavigation &&
+                    !string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal))
+                    ShowMainNavigation();
+            });
+        }
     }
 
     private void ResynchronizeSelectedNavigationItem()
@@ -3268,6 +3287,7 @@ public sealed partial class MainWindow : Window
             if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
                 return;
             _sidebarPins = ParseSidebarPins(entry.Value);
+            _sidebarPinsReady = true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -3275,9 +3295,8 @@ public sealed partial class MainWindow : Window
         }
         catch
         {
-            if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
-                return;
-            _sidebarPins = [];
+            // A failed replacement read must not discard accepted same-owner pins.
+            return;
         }
         if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
             return;

@@ -134,30 +134,52 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         }
     }
 
-    public async Task SaveCardPresentationAsync(
+    public async Task<bool> SaveCardPresentationAsync(
         CardPresentation presentation,
         CancellationToken cancellationToken = default)
     {
         var normalized = presentation.Normalize();
+        var context = settingsApi.CaptureContext();
+        var generation = Volatile.Read(ref _generation);
         await settingsApi.SetContractSettingValueAsync(
+            context,
             UICustomizationSettingKeys.CardPresentation,
             "profile_client",
             normalized,
             ct: cancellationToken).ConfigureAwait(false);
-        CardPresentation = normalized;
-        CardPresentationSource = "profile_client";
-        _loaded = true;
+        if (!IsCurrent(context, generation)) return false;
+        lock (_stateGate)
+        {
+            if (!IsCurrent(context, generation)) return false;
+            CardPresentation = normalized;
+            CardPresentationSource = "profile_client";
+            _loaded = true;
+            _loadedContext = context;
+            _loadedGeneration = generation;
+        }
         Changed?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
-    public async Task ResetCardPresentationAsync(CancellationToken cancellationToken = default)
+    public async Task<bool> ResetCardPresentationAsync(CancellationToken cancellationToken = default)
     {
+        var context = settingsApi.CaptureContext();
+        var generation = Volatile.Read(ref _generation);
         await settingsApi.DeleteContractSettingValueAsync(
+            context,
             UICustomizationSettingKeys.CardPresentation,
             "profile_client",
             ct: cancellationToken).ConfigureAwait(false);
-        _loaded = false;
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        if (!IsCurrent(context, generation)) return false;
+        lock (_stateGate)
+        {
+            if (!IsCurrent(context, generation)) return false;
+            _loaded = false;
+        }
+        await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
+        lock (_stateGate)
+            return IsCurrent(context, generation) && _loaded &&
+                _loadedContext == context && _loadedGeneration == generation && IsSupported && !IsUnavailable;
     }
 
     public async Task ClearDeviceOverrideAsync(string key, CancellationToken cancellationToken = default)

@@ -10,6 +10,7 @@ public sealed partial class MainWindow
 {
     private int _sidebarPublicationQueued;
     private bool _sidebarCustomizationReady;
+    private bool _sidebarPinsReady;
     private long _sidebarRetirementGeneration;
     private long _sidebarFocusRestoreGeneration;
 
@@ -34,6 +35,7 @@ public sealed partial class MainWindow
             AppsHeader.Visibility = Visibility.Collapsed;
         }
         _sidebarPins = [];
+        _sidebarPinsReady = false;
         _viewModel.RetireLibraries();
         RemoveDynamicLibraryNavItems();
         foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>()
@@ -63,10 +65,13 @@ public sealed partial class MainWindow
         var focusState = focused?.FocusState ?? FocusState.Unfocused;
         var selected = NavView.SelectedItem;
         var hidden = _settingsService.Load().HiddenLibraryIds.ToHashSet();
-        var oldLibraries = NavView.MenuItems.OfType<NavigationViewItem>()
-            .Where(item => item.Tag is Library).ToDictionary(item => ((Library)item.Tag).Id);
+        var oldLibraryItems = NavView.MenuItems.OfType<NavigationViewItem>()
+            .Where(item => item.Tag is Library).ToArray();
+        var oldLibraries = oldLibraryItems.GroupBy(item => ((Library)item.Tag).Id)
+            .ToDictionary(group => group.Key, group => group.First());
         var desired = new List<NavigationViewItem>();
-        foreach (var library in _viewModel.Libraries.Where(library => !hidden.Contains(library.Id)))
+        foreach (var library in _viewModel.Libraries.DistinctBy(library => library.Id)
+                     .Where(library => !hidden.Contains(library.Id)))
         {
             oldLibraries.TryGetValue(library.Id, out var item);
             item ??= new NavigationViewItem();
@@ -77,7 +82,7 @@ public sealed partial class MainWindow
             ReconcilePins(item, library.Id);
             desired.Add(item);
         }
-        ReconcileSidebarItems(NavView.MenuItems, header + 1, oldLibraries.Values.ToArray(), desired);
+        ReconcileSidebarItems(NavView.MenuItems, header + 1, oldLibraryItems, desired);
         PublishPrimaryMenu();
 
         // Native removal/moves may reset selection/focus. Only surviving nodes
@@ -127,9 +132,7 @@ public sealed partial class MainWindow
             if (item == null)
             {
                 var tag = new SidebarPinNavTag { LibraryId = libraryId, PinType = pin.Type, PinId = pin.Id, Label = pin.Label };
-                item = new NavigationViewItem { Tag = tag,
-                    Icon = Controls.WebUiIcon.Navigation(pin.Type == "collection" ? "folder-open" : "layout-grid", 14) };
-                item.Icon.Opacity = .6;
+                item = new NavigationViewItem { Tag = tag };
                 item.Content = BuildPinnedSidebarContent(item, tag);
             }
             else
@@ -141,6 +144,13 @@ public sealed partial class MainWindow
                 var content = (Grid)item.Content;
                 content.Children.OfType<TextBlock>().Single().Text = pin.Label;
                 AutomationProperties.SetName(content.Children.OfType<Button>().Single(), $"Unpin {pin.Label}");
+            }
+            var icon = string.Equals(pin.Type, "collection", StringComparison.OrdinalIgnoreCase) ? "folder-open" : "layout-grid";
+            if (!Equals(item.Icon?.Tag, icon))
+            {
+                item.Icon = Controls.WebUiIcon.Navigation(icon, 14);
+                item.Icon.Tag = icon;
+                item.Icon.Opacity = .6;
             }
             desired.Add(item);
         }
