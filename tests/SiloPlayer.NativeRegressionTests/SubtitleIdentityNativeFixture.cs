@@ -20,6 +20,11 @@ internal static partial class SubtitleIdentityNativeFixture
             "presentation-ai-prefetch" or "presentation-ai-prefetch-access" or "presentation-ai-cues" or "presentation-ai-cues-access";
         var presentationOnly = aiCallback || presentation is "presentation-flyout" or "presentation-osc" or "presentation-ai-menu" or "presentation-ai-dialog" or "presentation-ai-profile" or "presentation-ai-access";
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
+        if (presentation == "review-existing-ai-retirement")
+        {
+            await AiSameFileReplanAsync(assets, retirement: "load");
+            return;
+        }
         if (presentation is "review-ai-load" or "review-ai-timeout-load" or "review-ai-aba" or "review-ai-same-file" or "review-owned-foreign-grant" or "review-cue-owned-cleanup" or "review-cue-positive")
         {
             await ReviewOwnershipAsync(assets, presentation);
@@ -1262,12 +1267,20 @@ internal static partial class SubtitleIdentityNativeFixture
                 finally { service.ContentLoaded -= Reloaded; }
                 if (retirement != null)
                 {
+                    var pausedControlDeadline = DateTime.UtcNow.AddSeconds(4);
                     await cleared.Task.WaitAsync(TimeSpan.FromSeconds(4));
                     Require(!mpv.IsPaused, "AI retirement carried its temporary pause into replacement playback.");
                     service.SetPaused(true);
                     mpv.SetSubtitleTrack(1);
+                    var cachedPauseBeforeNativeRead = mpv.IsPaused;
+                    var capturePauseBeforeNativeRead = Call(service, "CaptureUserPausedState");
+                    Program.Log($"Retired AI BEFORE late callbacks: initialCachedPause={cachedPauseBeforeNativeRead}, initialCapturePause={capturePauseBeforeNativeRead}, nativePause={mpv.GetPropertyFlag("pause")}, cachedPause={mpv.IsPaused}, SID={mpv.GetPropertyDouble("sid")}, prefs={wire.PreferenceWrites}, job={Get(service, "_liveSubtitleJobId")}, CTS={Get(service, "_liveSubtitleResumeCts") != null}, capturePause={Call(service, "CaptureUserPausedState")}.");
+                    while (!mpv.IsPaused && DateTime.UtcNow < pausedControlDeadline) await Task.Delay(10);
+                    Require(mpv.IsPaused && mpv.GetPropertyFlag("pause") && mpv.GetPropertyDouble("sid") == 1,
+                        "Retired AI control did not establish its replacement viewer pause/SID within its original readiness budget.");
                     Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
                     Call(service, "ResumeAfterLiveSubtitleBuffer", 77L);
+                    Program.Log($"Retired AI AFTER late callbacks: nativePause={mpv.GetPropertyFlag("pause")}, cachedPause={mpv.IsPaused}, SID={mpv.GetPropertyDouble("sid")}, prefs={wire.PreferenceWrites}, job={Get(service, "_liveSubtitleJobId")}, CTS={Get(service, "_liveSubtitleResumeCts") != null}, capturePause={Call(service, "CaptureUserPausedState")}.");
                     Require(mpv.IsPaused && mpv.GetPropertyDouble("sid") == 1 && wire.PreferenceWrites == 0 &&
                         (bool)Call(service, "CaptureUserPausedState")! && Get(service, "_liveSubtitleResumeCts") == null,
                         "Late retired AI callbacks changed the replacement file's SID, pause or preference.");
