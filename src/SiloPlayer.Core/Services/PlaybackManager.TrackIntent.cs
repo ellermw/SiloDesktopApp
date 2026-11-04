@@ -42,6 +42,11 @@ public partial class PlaybackManager
         get { lock (_trackIntentGate) return !_hasViewerSubtitle || _subtitleSelectionIsAutomatic; }
     }
 
+    public bool IsRetainedSubtitleUnavailable
+    {
+        get { lock (_trackIntentGate) return _hasViewerSubtitle && _viewerSubtitle != null && MatchCurrentSubtitle() == null; }
+    }
+
     /// <summary>Records a local choice, retaining whether startup policy or the viewer selected it.</summary>
     public void RecordLocalSubtitleSelection(int? subtitleIndex, bool isAutomatic = false)
     {
@@ -85,10 +90,9 @@ public partial class PlaybackManager
                 if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
                 {
                     var desired = MatchCurrentSubtitle();
-                    if (desired != null || !_subtitleSelectionIsAutomatic || _viewerSubtitle == null)
+                    if (desired != null || !KeepGrantedSubtitleWhenUnmatched())
                         return desired?.Index ?? -1;
-                    // Seek replies cannot acknowledge an unsent revision, but
-                    // an unmatched Auto row still must not become explicit Off.
+                    // An unmatched Auto or cross-file choice is not explicit Off.
                 }
                 return GrantedSubtitleSelection()?.Index ?? -1;
             }
@@ -116,13 +120,14 @@ public partial class PlaybackManager
                 return;
             }
             var desired = MatchCurrentSubtitle();
-            // An automatic row that cannot uniquely rebind is not a viewer
-            // request for Off, even on a same-file replan. Accept the Auto grant,
-            // retaining the original row so a later inventory can rebind it.
-            // A same-file automatic Off still needs its own acknowledgement.
-            if (_subtitleSelectionIsAutomatic && desired == null &&
-                (_viewerSubtitle != null || CurrentSession?.MediaFileId != _viewerSubtitleFile))
+            // A missing cross-file choice is not Off. Keep the accepted grant
+            // and the source intent, but report an unfulfilled manual choice.
+            // Automatic Off also needs reconsideration on a different file.
+            if (desired == null && (KeepGrantedSubtitleWhenUnmatched() ||
+                _subtitleSelectionIsAutomatic && CurrentSession?.MediaFileId != _viewerSubtitleFile))
             {
+                if (!_subtitleSelectionIsAutomatic && revision == _subtitleRevision && CurrentSession != null)
+                    CurrentSession.SubtitleReconciliationFailed = true;
                 AcknowledgeSubtitleIntent(revision);
                 return;
             }
@@ -153,7 +158,7 @@ public partial class PlaybackManager
             if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
             {
                 var track = MatchCurrentSubtitle();
-                if (track != null || !_subtitleSelectionIsAutomatic || _viewerSubtitle == null)
+                if (track != null || !KeepGrantedSubtitleWhenUnmatched())
                     selected.Subtitle = track == null ? null : new() { Id = track.TrackId ?? "", Index = track.Index };
             }
             return _subtitleRevision;
@@ -182,31 +187,61 @@ public partial class PlaybackManager
         return matches.Length == 1 ? matches[0] : null;
     }
 
+    private bool KeepGrantedSubtitleWhenUnmatched()
+        => _viewerSubtitle != null && (_subtitleSelectionIsAutomatic || CurrentSession?.MediaFileId != _viewerSubtitleFile);
+
     private SubtitleTrackInfo? MatchCurrentSubtitle()
     {
         if (_viewerSubtitle == null) return null;
         var inventory = CurrentSession?.SubtitleUrls ?? [];
-        if (!string.IsNullOrWhiteSpace(_viewerSubtitle.TrackId))
+        var sameFile = CurrentSession?.MediaFileId == _viewerSubtitleFile;
+        var hasIdentity = !string.IsNullOrWhiteSpace(_viewerSubtitle.TrackId);
+        if (hasIdentity)
         {
-            // An absent, unavailable or ambiguous identity is not permission to
-            // select a different row with similar metadata (or a reused index).
             var identities = inventory.Where(t => t.TrackId == _viewerSubtitle.TrackId).Take(2).ToArray();
-            return identities.Length == 1 && !identities[0].Unplayable ? identities[0] : null;
+            // A present but unavailable/ambiguous identity must never rebind.
+            if (identities.Length > 0)
+                return identities.Length == 1 && !identities[0].Unplayable ? identities[0] : null;
         }
-        var candidates = inventory.Where(t => !t.Unplayable && string.IsNullOrWhiteSpace(t.TrackId) &&
-            Equal(t.Source, _viewerSubtitle.Source) && Equal(t.Codec, _viewerSubtitle.Codec) &&
+        if (sameFile && Equal(_viewerSubtitle.Source, "downloaded"))
+        {
+            // Refreshed downloads and plan rows share a stored ID/sync key even
+            // when only one inventory supplies TrackId. Never use list position
+            // to bridge that identity boundary.
+            var key = SubtitleStoredKey(_viewerSubtitle);
+            if (key != null)
+            {
+                var stored = inventory.Where(t => Equal(t.Source, _viewerSubtitle.Source) &&
+                    SubtitleStoredKey(t) == key).Take(2).ToArray();
+                if (stored.Length > 0)
+                    return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
+            }
+        }
+        var candidates = inventory.Where(t => !t.Unplayable &&
+            (!sameFile || !hasIdentity || Equal(_viewerSubtitle.Source, "downloaded") && string.IsNullOrWhiteSpace(t.TrackId)) &&
+            Equal(t.Source, _viewerSubtitle.Source) && SubtitleCodec(t.Codec) == SubtitleCodec(_viewerSubtitle.Codec) &&
             MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
             t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
-        // An index identifies a legacy row only within the same file. Across
-        // versions, equally good metadata is ambiguous, not a first-row choice.
-        if (CurrentSession?.MediaFileId == _viewerSubtitleFile &&
-            candidates.FirstOrDefault(t => t.Index == _viewerSubtitle.Index) is { } sameFile) return sameFile;
+        // Only two identityless rows on the same file can use a legacy index.
+        if (sameFile && !hasIdentity && candidates.FirstOrDefault(t =>
+            string.IsNullOrWhiteSpace(t.TrackId) && t.Index == _viewerSubtitle.Index) is { } legacy) return legacy;
         var ranked = candidates.OrderByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).Take(2).ToArray();
         return ranked.Length == 1 || ranked.Length == 2 &&
             SubtitleScore(ranked[0].Language, ranked[0].Source, ranked[0].Codec, ranked[0].Label, _viewerSubtitle) >
             SubtitleScore(ranked[1].Language, ranked[1].Source, ranked[1].Codec, ranked[1].Label, _viewerSubtitle)
                 ? ranked[0] : null;
     }
+
+    private static string? SubtitleStoredKey(SubtitleTrackInfo track)
+        => !string.IsNullOrWhiteSpace(track.SyncKey) ? track.SyncKey : track.Id is > 0 ? $"stored-{track.Id}" : null;
+
+    private static string SubtitleCodec(string? codec) => codec?.Trim().ToLowerInvariant() switch
+    {
+        "srt" => "subrip",
+        "ssa" => "ass",
+        "vtt" => "webvtt",
+        var value => value ?? "",
+    };
     private void CaptureReplacementSubtitleIntent()
     {
         lock (_trackIntentGate)
@@ -275,7 +310,7 @@ public partial class PlaybackManager
         => !UnknownSubtitleLanguage(language) && !UnknownSubtitleLanguage(desired.Language) &&
            CanonicalLanguage(language) == CanonicalLanguage(desired.Language) ||
            UnknownSubtitleLanguage(language) && UnknownSubtitleLanguage(desired.Language) &&
-           Equal(source, desired.Source) && Equal(codec, desired.Codec) &&
+           Equal(source, desired.Source) && SubtitleCodec(codec) == SubtitleCodec(desired.Codec) &&
            Equal(label ?? "", SubtitleIdentityLabel(desired) ?? "");
     // Adapted legacy rows can use the language itself as a synthesized label.
     private static string? SubtitleIdentityLabel(SubtitleTrackInfo track)
@@ -289,5 +324,5 @@ public partial class PlaybackManager
     }
     private static int SubtitleScore(string? language, string? source, string? codec, string? label, SubtitleTrackInfo desired)
         => (CanonicalLanguage(language) == CanonicalLanguage(desired.Language) ? 64 : 0) +
-           (Equal(source, desired.Source) ? 4 : 0) + (Equal(codec, desired.Codec) ? 1 : 0) + (Equal(label, desired.Label) ? 8 : 0);
+           (Equal(source, desired.Source) ? 4 : 0) + (SubtitleCodec(codec) == SubtitleCodec(desired.Codec) ? 1 : 0) + (Equal(label, desired.Label) ? 8 : 0);
 }

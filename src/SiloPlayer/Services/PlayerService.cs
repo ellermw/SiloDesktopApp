@@ -3049,7 +3049,8 @@ public partial class PlayerService : IDisposable
                         subtitleFailureSession is { IsSubtitleBurnedIn: false } &&
                         _executedSubtitleFileId == subtitleFailureSession.MediaFileId &&
                         (_executedSubtitleTrack?.Index ?? -1) == initialSubtitleIndex &&
-                        (initialSubtitleIndex >= 0 || subtitleIntent?.Track == null);
+                        (initialSubtitleIndex >= 0 || subtitleIntent?.Track == null) &&
+                        _playbackManager?.IsRetainedSubtitleUnavailable != true;
                 }
             }
 
@@ -7564,25 +7565,34 @@ public partial class PlayerService : IDisposable
             var response = await _playbackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
             if (!ReferenceEquals(_playbackManager, manager) || manager.CurrentSession != session) return;
 
-            var existing = session.SubtitleUrls
-                .Where(track => !string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var previousDownloads = session.SubtitleUrls
+                .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var existing = session.SubtitleUrls.Except(previousDownloads).ToList();
             var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
-            var downloaded = response.Subtitles.Select((entry, offset) => new SubtitleTrackInfo
+            var downloaded = response.Subtitles.Select((entry, offset) =>
             {
-                SyncKey = "stored-" + entry.Id,
-                Id = entry.Id,
-                Index = baseIndex + offset,
-                MediaFileId = mediaFileId,
-                Language = entry.Language,
-                Codec = string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format,
-                Label = string.IsNullOrWhiteSpace(entry.ReleaseName)
-                    ? (entry.Title ?? entry.Language)
-                    : $"{entry.ReleaseName} ({entry.Provider})",
-                Source = "downloaded",
-                HearingImpaired = entry.HearingImpaired,
-                Forced = entry.Forced,
-                Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
+                var syncKey = "stored-" + entry.Id;
+                var matches = previousDownloads.Where(track => track.Id == entry.Id || track.SyncKey == syncKey).Take(2).ToArray();
+                var previous = matches.Length == 1 ? matches[0] : null;
+                return new SubtitleTrackInfo
+                {
+                    TrackId = previous?.TrackId,
+                    SyncKey = previous?.SyncKey ?? syncKey,
+                    Id = entry.Id,
+                    Unplayable = previous?.Unplayable ?? false,
+                    Delivery = previous?.Delivery,
+                    Index = baseIndex + offset,
+                    MediaFileId = mediaFileId,
+                    Language = entry.Language,
+                    Codec = previous?.Codec ?? (string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format),
+                    Label = string.IsNullOrWhiteSpace(entry.ReleaseName)
+                        ? (entry.Title ?? entry.Language)
+                        : $"{entry.ReleaseName} ({entry.Provider})",
+                    Source = "downloaded",
+                    HearingImpaired = entry.HearingImpaired,
+                    Forced = entry.Forced,
+                    Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
+                };
             }).ToList();
             session.SubtitleUrls = [.. existing, .. downloaded];
             SendSubtitleListToOsc();

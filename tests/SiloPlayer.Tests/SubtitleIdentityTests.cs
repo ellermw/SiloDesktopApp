@@ -131,8 +131,8 @@ public sealed class SubtitleIdentityTests
     [InlineData("embedded", "ass", "", 8)]
     [InlineData("external", "ass", "", -1)]
     [InlineData("embedded", "subrip", "", -1)]
-    [InlineData("embedded", "ass", "new-identity", -1)]
-    public void LegacyRebindingRequiresTheSameSourceCodecAndAnIdentitylessRow(string source, string codec, string trackId, int expected)
+    [InlineData("embedded", "ass", "new-identity", 8)]
+    public void LegacyRebindingRequiresTheSameSourceCodecButCanAcquireIdentity(string source, string codec, string trackId, int expected)
     {
         WithManager(manager =>
         {
@@ -168,6 +168,76 @@ public sealed class SubtitleIdentityTests
             Assert.Equal(8, manager.SubtitleSelectionForLoad);
             replacement.SubtitleUrls.RemoveAt(1);
             Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+        });
+    }
+
+    [Fact]
+    public void MissingSameFileNativeIdentityCannotRebindToAnIdentitylessLookalike()
+    {
+        WithManager(manager =>
+        {
+            var session = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls =
+                [new() { Index = 2, TrackId = "old", Source = "embedded", Language = "eng", Codec = "ass" }] };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+            manager.RecordLocalSubtitleSelection(2);
+            session.SubtitleUrls = [new() { Index = 2, Source = "embedded", Language = "eng", Codec = "ass" }];
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            Assert.True(manager.IsRetainedSubtitleUnavailable);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DownloadedIdentityBoundaryRequiresUniqueMetadataNotAReusedIndex(bool reverse)
+    {
+        WithManager(manager =>
+        {
+            var desired = new SubtitleTrackInfo { Index = 2, TrackId = reverse ? "original" : null,
+                Source = "downloaded", Language = "en-GB", Codec = "srt" };
+            var session = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [desired] };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+            manager.RecordLocalSubtitleSelection(2);
+            session.SubtitleUrls =
+            [
+                new() { Index = 2, TrackId = reverse ? null : "first", Source = "downloaded", Language = "eng-gb", Codec = "subrip" },
+                new() { Index = 8, TrackId = reverse ? null : "second", Source = "downloaded", Language = "eng-gb", Codec = "subrip" },
+            ];
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            desired.Label = "Selected release";
+            session.SubtitleUrls[0].Label = "Other release";
+            session.SubtitleUrls[1].Label = desired.Label;
+            Assert.Equal(8, manager.SubtitleSelectionForLoad);
+            Assert.Same(desired, manager.CaptureLocalSubtitleIntent().Track);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CrossFileIdentityUsesUniqueFullMetadataAndLabelTieBreak(bool ambiguous)
+    {
+        WithManager(manager =>
+        {
+            var desired = new SubtitleTrackInfo { Index = 2, TrackId = "source", Source = "embedded",
+                Language = "en-GB", Codec = "ass", Forced = true, HearingImpaired = true, Label = "Selected" };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager,
+                new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [desired] });
+            manager.RecordLocalSubtitleSelection(2);
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager,
+                new PlaybackStartResponse { MediaFileId = 43, SubtitleUrls =
+                [
+                    new() { Index = 2, TrackId = "wrong-region", Source = "embedded", Language = "en", Codec = "ass", Forced = true, HearingImpaired = true, Label = "Selected" },
+                    new() { Index = 3, TrackId = "wrong-source", Source = "external", Language = "en-GB", Codec = "ass", Forced = true, HearingImpaired = true, Label = "Selected" },
+                    new() { Index = 4, TrackId = "wrong-codec", Source = "embedded", Language = "en-GB", Codec = "srt", Forced = true, HearingImpaired = true, Label = "Selected" },
+                    new() { Index = 5, TrackId = "not-forced", Source = "embedded", Language = "en-GB", Codec = "ass", HearingImpaired = true, Label = "Selected" },
+                    new() { Index = 6, TrackId = "not-hi", Source = "embedded", Language = "en-GB", Codec = "ass", Forced = true, Label = "Selected" },
+                    new() { Index = 7, TrackId = "other-label", Source = "embedded", Language = "en-GB", Codec = "ass", Forced = true, HearingImpaired = true, Label = ambiguous ? "Selected" : "Other" },
+                    new() { Index = 8, TrackId = "equivalent", Source = "embedded", Language = "eng-gb", Codec = "ass", Forced = true, HearingImpaired = true, Label = "Selected" },
+                ] });
+            Assert.Equal(ambiguous ? -1 : 8, manager.SubtitleSelectionForLoad);
+            Assert.Equal(ambiguous, manager.IsRetainedSubtitleUnavailable);
+            Assert.Same(desired, manager.CaptureLocalSubtitleIntent().Track);
         });
     }
 
