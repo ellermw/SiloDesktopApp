@@ -212,6 +212,7 @@ public sealed class BoxSetOwnershipTests
         using var wire = new Wire { DetailStatus = HttpStatusCode.ServiceUnavailable }; using var http = new HttpClient(wire);
         var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "2"); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
         wire.DetailStatus = HttpStatusCode.NotFound; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.NotFound, vm.Failure);
+        wire.DetailStatus = HttpStatusCode.Forbidden; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.AccessDenied, vm.Failure); Assert.Null(vm.Detail); Assert.False(vm.IsLoading);
         wire.DetailStatus = HttpStatusCode.OK; await vm.RefreshAsync(); Assert.NotNull(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
     }
     [Theory]

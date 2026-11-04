@@ -92,6 +92,7 @@ public partial class SearchViewModel : ObservableObject
         _peopleApi = peopleApi;
         _requestsApi = requestsApi;
         _settingsApi = settingsApi;
+        BoxSets = new BoxSetSearchState(catalogApi);
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
         {
             if (!_catalogApi.IsCurrentContext(change.Context) || !change.Marked.HasValue) return;
@@ -102,6 +103,22 @@ public partial class SearchViewModel : ObservableObject
     public BulkObservableCollection<MediaItem> Results { get; } = [];
     public ObservableCollection<Person> PeopleResults { get; } = [];
     public ObservableCollection<RequestMediaResult> OutsideLibraryResults { get; } = [];
+    public BoxSetSearchState BoxSets { get; }
+    private bool _boxSetSearchActive;
+    [ObservableProperty] private int? _libraryId;
+    partial void OnQueryChanged(string value) => BoxSets.Retire();
+    partial void OnLibraryIdChanged(int? value) => BoxSets.Retire();
+    partial void OnMediaTypeChanged(string? value) => BoxSets.Retire();
+
+    public void BeginSearchVisit() => _boxSetSearchActive = true;
+    private string? BoxSetMediaScope => string.IsNullOrWhiteSpace(AdvancedQuery.MediaScope) ? MediaType : AdvancedQuery.MediaScope;
+    public Task RefreshBoxSetSearchAsync(bool refresh = true)
+    {
+        if (!_boxSetSearchActive) return Task.CompletedTask;
+        var query = Query.Trim(); var library = LibraryId; var type = BoxSetMediaScope;
+        return BoxSets.SearchAsync(query, library, type is null or "video" or "movie",
+            () => _boxSetSearchActive && Query.Trim() == query && LibraryId == library && BoxSetMediaScope == type, refresh);
+    }
 
     [ObservableProperty]
     private string _query = "";
@@ -244,14 +261,17 @@ public partial class SearchViewModel : ObservableObject
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task SearchAsync()
     {
+        _boxSetSearchActive = true;
         var querySnapshot = Query.Trim();
         var searchKey = BuildSearchKey(querySnapshot);
         // Preserve both the window cursor and the outstanding optional reads
         // when the same visible search is submitted again.
         if (string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal) &&
             (Results.Count > 0 || PeopleResults.Count > 0 || OutsideLibraryResults.Count > 0) &&
-            ErrorMessage == null && !IsLoading && !IsLoadingMore) return;
+            ErrorMessage == null && !IsLoading && !IsLoadingMore)
+        { _ = RefreshBoxSetSearchAsync(false); return; }
         CancelPendingSearch();
+        _boxSetSearchActive = true;
         var searchCts = new CancellationTokenSource();
         _searchCts = searchCts;
         var ct = searchCts.Token;
@@ -289,6 +309,7 @@ public partial class SearchViewModel : ObservableObject
             // a slow plugin or network timeout.
             var catalogTask = FetchCatalogPageAsync(0, null, ct, querySnapshot);
             var peopleTask = SearchPeopleAsync(querySnapshot, ct);
+            _ = RefreshBoxSetSearchAsync(false);
 
             var primaryTimer = Stopwatch.StartNew();
             var response = await catalogTask;
@@ -335,6 +356,8 @@ public partial class SearchViewModel : ObservableObject
 
     public void CancelPendingSearch()
     {
+        _boxSetSearchActive = false;
+        BoxSets.Suspend();
         var previousActions = _externalActionsCts; _externalActionsCts = new(); previousActions.Cancel(); previousActions.Dispose(); _externalPending.Clear();
         OutsideWatchlistTitlesSupported = false;
         Interlocked.Exchange(ref _peopleRetryCts, null)?.Cancel();
@@ -410,6 +433,8 @@ public partial class SearchViewModel : ObservableObject
             query,
             MediaScope,
             MediaType ?? "",
+            LibraryId?.ToString() ?? "",
+            _catalogApi.CaptureContext().ToString(),
             SortField,
             SortOrder,
             Genre ?? "",
@@ -452,7 +477,7 @@ public partial class SearchViewModel : ObservableObject
     {
         var requestSort = GetRequestSortField();
         return _catalogApi.GetCatalogAsync(
-            null,
+            LibraryId,
             // Current WebUI displays Date Added as the default query sort but
             // intentionally omits it from an unscoped query request. The
             // server then applies its optimized default query ordering.
