@@ -3,6 +3,22 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void SubtitleAddUsesSupportedNativeFlagsAndKeepsLanguageOnlyMetadata()
+    {
+        // The pinned mpv command accepts select/auto/cached; sid's "no"
+        // property value is not a sub-add command flag.
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Player", "MpvPlayer.cs"));
+        var start = source.IndexOf("public bool AddSubtitle(", StringComparison.Ordinal);
+        var end = source.IndexOf("public void ReloadSubtitle(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        Assert.Contains("new List<string> { \"sub-add\", url, select ? \"select\" : \"auto\" }", method);
+        Assert.DoesNotContain("select ? \"select\" : \"no\"", method);
+        Assert.Contains("!string.IsNullOrEmpty(title) || !string.IsNullOrEmpty(lang)", method);
+        Assert.Contains("args.Add(title ?? \"\");", method);
+        Assert.Contains("args.Add(lang);", method);
+    }
+
+    [Fact]
     public void FailedSubtitleReadCannotRollbackAnAcceptedFileToOutgoingIntent()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
