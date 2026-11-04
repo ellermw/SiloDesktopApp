@@ -88,11 +88,25 @@ public sealed class ShellNavigationReentrancySourceTests
             Assert.Contains($"if (completed) _interruptedCardArtwork.Remove({border})", load);
             Assert.Contains($"else _interruptedCardArtwork.Add({border})", load);
         }
+        // Overview translation lives in its own partial; keep checking the
+        // actual lifecycle implementation rather than its former file location.
         var overview = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.Overview.cs");
         var configure = MethodBody(overview, "private async Task ConfigureOnViewTranslationAsync(");
         Assert.Contains("++_overviewTranslationStatusReads", configure);
         Assert.Contains("--_overviewTranslationStatusReads", configure);
+        Assert.Contains("finally", configure);
+        Assert.Contains("revision == _overviewConfigurationRevision", configure);
+        Assert.Contains("ReferenceEquals(navigation, _navigationCts) && ReferenceEquals(ViewModel.Item, item)", configure);
+        Assert.Contains("ViewModel.LibraryId == library", configure);
+        Assert.Contains("!configurationCompleted || !api.IsCurrentContext(context)", configure);
         Assert.Contains("_overviewTranslationInterrupted = true", configure);
+        var translate = MethodBody(overview, "private async Task TranslateOverviewAsync(");
+        Assert.Contains("_translationCts = cts", translate);
+        Assert.Contains("if (ReferenceEquals(_translationCts, cts)) _translationCts = null", translate);
+        Assert.Contains("ReferenceEquals(_translationCts, cts)", translate);
+        Assert.Contains("var restoreControls = ControlsCurrent()", translate);
+        Assert.Contains("if (!api.IsCurrentContext(context) || api.LocalizedReadGeneration != language) _overviewTranslationInterrupted = true", translate);
+        Assert.Contains("_overviewTranslationInterrupted = true", translate);
         var departed = MethodBody(page, "protected override void OnNavigatedFrom(");
         Assert.Contains("_translationCts?.Cancel();", departed);
         Assert.Contains("_translationCts = null;", departed);
