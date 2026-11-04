@@ -251,12 +251,21 @@ internal static partial class BoxSetNativeFixture
         internal int Reads;
         internal int Played=1; internal bool Empty; internal HttpStatusCode Status=HttpStatusCode.OK, CapabilityStatus=HttpStatusCode.OK;
         internal string Title="The Very Long Adventure Box Set";
+        internal string? ArtworkSignature;
+        private string? ArtworkUrl(string name) => ArtworkSignature is null ? null
+            : "https://boxsets-native.invalid/" + name + "?X-Amz-Signature=" + ArtworkSignature;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var path=request.RequestUri!.AbsolutePath; object body;
             if(path.EndsWith("capabilities")) body=new { box_sets=true };
             else if(path.EndsWith("libraries")) body=new { items=new[] { new { id=2,box_sets_enabled=true }, new { id=12,box_sets_enabled=true } } };
-            else body=new { id="7",library_id="12",title=Title,overview="A synthetic release-ordered collection with missing artwork.",movie_count=Empty?0:3,played_count=Played,first_year=2001,last_year=2011,items=Empty?Array.Empty<object>():new object[] { new { content_id="first",type="movie",title="First",user_state=new { played=true } },new { content_id="second",type="movie",title="Second",user_state=new { played=Played==3 } },new { content_id="third",type="movie",title="Third",user_state=new { played=Played==3 } } } };
+            else body=new { id="7",library_id="12",title=Title,overview="A synthetic release-ordered collection with missing artwork.",
+                poster_url=ArtworkUrl("set-poster"),backdrop_url=ArtworkUrl("set-backdrop"),
+                movie_count=Empty?0:3,played_count=Played,first_year=2001,last_year=2011,
+                items=Empty?Array.Empty<object>():new object[] {
+                    new { content_id="first",type="movie",title="First",poster_url=ArtworkUrl("first-poster"),backdrop_url=ArtworkUrl("first-backdrop"),user_state=new { played=true } },
+                    new { content_id="second",type="movie",title="Second",poster_url=ArtworkUrl("second-poster"),backdrop_url=ArtworkUrl("second-backdrop"),user_state=new { played=Played==3 } },
+                    new { content_id="third",type="movie",title="Third",poster_url=ArtworkUrl("third-poster"),backdrop_url=ArtworkUrl("third-backdrop"),user_state=new { played=Played==3 } } } };
             // Freeze the server snapshot before holding delivery, so a mutation
             // during an initial read cannot magically update that old response.
             var response = new HttpResponseMessage(path.Contains("box-sets/")?Status:path.EndsWith("capabilities")?CapabilityStatus:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };

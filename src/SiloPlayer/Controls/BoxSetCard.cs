@@ -57,7 +57,7 @@ public sealed class BoxSetCard : Button
             : !string.IsNullOrWhiteSpace(set.BackdropUrl) ? set.BackdropThumbhash
             : posterThumbhash ?? set.PosterThumbhash ?? set.BackdropThumbhash;
         var identityChanged = Summary?.Id != set.Id || Summary?.LibraryId != set.LibraryId;
-        var artworkChanged = _panel is null || identityChanged || _artworkUrl != artworkUrl;
+        var artworkChanged = _panel is null || identityChanged || !LibraryPosterBinding.HasSameArtworkUrl(_artworkUrl, artworkUrl);
         Summary = set;
         if (_panel is null) BuildContent();
         // Keep the Button and all its children mounted on a same-item refresh.
@@ -70,11 +70,21 @@ public sealed class BoxSetCard : Button
         AutomationProperties.SetName(this, $"{set.Title}, Box set, {set.MovieCount} films, {set.ProgressText}");
         if (!artworkChanged)
         {
+            // Keep the mounted image, but use the renewed signature for any later load.
+            var renewedUrl = _artworkUrl != artworkUrl;
+            _artworkUrl = artworkUrl;
             if (_thumbhash != thumbhash)
             {
                 _thumbhash = thumbhash;
                 _fallback!.Reset("movie", thumbhash);
                 if (_poster!.Source is null) _ = _fallback.ShowThumbhashAsync();
+            }
+            if (renewedUrl && _poster!.Source is null)
+            {
+                // The previous signed request may be pending or failed. A
+                // renewed URL can recover it without rebuilding this control.
+                CancelArtworkLoad();
+                StartArtworkLoad();
             }
             return;
         }

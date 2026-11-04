@@ -180,6 +180,10 @@ public sealed class GroupedLibraryTests
         Assert.True(model.WindowEndIndex >= 839);
         Assert.Equal(1000, model.TotalCount);
         var old = model.GetWindowItem(700);
+        var oldStart = model.WindowStartIndex;
+        var oldEnd = model.WindowEndIndex;
+        var first = model.GetWindowItem(oldStart);
+        var last = model.GetWindowItem(oldEnd);
         await model.EnsureLetterIndexAsync();
         var letterIndex = model.LetterIndex;
         var totals = new List<int>();
@@ -201,11 +205,126 @@ public sealed class GroupedLibraryTests
         wire.Release.TrySetResult(); await refresh;
         Assert.All(Enumerable.Range(660, 180), index => Assert.Equal(3, model.GetWindowItem(index)!.BoxSet!.PlayedCount));
         Assert.NotSame(old, model.GetWindowItem(700));
+        Assert.Equal(oldStart, model.WindowStartIndex);
+        Assert.Equal(oldEnd, model.WindowEndIndex);
+        Assert.Same(first, model.GetWindowItem(oldStart));
+        Assert.Same(last, model.GetWindowItem(oldEnd));
         var firstWindow = wire.CatalogRanges.Skip(before).First(request => !request.IncludeTotal);
         Assert.Equal(660, firstWindow.Start); Assert.Null(firstWindow.Cursor);
         Assert.All(totals, total => Assert.Equal(1000, total));
         Assert.All(displayedTotals, total => Assert.Equal(1000, total));
         Assert.Equal(1000, model.TotalCount);
+        var reads = wire.Catalog.Count;
+        await model.EnsureRangeLoadedAsync(0, 59);
+        Assert.Equal(reads, wire.Catalog.Count);
+        model.CancelCatalogLoads();
+    }
+
+    [Fact]
+    public async Task GroupedRefreshPreservesSparsePagesAndUpdatesOnlyOverlappingSlots()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.LoadMoreCommand.ExecuteAsync(null);
+        await model.LoadMoreCommand.ExecuteAsync(null);
+        var first = model.Items[0]; var refreshed = model.Items[70];
+        Assert.NotNull(first); Assert.NotNull(refreshed);
+        var resets = 0;
+        model.Items.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset) resets++;
+        };
+        wire.PlayedCount = 3;
+        Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed, await model.RefreshGroupedCatalogAsync(60, 20));
+        Assert.Same(first, model.Items[0]);
+        Assert.NotSame(refreshed, model.Items[70]);
+        Assert.Equal(3, model.Items[70]!.BoxSet!.PlayedCount);
+        Assert.True(model.Items.IsPageLoaded(0)); Assert.True(model.Items.IsPageLoaded(1));
+        Assert.Equal(0, resets);
+        var before = wire.CatalogRanges.Count;
+        await model.LoadMoreCommand.ExecuteAsync(null);
+        Assert.Equal(120, wire.CatalogRanges[before].Start);
+        model.CancelCatalogLoads();
+    }
+
+    [Fact]
+    public async Task GroupedRefreshKeepsUnrelatedScrollLoadAlive()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalogResponse = async (start, includeTotal, ct) =>
+        {
+            if (start != 100 || includeTotal) return;
+            started.TrySetResult();
+            await release.Task.WaitAsync(ct);
+        };
+        var scroll = model.LoadWindowAsync(100, 100);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            wire.PlayedCount = 3;
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed, await model.RefreshGroupedCatalogAsync(0, 60));
+            Assert.False(scroll.IsCompleted);
+            Assert.True(model.IsLoading);
+            Assert.Equal(3, model.GetWindowItem(0)!.BoxSet!.PlayedCount);
+        }
+        finally { release.TrySetResult(); await scroll; }
+        Assert.NotNull(model.GetWindowItem(199));
+        Assert.NotNull(model.GetWindowItem(0));
+        Assert.False(model.IsLoading);
+        model.CancelCatalogLoads();
+    }
+
+    [Theory]
+    [InlineData("window")]
+    [InlineData("sparse")]
+    [InlineData("prefetch")]
+    [InlineData("window-error")]
+    public async Task GroupedRefreshRejectsOlderOverlappingRead(string reader)
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        var start = reader == "sparse" ? 0 : reader == "prefetch" ? 40 : 100;
+        var refreshedStart = reader == "sparse" ? 20 : 120;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = false;
+        wire.AfterCatalogSnapshot = async (index, includeTotal, response) =>
+        {
+            if (held || index != start || includeTotal) return;
+            if (reader == "window-error")
+            {
+                response.StatusCode = HttpStatusCode.BadRequest;
+                response.Content = new StringContent("""{"type":"https://fixture.invalid/docs/api/v2/problems/invalid_cursor","status":400,"detail":"Retired cursor."}""");
+            }
+            held = true; started.TrySetResult();
+            await release.Task; // Freeze the original body, even if its owner is retired.
+        };
+        Task oldRead = reader switch
+        {
+            "sparse" => model.LoadMoreCommand.ExecuteAsync(null),
+            "prefetch" => model.PrefetchAroundAsync(100, 159, true),
+            _ => model.LoadWindowAsync(100, 100),
+        };
+        SiloPlayer.Core.Models.Home.MediaItem? fresh = null;
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            wire.PlayedCount = 3;
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed,
+                await model.RefreshGroupedCatalogAsync(refreshedStart, 20));
+            Assert.Equal(3, model.GetWindowItem(refreshedStart)!.BoxSet!.PlayedCount);
+            fresh = model.GetWindowItem(refreshedStart);
+        }
+        finally { release.TrySetResult(); await oldRead; }
+        if (reader == "prefetch") await model.LoadWindowAsync(800, 100);
+        Assert.Equal(3, model.GetWindowItem(refreshedStart)!.BoxSet!.PlayedCount);
+        Assert.Same(fresh, model.GetWindowItem(refreshedStart));
+        if (reader == "sparse") Assert.False(model.Items.IsPageLoaded(0));
+        Assert.Null(model.ErrorMessage);
+        Assert.False(model.IsLoading);
         model.CancelCatalogLoads();
     }
 
@@ -338,6 +457,8 @@ public sealed class GroupedLibraryTests
         public HttpStatusCode CapabilityStatus = HttpStatusCode.OK, CatalogStatus = HttpStatusCode.OK;
         public bool HoldCapabilities;
         public string? CapabilityFailure;
+        public Func<int, bool, CancellationToken, Task>? BeforeCatalogResponse;
+        public Func<int, bool, HttpResponseMessage, Task>? AfterCatalogSnapshot;
         public readonly TaskCompletionSource CapabilitiesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseCapabilities = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient? Client;
         public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -378,11 +499,14 @@ public sealed class GroupedLibraryTests
                 Catalog.Add((Value("group"), request.Method.Method, Value("order") ?? (Value("sort")?.StartsWith('-') == true ? "desc" : "asc"), Value("type")));
                 var includeTotal = Value("skip_total") != "true" && Value("skip_total") != "True";
                 CatalogRanges.Add((start, Value("cursor"), includeTotal));
+                if (BeforeCatalogResponse is not null) await BeforeCatalogResponse(start, includeTotal, ct);
                 if (HoldCatalog) { Started.TrySetResult(); await Release.Task; }
                 if (CatalogStatus != HttpStatusCode.OK && start >= FailWindowFromStart)
                     return new(CatalogStatus) { Content = new StringContent("{}") };
                 var items = Enumerable.Range(start, Math.Min(limit, 1000 - start)).Select(i => new { content_id = Value("group") == "box_set" ? "box_set:9:" + i : "movie-" + i, type = Value("group") == "box_set" ? "box_set" : "movie", title = "Set " + i, box_set = Value("group") == "box_set" ? new { id = i.ToString(), library_id = "9", title = "Set " + i, movie_count = 3, played_count = PlayedCount } : null });
-                return Json(JsonSerializer.Serialize(new { items, total = OmitWindowTotals && !includeTotal ? 0 : 1000, total_exact = includeTotal, window_cursor = "root", page = new { has_more = start + limit < 1000, next_cursor = "next-" + (start + limit) } }));
+                var response = Json(JsonSerializer.Serialize(new { items, total = OmitWindowTotals && !includeTotal ? 0 : 1000, total_exact = includeTotal, window_cursor = "root", page = new { has_more = start + limit < 1000, next_cursor = "next-" + (start + limit) } }));
+                if (AfterCatalogSnapshot is not null) await AfterCatalogSnapshot(start, includeTotal, response);
+                return response;
             }
             return Json("{}");
         }

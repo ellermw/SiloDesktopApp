@@ -30,7 +30,7 @@ public partial class LibraryViewModel
 
     public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync(preserveExisting: false);
 
-    private async Task EnsureLetterIndexCoreAsync(bool preserveExisting)
+    private async Task EnsureLetterIndexCoreAsync(bool preserveExisting, bool force = false)
     {
         if (Library is not null && !await EnsureGroupingAsync()) return;
         if (Library is null || SelectedSort != "title")
@@ -39,7 +39,7 @@ public partial class LibraryViewModel
             return;
         }
         var key = LetterQueryKey();
-        if (_letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
+        if (!force && _letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
         if (!preserveExisting) LetterIndex = null;
         _letterIndexKey = key;
         IsLetterIndexLoading = true;
@@ -67,7 +67,7 @@ public partial class LibraryViewModel
                 yearMax: UseAdvancedRules ? null : SelectedYearMax, type: type,
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
                 queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct, group: _catalogGroup);
-            if (ct.IsCancellationRequested || key != LetterQueryKey()) return;
+            if (ct.IsCancellationRequested || key != LetterQueryKey() || loadVersion != _letterIndexLoadVersion) return;
             LetterIndex = index;
             if (index is not null)
             {
@@ -79,7 +79,7 @@ public partial class LibraryViewModel
         }
         catch (OperationCanceledException)
         {
-            if (_letterIndexKey == key) _letterIndexKey = null;
+            if (_letterIndexKey == key && loadVersion == _letterIndexLoadVersion) _letterIndexKey = null;
         }
         catch (Exception ex)
         {
@@ -87,7 +87,7 @@ public partial class LibraryViewModel
                 $"catalog_letters library={libraryId} order={order} type={type ?? "all"} group_count={groups?.Count ?? 0} query_fingerprint={queryFingerprint}");
             // Keep browsing usable. Only explicit query/return/jump requests
             // retry this optional aid; publishing card windows must not retry it.
-            if (_letterIndexKey == key)
+            if (_letterIndexKey == key && loadVersion == _letterIndexLoadVersion)
             {
                 _letterIndexKey = null;
                 _letterIndexTask = null;

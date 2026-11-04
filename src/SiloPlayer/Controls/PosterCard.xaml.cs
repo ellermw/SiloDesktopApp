@@ -332,8 +332,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     {
         var old = MediaItem;
         _preserveArtworkOnUpdate = old != null && item.Type == "movie" && old.ContentId == item.ContentId && old.Type == item.Type
-            && old.PosterUrl == item.PosterUrl && old.PosterThumbhash == item.PosterThumbhash
-            && old.BackdropUrl == item.BackdropUrl && old.BackdropThumbhash == item.BackdropThumbhash;
+            && LibraryPosterBinding.HasSameArtworkUrl(old.PosterUrl, item.PosterUrl) && old.PosterThumbhash == item.PosterThumbhash
+            && LibraryPosterBinding.HasSameArtworkUrl(old.BackdropUrl, item.BackdropUrl) && old.BackdropThumbhash == item.BackdropThumbhash;
         try { MediaItem = item; }
         finally { _preserveArtworkOnUpdate = false; }
     }

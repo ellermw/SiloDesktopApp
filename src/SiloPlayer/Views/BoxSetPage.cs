@@ -23,6 +23,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     private TextBlock? _title, _counts, _overview, _playText, _refreshNotice;
     private Button? _playButton, _refreshRetry;
     private ItemsControl? _movies;
+    private Image? _heroPoster, _heroBackdrop;
     private bool _playPending;
     private bool _active;
     private long _visit;
@@ -110,6 +111,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         else if (!ViewModel.IsLoading) _knownMembership = null;
         Body.Children.Clear();
         _renderedSet = null;
+        _heroPoster = _heroBackdrop = null;
         if (ViewModel.Detail == null && ViewModel.IsLoading)
         {
             Body.Children.Add(new ProgressRing { IsActive = true });
@@ -129,7 +131,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         var hero = new Grid { MinHeight = 220 };
         if (!string.IsNullOrWhiteSpace(set.BackdropUrl))
         {
-            var backdrop = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.BackdropUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill, Opacity = .22, MaxHeight = 300 };
+            var backdrop = _heroBackdrop = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.BackdropUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill, Opacity = .22, MaxHeight = 300 };
             Grid.SetColumnSpan(backdrop, 2); hero.Children.Add(backdrop);
         }
         hero.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); hero.ColumnDefinitions.Add(new ColumnDefinition());
@@ -139,7 +141,11 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         fallback.Reset("movie", set.PosterThumbhash);
         _ = fallback.ShowThumbhashAsync();
         artwork.Children.Add(fallback);
-        if (!string.IsNullOrWhiteSpace(set.PosterUrl)) artwork.Children.Add(new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill });
+        if (!string.IsNullOrWhiteSpace(set.PosterUrl))
+        {
+            _heroPoster = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill };
+            artwork.Children.Add(_heroPoster);
+        }
         hero.Children.Add(artwork); Grid.SetColumn(info, 1);
         info.Children.Add(new TextBlock { Text = "Box set" });
         info.Children.Add(_title = new TextBlock { FontSize = 32, TextWrapping = TextWrapping.Wrap });
@@ -174,10 +180,16 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         UpdateDetail(set);
     }
     private static bool SameLayout(BoxSetDetail previous, BoxSetDetail next) => previous.Id == next.Id && previous.LibraryId == next.LibraryId
-        && previous.PosterUrl == next.PosterUrl && previous.PosterThumbhash == next.PosterThumbhash && previous.BackdropUrl == next.BackdropUrl
+        && LibraryPosterBinding.HasSameArtworkUrl(previous.PosterUrl, next.PosterUrl) && previous.PosterThumbhash == next.PosterThumbhash
+        && LibraryPosterBinding.HasSameArtworkUrl(previous.BackdropUrl, next.BackdropUrl)
         && previous.Items.Where(BoxSetDetail.IsMovieMember).Select(x => x.ContentId).SequenceEqual(next.Items.Where(BoxSetDetail.IsMovieMember).Select(x => x.ContentId));
     private void UpdateDetail(BoxSetDetail set)
     {
+        if (_renderedSet is { } previous)
+        {
+            RetryRenewedArtwork(_heroPoster, previous.PosterUrl, set.PosterUrl);
+            RetryRenewedArtwork(_heroBackdrop, previous.BackdropUrl, set.BackdropUrl);
+        }
         _title!.Text = set.Title;
         _counts!.Text = $"{set.MovieCount} films  ·  {set.Years}  ·  {set.ProgressText}";
         _overview!.Text = set.Overview;
@@ -191,5 +203,15 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         var notice = ViewModel.Failure != DetailFailureKind.None && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
         _refreshNotice!.Visibility = notice; _refreshRetry!.Visibility = notice;
         _renderedSet = set;
+    }
+
+    private static void RetryRenewedArtwork(Image? image, string? previousUrl, string? nextUrl)
+    {
+        if (image == null || previousUrl == nextUrl || string.IsNullOrWhiteSpace(nextUrl)) return;
+        var outcome = SiloPlayer.Converters.UrlToImageSourceConverter.GetLoadOutcome(image.Source);
+        // Keep successfully mounted artwork. A pending/failed converter
+        // operation belongs to its old signature and needs a renewed source.
+        if (image.Source != null && (outcome == null || outcome.IsCompletedSuccessfully && outcome.Result)) return;
+        image.Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(nextUrl, typeof(ImageSource), null!, "") as ImageSource;
     }
 }

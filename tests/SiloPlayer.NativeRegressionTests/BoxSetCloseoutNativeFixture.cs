@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
@@ -19,6 +20,11 @@ internal static partial class BoxSetNativeFixture
     private static async Task RunCloseoutAsync(StackPanel parent, CatalogApi catalog, SiloApiClient api,
         Wire wire, NavigationService navigation, string scenario)
     {
+        if (scenario is "artwork-recovery-aggregate" or "artwork-recovery-hero")
+        {
+            await VerifyFailedArtworkRenewalAsync(parent, catalog, api, wire, scenario);
+            return;
+        }
         if (scenario == "initial-membership-progress")
         {
             await VerifyInitialMovieMembershipProgressAsync(parent);
@@ -70,7 +76,24 @@ internal static partial class BoxSetNativeFixture
                     Check(actualUrl == row.ExpectedUrl && fallback.Thumbhash == row.ExpectedHash,
                         "aggregate artwork URL and actual fallback thumbhash must name the same selected image branch");
                 }
-                Program.Log("PASS:7 actual aggregate caller/poster/backdrop placeholder identity and same-URL refresh cases.");
+                var signed = new BoxSetSummary { Id = "7", LibraryId = "12", MovieCount = 3,
+                    PosterUrl = "https://boxsets-native.invalid/poster?X-Amz-Signature=first" };
+                aggregate.SetSummary(signed);
+                typeof(BoxSetCard).GetMethod("CancelArtworkLoad", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(aggregate, null);
+                var mounted = (Image)typeof(BoxSetCard).GetField("_poster", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(aggregate)!;
+                var source = new BitmapImage(); mounted.Source = source;
+                var mountedFallback = Descendants(aggregate).OfType<DefaultArtwork>().Single();
+                mountedFallback.Visibility = Visibility.Collapsed;
+                var content = aggregate.Content;
+                aggregate.SetSummary(new() { Id = "7", LibraryId = "12", MovieCount = 3, PlayedCount = 2,
+                    PosterUrl = "https://boxsets-native.invalid/poster?X-Amz-Signature=renewed" });
+                Check(ReferenceEquals(content, aggregate.Content) && ReferenceEquals(source, mounted.Source)
+                    && mountedFallback.Visibility == Visibility.Collapsed
+                    && (string?)typeof(BoxSetCard).GetField("_artworkUrl", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(aggregate) == aggregate.Summary!.PosterUrl
+                    && typeof(BoxSetCard).GetField("_artworkLoad", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(aggregate) == null,
+                    "renewed aggregate signature retains mounted artwork and stores the latest URL without a new load");
+                await VerifyRenewedArtworkAsync(parent, catalog, api, wire);
+                Program.Log("PASS: aggregate artwork branch identity and re-signed aggregate/detail/member artwork, controls and focus retention.");
             }
             finally
             {
@@ -164,6 +187,53 @@ internal static partial class BoxSetNativeFixture
             Program.Log("PASS: actual dedicated box-set closeout " + scenario + ".");
         }
         finally { wire.Release.TrySetResult(); page.ViewModel.Cancel(); parent.Children.Remove(page); }
+    }
+
+    private static async Task VerifyRenewedArtworkAsync(StackPanel parent, CatalogApi catalog, SiloApiClient api, Wire wire)
+    {
+        var page = new BoxSetPage(catalog, api) { Width = 960, Height = 700 };
+        wire.ArtworkSignature = "first";
+        parent.Children.Add(page);
+        try
+        {
+            await page.ViewModel.LoadAsync("7", "12"); await DrainAsync(parent); page.UpdateLayout();
+            var hero = (Grid)page.Body.Children[0];
+            var poster = hero.Children.OfType<Grid>().Single().Children.OfType<Image>().Single();
+            var backdrop = hero.Children.OfType<Image>().Single();
+            var posterSource = new BitmapImage(); var backdropSource = new BitmapImage();
+            poster.Source = posterSource; backdrop.Source = backdropSource;
+            var play = Descendants(page).OfType<Button>().Single(button => button.Name == "BoxSetPlay");
+            var movies = (ItemsControl)page.Body.Children[2];
+            var cards = movies.Items.OfType<PosterCard>().ToArray();
+            var images = cards.Select(card =>
+            {
+                // Seed mounted sources without depending on synthetic CDN downloads.
+                ((CancellationTokenSource?)typeof(PosterCard).GetField("_loadCts", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(card))?.Cancel();
+                card.SuppressImageLoading = true;
+                var image = (Image)card.FindName("PosterImage");
+                image.Source = new BitmapImage(); image.Opacity = 1;
+                return image;
+            }).ToArray();
+            var sources = images.Select(image => image.Source).ToArray();
+            Check(cards.Length == 3 && play.Focus(FocusState.Keyboard), "artwork refresh starts with mounted members and focused Play");
+            foreach (var signature in new[] { "renewed", "renewed-again" })
+            {
+                if (signature == "renewed-again") Check(cards[1].Focus(FocusState.Keyboard), "member focus before signature refresh");
+                wire.ArtworkSignature = signature;
+                await page.ViewModel.RefreshAsync(); await DrainAsync(parent); page.UpdateLayout();
+                Check(ReferenceEquals(hero, page.Body.Children[0]) && ReferenceEquals(posterSource, poster.Source)
+                    && ReferenceEquals(backdropSource, backdrop.Source)
+                    && ReferenceEquals(play, Descendants(page).OfType<Button>().Single(button => button.Name == "BoxSetPlay"))
+                    && movies.Items.OfType<PosterCard>().SequenceEqual(cards)
+                    && images.Zip(sources).All(pair => ReferenceEquals(pair.First.Source, pair.Second)),
+                    "re-signed URLs must retain the mounted hero, Play button, member cards and poster sources");
+                Check(signature == "renewed" ? play.FocusState == FocusState.Keyboard : cards[1].FocusState == FocusState.Keyboard,
+                    "signature-only refresh retains keyboard focus");
+                Check(cards.All(card => card.MediaItem!.PosterUrl!.EndsWith(signature, StringComparison.Ordinal)),
+                    "retained member controls receive the renewed artwork URL");
+            }
+        }
+        finally { wire.ArtworkSignature = null; page.ViewModel.Cancel(); parent.Children.Remove(page); }
     }
 
     private static async Task VerifyInitialSurfaceInvalidationsAsync(StackPanel parent, CatalogApi catalog, SiloApiClient api, Wire wire)

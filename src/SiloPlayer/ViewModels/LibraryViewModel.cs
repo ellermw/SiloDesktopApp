@@ -26,6 +26,13 @@ public partial class LibraryViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly HashSet<int> _loadingPages = [];
     private readonly Dictionary<int, CatalogResponse> _pageResponses = [];
+    private sealed class CatalogRangeRead(int start, long count)
+    {
+        public int Start { get; } = start;
+        public long End { get; } = start + count;
+        public bool Retired { get; set; }
+    }
+    private readonly HashSet<CatalogRangeRead> _activeCatalogReads = [];
     private string? _catalogGroup;
     private string? _catalogLibraryScope;
     private Task<bool>? _groupingTask;
@@ -58,6 +65,7 @@ public partial class LibraryViewModel : ObservableObject
     private ApiRequestContext? _loadedFiltersContext;
     private int _loadedFiltersGeneration = -1;
     private int _exactCountQueryVersion = -1;
+    private long _exactCountLoadVersion;
 
     public LibraryViewModel(CatalogApi catalogApi)
     {
@@ -400,11 +408,16 @@ public partial class LibraryViewModel : ObservableObject
                 token.ThrowIfCancellationRequested();
                 if (GetWindowItem(index) != null) continue;
                 var fetchStart = first + (index - first) / 100 * 100;
-                var response = await FetchWindowPageAsync(fetchStart,
-                    false, _snapshot, token);
-                if (token.IsCancellationRequested || version != _queryVersion) return [];
-                RememberWindow(fetchStart, response, false);
-                if (response.Items.Count == 0) break;
+                var read = BeginCatalogRangeRead(fetchStart, CatalogWindowPageSize);
+                try
+                {
+                    var response = await FetchWindowPageAsync(fetchStart,
+                        false, _snapshot, token, read: read);
+                    if (token.IsCancellationRequested || version != _queryVersion || read.Retired) return [];
+                    RememberWindow(fetchStart, response, false);
+                    if (response.Items.Count == 0) break;
+                }
+                finally { _activeCatalogReads.Remove(read); }
             }
             return indices.Select(GetWindowItem).OfType<MediaItem>().ToArray();
         }
@@ -533,7 +546,6 @@ public partial class LibraryViewModel : ObservableObject
         var version = _queryVersion;
         var jump = _letterJumpVersion;
         var key = LetterQueryKey();
-        var group = _catalogGroup;
         using var pending = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
         try
         {
@@ -547,20 +559,17 @@ public partial class LibraryViewModel : ObservableObject
             if (IsLetterJumpInProgress || jump != _letterJumpVersion) return GroupedRefreshResult.Deferred;
             if (replacement is null) return GroupedRefreshResult.Failed;
 
-            // Commit together, retaining the exact extent and mounted alphabet rail
-            // until their optional replacements arrive. No user jump is retired.
-            StartNewCatalogQuery(preserveExtent: true, preserveLetters: true);
-            IsLoading = false;
-            _catalogGroup = group;
-            _groupingTask = Task.FromResult(true);
-            Items.Reset(TotalCount);
-            _observedCatalogEnd = startIndex + replacement.Items.Count;
-            ApplyWindowResponse(startIndex, replacement, false);
+            // This is a range replacement, not a new query. Keep adjacent/sparse
+            // pages, cursor ownership and unrelated scroll loads alive.
+            RetireOverlappingCatalogReads(startIndex, Math.Max(itemCount, replacement.Items.Count));
+            _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + replacement.Items.Count);
+            ApplyWindowResponse(startIndex, replacement, false, preserveAdjacent: true);
+            UpdateCachedRange(startIndex, replacement.Items);
             RememberWindow(startIndex, replacement, false);
             WindowLoaded?.Invoke();
             _exactCountQueryVersion = _queryVersion;
             _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
-            _ = EnsureLetterIndexCoreAsync(preserveExisting: true);
+            _ = EnsureLetterIndexCoreAsync(preserveExisting: true, force: true);
             return GroupedRefreshResult.Completed;
         }
         catch (OperationCanceledException) when (pending.IsCancellationRequested) { return GroupedRefreshResult.Failed; }
@@ -568,6 +577,43 @@ public partial class LibraryViewModel : ObservableObject
         {
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex, "grouped_catalog_refresh");
             return GroupedRefreshResult.Failed;
+        }
+    }
+
+    private CatalogRangeRead BeginCatalogRangeRead(int start, long count)
+    {
+        var read = new CatalogRangeRead(start, count);
+        _activeCatalogReads.Add(read);
+        return read;
+    }
+
+    private void RetireOverlappingCatalogReads(int start, int count)
+    {
+        var end = (long)start + count;
+        foreach (var read in _activeCatalogReads)
+            if (read.Start < end && start < read.End) read.Retired = true;
+        foreach (var boundary in _completedBoundaries.Where(pair => pair.Value.Start < end
+            && start < (long)pair.Value.Start + CatalogWindowPageSize).Select(pair => pair.Key).ToArray())
+            _completedBoundaries.Remove(boundary);
+    }
+
+    private void UpdateCachedRange(int startIndex, IReadOnlyList<MediaItem> replacement)
+    {
+        void Update(int cachedStart, List<MediaItem> cached)
+        {
+            var first = Math.Max(startIndex, cachedStart);
+            var end = Math.Min(startIndex + replacement.Count, cachedStart + cached.Count);
+            for (var index = first; index < end; index++)
+                cached[index - cachedStart] = replacement[index - startIndex];
+        }
+        foreach (var cached in _recentWindows)
+            Update(cached.Start, cached.Response.Items);
+        foreach (var (page, response) in _pageResponses)
+        {
+            var pageStart = page * PageSize;
+            if (pageStart >= startIndex + replacement.Count || pageStart + response.Items.Count <= startIndex) continue;
+            Update(pageStart, response.Items);
+            Items.SetPage(page, response.Items);
         }
     }
 
@@ -696,6 +742,8 @@ public partial class LibraryViewModel : ObservableObject
         var ct = linkedCts.Token;
         var windowVersion = ++_windowLoadVersion;
         var queryVersion = _queryVersion;
+        var read = BeginCatalogRangeRead(startIndex,
+            ((long)itemCount + CatalogWindowPageSize - 1) / CatalogWindowPageSize * CatalogWindowPageSize);
 
         IsLoading = true;
         ErrorMessage = null;
@@ -705,7 +753,7 @@ public partial class LibraryViewModel : ObservableObject
             const bool includeTotal = false;
             await FetchWindowAsync(startIndex, itemCount, includeTotal, response =>
             {
-                if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion)
+                if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion || read.Retired)
                     return;
                 // A count may have landed while this speculative window was
                 // in flight. Even total_exact on a skip-total window cannot
@@ -717,9 +765,10 @@ public partial class LibraryViewModel : ObservableObject
                 RememberWindow(startIndex, response, includeTotal);
                 WindowLoaded?.Invoke();
                 EnsureExactCountRequested();
-            }, _snapshot, ct);
+            }, _snapshot, ct, read: read);
         }
         catch (OperationCanceledException) { }
+        catch (Exception) when (read.Retired) { }
         catch (ApiException ex) when (allowCursorRecovery && ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor"
             && !string.IsNullOrWhiteSpace(_snapshot) && queryVersion == _queryVersion && windowVersion == _windowLoadVersion
             && _catalogContext == _catalogApi.CaptureContext())
@@ -756,6 +805,7 @@ public partial class LibraryViewModel : ObservableObject
         }
         finally
         {
+            _activeCatalogReads.Remove(read);
             if (ReferenceEquals(_windowLoadCts, linkedCts))
             {
                 _windowLoadCts = null;
@@ -895,25 +945,39 @@ public partial class LibraryViewModel : ObservableObject
 
         IsLoading = true;
         ErrorMessage = null;
+        var reads = pagesToLoad.Select(page => (Page: page,
+            Read: BeginCatalogRangeRead(page * PageSize, CatalogWindowPageSize))).ToArray();
 
         try
         {
-            var tasks = pagesToLoad.Select(async page => (Page: page, Response: await FetchPageAsync(page, includeTotal: false, snapshot: _snapshot, ct: ct)));
-            var results = await Task.WhenAll(tasks);
+            var tasks = reads.Select(async pending =>
+            {
+                try
+                {
+                    return (pending.Page, pending.Read,
+                        Response: await FetchPageAsync(pending.Page, includeTotal: false, snapshot: _snapshot, ct: ct, read: pending.Read));
+                }
+                catch (Exception) when (pending.Read.Retired)
+                {
+                    return (pending.Page, pending.Read, Response: (CatalogResponse?)null);
+                }
+            });
+            var completed = await Task.WhenAll(tasks);
             if (version != _queryVersion) return;
+            var results = completed.Where(result => !result.Read.Retired && result.Response is not null).ToArray();
 
             foreach (var result in results.OrderBy(r => r.Page))
             {
-                _pageResponses[result.Page] = result.Response;
+                _pageResponses[result.Page] = result.Response!;
                 if (string.IsNullOrWhiteSpace(_snapshot))
-                    _snapshot = result.Response.Snapshot;
+                    _snapshot = result.Response!.Snapshot;
             }
 
-            RecomputeVirtualTotal();
+            if (results.Length > 0) RecomputeVirtualTotal();
 
             foreach (var result in results.OrderBy(r => r.Page))
-                Items.SetPage(result.Page, result.Response.Items);
-            PageLoaded?.Invoke();
+                Items.SetPage(result.Page, result.Response!.Items);
+            if (results.Length > 0) PageLoaded?.Invoke();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -923,6 +987,7 @@ public partial class LibraryViewModel : ObservableObject
         }
         finally
         {
+            foreach (var pending in reads) _activeCatalogReads.Remove(pending.Read);
             if (version == _queryVersion)
             {
                 foreach (var page in pagesToLoad)
@@ -934,9 +999,9 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private async Task<CatalogResponse> FetchPageAsync(int pageIndex, bool includeTotal, string? snapshot = null, CancellationToken ct = default)
+    private async Task<CatalogResponse> FetchPageAsync(int pageIndex, bool includeTotal, string? snapshot = null, CancellationToken ct = default, CatalogRangeRead? read = null)
     {
-        var response = await FetchWindowPageAsync(pageIndex * PageSize, includeTotal, snapshot, ct);
+        var response = await FetchWindowPageAsync(pageIndex * PageSize, includeTotal, snapshot, ct, read: read);
         if (response.Items.Count > PageSize)
         {
             // The legacy sparse list still uses 60-slot UI pages. Its network
@@ -949,18 +1014,18 @@ public partial class LibraryViewModel : ObservableObject
     }
 
     private async Task FetchWindowAsync(int startIndex, int itemCount, bool includeTotal,
-        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default, bool publishState = true)
+        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default, bool publishState = true, CatalogRangeRead? read = null)
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure(
             includeTotal ? "catalog-request-with-total" : "catalog-request-window");
-        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct, publishState);
+        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct, publishState, read);
         ct.ThrowIfCancellationRequested();
         publishPage(response);
         while (response.Items.Count < itemCount && response.HasMore)
         {
             ct.ThrowIfCancellationRequested();
             var next = await FetchWindowPageAsync(startIndex + response.Items.Count,
-                false, response.Snapshot ?? snapshot, ct, publishState);
+                false, response.Snapshot ?? snapshot, ct, publishState, read);
             ct.ThrowIfCancellationRequested();
             response.HasMore = next.HasMore;
             if (response.Page is not null) response.Page.HasMore = next.HasMore;
@@ -980,11 +1045,12 @@ public partial class LibraryViewModel : ObservableObject
 
     private async Task LoadExactCountAsync(int version, string? snapshot, CancellationToken ct)
     {
+        var loadVersion = ++_exactCountLoadVersion;
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-exact-count");
         try
         {
             var result = await FetchWindowPageAsync(0, true, snapshot, ct);
-            if (ct.IsCancellationRequested || version != _queryVersion || !result.TotalExact) return;
+            if (ct.IsCancellationRequested || version != _queryVersion || loadVersion != _exactCountLoadVersion || !result.TotalExact) return;
             ApplyExactCatalogTotal(result.Total);
             WindowLoaded?.Invoke();
         }
@@ -996,8 +1062,9 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct, bool publishState = true)
+    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct, bool publishState = true, CatalogRangeRead? read = null)
     {
+        if (read?.Retired == true) throw new OperationCanceledException("Catalog range was refreshed.", ct);
         using var operation = SiloPlayer.Core.Services.LocalLog.BeginOperation("catalog-" + Guid.NewGuid().ToString("N"));
         var context = _catalogApi.CaptureContext();
         var version = _queryVersion;
@@ -1055,6 +1122,7 @@ public partial class LibraryViewModel : ObservableObject
             throw;
         }
         ct.ThrowIfCancellationRequested();
+        if (read?.Retired == true) throw new OperationCanceledException("Catalog range was refreshed.", ct);
         if (version != _queryVersion || context != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryGroupingScope(Library))
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
         SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_queries.txt",
