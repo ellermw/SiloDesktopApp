@@ -939,6 +939,10 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
+            // Only an empty selector means the whole default suite. An unknown one must not run it and report success.
+            var unknownGroup = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY");
+            if (!string.IsNullOrEmpty(unknownGroup))
+                throw new InvalidOperationException($"Unknown native test group: {unknownGroup}");
             await HomeRefreshPreservesCards(parent);
             Program.Log("PASS: Continue Watching refreshes preserve unchanged native cards.");
             await RenewedArtworkRetriesOnlyMissingImages(parent);
