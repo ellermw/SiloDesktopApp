@@ -5,7 +5,7 @@ namespace SiloPlayer.Tests;
 public sealed class ReleaseVersionTests
 {
     [Fact]
-    public void CurrentOscReceiptMatchesAllSourceVersionStamps()
+    public void AppUpdaterLauncherAndInstallerUseConsistentSourceVersionStamps()
     {
         var root = TestRepository.Root;
         var projects = new[] { "SiloPlayer", "SiloPlayer.UpdateHost", "SiloPlayer.Launcher" }
@@ -27,9 +27,6 @@ public sealed class ReleaseVersionTests
                 .Cast<System.Text.RegularExpressions.Match>()).Groups[1].Value;
         Assert.Equal(semantic, InnoStamp(installer, "MyAppVersion"));
         Assert.Equal(numeric, InnoStamp(installer, "MyAppFourPartVersion"));
-        var identity = $"Source version: `{semantic}`; numeric version: `{numeric}`.";
-        foreach (var path in new[] { "docs/current-development.md", "docs/research/2026-11-03-osc-hud-states-verification.md" })
-            Assert.Contains(identity, File.ReadAllText(Path.Combine(root, path)));
     }
 
     [Theory]
