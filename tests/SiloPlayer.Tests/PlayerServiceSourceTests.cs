@@ -27,9 +27,10 @@ public sealed class PlayerServiceSourceTests
         var cycle = source[start..end];
         var executed = cycle.IndexOf("if (selected.Sid == 0 ? actualSid > 0", StringComparison.Ordinal);
         var retire = cycle.IndexOf("Interlocked.Exchange(ref _subtitleActivationIntent, new object());", StringComparison.Ordinal);
-        var intent = cycle.IndexOf("manager!.RecordLocalSubtitleSelection(selected.Track?.Index,", StringComparison.Ordinal);
-        Assert.True(executed >= 0 && retire > executed && intent > retire);
+        var intent = cycle.IndexOf("manager!.TryRecordLocalSubtitleSelection(session, selected.Track,", StringComparison.Ordinal);
+        Assert.True(executed >= 0 && intent > executed && retire > intent);
         Assert.Contains("isAutomatic: manager.IsSubtitleSelectionAutomatic", cycle[intent..]);
+        Assert.Contains("mpv.SetSubtitleTrack(previousSid > 0", cycle[intent..retire]);
         Assert.DoesNotContain("SaveExecutedSubtitlePreferenceAsync", cycle);
         Assert.DoesNotContain("SaveSubtitlePrefsAsync", cycle);
     }
@@ -94,7 +95,7 @@ public sealed class PlayerServiceSourceTests
         var end = source.IndexOf("private async Task ReconcileDeferredSubtitleSelectionAsync(", start, StringComparison.Ordinal);
         var method = source[start..end];
         var loop = method.IndexOf("while (true)", StringComparison.Ordinal);
-        Assert.Contains("manager.RecordLocalSubtitleSelection(requestedIndex, manager.IsSubtitleSelectionAutomatic);", method[..loop]);
+        Assert.Contains("manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic)", method[..loop]);
         Assert.Contains("manager.ReplanRecordedSubtitleSelectionAsync(position, ct)", method[loop..]);
         Assert.DoesNotContain("manager.ReplanSubtitleAsync(", method[loop..]);
         Assert.Contains("manager.CaptureLocalSubtitleIntent() != submittedIntent", method[loop..]);

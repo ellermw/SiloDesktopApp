@@ -50,11 +50,28 @@ public partial class PlaybackManager
             var track = subtitleIndex.HasValue ? CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index == subtitleIndex) : null;
             if (subtitleIndex.HasValue && track == null) throw new InvalidOperationException("The selected subtitle is no longer in the active inventory.");
             if (track?.Unplayable == true) throw new InvalidOperationException("The selected subtitle is unavailable.");
-            _hasViewerSubtitle = true; _viewerSubtitle = track;
-            _subtitleSelectionIsAutomatic = isAutomatic;
-            _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
-            ++_subtitleRevision;
+            RecordLocalSubtitleSelectionCore(track, isAutomatic);
         }
+    }
+
+    /// <summary>Admits a resolved choice only while its exact session and row remain current.</summary>
+    public bool TryRecordLocalSubtitleSelection(PlaybackStartResponse session, SubtitleTrackInfo? track, bool isAutomatic = false)
+    {
+        lock (_trackIntentGate)
+        {
+            if (!ReferenceEquals(session, CurrentSession) || track != null &&
+                (track.Unplayable || !session.SubtitleUrls.Contains(track))) return false;
+            RecordLocalSubtitleSelectionCore(track, isAutomatic);
+            return true;
+        }
+    }
+
+    private void RecordLocalSubtitleSelectionCore(SubtitleTrackInfo? track, bool isAutomatic)
+    {
+        _hasViewerSubtitle = true; _viewerSubtitle = track;
+        _subtitleSelectionIsAutomatic = isAutomatic;
+        _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
+        ++_subtitleRevision;
     }
 
     public void RecordLocalAudioSelection(int audioIndex)

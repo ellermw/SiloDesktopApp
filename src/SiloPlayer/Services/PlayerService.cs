@@ -1215,6 +1215,7 @@ public partial class PlayerService : IDisposable
         var selectionRoomGeneration = Volatile.Read(ref _roomPlaybackGeneration);
         object selectionActivationIntent;
         PlaybackManager.SubtitleSelectionIntent? admittedIntent = null;
+        PlaybackStartResponse? admittedSession = null;
         var selectedSubtitleIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
         var preferenceOwner = new SubtitlePreferenceOwner(authority, authority.ApiClient.CaptureContext(), manager, selectionFileId, GetPrefsKey(), ownerToken);
         var deferLocalSelection = _switchingContent || IsLoading || _subtitleVersionSwitchActive;
@@ -1312,6 +1313,7 @@ public partial class PlayerService : IDisposable
         lock (_subtitleTrackStateLock)
         {
             if (!CurrentReadChoice()) { RetireReadChoice(); return false; }
+            var selectionSession = manager?.CurrentSession;
             if (track != null)
             {
                 track = ResolveCurrentSubtitleChoice(track, selectionFileId);
@@ -1322,13 +1324,12 @@ public partial class PlayerService : IDisposable
                 selectedSubtitleIndex = track.Index;
                 _pendingSubtitlePreferenceIndex = selectedSubtitleIndex;
             }
-            if (manager?.CurrentSession?.ProtocolVersion >= 3)
+            if (selectionSession?.ProtocolVersion >= 3)
             {
-                try { manager.RecordLocalSubtitleSelection(selectedSubtitleIndex < 0 ? null : selectedSubtitleIndex); }
-                catch (InvalidOperationException)
+                if (!manager!.TryRecordLocalSubtitleSelection(selectionSession, track))
                 {
-                    // A grant can retire between membership resolution and
-                    // the manager's own inventory-checked intent admission.
+                    // A grant may reuse the index after this exact row was
+                    // resolved. Admit the captured owner, never its ordinal.
                     RetireReadChoice(); ShowSubtitleSelectionUnavailable(); return false;
                 }
                 admittedIntent = manager.CaptureLocalSubtitleIntent();
@@ -1338,6 +1339,7 @@ public partial class PlayerService : IDisposable
             }
             else if (deferLocalSelection || _pendingInitialServerSubtitleIndex.HasValue)
                 _pendingInitialServerSubtitleIndex = selectedSubtitleIndex;
+            admittedSession = selectionSession;
             _activeSubtitleServerIndex = selectedSubtitleIndex;
         }
         var wasPaused = CaptureUserPausedState();
@@ -1360,7 +1362,7 @@ public partial class PlayerService : IDisposable
                 selectionExecuted = true;
             else
             {
-                var result = await SetBitmapSubtitleBurnInAsync(track);
+                var result = await SetBitmapSubtitleBurnInAsync(track, expectedSession: admittedSession);
                 if (result == SubtitleTransportResult.Superseded) return false;
                 transportReloadScheduled = result == SubtitleTransportResult.ReloadScheduled;
             }
@@ -1375,7 +1377,8 @@ public partial class PlayerService : IDisposable
             // resume stale frames from the outgoing transport.
             if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
             {
-                var result = await SetBitmapSubtitleBurnInAsync(null, postLoadSubtitleIndex: track.Index);
+                var result = await SetBitmapSubtitleBurnInAsync(null, postLoadSubtitleIndex: track.Index,
+                    expectedSession: admittedSession, postLoadTrack: track);
                 if (result == SubtitleTransportResult.Superseded) return false;
                 transportReloadScheduled = result == SubtitleTransportResult.ReloadScheduled;
             }
@@ -1427,7 +1430,7 @@ public partial class PlayerService : IDisposable
         }
         else if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
         {
-            var result = await SetBitmapSubtitleBurnInAsync(null);
+            var result = await SetBitmapSubtitleBurnInAsync(null, expectedSession: admittedSession);
             if (result == SubtitleTransportResult.Superseded) return false;
             transportReloadScheduled = result == SubtitleTransportResult.ReloadScheduled;
         }
@@ -3310,10 +3313,16 @@ public partial class PlayerService : IDisposable
                     applyInitialSubtitleSelection = ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic);
                     if (applyInitialSubtitleSelection)
                     {
-                        _pendingAutomaticSubtitleSelection = null;
-                        _pendingInitialServerSubtitleIndex = automaticIndex ?? -1;
-                        if (session.ProtocolVersion >= 3)
-                            _playbackManager.RecordLocalSubtitleSelection(automaticIndex, isAutomatic: true);
+                        var automaticTrack = automaticIndex.HasValue
+                            ? session.SubtitleUrls.FirstOrDefault(track => track.Index == automaticIndex) : null;
+                        if (session.ProtocolVersion >= 3 && (automaticIndex.HasValue && automaticTrack == null ||
+                            _playbackManager?.TryRecordLocalSubtitleSelection(session, automaticTrack, isAutomatic: true) != true))
+                            applyInitialSubtitleSelection = false;
+                        if (applyInitialSubtitleSelection)
+                        {
+                            _pendingAutomaticSubtitleSelection = null;
+                            _pendingInitialServerSubtitleIndex = automaticIndex ?? -1;
+                        }
                     }
                 }
             }
@@ -4221,21 +4230,20 @@ public partial class PlayerService : IDisposable
 
         if (explicitSelection == -1 || selectedTrack == null || selectedTrack.Unplayable)
         {
+            if (session.ProtocolVersion >= 3 && _playbackManager?.TryRecordLocalSubtitleSelection(session, null,
+                isAutomatic: explicitSelection == null && explicitSignature == null) != true) return;
             _pendingSubtitleSelection = -1;
             _pendingInitialServerSubtitleIndex = -1;
-            if (session.ProtocolVersion >= 3) _playbackManager?.RecordLocalSubtitleSelection(null,
-                isAutomatic: explicitSelection == null && explicitSignature == null);
             return;
         }
 
-        _pendingInitialServerSubtitleIndex = selectedTrack.Index;
         if (session.ProtocolVersion >= 3 && _playbackManager is { } manager)
         {
             lock (_subtitleTrackStateLock)
             {
                 var previous = manager.CaptureLocalSubtitleIntent();
-                manager.RecordLocalSubtitleSelection(selectedTrack.Index,
-                    isAutomatic: explicitSelection == null && explicitSignature == null);
+                if (!manager.TryRecordLocalSubtitleSelection(session, selectedTrack,
+                    isAutomatic: explicitSelection == null && explicitSignature == null)) return;
                 if (isExplicitTrack)
                     _pendingExplicitInitialSubtitleOwner = new(_activeAuthority,
                         _activeAuthority.ApiClient.CaptureIdentityContext(), manager, session.MediaFileId,
@@ -4243,6 +4251,7 @@ public partial class PlayerService : IDisposable
                         previous, manager.CaptureLocalSubtitleIntent());
             }
         }
+        _pendingInitialServerSubtitleIndex = selectedTrack.Index;
         if (string.Equals(selectedTrack.Source, "embedded", StringComparison.OrdinalIgnoreCase))
         {
             var embedded = session.SubtitleUrls
@@ -5682,11 +5691,14 @@ public partial class PlayerService : IDisposable
     /// <returns>Distinguishes a retired owner from failure and an accepted reload.</returns>
     private async Task<SubtitleTransportResult> SetBitmapSubtitleBurnInAsync(
         SubtitleTrackInfo? track,
-        int? postLoadSubtitleIndex = null)
+        int? postLoadSubtitleIndex = null,
+        PlaybackStartResponse? expectedSession = null,
+        SubtitleTrackInfo? postLoadTrack = null)
     {
         var manager = _playbackManager;
         var mpv = _mpv;
         if (mpv == null || manager?.CurrentSession is not { } session) return SubtitleTransportResult.Superseded;
+        if (expectedSession != null && !ReferenceEquals(expectedSession, session)) return SubtitleTransportResult.Superseded;
         var authority = _activeAuthority;
         var authorityToken = _authorityLifetimeCts.Token;
         var identity = authority.ApiClient.CaptureIdentityContext();
@@ -5706,6 +5718,8 @@ public partial class PlayerService : IDisposable
         await CancelAndDrainTransportRestartsAsync(ct);
         if (!CurrentOwner()) return SubtitleTransportResult.Superseded;
         int? requestedIndex = track?.Index ?? postLoadSubtitleIndex;
+        var requestedTrack = track ?? postLoadTrack ?? (requestedIndex.HasValue
+            ? session.SubtitleUrls.FirstOrDefault(candidate => candidate.Index == requestedIndex) : null);
         var transportMutationAttempted = false;
         var reconcileDeferredSelection = false;
         var loadStarted = false;
@@ -5727,7 +5741,9 @@ public partial class PlayerService : IDisposable
                     _activeSubtitleServerIndex != (requestedIndex ?? -1)) return SubtitleTransportResult.Superseded;
                 // Admit the initial file-local choice exactly once. Subsequent
                 // grants can change files and must reuse this retained identity.
-                manager.RecordLocalSubtitleSelection(requestedIndex, manager.IsSubtitleSelectionAutomatic);
+                if (requestedIndex.HasValue && requestedTrack == null ||
+                    !manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic))
+                    return SubtitleTransportResult.Superseded;
             }
             var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? Versions.FirstOrDefault(v => v.FileId == (_requestedMediaFileId ?? 0))
@@ -6001,7 +6017,8 @@ public partial class PlayerService : IDisposable
             if (session?.IsSubtitleBurnedIn == true && (track == null || track.Index != burnedTrack?.Index))
             {
                 var result = alreadyReplanned ? SubtitleTransportResult.Failed :
-                    await SetBitmapSubtitleBurnInAsync(null, postLoadSubtitleIndex: track?.Index);
+                    await SetBitmapSubtitleBurnInAsync(null, postLoadSubtitleIndex: track?.Index,
+                        expectedSession: session, postLoadTrack: track);
                 if (result == SubtitleTransportResult.ReloadScheduled) return true;
                 if (result == SubtitleTransportResult.Superseded || !CurrentSelection()) return false;
                 if (!RestoreExecutedSubtitleSelection(reapply: false, currentSelection: CurrentSelection)) return false;
@@ -6023,7 +6040,7 @@ public partial class PlayerService : IDisposable
                 if (IsUnsupportedBitmapSubtitle(track) && !IsBurnedInSubtitle(session, track))
                 {
                     var result = alreadyReplanned ? SubtitleTransportResult.Failed :
-                        await SetBitmapSubtitleBurnInAsync(track);
+                        await SetBitmapSubtitleBurnInAsync(track, expectedSession: session);
                     // An accepted reload owns its pending index, possibly reconciled
                     // to a newer pick. A retired worker must not overwrite it.
                     if (result == SubtitleTransportResult.ReloadScheduled) return true;
@@ -6109,9 +6126,18 @@ public partial class PlayerService : IDisposable
                 generation != Volatile.Read(ref _loadedMediaInitGeneration)) return;
             var current = choices.FindIndex(choice => (choice.Track?.Index ?? -1) == _activeSubtitleServerIndex);
             var selected = choices[current > 0 ? current - 1 : choices.Count - 1];
+            var previousSid = mpv.GetPropertyDouble("sid");
             mpv.SetSubtitleTrack(selected.Sid);
             var actualSid = mpv.GetPropertyDouble("sid");
             if (selected.Sid == 0 ? actualSid > 0 : (int)Math.Round(actualSid) != selected.Sid) return;
+            if (session.ProtocolVersion >= 3 && !manager!.TryRecordLocalSubtitleSelection(session, selected.Track,
+                isAutomatic: manager.IsSubtitleSelectionAutomatic))
+            {
+                // The service lock still owns this native file. A newly
+                // published grant cannot lend this gesture its reused index.
+                mpv.SetSubtitleTrack(previousSid > 0 ? (int)Math.Round(previousSid) : 0);
+                return;
+            }
             Interlocked.Exchange(ref _subtitleActivationIntent, new object());
             _pendingAutomaticSubtitleSelection = null;
             _pendingInitialServerSubtitleIndex = null;
@@ -6119,8 +6145,6 @@ public partial class PlayerService : IDisposable
             _pendingSubtitlePreferenceOwner = null;
             _pendingExplicitInitialSubtitleOwner = null;
             _activeSubtitleServerIndex = selected.Track?.Index ?? -1;
-            if (session.ProtocolVersion >= 3) manager!.RecordLocalSubtitleSelection(selected.Track?.Index,
-                isAutomatic: manager.IsSubtitleSelectionAutomatic);
             CommitExecutedSubtitleSelection(selected.Track);
             mpv.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
