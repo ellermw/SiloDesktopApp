@@ -16,7 +16,7 @@ public sealed partial class LibraryPage
     private bool _groupedCatalogDirty;
     private bool _libraryFlagsDirty;
 
-    private bool IsBoxSetLibrary => ViewModel.Library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "mixed" };
+    private bool IsBoxSetLibrary => ViewModel.Library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" };
     private bool CanRefreshGroupedGrid => _isNavigated && IsBoxSetLibrary && _currentTab == "Library"
         && _currentAudiobookAxis == "books" && _libraryCatalogLoaded && LibraryContentArea.Visibility == Visibility.Visible;
 

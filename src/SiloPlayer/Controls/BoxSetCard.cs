@@ -26,6 +26,13 @@ public sealed class BoxSetCard : Button
         Unloaded += (_, _) => CancelArtworkLoad();
         Loaded += (_, _) => { if (_poster?.Source is null && _artworkLoad is null) StartArtworkLoad(); };
     }
+    protected override void OnTapped(Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        base.OnTapped(e);
+        // The button's Click owns navigation. The same gesture must not also
+        // activate a containing PosterCard or catalog slot.
+        e.Handled = true;
+    }
     /// <summary>Fit the shared aggregate presentation inside a virtual catalog slot.</summary>
     public void SetCatalogLayout(double width, double posterHeight, double height)
     {

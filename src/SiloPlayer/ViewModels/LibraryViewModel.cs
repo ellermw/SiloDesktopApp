@@ -501,7 +501,7 @@ public partial class LibraryViewModel : ObservableObject
     {
         try
         {
-            var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "mixed" }
+            var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" }
                 && SelectedType is null or "" or "movie" or "video";
             var supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
             if (ct.IsCancellationRequested || version != _queryVersion || _catalogContext != _catalogApi.CaptureContext()

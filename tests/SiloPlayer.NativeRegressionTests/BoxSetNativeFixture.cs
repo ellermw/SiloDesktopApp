@@ -21,7 +21,7 @@ using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
-internal static class BoxSetNativeFixture
+internal static partial class BoxSetNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent, bool invalidMemberChecks = true)
     {
@@ -36,6 +36,11 @@ internal static class BoxSetNativeFixture
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://boxsets-native.invalid"); api.SetProfile("fixture");
         var catalog = new CatalogApi(api); fixtureServices.Catalog = catalog; fixtureServices.Client = api;
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_BOXSET_CLOSEOUT_CASE") is { Length: > 0 } closeout)
+        {
+            await RunCloseoutAsync(parent, catalog, api, wire, navigation, closeout);
+            return;
+        }
         var page = new BoxSetPage(catalog, api) { Width = 960, Height = 700 };
         parent.Children.Add(page);
         await page.ViewModel.LoadAsync("7", "2"); await Task.Delay(120); page.UpdateLayout();

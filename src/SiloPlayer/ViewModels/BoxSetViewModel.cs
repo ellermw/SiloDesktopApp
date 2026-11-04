@@ -53,11 +53,17 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
         IsLoading = true; Failure = DetailFailureKind.None;
         try
         {
-            if (!int.TryParse(library, out var libraryId) || !await catalog.BoxSetsEnabledAsync(libraryId, ct, throwOnCapabilityFailure: true))
+            if (!int.TryParse(library, out var libraryId) || libraryId <= 0)
+            { if (Current()) { Detail = null; Failure = DetailFailureKind.NotFound; } return; }
+            var eligibleLibraries = await catalog.GetBoxSetLibraryIdsAsync(ct, throwOnCapabilityFailure: true);
+            if (!eligibleLibraries.Contains(libraryId))
             { if (Current()) { Detail = null; Failure = DetailFailureKind.NotFound; } return; }
             if (!Current()) return;
             var result = await catalog.GetBoxSetAsync(id, library, ct);
-            if (Current()) Detail = result;
+            if (!Current()) return;
+            if (!int.TryParse(result.LibraryId, out var returnedLibrary) || !eligibleLibraries.Contains(returnedLibrary))
+            { Detail = null; Failure = DetailFailureKind.AccessDenied; return; }
+            Detail = result;
         }
         catch (OperationCanceledException) when (!Current()) { }
         catch (Exception ex)
@@ -71,7 +77,9 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
                 Failure = failure;
             }
         }
-        finally { if (Current()) IsLoading = false; }
+        // A retired read still owns its loading flag until a successor takes
+        // the request slot. Context retirement must not strand that flag.
+        finally { if (ReferenceEquals(_pending, pending)) IsLoading = false; }
     }
     public async Task PlayAsync(Func<string, int, ApiRequestContext, CancellationToken, Task> play)
     {

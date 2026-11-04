@@ -68,12 +68,16 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     }
     public void Receive(PlaybackProgressUpdated message) => DispatcherQueue.TryEnqueue(async () =>
     {
-        var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureContext();
-        if (!_active || detail?.Items.Any(x => x.ContentId == message.ContentId) != true) return;
+        var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureIdentityContext();
+        if (!_active || (detail != null ? !detail.Items.Any(x => x.ContentId == message.ContentId) : !ViewModel.IsLoading)) return;
         try { await message.Persisted; } catch { return; }
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_active && visit == _visit && _catalog.IsCurrentContext(owner)) Refresh();
+            // Initial membership may arrive before the final playback write.
+            // Recheck it after persistence; an access-cache refresh does not
+            // retire this same-viewer invalidation, but a different visit does.
+            if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner) &&
+                (_knownMembership != null ? _knownMembership.Items.Any(x => x.ContentId == message.ContentId) : ViewModel.IsLoading)) Refresh();
         });
     });
     protected override async void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); _knownMembership = null; _visit++; if (e.Parameter is BoxSetNavigationArgs route) await ViewModel.LoadAsync(route.Id, route.LibraryId); }
@@ -113,8 +117,11 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         }
         if (ViewModel.Detail == null && ViewModel.Failure != DetailFailureKind.None)
         {
-            Body.Children.Add(new TextBlock { Text = ViewModel.Failure == DetailFailureKind.NotFound ? "Box set unavailable" : "Could not load box set", FontSize = 24, TextWrapping = TextWrapping.Wrap });
-            if (ViewModel.Failure != DetailFailureKind.NotFound) { var retry = new Button { Content = "Try again" }; retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
+            var unavailable = ViewModel.Failure is DetailFailureKind.NotFound or DetailFailureKind.AccessDenied;
+            Body.Children.Add(new TextBlock { Text = unavailable ? "Box set unavailable" : "Could not load box set", FontSize = 24, TextWrapping = TextWrapping.Wrap });
+            if (ViewModel.Failure == DetailFailureKind.AccessDenied)
+                Body.Children.Add(new TextBlock { Text = DetailFailurePolicy.Message(ViewModel.Failure), TextWrapping = TextWrapping.Wrap });
+            if (!unavailable) { var retry = new Button { Content = "Try again" }; retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
         }
         if (ViewModel.Detail is not {} set) return;
         var hero = new Grid { MinHeight = 220 };

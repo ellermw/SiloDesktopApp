@@ -12,6 +12,7 @@ public sealed class GroupedLibraryTests
 {
     [Theory]
     [InlineData("movie", true, true, true)]
+    [InlineData("movies", true, true, true)]
     [InlineData("mixed", true, true, true)]
     [InlineData("movie", false, true, false)]
     [InlineData("movie", true, false, false)]

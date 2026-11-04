@@ -105,6 +105,62 @@ public sealed class BoxSetOwnershipTests
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
         Assert.Contains("Reopen", error.Message); Assert.Equal(1, calls);
     }
+    [Theory]
+    [InlineData("12", true, true)]
+    [InlineData("12", false, false)]
+    [InlineData("99", true, false)]
+    [InlineData("0", true, false)]
+    [InlineData("not-a-library", true, false)]
+    public async Task DedicatedDetailValidatesTheReturnedLibraryBeforePublishingOrPlaying(string returned, bool enabled, bool allowed)
+    {
+        using var wire = new Wire { ReturnedLibrary = returned, Enabled = enabled };
+        using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var calls = 0;
+        if (allowed)
+        {
+            Assert.Equal(returned, vm.Detail?.LibraryId); Assert.Equal(DetailFailureKind.None, vm.Failure);
+            await vm.PlayAsync((_, library, _, _) => { calls++; Assert.Equal(12, library); return Task.CompletedTask; });
+            Assert.Equal(1, calls);
+        }
+        else
+        {
+            Assert.Null(vm.Detail); Assert.Equal(DetailFailureKind.AccessDenied, vm.Failure);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
+            Assert.Equal(0, calls);
+        }
+        Assert.False(vm.IsLoading); vm.Cancel();
+    }
+
+    [Theory] [InlineData("profile")] [InlineData("access")] [InlineData("language")]
+    public async Task RetiredActiveReadReleasesItsOwnLoadingWithoutPublishingStaleDetail(string change)
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); var read = vm.LoadAsync("7", "2");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(vm.IsLoading);
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Release.TrySetResult(); await read.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(vm.IsLoading); Assert.Null(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
+    }
+
+    [Fact] public async Task RetiredOlderReadDoesNotReleaseTheNewerRequestLoading()
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); var old = vm.LoadAsync("7", "2");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var oldRelease = wire.Release;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var current = vm.RefreshAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        oldRelease.TrySetResult(); await old.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(vm.IsLoading); Assert.Null(vm.Detail);
+        wire.Release.TrySetResult(); await current.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(vm.IsLoading); Assert.NotNull(vm.Detail); vm.Cancel();
+    }
+
     [Fact] public async Task PrimaryActionRevalidatesAccessAndUsesTheCurrentTargetAndReadOwner()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
