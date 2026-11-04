@@ -272,6 +272,8 @@ internal static class EpisodeOverviewNativeFixture
                 Image? Still() => Descendants(protectedRail).OfType<Image>().FirstOrDefault(image => image.Source is BitmapImage { PixelWidth: > 0 });
                 await Until(() => Still() != null); page.UpdateLayout();
                 var protectedPixels = await Pixels(Still()!);
+                var protectedSize = (Still()!.ActualWidth, Still()!.ActualHeight, Still()!.Opacity);
+                var protectedPosition = Still()!.TransformToVisual(page).TransformPoint(new(0, 0));
                 wire.SpoilerFailure = "503"; wire.FailSpoilerEffective = true;
                 if (change == "access") client.InvalidateAccessContext(); else client.SetProfile("fixture");
                 Call(page, "RefreshRetiredOverviewScope");
@@ -282,9 +284,42 @@ internal static class EpisodeOverviewNativeFixture
                 // Also exercise a fresh card/still created after the replacement read has failed.
                 Call(page, "BuildSiblingEpisodeCards");
                 await Until(() => Still() != null); page.UpdateLayout();
+                var rebuiltPixels = await Pixels(Still()!);
+                File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"spoiler-{change}-original.bgra"), protectedPixels);
+                File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"spoiler-{change}-rebuilt.bgra"), rebuiltPixels);
+                var changedChannels = protectedPixels.Zip(rebuiltPixels).Count(pair => pair.First != pair.Second);
+                var maximumDelta = protectedPixels.Zip(rebuiltPixels).Max(pair => Math.Abs(pair.First - pair.Second));
+                var rebuiltSize = (Still()!.ActualWidth, Still()!.ActualHeight, Still()!.Opacity);
+                var rebuiltPosition = Still()!.TransformToVisual(page).TransformPoint(new(0, 0));
                 Check(Descendants(protectedRail).OfType<EpisodeCardCaption>().Single().OverviewText.Visibility == Visibility.Collapsed &&
-                    protectedPixels.SequenceEqual(await Pixels(Still()!)),
-                    "Sibling captions remain hidden and freshly loaded still pixels retain the same spoiler blur after a failed reload");
+                    protectedSize == rebuiltSize && protectedPosition.X == rebuiltPosition.X && protectedPosition.Y == rebuiltPosition.Y &&
+                    protectedPixels.Length == rebuiltPixels.Length && maximumDelta <= 1,
+                    $"Sibling captions remain hidden and freshly loaded still pixels retain the same spoiler blur after a failed reload: change={change}, " +
+                    $"caption={Descendants(protectedRail).OfType<EpisodeCardCaption>().Single().OverviewText.Visibility}, " +
+                    $"originalBytes={protectedPixels.Length}, rebuiltBytes={rebuiltPixels.Length}, originalSize={protectedSize}, " +
+                    $"rebuiltSize=({Still()!.ActualWidth},{Still()!.ActualHeight},{Still()!.Opacity}), " +
+                    $"positions={protectedPosition}/{Still()!.TransformToVisual(page).TransformPoint(new(0, 0))}, changedChannels={changedChannels}, maximumDelta={maximumDelta}");
+                // Allow only one 8-bit rendering step. Prove that this bound
+                // still rejects the actual unprotected source in the same image.
+                var still = Still()!;
+                var protectedSource = (BitmapImage)still.Source;
+                var unprotected = new BitmapImage
+                {
+                    DecodePixelWidth = protectedSource.DecodePixelWidth,
+                    DecodePixelType = protectedSource.DecodePixelType,
+                    UriSource = new Uri(Path.Combine(Program.AppDirectory, "Assets", "silo-icon-1024.png"))
+                };
+                try
+                {
+                    still.Source = unprotected;
+                    await Until(() => unprotected.PixelWidth > 0); page.UpdateLayout();
+                    var unprotectedPixels = await Pixels(still);
+                    File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"spoiler-{change}-unprotected.bgra"), unprotectedPixels);
+                    Check(unprotectedPixels.Length == protectedPixels.Length &&
+                        protectedPixels.Zip(unprotectedPixels).Any(pair => Math.Abs(pair.First - pair.Second) > 1),
+                        "The protected-still pixel bound did not reject the actual unblurred source.");
+                }
+                finally { still.Source = protectedSource; page.UpdateLayout(); }
                 wire.SpoilerFailure = null; Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
                 await spoilers.EnsureLoadedAsync();
             }

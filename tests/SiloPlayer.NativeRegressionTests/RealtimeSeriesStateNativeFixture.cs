@@ -48,6 +48,11 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 await VerifyPartyMembershipAsync(parent, wire);
                 return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_REALTIME_CASE") == "companion-recovery")
+            {
+                await VerifyCompanionReconnectAsync(parent, wire, client, "series");
+                return;
+            }
             foreach (var type in new[] { "series", "season" })
             {
                 wire.Count = 2; wire.Target = "new-target"; wire.LoadedPlayed = false; wire.LoadedPosition = 0; wire.Favorite = false;
@@ -1283,8 +1288,21 @@ internal static partial class RealtimeSeriesStateNativeFixture
                         Check(((UIElement)replacement.FindName("AdvisoryAgeBadge")).Visibility == Visibility.Visible,
                             "Reconnect remount did not recover the advisory badge.");
                     else
-                        Check(((MenuFlyout)replacement.FindName("MoreFlyout")).Items.OfType<MenuFlyoutItem>()
-                            .Any(item => item.Text == "Request seasons"), "Reconnect remount did not recover Request seasons.");
+                    {
+                        var actions = ((MenuFlyout)replacement.FindName("MoreFlyout")).Items.OfType<MenuFlyoutItem>().ToArray();
+                        if (!actions.Any(item => item.Text == "Request Seasons"))
+                        {
+                            var requests = new RequestsApi(client);
+                            var status = await requests.GetStatusAsync();
+                            var detail = await requests.GetDetailAsync("series", 42);
+                            var requestOwner = typeof(ItemDetailPage).GetField("_requestSeasonsContentId", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(replacement);
+                            Check(false, $"Reconnect remount did not recover Request seasons: phase={phase}, enabled={status.RequestsEnabled}, " +
+                                $"allowed={status.Allowed}, supported={status.SeasonRequestsSupported}, missing={status.MissingSeasonsRequestable}, " +
+                                $"requestable={detail.Request.Requestable}, seasons={string.Join(",", detail.Seasons?.Select(season => season.SeasonNumber) ?? [])}, " +
+                                $"owner={requestOwner}, item={replacement.ViewModel.Item?.ContentId}/{replacement.ViewModel.Item?.Type}, " +
+                                $"tmdb={replacement.ViewModel.Item?.TmdbId}, navigationCanceled={navigation.IsCancellationRequested}, actions={string.Join("|", actions.Select(action => action.Text))}.");
+                        }
+                    }
                 }
                 finally
                 {
