@@ -415,6 +415,11 @@ local function quality_choices_available()
     local versions = state.watch_party and {} or (state.quality_info.versions or {})
     return #versions > 1 or #visible_quality_tiers() > 1
 end
+local function native_menu_active(kind)
+    local request = state.native_menu_request
+    return request ~= nil and (request.kind == kind
+        or (kind == "more" and request.opener == "btn_more"))
+end
 local function native_menu_input(action)
     local request = state.native_menu_request
     if not request then return false end
@@ -1899,15 +1904,14 @@ local function render_osc()
 
     local bchap = L.btn_chapters
     if bchap then
-        draw_utility_state(bchap, state.chapter_menu_visible)
+        draw_utility_state(bchap, state.chapter_menu_visible or native_menu_active("chapters"))
         draw_chapters_icon(ass, bchap.cx, bchap.cy, math.floor(20 * sc),
             config.text_color, "38", ma)
     end
 
     local baudio = L.btn_audio
     if baudio then
-        draw_utility_state(baudio, state.audio_menu_visible or (state.native_menu_request
-            and (state.native_menu_request.kind or "audio") == "audio"))
+        draw_utility_state(baudio, state.audio_menu_visible or native_menu_active("audio"))
         draw_audio_lines_icon(ass, baudio.cx, baudio.cy, math.floor(20 * sc),
             config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma)
     end
@@ -1955,7 +1959,7 @@ local function render_osc()
     end
     local more = L.btn_more
     if more then
-        draw_utility_state(more, state.compact_menu_visible)
+        draw_utility_state(more, state.compact_menu_visible or native_menu_active("more"))
         draw_text(ass, more.cx, more.cy, "...", math.floor(20 * sc), config.text_color, "20", ma, 5)
     end
     local bf = L.btn_fullscreen
@@ -4687,7 +4691,8 @@ end
 local function open_native_menu(kind, keyboard)
     local scope = state['native_' .. kind .. '_scope']
     if not scope then return false end
-    if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1) or state.osc_disabled
+    if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1)
+        or (kind == "chapters" and #state.chapters == 0) or state.osc_disabled
         or state.playback_loading or state.post_roll_active
         or state.native_menu_sequence >= 9007199254740991 then return true end
     compute_layout()
@@ -4701,6 +4706,7 @@ local function open_native_menu(kind, keyboard)
     state.native_menu_sequence = state.native_menu_sequence + 1
     local request = {
         owner = scope, kind = kind,
+        opener = state.layout[opener] and opener or "btn_more",
         sequence = state.native_menu_sequence,
         focus_name = keyboard and (state.layout[opener] and opener or "btn_more") or nil,
     }
@@ -4736,6 +4742,7 @@ local function toggle_transport_menu_from_button(mx, my)
     end
 
     if L.btn_chapters and point_in_rect(mx, my, L.btn_chapters) and #state.chapters > 0 then
+        if open_native_menu("chapters") then return true end
         local opening = not state.chapter_menu_visible
         close_transport_menus("chapters")
         state.chapter_menu_visible = opening
@@ -4835,14 +4842,16 @@ local function move_controller_focus(direction)
     return true
 end
 
-local function open_transport_menu_from_controller(kind)
+local function open_transport_menu_from_controller(kind, keyboard)
+    if keyboard == nil then keyboard = true end
     close_transport_menus(kind)
     if kind == "audio" then
-        if open_native_menu("audio", true) then return end
+        if open_native_menu("audio", keyboard) then return end
         state.audio_menu_visible = not state.audio_menu_visible
         set_keyboard_transport_menu(kind, state.audio_menu_visible)
         render_audio_menu()
     elseif kind == "chapters" then
+        if open_native_menu("chapters", keyboard) then return end
         state.chapter_menu_visible = not state.chapter_menu_visible
         set_keyboard_transport_menu(kind, state.chapter_menu_visible)
         render_chapter_menu()
@@ -4856,9 +4865,34 @@ local function open_transport_menu_from_controller(kind)
         set_keyboard_transport_menu(kind, state.quality_menu_visible)
         render_quality_menu()
     end
-    if current_keyboard_menu() then
+    if keyboard and current_keyboard_menu() then
         move_keyboard_menu_focus("next")
     end
+end
+
+local function activate_utility_control(name, keyboard)
+    if name == "btn_fill" then
+        mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
+    elseif name == "btn_volume_down" or name == "btn_volume_up" then
+        local volume = clamp(mp.get_property_number("volume", 100) + (name == "btn_volume_up" and 10 or -10), 0, 100)
+        mp.set_property_number("volume", volume)
+        mp.commandv("script-message", "silo-volume-changed", tostring(volume))
+    elseif name == "btn_volume" then
+        mp.commandv("cycle", "mute")
+    elseif name == "btn_audio" then
+        open_transport_menu_from_controller("audio", keyboard)
+    elseif name == "btn_chapters" then
+        open_transport_menu_from_controller("chapters", keyboard)
+    elseif name == "btn_stats" then
+        toggle_stats()
+    elseif name == "btn_pip" then
+        mp.commandv("script-message", "silo-pip-toggle")
+    else
+        return false
+    end
+    show_osc()
+    request_tick()
+    return true
 end
 
 local function activate_controller_focus()
@@ -4875,14 +4909,10 @@ local function activate_controller_focus()
     end
 
     if name:sub(1, 9) == "overflow_" then name = name:sub(10); state.compact_menu_visible = false end
+    if activate_utility_control(name, true) then return true end
     if name == "btn_more" then
+        if open_native_menu("more", true) then return true end
         state.compact_menu_visible = not state.compact_menu_visible
-    elseif name == "btn_fill" then
-        mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
-    elseif name == "btn_volume_down" or name == "btn_volume_up" then
-        local volume = clamp(mp.get_property_number("volume", 100) + (name == "btn_volume_up" and 10 or -10), 0, 100)
-        mp.set_property_number("volume", volume)
-        mp.commandv("script-message", "silo-volume-changed", tostring(volume))
     elseif name == "btn_prev_ep" then
         state.prev_ep_available = false
         mp.commandv("script-message", "silo-prev-episode")
@@ -4897,20 +4927,10 @@ local function activate_controller_focus()
         state.next_ep_available = false
         render_next_episode_button()
         mp.commandv("script-message", "silo-next-episode")
-    elseif name == "btn_volume" then
-        mp.commandv("cycle", "mute")
-    elseif name == "btn_audio" then
-        open_transport_menu_from_controller("audio")
-    elseif name == "btn_chapters" then
-        open_transport_menu_from_controller("chapters")
     elseif name == "btn_cc" then
         open_transport_menu_from_controller("subtitles")
     elseif name == "btn_quality" then
         open_transport_menu_from_controller("quality")
-    elseif name == "btn_stats" then
-        toggle_stats()
-    elseif name == "btn_pip" then
-        mp.commandv("script-message", "silo-pip-toggle")
     elseif name == "btn_fullscreen" then
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end
@@ -5040,7 +5060,9 @@ local function handle_mouse_down()
         consume_video_click(); request_tick(); return
     end
     if state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
-        consume_video_click(); state.controller_focus_name = "btn_more"; activate_controller_focus(); return
+        consume_video_click()
+        if open_native_menu("more", false) then return end
+        state.controller_focus_name = "btn_more"; activate_controller_focus(); return
     end
     if state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
         consume_video_click(); state.controller_focus_name = "btn_fill"; activate_controller_focus(); return
@@ -6216,6 +6238,27 @@ end
 --------------------------------------------------------------------------------
 
 local function setup_script_messages()
+    mp.register_script_message("osc-native-more-action", function(token, sequence, id)
+        local closed = state.native_more_closed
+        if not closed or state.native_menu_request or token ~= state.native_more_scope
+            or closed.owner ~= token or closed.sequence ~= tonumber(sequence)
+            or closed.sequence ~= state.native_menu_sequence then return end
+        local controls = {
+            audio = "btn_audio", chapters = "btn_chapters", stats = "btn_stats", pip = "btn_pip",
+            fill = "btn_fill", ["volume-down"] = "btn_volume_down", ["volume-up"] = "btn_volume_up", mute = "btn_volume",
+        }
+        local control = controls[id]
+        if not control then return end
+        state.native_more_closed = nil
+        if state.playback_failure_visible or state.playback_loading or state.osc_disabled or state.post_roll_active then return end
+        -- Dispatch this accepted utility intent directly. A newly arrived
+        -- buffering prompt must never reinterpret it as Lower/Restore.
+        activate_utility_control(control, closed.focus_name ~= nil)
+        if not state.native_menu_request then
+            compute_layout()
+            state.controller_focus_name = closed.focus_name and state.layout[closed.focus_name] and closed.focus_name or nil
+        end
+    end)
     for _, menu_kind in ipairs({'audio','quality','chapters','speed','stats','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
@@ -6226,6 +6269,7 @@ local function setup_script_messages()
                 if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
                     state.native_menu_request = nil
                 end
+                if kind == "more" then state.native_more_closed = nil end
                 state[key] = scope
                 -- Sequences span all kinds sharing one host/gate. Rotating an
                 -- unrelated capability cannot reset a live request sequence.
@@ -6236,6 +6280,9 @@ local function setup_script_messages()
     mp.register_script_message("osc-native-menu-closed", function(token, sequence, consume)
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
+        if request.kind == "more" then
+            state.native_more_closed = { owner = request.owner, sequence = request.sequence, focus_name = request.focus_name }
+        end
         state.native_menu_request = nil
         if consume == "true" then state.native_menu_pointer_block = request end
         if not state.osc_disabled then
