@@ -17,11 +17,11 @@ public partial class PlayerService
     private int ExecutedSubtitleIndex => _playbackManager?.CurrentSession?.MediaFileId == _executedSubtitleFileId
         ? _executedSubtitleTrack?.Index ?? -1 : -1;
     private ContentDialog? _nativeSubtitleDialog;
-    private async Task HandoffNativeSubtitleDialogAsync(string action, PlaybackMenuRequest request, PlaybackUiSnapshot owner)
+    private async Task HandoffNativeSubtitleDialogAsync(string action, PlaybackMenuRequest request, PlaybackUiSnapshot owner, Func<bool> canOpen)
     {
         try
         {
-            if (!owner.IsCurrent()) return;
+            if (!owner.IsCurrent() || !canOpen()) return;
             if (action == "add") await ShowSubtitleSearchDialogAsync(request);
             else if (action == "appearance") await ShowSubtitleAppearanceDialogAsync(request);
             else await ShowSubtitleAiDialogAsync(request);
@@ -104,8 +104,7 @@ public partial class PlayerService
                     owner.Mpv.SendScriptMessage("osc-native-subtitle-dialog-opening", request.OwnerToken, request.Sequence.ToString(CultureInfo.InvariantCulture));
                     menu?.Close(PlaybackMenuCloseReason.Selection);
                     // Close synchronously releases this exact menu's dialog lease.
-                    if (!InventoryCurrent()) return;
-                    _ = HandoffNativeSubtitleDialogAsync(id, request, dialogOwner);
+                    _ = HandoffNativeSubtitleDialogAsync(id, request, dialogOwner, InventoryCurrent);
                     return;
             }
             refresh();

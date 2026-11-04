@@ -364,7 +364,7 @@ public sealed class PlayerServiceSourceTests
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
 
-        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId);", method, StringComparison.Ordinal);
+        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId, snapshot.IsCurrent);", method, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "RestorePlaybackStateAfterSubtitleChange(snapshot.WasPaused, snapshot.Position, allowSeek: true)",
             method,
@@ -1096,7 +1096,7 @@ public sealed class PlayerServiceSourceTests
         var search = source[searchStart..searchEnd];
         Assert.Contains("var snapshot = CapturePlaybackUiSnapshot();", search, StringComparison.Ordinal);
         Assert.Contains("RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);", search, StringComparison.Ordinal);
-        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId);", search, StringComparison.Ordinal);
+        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId, snapshot.IsCurrent);", search, StringComparison.Ordinal);
         Assert.DoesNotContain("RestorePlaybackStateAfterSubtitleChange(snapshot.WasPaused, snapshot.Position, allowSeek: true);", search, StringComparison.Ordinal);
         Assert.DoesNotContain("SwitchVersionAsync", search, StringComparison.Ordinal);
         Assert.DoesNotContain("_videoWindow?.Hide()", search, StringComparison.Ordinal);
