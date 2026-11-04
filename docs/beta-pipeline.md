@@ -13,8 +13,8 @@ Pull requests into `beta` go through an automated pipeline that runs on the Open
 6. **Tests.** Tests that have not already passed on this head run in the QA VM. A failing unit test is rerun alone, and one that then passes is reported as flaky and doesn't block the merge.
 7. **Merge.** The pull request is squash-merged into `beta`. If it conflicts with `beta`, the pipeline merges `beta` into the pull request first, and that new head gets a full review.
 8. **Beta release.** Merged pull requests wait until 5 are waiting, one of them changed 40 or more files, the oldest has waited 24 hours, or nothing has been in progress for 10 minutes. The next version is then stamped onto `beta`, the QA VM builds the installer and update assets from that commit, and the pipeline publishes a GitHub pre-release tagged `v<version>-beta.<n>`. The app offers pre-releases only to users who opt in to the Beta channel, so stable users are not offered it.
-9. **README.** Each beta updates the badges and Beta download section of the README on `main`, and merges that into `beta`.
+9. **README.** After publishing the beta tag, the pipeline opens a pull request against `main` to update the badges and Beta download section of the README. Merging it into `main` and syncing it back into `beta` require the owner's approval; the pipeline does not automatically push or merge changes to `main`. The README update is not part of the already-published beta tag.
 
 The pipeline assigns all version numbers, so pull requests should not change them.
 
-Stable releases and promotion of `main` to stable are outside this pipeline. Promoting a beta to stable needs the owner's approval and follows the release-delivery requirements in [AGENTS.md](../AGENTS.md).
+Stable releases and automatic changes to `main` are outside this pipeline. Promoting a beta to stable needs the owner's approval and follows the release-delivery requirements in [AGENTS.md](../AGENTS.md).
