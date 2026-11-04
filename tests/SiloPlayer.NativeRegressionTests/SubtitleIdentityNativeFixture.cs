@@ -516,6 +516,7 @@ internal static class SubtitleIdentityNativeFixture
                 Call(service, "CycleSubtitleBackward");
                 Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0,
                     "Local caption cycling did not include Off.");
+                await VerifySubtitleCycleKeysAsync(assets, service, manager, mpv);
             }
             finally { japanese.Unplayable = false; }
             Require(wire.PreferenceWrites == cycleWrites && Volatile.Read(ref subtitles.Requests) == cycleRequests && mpv.IsPaused,
@@ -523,6 +524,53 @@ internal static class SubtitleIdentityNativeFixture
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");
         }
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
+    }
+
+    private static async Task VerifySubtitleCycleKeysAsync(string assets, PlayerService service, PlaybackManager manager, MpvPlayer mpv)
+    {
+        // Load the production OSC into the same libmpv instance that has both
+        // native subtitle streams. Japanese is demuxed but server-unplayable.
+        // Use real keypresses with default bindings enabled, not Lua callbacks.
+        var script = Path.GetFullPath(Path.Combine(assets, "..", "..", "..", "libs", "mpv", "scripts", "silo-osc.lua")).Replace('\\', '/');
+        var probe = Path.Combine(Program.ResultDirectory, "identity-cycle-keys.lua");
+        await File.WriteAllTextAsync(probe, $$"""
+            local mp = require 'mp'
+            assert(loadfile([[{{script}}]]))()
+            mp.commandv('script-message', 'silo-identity-keys-ready')
+            """);
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var selected = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gestures = 0;
+        void Observe(string[] message)
+        {
+            if (message.FirstOrDefault() == "silo-identity-keys-ready") ready.TrySetResult();
+            if (message.FirstOrDefault() == "silo-identity-active" && message.Length > 1) selected.TrySetResult(message[1]);
+            if (message.FirstOrDefault() == "silo-subtitle-cycle")
+            {
+                Interlocked.Increment(ref gestures);
+                Call(service, "OnScriptMessage", (object)message);
+            }
+        }
+        mpv.ScriptMessageReceived += Observe;
+        try
+        {
+            mpv.SetProperty("input-default-bindings", "yes");
+            Call(mpv, "Command", (object)new[] { "load-script", probe });
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            foreach (var (key, index, sid) in new[] { ("j", 2, 1), ("j", -1, 0), ("J", 2, 1), ("J", -1, 0) })
+            {
+                selected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var before = Volatile.Read(ref gestures);
+                Call(mpv, "Command", (object)new[] { "keypress", key });
+                Require(await selected.Task.WaitAsync(TimeSpan.FromSeconds(4)) == index.ToString(System.Globalization.CultureInfo.InvariantCulture) &&
+                    Volatile.Read(ref gestures) == before + 1 && service.ActiveSubtitleServerIndex == index &&
+                    manager.SubtitleSelectionForLoad == index && !manager.IsSubtitleSelectionAutomatic &&
+                    ((SubtitleTrackInfo?)Get(service, "_executedSubtitleTrack"))?.Index == (index < 0 ? (int?)null : index) &&
+                    (sid == 0 ? mpv.GetPropertyDouble("sid") <= 0 : mpv.GetPropertyDouble("sid") == sid),
+                    $"Actual {key} key bypassed host subtitle cycling or selected the unavailable demuxed stream.");
+            }
+        }
+        finally { mpv.ScriptMessageReceived -= Observe; }
     }
 
     private static async Task BurnedInTextSubtitlesAsync(string assets)

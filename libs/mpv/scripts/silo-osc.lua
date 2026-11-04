@@ -6016,9 +6016,9 @@ local function setup_key_bindings()
         if not state.playback_failure_visible then toggle_stats() end
     end)
 
-    -- Subtitle delay nudge (matches mpv defaults but bound explicitly because
-    -- input-default-bindings=no in the host). Z slows subs (shows them later
-    -- relative to audio); X speeds them up. Each press shifts by 100 ms; the
+    -- Subtitle delay nudge routes through host-owned timing preferences rather
+    -- than mpv's default action. Z slows subs (shows them later relative to
+    -- audio); X speeds them up. Each press shifts by 100 ms; the
     -- OSD shows the current absolute delay so the user can dial it in.
     local function nudge_sub_delay(delta)
         if state.playback_failure_visible then return end
@@ -6143,6 +6143,17 @@ local function setup_key_bindings()
     end
     mp.add_forced_key_binding("c", "silo-captions-toggle", toggle_captions)
     mp.add_forced_key_binding("C", "silo-captions-toggle-shift", toggle_captions)
+
+    -- Never let mpv's builtin j/J cycle an unverified or unavailable SID.
+    -- Keep both directions local, using the same host-owned routes as CC.
+    mp.add_forced_key_binding("j", "silo-subtitle-cycle-forward", function()
+        if state.playback_failure_visible then return end
+        mp.commandv("script-message", "silo-subtitle-cycle", "forward")
+    end)
+    mp.add_forced_key_binding("J", "silo-subtitle-cycle-backward", function()
+        if state.playback_failure_visible then return end
+        mp.commandv("script-message", "silo-subtitle-cycle")
+    end)
 
     mp.add_forced_key_binding("f", "silo-fs-override", function()
         if state.playback_failure_visible then return end

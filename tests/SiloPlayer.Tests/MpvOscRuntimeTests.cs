@@ -39,6 +39,37 @@ public sealed class MpvOscRuntimeTests
     }
 
     [Fact]
+    public void ActualSubtitleCycleKeysUseHostDirectionsInsteadOfNativeCycling()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            mp.set_property('input-default-bindings', 'yes')
+            mp.commandv('keypress', 'j')
+            mp.commandv('keypress', 'J')
+            mp.add_timeout(0.1, function()
+                osc_test_state.playback_failure_visible = true
+                mp.commandv('keypress', 'j')
+                mp.commandv('keypress', 'J')
+                mp.add_timeout(0.1, function()
+                    mp.set_property('user-data/cycle-keys', table.concat(intents, ','))
+                end)
+            end)
+            """, rawAss: true, resultProperty: "user-data/cycle-keys", beforeScript: """
+            intents = {}
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-cycle' then
+                    table.insert(intents, args[3] or 'backward')
+                end
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, 'persist') end
+                if args[1] == 'cycle' and args[2] == 'sub' then table.insert(intents, 'native') end
+                return command(...)
+            end
+            """);
+        Assert.Equal("forward,backward", output);
+    }
+
+    [Fact]
     public void SubtitleRightClickUsesLocalHostCycleWithoutPersistedSelections()
     {
         var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
