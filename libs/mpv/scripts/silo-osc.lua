@@ -205,6 +205,7 @@ local state = {
     keyboard_menu_kind = nil,
     keyboard_menu_index = -1,
     controller_focus_name = nil,
+    controller_focus_deadline = 0,
 
     -- Skip markers (intro/credits)
     intro_start     = 0,
@@ -2605,12 +2606,13 @@ end
 local hide_osc  -- forward declaration
 
 -- Both idle and pointer-leave timers respect the same presentation owner.
--- Re-arm while held so releasing a menu/focus never strands visible chrome.
+-- Re-arm while held; transport focus owns only the normal input idle period.
 local function arm_osc_hide(delay)
     if state.hide_timer then state.hide_timer:kill() end
     state.hide_timer = mp.add_timeout(delay, function()
         local focus = state.controller_focus_name
         local focus_owned = focus and state.layout[focus] and hud_control_enabled(focus)
+            and mp.get_time() < state.controller_focus_deadline
             and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
         if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
             or state.native_menu_request or native_dialog_active()
@@ -2627,6 +2629,9 @@ end
 show_osc = function()
     state.visible = true
     state.target_alpha = 1
+    if state.controller_focus_name then
+        state.controller_focus_deadline = mp.get_time() + config.hide_timeout
+    end
     arm_osc_hide(config.hide_timeout)
 end
 
@@ -2640,8 +2645,10 @@ local function dismiss_transport_menus_for_fade()
     state.keyboard_menu_kind = nil
     state.keyboard_menu_index = -1
     state.controller_focus_name = nil
+    state.controller_focus_deadline = 0
+    remove_chapter_thumbnail_menu_overlays()
 
-    for _, overlay in ipairs({
+    for _, overlay in pairs({
         state.subtitle_menu_overlay,
         state.quality_menu_overlay,
         state.audio_menu_overlay,
@@ -5002,32 +5009,18 @@ local function activate_utility_control(name, keyboard)
     return true
 end
 
-local function activate_controller_focus()
-    if native_menu_input("activate") then return true end
-    -- A focused Party opener expresses that intent. It must never run a
-    -- buffering/failure action merely because that unrelated surface appeared.
-    if state.controller_focus_name == 'btn_party' then return open_native_menu('party', true) end
-    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then return open_native_menu('quality', true) end
-    if state.playback_failure_visible then
-        return invoke_playback_failure_action(state.playback_failure_focus)
-    end
-    local buffering_action = (state.buffering_quality_actions or {})[state.buffering_quality_focus or 1]
-    if buffering_action and buffering_quality_action(buffering_action.action) then return true end
-    local name = state.controller_focus_name
-    if not name then
-        move_controller_focus("next")
-        return true
-    end
-
+-- Pointer callers already hit-tested floating prompts; dispatch their named
+-- control without applying keyboard/controller prompt precedence again.
+local function activate_transport_control(name, keyboard)
     -- A stale focus or compact-menu row cannot re-enable an unavailable action.
     if not hud_control_enabled(name) then return true end
 
     if name:sub(1, 9) == "overflow_" then name = name:sub(10); state.compact_menu_visible = false end
-    if activate_utility_control(name, true) then return true end
+    if activate_utility_control(name, keyboard) then return true end
     if name == "btn_party" then
-        open_native_menu("party", true)
+        open_native_menu("party", keyboard)
     elseif name == "btn_more" then
-        if open_native_menu("more", true) then return true end
+        if open_native_menu("more", keyboard) then return true end
         state.compact_menu_visible = not state.compact_menu_visible
     elseif name == "btn_prev_ep" then
         state.prev_ep_available = false
@@ -5044,15 +5037,32 @@ local function activate_controller_focus()
         render_next_episode_button()
         mp.commandv("script-message", "silo-next-episode")
     elseif name == "btn_cc" then
-        open_transport_menu_from_controller("subtitles")
+        open_transport_menu_from_controller("subtitles", keyboard)
     elseif name == "btn_quality" then
-        open_transport_menu_from_controller("quality")
+        open_transport_menu_from_controller("quality", keyboard)
     elseif name == "btn_fullscreen" then
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end
     show_osc()
     request_tick()
     return true
+end
+
+local function activate_controller_focus()
+    if native_menu_input("activate") then return true end
+    -- A focused Party or settings opener keeps its explicit native intent.
+    if state.controller_focus_name == 'btn_party' then return open_native_menu('party', true) end
+    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then return open_native_menu('quality', true) end
+    if state.playback_failure_visible then
+        return invoke_playback_failure_action(state.playback_failure_focus)
+    end
+    local buffering_action = (state.buffering_quality_actions or {})[state.buffering_quality_focus or 1]
+    if buffering_action and buffering_quality_action(buffering_action.action) then return true end
+    if not state.controller_focus_name then
+        move_controller_focus("next")
+        return true
+    end
+    return activate_transport_control(state.controller_focus_name, true)
 end
 
 local function handle_mouse_down()
@@ -5182,18 +5192,14 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
-                if item.name == "btn_audio" and open_native_menu("audio", false) then return end
-                if item.name == "btn_stats" and open_native_menu("stats", false) then return end
-                consume_video_click(); state.controller_focus_name = "overflow_" .. item.name; activate_controller_focus(); return
+                consume_video_click(); activate_transport_control("overflow_" .. item.name, false); return
             end
         end
         state.compact_menu_visible = false
         consume_video_click(); request_tick(); return
     end
     if hud_input_available() and state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
-        consume_video_click()
-        if open_native_menu("more", false) then return end
-        state.controller_focus_name = "btn_more"; activate_controller_focus(); return
+        consume_video_click(); activate_transport_control("btn_more", false); return
     end
     if hud_input_available() and state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
         state.pressed_control = "btn_fill"
@@ -5403,6 +5409,8 @@ local function handle_mouse_down()
     -- Window actions retire the surface. Hold it until the same button's release.
     if state.pressed_control == "btn_minimize" or state.pressed_control == "btn_exit" then
         consume_video_click()
+        -- A press accepted during fade-out owns a visible surface until release.
+        show_osc()
         return
     end
 
@@ -5656,6 +5664,8 @@ local function observe_properties()
         state.pressed_control = nil
         state.osc_disabled = (val == "false")
         if state.osc_disabled then
+            dismiss_transport_menus_for_fade()
+            state.restore_subtitle_focus_after_dialog = false
             if state.osc_overlay then
                 set_osc_overlay("", state.osc_overlay.res_x, state.osc_overlay.res_y)
             end
@@ -6727,7 +6737,7 @@ local function init()
 
     -- Show OSC briefly on file load
     mp.register_event("file-loaded", function()
-        state.pressed_control = nil
+        dismiss_transport_menus_for_fade()
         state.idle = false
         -- Reset drag state from previous session (mpv instance is reused)
         state.dragging_seek = false

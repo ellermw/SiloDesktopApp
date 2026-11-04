@@ -79,6 +79,22 @@ internal static class OscHudStatesNativeFixture
             var geometry = await Query("btn_exit");
             for (var i = 0; geometry.Alpha < .99 && i < 40; i++) { await Task.Delay(25); geometry = await Query("btn_exit"); }
             Require(geometry.Alpha >= .99 && geometry.W > 0, "OSC did not become fully visible");
+            if (reviewCase == null && size.Item1 == 960 && shade == 16)
+            {
+                player.SendScriptMessage("osc-controller-nav", "right");
+                Require((await Query("btn_play")).Focus != "", "Controller must own focus before content replacement.");
+                // Do not use osc-set-visibility to clean up on behalf of file-loaded.
+                await LoadClip(clip, resetVisibility: false);
+                Require((await Query("btn_play")).Focus == "", "File load retained the outgoing controller focus.");
+                player.Play(); await Until(() => !player.IsPaused);
+                await Task.Delay(3600);
+                var hidden = await Query("btn_play");
+                Require(hidden.Target == 0 && hidden.Alpha < .1,
+                    "Replaced content could not auto-hide without pointer input.");
+                observations.Add(new { fileLoadRetiresFocusAndHides = true });
+                player.Pause(); await Until(() => player.IsPaused);
+                player.SendScriptMessage("osc-show"); await Task.Delay(350);
+            }
             if (size.Item1 >= 1920 && reviewCase is "all" or "fit")
             {
                 var fit = await Query("btn_fill");
@@ -176,7 +192,7 @@ internal static class OscHudStatesNativeFixture
             : "PASS: actual OSC top chrome hover/press/release pixels on bright/dark960/1920 video; one intent, paused continuity and resumed playback.");
         await Task.Delay(50);
 
-        async Task LoadClip(string clip)
+        async Task LoadClip(string clip, bool resetVisibility = true)
         {
             var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void Loaded() => loaded.TrySetResult();
@@ -184,7 +200,7 @@ internal static class OscHudStatesNativeFixture
             try { player.LoadFile(clip); await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
             finally { player.FileLoaded -= Loaded; }
             player.Pause(); await Until(() => player.IsPaused && player.GetPropertyFlag("vo-configured"));
-            player.SendScriptMessage("osc-set-visibility", "true");
+            if (resetVisibility) player.SendScriptMessage("osc-set-visibility", "true");
             player.SendScriptMessage("osc-show"); await Task.Delay(250);
         }
 
