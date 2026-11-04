@@ -1268,8 +1268,10 @@ internal static partial class RealtimeSeriesStateNativeFixture
                     Check(replacement.CanPreserveOnReconnect, "A successfully recovered companion should permit preservation.");
                     if (phase is "backdrop" or "poster")
                     {
-                        var image = (Image)replacement.FindName(phase == "backdrop" ? "BackdropImage" : "HeroPosterImage");
-                        Check(image.Source != null, "Reconnect remount did not paint the missing hero artwork.");
+                        var source = phase == "backdrop"
+                            ? ((SiloPlayer.Controls.BackdropImage)replacement.FindName("BackdropImage")).Source
+                            : ((Image)replacement.FindName("HeroPosterImage")).Source;
+                        Check(source != null, "Reconnect remount did not paint the missing hero artwork.");
                         // A definitive absence is healthy, not an interrupted download.
                         replacement.ViewModel.Item!.BackdropUrl += "?v=missing";
                         replacement.ViewModel.Item.PosterUrl += "?v=missing";

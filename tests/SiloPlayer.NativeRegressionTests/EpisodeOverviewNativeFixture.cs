@@ -203,7 +203,7 @@ internal static class EpisodeOverviewNativeFixture
                 Call(page, "ApplyEpisodeSpoilers"); Call(page, "RefreshRetiredOverviewScope");
                 await Task.Delay(550);
                 Check(overview.Visibility == Visibility.Visible && button.Visibility == Visibility.Visible && !button.IsEnabled &&
-                    (string)button.Content == "Translating…" && overview.Opacity == 0.55 &&
+                    (string)button.Content == "Translating…" && Math.Abs(overview.Opacity - 0.55) < 1e-6 &&
                     !translation.IsCancellationRequested && ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts")) &&
                     Field<long>(page, "_overviewConfigurationRevision") == revision && wire.Posts.Count == 1,
                     $"A {change} transition during a held automatic {stage} retains the original translation and restores its busy presentation: " +
@@ -332,7 +332,7 @@ internal static class EpisodeOverviewNativeFixture
                 await vm.LoadInLibraryAsync("episode", 42);
                 var configuration = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
                 Call(page, "UpdateUI");
-                await Until(() => wire.Posts.Count == 1 && (state == "active" ? overview.Opacity == 0.55 :
+                await Until(() => wire.Posts.Count == 1 && (state == "active" ? Math.Abs(overview.Opacity - 0.55) < 1e-6 :
                     button.Visibility == Visibility.Visible && button.IsEnabled && Field<bool>(page, "_translateButtonMode")));
                 var translation = Field<CancellationTokenSource?>(page, "_translationCts");
                 var configurationRevision = Field<long>(page, "_overviewConfigurationRevision");
@@ -751,7 +751,7 @@ internal static class EpisodeOverviewNativeFixture
                 if (stage != "idle")
                 {
                     await (stage == "post" ? wire.PostEntered.Task : wire.PollEntered.Task).WaitAsync(TimeSpan.FromSeconds(5));
-                    Check(overview.Opacity == 0.55 && !button.IsEnabled && (string)button.Content == "Translating…",
+                    Check(Math.Abs(overview.Opacity - 0.55) < 1e-6 && !button.IsEnabled && (string)button.Content == "Translating…",
                         "Held translation must own the dimmed controls before scope retirement");
                 }
                 // The new scope still needs translation; a held old read may contain translated text.
