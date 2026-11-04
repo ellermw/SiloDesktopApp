@@ -121,7 +121,21 @@ public sealed partial class CollectionsPage
                 ToolTipService.SetToolTip(pin, pinned ? "Unpin from sidebar" : "Pin to sidebar");
                 AutomationProperties.SetName(pin, $"{(pinned ? "Unpin" : "Pin")} {collection.Title} {(pinned ? "from" : "to")} sidebar"); Visibility();
             }
-            UpdatePin(); pin.Click += async (_, _) => { pin.IsEnabled = false; try { pinned = await window.ToggleSidebarPinAsync(library.LibraryId, "collection", collection.Id, collection.Title); UpdatePin(); } finally { pin.IsEnabled = true; } };
+            UpdatePin();
+            pin.Click += async (_, _) =>
+            {
+                pin.IsEnabled = false;
+                try
+                {
+                    pinned = await window.ToggleSidebarPinAsync(library.LibraryId, "collection", collection.Id, collection.Title);
+                    UpdatePin();
+                }
+                catch (OperationCanceledException)
+                {
+                    // A retired action cannot change the retained card state.
+                }
+                finally { pin.IsEnabled = true; }
+            };
             layer.Children.Add(pin); card.PointerEntered += (_, _) => { over = true; Visibility(); }; card.PointerExited += (_, _) => { over = false; Visibility(); }; pin.GotFocus += (_, _) => Visibility(); pin.LostFocus += (_, _) => Visibility();
         }
         return card;

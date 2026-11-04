@@ -3184,10 +3184,10 @@ public sealed partial class MainWindow : Window
     {
         var shellKey = _hydratedShellKey;
         var context = _apiClient.CaptureContext();
-        if (!IsCurrentSidebarMutation(shellKey, context)) return false;
+        if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
         var settingsApi = App.Services.GetRequiredService<SettingsApi>();
         var entry = await settingsApi.GetSettingAsync("sidebar_pins");
-        if (!IsCurrentSidebarMutation(shellKey, context)) return false;
+        if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
         var map = ParseSidebarPins(entry.Value);
         var key = libraryId.ToString();
         var pins = map.TryGetValue(key, out var existing) ? existing : [];
@@ -3217,12 +3217,8 @@ public sealed partial class MainWindow : Window
                 ["id"] = pin.Id,
                 ["label"] = pin.Label,
             }).ToList());
-        try
-        {
-            await settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
-        }
-        catch (OperationCanceledException) when (!IsCurrentSidebarMutation(shellKey, context)) { return false; }
-        if (!IsCurrentSidebarMutation(shellKey, context)) return false;
+        await settingsApi.SetContractSettingValueAsync(context, "ui.sidebar_pins", "profile", serializable);
+        if (!IsCurrentSidebarMutation(shellKey, context)) throw new OperationCanceledException("The sidebar pin action owner was retired.");
         _sidebarPins = map;
         UpdateLibraryNavItems();
         return nowPinned;

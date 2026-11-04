@@ -3461,6 +3461,11 @@ public sealed partial class LibraryPage : Page,
                     pinButton.Opacity = nowPinned ? 1 : 0;
                     ToolTipService.SetToolTip(pinButton, nowPinned ? "Unpin from sidebar" : "Pin to sidebar");
                 }
+                catch (OperationCanceledException)
+                {
+                    // A retired shell did not commit this control's result.
+                    // Retain its previous presentation until normal refresh.
+                }
                 finally { pinButton.IsEnabled = true; }
             };
             card.Children.Add(pinButton);

@@ -18,14 +18,14 @@ using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
-internal static class SidebarReviewNativeFixture
+internal static partial class SidebarReviewNativeFixture
 {
     private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic;
     private static readonly List<string> Failures = [];
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
     private static object Pins = PinMap("Pin");
     private static string MenuLabel = "Current menu";
-    private static TaskCompletionSource<object>? HeldPins, HeldLibraries, HeldMenuRead, HeldMenuWrite;
+    private static TaskCompletionSource<object>? HeldPins, HeldLibraries, HeldMenuRead, HeldMenuWrite, HeldPinWrite;
     private static int PinReads, PinWrites, LibraryReads, MenuReads, MenuWrites;
     private static bool FailSidebarReads, FailLibraryReads, FailPinReads, FailCustomizationReads;
     private static string PosterSize = "standard";
@@ -42,6 +42,8 @@ internal static class SidebarReviewNativeFixture
         new { key = "ui.card_presentation", value = new { poster_size = PosterSize, caption = "title_metadata" }, source = "profile_client" } } };
     private static object Libraries() => new { items = new[] { new { id = 1, name = "One", type = "movies" }, new { id = 2, name = "Two", type = "series" } } };
     private static TaskCompletionSource<object> Hold() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static bool NeedsLibraryReload(MainViewModel vm) => typeof(MainViewModel).GetProperty("NeedsLibraryReload")?.GetValue(vm) is bool pending
+        ? pending : throw new InvalidOperationException("The selected library retry scenario requires the current readiness API.");
     private static NavigationViewItem[] Rows(NavigationView nav) => nav.MenuItems.OfType<NavigationViewItem>().ToArray();
     private static NavigationViewItem[] LibraryRows(NavigationView nav) => Rows(nav).Where(n => n.Tag is Library).ToArray();
     private static NavigationViewItem[] PrimaryRows(NavigationView nav) => Rows(nav).Where(n => n.Tag?.GetType().Name == "PrimaryMenuNavTag").ToArray();
@@ -74,6 +76,12 @@ internal static class SidebarReviewNativeFixture
         window.ShowMainNavigation();
         await Until(() => LibraryRows(nav).Length == 2);
         if (HeldMenuRead == null && !mode.EndsWith("duplicates", StringComparison.Ordinal)) await Until(() => PrimaryRows(nav).Length == 2);
+        if (mode is "sidebar-review-pin-owner-read" or "sidebar-review-pin-owner-write")
+        {
+            await CheckPinOwnerRetirementAsync(window, provider, mode.EndsWith("write", StringComparison.Ordinal));
+            if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
+            return;
+        }
         if (mode == "sidebar-review-closeout")
         {
             await CheckCloseoutAsync(window, provider, nav);
@@ -365,7 +373,7 @@ internal static class SidebarReviewNativeFixture
             Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext());
             await Until(() => LibraryReads > reads && PinReads > pinReads && !vm.IsLoadingLibraries);
             await Drain();
-            Check(vm.NeedsLibraryReload && vm.HasCurrentLibrarySnapshot && accepted.SequenceEqual(vm.Libraries) &&
+            Check(NeedsLibraryReload(vm) && vm.HasCurrentLibrarySnapshot && accepted.SequenceEqual(vm.Libraries) &&
                 ReferenceEquals(LibraryRows(nav)[0], library) && primary.SequenceEqual(PrimaryRows(nav)),
                 "failed library-only replacement remains retryable without retiring accepted libraries or primary nodes");
             Check((bool)typeof(MainWindow).GetField("_sidebarPinsReady", Instance)!.GetValue(window)!,
@@ -379,7 +387,7 @@ internal static class SidebarReviewNativeFixture
             reads = LibraryReads; pinReads = PinReads;
             var context = api.InvalidateAccessContext();
             Call(window, "OnReadCatchUpRequested", context);
-            await Until(() => !vm.NeedsLibraryReload && Equals(library.Content, "Recovered library"));
+            await Until(() => !NeedsLibraryReload(vm) && Equals(library.Content, "Recovered library"));
             await Drain();
             Check(api.CaptureContext() == context && LibraryReads > reads && PinReads == pinReads,
                 "later Home catch-up retries the failed library read without rereading ready pins");
@@ -412,7 +420,7 @@ internal static class SidebarReviewNativeFixture
             Check(!(bool)ready.GetValue(window)! && accepted.SequenceEqual(window.GetSidebarPins(1, "collection")) &&
                 ReferenceEquals(LibraryRows(nav)[0], library) && ReferenceEquals(library.MenuItems[0], pin),
                 "failed pin-only replacement remains retryable while retaining accepted pin data and native nodes");
-            Check(LibraryReads > libraryReads && !vm.NeedsLibraryReload && vm.HasCurrentLibrarySnapshot,
+            Check(LibraryReads > libraryReads && !NeedsLibraryReload(vm) && vm.HasCurrentLibrarySnapshot,
                 "successful library replacement stays ready despite the failed pin read");
 
             navigation.Navigate<HomePage>();
@@ -675,6 +683,7 @@ internal static class SidebarReviewNativeFixture
                 return Json(HeldPins == null ? new { value = Pins } : await HeldPins.Task);
             }
             PinWrites++;
+            if (HeldPinWrite is { } pinWrite) return Json(await pinWrite.Task);
             if (IsSettingsProfileRoute || Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "sidebar-review-picker-back")
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));

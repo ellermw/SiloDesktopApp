@@ -131,7 +131,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             lock (_stateGate)
             {
                 if (!IsCurrent(context, generation, writeEpoch)) return;
-                if (IsSupported && _acceptedIdentity == identity)
+                if (!missingCapability && IsSupported && _acceptedIdentity == identity)
                 {
                     // A transient replacement failure must not discard the
                     // accepted same-owner layout. Editing stays disabled, and

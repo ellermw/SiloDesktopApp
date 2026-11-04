@@ -203,7 +203,11 @@ internal static class SidebarPublicationNativeFixture
         var outgoingToggle = window.ToggleSidebarPinAsync(1, "collection", "new-pin", "Outgoing pin");
         await Until(() => PinRead); outgoingPins = HeldPins; HeldPins = null; HeldLibraries = NewHeld();
         auth.SelectProfile("fourth", profile: new() { Id = "fourth", Name = "Fourth" }); window.ShowMainNavigation();
-        outgoingPins.SetResult(Json(new { value = Pins })); await outgoingToggle; await Drain();
+        outgoingPins.SetResult(Json(new { value = Pins }));
+        var readCanceled = false;
+        try { await outgoingToggle; } catch (OperationCanceledException) { readCanceled = true; }
+        await Drain();
+        Check(readCanceled, "retired toggle read reports cancellation instead of a valid unpinned result");
         Check(LastWrite == null, "retired toggle read cannot write another profile's pins");
         HeldLibraries.SetResult(Json(new { items = new[] { Lib(1, "Fourth viewer") } })); HeldLibraries = null;
         await Until(() => LibraryNodes(nav).Length > 0); await Drain();
@@ -213,7 +217,11 @@ internal static class SidebarPublicationNativeFixture
         HeldLibraries = NewHeld();
         auth.SelectProfile("fifth", profile: new() { Id = "fifth", Name = "Fifth" }); window.ShowMainNavigation();
         Pins = new Dictionary<string, object> { ["1"] = new[] { new { type = "section", id = "new-viewer-pin", label = "New viewer pin" } } };
-        HeldWrite.SetResult(Json(new { })); HeldWrite = null; await acceptedToggle; await Drain();
+        HeldWrite.SetResult(Json(new { })); HeldWrite = null;
+        var writeCanceled = false;
+        try { await acceptedToggle; } catch (OperationCanceledException) { writeCanceled = true; }
+        await Drain();
+        Check(writeCanceled, "accepted retired write reports cancellation instead of a valid unpinned result");
         Check(window.GetSidebarPins(1, "collection").Count == 0, "accepted retired write completion cannot republish outgoing pin map");
         HeldLibraries.SetResult(Json(new { items = new[] { Lib(1, "Fifth viewer") } })); HeldLibraries = null;
         await Until(() => LibraryNodes(nav).Length > 0 && window.GetSidebarPins(1, "section").Count > 0); await Drain();

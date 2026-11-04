@@ -842,6 +842,10 @@ public sealed partial class CollectionsPage : Page
                     ? $"Unpin {collection.Title} from sidebar"
                     : $"Pin {collection.Title} to sidebar");
             }
+            catch (OperationCanceledException)
+            {
+                // No current shell result was committed; preserve this card.
+            }
             finally
             {
                 pinButton.IsEnabled = true;

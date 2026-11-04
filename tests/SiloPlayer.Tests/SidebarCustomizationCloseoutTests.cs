@@ -40,13 +40,13 @@ public sealed class SidebarCustomizationCloseoutTests
     [InlineData(405, false)]
     [InlineData(404, true)]
     [InlineData(405, true)]
-    public async Task CapabilityFailureRetainsAcceptedLayoutAndRetriesSameOwner(int status, bool changeRequestContext)
+    public async Task MissingCapabilityResetsAcceptedSameOwnerLayoutWithoutRetrying(int status, bool changeRequestContext)
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var client = Client(http); var service = new UICustomizationService(new SettingsApi(client));
         await service.EnsureLoadedAsync();
-        var acceptedMenu = service.PrimaryMenu; var acceptedCards = service.CardPresentation;
-        var acceptedShortcuts = service.Shortcuts;
+        Assert.True(service.IsSupported);
+        Assert.NotNull(service.PrimaryMenu);
         var identity = client.CaptureIdentityContext();
         if (changeRequestContext) client.InvalidateAccessContext();
         else service.Invalidate();
@@ -55,28 +55,50 @@ public sealed class SidebarCustomizationCloseoutTests
         wire.CapabilityStatus = status;
         await service.EnsureLoadedAsync();
 
-        Assert.True(service.IsSupported);
-        Assert.True(service.IsUnavailable);
-        Assert.Same(acceptedMenu, service.PrimaryMenu);
-        Assert.Same(acceptedCards, service.CardPresentation);
-        Assert.Same(acceptedShortcuts, service.Shortcuts);
-        Assert.Equal("profile_client", service.PrimaryMenuSource);
-        Assert.Equal("profile_client", service.CardPresentationSource);
+        Assert.False(service.IsSupported);
+        Assert.False(service.IsUnavailable);
+        Assert.Null(service.PrimaryMenu);
+        Assert.Equal("standard", service.CardPresentation.PosterSize);
+        Assert.Equal("title_metadata", service.CardPresentation.Caption);
+        Assert.Empty(service.Shortcuts.Items);
+        Assert.Equal("default", service.PrimaryMenuSource);
+        Assert.Equal("default", service.CardPresentationSource);
         Assert.Equal(effectiveReads, wire.EffectiveReads);
         var capabilityReads = wire.CapabilityReads;
-        wire.CapabilityStatus = 200; wire.MenuLabel = "Recovered";
         await service.EnsureLoadedAsync();
+        Assert.Equal(capabilityReads, wire.CapabilityReads);
         Assert.Equal(context, client.CaptureContext());
         Assert.Equal(identity, client.CaptureIdentityContext());
+        wire.CapabilityStatus = 200; wire.MenuLabel = "Recovered";
+        service.Invalidate(); await service.EnsureLoadedAsync();
         Assert.Equal(capabilityReads + 1, wire.CapabilityReads);
         Assert.Equal(effectiveReads + 1, wire.EffectiveReads);
         Assert.True(service.IsSupported);
         Assert.False(service.IsUnavailable);
         Assert.Equal("Recovered", service.PrimaryMenu!.Items.Last().Label);
-        await service.EnsureLoadedAsync();
-        Assert.Equal(capabilityReads + 1, wire.CapabilityReads);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TransientCapabilityFailureStillRetainsAcceptedSameOwnerLayout(bool changeRequestContext)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = Client(http); var service = new UICustomizationService(new SettingsApi(client));
+        await service.EnsureLoadedAsync();
+        var acceptedMenu = service.PrimaryMenu; var acceptedCards = service.CardPresentation;
+        var acceptedShortcuts = service.Shortcuts;
+        if (changeRequestContext) client.InvalidateAccessContext(); else service.Invalidate();
+        wire.CapabilityStatus = 503; await service.EnsureLoadedAsync();
+        Assert.True(service.IsSupported); Assert.True(service.IsUnavailable);
+        Assert.Same(acceptedMenu, service.PrimaryMenu); Assert.Same(acceptedCards, service.CardPresentation);
+        Assert.Same(acceptedShortcuts, service.Shortcuts);
+        var reads = wire.CapabilityReads;
+        wire.CapabilityStatus = 200; wire.MenuLabel = "Recovered";
+        await service.EnsureLoadedAsync();
+        Assert.Equal(reads + 1, wire.CapabilityReads);
+        Assert.False(service.IsUnavailable); Assert.Equal("Recovered", service.PrimaryMenu!.Items.Last().Label);
+    }
     [Theory]
     [InlineData(404)]
     [InlineData(405)]
