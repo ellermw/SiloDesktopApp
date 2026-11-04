@@ -20,12 +20,17 @@ internal static partial class SubtitleIdentityNativeFixture
             "presentation-ai-prefetch" or "presentation-ai-prefetch-access" or "presentation-ai-cues" or "presentation-ai-cues-access";
         var presentationOnly = aiCallback || presentation is "presentation-flyout" or "presentation-osc" or "presentation-ai-menu" or "presentation-ai-dialog" or "presentation-ai-profile" or "presentation-ai-access";
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
+        if (presentation == "review-consecutive-ai")
+        {
+            await AiSameFileReplanAsync(assets);
+            return;
+        }
         if (presentation == "review-existing-ai-retirement")
         {
             await AiSameFileReplanAsync(assets, retirement: "load");
             return;
         }
-        if (presentation is "review-ai-load" or "review-ai-timeout-load" or "review-ai-aba" or "review-ai-same-file" or "review-owned-foreign-grant" or "review-cue-owned-cleanup" or "review-cue-positive" or "review-ai-newer-native-cue" or "review-ai-newer-off-cue" or "review-ai-newer-off-completion")
+        if (presentation is "review-ai-load" or "review-ai-timeout-load" or "review-ai-aba" or "review-ai-same-file" or "review-owned-foreign-grant" or "review-cue-owned-cleanup" or "review-cue-positive" or "review-ai-newer-native-cue" or "review-ai-newer-off-cue" or "review-ai-newer-off-completion" or "review-ai-resume-manual")
         {
             await ReviewOwnershipAsync(assets, presentation);
             return;
@@ -1370,6 +1375,10 @@ internal static partial class SubtitleIdentityNativeFixture
                     mpv.GetPropertyDouble("sid") == (int)Get(service, "_liveSubtitleSid")!,
                     "The second AI job did not attach its actual live track.");
             }
+            var pausedBeforeManual = mpv.IsPaused;
+            var pauseIntentBeforeManual = Call(service, "CaptureUserPausedState");
+            var resumeIntentBeforeManual = Get(service, "_resumeAfterLiveSubtitleBuffer");
+            var bufferBeforeManual = Get(service, "_liveSubtitleResumeCts") != null;
             if (scenario.StartsWith("viewer-", StringComparison.Ordinal))
             {
                 expectedTrack = scenario.StartsWith("viewer-off", StringComparison.Ordinal) ? null : native;
@@ -1395,6 +1404,7 @@ internal static partial class SubtitleIdentityNativeFixture
             }
             var resumedDeadline = DateTime.UtcNow.AddSeconds(4);
             while (mpv.IsPaused && DateTime.UtcNow < resumedDeadline) await Task.Delay(10);
+            Program.Log($"Consecutive {scenario}: beforeManual cachedPause={pausedBeforeManual}, capturePause={pauseIntentBeforeManual}, buffer={bufferBeforeManual}, resume={resumeIntentBeforeManual}; expectedSID={expectedSid}, actualSID={mpv.GetPropertyDouble("sid")}, expectedIndex={expectedTrack?.Index ?? -1}, active={service.ActiveSubtitleServerIndex}, executed={ReferenceEquals(Get(service, "_executedSubtitleTrack"), expectedTrack)}, sameIntent={manager.CaptureLocalSubtitleIntent() == intent}, desired={manager.SubtitleSelectionForLoad}, prefs={wire.PreferenceWrites}/{writes}, nativePause={mpv.GetPropertyFlag("pause")}, cachedPause={mpv.IsPaused}, job={Get(service, "_liveSubtitleJobId")}, buffer={Get(service, "_liveSubtitleResumeCts") != null}, pathExists={File.Exists(livePath)}.");
             Require(mpv.GetPropertyDouble("sid") == expectedSid && service.ActiveSubtitleServerIndex == (expectedTrack?.Index ?? -1) &&
                 ReferenceEquals(Get(service, "_executedSubtitleTrack"), expectedTrack) && manager.CaptureLocalSubtitleIntent() == intent &&
                 manager.SubtitleSelectionForLoad == (expectedTrack?.Index ?? -1) && wire.PreferenceWrites == writes && !mpv.IsPaused &&

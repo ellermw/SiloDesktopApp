@@ -39,6 +39,8 @@ internal static partial class SubtitleIdentityNativeFixture
         try
         {
             if (cue) await ReviewCorrectedCueAsync(assets, scenario, server, api, manager, service, mpv);
+            else if (scenario == "review-ai-resume-manual")
+                await ReviewAiResumeManualAsync(manager, service, mpv, wire);
             else if (scenario.StartsWith("review-ai-newer-", StringComparison.Ordinal))
                 await ReviewAiNewerChoiceAsync(scenario, server, wire, manager, service, mpv);
             else if (scenario == "review-owned-foreign-grant")
@@ -91,6 +93,58 @@ internal static partial class SubtitleIdentityNativeFixture
             Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
             Set(service, "_mpv", null); Set(service, "_playbackManager", null);
         }
+    }
+
+    private static async Task ReviewAiResumeManualAsync(PlaybackManager manager, PlayerService service, MpvPlayer mpv, Wire wire)
+    {
+        mpv.Play();
+        var readyDeadline = DateTime.UtcNow.AddSeconds(4);
+        while (mpv.IsPaused && DateTime.UtcNow < readyDeadline) await Task.Delay(10);
+        Require(!mpv.IsPaused, "AI resume control did not establish playing native/cache state.");
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deliveryTimedOut = 0;
+        void HoldPauseDelivery(bool paused)
+        {
+            if (!paused) return;
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(6))) Interlocked.Exchange(ref deliveryTimedOut, 1);
+        }
+        mpv.PauseChanged += HoldPauseDelivery;
+        try
+        {
+            mpv.Pause(); await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            var owner = Call(service, "CaptureSubtitleOperationOwner", manager.CurrentSession!)!;
+            var path = Path.Combine(Program.ResultDirectory, "resume-manual.vtt");
+            await File.WriteAllTextAsync(path, "WEBVTT\n\n");
+            Set(service, "_liveSubtitleJobId", 77L); Set(service, "_liveSubtitleFileId", 42);
+            Set(service, "_liveSubtitleOperationOwner", owner); Set(service, "_liveSubtitlePath", path);
+            Set(service, "_liveSubtitleFileLoadGeneration", Get(service, "_fileLoadGeneration"));
+            Set(service, "_liveSubtitleResumeCts", new CancellationTokenSource());
+            Set(service, "_resumeAfterLiveSubtitleBuffer", true);
+            using var cues = JsonDocument.Parse("""{"job_id":77,"cues":[{"start":0,"end":5,"text":"resume cue"}]}""");
+            Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+            var nativeBefore = mpv.GetPropertyFlag("pause");
+            var cachedBefore = mpv.IsPaused;
+            var captured = (bool)Call(service, "CaptureUserPausedState")!;
+            Require(!nativeBefore && cachedBefore && Volatile.Read(ref deliveryTimedOut) == 0 && Get(service, "_liveSubtitleResumeCts") == null,
+                "AI resume control did not hold event delivery after the real native Play command.");
+            await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+            Program.Log($"Held AI resume: nativeBefore={nativeBefore}, cachedBefore={cachedBefore}, captured={captured}, nativeAfterOff={mpv.GetPropertyFlag("pause")}, SID={mpv.GetPropertyDouble("sid")}, prefs={wire.PreferenceWrites}, observerTimedOut={Volatile.Read(ref deliveryTimedOut)}.");
+            Require(!captured && !mpv.GetPropertyFlag("pause") && mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 1 && Volatile.Read(ref deliveryTimedOut) == 0,
+                "Manual Off treated a stale AI-buffer pause event as viewer intent and paused actually playing media.");
+            Program.Log("PASS: manual Off after AI resume uses actual native pause, preserving playing intent while pause-event delivery is held.");
+        }
+        finally { release.Set(); mpv.PauseChanged -= HoldPauseDelivery; }
+        mpv.Pause();
+        Require((bool)Call(service, "CaptureUserPausedState")!, "Actual viewer pause was lost after the AI resume control.");
+        await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+        Require(mpv.GetPropertyFlag("pause") && wire.PreferenceWrites == 2,
+            "Manual Off resumed an actually paused viewer after the playing-intent control.");
+        mpv.Dispose();
+        Require((bool)Call(service, "CaptureUserPausedState")! == (mpv.IsPaused && !mpv.IsBufferingForCache),
+            "Retired native pause read did not preserve the safe cached intent fallback.");
+        Program.Log("PASS: actual viewer pause and retired-player fallback remain distinct from stale helper pause events.");
     }
 
     private static async Task ReviewAiNewerChoiceAsync(string scenario, SubtitleServer server, Wire wire,

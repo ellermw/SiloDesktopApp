@@ -668,10 +668,16 @@ public sealed partial class MpvPlayer : IDisposable
         return 0;
     }
 
-    public bool GetPropertyFlag(string name)
+    public bool GetPropertyFlag(string name) => TryGetPropertyFlag(name, out var value) && value;
+
+    /// <summary>Distinguishes a false flag from an unavailable/retired native player.</summary>
+    public bool TryGetPropertyFlag(string name, out bool value)
     {
+        value = false;
         using var lease = EnterNative();
-        return lease.Active && mpv_get_property_int(_mpvHandle, name, MPV_FORMAT_FLAG, out var value) == 0 && value != 0;
+        if (!lease.Active || mpv_get_property_int(_mpvHandle, name, MPV_FORMAT_FLAG, out var nativeValue) != 0) return false;
+        value = nativeValue != 0;
+        return true;
     }
 
     /// <summary>Read mpv's actual cached seek ranges rather than guessing from cache duration.</summary>

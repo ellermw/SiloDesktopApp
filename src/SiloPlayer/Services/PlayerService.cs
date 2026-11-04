@@ -1492,7 +1492,12 @@ public partial class PlayerService : IDisposable
     {
         lock (_liveSubtitleLock)
             if (_liveSubtitleResumeCts != null && _resumeAfterLiveSubtitleBuffer) return false;
-        return (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;
+        var mpv = _mpv;
+        var paused = mpv?.IsPaused ?? IsPaused;
+        // Native commands settle before their property events reach IsPaused.
+        // Do not turn a completed helper pause into a new viewer pause intent.
+        if (mpv != null && mpv.TryGetPropertyFlag("pause", out var nativePaused)) paused = nativePaused;
+        return paused && mpv?.IsBufferingForCache != true;
     }
 
     // ── State ────────────────────────────────────────────────────────────

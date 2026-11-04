@@ -935,10 +935,9 @@ public sealed class PlayerServiceSourceTests
         var capture = source[captureStart..captureEnd];
         Assert.Contains("lock (_liveSubtitleLock)", capture, StringComparison.Ordinal);
         Assert.Contains("if (_liveSubtitleResumeCts != null && _resumeAfterLiveSubtitleBuffer) return false;", capture, StringComparison.Ordinal);
-        Assert.Contains(
-            "return (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;",
-            capture,
-            StringComparison.Ordinal);
+        Assert.Contains("var paused = mpv?.IsPaused ?? IsPaused;", capture, StringComparison.Ordinal);
+        Assert.Contains("mpv.TryGetPropertyFlag(\"pause\", out var nativePaused)) paused = nativePaused;", capture, StringComparison.Ordinal);
+        Assert.Contains("return paused && mpv?.IsBufferingForCache != true;", capture, StringComparison.Ordinal);
 
         var restoreStart = source.IndexOf("private void RestorePlaybackStateAfterSubtitleChange", StringComparison.Ordinal);
         var restoreEnd = source.IndexOf("/// <summary>", restoreStart, StringComparison.Ordinal);
