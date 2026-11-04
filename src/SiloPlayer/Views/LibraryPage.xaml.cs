@@ -297,7 +297,6 @@ public sealed partial class LibraryPage : Page,
         base.OnNavigatedTo(e);
         _isNavigated = true;
         var visit = ++_stateVisit;
-        var owner = _stateSettings.CaptureSettingsContext();
         var identity = _stateSettings.CaptureSettingsIdentityContext();
         var isRefresh = App.Services.GetRequiredService<NavigationService>().IsRefreshingCurrentEntry;
         var language = _stateSettings.LocalizedReads.Generation;
@@ -307,20 +306,12 @@ public sealed partial class LibraryPage : Page,
         RegisterMediaMessages();
         AttachRecommendedRealtimeEvents();
 
-        var library = e.Parameter as Library;
-        string? requestedTab = null;
-        string? requestedGenre = null;
-        if (e.Parameter is NavigationArgs navigationArgs)
-        {
-            library = navigationArgs.Library;
-            // History and shell refreshes replay the original parameter, not a
-            // new user tab/genre request. Capture refresh status before any await.
-            if (e.NavigationMode == NavigationMode.New && !isRefresh)
-            {
-                requestedTab = navigationArgs.InitialTab;
-                requestedGenre = navigationArgs.InitialGenre;
-            }
-        }
+        var navigationArgs = e.Parameter as NavigationArgs;
+        var library = navigationArgs?.Library ?? e.Parameter as Library;
+        var newRequest = e.NavigationMode == NavigationMode.New && !isRefresh;
+        var historyReturn = e.NavigationMode is NavigationMode.Back or NavigationMode.Forward;
+        var differentExplicitEntry = historyReturn && !ReferenceEquals(_stateEntryParameter, e.Parameter) &&
+            (navigationArgs?.InitialTab != null || !string.IsNullOrWhiteSpace(navigationArgs?.InitialGenre));
 
         LibraryUnavailableState.Visibility = library == null
             ? Visibility.Visible
@@ -330,8 +321,8 @@ public sealed partial class LibraryPage : Page,
             _activeLibraryId = null;
             _libraryStateApplied = false;
             IsEnabled = true;
-            _stateOwner = null;
             _stateIdentity = null;
+            _stateEntryParameter = null;
             _stateSnapshot = null;
             _retainedSearch = null;
             HeaderGrid.Visibility = Visibility.Collapsed;
@@ -346,17 +337,15 @@ public sealed partial class LibraryPage : Page,
 
         if (library != null)
         {
-            var sameLibrary = _activeLibraryId == library.Id && _libraryStateApplied && ViewModel.Library?.Id == library.Id && ViewModel.Library.Type == library.Type && _stateOwner == owner && _stateLanguage == language;
+            var sameLibrary = _activeLibraryId == library.Id && _libraryStateApplied && ViewModel.Library?.Id == library.Id && ViewModel.Library.Type == library.Type && _stateIdentity == identity && _stateLanguage == language;
             // Controls still contain the previous library until its successor is applied.
             // Do not accept input or persist that provisional view during restoration.
             _libraryStateApplied = sameLibrary;
             IsEnabled = sameLibrary;
             if (_stateLanguage != language) _stateSettings.LibraryPageState.Invalidate();
-            if (_stateOwner != owner) _stateSnapshot = null;
-            _stateOwner = owner;
+            if (_stateIdentity != identity) _stateSnapshot = null;
             _stateIdentity = identity;
             _stateLanguage = language;
-            _pageStateContext = owner.Request;
             if (!sameLibrary)
             {
                 ResetRecommendedContent();
@@ -392,15 +381,15 @@ public sealed partial class LibraryPage : Page,
             var edit = _stateEdit;
             var revision = _stateSettings.LibraryPageState.Revision;
             var snapshot = sameLibrary && _stateSettings.LibraryPageState.TryGetConfirmed(library.Id, out var confirmed)
-                ? confirmed : await RestoreLibraryStateAsync(library.Id, visit, owner);
-            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id)) return;
+                ? confirmed : await RestoreLibraryStateAsync(library.Id, visit, identity);
+            if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
             await CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<CatalogApi>());
-            if (!IsLibraryStateVisitCurrent(visit, owner, library.Id)) return;
+            if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
             while (revision != _stateSettings.LibraryPageState.Revision)
             {
                 revision = _stateSettings.LibraryPageState.Revision;
-                snapshot = await RestoreLibraryStateAsync(library.Id, visit, owner);
-                if (!IsLibraryStateVisitCurrent(visit, owner, library.Id)) return;
+                snapshot = await RestoreLibraryStateAsync(library.Id, visit, identity);
+                if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
             }
             // An own save can confirm a newer document during metadata revalidation
             // without changing the invalidation revision.
@@ -410,14 +399,28 @@ public sealed partial class LibraryPage : Page,
             // A newer same-library edit wins over the restore, but must not abandon
             // activation: an interrupted tab still needs its content loaded.
             var edited = sameLibrary && (edit != _stateEdit || HasLibraryFilterDraft);
-            var historyReturn = e.NavigationMode is NavigationMode.Back or NavigationMode.Forward;
             var pendingSearch = snapshot is not { Remember: false } && _pendingStateSaves.TryGetValue((identity, library.Id), out var pending)
                 ? pending.Search : null;
-            var retain = sameLibrary && (edited || snapshot == null || historyReturn && !snapshot.Value.Remember || snapshot.Value.Remember &&
+            var retain = sameLibrary && !differentExplicitEntry && (edited || snapshot == null || historyReturn && !snapshot.Value.Remember || snapshot.Value.Remember &&
                 (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch || HasUnsavedLibraryState(library.Id, identity)));
-            var state = retain ? CaptureLibraryViewState(_currentTab) :
-                ParseOwnedLibrarySearch(pendingSearch ?? snapshot?.Search, visit, owner, library.Id) ??
-                (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
+            var savedSearch = pendingSearch ?? snapshot?.Search;
+            var restoredState = retain ? CaptureLibraryViewState(_currentTab) :
+                ParseOwnedLibrarySearch(savedSearch, visit, identity, library.Id);
+            // Replay routes only when they are new, belong to a different explicit
+            // history entry, or neither a retained nor a saved view supplies state.
+            var replayRoute = newRequest || differentExplicitEntry ||
+                !sameLibrary && (restoredState == null || string.IsNullOrWhiteSpace(savedSearch));
+            var requestedTab = replayRoute ? navigationArgs?.InitialTab : null;
+            var requestedGenre = replayRoute ? navigationArgs?.InitialGenre : null;
+            var state = restoredState ?? (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
+            var temporaryGenreView = !string.IsNullOrWhiteSpace(requestedGenre) && state.Match == "any" && state.QueryGroups.Count > 0;
+            if (temporaryGenreView)
+            {
+                // The two-level query contract cannot wrap an OR query in an AND.
+                // Browse the genre alone without rewriting or saving that query.
+                state = new LibraryViewState { Axis = state.Axis, Sort = state.Sort, Order = state.Order,
+                    MediaType = state.MediaType, Match = state.Match };
+            }
             _currentAudiobookAxis = library.Type is "audiobook" or "audiobooks" ? state.Axis : "books";
             if (requestedTab is "Recommended" or "Library" or "Collections")
                 state.Tab = requestedTab;
@@ -427,12 +430,9 @@ public sealed partial class LibraryPage : Page,
                 state.Genre = requestedGenre;
                 state.Genres = [requestedGenre];
                 foreach (var group in state.QueryGroups) group.Rules.RemoveAll(rule => rule.Field == "genre");
-                if (state.QueryGroups.Count > 0)
-                {
-                    // The explicit genre is a constraint, never another OR alternative.
-                    state.Match = "all";
+                state.QueryGroups.RemoveAll(group => group.Rules.Count == 0);
+                if (state.QueryGroups.Count > 0 || temporaryGenreView)
                     state.QueryGroups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = requestedGenre }] });
-                }
             }
 
             if (!retain || !string.IsNullOrWhiteSpace(requestedGenre))
@@ -448,15 +448,16 @@ public sealed partial class LibraryPage : Page,
             if (!edited || requestedTab != null || requestedGenre != null)
                 ApplyLibraryViewState(state);
             _stateSnapshot = snapshot;
+            _stateEntryParameter = e.Parameter;
             _libraryStateApplied = true;
             IsEnabled = true;
             // Only newly restored input establishes a baseline; retaining visible
             // input must not mark an unsaved edit as already persisted.
             if (!retain) _retainedSearch = pendingSearch ?? snapshot?.Search;
             FlushLibraryStateSave(); // Retry failed departure saves without blocking retained activation.
-            if (requestedTab != null || requestedGenre != null)
+            if (newRequest && !temporaryGenreView && (requestedTab != null || requestedGenre != null))
                 ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));
-            if (!retain) _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
+            if (!retain || temporaryGenreView) _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
 
             if (state.Tab == "Recommended")
             {
@@ -473,7 +474,7 @@ public sealed partial class LibraryPage : Page,
                     var groupOffset = retain ? AudiobookGroupsPanel.VerticalOffset : 0;
                     var groupEdit = _stateEdit;
                     await LoadAudiobookGroupsAsync(true);
-                    if (IsLibraryStateVisitCurrent(visit, owner, library.Id) && groupEdit == _stateEdit && _currentTab == "Library")
+                    if (IsLibraryStateVisitCurrent(visit, identity, library.Id) && groupEdit == _stateEdit && _currentTab == "Library")
                     {
                         AudiobookGroupsPanel.UpdateLayout();
                         AudiobookGroupsPanel.ChangeView(null, groupOffset, null, true);
@@ -969,10 +970,7 @@ public sealed partial class LibraryPage : Page,
         var type = libraryType.Trim().ToLowerInvariant();
         var isAudiobook = type is "audiobook" or "audiobooks";
         AudiobookAxisPanel.Visibility = isAudiobook ? Visibility.Visible : Visibility.Collapsed;
-        SortComboBox.Visibility = Visibility.Visible;
-        OrderComboBox.Visibility = Visibility.Visible;
-        OpenFiltersButton.Visibility = Visibility.Visible;
-        ResultCountText.Visibility = Visibility.Collapsed;
+        UpdateCatalogToolbarVisibility(!isAudiobook || _currentAudiobookAxis == "books");
         if (isAudiobook) UpdateAudiobookAxisButtons();
         List<FilterOption>? options = null;
 
@@ -1896,10 +1894,7 @@ public sealed partial class LibraryPage : Page,
         UpdateLibraryLetters();
         LibraryContentArea.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
         AudiobookGroupsPanel.Visibility = showBooks ? Visibility.Collapsed : Visibility.Visible;
-        SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
-        OrderComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
-        OpenFiltersButton.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
-        ResultCountText.Visibility = Visibility.Collapsed;
+        UpdateCatalogToolbarVisibility(showBooks);
         ActiveFiltersBar.Visibility = showBooks && FilterBadgesPanel.Children.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -1916,6 +1911,14 @@ public sealed partial class LibraryPage : Page,
         _suppressFilterEvents = false;
         AudiobookGroupSearchBox.PlaceholderText = $"Search {AudiobookGroupNoun(axis)}…";
         await LoadAudiobookGroupsAsync(reset: true);
+    }
+
+    private void UpdateCatalogToolbarVisibility(bool showBooks)
+    {
+        SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        OrderComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        OpenFiltersButton.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        ResultCountText.Visibility = Visibility.Collapsed;
     }
 
     private void UpdateAudiobookAxisButtons()

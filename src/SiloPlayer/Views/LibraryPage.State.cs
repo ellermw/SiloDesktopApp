@@ -13,9 +13,8 @@ namespace SiloPlayer.Views;
 public sealed partial class LibraryPage
 {
     private readonly SettingsApi _stateSettings = App.Services.GetRequiredService<SettingsApi>();
-    private ApiRequestContext? _pageStateContext;
-    private SettingsRequestContext? _stateOwner;
     private SettingsIdentityContext? _stateIdentity;
+    private object? _stateEntryParameter;
     private LibraryPageStateSnapshot? _stateSnapshot;
     private long _stateVisit, _stateEdit, _stateLanguage;
     private string? _retainedSearch;
@@ -47,22 +46,37 @@ public sealed partial class LibraryPage
     private bool HasUnsavedLibraryState(int id, SettingsIdentityContext owner)
         => _pendingStateSaves.ContainsKey((owner, id));
 
-    private bool IsLibraryStateVisitCurrent(long visit, SettingsRequestContext owner, int libraryId)
+    private bool IsLibraryStateVisitCurrent(long visit, SettingsIdentityContext owner, int libraryId)
         => _isNavigated && visit == _stateVisit && _activeLibraryId == libraryId &&
-            _stateSettings.IsCurrentSettingsContext(owner) && _stateLanguage == _stateSettings.LocalizedReads.Generation;
+            _stateSettings.IsCurrentSettingsIdentityContext(owner) && _stateLanguage == _stateSettings.LocalizedReads.Generation;
 
-    private async Task<LibraryPageStateSnapshot?> RestoreLibraryStateAsync(int libraryId, long visit, SettingsRequestContext owner)
+    private async Task<LibraryPageStateSnapshot?> RestoreLibraryStateAsync(int libraryId, long visit, SettingsIdentityContext owner)
     {
-        if (!IsLibraryStateVisitCurrent(visit, owner, libraryId) || _stateRestoreCancellation is not { } cancellation) return null;
+        if (_stateRestoreCancellation is not { } cancellation) return null;
         var edit = _stateEdit;
-        try { return await _stateSettings.LibraryPageState.ReadSnapshotAsync(libraryId, cancellation.Token); }
-        catch (OperationCanceledException) { return null; }
-        catch (Exception ex)
+        while (IsLibraryStateVisitCurrent(visit, owner, libraryId) && !cancellation.IsCancellationRequested)
         {
-            if (IsLibraryStateVisitCurrent(visit, owner, libraryId) && edit == _stateEdit)
-                App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}");
-            return null;
+            // Access/cache generations authorize individual reads, not the retained visit.
+            var requestOwner = _stateSettings.CaptureSettingsContext();
+            if (!IsLibraryStateVisitCurrent(visit, owner, libraryId)) return null;
+            try
+            {
+                var snapshot = await _stateSettings.LibraryPageState.ReadSnapshotAsync(libraryId, cancellation.Token);
+                if (!_stateSettings.IsCurrentSettingsContext(requestOwner)) continue;
+                return snapshot;
+            }
+            catch (Exception) when (IsLibraryStateVisitCurrent(visit, owner, libraryId) &&
+                !cancellation.IsCancellationRequested && !_stateSettings.IsCurrentSettingsContext(requestOwner))
+            { /* Retry with current authorization, never with a different identity. */ }
+            catch (OperationCanceledException) { return null; }
+            catch (Exception ex)
+            {
+                if (IsLibraryStateVisitCurrent(visit, owner, libraryId) && edit == _stateEdit)
+                    App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}");
+                return null;
+            }
         }
+        return null;
     }
 
     private void AttachLibraryStateEvents()
@@ -76,7 +90,7 @@ public sealed partial class LibraryPage
         _stateSettings.LocalizedReads.Invalidated += LibraryState_LanguageChanged;
     }
 
-    private LibraryViewState? ParseOwnedLibrarySearch(string? search, long visit, SettingsRequestContext owner, int libraryId)
+    private LibraryViewState? ParseOwnedLibrarySearch(string? search, long visit, SettingsIdentityContext owner, int libraryId)
     {
         try { return ParseLibrarySearch(search); }
         catch (Exception ex)
@@ -112,7 +126,8 @@ public sealed partial class LibraryPage
         var visit = _stateVisit;
         DispatcherQueue.TryEnqueue(async () =>
         {
-            if (!_isNavigated || !_libraryStateApplied || visit != _stateVisit || _stateOwner is not { } owner || _activeLibraryId is not { } id) return;
+            if (!_isNavigated || !_libraryStateApplied || visit != _stateVisit || _stateIdentity is not { } owner ||
+                !_stateSettings.IsCurrentSettingsIdentityContext(owner) || _activeLibraryId is not { } id) return;
             if (_stateRefreshQueued) { _stateRefreshAgain = true; return; }
             _stateRefreshQueued = true;
             var edit = _stateEdit;
