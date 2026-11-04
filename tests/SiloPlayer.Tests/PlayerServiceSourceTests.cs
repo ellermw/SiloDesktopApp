@@ -3,6 +3,38 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void SubtitleAttachmentAdmissionCannotCancelAReadBeforeValidActivation()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task SaveExecutedSubtitlePreferenceAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var admission = method.IndexOf("if (acceptActivation?.Invoke() == false) return false;", StringComparison.Ordinal);
+        Assert.True(admission > 0);
+        Assert.DoesNotContain("CancelSubtitleSelectionRead();", method[..admission]);
+        Assert.DoesNotContain("_pendingLegacySubtitleSelection = null;", method[..admission]);
+        var detached = method.IndexOf("Interlocked.Exchange(ref _subtitleReadOperation, null)", admission, StringComparison.Ordinal);
+        Assert.True(detached > admission, "Read retirement must follow accepted activation under the same state lock.");
+        Assert.Contains("retiredRead?.Cancel();", method[detached..], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubtitleAttachmentMutationLocksRecheckTheirCurrentSelectionOwner()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task SaveExecutedSubtitlePreferenceAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        foreach (var mutation in new[] { "_activeSubtitleServerIndex = selectedSubtitleIndex;", "mpv.SetSubtitleTrack(0);", "CommitExecutedSubtitleSelection(track);" })
+        {
+            var at = method.IndexOf(mutation, StringComparison.Ordinal);
+            var gate = method.LastIndexOf("lock (_subtitleTrackStateLock)", at, StringComparison.Ordinal);
+            Assert.True(gate >= 0 && at > gate);
+            Assert.Contains("if (!CurrentReadChoice())", method[gate..at], StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void AudioAndQualityControlsCaptureTheirOwnerBeforeDrainingTransportWork()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
@@ -1472,7 +1504,7 @@ public sealed class PlayerServiceSourceTests
         var persist = source[source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track,", StringComparison.Ordinal)..];
         AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != selected");
         var persistSelect = persist.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
-        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", persistSelect, StringComparison.Ordinal);
+        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentReadChoice);", persistSelect, StringComparison.Ordinal);
         // Restoration uses the state from just before the sub-add, not from before the download.
         Assert.InRange(persist.IndexOf("wasPaused = CaptureUserPausedState();", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
         Assert.InRange(persist.IndexOf("position = CurrentMediaPosition;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
@@ -1483,7 +1515,7 @@ public sealed class PlayerServiceSourceTests
         Assert.DoesNotContain("return;", persist[loadChanged..persistSelect], StringComparison.Ordinal);
         Assert.True(persist.IndexOf("SaveSubtitlePrefsAsync(", persistSelect, StringComparison.Ordinal) > persistSelect);
         var byIndex = source[source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
-        var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarAsync(track);", StringComparison.Ordinal);
+        var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentSelection);", StringComparison.Ordinal);
         var byIndexSelect = byIndex.IndexOf("SelectSubtitleTrackForOwner(track, CurrentSelection)", byIndexPrefetch, StringComparison.Ordinal);
         Assert.InRange(byIndex.IndexOf("if (!CurrentSelection()) return false;", byIndexPrefetch, StringComparison.Ordinal), byIndexPrefetch, byIndexSelect);
         Assert.Contains("CurrentSubtitleSidecarGeneration() == sidecarGeneration", byIndex);
@@ -1493,7 +1525,7 @@ public sealed class PlayerServiceSourceTests
     private static void AssertPrefetchedThenCurrentBeforeSelection(string method, string currentCheck)
     {
         var select = method.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
-        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", select, StringComparison.Ordinal);
+        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentReadChoice);", select, StringComparison.Ordinal);
         var captured = method.LastIndexOf("var sidecarGeneration = CurrentSubtitleSidecarGeneration();", prefetch, StringComparison.Ordinal);
         var current = method.IndexOf(currentCheck, prefetch, StringComparison.Ordinal);
         var loadCurrent = method.IndexOf("CurrentSubtitleSidecarGeneration() != sidecarGeneration", prefetch, StringComparison.Ordinal);

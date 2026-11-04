@@ -52,7 +52,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAiRefreshOwnershipAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "translation-profile", "translation-newer-off", "translation-newer-track", "translation-before-completion-off", "translation-cycle", "translation-newer-claim", "translation-buffer-off", "translation-buffer-user-pause" })
+        foreach (var scenario in new[] { "translation-profile", "translation-newer-off", "translation-newer-track", "translation-before-completion-off", "translation-cycle", "translation-newer-claim", "translation-buffer-off", "translation-buffer-user-pause", "translation-arbitration-admission", "translation-arbitration-mutation" })
         {
             try { await CheckBusyAsync(parent, scenario); Program.Log("PASS: AI completion ownership " + scenario); }
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: AI completion " + scenario + ": " + ex); }
@@ -159,6 +159,54 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     (int)Get(service, "_liveSubtitleSid")! == priorSid && File.Exists(livePath),
                     "Held AI completion refresh published old-profile inventory, selected/persisted a track or removed current live cues after profile retirement.");
                 Program.Log("PASS: held AI completion inventory GET cannot mutate replacement-profile inventory/SID/preferences/live cues.");
+                return;
+            }
+            if (scenario == "translation-arbitration-admission")
+            {
+                var successor = (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+                await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                var read = Get(service, "_subtitleReadOperation")!;
+                var readToken = (CancellationToken)read.GetType().GetProperty("Token")!.GetValue(read)!;
+                var staleTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+                var rejected = (Task<bool>)Call(service, "TrySetSubtitleTrackAndPersistAsync", 1, staleTrack.Language, staleTrack, false, (Func<bool>)(() => false))!;
+                Require(!await rejected && ReferenceEquals(read, Get(service, "_subtitleReadOperation")) && !readToken.IsCancellationRequested,
+                    "Rejected automatic attachment canceled or replaced the newer manual sidecar reader before admission.");
+                subtitles.BusyResponses = 0;
+                await successor.WaitAsync(TimeSpan.FromSeconds(8));
+                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") > 0 && wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }),
+                    "The newer held manual choice did not execute and persist after rejecting an older attachment.");
+                Program.Log("PASS: rejected stale autoattachment leaves the actual newer manual sidecar read alive through execution.");
+                return;
+            }
+            if (scenario == "translation-arbitration-mutation")
+            {
+                var stateGate = Get(service, "_subtitleTrackStateLock")!;
+                var intent = service.BeginSubtitleActivationIntent();
+                var boundary = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var release = new ManualResetEventSlim();
+                var outsideChecks = 0;
+                bool Guard()
+                {
+                    var accepted = intent();
+                    if (!Monitor.IsEntered(stateGate) && Interlocked.Increment(ref outsideChecks) == 2)
+                    {
+                        boundary.TrySetResult();
+                        if (!release.Wait(TimeSpan.FromSeconds(8))) throw new TimeoutException("Selection boundary was not released.");
+                    }
+                    return accepted;
+                }
+                var staleTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+                var older = Task.Run(async () => await (Task<bool>)Call(service, "TrySetSubtitleTrackAndPersistAsync", 1, staleTrack.Language, staleTrack, false, (Func<bool>)Guard)!);
+                try
+                {
+                    await boundary.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!;
+                }
+                finally { release.Set(); }
+                Require(!await older.WaitAsync(TimeSpan.FromSeconds(8)) && service.ActiveSubtitleServerIndex == -1 &&
+                    manager.SubtitleSelectionForLoad == -1 && mpv.GetPropertyDouble("sid") <= 0 && wire.RequestedPreferences.SequenceEqual(new[] { 1, -1 }),
+                    "An older true pre-lock owner snapshot overwrote newer Off in the accepted-intent mutation lock.");
+                Program.Log("PASS: real owner-callback barrier between precheck and mutation cannot overwrite a later committed manual Off.");
                 return;
             }
             if (scenario is "translation-buffer-off" or "translation-buffer-user-pause")
