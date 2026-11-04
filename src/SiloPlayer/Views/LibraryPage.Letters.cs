@@ -19,6 +19,16 @@ public sealed partial class LibraryPage
     private string? _activeLibraryLetter;
     private string? _chosenLibraryEndLetter;
     private long _queuedLetterJumpVersion;
+    private bool _libraryScrollIsIntermediate;
+    private Action? _pendingLibraryLetterCommit;
+    private EventHandler<object>? _libraryLetterFrameHandler;
+
+    private void ClearLibraryLetterFrame()
+    {
+        if (_libraryLetterFrameHandler is not { } handler) return;
+        CompositionTarget.Rendering -= handler;
+        _libraryLetterFrameHandler = null;
+    }
 
     private bool IsLibraryLetterGrid => _isNavigated && _currentTab == "Library" &&
         _currentAudiobookAxis == "books" && ViewModel.SelectedSort == "title";
@@ -191,9 +201,12 @@ public sealed partial class LibraryPage
             ReferenceEquals(owner, ViewModel.LetterIndex) && index < ViewModel.TotalCount &&
             ViewModel.GetWindowItem(index) is not null && catalog.IsCurrentContext(context) && catalog.FilterCacheGeneration == language;
         _queuedLetterJumpVersion = jump;
-        DispatcherQueue.TryEnqueue(() =>
+        ClearLibraryLetterFrame();
+        void Commit()
         {
-            if (_queuedLetterJumpVersion == jump) _queuedLetterJumpVersion = 0;
+            if (_queuedLetterJumpVersion != jump) return;
+            _queuedLetterJumpVersion = 0;
+            _pendingLibraryLetterCommit = null;
             if (!IsCurrent()) return;
             UpdateVirtualGridMetrics();
             var layout = GetGridLayout();
@@ -203,6 +216,33 @@ public sealed partial class LibraryPage
             _chosenLibraryEndLetter = offset >= maxOffset ? owner?.LetterAtIndex(index) : null;
             SetLibraryVerticalOffset(offset, force: true, owner: IsCurrent);
             UpdateActiveLibraryLetter();
+        }
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_queuedLetterJumpVersion != jump) return;
+            // A requested animation can start after this dispatcher turn.
+            // Observe one native frame before deciding whether it is idle.
+            EventHandler<object>? frame = null;
+            frame = (_, _) =>
+            {
+                CompositionTarget.Rendering -= frame;
+                if (!ReferenceEquals(_libraryLetterFrameHandler, frame)) return;
+                _libraryLetterFrameHandler = null;
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_queuedLetterJumpVersion != jump) return;
+                    if (_libraryScrollIsIntermediate)
+                    {
+                        // Immediate ChangeView translates existing motion.
+                        // Commit once it ends, under the same owner.
+                        _pendingLibraryLetterCommit = Commit;
+                        return;
+                    }
+                    Commit();
+                });
+            };
+            _libraryLetterFrameHandler = frame;
+            CompositionTarget.Rendering += frame;
         });
     }
 

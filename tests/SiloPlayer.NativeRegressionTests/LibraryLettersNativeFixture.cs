@@ -288,18 +288,32 @@ internal static class LibraryLettersNativeFixture
     {
         var interleaved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Wire.WindowReadGate? held = null;
+        EventHandler<object>? afterFrame = null;
         var before = scroll.VerticalOffset;
         void AfterFirstQueue(int position)
         {
             if (position != 20) return;
-            // Page's first dispatcher callback was enqueued before this one.
-            // Its second callback is therefore queued after our interleaver.
+            // The page registers its one-frame observer in the preceding
+            // callback. Register ours after it, so its target callback runs
+            // first and its native ChangeView remains behind our interleave.
             page.DispatcherQueue.TryEnqueue(() =>
+            {
+                afterFrame = (_, _) =>
+                {
+                    Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= afterFrame;
+                    afterFrame = null;
+                    page.DispatcherQueue.TryEnqueue(Interleave);
+                };
+                Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += afterFrame;
+            });
+            void Interleave()
             {
                 try
                 {
                     var pending = typeof(LibraryPage).GetField("_pendingLibraryOffset", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page);
                     if (pending is not double) throw new InvalidOperationException("The first letter callback did not establish its second pending boundary.");
+                    if (Math.Abs(scroll.VerticalOffset - before) > .2)
+                        throw new InvalidOperationException("The second-boundary interleave ran after native movement.");
                     if (scenario == "newer") { held = wire.HoldNextWindow(); Invoke(letter("M")); }
                     else if (scenario == "query") page.ViewModel.SelectedGenre = "Comedy";
                     else if (scenario == "manual") { ManualScroll(page, scroll, before + .5); page.UpdateLayout(); }
@@ -318,7 +332,7 @@ internal static class LibraryLettersNativeFixture
                     interleaved.TrySetResult();
                 }
                 catch (Exception ex) { interleaved.TrySetException(ex); }
-            });
+            }
         }
         page.ViewModel.LetterJumpRequested += AfterFirstQueue;
         try
@@ -332,7 +346,12 @@ internal static class LibraryLettersNativeFixture
                 throw new InvalidOperationException($"A stale second dispatch overrode {scenario}: expected {expected:F3}, observed {scroll.VerticalOffset:F3}.");
             Program.Log($"PASS: second native letter dispatch retires after {scenario} at unchanged/half-pixel offset.");
         }
-        finally { page.ViewModel.LetterJumpRequested -= AfterFirstQueue; held?.Release.TrySetResult(); }
+        finally
+        {
+            page.ViewModel.LetterJumpRequested -= AfterFirstQueue;
+            if (afterFrame is not null) Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= afterFrame;
+            held?.Release.TrySetResult();
+        }
     }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static string Help(Button button) => Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(button);
@@ -375,6 +394,27 @@ internal static class LibraryLettersNativeFixture
             finally { held.Release.TrySetResult(); }
         }
 
+        // An immediate response can queue its target before the native
+        // animation publishes its first intermediate ViewChanged event.
+        var fastFrames = 0;
+        void ObserveFast(object? sender, ScrollViewerViewChangedEventArgs args) => fastFrames++;
+        scroll.ViewChanged += ObserveFast;
+        try
+        {
+            scroll.ChangeView(null, scroll.VerticalOffset + 3 * rowHeight, null, disableAnimation: false);
+            Invoke(letter("M"));
+            if (fastFrames != 0)
+                throw new InvalidOperationException("The immediate response regression did not precede the first native frame.");
+            // Observe the old native animation's whole bounded lifetime, not
+            // just a momentary exact offset before its remaining frames run.
+            await Task.Delay(600);
+            await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+            Program.Log($"PASS: immediate letter response starts before the first native frame and retains exact target after {fastFrames} frames.");
+        }
+        finally { scroll.ViewChanged -= ObserveFast; }
+        Invoke(top);
+        await Until(() => scroll.VerticalOffset < 1 && !page.ViewModel.IsLetterJumpInProgress && page.ViewModel.GetWindowItem(0) is not null);
+
         // Continue a native animated scroll that began before the choice. Its
         // intermediate frames have no new input authority over the held letter.
         var coasting = wire.HoldNextWindow();
@@ -390,22 +430,42 @@ internal static class LibraryLettersNativeFixture
                 throw new InvalidOperationException("Earlier native animation cancelled the latest letter choice.");
         }
         finally { coasting.Release.TrySetResult(); }
-        await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
+        try { await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1); }
+        catch (TimeoutException ex)
+        {
+            var currentLayout = typeof(LibraryPage).GetMethod("GetGridLayout", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
+            object? Field(string name) => typeof(LibraryPage).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page);
+            throw new InvalidOperationException(JsonSerializer.Serialize(new
+            {
+                phase = "coasting-completion", offset = scroll.VerticalOffset, expected = (600 / columns) * rowHeight,
+                columns, rowHeight, currentLayout, pending = page.ViewModel.IsLetterJumpInProgress,
+                letter = page.ViewModel.PendingLetter, error = page.ViewModel.LetterJumpError,
+                queuedOffset = Field("_pendingLibraryOffset"), logicalOffset = Field("_libraryVerticalOffset"),
+                queuedVersion = Field("_queuedLetterJumpVersion"), total = page.ViewModel.TotalCount,
+                extent = scroll.ScrollableHeight
+            }), ex);
+        }
 
         scroll.ChangeView(null, scroll.ScrollableHeight, null, true);
         await Until(() => Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 1);
         var beforeClamp = scroll.VerticalOffset;
-        var width = frame.Width;
+        var clampHeight = frame.Height;
+        var clampViewport = scroll.ViewportHeight;
         var clamped = wire.HoldNextWindow(); Invoke(letter("M"));
         try
         {
             await clamped.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            frame.Width = width + 400; page.UpdateLayout();
+            // Widening an already-max-column grid grows its posters and
+            // extent. A taller viewport creates the intended bottom clamp.
+            frame.Height = clampHeight + 100; page.UpdateLayout();
             await Until(() => scroll.VerticalOffset < beforeClamp - 1);
+            if (scroll.ViewportHeight <= clampViewport || Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) > 1)
+                throw new InvalidOperationException("The resize regression did not create a native bottom clamp.");
             if (!page.ViewModel.IsLetterJumpInProgress || page.ViewModel.PendingLetter != "M")
                 throw new InvalidOperationException("A resize-driven native clamp cancelled the held letter choice.");
+            Program.Log($"PASS: actual resize clamp retains held M: offset {beforeClamp:F3}->{scroll.VerticalOffset:F3}, viewport {clampViewport:F3}->{scroll.ViewportHeight:F3}.");
         }
-        finally { frame.Width = width; page.UpdateLayout(); clamped.Release.TrySetResult(); }
+        finally { frame.Height = clampHeight; page.UpdateLayout(); clamped.Release.TrySetResult(); }
         await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (600 / columns) * rowHeight) < 1);
 
         var failed = wire.HoldNextWindow(fail: true); Invoke(letter("A"));
@@ -592,6 +652,12 @@ internal static class LibraryLettersNativeFixture
         finally { failed.Release.TrySetResult(); }
         foreach (var change in new[] { "profile", "language", "filter" })
         {
+            // Each case must start with the target absent. A preceding case's
+            // ordinary viewport read can otherwise retain a valid M window.
+            Invoke(letter("A"));
+            await Until(() => !page.ViewModel.IsLetterJumpInProgress && Math.Abs(scroll.VerticalOffset - (20 / columns) * rowHeight) < 1);
+            if (page.ViewModel.GetWindowItem(600) is not null)
+                throw new InvalidOperationException($"The retired {change} regression already had its target before the held request.");
             var retired = wire.HoldNextWindow(fail: true); Invoke(letter("M"));
             try
             {

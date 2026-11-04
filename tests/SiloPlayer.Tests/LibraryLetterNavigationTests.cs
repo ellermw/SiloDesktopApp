@@ -481,7 +481,7 @@ public sealed class LibraryLetterNavigationTests
         var start = source.IndexOf("private async Task EnsureVisibleRangeLoadedAsync", StringComparison.Ordinal);
         var end = source.IndexOf("var range = GetVisibleItemRange", start, StringComparison.Ordinal);
         var guard = source[start..end];
-        Assert.Contains("if (ViewModel.IsLetterJumpInProgress)", guard);
+        Assert.Contains("if (ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0)", guard);
         Assert.Contains("ScheduleVisibleRangeLoad(force);", guard);
     }
 
@@ -959,7 +959,8 @@ public sealed class LibraryLetterNavigationTests
         var guard = source[start..end];
         var empty = guard.IndexOf("if (ViewModel.TotalCount <= 0)", StringComparison.Ordinal);
         Assert.True(empty > guard.IndexOf("if (ViewModel.IsLetterJumpViewportBlocked)", StringComparison.Ordinal));
-        Assert.True(empty > guard.IndexOf("if (ViewModel.IsLetterJumpInProgress)", StringComparison.Ordinal));
+        var pending = guard.IndexOf("if (ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0)", StringComparison.Ordinal);
+        Assert.InRange(pending, 0, empty - 1);
         Assert.Contains("await ViewModel.EnsureRangeLoadedAsync(0, 0);", guard[empty..]);
         Assert.Contains("ScheduleVisibleRangeLoad(force: true);", guard[empty..]);
     }

@@ -509,6 +509,9 @@ public sealed partial class LibraryPage : Page,
         _isNavigated = false;
         if (_pendingLibraryScroll is { } pendingScroll) ClearPendingLibraryOffset(pendingScroll);
         _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        _libraryScrollIsIntermediate = false;
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         DetachRecommendedRealtimeEvents();
@@ -1532,6 +1535,8 @@ public sealed partial class LibraryPage : Page,
         if (!_isNavigated) return;
         ViewModel.RetireLetterJump();
         _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
         _chosenLibraryEndLetter = null;
         // The seek may have cancelled the read for this very same row range.
         _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
@@ -1573,7 +1578,14 @@ public sealed partial class LibraryPage : Page,
 
     private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
+        if (!_isNavigated) return;
+        _libraryScrollIsIntermediate = e.IsIntermediate;
+        if (!e.IsIntermediate && _pendingLibraryLetterCommit is { } commit)
+        {
+            _pendingLibraryLetterCommit = null;
+            DispatcherQueue.TryEnqueue(() => commit());
+        }
+        if (_pendingLibraryOffset.HasValue) return;
         // Only new input retires a choice. Coasting from an earlier manipulation
         // and native extent clamps still update the viewport, but keep its owner.
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
@@ -2333,7 +2345,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        if (ViewModel.IsLetterJumpInProgress)
+        if (ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0)
         {
             // Recompute the latest viewport after the jump scrolls (or restores
             // its old cards), without letting this debounce cancel the seek.
