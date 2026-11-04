@@ -5417,6 +5417,17 @@ public partial class PlayerService : IDisposable
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         var mpv = _mpv;
+        var readIndex = track.Index;
+        var readTrack = session?.SubtitleUrls.FirstOrDefault(t => t.Index == readIndex);
+        var readTrackId = readTrack?.TrackId;
+        var readStoredId = readTrack?.Id;
+        var readSyncKey = readTrack?.SyncKey;
+        var readUrl = readTrack?.Url;
+        if (readTrack == null || readTrack.Unplayable ||
+            !string.IsNullOrEmpty(track.TrackId) && track.TrackId != readTrackId ||
+            track.Id is > 0 && track.Id != readStoredId ||
+            !string.IsNullOrEmpty(track.SyncKey) && track.SyncKey != readSyncKey)
+            return SubtitlePrefetchOutcome.Retired;
         Uri url;
         lock (_subtitleTrackStateLock)
         {
@@ -5431,6 +5442,8 @@ public partial class PlayerService : IDisposable
         bool CurrentOwner() => !_closing && ReferenceEquals(authority, _activeAuthority) &&
             authority.ApiClient.IsCurrentContext(context) && ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) &&
             ReferenceEquals(session, manager?.CurrentSession) &&
+            session!.SubtitleUrls.Contains(readTrack) && !readTrack.Unplayable && readTrack.Index == readIndex &&
+            readTrack.TrackId == readTrackId && readTrack.Id == readStoredId && readTrack.SyncKey == readSyncKey && readTrack.Url == readUrl &&
             ReferenceEquals(selection, Volatile.Read(ref _subtitleReadOperation)) && !selection.Token.IsCancellationRequested &&
             ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) &&
             CurrentSubtitleSidecarGeneration() == generation && loadedMediaGeneration == Volatile.Read(ref _loadedMediaInitGeneration);

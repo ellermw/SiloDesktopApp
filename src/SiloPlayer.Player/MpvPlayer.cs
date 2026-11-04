@@ -537,7 +537,6 @@ public sealed partial class MpvPlayer : IDisposable
     public void LoadFile(string url, string? authHeader = null, double startSeconds = 0)
     {
         ThrowIfNotInitialized();
-        lock (_asyncSubtitleGate) _asyncSubtitleFileGeneration++;
         ResetUpscalingForLoad();
 
         // Original files use a seekable HTTP reader directly through mpv's
@@ -552,10 +551,16 @@ public sealed partial class MpvPlayer : IDisposable
         if (nativeDirect) url = PrepareNativeDirectInput(url);
         else Volatile.Write(ref _directRequest, null);
 
-        if (startSeconds > 0.001)
-            Command("loadfile", url, "replace", "-1", $"start={FormatSeconds(startSeconds)}");
-        else
-            Command("loadfile", url);
+        lock (_asyncSubtitleGate)
+        {
+            // Capture/completion of an async add cannot observe the new epoch
+            // while the outgoing file is still awaiting native submission.
+            _asyncSubtitleFileGeneration++;
+            if (startSeconds > 0.001)
+                Command("loadfile", url, "replace", "-1", $"start={FormatSeconds(startSeconds)}");
+            else
+                Command("loadfile", url);
+        }
     }
 
     /// <summary>Signed direct-node URLs need no rotating account-token relay.</summary>
@@ -580,9 +585,12 @@ public sealed partial class MpvPlayer : IDisposable
     public void Stop()
     {
         ThrowIfNotInitialized();
-        lock (_asyncSubtitleGate) _asyncSubtitleFileGeneration++;
         _diagnostics?.Record("stop_requested", new { position = Position });
-        Command("stop");
+        lock (_asyncSubtitleGate)
+        {
+            _asyncSubtitleFileGeneration++;
+            Command("stop");
+        }
         // Keep the flight recorder through stop/reload recovery and episode changes.
         // Its bounded history and incident windows finish independently of playback.
     }

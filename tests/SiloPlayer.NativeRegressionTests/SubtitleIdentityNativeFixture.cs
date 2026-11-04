@@ -57,7 +57,7 @@ internal static class SubtitleIdentityNativeFixture
                 : embedded.Any(t => t.Id == 1 && t.StreamIndex == 1) && embedded.Any(t => t.Id == 2 && t.StreamIndex == 2)),
                 "Loaded Matroska subtitle identities do not match the attested demuxer namespace.");
             var closeout = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
-            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle")
+            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "retired-read-cache")
             {
                 if (closeout == "cast-off")
                 {
@@ -123,6 +123,32 @@ internal static class SubtitleIdentityNativeFixture
                         Require(mpv.GetPropertyDouble("sid") == (retire == "access" ? 2 : 0) && mpv.IsPaused,
                             "Legacy pre-play execution did not retain identity-only access compatibility or reject retired/populated/newer-manual ownership.");
                     }
+                }
+                else if (closeout == "retired-read-cache")
+                {
+                    var prior = session.SubtitleUrls.Single(t => t.Index == 2);
+                    await service.SetSubtitleTrackAndPersistAsync(3, prior.Language, prior);
+                    var retainedWrites = wire.PreferenceWrites;
+                    var original = new SubtitleTrackInfo { Index = 20, TrackId = "held-original", Source = "external", Codec = "srt", Language = "en", Url = subtitles.Origin + "/held-original.srt" };
+                    session.SubtitleUrls.Add(original);
+                    var held = subtitles.HoldNext();
+                    var pending = service.SetSubtitleTrackAndPersistAsync(21, original.Language, original);
+                    var replacement = new SubtitleTrackInfo { Index = 20, TrackId = "new-at-ordinal", Source = "external", Codec = "srt", Language = "ja", Url = subtitles.Origin + "/new-at-ordinal.srt" };
+                    try
+                    {
+                        await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        session.SubtitleUrls.Remove(original); session.SubtitleUrls.Add(replacement);
+                        held.Release.TrySetResult();
+                        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+                        Require(!((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(20) &&
+                            service.ActiveSubtitleServerIndex == 2 && mpv.GetPropertyDouble("sid") == 1 && wire.PreferenceWrites == retainedWrites,
+                            "A retired inventory row left its bytes under another track's reused ordinal or changed the executed preference.");
+                        var replacementReads = subtitles.Requests;
+                        await service.SetSubtitleTrackAndPersistAsync(21, replacement.Language, replacement);
+                        Require(subtitles.Requests == replacementReads + 1 && service.ActiveSubtitleServerIndex == 20 && wire.PreferenceWrites == retainedWrites + 1 && mpv.IsPaused,
+                            "The new inventory choice reused old bytes or failed to execute/persist under its own read.");
+                    }
+                    finally { held.Release.TrySetResult(); }
                 }
                 else if (closeout == "async-lifecycle")
                 {
