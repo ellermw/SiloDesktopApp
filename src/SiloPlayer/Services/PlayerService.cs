@@ -642,6 +642,7 @@ public partial class PlayerService : IDisposable
         _offeredRoomQuality = next.Label;
         _offeredFromQuality = ActiveQualityTier;
         _mpv?.SendScriptMessage("osc-room-quality-offer", next.Label);
+        NativePartyStateChanged?.Invoke();
         ShowWatchPartyNotice("Playback has stalled repeatedly. Lower quality is available in the Watch Party panel.");
     }
 
@@ -650,6 +651,7 @@ public partial class PlayerService : IDisposable
         var target = _offeredRoomQuality;
         _offeredRoomQuality = null;
         _mpv?.SendScriptMessage("osc-room-quality-offer", "");
+        NativePartyStateChanged?.Invoke();
         if (!IsWatchTogetherPlayback || target == null || _offeredFromQuality != ActiveQualityTier) return;
         await SelectQualityAsync(target);
     }
@@ -1370,10 +1372,12 @@ public partial class PlayerService : IDisposable
 
         if (room == null || string.Equals(room.Phase, "ended", StringComparison.OrdinalIgnoreCase))
         {
+            _mpv.SendScriptMessage("osc-native-party-scope", "");
             _mpv.SendScriptMessage("osc-set-watch-party", "null");
             return;
         }
 
+        _mpv.SendScriptMessage("osc-native-party-scope", _nativeMenuOwner is { } nativeOwner && nativeOwner.IsCurrent() ? nativeOwner.Token : "");
         var payload = new
         {
             visible = true,
@@ -5967,6 +5971,7 @@ public partial class PlayerService : IDisposable
             case "silo-native-quality-open":
             case "silo-native-chapters-open":
             case "silo-native-more-open":
+            case "silo-native-party-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;

@@ -66,6 +66,7 @@ public partial class PlayerService
             mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-more-scope", owner.Token);
             mpv.SendScriptMessage("osc-native-stats-scope", owner.Token);
+            mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -78,6 +79,7 @@ public partial class PlayerService
         void Retire()
         {
             if (!ReferenceEquals(owner, _nativeMenuOwner)) return;
+            _nativePartyEndDialog?.Hide();
             _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
             owner?.Mpv.SendScriptMessage("osc-native-audio-scope", "");
@@ -85,6 +87,7 @@ public partial class PlayerService
             owner?.Mpv.SendScriptMessage("osc-native-chapters-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-more-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-stats-scope", "");
+            owner?.Mpv.SendScriptMessage("osc-native-party-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -127,6 +130,7 @@ public partial class PlayerService
                 "chapters" => CreateNativeChaptersMenu(owner, request, Finish),
                 "more" => CreateNativeMoreMenu(owner, request, Finish),
                 "stats" => CreateNativeStatsMenu(owner, request, Finish),
+                "party" => CreateNativePartyMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }

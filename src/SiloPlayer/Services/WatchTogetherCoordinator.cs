@@ -263,21 +263,26 @@ public sealed class WatchTogetherCoordinator
     private void OnWatchTogetherActionRequested(string action)
     {
         if (!EnsureCurrentAuthority()) return;
-        var room = _activeRoom;
+        if (_activeRoom is { } room) _ = InvokePlaybackPanelActionAsync(room, action);
+    }
+
+    public async Task InvokePlaybackPanelActionAsync(WatchTogetherRoomViewModel room, string action, Func<bool>? ownsPlayback = null)
+    {
+        var roomId = room.Room?.RoomId;
+        bool Current() => EnsureCurrentAuthority() && ReferenceEquals(room, _activeRoom)
+            && room.Room?.RoomId == roomId && ownsPlayback?.Invoke() != false;
+        if (!Current() || room.IsBusy) return;
         if (action == "lower-quality")
         {
-            _ = _playerService.AcceptWatchPartyLowerQualityAsync();
+            await _playerService.AcceptWatchPartyLowerQualityAsync();
             return;
         }
-        if (room?.Room?.SelfCanManageRoom != true) return;
+        if (room.Room?.SelfCanManageRoom != true) return;
         switch (action)
         {
             case "invite": CopyInvite(room.Room); break;
-            case "toggle-policy":
-                if (room.TogglePolicyCommand.CanExecute(null)) room.TogglePolicyCommand.Execute(null);
-                break;
-            case "end":
-                if (room.CloseRoomCommand.CanExecute(null)) room.CloseRoomCommand.Execute(null);
+            case "toggle-policy": case "stop": case "end":
+                await room.InvokePlaybackPanelMutationAsync(action, Current);
                 break;
         }
     }

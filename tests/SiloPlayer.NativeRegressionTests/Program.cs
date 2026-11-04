@@ -194,6 +194,29 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-party-refreshed")
+            {
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, "menu");
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, "stale");
+                var failures = new List<Exception>();
+                foreach (var mode in new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality" })
+                {
+                    try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
+                    catch (Exception error) { Program.Log($"FAIL [{mode}]: {error.Message}"); failures.Add(error); }
+                }
+                if (failures.Count > 0) throw new AggregateException("Combined Party/Quality checks failed.", failures);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-party-actions")
+            {
+                await NativePartyActionsFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-party-menu" or "native-party-end" or "native-party-stale" or "native-party-direct")
+            {
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY")![13..]);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
             {
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);

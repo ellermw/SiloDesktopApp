@@ -29,7 +29,7 @@ using Windows.Storage.Streams;
 /// generated local video and a synthetic API. No installed application, account,
 /// system input injection, foreground changes or production setup are used.
 /// </summary>
-internal static class PlaybackAudioMenuNativeFixture
+internal static partial class PlaybackAudioMenuNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -928,6 +928,8 @@ internal static class PlaybackAudioMenuNativeFixture
             }
             menu.Activated += Activated; menu.Closed += Closed;
         }
+
+        internal void RegisterWindow(IntPtr hwnd, string role) => _roles[hwnd.ToInt64()] = role;
 
         internal void Complete()
         {
