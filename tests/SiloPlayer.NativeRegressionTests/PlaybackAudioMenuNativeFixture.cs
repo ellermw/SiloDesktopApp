@@ -844,13 +844,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     {
                         context.Response.StatusCode = 404; context.Response.ContentLength64 = 0; context.Response.Close(); continue;
                     }
-                    if (context.Request.Url?.AbsolutePath == "/fixture-subtitle.vtt")
-                    {
-                        var subtitle = Encoding.UTF8.GetBytes("WEBVTT\n\n00:00.000 --> 01:00.000\nSynthetic subtitle\n");
-                        context.Response.ContentType = "text/vtt"; context.Response.ContentLength64 = subtitle.Length;
-                        try { await context.Response.OutputStream.WriteAsync(subtitle); context.Response.Close(); } catch (HttpListenerException) { }
-                        continue;
-                    }
                     var from = 0; var through = bytes.Length - 1;
                     context.Response.ContentType = "application/octet-stream";
                     context.Response.Headers["Accept-Ranges"] = "bytes";
