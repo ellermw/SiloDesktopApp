@@ -121,6 +121,7 @@ internal static partial class ArtworkMotionNativeFixture
     {
         await OverlayFirstMountCasesAsync(parent);
         await spoilers.EnsureLoadedAsync();
+        await CachedEpisodeRebindAsync(parent, wire);
         foreach (var kind in new[] { "poster", "landscape" })
         foreach (var variant in new[] { "movie", "blur", "cached" })
         {
@@ -155,6 +156,42 @@ internal static partial class ArtworkMotionNativeFixture
         Check(CardImage(stale).Source != null, "Explicit authorized successor bind loads after first mount");
         parent.Children.Remove(stale); await Until(() => !stale.IsLoaded);
         await Task.Delay(300); // Allow the owned queued Unloaded handlers to finish before service teardown.
+    }
+
+    private static async Task CachedEpisodeRebindAsync(StackPanel parent, Wire wire)
+    {
+        var seed = new PosterCard();
+        var recycled = new PosterCard();
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(seed); row.Children.Add(recycled); parent.Children.Insert(0, row);
+        try
+        {
+            await Until(() => seed.IsLoaded && recycled.IsLoaded);
+            Bind(recycled, "cached-episode-rebind-movie");
+            await Until(() => CardImage(recycled).Source is BitmapImage { PixelWidth: > 0 });
+            foreach (var watched in new[] { false, true })
+            {
+                var id = "cached-episode-rebind-" + watched;
+                MediaItem Episode() => new()
+                {
+                    ContentId = id, Title = id, Type = "episode", PosterIsEpisodeStill = true,
+                    PosterUrl = "https://artwork-motion.invalid/art/" + id,
+                    UserState = new() { Played = watched },
+                };
+                seed.MediaItem = Episode();
+                await Until(() => CardImage(seed).Source is BitmapImage { PixelWidth: > 0 });
+                var cached = CardImage(seed).Source;
+                var requests = wire.Requests.GetValueOrDefault("/art/" + id);
+                recycled.MediaItem = Episode();
+                Check(ReferenceEquals(CardImage(recycled).Source, cached) && CardImage(recycled).Opacity == 1 &&
+                    ((FrameworkElement)recycled.FindName("ArtworkFallback")).Visibility == Visibility.Collapsed,
+                    $"Loaded PosterCard rebind preserves immediate decoded episode hit across spoiler-state change (watched={watched}).");
+                await Task.Delay(100);
+                Check(ReferenceEquals(CardImage(recycled).Source, cached) && wire.Requests.GetValueOrDefault("/art/" + id) == requests,
+                    $"Cached episode rebind stays visible without a replacement request (watched={watched}).");
+            }
+        }
+        finally { parent.Children.Remove(row); await Until(() => !seed.IsLoaded && !recycled.IsLoaded); }
     }
 
     // Hold only this fixture's async continuations; dispatch every callback on its original UI context.

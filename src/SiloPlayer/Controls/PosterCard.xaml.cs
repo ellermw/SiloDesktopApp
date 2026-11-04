@@ -372,7 +372,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
         ApplyCardPresentation();
         ApplyActionGeometry(item);
-        UpdateQuickActionState(item);
+        // This bind owns the artwork load below; action updates must not replace its token.
+        UpdateQuickActionState(item, refreshArtwork: false);
 
         PosterImage.Opacity = 0;
 
@@ -394,7 +395,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         else
         {
             _deferredOverlayItem = null;
-            RefreshOverlayPreferences(item);
+            RefreshOverlayPreferences(item, refreshArtwork: false);
         }
 
         if (SuppressImageLoading)
@@ -420,19 +421,19 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         _overlayLoadCts = null;
     }
 
-    private void RefreshOverlayPreferences(MediaItem item)
+    private void RefreshOverlayPreferences(MediaItem item, bool refreshArtwork = true)
     {
         if (DeferOverlayLoading || _artworkOwner?.IsCurrent == false) return;
-        UpdateQuickActionState(item);
+        UpdateQuickActionState(item, refreshArtwork);
         UpdateBadges(item);
         var service = App.Services.GetRequiredService<CardOverlayService>();
         if (service.IsLoaded || _overlayLoadCts != null) return;
         // Overlay waits belong to the bind, not artwork retries or activity changes.
         _overlayLoadCts = new CancellationTokenSource();
-        _ = EnsureBadgesLoadedAsync(item, _overlayLoadCts.Token);
+        _ = EnsureBadgesLoadedAsync(item, _overlayLoadCts.Token, refreshArtwork);
     }
 
-    private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
+    private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct, bool refreshArtwork)
     {
         try
         {
@@ -442,7 +443,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item) &&
                 !DeferOverlayLoading && _artworkOwner?.IsCurrent != false)
             {
-                UpdateQuickActionState(item);
+                UpdateQuickActionState(item, refreshArtwork);
                 UpdateBadges(item);
             }
         }
@@ -1048,13 +1049,13 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private void QuickAction_Tapped(object sender, TappedRoutedEventArgs e)
         => e.Handled = true;
 
-    private void UpdateQuickActionState(MediaItem item)
+    private void UpdateQuickActionState(MediaItem item, bool refreshArtwork = true)
     {
         var preferences = App.Services.GetRequiredService<CardOverlayService>();
         var hasState = item.UserState != null && !SelectionMode && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
         var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");
         var showFavorite = hasState && MediaItemActionPolicy.CanAddToPersonalLists(item.Type) && (preferences.QuickActionMode is "both" or "favorites");
-        RefreshSpoilerArtwork();
+        if (refreshArtwork) RefreshSpoilerArtwork();
         var isWatched = item.UserState?.Played == true;
         var isFavorite = item.UserState?.IsFavorite == true;
 

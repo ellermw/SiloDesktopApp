@@ -148,7 +148,7 @@ public sealed partial class LibraryPage : Page,
     private bool _forceQueuedRender;
     private readonly ArtworkMotionPolicy _artworkMotion;
     private DispatcherTimer? _cardBindTimer;
-    private bool _isNavigated;
+    private volatile bool _isNavigated;
     private bool _viewModelEventsAttached;
     private bool _messengerRegistered;
     private int? _activeLibraryId;
@@ -503,6 +503,10 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        // Retire read-ahead before Reset releases any deferred warmup continuations.
+        _libraryReadAheadCts?.Cancel();
+        _libraryReadAheadCts?.Dispose();
+        _libraryReadAheadCts = null;
         ArtworkViewport.SetActive(RecommendedPanel, false);
         foreach (var card in _libraryCardSlots) card.SuspendArtwork();
         _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
@@ -511,9 +515,6 @@ public sealed partial class LibraryPage : Page,
         DetachRecommendedRealtimeEvents();
         CancelRecommendedRefresh();
         _visibleRangeDebounceTimer?.Stop();
-        _libraryReadAheadCts?.Cancel();
-        _libraryReadAheadCts?.Dispose();
-        _libraryReadAheadCts = null;
         _posterSizeTimer?.Stop();
         _cardBindTimer?.Stop();
         _audiobookGroupSearchTimer?.Stop();
@@ -2312,7 +2313,7 @@ public sealed partial class LibraryPage : Page,
             await Task.Delay(150, ct);
             var items = await ViewModel.PrefetchAroundAsync(start, end, forward, ct);
             ct.ThrowIfCancellationRequested();
-            if (!_stateSettings.IsCurrentContext(context)) return;
+            if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
             var images = App.Services.GetRequiredService<ImageService>();
             var http = App.Services.GetRequiredService<HttpClient>();
             await Parallel.ForEachAsync(items,
@@ -2326,17 +2327,16 @@ public sealed partial class LibraryPage : Page,
                     {
                         await _artworkMotion.WaitAsync(token);
                         token.ThrowIfCancellationRequested();
-                        if (!_stateSettings.IsCurrentContext(context)) return;
-                        var started = await s_artworkWarmupThrottle.RunAsync(async _ =>
+                        if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
+                        var started = await s_artworkWarmupThrottle.RunAsync(async workToken =>
                         {
-                            token.ThrowIfCancellationRequested();
-                            if (!_stateSettings.IsCurrentContext(context)) return true;
+                            workToken.ThrowIfCancellationRequested();
+                            if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return true;
                             if (_artworkMotion.IsDeferred) return false;
-                            // Shared downloads outlive a caller's cancellation.
-                            // Keep this slot until completion, retaining the
-                            // existing bound on background downloads.
+                            // Cancel work that has not started, but keep this slot
+                            // until an already-started shared download completes.
                             await images.GetImageDiskPathAsync(item.ContentId,
-                                poster ? "poster" : "backdrop", url, http, CancellationToken.None);
+                                poster ? "poster" : "backdrop", url, http, workToken, waitForSharedDownload: true);
                             return true;
                         }, token);
                         if (started) break;

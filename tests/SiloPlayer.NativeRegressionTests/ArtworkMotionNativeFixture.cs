@@ -114,8 +114,23 @@ internal static partial class ArtworkMotionNativeFixture
             var retainedItem = retained.MediaItem!;
             retainedItem.PosterUrl = "https://artwork-motion.invalid/art/library-retained";
             retained.BindPlaceholder(); retained.Bind(retainedItem, "title");
+            var readAheadField = typeof(LibraryPage).GetField("_libraryReadAheadCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            var previousReadAhead = (CancellationTokenSource?)readAheadField.GetValue(page);
+            previousReadAhead?.Cancel(); previousReadAhead?.Dispose();
+            using var departureReadAhead = new CancellationTokenSource();
+            readAheadField.SetValue(page, departureReadAhead);
+            var motion = (ArtworkMotionPolicy)typeof(LibraryPage).GetField("_artworkMotion", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!;
+            motion.Reset(0, scroll.VerticalOffset); motion.Observe(0, scroll.VerticalOffset + 400);
+            // Freeze only the settle timer so departure, not wall-clock timing, releases this wait.
+            ((ITimer?)typeof(ArtworkMotionPolicy).GetField("_settle", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(motion))?.Change(
+                Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            var deferredReadAhead = motion.WaitAsync(departureReadAhead.Token);
+            var canceledBeforeRelease = false;
+            using var cancellation = departureReadAhead.Token.Register(() => canceledBeforeRelease = motion.IsDeferred);
             frame.Navigate(typeof(Page));
             await Task.Delay(400);
+            Check(canceledBeforeRelease && deferredReadAhead.IsCanceled && readAheadField.GetValue(page) == null,
+                "Library departure cancels and clears read-ahead before releasing the deferred artwork policy.");
             Check(!wire.Requests.ContainsKey("/art/library-retained"), "Library departure cancels a pending current bind.");
             var heldReads = wire.HeldLibraryStateReads;
             var stateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
