@@ -1136,6 +1136,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 IsFavorite = false;
                 InWatchlist = false;
                 await CheckFavoriteWatchlistAsync(contentId, loadCts);
+                if (!Current()) return;
             }
 
             UserRating = Item?.UserRating;
@@ -1145,8 +1146,13 @@ public partial class ItemDetailViewModel : ObservableObject,
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
             OnPropertyChanged(nameof(RatingDisplay));
-            var trailing = _initialRemoteState;
-            _initialRemoteState = null;
+            MediaStateInvalidated? trailing;
+            lock (_remoteStateGate)
+            {
+                if (!Current()) return;
+                trailing = _initialRemoteState;
+                _initialRemoteState = null;
+            }
             // Let navigation paint the committed detail without waiting for
             // the shared, ownership-guarded realtime loop to drain.
             if (initialRevision != _initialStateRevision && trailing != null && IsRelatedInitialState(trailing, item))

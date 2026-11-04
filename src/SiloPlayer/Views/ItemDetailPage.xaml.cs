@@ -4959,6 +4959,14 @@ public sealed partial class ItemDetailPage : Page
     private async void RetryEpisodesButton_Click(object sender, RoutedEventArgs e)
     {
         var item = ViewModel.Item;
+        if (item?.Type == "series")
+        {
+            var navigationToken = _navigationCts?.Token ?? CancellationToken.None;
+            await UpdateSeriesLayoutAsync(item.ContentId, navigationToken, reloadEpisodes: true);
+            if (!ReferenceEquals(ViewModel.Item, item) || !IsActiveDetail(item.ContentId, navigationToken)) return;
+            await ApplySeriesActionAsync();
+            return;
+        }
         if (item?.Type != "season") return;
 
         EpisodesLoadError.Visibility = Visibility.Collapsed;
