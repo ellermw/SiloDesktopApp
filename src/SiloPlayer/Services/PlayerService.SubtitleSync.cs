@@ -48,7 +48,7 @@ public partial class PlayerService
             _subtitleSyncEntries.Clear();
             // Prefetched sidecars are deleted below with the other files; a pending
             // prefetch must not register a file after this cleanup.
-            lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _subtitleSidecarGeneration++; }
+            lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _preparedSubtitleReload = null; _subtitleSidecarGeneration++; }
             foreach (var file in _subtitleSyncFiles) { try { File.Delete(file); } catch { } }
             _subtitleSyncFiles.Clear();
             _mpv?.SendScriptMessage("osc-subtitle-sync-notice", "{}");

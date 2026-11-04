@@ -1204,6 +1204,21 @@ public partial class PlayerService : IDisposable
             else if (deferLocalSelection || _pendingInitialServerSubtitleIndex.HasValue)
                 _pendingInitialServerSubtitleIndex = selectedSubtitleIndex;
         }
+        // A replacement must not commit burned pixels before its text choice
+        // is ready. The same captured preference owner owns this preflight.
+        if (track != null && !IsUnsupportedBitmapSubtitle(track) && !deferLocalSelection)
+        {
+            var readOutcome = await PrefetchSubtitleSidecarAsync(track);
+            if (!ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) ||
+                !ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(preferenceOwner.Context)) return false;
+            if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
+            {
+                RestoreExecutedSubtitleSelection(reapply: false);
+                ShowSubtitleReadFailure(readOutcome);
+                return false;
+            }
+            if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
+        }
         var wasPaused = CaptureUserPausedState();
         var position = CurrentMediaPosition;
         var transportReloadScheduled = false;
@@ -5318,12 +5333,15 @@ public partial class PlayerService : IDisposable
             _loadedExternalSubtitleSids.Clear();
             // Same-session reloads keep the subtitle-sync lifecycle alive, so
             // remove this file's downloads here instead of accumulating them.
+            var retained = TakePreparedSubtitleReload();
             foreach (var path in _prefetchedSubtitleFiles.Values)
             {
+                if (path == retained?.Path) continue;
                 _subtitleSyncFiles.Remove(path);
                 try { File.Delete(path); } catch { }
             }
             _prefetchedSubtitleFiles.Clear();
+            if (retained != null) _prefetchedSubtitleFiles[retained.Index] = retained.Path;
             _subtitleSidecarGeneration++;
         }
 
@@ -5459,6 +5477,7 @@ public partial class PlayerService : IDisposable
                 if (_pendingSubtitlePreferenceIndex == (requestedIndex ?? -1))
                     _pendingSubtitlePreferenceIndex = resolvedIndex;
             }
+            PrepareSubtitleFileForReload(session, replanned, resolvedIndex);
             BeginMpvLoad(preparedV3, restorePaused: wasPaused);
             var finalTrack = replanned.SubtitleUrls.FirstOrDefault(candidate => candidate.Index == resolvedIndex);
             if (replanned.IsSubtitleBurnedIn && finalTrack != null &&
@@ -5784,6 +5803,11 @@ public partial class PlayerService : IDisposable
                     MediaLanguageCatalog.Normalize(t.Language) == MediaLanguageCatalog.Normalize(previous.Language) &&
                     t.Forced == previous.Forced && t.HearingImpaired == previous.HearingImpaired))
             : null;
+        // A retained server burn-in is already rendered even when no local
+        // SID has been recorded (for example before the first manual choice).
+        if (retained == null && previousIntent?.Track is { } granted && session?.MediaFileId == previousIntent.MediaFileId &&
+            IsBurnedInSubtitle(session, granted))
+            retained = session.SubtitleUrls.FirstOrDefault(t => t.Index == granted.Index && IsBurnedInSubtitle(session, t));
         // A retained native-only row may have no route in a replacement remux.
         // Do not retain a highlight for subtitles the new file cannot execute.
         if (retained != null && (!HasSubtitleSelectionRoute(retained) ||
