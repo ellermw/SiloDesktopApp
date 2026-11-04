@@ -92,7 +92,8 @@ public partial class PlayerService
             (owner?.Mpv ?? _mpv)?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
-        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
+        var busyAction = request.Kind != "stats" && (IsLoading || _switchingContent);
+        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || busyAction)
         { Ack(); return; }
         if (!_nativeMenuGate.TryOpen(request))
         {

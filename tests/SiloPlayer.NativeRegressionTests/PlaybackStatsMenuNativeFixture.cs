@@ -48,6 +48,7 @@ internal static class PlaybackStatsMenuNativeFixture
         var queries = new ConcurrentDictionary<string, TaskCompletionSource<JsonElement>>();
         var statsSamples = 0;
         var activations = 0;
+        Task? busyOperation = null;
         void Message(string[] args)
         {
             if (args.Length == 4 && args[0] == "silo-native-menu-input" && args[3] == "activate") Interlocked.Increment(ref activations);
@@ -82,6 +83,33 @@ internal static class PlaybackStatsMenuNativeFixture
             // for its generation to settle before testing an unrelated menu interaction.
             var publication = (long)Get(service, "_nativeMenuPublication")!;
             await UntilAsync(async () => { await Task.Delay(400); var current = (long)Get(service, "_nativeMenuPublication")!; var stable = current == publication; publication = current; return stable; }, "Initial capability publication did not settle.");
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_STATS_CASE") == "busy")
+            {
+                wire.HoldFailedReplan = true;
+                busyOperation = (Task)Call(service, "SwitchQualityTierAsync", "720p", null, null, null)!;
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(service.IsLoading && service.IsQualitySwitchActive, "The real held replan did not own busy state.");
+                var busyRevision = (long)Get(service, "_playbackBusyRevision")!;
+                var file = (long)Get(service, "_playbackFileGeneration")!;
+                var busyMenu = await Open("key");
+                await Until(() => ((ListView)Get(busyMenu, "_list")!).Items.Count >= 25, "Busy Stats did not populate diagnostics.");
+                Command(mpv, "keypress", "END"); Command(mpv, "keypress", "ENTER");
+                await Until(() => Volatile.Read(ref activations) == 1, "Busy Stats did not receive native read-only activation.");
+                Require(ReferenceEquals(Menu(service), busyMenu) && service.IsLoading && service.IsQualitySwitchActive &&
+                    (bool)Get(service, "_switchingContent")! && (long)Get(service, "_playbackBusyRevision")! == busyRevision &&
+                    (long)Get(service, "_playbackFileGeneration")! == file && wire.Qualities.Count == 1 && mpv.IsPaused,
+                    "Read-only Stats changed the held replan's flags, file, pause or request inventory.");
+                Command(mpv, "keypress", "i");
+                await UntilAsync(async () => Menu(service) == null && !(await Query()).GetProperty("pending").GetBoolean(), "Busy Stats did not close.");
+                Require(Gate(service).CurrentCount == 1 && service.IsLoading && service.IsQualitySwitchActive &&
+                    (long)Get(service, "_playbackBusyRevision")! == busyRevision, "Stats close released a replan's busy ownership.");
+                wire.ReleaseReplan.TrySetResult(); await busyOperation.WaitAsync(TimeSpan.FromSeconds(8));
+                await Until(() => !service.IsLoading && !service.IsQualitySwitchActive && !(bool)Get(service, "_switchingContent")!,
+                    "The real replan failed to release its own busy state after Stats closed.");
+                foreground.Observe("stats-busy-complete");
+                Program.Log("PASS: actual held quality replan permits read-only native Stats key open/End/Enter/second-i close, preserving its exact busy revision, file, pause and single request; replan completes its own cleanup.");
+                return;
+            }
             var menu = await Open("pointer");
             var list = (ListView)Get(menu, "_list")!;
             await Until(() => list.Items.Count >= 25, "Native playback info did not receive the actual OSC diagnostic sections.");
@@ -135,6 +163,8 @@ internal static class PlaybackStatsMenuNativeFixture
         }
         finally
         {
+            wire.ReleaseReplan.TrySetResult();
+            if (busyOperation != null) await busyOperation.WaitAsync(TimeSpan.FromSeconds(8));
             mpv.ScriptMessageReceived -= Message;
             if (Menu(service) is { } menu) Call(menu, "Input", "cancel");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");

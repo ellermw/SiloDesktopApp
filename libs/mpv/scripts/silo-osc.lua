@@ -4739,7 +4739,9 @@ local function toggle_stats(keyboard)
         if state.native_menu_request.kind == "stats" then native_menu_input("cancel") end
         return
     end
-    if open_native_menu("stats", keyboard) then return end
+    -- Diagnostics stay available during states that suppress action menus.
+    -- Retain their existing read-only overlay until native presentation is eligible.
+    if not state.playback_loading and not state.post_roll_active and open_native_menu("stats", keyboard) then return end
     state.stats_visible = not state.stats_visible
     if state.stats_visible then state.stats_scroll_offset = 0 end
     render_stats()
