@@ -511,17 +511,24 @@ internal static class SubtitleIdentityNativeFixture
             var cycleRequests = Volatile.Read(ref subtitles.Requests);
             foreach (var (index, sid) in new[] { (4, 2), (2, 1), (-1, 0) })
             {
-                // Every cycle is a viewer gesture, even after an automatic pick
-                // (including automatic Off); it must not inherit Auto provenance.
+                // A local cycle changes the loaded choice without changing
+                // startup Auto provenance or the saved preference policy.
                 manager.RecordLocalSubtitleSelection(service.ActiveSubtitleServerIndex < 0 ? null : service.ActiveSubtitleServerIndex,
                     isAutomatic: true);
                 Call(service, "CycleSubtitleBackward");
-                Require(!manager.IsSubtitleSelectionAutomatic && !manager.CaptureLocalSubtitleIntent().IsAutomatic,
-                    "Local caption cycling retained the previous automatic selection's provenance.");
+                Require(manager.IsSubtitleSelectionAutomatic && manager.CaptureLocalSubtitleIntent().IsAutomatic,
+                    "Local caption cycling changed the previous automatic selection's provenance.");
                 Require(service.ActiveSubtitleServerIndex == index && manager.SubtitleSelectionForLoad == index &&
                     (sid == 0 ? mpv.GetPropertyDouble("sid") <= 0 : mpv.GetPropertyDouble("sid") == sid),
                     "Local caption cycling did not map server rows to their actual loaded native SIDs.");
             }
+            // An already explicit choice remains explicit as well. This is a
+            // local provenance check, without a new API preference write.
+            manager.RecordLocalSubtitleSelection(null, isAutomatic: false);
+            Call(service, "CycleSubtitleBackward");
+            Require(!manager.IsSubtitleSelectionAutomatic && !manager.CaptureLocalSubtitleIntent().IsAutomatic &&
+                service.ActiveSubtitleServerIndex == 4 && manager.SubtitleSelectionForLoad == 4 && mpv.GetPropertyDouble("sid") == 2,
+                "Local caption cycling lost explicit provenance or the actual Japanese native track.");
             japanese.Unplayable = true;
             try
             {

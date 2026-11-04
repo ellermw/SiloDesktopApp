@@ -5806,6 +5806,9 @@ public partial class PlayerService : IDisposable
                         mpv.SendScriptMessage("osc-set-loading", "false");
                         var restorePaused = PauseIntent();
                         RestorePlaybackStateAfterSubtitleChange(restorePaused, CurrentMediaPosition, allowSeek: false);
+                        // Room commands may create a pause slot during this
+                        // tentative freeze. Keep it only for a real pending load.
+                        if (_fileLoadTimeoutCts == null) _restorePausedAfterLoad = null;
                     });
                     if (loadingOwner != null)
                         App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,

@@ -32,7 +32,9 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("_subtitleReplanPauseIntent = PauseIntent();", method);
         Assert.Contains("if (_subtitleReplanPauseIntent.HasValue) _subtitleReplanPauseIntent = paused;", source);
         Assert.Contains("var restorePaused = PauseIntent();", rollback);
-        Assert.DoesNotContain("_restorePausedAfterLoad = null;", rollback);
+        const string unownedPauseCleanup = "if (_fileLoadTimeoutCts == null) _restorePausedAfterLoad = null;";
+        Assert.Contains(unownedPauseCleanup, rollback);
+        Assert.DoesNotContain("_restorePausedAfterLoad = null;", rollback.Replace(unownedPauseCleanup, "", StringComparison.Ordinal));
         Assert.Contains("RestorePlaybackStateAfterSubtitleChange(restorePaused, CurrentMediaPosition, allowSeek: false);", rollback);
         Assert.DoesNotContain("RestorePlaybackStateAfterSubtitleChange(wasPaused,", rollback);
         Assert.Contains("ShowSubtitleSelectionUnavailable();", rollback);
