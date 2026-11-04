@@ -39,6 +39,14 @@ public partial class PlaybackManager
         }
     }
 
+    /// <summary>Checks an executed row against the still-current intent, not an outgoing combined index.</summary>
+    public bool IsLocalSubtitleIntentSatisfied(SubtitleSelectionIntent intent, SubtitleTrackInfo? track)
+    {
+        lock (_trackIntentGate)
+            return intent == CaptureLocalSubtitleIntent() && _hasViewerSubtitle &&
+                (track == null ? _viewerSubtitle == null : ReferenceEquals(track, MatchCurrentSubtitle()));
+    }
+
     /// <summary>Shared with inventory refresh/presentation; acquire after the service's subtitle locks.</summary>
     public object SubtitleInventorySyncRoot => _trackIntentGate;
 
@@ -262,6 +270,15 @@ public partial class PlaybackManager
         // Only two identityless rows on the same file can use a legacy index.
         if (sameFile && !hasIdentity && candidates.FirstOrDefault(t =>
             string.IsNullOrWhiteSpace(t.TrackId) && t.Index == _viewerSubtitle.Index) is { } legacy) return legacy;
+        // Another version can offer the same language in a different format or
+        // source. Prefer the strict metadata tier, but retain the viewer's
+        // language when only a unique best alternative exists. Never use this
+        // policy fallback for same-file identity or a stored download.
+        if (candidates.Length == 0 && !sameFile && !Equal(_viewerSubtitle.Source, "downloaded") &&
+            !UnknownSubtitleLanguage(_viewerSubtitle.Language))
+            candidates = inventory.Where(t => !t.Unplayable && !Equal(t.Source, "downloaded") &&
+                !UnknownSubtitleLanguage(t.Language) && CanonicalLanguage(t.Language) == CanonicalLanguage(_viewerSubtitle.Language) &&
+                t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
         var ranked = candidates.OrderByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).Take(2).ToArray();
         return ranked.Length == 1 || ranked.Length == 2 &&
             SubtitleScore(ranked[0].Language, ranked[0].Source, ranked[0].Codec, ranked[0].Label, _viewerSubtitle) >

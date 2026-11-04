@@ -80,6 +80,8 @@ public partial class PlayerService : IDisposable
         PlaybackManager? Manager, int? MediaFileId, string? Key, CancellationToken Token)
     {
         public PlaybackManager.SubtitleSelectionIntent? PreviousIntent { get; init; }
+        public PlaybackManager.SubtitleSelectionIntent? RequestedIntent { get; init; }
+        public SubtitleTrackInfo? RequestedTrack { get; init; }
         public bool FollowsVersionSwitch { get; init; }
     }
     private SubtitlePreferenceOwner? _pendingSubtitlePreferenceOwner;
@@ -1150,22 +1152,24 @@ public partial class PlayerService : IDisposable
                 PreviousIntent = _pendingSubtitlePreferenceOwner?.PreviousIntent ??
                     _pendingExplicitInitialSubtitleOwner?.PreviousIntent ?? manager?.CaptureLocalSubtitleIntent(),
                 FollowsVersionSwitch = selectedSubtitleIndex < 0 && _subtitleVersionSwitchActive,
+                RequestedTrack = track,
             };
             _pendingExplicitInitialSubtitleOwner = null;
             _pendingAutomaticSubtitleSelection = null;
             _activeSubtitleServerIndex = selectedSubtitleIndex;
             _pendingSubtitlePreferenceIndex = selectedSubtitleIndex;
-            _pendingSubtitlePreferenceOwner = preferenceOwner;
             _pendingInitialSubtitleFileId = selectionFileId;
             if (manager?.CurrentSession?.ProtocolVersion >= 3)
             {
                 manager.RecordLocalSubtitleSelection(selectedSubtitleIndex < 0 ? null : selectedSubtitleIndex);
+                preferenceOwner = preferenceOwner with { RequestedIntent = manager.CaptureLocalSubtitleIntent() };
                 // PlaybackManager retains identity and rebinds it to each accepted
                 // inventory. A raw pending index must not outrank that resolution.
                 _pendingInitialServerSubtitleIndex = null;
             }
             else if (deferLocalSelection || _pendingInitialServerSubtitleIndex.HasValue)
                 _pendingInitialServerSubtitleIndex = selectedSubtitleIndex;
+            _pendingSubtitlePreferenceOwner = preferenceOwner;
         }
         var wasPaused = CaptureUserPausedState();
         var position = CurrentMediaPosition;
@@ -1293,6 +1297,22 @@ public partial class PlayerService : IDisposable
         RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
         await SaveExecutedSubtitlePreferenceAsync(preferenceOwner, track);
         return true;
+    }
+
+    private bool MatchesSubtitlePreference(SubtitlePreferenceOwner owner, SubtitleTrackInfo? track)
+        => ReferenceEquals(owner.Manager, _playbackManager) &&
+           (owner.RequestedIntent is { } intent
+               ? owner.Manager?.IsLocalSubtitleIntentSatisfied(intent, track) == true
+               : ReferenceEquals(owner.RequestedTrack, track));
+
+    // Called under the selection lock, only after execution. A grant that did
+    // not satisfy the deferred pick retires it without saving an unrelated row.
+    private SubtitlePreferenceOwner? ConsumeExecutedSubtitlePreference(SubtitleTrackInfo? track)
+    {
+        var owner = _pendingSubtitlePreferenceOwner;
+        _pendingSubtitlePreferenceIndex = null;
+        _pendingSubtitlePreferenceOwner = null;
+        return owner != null && MatchesSubtitlePreference(owner, track) ? owner : null;
     }
 
     private async Task SaveExecutedSubtitlePreferenceAsync(SubtitlePreferenceOwner? owner, SubtitleTrackInfo? track)
@@ -2987,12 +3007,8 @@ public partial class PlayerService : IDisposable
                     // A newer manager-owned choice still wins over that grant.
                     _pendingInitialServerSubtitleIndex = null;
                     _pendingAutomaticSubtitleSelection = null;
-                    if (_pendingSubtitlePreferenceIndex.HasValue &&
-                        _pendingSubtitlePreferenceIndex != _playbackManager!.SubtitleSelectionForLoad)
-                    {
-                        _pendingSubtitlePreferenceIndex = null;
-                        _pendingSubtitlePreferenceOwner = null;
-                    }
+                    // Execution below consumes preferences by retained identity;
+                    // an outgoing index cannot attest whether the grant fulfilled it.
                 }
             }
             // Clearing/replacing the initial choice also retires its automatic
@@ -5234,13 +5250,16 @@ public partial class PlayerService : IDisposable
         var wasPaused = (_switchingContent || IsLoading) && _restorePausedAfterLoad is bool pendingPause
             ? pendingPause : CaptureUserPausedState();
         bool PauseIntent() => IsWatchTogetherPlayback ? _roomPlaybackPaused : _subtitleReplanPauseIntent ?? wasPaused;
+        // Room pause/play can populate the pause slot during this request even
+        // when no FILE_LOADED is pending. Only an inherited load owns that slot.
+        var inheritedPendingLoad = _restorePausedAfterLoad.HasValue;
         var selectionIntent = manager.CaptureLocalSubtitleIntent();
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
         void RefuseTentativeSubtitleSelection()
         {
             // A rejected request never owns an already pending FILE_LOADED.
             // Its loading state and pause slot still belong to that load.
-            var preservePendingLoad = !loadStarted && _restorePausedAfterLoad.HasValue;
+            var preservePendingLoad = !loadStarted && inheritedPendingLoad;
             if (!preservePendingLoad)
             {
                 _prematureEofRecoveryActive = false;
@@ -5543,12 +5562,7 @@ public partial class PlayerService : IDisposable
                     {
                         if (!CurrentSelection()) return false;
                         CommitExecutedSubtitleSelection(track);
-                        if (_pendingSubtitlePreferenceIndex == track.Index)
-                        {
-                            preferenceOwner = _pendingSubtitlePreferenceOwner;
-                            _pendingSubtitlePreferenceIndex = null;
-                            _pendingSubtitlePreferenceOwner = null;
-                        }
+                        preferenceOwner = ConsumeExecutedSubtitlePreference(track);
                     }
                     await SaveExecutedSubtitlePreferenceAsync(preferenceOwner, track);
                     if (CurrentSelection()) mpv.SendScriptMessage("osc-set-active-subtitle", track.Index.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -5558,19 +5572,15 @@ public partial class PlayerService : IDisposable
                 ShowSubtitleSelectionUnavailable(showUnavailable);
                 return false;
             }
+            SubtitlePreferenceOwner? offPreferenceOwner;
             lock (_subtitleTrackStateLock)
             {
                 if (!CurrentSelection()) return false;
                 mpv.SetSubtitleTrack(0);
                 CommitExecutedSubtitleSelection(null);
+                offPreferenceOwner = ConsumeExecutedSubtitlePreference(null);
             }
-            if (_pendingSubtitlePreferenceIndex == serverTrackIndex)
-            {
-                var preferenceOwner = _pendingSubtitlePreferenceOwner;
-                _pendingSubtitlePreferenceIndex = null;
-                _pendingSubtitlePreferenceOwner = null;
-                await SaveExecutedSubtitlePreferenceAsync(preferenceOwner, null);
-            }
+            await SaveExecutedSubtitlePreferenceAsync(offPreferenceOwner, null);
         }
         // A persistent request can be accepted while loading; only the owner
         // that actually executes it may publish the resulting highlight.

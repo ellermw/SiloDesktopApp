@@ -152,6 +152,57 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             Require(media.SubtitleRequests > 0, "Native player never fetched the served subtitle bytes.");
             Program.Log("PASS: actual PlayerService replans a burned-in DVD subtitle away for Off and for a text track, and the text pick survives a quality reload with a matching native sid.");
 
+            // A text pick made while a quality reply is in flight belongs to
+            // the outgoing inventory. Persist only its executed rebound row,
+            // even when another track acquires that outgoing combined index.
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+            var english = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == English);
+            await service.SetSubtitleTrackAndPersistAsync(English + 1, english.Language, english);
+            var deferredSpanish = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == Spanish);
+            var deferredWrites = wire.PreferenceWrites;
+            var qualityEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var qualityRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.BeforeQualityChange = ct => { qualityEntered.TrySetResult(); return qualityRelease.Task.WaitAsync(ct); };
+            try
+            {
+                await Loaded(async () =>
+                {
+                    var quality = (Task)Call(service, "SwitchQualityTierAsync", "480p", null, null)!;
+                    try
+                    {
+                        await qualityEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        Require(service.IsLoading && service.IsSwitchingContent,
+                            "The deferred text fixture did not hold a quality replacement.");
+                        await service.SetSubtitleTrackAndPersistAsync(Spanish + 1, deferredSpanish.Language, deferredSpanish);
+                        Require((int?)Get(service, "_pendingSubtitlePreferenceIndex") == Spanish &&
+                            Get(service, "_pendingSubtitlePreferenceOwner") != null && wire.PreferenceWrites == deferredWrites,
+                            "A deferred text pick was not retained without an early preference write.");
+                        wire.ReindexSpanish = wire.ReuseSpanishIndex = true;
+                    }
+                    finally { qualityRelease.TrySetResult(); }
+                    await quality.WaitAsync(TimeSpan.FromSeconds(6));
+                });
+                await Until(() => Get(service, "_loadedMediaInitCts") == null &&
+                    service.ActiveSubtitleServerIndex == Spanish + 10 && NativeSidMatches(service, mpv, Spanish + 10));
+                Require(wire.PreferenceWrites == deferredWrites + 1 && wire.LastSubtitlePreferenceIndex == Spanish + 10 &&
+                    Get(service, "_pendingSubtitlePreferenceIndex") == null && Get(service, "_pendingSubtitlePreferenceOwner") == null,
+                    "The deferred text preference was not saved exactly once for its executed rebound identity.");
+                var unrelated = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Spanish);
+                Require(unrelated.TrackId != deferredSpanish.TrackId &&
+                    await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", unrelated.Index, false)!,
+                    "The deferred text fixture did not execute a different row at the outgoing index.");
+                Require(wire.PreferenceWrites == deferredWrites + 1 && wire.LastSubtitlePreferenceIndex == Spanish + 10,
+                    "A stale deferred preference was saved against an unrelated row at the outgoing index.");
+            }
+            finally
+            {
+                qualityRelease.TrySetResult(); wire.BeforeQualityChange = null;
+                wire.ReindexSpanish = wire.ReuseSpanishIndex = false;
+            }
+            await Loaded(() => (Task)Call(service, "SwitchQualityTierAsync", "480p", null, null)!);
+            await Until(() => Get(service, "_loadedMediaInitCts") == null && service.ActiveSubtitleServerIndex == Spanish);
+            Program.Log("PASS: a deferred manual text pick survives quality-plan reindexing, saves its executed index exactly once and cannot persist a different row at its outgoing index.");
+
             // Reject a bitmap pick while a quality replacement is still held
             // before FILE_LOADED. The subtitle request does not own that load's
             // pause slot, loading flags, timeout, or overlay.
@@ -717,13 +768,15 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         public bool RejectTrackChanges, TerminalTrackRejection, TimeoutTrackRejection;
         public Func<CancellationToken, Task>? BeforeTrackRejection;
         public Func<CancellationToken, Task>? BeforeTrackChange;
+        public Func<CancellationToken, Task>? BeforeQualityChange;
         public bool DeclineTrackChanges;
-        public bool ReindexSpanish, ReindexDvd;
+        public bool ReindexSpanish, ReindexDvd, ReuseSpanishIndex;
         public int PreferenceWrites;
         public int LastSubtitlePreferenceIndex = -2;
         public List<JsonElement> Starts = [], Replans = [];
         private int CombinedIndex(int track)
-            => (track == Spanish && ReindexSpanish || track == Dvd && ReindexDvd) ? track + 10 : track;
+            => track == English && ReindexSpanish && ReuseSpanishIndex ? Spanish :
+                (track == Spanish && ReindexSpanish || track == Dvd && ReindexDvd) ? track + 10 : track;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "burn-in.invalid") throw new InvalidOperationException("Burn-in fixture attempted external networking.");
@@ -751,6 +804,11 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             else
             {
                 Replans.Add(body.Clone());
+                if (body.GetProperty("operation").GetString() == "quality_change" && BeforeQualityChange is { } beforeQuality)
+                {
+                    BeforeQualityChange = null;
+                    await beforeQuality(ct);
+                }
                 if (body.GetProperty("operation").GetString() == "track_change" && BeforeTrackChange is { } beforeChange)
                 {
                     BeforeTrackChange = null;
@@ -792,7 +850,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                         track_id = _subtitle < 0 ? null : $"sub:{_file}:{_subtitle}",
                         inventory = new object[]
                         {
-                            new { track_id = $"sub:{_file}:0", combined_index = English, language = "eng", codec = "srt", source = "external", url = origin + "/eng.srt", label = "English", delivery = "sidecar" },
+                            new { track_id = $"sub:{_file}:0", combined_index = CombinedIndex(English), language = "eng", codec = "srt", source = "external", url = origin + "/eng.srt", label = "English", delivery = "sidecar" },
                             new { track_id = $"sub:{_file}:1", combined_index = CombinedIndex(Spanish), language = "spa", codec = "srt", source = "external", url = origin + "/spa.srt", label = "Spanish", delivery = "sidecar" },
                             new { track_id = $"sub:{_file}:2", combined_index = CombinedIndex(Dvd), language = "eng", codec = "dvd_subtitle", source = "embedded", label = "English (DVD)", delivery = "burn_in_only" },
                         },

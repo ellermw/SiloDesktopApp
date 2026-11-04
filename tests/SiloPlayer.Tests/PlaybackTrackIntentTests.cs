@@ -303,6 +303,46 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Theory]
+    [InlineData("pgs", false, false)]
+    [InlineData("ass", false, false)]
+    [InlineData("srt", true, false)]
+    [InlineData("pgs", false, true)]
+    [InlineData("ass", false, true)]
+    [InlineData("srt", true, true)]
+    public async Task VersionSwitchRetainsManualLanguageAcrossCodecAndSourceChanges(
+        string replacementCodec, bool originalExternal, bool grantAlreadyMatches)
+    {
+        using var scope = new Fixture();
+        var original = scope.Manager.WatchDetail!.Versions.Single(v => v.FileId == 42).SubtitleTracks![0];
+        original.External = originalExternal;
+        scope.Manager.WatchDetail.Versions.Single(v => v.FileId == 44).SubtitleTracks =
+        [
+            new() { Language = "spa", Codec = "srt", Title = "Spanish" },
+            new() { Language = "en", Codec = replacementCodec, Title = "English" },
+        ];
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(0);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        scope.Wire.InitialSubtitleSelection = grantAlreadyMatches ? 1 : -1;
+
+        var accepted = await scope.Manager.StartReplacementSessionAsync(44, 14);
+
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal("sub:44:1", accepted.SelectedSubtitleTrackId);
+        Assert.False(accepted.SubtitleReconciliationFailed);
+        Assert.False(scope.Manager.IsRetainedSubtitleUnavailable);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+        if (grantAlreadyMatches) Assert.Empty(scope.Wire.Replans);
+        else
+        {
+            var selection = Assert.Single(scope.Wire.Replans).GetProperty("selected_tracks").GetProperty("subtitle");
+            Assert.Equal("sub:44:1", selection.GetProperty("id").GetString());
+            Assert.Equal(1, selection.GetProperty("index").GetInt32());
+        }
+        Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData("en-GB", "eng-gb", "en", false)]
     [InlineData("pt-BR", "por_br", "pt-PT", false)]
     [InlineData("zh-Hant", "zho-Hant", "zh-Hans", false)]
