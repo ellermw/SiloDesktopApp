@@ -128,7 +128,12 @@ public sealed class RealtimeReadOwnershipTests
         var context = f.Client.CaptureContext();
         var recipient = new object();
         var messages = new List<MediaSurfaceChanged>();
-        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) =>
+        {
+            // Ignore other parallel fixtures, but retain wrong/missing authority
+            // on our target and wrong targets published by our backend.
+            if (message.ContentId == Series || message.Context?.BaseUrl == context.BaseUrl) messages.Add(message);
+        });
         try
         {
             var operation = mutation == "favorite" ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null)
@@ -1583,7 +1588,14 @@ public sealed class RealtimeReadOwnershipTests
             var path = request.RequestUri.AbsolutePath;
             object body;
             var hold = false;
-            if (path is "/api/v2/favorites" or "/api/v2/watchlist")
+            if (path == "/api/v2/catalog/search/capabilities")
+            {
+                // Movie details probe optional box sets. Capabilities are global;
+                // only the actual detail/season/episode reads carry library scope.
+                Assert.Equal("", request.RequestUri.Query);
+                body = new { box_sets = false };
+            }
+            else if (path is "/api/v2/favorites" or "/api/v2/watchlist")
             {
                 CollectionReads++;
                 body = new { items = new[] { new { content_id = Series, type = "series" } } };

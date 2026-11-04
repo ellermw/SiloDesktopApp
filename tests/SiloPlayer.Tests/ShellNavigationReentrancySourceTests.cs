@@ -63,7 +63,8 @@ public sealed class ShellNavigationReentrancySourceTests
         Assert.Contains("if (!preserveDetail) ShowMainNavigation();", apply);
         Assert.Contains("LoadShellNavigationAsync(shellKey, token)", apply);
         Assert.Contains("RefreshUserNavigationCapabilitiesAsync(shellKey, token)", apply);
-        Assert.Contains("if (!preserveDetail)\n            TryShellAction(\"access_active_route\"", apply);
+        // Box sets also reconcile in place; failed non-box-set routes still remount.
+        Assert.Contains("if (!preserveDetail && ContentFrame.Content is not BoxSetPage)\n            TryShellAction(\"access_active_route\"", apply);
         Assert.Contains("_navigationService.RefreshCurrentEntry()", apply);
     }
 
