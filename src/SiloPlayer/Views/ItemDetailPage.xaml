@@ -1276,6 +1276,13 @@
                         </ScrollView>
                     </StackPanel>
 
+                    <StackPanel x:Name="BoxSetSection" Visibility="Collapsed" Spacing="12">
+                        <Grid><TextBlock x:Name="BoxSetTitle" FontSize="20" TextWrapping="Wrap" Margin="0,0,100,0"/><Button Content="View all" HorizontalAlignment="Right" Click="BoxSetViewAll_Click"/></Grid>
+                        <ScrollViewer x:Name="BoxSetScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="BoxSetMovies" Orientation="Horizontal" Spacing="16"/>
+                        </ScrollViewer>
+                    </StackPanel>
+
                     <!-- More Like This section -->
                     <StackPanel x:Name="SimilarSection" Visibility="Collapsed" Spacing="20">
                         <TextBlock Text="More Like This" Style="{StaticResource TitleTextStyle}" FontSize="20" />

@@ -5,14 +5,18 @@ namespace SiloPlayer.Helpers;
 
 public sealed record ItemDetailNavigationArgs(string ContentId, int? LibraryId = null);
 
+public sealed record BoxSetNavigationArgs(string Id, string LibraryId);
+
 public static class MediaNavigationContext
 {
     public static int? LibraryId(DependencyObject source)
     {
         for (DependencyObject? node = source; node != null; node = VisualTreeHelper.GetParent(node))
         {
+            if (node is FrameworkElement { Tag: ItemDetailNavigationArgs scoped }) return scoped.LibraryId;
             if (node is LibraryPage library) return library.ViewModel.Library?.Id;
             if (node is CollectionBrowsePage collection) return collection.CurrentLibraryId;
+            if (node is BoxSetPage boxSet) return boxSet.CurrentLibraryId;
             if (node is ItemDetailPage detail) return detail.ViewModel.LibraryId;
         }
         return null;

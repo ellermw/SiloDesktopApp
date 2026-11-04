@@ -169,7 +169,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 Program.Log("PASS: same-session/file room attachment and departure refresh native version permissions; its explanation appears once.");
                 return;
             }
-            if (mode == "terminal")
+            if (mode.StartsWith("terminal", StringComparison.Ordinal))
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
                 await Open();
@@ -178,6 +178,22 @@ internal static class PlaybackQualityMenuNativeFixture
                 Call(service, "EnterPlaybackTerminalState", new InvalidOperationException("Synthetic interrupted playback"),
                     0d, "quality-fixture", true, manager.CurrentSession);
                 await Until(() => Menu(service) == null, "Terminal failure did not retire the existing menu.");
+                if (mode != "terminal")
+                {
+                    var terminalFile = (long)Get(service, "_playbackFileGeneration")!;
+                    Call(service, "OnScriptMessage", (object)(mode == "terminal-legacy-version"
+                        ? new[] { "silo-version-select", "71" } : new[] { "silo-quality-select", "720p" }));
+                    var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    window.DispatcherQueue.TryEnqueue(() => dispatched.TrySetResult());
+                    await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    await Task.Delay(250); await Query();
+                    Require(Get(service, "_playbackTerminalState") != null && wire.Qualities.IsEmpty && wire.Files.Count == 1 &&
+                        (long)Get(service, "_playbackFileGeneration")! == terminalFile && !service.IsLoading &&
+                        !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                        "A delayed legacy selection replanned or claimed busy state above terminal Retry/Exit.");
+                    Program.Log($"PASS: actual {mode} delivered after terminal failure leaves the accepted file, busy state and Retry/Exit intact.");
+                    return;
+                }
                 Call(service, "SendQualityInfoToOsc");
                 await Task.Delay(100);
                 var currentOwner = Get(service, "_nativeMenuOwner") ?? initialOwner;
