@@ -9,8 +9,12 @@ public partial class PlayerService
     internal SubtitleOperationOwner? CaptureSubtitleOperationOwner(PlaybackStartResponse session)
     {
         var manager = _playbackManager;
-        if (manager == null || !ReferenceEquals(session, manager.CurrentSession)) return null;
-        return new(this, _activeAuthority, manager, session);
+        if (manager == null) return null;
+        lock (manager.SubtitleInventorySyncRoot)
+        {
+            if (!ReferenceEquals(manager, _playbackManager) || !ReferenceEquals(session, manager.CurrentSession)) return null;
+            return new(this, _activeAuthority, manager, session);
+        }
     }
 
     internal sealed class SubtitleOperationOwner
@@ -22,6 +26,7 @@ public partial class PlayerService
         private readonly long _playGeneration;
         private readonly string? _content;
         private readonly int _mediaFileId;
+        private readonly long _mediaFileLifetimeGeneration;
         private readonly CancellationToken _token;
         private PlaybackStartResponse _session;
 
@@ -32,6 +37,7 @@ public partial class PlayerService
             _identity = authority.ApiClient.CaptureIdentityContext();
             _playGeneration = Volatile.Read(ref player._playRequestGeneration);
             _content = player.ContentId; _mediaFileId = session.MediaFileId;
+            _mediaFileLifetimeGeneration = manager.MediaFileLifetimeGeneration;
             _token = player._authorityLifetimeCts.Token;
         }
 
@@ -48,13 +54,17 @@ public partial class PlayerService
         {
             get
             {
-                if (!Stable) return false;
-                var previous = Volatile.Read(ref _session);
-                var current = _manager.CurrentSession;
-                if (current == null || current.MediaFileId != _mediaFileId) return false;
-                Interlocked.CompareExchange(ref _session, current, previous);
-                return Stable && ReferenceEquals(current, _manager.CurrentSession) &&
-                    ReferenceEquals(current, Volatile.Read(ref _session));
+                lock (_manager.SubtitleInventorySyncRoot)
+                {
+                    if (!Stable || _mediaFileLifetimeGeneration != _manager.MediaFileLifetimeGeneration) return false;
+                    var previous = Volatile.Read(ref _session);
+                    var current = _manager.CurrentSession;
+                    if (current == null || current.MediaFileId != _mediaFileId) return false;
+                    Interlocked.CompareExchange(ref _session, current, previous);
+                    return Stable && _mediaFileLifetimeGeneration == _manager.MediaFileLifetimeGeneration &&
+                        ReferenceEquals(current, _manager.CurrentSession) &&
+                        ReferenceEquals(current, Volatile.Read(ref _session));
+                }
             }
         }
 

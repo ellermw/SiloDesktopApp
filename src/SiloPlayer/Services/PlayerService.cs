@@ -7872,7 +7872,7 @@ public partial class PlayerService : IDisposable
                 // A same-file reload may have captured the temporary buffer
                 // pause. Its eventual FILE_LOADED must not reinstate it.
                 if (_switchingContent || IsLoading) _restorePausedAfterLoad = false;
-                if (_mpv?.IsPaused == true) _mpv.Play();
+                else if (_mpv?.IsPaused == true) _mpv.Play();
             }
             _resumeAfterLiveSubtitleBuffer = false;
         }

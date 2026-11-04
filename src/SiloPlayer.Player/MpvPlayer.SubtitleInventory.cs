@@ -37,7 +37,10 @@ public sealed partial class MpvPlayer
     }
 
     /// <summary>Actual subtitle IDs, including sidecars, for verifying sub-add.</summary>
-    public IReadOnlyList<int> GetSubtitleTrackIds(bool externalOnly = false)
+    public IReadOnlyList<int> GetSubtitleTrackIds(bool externalOnly = false) => GetSubtitleTrackIds(externalOnly, null);
+
+    /// <summary>Optionally restricts IDs to the exact local path supplied to sub-add.</summary>
+    public IReadOnlyList<int> GetSubtitleTrackIds(bool externalOnly, string? externalFilename)
     {
         ThrowIfNotInitialized();
         using var lease = EnterNative();
@@ -47,7 +50,8 @@ public sealed partial class MpvPlayer
         for (var i = 0; i < count; i++)
         {
             if (GetString($"track-list/{i}/type") != "sub" ||
-                externalOnly && GetString($"track-list/{i}/external") != "yes") continue;
+                externalOnly && GetString($"track-list/{i}/external") != "yes" ||
+                externalFilename != null && !string.Equals(GetString($"track-list/{i}/external-filename"), externalFilename, StringComparison.OrdinalIgnoreCase)) continue;
             if (mpv_get_property_int(_mpvHandle, $"track-list/{i}/id", MPV_FORMAT_INT64, out var id) >= 0 && id > 0)
                 ids.Add(checked((int)id));
         }

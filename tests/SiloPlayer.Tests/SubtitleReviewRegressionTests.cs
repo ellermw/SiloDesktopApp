@@ -7,16 +7,25 @@ public sealed class SubtitleReviewRegressionTests
     {
         var owner = Read("PlayerService.SubtitleOperationOwner.cs");
         var ai = Between(owner, "internal bool IsCurrentForAi", "internal bool CanUseSession");
-        Assert.Contains("if (!Stable) return false;", ai);
+        Assert.Contains("if (!Stable || _mediaFileLifetimeGeneration != _manager.MediaFileLifetimeGeneration) return false;", ai);
         Assert.Contains("current.MediaFileId != _mediaFileId", ai);
         Assert.Contains("Interlocked.CompareExchange(ref _session, current, previous)", ai);
+        Assert.True(ai.IndexOf("lock (_manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal) <
+            ai.IndexOf("if (!Stable ||", StringComparison.Ordinal));
         Assert.Contains("ReferenceEquals(current, _manager.CurrentSession)", ai);
         Assert.Contains("internal bool IsCurrent => Stable && ReferenceEquals", owner);
+        Assert.Contains("_mediaFileLifetimeGeneration == _manager.MediaFileLifetimeGeneration", owner);
+        var capture = Between(owner, "internal SubtitleOperationOwner? CaptureSubtitleOperationOwner", "internal sealed class SubtitleOperationOwner");
+        var captureGate = capture.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        var expected = capture.IndexOf("!ReferenceEquals(session, manager.CurrentSession)", StringComparison.Ordinal);
+        var receipt = capture.IndexOf("return new(this, _activeAuthority, manager, session);", StringComparison.Ordinal);
+        Assert.True(captureGate >= 0 && expected > captureGate && receipt > expected);
         var service = Read("PlayerService.cs");
         var live = Between(service, "private void ApplySubtitleTranslationCues(", "private void SendTranslationBufferingState(");
         Assert.DoesNotContain("_liveSubtitleOperationOwner?.IsCurrent == false", live);
         Assert.Contains("_liveSubtitleOperationOwner?.IsCurrentForAi == false", live);
         Assert.Contains("if (_switchingContent || IsLoading) _restorePausedAfterLoad = false;", live);
+        Assert.Contains("else if (_mpv?.IsPaused == true) _mpv.Play();", live);
         var overlay = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
         Assert.Contains("bool currentOwner() => operationOwner.IsCurrentForAi;", overlay);
     }
@@ -75,18 +84,20 @@ public sealed class SubtitleReviewRegressionTests
     public void CorrectedCueFailureCannotBorrowThePreviousSidOrCommitTiming()
     {
         var reload = Reload();
-        Assert.Contains("var previousIds = _mpv.GetSubtitleTrackIds().ToHashSet();", reload);
-        Assert.Contains("var added = _mpv.AddSubtitle", reload);
+        Assert.Contains("var previousIds = mpv.GetSubtitleTrackIds().ToHashSet();", reload);
+        Assert.Contains("var added = mpv.AddSubtitle", reload);
         Assert.Contains("select: false", reload);
         Assert.Contains("Where(id => !previousIds.Contains(id)).ToArray()", reload);
-        var verified = reload.IndexOf("if (!added || newIds.Length != 1)", StringComparison.Ordinal);
-        var selected = reload.IndexOf("!= newIds[0])", StringComparison.Ordinal);
-        var rollback = reload.IndexOf("if (!loaded)", StringComparison.Ordinal);
+        Assert.Contains("externalFilename: path", reload);
+        var verified = reload.IndexOf("if (!added || newSid <= 0 || !SameFile() || !SyncCurrent(ct))", StringComparison.Ordinal);
+        var selected = reload.IndexOf("!= newSid)", StringComparison.Ordinal);
+        var rollback = reload.IndexOf("if (!loaded && SameFile())", StringComparison.Ordinal);
         var map = reload.IndexOf("_loadedExternalSubtitleSids[index] = newSid;", StringComparison.Ordinal);
         var timing = reload.IndexOf("entry.LastAppliedTiming = timing;", StringComparison.Ordinal);
         Assert.True(verified >= 0 && selected > verified && rollback > selected && map > rollback && timing > map);
-        Assert.Contains("foreach (var addedSid in newIds) _mpv.RemoveSubtitle(addedSid);", reload);
-        Assert.Contains("_mpv.SetSubtitleTrack(previousSid);", reload);
+        Assert.Contains("if (newSid > 0) mpv.RemoveSubtitle(newSid);", reload);
+        Assert.Contains("if (newSid > 0 && selectedSid == newSid) mpv.SetSubtitleTrack(previousSid);", reload);
+        Assert.DoesNotContain("foreach (var addedSid in newIds)", reload);
         Assert.Contains("entry.Error = \"Timing changed, but the new cues couldn't load.", reload);
     }
 

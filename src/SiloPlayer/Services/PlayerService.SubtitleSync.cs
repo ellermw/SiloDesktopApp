@@ -413,30 +413,39 @@ public partial class PlayerService
                 if (!SyncCurrent(ct) || entry.State.Timing != timing || !IsActiveSyncKey(state.Key) || _mpv == null) return;
                 var index = pair.Value.Track.Index;
                 _loadedExternalSubtitleSids.TryGetValue(index, out var oldSid);
-                var previousSid = (int)Math.Round(_mpv.GetPropertyDouble("sid"));
-                var previousIds = _mpv.GetSubtitleTrackIds().ToHashSet();
-                // Do not let a failed add borrow the currently selected SID.
-                var added = _mpv.AddSubtitle(path, pair.Value.Track.Label, pair.Value.Track.Language, select: false);
-                var newIds = _mpv.GetSubtitleTrackIds(externalOnly: true).Where(id => !previousIds.Contains(id)).ToArray();
+                var mpv = _mpv;
+                var session = _playbackManager?.CurrentSession;
+                var fileGeneration = Volatile.Read(ref _fileLoadGeneration);
+                bool SameFile() => ReferenceEquals(mpv, _mpv) && ReferenceEquals(session, _playbackManager?.CurrentSession) &&
+                    fileGeneration == Volatile.Read(ref _fileLoadGeneration);
+                var previousSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+                var previousIds = mpv.GetSubtitleTrackIds().ToHashSet();
+                // The inventory delta may include an unrelated native async add.
+                // Only this unique, newly generated local path proves our SID.
+                var added = mpv.AddSubtitle(path, pair.Value.Track.Label, pair.Value.Track.Language, select: false);
+                var ownedIds = mpv.GetSubtitleTrackIds(externalOnly: true, externalFilename: path)
+                    .Where(id => !previousIds.Contains(id)).ToArray();
+                var newSid = ownedIds.Length == 1 ? ownedIds[0] : 0;
                 var loaded = false;
                 try
                 {
-                    if (!added || newIds.Length != 1)
+                    if (!added || newSid <= 0 || !SameFile() || !SyncCurrent(ct))
                         throw new InvalidDataException("Corrected subtitle did not load.");
-                    _mpv.SetSubtitleTrack(newIds[0]);
-                    if ((int)Math.Round(_mpv.GetPropertyDouble("sid")) != newIds[0])
+                    mpv.SetSubtitleTrack(newSid);
+                    if ((int)Math.Round(mpv.GetPropertyDouble("sid")) != newSid)
                         throw new InvalidDataException("Corrected subtitle did not select.");
                     loaded = true;
                 }
                 finally
                 {
-                    if (!loaded)
+                    if (!loaded && SameFile())
                     {
-                        foreach (var addedSid in newIds) _mpv.RemoveSubtitle(addedSid);
-                        _mpv.SetSubtitleTrack(previousSid);
+                        var selectedSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+                        if (newSid > 0) mpv.RemoveSubtitle(newSid);
+                        // A successor's native selection is not ours to undo.
+                        if (newSid > 0 && selectedSid == newSid) mpv.SetSubtitleTrack(previousSid);
                     }
                 }
-                var newSid = newIds[0];
                 _loadedExternalSubtitleSids[index] = newSid;
                 if (oldSid > 0 && oldSid != newSid && previousIds.Contains(oldSid)) _mpv.RemoveSubtitle(oldSid);
                 _subtitleSyncFiles.Add(path); path = null;

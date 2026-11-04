@@ -10,7 +10,7 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Player;
 using SiloPlayer.Services;
 
-internal static class SubtitleIdentityNativeFixture
+internal static partial class SubtitleIdentityNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent, bool unresolvedOnly = false, bool regionalOnly = false)
     {
@@ -20,6 +20,11 @@ internal static class SubtitleIdentityNativeFixture
             "presentation-ai-prefetch" or "presentation-ai-prefetch-access" or "presentation-ai-cues" or "presentation-ai-cues-access";
         var presentationOnly = aiCallback || presentation is "presentation-flyout" or "presentation-osc" or "presentation-ai-menu" or "presentation-ai-dialog" or "presentation-ai-profile" or "presentation-ai-access";
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
+        if (presentation is "review-ai-load" or "review-ai-timeout-load" or "review-ai-aba" or "review-ai-same-file" or "review-owned-foreign-grant" or "review-cue-owned-cleanup" or "review-cue-positive")
+        {
+            await ReviewOwnershipAsync(assets, presentation);
+            return;
+        }
         if (presentation is "preplay-legacy" or "preplay-legacy-retired")
         {
             await LegacyPrePlayAsync(assets, presentation == "preplay-legacy-retired");
@@ -1178,10 +1183,28 @@ internal static class SubtitleIdentityNativeFixture
                     mp.commandv('script-message', 'silo-ai-replan-ready')
                     """);
                 Call(mpv, "Command", (object)new[] { "load-script", probe });
+                var readyDeadline = DateTime.UtcNow.AddSeconds(4);
                 await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 mpv.Play();
+                while (mpv.IsPaused && DateTime.UtcNow < readyDeadline) await Task.Delay(10);
+                Require(!mpv.IsPaused, "AI replan setup did not observe actual playing state within its readiness budget.");
                 var owner = Call(service, "CaptureSubtitleOperationOwner", session)!;
+                // Establish Begin's downstream buffer state in this fixture's
+                // owned directory, rather than writing the installed app's
+                // LocalApplicationData/live-subtitles directory.
+                var isolatedLivePath = Path.Combine(Program.ResultDirectory, "ai-replan-owned-" + afterBuffer + retirement + ".vtt");
+                await File.WriteAllTextAsync(isolatedLivePath, "WEBVTT\n\n");
+                Set(service, "_liveSubtitlePath", isolatedLivePath);
+                Set(service, "_liveSubtitleJobId", 77L); Set(service, "_liveSubtitleFileId", 42);
+                Set(service, "_liveSubtitleOperationOwner", owner);
+                Set(service, "_liveSubtitleFileLoadGeneration", Get(service, "_fileLoadGeneration"));
+                Set(service, "_preLiveSubtitleSid", Math.Max(0, (int)Math.Round(mpv.GetPropertyDouble("sid"))));
+                Set(service, "_resumeAfterLiveSubtitleBuffer", true);
+                Set(service, "_liveSubtitleResumeCts", new CancellationTokenSource());
+                mpv.Pause();
+                Call(service, "SendTranslationBufferingState", true, "French AI");
                 Call(service, "PrepareLiveSubtitleTranslationForOwner", 77L, 42, "fr", "French AI", owner);
+                while (!mpv.IsPaused && DateTime.UtcNow < readyDeadline) await Task.Delay(10);
                 Require(mpv.IsPaused && (bool)Get(service, "_resumeAfterLiveSubtitleBuffer")!, "AI replan fixture did not establish its temporary buffering pause.");
                 var bufferToken = ((CancellationTokenSource)Get(service, "_liveSubtitleResumeCts")!).Token;
                 var livePath = (string)Get(service, "_liveSubtitlePath")!;
@@ -1510,6 +1533,7 @@ internal static class SubtitleIdentityNativeFixture
         public byte[]? MediaBytes;
         public int Requests;
         public Func<Task>? BeforeSubtitleResponse;
+        public Func<Task>? BeforeMediaResponse;
         public SubtitleServer(byte[] bytes)
         {
             var reserve = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0); reserve.Start();
@@ -1524,6 +1548,7 @@ internal static class SubtitleIdentityNativeFixture
                     Interlocked.Increment(ref Requests);
                     if (request.Request.Url?.AbsolutePath == "/media.mkv" && MediaBytes is { } media)
                     {
+                        if (BeforeMediaResponse != null) await BeforeMediaResponse();
                         var start = long.Parse((request.Request.Headers["Range"] ?? "bytes=0-").Split('=')[1].Split('-')[0]);
                         if (start >= media.Length) { request.Response.StatusCode = 416; request.Response.Close(); continue; }
                         request.Response.StatusCode = 206;
@@ -1554,6 +1579,7 @@ internal static class SubtitleIdentityNativeFixture
         public int AiStarts;
         public Func<Task>? BeforeAiStatus;
         public Func<Task>? BeforeAiStart, BeforeAiJob, BeforeAiInventory;
+        public int? ReplanFileId;
         public int AiJobReads, AiInventoryReads;
         public long? AiResultSubtitleId;
         public JsonElement? AiStartRequest;
@@ -1612,7 +1638,7 @@ internal static class SubtitleIdentityNativeFixture
                         playback_plan = new
                         {
                             plan_id = $"initial-{Replans}", plan_attempt_key = "key", session_id = "fresh-preplay",
-                            effective_media_file_id = 42, delivery = "original_http", active_quality = "original",
+                            effective_media_file_id = path.EndsWith("/replan") ? ReplanFileId ?? 42 : 42, delivery = "original_http", active_quality = "original",
                             stream = new { url = InitialPlaybackUrl }, timeline = new { can_seek_anywhere = true },
                             source = new { duration_seconds = 60 },
                             selected_tracks = new { audio = new { id = "file:42:audio:0", index = 0 } },

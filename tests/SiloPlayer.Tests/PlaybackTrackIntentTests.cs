@@ -8,6 +8,29 @@ namespace SiloPlayer.Tests;
 
 public sealed class PlaybackTrackIntentTests
 {
+    [Fact]
+    public async Task MediaFileLifetimeRetiresAcrossDepartureAndReturnButNotSameFileReplans()
+    {
+        using var scope = new Fixture();
+        Assert.Equal(0, scope.Manager.MediaFileLifetimeGeneration);
+        await scope.Manager.StartSessionAsync(42);
+        var first = scope.Manager.MediaFileLifetimeGeneration;
+        Assert.True(first > 0);
+        await scope.Manager.ReplanQualityAsync("720p", 12);
+        Assert.Equal(first, scope.Manager.MediaFileLifetimeGeneration);
+        await scope.Manager.StartReplacementSessionAsync(42, 13);
+        Assert.Equal(first, scope.Manager.MediaFileLifetimeGeneration);
+        await scope.Manager.StartReplacementSessionAsync(44, 14);
+        var departed = scope.Manager.MediaFileLifetimeGeneration;
+        Assert.True(departed > first);
+        await scope.Manager.StartReplacementSessionAsync(42, 15);
+        Assert.True(scope.Manager.MediaFileLifetimeGeneration > departed);
+        var returned = scope.Manager.MediaFileLifetimeGeneration;
+        await scope.Manager.StopSessionAsync();
+        Assert.Null(scope.Manager.CurrentSession);
+        Assert.True(scope.Manager.MediaFileLifetimeGeneration > returned);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(null)]

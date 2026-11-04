@@ -53,10 +53,23 @@ public partial class PlaybackManager : IDisposable
     public string? SessionId => _sessionId;
     public WatchDetailResponse? WatchDetail { get; private set; }
     private PlaybackStartResponse? _currentSession;
+    private long _mediaFileLifetimeGeneration;
+    /// <summary>Changes when the accepted media file departs, including a later return to the same ID.</summary>
+    public long MediaFileLifetimeGeneration
+    {
+        get { lock (_trackIntentGate) return _mediaFileLifetimeGeneration; }
+    }
     public PlaybackStartResponse? CurrentSession
     {
         get { lock (_trackIntentGate) return _currentSession; }
-        private set { lock (_trackIntentGate) _currentSession = value; }
+        private set
+        {
+            lock (_trackIntentGate)
+            {
+                if (_currentSession?.MediaFileId != value?.MediaFileId) _mediaFileLifetimeGeneration++;
+                _currentSession = value;
+            }
+        }
     }
     public string? StreamUrl { get; private set; }
     public string QualityPreference => _qualityPreferenceV3;
