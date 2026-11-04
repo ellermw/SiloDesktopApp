@@ -19,7 +19,12 @@ public sealed class SubtitleIdentityTests
         var rejectionEnd = method.IndexOf("        try\n", rejectionStart, StringComparison.Ordinal);
         Assert.True(rejectionStart >= 0 && rejectionEnd > rejectionStart);
         var refusal = method[rejectionStart..rejectionEnd];
-        Assert.Contains("var recoverTransport = transportPreparationAttempted || !ReferenceEquals(manager.CurrentSession, session);", refusal);
+        Assert.Contains("var recoverTransport = transportPreparationAttempted || subtitlePlanAdopted;", refusal);
+        Assert.DoesNotContain("!ReferenceEquals(manager.CurrentSession, session)", refusal);
+        var adoptedPlan = method.IndexOf("replanned = replacement;", StringComparison.Ordinal);
+        var ownedPlan = method.IndexOf("subtitlePlanAdopted = true;", adoptedPlan, StringComparison.Ordinal);
+        Assert.True(adoptedPlan >= 0 && ownedPlan > adoptedPlan);
+        Assert.Contains("if (!CurrentOwner() || manager.CurrentSession != replanned) return SubtitleTransportResult.Superseded;", method[adoptedPlan..ownedPlan]);
         var rollbackCall = refusal.IndexOf("RefuseTentativeSubtitleSelection(preserveTransportForRecovery: recoverTransport);", StringComparison.Ordinal);
         var retained = refusal.IndexOf("if (!recoverTransport) return refusal;", StringComparison.Ordinal);
         var recovery = refusal.IndexOf("_ = RunStreamRecoveryAsync(", StringComparison.Ordinal);

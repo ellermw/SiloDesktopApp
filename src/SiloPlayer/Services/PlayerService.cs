@@ -5290,6 +5290,7 @@ public partial class PlayerService : IDisposable
         int? requestedIndex = track?.Index;
         var transportMutationAttempted = false;
         var transportPreparationAttempted = false;
+        var subtitlePlanAdopted = false;
         var loadStarted = false;
         var reconcileDeferredSelection = false;
         await _transportRestartGate.WaitAsync(ct).ConfigureAwait(false);
@@ -5352,7 +5353,10 @@ public partial class PlayerService : IDisposable
             // A prior retry may have adopted a plan without loading it, or
             // preparation may already have stopped the outgoing stream's proxies.
             // Only an unchanged, unprepared transport is safe to resume.
-            var recoverTransport = transportPreparationAttempted || !ReferenceEquals(manager.CurrentSession, session);
+            // A concurrent quality/audio grant can replace CurrentSession while
+            // this request is rejected before adoption. Its pending native load
+            // owns recovery and pause; only our own accepted plan requires repair.
+            var recoverTransport = transportPreparationAttempted || subtitlePlanAdopted;
             if (!loadStarted)
                 RefuseTentativeSubtitleSelection(preserveTransportForRecovery: recoverTransport);
             if (!recoverTransport) return refusal;
@@ -5406,6 +5410,7 @@ public partial class PlayerService : IDisposable
                 }
                 replanned = replacement;
                 if (!CurrentOwner() || manager.CurrentSession != replanned) return SubtitleTransportResult.Superseded;
+                subtitlePlanAdopted = true;
                 // The returned inventory may have rebound the same intent to a
                 // different combined index. Bound retries using that inventory.
                 _subtitleReplanAttempt = new(replanned, manager.SubtitleSelectionForLoad);
