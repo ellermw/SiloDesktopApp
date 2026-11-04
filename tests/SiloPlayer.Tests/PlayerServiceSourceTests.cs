@@ -1350,9 +1350,13 @@ public sealed class PlayerServiceSourceTests
         Assert.InRange(persist.IndexOf("position = CurrentMediaPosition;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
         Assert.Contains("CompleteExecutedSubtitleSelectionAsync(choice, track)", persist);
         var lifecycle = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SubtitleSelection.cs"));
-        Assert.Contains("Interlocked.Exchange(ref owner.PreferenceClaimed, 1)", lifecycle);
+        Assert.Contains("Interlocked.CompareExchange(ref owner.PreferenceClaimed, 1, 0)", lifecycle);
+        Assert.Contains("Volatile.Write(ref owner.PreferenceClaimed, 0)", lifecycle);
         Assert.Contains("ReferenceEquals(owner, Volatile.Read(ref _subtitleSelectionOperation))", lifecycle);
-        Assert.Contains("SaveExecutedSubtitlePreferenceAsync(owner.PreferenceOwner with { Token = sendLifetime.Token }, applied)", lifecycle);
+        Assert.Contains("SaveExecutedSubtitlePreferenceAsync(owner.PreferenceOwner, applied)", lifecycle);
+        Assert.DoesNotContain("CreateLinkedTokenSource(owner.Token", lifecycle);
+        Assert.Contains("await _subtitlePreferenceSaveGate.WaitAsync(owner.Token)", source);
+        Assert.Contains("ProtocolVersion >= 3 ? track.NativeTitle : track.Label", source);
         Assert.DoesNotContain("using var subtitleChoice", persist);
         var byIndex = source[source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
         var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarAsync(track)", StringComparison.Ordinal);

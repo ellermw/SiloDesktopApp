@@ -27,6 +27,15 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     }
     internal static async Task RunAsync(StackPanel parent)
     {
+        var only = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_OWNERSHIP_CASE") ?? "";
+        if (only.Length > 0)
+        {
+            if (only is not ("applied-newer-busy" or "applied-newer-applied" or "applied-failed-retry" or "applied-raw-labels"))
+                throw new InvalidOperationException("Unknown applied preference scope.");
+            await CheckAppliedPreferenceAsync(only["applied-".Length..]);
+            Program.Log("PASS: applied subtitle preference " + only);
+            return;
+        }
         var failures = new List<string>();
         foreach (var scenario in new[] { "newer-off", "newer-track", "reload-gap", "manual-reload-gap", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-retired-with-prior", "load-start-retired-newer-off", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
         {
@@ -49,7 +58,97 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: " + scenario + ": " + ex); }
         }
+        foreach (var scenario in new[] { "newer-busy", "newer-applied", "failed-retry", "raw-labels" })
+        {
+            try
+            {
+                await CheckAppliedPreferenceAsync(scenario);
+                Program.Log("PASS: applied subtitle preference " + scenario);
+            }
+            catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: " + scenario + ": " + ex); }
+        }
         if (failures.Count != 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
+
+    private static async Task CheckAppliedPreferenceAsync(string scenario)
+    {
+        using var subtitles = new HeldSubtitleServer(false) { BusyResponses = 100 };
+        subtitles.Release.TrySetResult();
+        using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
+        using var service = new PlayerService(playback, catalog, auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "applied-preference-" + scenario)), new SettingsApi(api));
+        using var manager = new PlaybackManager(playback, catalog, auth, api);
+        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [Version()] }); await manager.StartSessionAsync(42);
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+        Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "movie");
+        var wave = Path.Combine(Program.ResultDirectory, "applied-preference-" + scenario + ".wav"); WriteWave(wave);
+        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", wave));
+        mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0); service.SetPaused(true);
+        try
+        {
+            var spanish = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+            if (scenario == "raw-labels")
+            {
+                spanish.NativeTitle = null; spanish.Label = "spa";
+                await service.SetSubtitleTrackAndPersistAsync(1, spanish.Language, spanish);
+                spanish.NativeTitle = "Server title"; spanish.Label = "Display only";
+                await service.SetSubtitleTrackAndPersistAsync(1, spanish.Language, spanish);
+                manager.CurrentSession.ProtocolVersion = 2;
+                spanish.NativeTitle = null; spanish.Label = "Legacy title";
+                await service.SetSubtitleTrackAndPersistAsync(1, spanish.Language, spanish);
+                Require(wire.RequestedLabels.SequenceEqual(new string?[] { null, "Server title", "Legacy title" }),
+                    "Saved signatures must use the raw v3 label (including null), while preserving legacy labels.");
+                return;
+            }
+            wire.FailNextPreference = scenario == "failed-retry";
+            wire.HoldNextPreference = scenario != "failed-retry";
+            var first = service.SetSubtitleTrackAndPersistAsync(1, spanish.Language, spanish);
+            if (scenario == "failed-retry")
+            {
+                await first.WaitAsync(TimeSpan.FromSeconds(4));
+                var choice = Get(service, "_subtitleSelectionOperation")!;
+                Require(wire.CommittedPreferences.IsEmpty && service.ActiveSubtitleServerIndex == 1 &&
+                    (int)choice.GetType().GetField("PreferenceClaimed")!.GetValue(choice)! == 0,
+                    "A failed preference write consumed its retry claim or undid applied captions.");
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, false)!;
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, false)!;
+                Require(wire.RequestedPreferences.SequenceEqual(new[] { 1, 1 }) && wire.CommittedPreferences.SequenceEqual(new[] { 1 }),
+                    "The failed applied preference must retry successfully once, without duplicate successful saves.");
+                return;
+            }
+            await wire.PreferenceEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            var priorSid = mpv.GetPropertyDouble("sid");
+            Require(priorSid > 0 && service.ActiveSubtitleServerIndex == 1 && !first.IsCompleted,
+                "The held preference must belong to a verified, already applied choice.");
+            var newer = (Task)Call(service, "SelectSubtitleByServerIndexAsync", scenario == "newer-busy" ? 0 : -1, true)!;
+            if (scenario == "newer-busy")
+            {
+                await newer.WaitAsync(TimeSpan.FromSeconds(6));
+                Require(service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") == priorSid && !first.IsCompleted &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
+                    "A refused newer pick canceled or replaced the applied preference's in-flight save.");
+            }
+            else
+            {
+                await Until(() => service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0);
+                Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && !newer.IsCompleted &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
+                    "A newer executed preference must wait behind the earlier dispatched write.");
+            }
+            wire.PreferenceRelease.TrySetResult();
+            await Task.WhenAll(first, newer).WaitAsync(TimeSpan.FromSeconds(4));
+            Require(wire.CommittedPreferences.SequenceEqual(scenario == "newer-busy" ? new[] { 1 } : new[] { 1, -1 }),
+                "Applied preference writes were lost or committed out of execution order.");
+        }
+        finally
+        {
+            wire.PreferenceRelease.TrySetResult();
+            Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+        }
     }
 
     internal static async Task RunBusyAsync(StackPanel parent)
@@ -1502,6 +1601,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     {
         public int PreferenceWrites;
         public ConcurrentQueue<int> RequestedPreferences = new();
+        public ConcurrentQueue<int> CommittedPreferences = new();
+        public ConcurrentQueue<string?> RequestedLabels = new();
+        public bool HoldNextPreference, FailNextPreference;
+        public TaskCompletionSource PreferenceEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource PreferenceRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool HoldSettings;
         public bool SupportBurnInReplan;
         public bool StartsBurned;
@@ -1529,8 +1633,22 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (path.Contains("-prefs/", StringComparison.Ordinal))
             {
                 using var preference = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
-                RequestedPreferences.Enqueue(preference.RootElement.GetProperty("subtitle_track_index").GetInt32());
-                Interlocked.Increment(ref PreferenceWrites); return Json("{}");
+                var index = preference.RootElement.GetProperty("subtitle_track_index").GetInt32();
+                RequestedPreferences.Enqueue(index);
+                if (preference.RootElement.TryGetProperty("track_signature", out var signature) && signature.ValueKind == JsonValueKind.Object)
+                    RequestedLabels.Enqueue(signature.GetProperty("label").GetString());
+                Interlocked.Increment(ref PreferenceWrites);
+                if (HoldNextPreference)
+                {
+                    HoldNextPreference = false; PreferenceEntered.TrySetResult(); await PreferenceRelease.Task.WaitAsync(ct);
+                }
+                if (FailNextPreference)
+                {
+                    FailNextPreference = false;
+                    return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}") };
+                }
+                CommittedPreferences.Enqueue(index);
+                return Json("{}");
             }
             if (path.Contains("/settings/", StringComparison.Ordinal))
             {

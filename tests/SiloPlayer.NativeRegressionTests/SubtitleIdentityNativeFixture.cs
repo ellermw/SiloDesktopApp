@@ -37,6 +37,7 @@ internal static class SubtitleIdentityNativeFixture
         Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
         typeof(PlayerService).GetProperty("State")!.SetValue(service, PlayerState.Expanded);
         typeof(PlayerService).GetProperty("ContentId")!.SetValue(service, "movie");
+        CheckInitialPlayableSelection(service, manager);
         Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", Path.Combine(assets, "tracks.mkv")));
         var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         mpv.FileLoaded += () => loaded.TrySetResult(); mpv.LoadFile(Path.Combine(assets, "tracks.mkv"));
@@ -557,6 +558,45 @@ internal static class SubtitleIdentityNativeFixture
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");
         }
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
+    }
+
+    private static void CheckInitialPlayableSelection(PlayerService service, PlaybackManager manager)
+    {
+        var previous = manager.CurrentSession;
+        var version = new FileVersion { FileId = 42, SubtitleTracks = [
+            new() { Language = "eng", Codec = "srt", External = true },
+            new() { Language = "spa", Codec = "srt", External = true },
+            new() { Language = "eng", Codec = "srt", External = true },
+        ] };
+        var session = new PlaybackStartResponse { ProtocolVersion = 3, MediaFileId = 42, SubtitleUrls = [
+            new() { Index = 0, TrackId = "unavailable", Source = "external", Language = "eng", Codec = "srt", Unplayable = true },
+            new() { Index = 1, TrackId = "spanish", Source = "external", Language = "spa", Codec = "srt" },
+            new() { Index = 2, TrackId = "english", Source = "external", Language = "eng", Codec = "srt" },
+        ] };
+        typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+        try
+        {
+            foreach (var source in new[] { "external", "downloaded" })
+            {
+                Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse(), version, session, null, null,
+                    new SubtitleTrackSignature { Source = source, Language = "eng", Codec = "srt" });
+                Require(Get(service, "_pendingInitialServerSubtitleIndex") is 2 && manager.SubtitleSelectionForLoad == 2,
+                    "Saved signature selected an unavailable duplicate instead of its playable match.");
+            }
+            foreach (var (ordinal, expected) in new[] { (0, 2), (1, 1), (2, 2) })
+            {
+                Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse(), version, session, null, ordinal, null);
+                Require(Get(service, "_pendingInitialServerSubtitleIndex") is int index && index == expected && manager.SubtitleSelectionForLoad == expected,
+                    "Explicit pre-play selection chose an unavailable row or shifted an ordinal onto a different language.");
+            }
+            Program.Log("PASS: initial saved/explicit subtitle matching skips unavailable duplicates without shifting source ordinals.");
+        }
+        finally
+        {
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, previous);
+            Call(manager, "ResetLocalTrackIntent");
+            Set(service, "_pendingInitialServerSubtitleIndex", null); Set(service, "_pendingSubtitleSelection", null);
+        }
     }
 
     private static async Task ExpectUnavailableAsync(Func<Task> action)

@@ -1233,13 +1233,22 @@ public partial class PlayerService : IDisposable
         return true;
     }
 
-    private async Task SaveExecutedSubtitlePreferenceAsync(SubtitlePreferenceOwner? owner, SubtitleTrackInfo? track)
+    private readonly SemaphoreSlim _subtitlePreferenceSaveGate = new(1, 1);
+
+    private async Task<bool> SaveExecutedSubtitlePreferenceAsync(SubtitlePreferenceOwner? owner, SubtitleTrackInfo? track)
     {
-        if (owner == null || string.IsNullOrEmpty(owner.Key) || owner.Token.IsCancellationRequested ||
-            !ReferenceEquals(owner.Authority, _activeAuthority) || !ReferenceEquals(owner.Manager, _playbackManager) ||
-            !owner.Authority.ApiClient.IsCurrentContext(owner.Context)) return;
+        bool CurrentOwner() => owner != null && !string.IsNullOrEmpty(owner.Key) && !owner.Token.IsCancellationRequested &&
+            ReferenceEquals(owner.Authority, _activeAuthority) && ReferenceEquals(owner.Manager, _playbackManager) &&
+            owner.Authority.ApiClient.IsCurrentContext(owner.Context);
+        if (owner == null || !CurrentOwner()) return false;
+        var entered = false;
         try
         {
+            // Once applied, a choice's save outlives newer pending picks. Keep
+            // dispatched saves ordered so an older response cannot overwrite B.
+            await _subtitlePreferenceSaveGate.WaitAsync(owner.Token);
+            entered = true;
+            if (!CurrentOwner()) return false;
             // Mirror derivePersistedSubtitleMode: index null ("Off") → "off";
             // any explicit track → "always". "auto" is never written here —
             // it's the default when no pref exists.
@@ -1254,14 +1263,22 @@ public partial class PlayerService : IDisposable
                     Source = track.Source ?? "embedded",
                     Language = track.Language,
                     Codec = track.Codec,
-                    Label = track.Label,
+                    Label = owner.Manager?.CurrentSession?.ProtocolVersion >= 3 ? track.NativeTitle : track.Label,
                     Forced = track.Forced,
                     HearingImpaired = track.HearingImpaired,
                 },
             };
-            await owner.Authority.PlaybackApi.SaveSubtitlePrefsAsync(owner.Context, owner.Key, req, owner.Token);
+            await owner.Authority.PlaybackApi.SaveSubtitlePrefsAsync(owner.Context, owner.Key!, req, owner.Token);
+            return true;
         }
-        catch (Exception ex) { LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}");
+            if (CurrentOwner() && ReferenceEquals(track, _executedSubtitleTrack))
+                ShowNotice("Subtitle preference not saved", "Captions are still applied, but your preference could not be saved. Select the subtitle again to retry.", "warning");
+            return false;
+        }
+        finally { if (entered) _subtitlePreferenceSaveGate.Release(); }
     }
 
     private void RestorePlaybackStateAfterSubtitleChange(bool wasPaused, double position, bool allowSeek)
@@ -3676,6 +3693,7 @@ public partial class PlayerService : IDisposable
         if (explicitSignature != null)
         {
             selectedTrack = session.SubtitleUrls.FirstOrDefault(track =>
+                !track.Unplayable &&
                 (string.IsNullOrWhiteSpace(explicitSignature.Source) ||
                     string.Equals(track.Source, explicitSignature.Source, StringComparison.OrdinalIgnoreCase)) &&
                 (string.IsNullOrWhiteSpace(explicitSignature.Language) ||
@@ -3694,7 +3712,7 @@ public partial class PlayerService : IDisposable
                 string.Equals(explicitSignature.Source, "downloaded", StringComparison.OrdinalIgnoreCase))
             {
                 selectedTrack = session.SubtitleUrls.FirstOrDefault(track =>
-                    string.Equals(track.Source, "external", StringComparison.OrdinalIgnoreCase) &&
+                    !track.Unplayable && string.Equals(track.Source, "external", StringComparison.OrdinalIgnoreCase) &&
                     (string.IsNullOrWhiteSpace(explicitSignature.Language) ||
                         string.Equals(track.Language, explicitSignature.Language, StringComparison.OrdinalIgnoreCase)) &&
                     (string.IsNullOrWhiteSpace(explicitSignature.Codec) ||
@@ -3726,10 +3744,14 @@ public partial class PlayerService : IDisposable
                         .Where(track => string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase))
                         .OrderBy(track => track.Index)
                         .ElementAtOrDefault(sourceOrdinal);
+                    // Keep source ordinals stable. If that exact row is
+                    // unavailable, resolve a playable signature match instead
+                    // of shifting the ordinal onto an unrelated subtitle.
+                    if (selectedTrack?.Unplayable == true) selectedTrack = null;
                 }
 
                 selectedTrack ??= session.SubtitleUrls.FirstOrDefault(track =>
-                    string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase) &&
+                    !track.Unplayable && string.Equals(track.Source, requestedSource, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Language, requested.Language, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(track.Codec, requested.Codec, StringComparison.OrdinalIgnoreCase) &&
                     (string.IsNullOrWhiteSpace(requested.Title) ||
@@ -5355,7 +5377,7 @@ public partial class PlayerService : IDisposable
         }
 
         // Remux/HLS need the advertised complete sidecar, as do external tracks.
-        // mpv fetches it once; cached SIDs remain valid until the next file load.
+        // Add downloaded local bytes; cached SIDs last until the next file load.
         if (SelectSubtitleSidecar(track)) return true;
         _mpv.SetSubtitleTrack(previousSid);
         return false;

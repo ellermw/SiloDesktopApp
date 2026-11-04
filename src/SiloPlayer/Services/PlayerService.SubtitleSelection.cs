@@ -106,11 +106,13 @@ public partial class PlayerService
         if (owner == null || !IsCurrentSubtitleChoice(owner) || !owner.Accepted) return;
         var expected = owner.RequestedTrack == null ? null : ResolveReloadSubtitleChoice(owner.RequestedTrack, owner.SourceFile);
         if ((owner.RequestedTrack != null && expected == null) || expected?.Index != applied?.Index) return;
-        // Immediate execution and FILE_LOADED share this one claim. Claim
-        // before awaiting so repeated initializers cannot duplicate the write.
-        if (Interlocked.Exchange(ref owner.PreferenceClaimed, 1) != 0) return;
-        using var sendLifetime = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, owner.PreferenceOwner!.Token);
-        await SaveExecutedSubtitlePreferenceAsync(owner.PreferenceOwner with { Token = sendLifetime.Token }, applied);
+        // Reserve before awaiting so repeated initializers cannot duplicate an
+        // in-flight write. Only success consumes the claim; failures can retry.
+        if (Interlocked.CompareExchange(ref owner.PreferenceClaimed, 1, 0) != 0) return;
+        // A newer pending pick cancels reads, not the preference for captions
+        // already on screen. Authority/profile retirement still owns the send.
+        if (!await SaveExecutedSubtitlePreferenceAsync(owner.PreferenceOwner, applied))
+            Volatile.Write(ref owner.PreferenceClaimed, 0);
     }
 
     private SubtitleTrackInfo? ResolveReloadSubtitleChoice(SubtitleTrackInfo requested, int? sourceFile)
