@@ -16,11 +16,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "blocking-add-off", "blocking-add-native", "failed-quality-off", "failed-quality-track", "failed-audio-off", "failed-audio-track", "failed-seek-off", "failed-seek-track", "failed-quality-transport-off", "failed-quality-transport-track", "failed-audio-transport-off", "failed-audio-transport-track", "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "manual-reload-finished", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
+        foreach (var scenario in new[] { "add-selection-flags", "blocking-add-off", "blocking-add-native", "failed-quality-off", "failed-quality-track", "failed-audio-off", "failed-audio-track", "failed-seek-off", "failed-seek-track", "failed-quality-transport-off", "failed-quality-transport-track", "failed-audio-transport-off", "failed-audio-transport-track", "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "manual-reload-finished", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
         {
             try
             {
-                if (scenario.StartsWith("burn-load-", StringComparison.Ordinal) || scenario.StartsWith("burn-response-", StringComparison.Ordinal)) await CheckBurnInLoadIntentAsync(scenario);
+                if (scenario == "add-selection-flags") await CheckAddSelectionFlagsAsync();
+                else if (scenario.StartsWith("burn-load-", StringComparison.Ordinal) || scenario.StartsWith("burn-response-", StringComparison.Ordinal)) await CheckBurnInLoadIntentAsync(scenario);
                 else if (scenario.StartsWith("load-start-", StringComparison.Ordinal) || scenario.StartsWith("loaded-settings-", StringComparison.Ordinal)) await CheckLoadStartAsync(scenario);
                 else await CheckAsync(parent, scenario);
                 Program.Log("PASS: sidecar ownership " + scenario);
@@ -28,6 +29,31 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: " + scenario + ": " + ex); }
         }
         if (failures.Count != 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
+
+    private static async Task CheckAddSelectionFlagsAsync()
+    {
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        var media = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity", "tracks.mkv"));
+        mpv.LoadFile(media); await Until(() => mpv.GetPropertyDouble("duration") > 0);
+        mpv.SetProperty("pause", "yes");
+        var nativeSid = mpv.GetEmbeddedSubtitleTracks().First().Id;
+        var sidecar = Path.Combine(Program.ResultDirectory, "add-selection-flags.srt");
+        await File.WriteAllTextAsync(sidecar, "1\n00:00:00,000 --> 00:00:10,000\nSelection flag regression\n");
+        foreach (var previousSid in new[] { 0, nativeSid })
+        foreach (var title in new string?[] { null, "Selection flag regression" })
+        foreach (var select in new[] { false, true })
+        {
+            mpv.SetSubtitleTrack(previousSid);
+            var previousIds = mpv.GetSubtitleTrackIds().ToHashSet();
+            Require(mpv.AddSubtitle(sidecar, title, "eng", select), "The selection flag fixture could not add its sidecar.");
+            var addedIds = mpv.GetSubtitleTrackIds(externalOnly: true).Where(id => !previousIds.Contains(id)).ToArray();
+            Require(addedIds.Length == 1, "The selection flag fixture did not publish exactly one sidecar.");
+            Require(mpv.GetPropertyDouble("sid") == (select ? addedIds[0] : previousSid),
+                $"sub-add select={select}, title={title ?? "<none>"} did not preserve the requested selection from SID {previousSid}.");
+            mpv.RemoveSubtitle(addedIds[0]);
+        }
+        Program.Log("PASS: sub-add explicitly selects or preserves Off/native SID with and without a title.");
     }
 
     private static async Task CheckBurnInLoadIntentAsync(string scenario)

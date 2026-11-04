@@ -5727,8 +5727,12 @@ public partial class PlayerService : IDisposable
                     if (!_closing && ReferenceEquals(mpv, _mpv) &&
                         fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration))
                     {
-                        if (added && newIds.Length == 1) mpv.RemoveSubtitle(newIds[0]);
-                        if (_activeSubtitleServerIndex < 0) mpv.SetSubtitleTrack(0);
+                        // The non-selecting add leaves sid untouched. Preserve
+                        // the current SID, not a snapshot from before the add:
+                        // a newer Off/native choice may already have executed.
+                        var retainedSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+                        foreach (var addedSid in newIds) mpv.RemoveSubtitle(addedSid);
+                        mpv.SetSubtitleTrack(retainedSid);
                     }
                     return false;
                 }
