@@ -22,6 +22,44 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void RetiredAiBufferingCleansUpWithoutTouchingAReplacementLoad()
+    {
+        var service = Read("PlayerService.cs");
+        var retain = Between(service, "private bool TryRetainLiveSubtitleTranslationLocked(", "private void SendTranslationBufferingState(");
+        var jobGuard = retain.IndexOf("if (jobId <= 0 || _liveSubtitleJobId != jobId) return false;", StringComparison.Ordinal);
+        var cleanup = retain.IndexOf("ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: false);", StringComparison.Ordinal);
+        Assert.True(jobGuard >= 0 && cleanup > jobGuard);
+        Assert.Contains("_liveSubtitleOperationOwner?.IsCurrentForAi == false", retain);
+        Assert.Contains("_playbackManager?.CurrentSession?.MediaFileId != _liveSubtitleFileId", retain);
+        foreach (var (first, next) in new[]
+        {
+            ("private void ApplySubtitleTranslationCues(", "private void ApplySubtitleTranslationCompleted("),
+            ("private void ApplySubtitleTranslationCompleted(", "private void ApplySubtitleTranslationFailed("),
+            ("private void ApplySubtitleTranslationFailed(", "public void FailLiveSubtitleTranslation("),
+            ("public void FailLiveSubtitleTranslation(", "private void ResumeAfterLiveSubtitleBuffer("),
+            ("private void ResumeAfterLiveSubtitleBuffer(", "private bool TryRetainLiveSubtitleTranslationLocked("),
+        })
+            Assert.Contains("if (!TryRetainLiveSubtitleTranslationLocked(jobId)", Between(service, first, next));
+
+        var load = Between(service, "private void BeginMpvLoad(", "private void ConfigureAudioOutput(");
+        var generation = load.IndexOf("Interlocked.Increment(ref _fileLoadGeneration)", StringComparison.Ordinal);
+        var retire = load.IndexOf("TryRetainLiveSubtitleTranslationLocked(_liveSubtitleJobId);", StringComparison.Ordinal);
+        var loadFile = load.IndexOf("mpv.LoadFile(", StringComparison.Ordinal);
+        Assert.True(generation >= 0 && retire > generation && loadFile > retire);
+        var clear = Between(service, "private void ClearLiveSubtitleTranslationLocked(", "private void DeleteLiveSubtitleFileLocked(");
+        Assert.Contains("_liveSubtitleResumeCts?.Cancel();", clear);
+        Assert.Contains("_liveSubtitleResumeCts?.Dispose();", clear);
+        Assert.Contains("_liveSubtitleResumeCts = null;", clear);
+        Assert.Contains("SendTranslationBufferingState(false, null);", clear);
+        Assert.Contains("_liveSubtitleFileId == _playbackManager?.CurrentSession?.MediaFileId", clear);
+        Assert.Contains("_liveSubtitleFileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", clear);
+        Assert.Contains("if (_liveSubtitleSid > 0 && sameLoad)", clear);
+        Assert.Contains("if (restorePreviousSubtitle && sameLoad)", clear);
+        Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && sameLoad && _mpv.IsPaused)", clear);
+        Assert.Contains("_resumeAfterLiveSubtitleBuffer = false;", clear);
+    }
+
+    [Fact]
     public void CorrectedCuesAreBoundedBeforeWritingEvenWithoutAContentLength()
     {
         var reload = Reload();

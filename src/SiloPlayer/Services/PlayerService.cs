@@ -2860,6 +2860,8 @@ public partial class PlayerService : IDisposable
         var playbackToken = _playbackCts?.Token ?? CancellationToken.None;
         var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(playbackToken);
         var generation = Interlocked.Increment(ref _fileLoadGeneration);
+        lock (_liveSubtitleLock)
+            TryRetainLiveSubtitleTranslationLocked(_liveSubtitleJobId);
         _fileLoadTimeoutCts = ownerCts;
         _restorePausedAfterLoad = IsWatchTogetherPlayback ? _roomPlaybackPaused : restorePaused;
         _transportHasFirstOutput = false;
@@ -7764,7 +7766,7 @@ public partial class PlayerService : IDisposable
         lock (_subtitleAddGate)
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false || _mpv == null || string.IsNullOrWhiteSpace(_liveSubtitlePath)) return;
+            if (!TryRetainLiveSubtitleTranslationLocked(jobId) || _mpv == null || string.IsNullOrWhiteSpace(_liveSubtitlePath)) return;
             foreach (var cueElement in cuesElement.EnumerateArray())
             {
                 if (!cueElement.TryGetProperty("start", out var startEl) || !startEl.TryGetDouble(out var start) ||
@@ -7812,7 +7814,7 @@ public partial class PlayerService : IDisposable
         SubtitleOperationOwner? owner;
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
+            if (!TryRetainLiveSubtitleTranslationLocked(jobId)) return;
             owner = _liveSubtitleOperationOwner;
         }
         ResumeAfterLiveSubtitleBuffer(jobId);
@@ -7829,7 +7831,7 @@ public partial class PlayerService : IDisposable
         var message = TryGetPayloadString(payload, "message");
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
+            if (!TryRetainLiveSubtitleTranslationLocked(jobId)) return;
             ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: true);
         }
         try
@@ -7845,7 +7847,7 @@ public partial class PlayerService : IDisposable
         if (jobId <= 0) return;
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
+            if (!TryRetainLiveSubtitleTranslationLocked(jobId)) return;
             ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: true);
         }
         try
@@ -7860,7 +7862,7 @@ public partial class PlayerService : IDisposable
     {
         lock (_liveSubtitleLock)
         {
-            if (_liveSubtitleJobId != jobId || _liveSubtitleOperationOwner?.IsCurrentForAi == false) return;
+            if (!TryRetainLiveSubtitleTranslationLocked(jobId)) return;
             try { _liveSubtitleResumeCts?.Cancel(); } catch { }
             _liveSubtitleResumeCts?.Dispose();
             _liveSubtitleResumeCts = null;
@@ -7874,6 +7876,20 @@ public partial class PlayerService : IDisposable
             }
             _resumeAfterLiveSubtitleBuffer = false;
         }
+    }
+
+    // Called under _liveSubtitleLock. A retired owner must release its UI and
+    // timer state, but a late event for another job must not clear the new job.
+    private bool TryRetainLiveSubtitleTranslationLocked(long jobId)
+    {
+        if (jobId <= 0 || _liveSubtitleJobId != jobId) return false;
+        if (_liveSubtitleOperationOwner?.IsCurrentForAi == false ||
+            _playbackManager?.CurrentSession?.MediaFileId != _liveSubtitleFileId)
+        {
+            ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: false);
+            return false;
+        }
+        return true;
     }
 
     private void SendTranslationBufferingState(bool active, string? label)
@@ -8146,7 +8162,8 @@ public partial class PlayerService : IDisposable
         SendTranslationBufferingState(false, null);
         if (_mpv != null)
         {
-            var sameLoad = _liveSubtitleFileLoadGeneration == Volatile.Read(ref _fileLoadGeneration);
+            var sameLoad = _liveSubtitleFileId == _playbackManager?.CurrentSession?.MediaFileId &&
+                _liveSubtitleFileLoadGeneration == Volatile.Read(ref _fileLoadGeneration);
             if (_liveSubtitleSid > 0 && sameLoad)
             {
                 try { _mpv.RemoveSubtitle(_liveSubtitleSid); } catch { }
@@ -8155,7 +8172,7 @@ public partial class PlayerService : IDisposable
             {
                 try { _mpv.SetSubtitleTrack(_preLiveSubtitleSid); } catch { }
             }
-            if (_resumeAfterLiveSubtitleBuffer && _mpv.IsPaused)
+            if (_resumeAfterLiveSubtitleBuffer && sameLoad && _mpv.IsPaused)
             {
                 try { _mpv.Play(); } catch { }
             }

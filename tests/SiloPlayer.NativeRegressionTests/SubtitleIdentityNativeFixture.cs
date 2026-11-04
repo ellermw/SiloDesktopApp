@@ -30,6 +30,8 @@ internal static class SubtitleIdentityNativeFixture
         {
             subtitles.MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv"));
             await AiSameFileReplanAsync(assets);
+            await AiSameFileReplanAsync(assets, retirement: "load");
+            await AiSameFileReplanAsync(assets, retirement: "timeout");
             await RefreshedDownloadedSubtitlesAsync(assets);
             await RefreshedDownloadedSubtitlesAsync(assets, storedIdentity: false);
             await RefreshedDownloadedSubtitlesAsync(assets, storedIdentity: false, trackIdentity: false);
@@ -893,7 +895,9 @@ internal static class SubtitleIdentityNativeFixture
                 using var payload = JsonDocument.Parse("""{"job_id":77,"cues":[{"start":0,"end":5,"text":"owned cue"}]}""");
                 Call(service, "ApplySubtitleTranslationCues", payload.RootElement);
                 Require(current ? (await File.ReadAllTextAsync(path)).Contains("owned cue", StringComparison.Ordinal) && mpv.GetPropertyDouble("sid") > 0
-                    : await File.ReadAllTextAsync(path) == empty && mpv.GetPropertyDouble("sid") == beforeSid && (int)Get(service, "_liveSubtitleSid")! == 0,
+                    : !File.Exists(path) && (long)Get(service, "_liveSubtitleJobId")! == 0 &&
+                        Get(service, "_liveSubtitleOperationOwner") == null && Get(service, "_liveSubtitleResumeCts") == null &&
+                        mpv.GetPropertyDouble("sid") == beforeSid && (int)Get(service, "_liveSubtitleSid")! == 0,
                     "Retired live AI cues changed native subtitles/owned bytes, or access-only invalidation lost current cues.");
                 Require(mpv.IsPaused && wire.PreferenceWrites == 0, "Live AI cue ownership changed genuine pause or a saved preference.");
             }
@@ -1117,9 +1121,9 @@ internal static class SubtitleIdentityNativeFixture
         }
     }
 
-    private static async Task AiSameFileReplanAsync(string assets)
+    private static async Task AiSameFileReplanAsync(string assets, string? retirement = null)
     {
-        foreach (var afterBuffer in new[] { false, true })
+        foreach (var afterBuffer in retirement == null ? new[] { false, true } : new[] { false })
         {
             using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt")))
                 { MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv")) };
@@ -1131,7 +1135,7 @@ internal static class SubtitleIdentityNativeFixture
             using var auth = new AuthService(api, new AuthApi(api));
             using var manager = new PlaybackManager(new(api), new(api), auth, api);
             using var service = new PlayerService(new(api), new(api), auth, api,
-                new SettingsService(Path.Combine(Program.ResultDirectory, "ai-replan-" + afterBuffer)), new SettingsApi(api));
+                new SettingsService(Path.Combine(Program.ResultDirectory, "ai-replan-" + afterBuffer + retirement)), new SettingsApi(api));
             var version = new FileVersion { FileId = 42, Duration = 60, Container = "mkv", AudioTracks = [new() { Language = "eng", Default = true }] };
             manager.UseWatchDetail(new() { ContentId = "movie", Versions = [version] });
             var session = await manager.StartSessionAsync(42);
@@ -1162,7 +1166,7 @@ internal static class SubtitleIdentityNativeFixture
             mpv.ScriptMessageReceived += Observe;
             try
             {
-                var probe = Path.Combine(Program.ResultDirectory, "ai-replan-" + afterBuffer + ".lua");
+                var probe = Path.Combine(Program.ResultDirectory, "ai-replan-" + afterBuffer + retirement + ".lua");
                 await File.WriteAllTextAsync(probe, """
                     local mp = require 'mp'
                     mp.register_script_message('osc-set-translation-buffering', function(value)
@@ -1179,12 +1183,35 @@ internal static class SubtitleIdentityNativeFixture
                 var owner = Call(service, "CaptureSubtitleOperationOwner", session)!;
                 Call(service, "PrepareLiveSubtitleTranslationForOwner", 77L, 42, "fr", "French AI", owner);
                 Require(mpv.IsPaused && (bool)Get(service, "_resumeAfterLiveSubtitleBuffer")!, "AI replan fixture did not establish its temporary buffering pause.");
+                var bufferToken = ((CancellationTokenSource)Get(service, "_liveSubtitleResumeCts")!).Token;
+                var livePath = (string)Get(service, "_liveSubtitlePath")!;
                 using var cues = JsonDocument.Parse("""{"job_id":77,"cues":[{"start":0,"end":5,"text":"AI replan cue"}]}""");
                 if (afterBuffer) Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
                 var wasPaused = (bool)Call(service, "CaptureUserPausedState")!;
                 Require(!wasPaused, "An AI buffering pause was captured as viewer pause intent.");
                 var replacement = await manager.ReplanQualityAsync("720p", 0);
                 Require(!ReferenceEquals(session, replacement), "Quality replan did not replace its response object.");
+                if (retirement != null)
+                {
+                    // Model an accepted plan changing the effective file, not
+                    // merely replacing the response object for the same file.
+                    replacement.MediaFileId = 43;
+                    version.FileId = 43;
+                }
+                if (retirement == "timeout")
+                {
+                    mpv.SetSubtitleTrack(1);
+                    // Invoke the exact timer callback without a 30-second sleep.
+                    Call(service, "ResumeAfterLiveSubtitleBuffer", 77L);
+                    await cleared.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(bufferToken.IsCancellationRequested && Get(service, "_liveSubtitleResumeCts") == null &&
+                        !(bool)Get(service, "_resumeAfterLiveSubtitleBuffer")! && (long)Get(service, "_liveSubtitleJobId")! == 0 &&
+                        Get(service, "_liveSubtitleOperationOwner") == null && !File.Exists(livePath) &&
+                        mpv.IsPaused && mpv.GetPropertyDouble("sid") == 1 && (bool)Call(service, "CaptureUserPausedState")!,
+                        "Retired AI timeout left buffering/timer state or changed the replacement file's pause/SID.");
+                    Program.Log("PASS: AI timeout after MediaFileId changes clears the overlay, cancels the resume CTS and retires pause intent without touching replacement playback.");
+                    continue;
+                }
                 Call(service, "WireMpvEvents");
                 var initializationGeneration = (long)Get(service, "_loadedMediaInitGeneration")!;
                 var reloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1197,6 +1224,11 @@ internal static class SubtitleIdentityNativeFixture
                     await prepare;
                     var prepared = prepare.GetType().GetProperty("Result")!.GetValue(prepare)!;
                     Call(service, "ApplyPreparedTransport", prepared); Call(service, "BeginMpvLoad", prepared, wasPaused);
+                    if (retirement != null)
+                        Require(bufferToken.IsCancellationRequested && Get(service, "_liveSubtitleResumeCts") == null &&
+                            !(bool)Get(service, "_resumeAfterLiveSubtitleBuffer")! && (long)Get(service, "_liveSubtitleJobId")! == 0 &&
+                            Get(service, "_liveSubtitleOperationOwner") == null && !File.Exists(livePath),
+                            "Accepting a different media file did not immediately retire AI buffering and its resume CTS.");
                     await reloaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
                     var deadline = DateTime.UtcNow.AddSeconds(5);
                     while (((long)Get(service, "_loadedMediaInitGeneration")! <= initializationGeneration ||
@@ -1205,6 +1237,20 @@ internal static class SubtitleIdentityNativeFixture
                         Get(service, "_loadedMediaInitCts") == null, "AI replacement initialization did not finish.");
                 }
                 finally { service.ContentLoaded -= Reloaded; }
+                if (retirement != null)
+                {
+                    await cleared.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(!mpv.IsPaused, "AI retirement carried its temporary pause into replacement playback.");
+                    service.SetPaused(true);
+                    mpv.SetSubtitleTrack(1);
+                    Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+                    Call(service, "ResumeAfterLiveSubtitleBuffer", 77L);
+                    Require(mpv.IsPaused && mpv.GetPropertyDouble("sid") == 1 && wire.PreferenceWrites == 0 &&
+                        (bool)Call(service, "CaptureUserPausedState")! && Get(service, "_liveSubtitleResumeCts") == null,
+                        "Late retired AI callbacks changed the replacement file's SID, pause or preference.");
+                    Program.Log("PASS: accepted MediaFileId change clears AI buffering and its resume CTS before load; late callbacks preserve replacement SID and user pause.");
+                    continue;
+                }
                 Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
                 await cleared.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 Require(!mpv.IsPaused && Get(service, "_liveSubtitleResumeCts") == null,

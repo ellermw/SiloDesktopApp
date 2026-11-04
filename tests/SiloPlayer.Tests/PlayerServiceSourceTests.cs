@@ -231,7 +231,13 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("osc-set-translation-buffering", source);
         Assert.Contains("if (_resumeAfterLiveSubtitleBuffer)", source);
         Assert.Contains("_mpv.Pause();", source);
-        Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && _mpv?.IsPaused == true)", source);
+        var resumeStart = source.IndexOf("private void ResumeAfterLiveSubtitleBuffer(long jobId)", StringComparison.Ordinal);
+        var resumeEnd = source.IndexOf("private bool TryRetainLiveSubtitleTranslationLocked", resumeStart, StringComparison.Ordinal);
+        Assert.True(resumeStart >= 0 && resumeEnd > resumeStart);
+        var resume = source[resumeStart..resumeEnd];
+        Assert.Contains("if (_resumeAfterLiveSubtitleBuffer)", resume);
+        Assert.Contains("if (_mpv?.IsPaused == true) _mpv.Play();", resume);
+        Assert.Contains("_resumeAfterLiveSubtitleBuffer = false;", resume);
         Assert.Contains("public void ReloadSubtitle(int sid)", mpv);
 
         var refreshStart = source.IndexOf("public async Task RefreshSubtitlesAfterAiAsync", StringComparison.Ordinal);
@@ -923,9 +929,15 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("var wasPaused = CaptureUserPausedState();", method, StringComparison.Ordinal);
         Assert.Contains("var position = CurrentMediaPosition;", method, StringComparison.Ordinal);
         Assert.Contains("RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);", method, StringComparison.Ordinal);
+        var captureStart = source.IndexOf("private bool CaptureUserPausedState()", StringComparison.Ordinal);
+        var captureEnd = source.IndexOf("// ── State", captureStart, StringComparison.Ordinal);
+        Assert.True(captureStart >= 0 && captureEnd > captureStart);
+        var capture = source[captureStart..captureEnd];
+        Assert.Contains("lock (_liveSubtitleLock)", capture, StringComparison.Ordinal);
+        Assert.Contains("if (_liveSubtitleResumeCts != null && _resumeAfterLiveSubtitleBuffer) return false;", capture, StringComparison.Ordinal);
         Assert.Contains(
-            "=> (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;",
-            source,
+            "return (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;",
+            capture,
             StringComparison.Ordinal);
 
         var restoreStart = source.IndexOf("private void RestorePlaybackStateAfterSubtitleChange", StringComparison.Ordinal);
