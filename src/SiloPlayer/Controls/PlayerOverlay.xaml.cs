@@ -1367,17 +1367,24 @@ public sealed partial class PlayerOverlay : UserControl
             var addItem = CreatePlayerMenuButton(CreateIconLabel("\uE721", "Search Online…"));
             addItem.Click += async (_, _) =>
             {
-                var session = _playerService.Manager?.CurrentSession;
+                var manager = _playerService.Manager;
+                var session = manager?.CurrentSession;
                 if (session == null) return;
+                var searchAuthority = _playerService.ActiveAuthority;
+                var searchContext = searchAuthority.ApiClient.CaptureContext();
+                bool CurrentSearch() => ReferenceEquals(searchAuthority, _playerService.ActiveAuthority) &&
+                    searchAuthority.ApiClient.IsCurrentContext(searchContext) && ReferenceEquals(manager, _playerService.Manager) &&
+                    ReferenceEquals(session, manager?.CurrentSession);
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault()?.Language)
+                var dialog = new SubtitleSearchDialog(searchAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault()?.Language)
                 {
                     XamlRoot = XamlRoot
                 };
                 dialog.SubtitleDownloaded += async subtitleId =>
                 {
-                    await _playerService.RefreshSubtitlesAfterAiAsync(session.MediaFileId, subtitleId);
-                    PopulateSubtitleFlyout();
+                    if (!CurrentSearch()) return;
+                    await _playerService.RefreshSubtitlesAfterAiAsync(session.MediaFileId, subtitleId, CurrentSearch);
+                    if (CurrentSearch()) PopulateSubtitleFlyout();
                 };
                 await dialog.ShowAsync();
                 SubtitleButton.Focus(FocusState.Programmatic);
@@ -1514,6 +1521,9 @@ public sealed partial class PlayerOverlay : UserControl
         bool Current() => (isCurrent?.Invoke() ?? true) && ReferenceEquals(authority, _playerService.ActiveAuthority) &&
             authority.ApiClient.IsCurrentContext(context) && ReferenceEquals(manager, _playerService.Manager) &&
             ReferenceEquals(session, manager?.CurrentSession) && _playerService.State != PlayerState.Idle;
+        bool CurrentJob() => ReferenceEquals(authority, _playerService.ActiveAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+            ReferenceEquals(manager, _playerService.Manager) && manager?.CurrentSession?.MediaFileId == session.MediaFileId &&
+            _playerService.State != PlayerState.Idle;
         if (!Current()) return;
         var api = authority.PlaybackApi;
         SubtitleAiStatus capability;
@@ -1583,7 +1593,7 @@ public sealed partial class PlayerOverlay : UserControl
                 }
 
                 var started = await api.StartSubtitleAiAsync(request);
-                if (!Current()) return;
+                if (!CurrentJob()) return;
                 var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
                     ? request.SourceLanguage
                     : request.TargetLanguage;
@@ -1600,7 +1610,7 @@ public sealed partial class PlayerOverlay : UserControl
                         liveLanguage,
                         $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
                 }
-                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, Current);
+                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, CurrentJob);
             },
             async () =>
             {
@@ -1645,7 +1655,7 @@ public sealed partial class PlayerOverlay : UserControl
             }
             if (job.Status != "completed") continue;
             DispatcherQueue.TryEnqueue(() => { if (isCurrent()) _ = _playerService.RefreshSubtitlesAfterAiAsync(
-                mediaFileId, job.ResultSubtitleId); });
+                mediaFileId, job.ResultSubtitleId, isCurrent); });
             return;
         }
     }

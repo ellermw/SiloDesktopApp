@@ -49,11 +49,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
     }
 
+    internal static Task RunAiRefreshOwnershipAsync(StackPanel parent) => CheckBusyAsync(parent, "translation-profile");
+
     private static async Task CheckBusyAsync(StackPanel parent, string scenario)
     {
         var recovers = scenario.StartsWith("recovered", StringComparison.Ordinal) || scenario.StartsWith("viewer-", StringComparison.Ordinal);
         var readFailure = scenario is "timeout" or "oversized-declared" or "oversized-chunked" or "not-found" or "not-found-automatic";
-        var translationCompleted = scenario == "translation-completed";
+        var translationCompleted = scenario is "translation-completed" or "translation-profile";
         var noContext = scenario.StartsWith("no-context-", StringComparison.Ordinal);
         using var subtitles = new HeldSubtitleServer(false) { BusyResponses = readFailure ? 0 : recovers ? 2 : 100,
             ReadFailure = readFailure ? scenario : null };
@@ -125,6 +127,23 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 priorSid = mpv.GetPropertyDouble("sid");
                 Set(service, "_liveSubtitleSid", (int)priorSid); Set(service, "_liveSubtitlePath", livePath);
                 Set(service, "_liveSubtitleJobId", 73L); Set(service, "_liveSubtitleFileId", 42);
+            }
+            if (scenario == "translation-profile")
+            {
+                wire.HoldSubtitleList = true;
+                var originalInventory = manager.CurrentSession!.SubtitleUrls;
+                var refresh = service.RefreshSubtitlesAfterAiAsync(42, 73);
+                await wire.SubtitleListEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                api.SetProfile("replacement-profile");
+                wire.SubtitleListRelease.TrySetResult();
+                await refresh.WaitAsync(TimeSpan.FromSeconds(8));
+                Require(ReferenceEquals(originalInventory, manager.CurrentSession.SubtitleUrls) &&
+                    service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") == priorSid &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1 }) &&
+                    (int)Get(service, "_liveSubtitleSid")! == priorSid && File.Exists(livePath),
+                    "Held AI completion refresh published old-profile inventory, selected/persisted a track or removed current live cues after profile retirement.");
+                Program.Log("PASS: held AI completion inventory GET cannot mutate replacement-profile inventory/SID/preferences/live cues.");
+                return;
             }
             var pending = translationCompleted ? service.RefreshSubtitlesAfterAiAsync(42, 73) :
                 noContext ? Task.Run(() =>
@@ -1106,6 +1125,9 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     }
     private sealed class Wire(string origin) : HttpMessageHandler
     {
+        public bool HoldSubtitleList;
+        public TaskCompletionSource SubtitleListEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SubtitleListRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int PreferenceWrites;
         public ConcurrentQueue<int> RequestedPreferences = new();
         public bool HoldSettings;
@@ -1128,7 +1150,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 throw new InvalidOperationException("Fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
             if (path == "/api/v2/subtitles/42")
+            {
+                if (HoldSubtitleList) { SubtitleListEntered.TrySetResult(); await SubtitleListRelease.Task.WaitAsync(ct); }
                 return Json("""{"subtitles":[{"id":73,"media_file_id":42,"language":"eng","format":"srt","source":"downloaded"}]}""");
+            }
             if (path.Contains("-prefs/", StringComparison.Ordinal))
             {
                 using var preference = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));

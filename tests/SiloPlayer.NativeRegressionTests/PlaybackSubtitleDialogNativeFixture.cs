@@ -28,6 +28,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         using var manager = new PlaybackManager(Scope<PlaybackApi>("Playback"), Scope<CatalogApi>("Catalog"), auth, api);
         using var video = new MpvVideoWindow();
         using var mpv = new MpvPlayer();
+        Action<string[]>? boundaryObserver = null;
         try
         {
             Set(wire, "AcceptStart", true);
@@ -72,6 +73,42 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 await (Task)Call(service, "HandleNativeMenuOpenAsync", request)!;
                 Require(Menu(service) != null, "Actual Subtitle caller did not open for dialog handoff.");
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_DIALOG_CASE") == "retired-handoff")
+            {
+                var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var completed = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+                boundaryObserver = message =>
+                {
+                    if (message.FirstOrDefault() == "silo-retired-dialog-ready") ready.TrySetResult();
+                    if (message.FirstOrDefault() == "silo-retired-dialog-completed") completed.TrySetResult(message);
+                };
+                mpv.ScriptMessageReceived += boundaryObserver;
+                var probe = Path.Combine(Program.ResultDirectory, "retired-dialog-probe.lua");
+                await File.WriteAllTextAsync(probe, """
+                    local mp = require 'mp'
+                    mp.register_script_message('osc-subtitle-dialog-closed', function(token, sequence, restore)
+                        if token then mp.commandv('script-message','silo-retired-dialog-completed',token,sequence,restore) end
+                    end)
+                    mp.commandv('script-message','silo-retired-dialog-ready')
+                    """);
+                Call(mpv, "Command", (object)new[] { "load-script", probe });
+                await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                await Open();
+                var request = Get(service, "_nativeMenuRequest")!;
+                var token = request.GetType().GetProperty("OwnerToken")!.GetValue(request)?.ToString();
+                var sequenceValue = request.GetType().GetProperty("Sequence")!.GetValue(request)?.ToString();
+                var menuWindow = (Window)Get(Menu(service)!, "_window")!;
+                var retiredInClose = false;
+                menuWindow.Closed += (_, _) => { retiredInClose = true; api.SetProfile("retired-inside-close"); };
+                Call(service, "InvokeNativeSubtitleAction", "add");
+                Require(retiredInClose, "Native menu close callback did not exercise the controlled retirement boundary.");
+                var completion = await completed.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Require(completion.Length == 4 && completion[1] == token && completion[2] == sequenceValue && completion[3] == "false" &&
+                    Get(service, "_nativeSubtitleDialog") == null && Gate(service).CurrentCount == 1,
+                    "Retirement during menu close skipped scoped dialog completion or opened a stale modal.");
+                Program.Log("PASS: context retirement inside native menu close still completes the exact dialog handoff and releases input without stale focus.");
+                return;
+            }
             foreach (var action in new[] { "add", "appearance", "ai" })
             {
                 await Open();
@@ -107,6 +144,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         }
         finally
         {
+            if (boundaryObserver != null) mpv.ScriptMessageReceived -= boundaryObserver;
             Call(service, "UnwireMpvEvents"); Call(service, "CancelPendingLoadedMediaInitialization");
             Call(service, "CancelPendingFileLoadTimeout"); Call(service, "StopPlaybackStallWatchdog");
             Call(service, "RetireNativeMenus"); Call(service, "StopSubtitleSync");

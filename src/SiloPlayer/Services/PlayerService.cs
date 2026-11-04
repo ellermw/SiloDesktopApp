@@ -1383,6 +1383,7 @@ public partial class PlayerService : IDisposable
         }
         RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
         await SaveExecutedSubtitlePreferenceAsync(preferenceOwner, track);
+        CompleteStoredSubtitleReplacement(track);
         return true;
     }
 
@@ -5763,6 +5764,7 @@ public partial class PlayerService : IDisposable
                         await SaveExecutedSubtitlePreferenceAsync(preferenceOwner, track);
                     }
                     if (CurrentSelection()) mpv.SendScriptMessage("osc-set-active-subtitle", serverTrackIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    CompleteStoredSubtitleReplacement(track);
                     return true;
                 }
                 if (!RestoreExecutedSubtitleSelection(reapply: true, failedTrack: track, currentSelection: CurrentSelection)) return false;
@@ -7050,8 +7052,8 @@ public partial class PlayerService : IDisposable
         // The refresh-and-select path snapshots the live state at the actual
         // attachment boundary. Do not restore the older dialog-open position:
         // playback is intentionally allowed to continue behind the modal.
-        await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId);
-        if (downloadedSubtitleId is > 0 && _subtitleSyncCts is { } syncOwner)
+        await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId, snapshot.IsCurrent);
+        if (snapshot.IsCurrent() && downloadedSubtitleId is > 0 && _subtitleSyncCts is { } syncOwner)
             await ReadSubtitleSyncAsync("stored-" + downloadedSubtitleId.Value, syncOwner.Token, watch: true);
     }
 
@@ -7877,15 +7879,61 @@ public partial class PlayerService : IDisposable
             : "false");
     }
 
-    public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, long? preferredSubtitleId = null)
+    private sealed record StoredSubtitleCompletion(PlaybackAuthorityScope Authority, ApiRequestContext Context,
+        PlaybackManager Manager, MpvPlayer Mpv, int MediaFileId, long PlayGeneration, long NativeFileGeneration,
+        string? Content, long JobId, long SubtitleId);
+    private StoredSubtitleCompletion? _storedSubtitleCompletion;
+
+    private void CompleteStoredSubtitleReplacement(SubtitleTrackInfo? executed)
+    {
+        var completion = _storedSubtitleCompletion;
+        bool Current() => completion != null && ReferenceEquals(completion, _storedSubtitleCompletion) && !_closing &&
+            ReferenceEquals(completion.Authority, _activeAuthority) && completion.Authority.ApiClient.IsCurrentContext(completion.Context) &&
+            ReferenceEquals(completion.Manager, _playbackManager) && ReferenceEquals(completion.Mpv, _mpv) &&
+            completion.MediaFileId == _playbackManager?.CurrentSession?.MediaFileId && completion.Content == ContentId &&
+            completion.PlayGeneration == Volatile.Read(ref _playRequestGeneration) && completion.JobId == _liveSubtitleJobId &&
+            executed?.Id == completion.SubtitleId && ReferenceEquals(executed, _executedSubtitleTrack) &&
+            _executedSubtitleFileId == completion.MediaFileId;
+        if (!Current()) return;
+        lock (_liveSubtitleLock)
+        {
+            if (!Current()) return;
+            ResumeAfterLiveSubtitleBuffer(completion!.JobId);
+            // Native IDs can be reused by a replacement load. Remove an old
+            // live SID only in its original native file, never the stored cue.
+            if (_liveSubtitleSid > 0 && completion.NativeFileGeneration == Volatile.Read(ref _fileLoadGeneration) &&
+                _liveSubtitleSid != (int)Math.Round(completion.Mpv.GetPropertyDouble("sid")))
+                try { completion.Mpv.RemoveSubtitle(_liveSubtitleSid); } catch { }
+            _liveSubtitleSid = 0;
+            DeleteLiveSubtitleFileLocked();
+            _storedSubtitleCompletion = null;
+        }
+    }
+
+    public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, long? preferredSubtitleId = null, Func<bool>? isCurrent = null)
     {
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         if (manager == null || session == null || session.MediaFileId != mediaFileId) return;
+        var authority = _activeAuthority;
+        var context = authority.ApiClient.CaptureContext();
+        var mpv = _mpv;
+        var token = _authorityLifetimeCts.Token;
+        var play = Volatile.Read(ref _playRequestGeneration);
+        var file = Volatile.Read(ref _playbackFileGeneration);
+        var nativeFile = Volatile.Read(ref _fileLoadGeneration);
+        var content = ContentId;
+        var liveJob = Volatile.Read(ref _liveSubtitleJobId);
+        bool Current() => !_closing && !token.IsCancellationRequested && (isCurrent?.Invoke() ?? true) &&
+            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+            ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager.CurrentSession) &&
+            ReferenceEquals(mpv, _mpv) && content == ContentId && play == Volatile.Read(ref _playRequestGeneration) &&
+            file == Volatile.Read(ref _playbackFileGeneration);
+        if (!Current()) return;
         try
         {
-            var response = await _playbackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
-            if (!ReferenceEquals(_playbackManager, manager) || manager.CurrentSession != session) return;
+            var response = await authority.PlaybackApi.GetSubtitlesAsync(mediaFileId, token, context).ConfigureAwait(false);
+            if (!Current()) return;
 
             var existing = session.SubtitleUrls
                 .Where(track => !string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase))
@@ -7907,26 +7955,23 @@ public partial class PlayerService : IDisposable
                 Forced = entry.Forced,
                 Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
             }).ToList();
+            if (!Current()) return;
             session.SubtitleUrls = [.. existing, .. downloaded];
             SendSubtitleListToOsc();
 
             var preferred = preferredSubtitleId.HasValue
                 ? downloaded.FirstOrDefault(track => track.Id == preferredSubtitleId)
                 : null;
-            if (preferred != null && _mpv != null)
+            if (preferred != null && mpv != null && Current())
             {
-                await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false);
-                var completedJobId = _liveSubtitleJobId;
-                if (completedJobId > 0) ResumeAfterLiveSubtitleBuffer(completedJobId);
-                lock (_liveSubtitleLock)
-                {
-                    if (_liveSubtitleSid > 0)
-                    {
-                        try { _mpv.RemoveSubtitle(_liveSubtitleSid); } catch { }
-                        _liveSubtitleSid = 0;
-                    }
-                    DeleteLiveSubtitleFileLocked();
-                }
+                var completion = liveJob > 0 ? new StoredSubtitleCompletion(authority, context, manager, mpv,
+                    mediaFileId, play, nativeFile, content, liveJob, preferred.Id) : null;
+                if (completion != null) _storedSubtitleCompletion = completion;
+                var executedOrQueued = await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false);
+                if (!executedOrQueued && ReferenceEquals(_storedSubtitleCompletion, completion)) _storedSubtitleCompletion = null;
+                // The executor owns cleanup after actual SID execution. A busy
+                // read or merely queued bitmap reload must retain live cues.
+                CompleteStoredSubtitleReplacement(preferred);
             }
         }
         catch (Exception ex)
@@ -7964,6 +8009,7 @@ public partial class PlayerService : IDisposable
 
     private void ClearLiveSubtitleTranslationLocked(bool restorePreviousSubtitle)
     {
+        _storedSubtitleCompletion = null;
         try { _liveSubtitleResumeCts?.Cancel(); } catch { }
         _liveSubtitleResumeCts?.Dispose();
         _liveSubtitleResumeCts = null;
