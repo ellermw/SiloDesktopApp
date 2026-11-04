@@ -1174,6 +1174,8 @@ public partial class PlayerService : IDisposable
                 }
                 preferenceOwner = preferenceOwner with { RequestedIntent = manager.CaptureLocalSubtitleIntent() };
             }
+            // Even Off followed by Off retires an older metadata-free pre-play choice.
+            Interlocked.Increment(ref _legacySubtitleChoiceVersion);
             _pendingExplicitInitialSubtitleOwner = null;
             _pendingAutomaticSubtitleSelection = null;
             _activeSubtitleServerIndex = selectedSubtitleIndex;
@@ -3072,6 +3074,8 @@ public partial class PlayerService : IDisposable
                 }
             }
             var requestedSubtitleExecutedLocally = false;
+            if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+            if (TryApplyLegacyInitialSubtitleChoice(generation, ownerCts)) applyInitialSubtitleSelection = false;
             if (applyInitialSubtitleSelection)
             {
                 var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
@@ -3811,6 +3815,11 @@ public partial class PlayerService : IDisposable
         _pendingInitialSubtitleFileId = session.MediaFileId;
         _pendingAutomaticSubtitleSelection = null;
         _pendingExplicitInitialSubtitleOwner = null;
+        lock (_subtitleTrackStateLock)
+        {
+            _legacySubtitleChoice = null;
+            Interlocked.Increment(ref _legacySubtitleChoiceVersion);
+        }
 
         if (explicitSignature != null)
         {
@@ -3929,6 +3938,27 @@ public partial class PlayerService : IDisposable
             !HasSubtitleSelectionRoute(selectedTrack)) selectedTrack = null;
         if (selectedTrack == null && isExplicitTrack)
         {
+            // Older servers may provide no playback inventory at all. Retain
+            // the explicit UI ordinal only for the incoming native file.
+            if (explicitSelection is >= 0 && explicitSignature == null &&
+                session.SubtitleUrls.Count == 0 && !session.IsSubtitleBurnedIn && _playbackManager is { } legacyManager)
+            {
+                lock (_subtitleTrackStateLock)
+                lock (legacyManager.SubtitleInventorySyncRoot)
+                {
+                    if (ReferenceEquals(legacyManager.CurrentSession, session) && session.SubtitleUrls.Count == 0)
+                    {
+                        var authority = _activeAuthority;
+                        _legacySubtitleChoice = new(explicitSelection.Value, authority,
+                            authority.ApiClient.CaptureIdentityContext(), legacyManager, session,
+                            Volatile.Read(ref _playRequestGeneration), ContentId,
+                            Volatile.Read(ref _legacySubtitleChoiceVersion), _authorityLifetimeCts.Token);
+                        _pendingSubtitleSelection = explicitSelection;
+                        _pendingInitialServerSubtitleIndex = null;
+                        return;
+                    }
+                }
+            }
             // Refusing a missing/unavailable pre-play choice is not an explicit
             // viewer Off. Retain the accepted plan and its automatic provenance.
             _pendingSubtitleSelection = null;
@@ -5650,6 +5680,7 @@ public partial class PlayerService : IDisposable
             if (selected.Sid == 0 ? actualSid > 0 : (int)Math.Round(actualSid) != selected.Sid) return;
             if (session.ProtocolVersion >= 3 &&
                 !manager!.TryRecordLocalSubtitleSelection(session, selected.Track, isAutomatic: false)) return;
+            Interlocked.Increment(ref _legacySubtitleChoiceVersion);
             _pendingAutomaticSubtitleSelection = null;
             _pendingInitialServerSubtitleIndex = null;
             _pendingSubtitlePreferenceIndex = null;

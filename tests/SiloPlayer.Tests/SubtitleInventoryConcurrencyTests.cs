@@ -15,7 +15,7 @@ public sealed class SubtitleInventoryConcurrencyTests
         var capture = Between(Read("SiloPlayer", "PlayerService.SiloCast.cs"),
             "public JsonObject CaptureSiloCastState()", "public async Task ApplySiloCastControlAsync(");
         var snapshot = Between(service, "private SubtitleRouteSnapshot CaptureSubtitleSelectionRoutes(",
-            "private bool HasSubtitleSelectionRoute(");
+            "internal sealed record SubtitleMenuSnapshot(");
         var route = Between(service, "private static bool HasSubtitleSelectionRoute(",
             "private void CommitExecutedSubtitleSelection(");
         var resolve = Between(service, "private static int ResolveNativeEmbeddedSidFromSnapshot(",

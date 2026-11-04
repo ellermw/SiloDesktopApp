@@ -17,6 +17,11 @@ internal static class SubtitleIdentityNativeFixture
         var presentation = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
         var presentationOnly = presentation is "presentation-flyout" or "presentation-osc";
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
+        if (presentation is "preplay-legacy" or "preplay-legacy-retired")
+        {
+            await LegacyPrePlayAsync(assets, presentation == "preplay-legacy-retired");
+            return;
+        }
         using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt")));
         if (!unresolvedOnly && !regionalOnly && !presentationOnly)
         {
@@ -668,6 +673,88 @@ internal static class SubtitleIdentityNativeFixture
     private sealed class PresentationServices(IServiceProvider fallback, PlayerService service) : IServiceProvider
     {
         public object? GetService(Type type) => type == typeof(PlayerService) ? service : fallback.GetService(type);
+    }
+
+    private static async Task LegacyPrePlayAsync(string assets, bool retiredOnly = false)
+    {
+        foreach (var change in retiredOnly ? new[] { "retired-initializer" } : new[] { "current", "access", "profile", "inventory", "manual", "manual-aba", "session", "play" })
+        {
+            using var retiredInitializer = new CancellationTokenSource();
+            using var currentInitializer = new CancellationTokenSource();
+            using var wire = new Wire();
+            using var http = new HttpClient(wire);
+            var api = new SiloApiClient(http); api.SetBaseUrl("https://subtitle-identity.invalid"); api.SetProfile("fixture");
+            using var auth = new AuthService(api, new AuthApi(api));
+            using var service = new PlayerService(new(api), new(api), auth, api,
+                new SettingsService(Path.Combine(Program.ResultDirectory, "legacy-preplay-" + change)), new SettingsApi(api));
+            using var manager = new PlaybackManager(new(api), new(api), auth, api);
+            var session = new PlaybackStartResponse { SessionId = "legacy", ProtocolVersion = 2, MediaFileId = 42, PlayMethod = "direct" };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+            manager.UseWatchDetail(new() { ContentId = "movie", SeriesId = "series", Versions = [new() { FileId = 42 }] });
+            using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+            Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+            typeof(PlayerService).GetProperty("State")!.SetValue(service, PlayerState.Expanded);
+            typeof(PlayerService).GetProperty("ContentId")!.SetValue(service, "movie");
+            Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", Path.Combine(assets, "tracks.mkv")));
+            Call(service, "WireMpvEvents");
+            try
+            {
+                Call(service, "ResolveInitialSubtitleSelection", new WatchDetailResponse(), new FileVersion { FileId = 42 }, session, null, 1, null);
+                Call(service, "ApplyPendingSubtitleSelection");
+                Require(mpv.GetPropertyDouble("sid") <= 0, "Legacy pre-play choice selected an outgoing SID before FILE_LOADED.");
+                if (change == "retired-initializer")
+                {
+                    Set(service, "_loadedMediaInitGeneration", 2L);
+                    Set(service, "_loadedMediaInitCts", currentInitializer);
+                    var choice = Get(service, "_legacySubtitleChoice");
+                    Require(choice != null, "Retired initializer control did not establish a newer legacy choice.");
+                    var helper = typeof(PlayerService).GetMethod("TryApplyLegacyInitialSubtitleChoice", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                    helper.Invoke(service, helper.GetParameters().Length == 0 ? [] : [1L, retiredInitializer]);
+                    Require(ReferenceEquals(choice, Get(service, "_legacySubtitleChoice")) && mpv.GetPropertyDouble("sid") <= 0,
+                        "A retired initializer consumed the newer load's legacy choice before taking its state gate.");
+                }
+                switch (change)
+                {
+                    case "access": Require(api.TryInvalidateAccessContext(api.CaptureContext(), out _), "Access-only control did not invalidate its cache."); break;
+                    case "profile": api.SetProfile("replacement"); break;
+                    case "inventory": session.SubtitleUrls.Add(new() { Index = 1, TrackId = "identified", Source = "embedded", ContainerTrackId = "99" }); break;
+                    case "manual": await service.SetSubtitleTrackAndPersistAsync(0, null, null); break;
+                    case "manual-aba": await service.SetSubtitleTrackAndPersistAsync(0, null, null); await service.SetSubtitleTrackAndPersistAsync(0, null, null); break;
+                    case "session": typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, new PlaybackStartResponse { ProtocolVersion = 2, MediaFileId = 42 }); break;
+                    case "play": Set(service, "_playRequestGeneration", (long)Get(service, "_playRequestGeneration")! + 1); break;
+                }
+                var writes = wire.PreferenceWrites;
+                var generation = (long)Get(service, "_loadedMediaInitGeneration")!;
+                Set(service, "_restorePausedAfterLoad", true);
+                typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, true);
+                mpv.SetProperty("sid", "no");
+                var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void Loaded() => loaded.TrySetResult();
+                mpv.FileLoaded += Loaded;
+                try
+                {
+                    mpv.LoadFile(Path.Combine(assets, "tracks.mkv"));
+                    await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    var deadline = DateTime.UtcNow.AddSeconds(4);
+                    while (DateTime.UtcNow < deadline && ((long)Get(service, "_loadedMediaInitGeneration")! <= generation ||
+                        service.IsLoading || Get(service, "_loadedMediaInitCts") != null)) await Task.Delay(20);
+                    Require((long)Get(service, "_loadedMediaInitGeneration")! > generation && !service.IsLoading && Get(service, "_loadedMediaInitCts") == null,
+                        "Actual legacy FILE_LOADED initialization did not finish within its bound.");
+                    var expected = change is "current" or "access" or "retired-initializer" ? mpv.GetEmbeddedSubtitleTracks()[1].Id : 0;
+                    Require((int)Math.Round(mpv.GetPropertyDouble("sid")) == expected && mpv.IsPaused && wire.PreferenceWrites == writes && wire.Replans == 0,
+                        $"Legacy empty-inventory {change} FILE_LOADED selected SID {mpv.GetPropertyDouble("sid")}, expected {expected}, or changed pause/preferences/transport.");
+                    Program.Log($"PASS: legacy empty-inventory {change} actual FILE_LOADED SID={expected}, pause retained, no preference/replan.");
+                }
+                finally { mpv.FileLoaded -= Loaded; }
+            }
+            finally
+            {
+                Call(service, "StopPlaybackStallWatchdog");
+                Call(service, "StopSubtitleSync");
+                await service.CloseAsync();
+                Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+            }
+        }
     }
 
     private static async Task FreshPrePlayWithoutRouteAsync(string origin)
