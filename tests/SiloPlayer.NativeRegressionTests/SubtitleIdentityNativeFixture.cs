@@ -17,6 +17,7 @@ internal static class SubtitleIdentityNativeFixture
         if (!unresolvedOnly && !regionalOnly)
         {
             subtitles.MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv"));
+            await RefreshedDownloadedSubtitlesAsync(assets);
             await FreshPrePlayWithoutRouteAsync(subtitles.Origin);
         }
         using var wire = new Wire(); using var http = new HttpClient(wire);
@@ -569,6 +570,82 @@ internal static class SubtitleIdentityNativeFixture
         }
     }
 
+    private static async Task RefreshedDownloadedSubtitlesAsync(string assets)
+    {
+        using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "japanese.srt")));
+        using var wire = new Wire { InventoryHost = new Uri(subtitles.Origin).Host };
+        using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl(subtitles.Origin); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        using var service = new PlayerService(new(api), new(api), auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "subtitle-refresh-identity")), new SettingsApi(api));
+        using var manager = new PlaybackManager(new(api), new(api), auth, api);
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        mpv.FileLoaded += () => loaded.TrySetResult(); mpv.LoadFile(Path.Combine(assets, "tracks.mkv"));
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
+        var original = new SubtitleTrackInfo { Index = 1, Id = 100, TrackId = "download:100", SyncKey = "stored-100",
+            Source = "downloaded", Codec = "srt", Language = "en", Url = subtitles.Origin + "/english.srt" };
+        var session = new PlaybackStartResponse { SessionId = "refresh", ProtocolVersion = 3, MediaFileId = 42,
+            SelectedSubtitleTrackId = original.TrackId, SelectedSubtitleTrackIndex = original.Index,
+            SubtitleMode = "sidecar", SubtitleUrls = [new() { Index = 0, Source = "embedded" }, original] };
+        typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+        manager.UseWatchDetail(new() { ContentId = "movie", SeriesId = "series", Versions = [new() { FileId = 42 }] });
+        Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+        typeof(PlayerService).GetProperty("State")!.SetValue(service, PlayerState.Expanded);
+        typeof(PlayerService).GetProperty("ContentId")!.SetValue(service, "movie");
+        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", Path.Combine(assets, "tracks.mkv")));
+        try
+        {
+            var englishPath = Path.Combine(Program.ResultDirectory, "refresh-english.srt");
+            File.Copy(Path.Combine(assets, "english.srt"), englishPath, overwrite: true);
+            Require(mpv.AddSubtitle(englishPath, "Original", "en", select: true), "Could not load the original download.");
+            var originalSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+            var sids = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+            var files = (Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!;
+            sids[1] = originalSid; files[1] = englishPath;
+            ((List<string>)Get(service, "_subtitleSyncFiles")!).Add(englishPath);
+            Set(service, "_activeSubtitleServerIndex", 1);
+            Call(service, "CommitExecutedSubtitleSelection", original);
+            Set(service, "_pendingInitialServerSubtitleIndex", 1);
+            Set(service, "_pendingInitialSubtitleFileId", 42);
+            manager.RecordLocalSubtitleSelection(1);
+            wire.DownloadedInventory = new() { Subtitles =
+                [new() { Id = 200, Language = "ja", Format = "srt" }, new() { Id = 100, Language = "en", Format = "srt" }] };
+
+            await service.RefreshSubtitlesAfterAiAsync(42);
+            var retained = session.SubtitleUrls.Single(track => track.Id == 100);
+            Require(retained.Index == 2 && service.ActiveSubtitleServerIndex == 2 &&
+                ReferenceEquals(Get(service, "_executedSubtitleTrack"), retained) &&
+                (int?)Get(service, "_pendingInitialServerSubtitleIndex") == 2 && session.SelectedSubtitleTrackIndex == 2 &&
+                manager.SubtitleSelectionForLoad == 2 && mpv.GetPropertyDouble("sid") == originalSid,
+                "Inventory refresh failed to rebind active, executed, granted or pending subtitle identity.");
+            Require(!sids.ContainsKey(1) && !files.ContainsKey(1) && sids[2] == originalSid && files[2] == englishPath,
+                "A new downloaded row inherited the previous row's SID or prefetched bytes.");
+            var added = session.SubtitleUrls.Single(track => track.Id == 200);
+            await service.SetSubtitleTrackAndPersistAsync(added.Index + 1, added.Language, added);
+            var addedSid = sids[added.Index];
+            Require(addedSid != originalSid && mpv.GetPropertyDouble("sid") == addedSid &&
+                File.ReadAllText(files[added.Index]) == File.ReadAllText(Path.Combine(assets, "japanese.srt")),
+                "Selecting a reused index did not load that row's own sidecar bytes.");
+
+            wire.DownloadedInventory.Subtitles[0] = new() { Id = 300, Language = "ja", Format = "srt" };
+            await service.RefreshSubtitlesAfterAiAsync(42, preferredSubtitleId: 300);
+            Require(sids[1] != addedSid && mpv.GetPropertyDouble("sid") == sids[1] &&
+                ((SubtitleTrackInfo?)Get(service, "_executedSubtitleTrack"))?.Id == 300,
+                "Translation-completed selection reused a removed row's cached SID.");
+
+            wire.DownloadedInventory.Subtitles.RemoveAt(0);
+            await service.RefreshSubtitlesAfterAiAsync(42);
+            Require(service.ActiveSubtitleServerIndex == -1 && Get(service, "_executedSubtitleTrack") == null &&
+                mpv.GetPropertyDouble("sid") <= 0 && sids[1] == originalSid && files[1] == englishPath && !sids.ContainsKey(2),
+                "Removal reused an active index or failed to move the retained download's caches.");
+            Require(mpv.IsPaused, "Subtitle refresh changed viewer pause intent.");
+            Program.Log("PASS: downloaded subtitle refresh rebinds active/pending identity and SID/prefetch caches across insertion, preferred replacement and removal.");
+        }
+        finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
+    }
+
     private static async Task ExpectUnavailableAsync(Func<Task> action)
     {
         try { await action(); }
@@ -627,12 +704,18 @@ internal static class SubtitleIdentityNativeFixture
     {
         public int PreferenceWrites, Replans;
         public string? InitialPlaybackUrl;
+        public string? InventoryHost;
+        public SubtitleListResponse? DownloadedInventory;
         public WatchDetailResponse? InitialWatchDetail;
         public List<JsonElement> ReplanRequests = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            if (request.RequestUri!.Host != "subtitle-identity.invalid") throw new InvalidOperationException("Unexpected fixture networking.");
+            if (request.RequestUri!.Host != "subtitle-identity.invalid" && request.RequestUri.Host != InventoryHost)
+                throw new InvalidOperationException("Unexpected fixture networking.");
             var path = request.RequestUri.AbsolutePath;
+            if (path == "/api/v2/subtitles/42" && DownloadedInventory != null)
+                return Json(JsonSerializer.Serialize(DownloadedInventory,
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }));
             if (path.Contains("-prefs/")) PreferenceWrites++;
             if (path.EndsWith("/replan"))
             {

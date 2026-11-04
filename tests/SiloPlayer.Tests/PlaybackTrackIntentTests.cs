@@ -255,13 +255,28 @@ public sealed class PlaybackTrackIntentTests
         Assert.True(scope.Manager.IsRetainedSubtitleUnavailable);
         Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad); // Keep the server's English grant, not implicit Off.
         Assert.Empty(scope.Wire.Replans);
-        await scope.Manager.ReplanAudioAsync(0, 22);
+        var audio = await scope.Manager.ReplanAudioAsync(0, 22);
+        Assert.False(audio.SubtitleReconciliationFailed);
         Assert.Equal("sub:43:0", Assert.Single(scope.Wire.Replans).GetProperty("selected_tracks")
             .GetProperty("subtitle").GetProperty("id").GetString());
-        await scope.Manager.StartReplacementSessionAsync(42, 23);
-        Assert.False(scope.Wire.Starts[2].TryGetProperty("subtitle_track_index", out _));
+        var quality = await scope.Manager.ReplanQualityAsync("720p", 22);
+        Assert.False(quality.SubtitleReconciliationFailed);
+        var seek = await scope.Manager.ReplanSeekAsync(23);
+        Assert.False(seek.SubtitleReconciliationFailed);
+        var recovery = await scope.Manager.RecoverPlaybackFailureAsync(23, "network_error", "fixture");
+        Assert.False(recovery.SubtitleReconciliationFailed);
+        Assert.Equal("failure_recovery", scope.Wire.Replans[^1].GetProperty("operation").GetString());
+        var restart = await scope.Manager.StartReplacementSessionAsync(43, 23);
+        Assert.False(restart.SubtitleReconciliationFailed);
+        Assert.True(scope.Manager.IsRetainedSubtitleUnavailable);
+        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
+
+        await scope.Manager.StartReplacementSessionAsync(42, 24);
+        Assert.False(scope.Wire.Starts[^1].TryGetProperty("subtitle_track_index", out _));
         Assert.Equal(1, scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        var switchedAgain = await scope.Manager.StartReplacementSessionAsync(43, 25);
+        Assert.True(switchedAgain.SubtitleReconciliationFailed);
     }
 
     [Theory]

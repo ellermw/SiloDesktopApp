@@ -5449,6 +5449,7 @@ public partial class PlayerService : IDisposable
         bool CurrentSelection() => !_closing && !_switchingContent && !IsLoading && !ownerToken.IsCancellationRequested &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(manager, _playbackManager) &&
             ReferenceEquals(session, manager?.CurrentSession) &&
+            (track == null || session?.SubtitleUrls.Contains(track) == true) &&
             ReferenceEquals(authority, _activeAuthority) && _activeSubtitleServerIndex == serverTrackIndex &&
             CurrentSubtitleSidecarGeneration() == sidecarGeneration &&
             Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration;
@@ -5684,7 +5685,8 @@ public partial class PlayerService : IDisposable
         bool CurrentSelection() => (selectionOwner?.Invoke() ?? true) &&
             !_closing && !_switchingContent && !IsLoading && !token.IsCancellationRequested &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(manager, _playbackManager) &&
-            ReferenceEquals(session, manager?.CurrentSession) && ReferenceEquals(authority, _activeAuthority) &&
+            ReferenceEquals(session, manager?.CurrentSession) && session?.SubtitleUrls.Contains(track) == true &&
+            ReferenceEquals(authority, _activeAuthority) &&
             _activeSubtitleServerIndex == activeIndex && ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) &&
             sidecarGeneration == CurrentSubtitleSidecarGeneration() &&
             loadGeneration == Volatile.Read(ref _loadedMediaInitGeneration);
@@ -5809,6 +5811,7 @@ public partial class PlayerService : IDisposable
         Uri url;
         lock (_subtitleTrackStateLock)
         {
+            if (_playbackManager?.CurrentSession?.SubtitleUrls.Contains(track) != true) return;
             if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
             var pair = _playbackManager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
             if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var parsed) ||
@@ -7565,9 +7568,10 @@ public partial class PlayerService : IDisposable
             var response = await _playbackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
             if (!ReferenceEquals(_playbackManager, manager) || manager.CurrentSession != session) return;
 
-            var previousDownloads = session.SubtitleUrls
+            var previousInventory = session.SubtitleUrls;
+            var previousDownloads = previousInventory
                 .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
-            var existing = session.SubtitleUrls.Except(previousDownloads).ToList();
+            var existing = previousInventory.Except(previousDownloads).ToList();
             var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
             var downloaded = response.Subtitles.Select((entry, offset) =>
             {
@@ -7594,7 +7598,81 @@ public partial class PlayerService : IDisposable
                     Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
                 };
             }).ToList();
-            session.SubtitleUrls = [.. existing, .. downloaded];
+            lock (_subtitleSyncGate)
+            lock (_subtitleTrackStateLock)
+            {
+                if (!ReferenceEquals(_playbackManager, manager) || manager.CurrentSession != session ||
+                    !ReferenceEquals(session.SubtitleUrls, previousInventory)) return;
+
+                SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
+                {
+                    if (track == null || existing.Contains(track)) return track;
+                    var candidates = string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)
+                        ? downloaded : existing;
+                    var matches = candidates.Where(candidate => !candidate.Unplayable &&
+                        string.Equals(candidate.Source, track.Source, StringComparison.OrdinalIgnoreCase) &&
+                        (!string.IsNullOrWhiteSpace(track.TrackId) && candidate.TrackId == track.TrackId ||
+                         !string.IsNullOrWhiteSpace(track.SyncKey) && candidate.SyncKey == track.SyncKey ||
+                         track.Id is > 0 && candidate.Id == track.Id)).Take(2).ToArray();
+                    return matches.Length == 1 ? matches[0] : null;
+                }
+                int? RebindIndex(int? index) => index == null || index < 0 ? index :
+                    Rebind(previousInventory.FirstOrDefault(track => track.Index == index))?.Index;
+
+                // Index-keyed caches belong to the old inventory. Move only
+                // uniquely identified downloads, and retire in-flight old-row work.
+                var loaded = previousDownloads.Select(track =>
+                    (Track: Rebind(track), Sid: _loadedExternalSubtitleSids.GetValueOrDefault(track.Index))).ToArray();
+                var prefetched = previousDownloads.Select(track =>
+                    (Track: Rebind(track), Path: _prefetchedSubtitleFiles.GetValueOrDefault(track.Index))).ToArray();
+                foreach (var index in previousDownloads.Concat(downloaded).Select(track => track.Index).Distinct())
+                {
+                    _loadedExternalSubtitleSids.Remove(index);
+                    _prefetchedSubtitleFiles.Remove(index);
+                }
+                foreach (var entry in loaded)
+                    if (entry.Track != null && entry.Sid > 0) _loadedExternalSubtitleSids[entry.Track.Index] = entry.Sid;
+                foreach (var entry in prefetched)
+                {
+                    if (entry.Path == null) continue;
+                    if (entry.Track != null) _prefetchedSubtitleFiles[entry.Track.Index] = entry.Path;
+                    else
+                    {
+                        _subtitleSyncFiles.Remove(entry.Path);
+                        try { File.Delete(entry.Path); } catch { }
+                    }
+                }
+                _subtitleSidecarGeneration++;
+
+                _activeSubtitleServerIndex = RebindIndex(_activeSubtitleServerIndex) ?? -1;
+                if (_executedSubtitleFileId == mediaFileId)
+                {
+                    var executed = _executedSubtitleTrack;
+                    _executedSubtitleTrack = Rebind(executed);
+                    if (executed != null && _executedSubtitleTrack == null && _liveSubtitleSid <= 0)
+                        _mpv?.SetSubtitleTrack(0);
+                }
+                if (_pendingInitialSubtitleFileId == mediaFileId)
+                {
+                    if (_pendingInitialServerSubtitleIndex.HasValue)
+                        _pendingInitialServerSubtitleIndex = RebindIndex(_pendingInitialServerSubtitleIndex) ?? -1;
+                    _pendingSubtitleSelection = RebindIndex(_pendingSubtitleSelection);
+                }
+                if (_pendingSubtitlePreferenceOwner?.MediaFileId == mediaFileId)
+                {
+                    _pendingSubtitlePreferenceIndex = RebindIndex(_pendingSubtitlePreferenceIndex);
+                    if (!_pendingSubtitlePreferenceIndex.HasValue) _pendingSubtitlePreferenceOwner = null;
+                }
+                var granted = previousInventory.FirstOrDefault(track => !string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)
+                    ? track.TrackId == session.SelectedSubtitleTrackId : track.Index == session.SelectedSubtitleTrackIndex);
+                if (granted != null)
+                {
+                    var rebound = Rebind(granted);
+                    session.SelectedSubtitleTrackId = rebound?.TrackId;
+                    session.SelectedSubtitleTrackIndex = rebound?.Index;
+                }
+                session.SubtitleUrls = [.. existing, .. downloaded];
+            }
             SendSubtitleListToOsc();
 
             var preferred = preferredSubtitleId.HasValue

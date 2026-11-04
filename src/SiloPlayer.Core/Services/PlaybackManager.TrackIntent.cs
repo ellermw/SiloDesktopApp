@@ -9,6 +9,7 @@ public partial class PlaybackManager
     private bool _subtitleSelectionIsAutomatic;
     private SubtitleTrackInfo? _viewerSubtitle;
     private int _viewerSubtitleFile;
+    private int? _unavailableSubtitleReportedFile;
     private long _subtitleRevision, _subtitleSentRevision;
     private AudioTrackInfo? _viewerAudio;
     private bool _hasViewerAudio;
@@ -33,6 +34,7 @@ public partial class PlaybackManager
             _viewerSubtitle = intent.Track;
             _viewerSubtitleFile = intent.MediaFileId;
             _subtitleSelectionIsAutomatic = intent.IsAutomatic;
+            _unavailableSubtitleReportedFile = null;
             ++_subtitleRevision;
         }
     }
@@ -58,6 +60,7 @@ public partial class PlaybackManager
             _hasViewerSubtitle = true; _viewerSubtitle = track;
             _subtitleSelectionIsAutomatic = isAutomatic;
             _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
+            _unavailableSubtitleReportedFile = null;
             ++_subtitleRevision;
         }
     }
@@ -105,6 +108,7 @@ public partial class PlaybackManager
         {
             _hasViewerSubtitle = _hasViewerAudio = false; _viewerSubtitle = null; _viewerAudio = null;
             _subtitleSelectionIsAutomatic = false;
+            _unavailableSubtitleReportedFile = null;
             ++_subtitleRevision; _subtitleSentRevision = _subtitleRevision;
             ++_audioRevision; _audioSentRevision = _audioRevision;
         }
@@ -126,11 +130,18 @@ public partial class PlaybackManager
             if (desired == null && (KeepGrantedSubtitleWhenUnmatched() ||
                 _subtitleSelectionIsAutomatic && CurrentSession?.MediaFileId != _viewerSubtitleFile))
             {
-                if (!_subtitleSelectionIsAutomatic && revision == _subtitleRevision && CurrentSession != null)
+                if (!_subtitleSelectionIsAutomatic && revision == _subtitleRevision && CurrentSession != null &&
+                    _unavailableSubtitleReportedFile != CurrentSession.MediaFileId)
+                {
                     CurrentSession.SubtitleReconciliationFailed = true;
+                    _unavailableSubtitleReportedFile = CurrentSession.MediaFileId;
+                }
                 AcknowledgeSubtitleIntent(revision);
                 return;
             }
+            // A successful match (or a new viewer intent) permits feedback on
+            // a later switch, but same-file replans/restarts must stay quiet.
+            if (revision == _subtitleRevision) _unavailableSubtitleReportedFile = null;
             var granted = GrantedSubtitleSelection();
             if (ReferenceEquals(desired, granted) &&
                 (desired != null || string.Equals(CurrentSession?.SubtitleMode, "off", StringComparison.OrdinalIgnoreCase)))
