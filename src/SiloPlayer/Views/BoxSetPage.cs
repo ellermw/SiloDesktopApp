@@ -174,7 +174,8 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         UpdateDetail(set);
     }
     private static bool SameLayout(BoxSetDetail previous, BoxSetDetail next) => previous.Id == next.Id && previous.LibraryId == next.LibraryId
-        && previous.PosterUrl == next.PosterUrl && previous.PosterThumbhash == next.PosterThumbhash && previous.BackdropUrl == next.BackdropUrl
+        && LibraryPosterBinding.HasSameArtworkUrl(previous.PosterUrl, next.PosterUrl) && previous.PosterThumbhash == next.PosterThumbhash
+        && LibraryPosterBinding.HasSameArtworkUrl(previous.BackdropUrl, next.BackdropUrl)
         && previous.Items.Where(BoxSetDetail.IsMovieMember).Select(x => x.ContentId).SequenceEqual(next.Items.Where(BoxSetDetail.IsMovieMember).Select(x => x.ContentId));
     private void UpdateDetail(BoxSetDetail set)
     {

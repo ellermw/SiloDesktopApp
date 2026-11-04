@@ -15,6 +15,8 @@ public sealed partial class LibraryPage
     private long _libraryFlagsRead;
     private bool _groupedCatalogDirty;
     private bool _libraryFlagsDirty;
+    private long _nextGroupedCatalogRefreshAt;
+    private const int GroupedCatalogRefreshCooldownMilliseconds = 5000;
 
     private bool IsBoxSetLibrary => ViewModel.Library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" };
     private bool CanRefreshGroupedGrid => _isNavigated && IsBoxSetLibrary && _currentTab == "Library"
@@ -61,12 +63,17 @@ public sealed partial class LibraryPage
         {
             try
             {
-                // One trailing refresh, never cancel a useful read for each scan event.
-                await Task.Delay(500, token);
+                // Coalesce a scan burst, including events arriving between reads.
+                // Keep a trailing refresh but bound network reads to one per cooldown.
                 while (Current() && _groupedCatalogDirty)
                 {
+                    var delay = Math.Clamp(_nextGroupedCatalogRefreshAt - Environment.TickCount64,
+                        500, GroupedCatalogRefreshCooldownMilliseconds);
+                    await Task.Delay((int)delay, token);
+                    if (!Current()) break;
                     if (ViewModel.IsLetterJumpInProgress) { await Task.Delay(100, token); continue; }
                     _groupedCatalogDirty = false;
+                    _nextGroupedCatalogRefreshAt = Environment.TickCount64 + GroupedCatalogRefreshCooldownMilliseconds;
                     var layout = GetGridLayout();
                     var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
                     var result = await ViewModel.RefreshGroupedCatalogCoreAsync(range.StartIndex,
@@ -78,7 +85,6 @@ public sealed partial class LibraryPage
                         QueueRenderVirtualGrid(force: true);
                         ScheduleVisibleRangeLoad(force: true);
                     }
-                    if (_groupedCatalogDirty) await Task.Delay(500, token);
                 }
             }
             catch (OperationCanceledException) { }

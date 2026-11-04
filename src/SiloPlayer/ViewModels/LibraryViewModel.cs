@@ -58,6 +58,7 @@ public partial class LibraryViewModel : ObservableObject
     private ApiRequestContext? _loadedFiltersContext;
     private int _loadedFiltersGeneration = -1;
     private int _exactCountQueryVersion = -1;
+    private long _exactCountLoadVersion;
 
     public LibraryViewModel(CatalogApi catalogApi)
     {
@@ -533,7 +534,6 @@ public partial class LibraryViewModel : ObservableObject
         var version = _queryVersion;
         var jump = _letterJumpVersion;
         var key = LetterQueryKey();
-        var group = _catalogGroup;
         using var pending = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
         try
         {
@@ -547,20 +547,16 @@ public partial class LibraryViewModel : ObservableObject
             if (IsLetterJumpInProgress || jump != _letterJumpVersion) return GroupedRefreshResult.Deferred;
             if (replacement is null) return GroupedRefreshResult.Failed;
 
-            // Commit together, retaining the exact extent and mounted alphabet rail
-            // until their optional replacements arrive. No user jump is retired.
-            StartNewCatalogQuery(preserveExtent: true, preserveLetters: true);
-            IsLoading = false;
-            _catalogGroup = group;
-            _groupingTask = Task.FromResult(true);
-            Items.Reset(TotalCount);
-            _observedCatalogEnd = startIndex + replacement.Items.Count;
-            ApplyWindowResponse(startIndex, replacement, false);
+            // This is a range replacement, not a new query. Keep adjacent/sparse
+            // pages, cursor ownership and unrelated scroll loads alive.
+            _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + replacement.Items.Count);
+            ApplyWindowResponse(startIndex, replacement, false, preserveAdjacent: true);
+            UpdateCachedRange(startIndex, replacement.Items);
             RememberWindow(startIndex, replacement, false);
             WindowLoaded?.Invoke();
             _exactCountQueryVersion = _queryVersion;
             _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
-            _ = EnsureLetterIndexCoreAsync(preserveExisting: true);
+            _ = EnsureLetterIndexCoreAsync(preserveExisting: true, force: true);
             return GroupedRefreshResult.Completed;
         }
         catch (OperationCanceledException) when (pending.IsCancellationRequested) { return GroupedRefreshResult.Failed; }
@@ -568,6 +564,26 @@ public partial class LibraryViewModel : ObservableObject
         {
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex, "grouped_catalog_refresh");
             return GroupedRefreshResult.Failed;
+        }
+    }
+
+    private void UpdateCachedRange(int startIndex, IReadOnlyList<MediaItem> replacement)
+    {
+        void Update(int cachedStart, List<MediaItem> cached)
+        {
+            var first = Math.Max(startIndex, cachedStart);
+            var end = Math.Min(startIndex + replacement.Count, cachedStart + cached.Count);
+            for (var index = first; index < end; index++)
+                cached[index - cachedStart] = replacement[index - startIndex];
+        }
+        foreach (var cached in _recentWindows)
+            Update(cached.Start, cached.Response.Items);
+        foreach (var (page, response) in _pageResponses)
+        {
+            var pageStart = page * PageSize;
+            if (pageStart >= startIndex + replacement.Count || pageStart + response.Items.Count <= startIndex) continue;
+            Update(pageStart, response.Items);
+            Items.SetPage(page, response.Items);
         }
     }
 
@@ -980,11 +996,12 @@ public partial class LibraryViewModel : ObservableObject
 
     private async Task LoadExactCountAsync(int version, string? snapshot, CancellationToken ct)
     {
+        var loadVersion = ++_exactCountLoadVersion;
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-exact-count");
         try
         {
             var result = await FetchWindowPageAsync(0, true, snapshot, ct);
-            if (ct.IsCancellationRequested || version != _queryVersion || !result.TotalExact) return;
+            if (ct.IsCancellationRequested || version != _queryVersion || loadVersion != _exactCountLoadVersion || !result.TotalExact) return;
             ApplyExactCatalogTotal(result.Total);
             WindowLoaded?.Invoke();
         }
