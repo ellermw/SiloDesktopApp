@@ -26,7 +26,7 @@ public sealed class SiloCastPlayerAdapter(PlayerService player, DispatcherQueue 
         => InvokeAsync(async () =>
         {
             if (!stillOwner()) return false;
-            await player.ApplySiloCastControlAsync(command);
+            await player.ApplySiloCastControlAsync(command, ct, deferSubtitleSelection: true);
             return true;
         }, ct);
 

@@ -70,6 +70,7 @@ public partial class PlayerService : IDisposable
     private int _activeSubtitleServerIndex = -1;
     private SubtitleTrackInfo? _executedSubtitleTrack;
     private int? _executedSubtitleFileId;
+    private ApiRequestContext? _executedSubtitleContext;
     private sealed record SubtitlePreferenceOwner(PlaybackAuthorityScope Authority, ApiRequestContext Context,
         PlaybackManager? Manager, string? Key, CancellationToken Token);
     private volatile bool _qualitySwitchActive;
@@ -2687,6 +2688,7 @@ public partial class PlayerService : IDisposable
         var sessionId = manager.SessionId
             ?? throw new InvalidOperationException("The playback session ended before media loading began.");
         var loadingOwner = _playbackCts;
+        PrepareAppliedSubtitleFileForReload();
 
         // Publish the reload before cancelling: token continuations can run
         // inline and must wait for the new file instead of retrying the old one.
@@ -5301,6 +5303,7 @@ public partial class PlayerService : IDisposable
     {
         _executedSubtitleTrack = track;
         _executedSubtitleFileId = _playbackManager?.CurrentSession?.MediaFileId;
+        _executedSubtitleContext = _activeAuthority.ApiClient.CaptureContext();
     }
 
     private void RestoreExecutedSubtitleSelection(bool reapply)
@@ -5406,7 +5409,8 @@ public partial class PlayerService : IDisposable
 
             var pair = _playbackManager?.GetSubtitleUrls()
                 .FirstOrDefault(candidate => candidate.Track.Index == track.Index);
-            if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl))
+            if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var remote) ||
+                remote.Scheme is not ("http" or "https"))
                 return false;
 
             var label = !string.IsNullOrWhiteSpace(track.Label) ? track.Label :
@@ -5414,10 +5418,8 @@ public partial class PlayerService : IDisposable
             // A read/cache can be retired between prefetch and selection.
             // No remote format may restart its download synchronously here;
             // unknown codecs use the owner-cancellable asynchronous URL reader.
-            if (!_prefetchedSubtitleFiles.ContainsKey(track.Index) &&
-                Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var remote) &&
-                remote.Scheme is "http" or "https") return false;
-            var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;
+            if (!_prefetchedSubtitleFiles.TryGetValue(track.Index, out var source) || !File.Exists(source))
+                return false;
             var previousSid = (int)Math.Round(_mpv.GetPropertyDouble("sid"));
             var previousMaximum = _mpv.GetSubtitleTrackIds().DefaultIfEmpty(0).Max();
             var added = _mpv.AddSubtitle(source, label, track.Language, select: true);

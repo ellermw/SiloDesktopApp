@@ -68,8 +68,9 @@ public partial class PlayerService
         };
     }
 
-    public async Task ApplySiloCastControlAsync(JsonObject command)
+    public async Task ApplySiloCastControlAsync(JsonObject command, CancellationToken ct = default, bool deferSubtitleSelection = false)
     {
+        ct.ThrowIfCancellationRequested();
         var name = command["name"]?.GetValue<string>() ?? throw new ArgumentException("Missing command name.");
         if (name == "stop") { await CloseAsync(); return; }
         if (_mpv == null || State == PlayerState.Idle) throw new InvalidOperationException("The player is not ready.");
@@ -97,7 +98,8 @@ public partial class PlayerService
                 // Optional track IDs encode Off as either an omitted key or JSON null.
                 if (command["trackId"] == null)
                 {
-                    if (!await SelectSubtitleByServerIndexAsync(-1))
+                    if (deferSubtitleSelection) StartSiloCastSubtitleSelection(-1, ct);
+                    else if (!await SelectSubtitleByServerIndexAsync(-1))
                         throw new ArgumentException("Subtitles could not be turned off.");
                     break;
                 }
@@ -106,7 +108,8 @@ public partial class PlayerService
                 var subtitleTrack = _playbackManager?.CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index + 1 == sid);
                 if (sid < 1 || subtitleTrack == null || subtitleTrack.Unplayable || !HasSubtitleSelectionRoute(subtitleTrack))
                     throw new ArgumentException("This subtitle track is unavailable.");
-                if (!await SelectSubtitleByServerIndexAsync(sid - 1))
+                if (deferSubtitleSelection) StartSiloCastSubtitleSelection(sid - 1, ct);
+                else if (!await SelectSubtitleByServerIndexAsync(sid - 1))
                     throw new ArgumentException("This subtitle track is unavailable.");
                 break;
             case "set_playback_speed":
@@ -148,6 +151,29 @@ public partial class PlayerService
                 if (!HasNextEpisodeForCurrentPlayback) throw new InvalidOperationException("No next episode is available.");
                 await ContinuePlayingNextAsync(); break;
             default: throw new ArgumentException("This command is not supported.");
+        }
+    }
+
+    private void StartSiloCastSubtitleSelection(int index, CancellationToken ct)
+    {
+        // Reserve the manual owner on the dispatcher, without keeping the
+        // receiver's serialized control lane occupied by the download.
+        var pending = SelectSubtitleByServerIndexAsync(index);
+        var owner = Volatile.Read(ref _subtitleSelectionOperation);
+        _ = ObserveSiloCastSubtitleSelectionAsync(pending, owner, ct);
+    }
+
+    private async Task ObserveSiloCastSubtitleSelectionAsync(Task<bool> pending,
+        SubtitleSelectionOperation? owner, CancellationToken ct)
+    {
+        using var cancellation = ct.Register(() => owner?.Cancel());
+        try { await pending; } // Selection publishes applied state and read failures.
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            LogToFile("silocast.txt", $"subtitle_selection_failed | {ex.GetType().Name}");
+            if (!ct.IsCancellationRequested && owner != null && IsCurrentSubtitleChoice(owner))
+                ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);
         }
     }
 }

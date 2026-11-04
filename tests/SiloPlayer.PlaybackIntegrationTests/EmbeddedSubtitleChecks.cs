@@ -95,13 +95,17 @@ internal static class EmbeddedSubtitleChecks
             mpv.FileLoaded += () => loaded.TrySetResult();
             mpv.LoadFile(media); mpv.Play();
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8));
-            Call(service, "SelectSubtitleTrack", track);
+            // Use the selection owner so remote bytes are prepared before the
+            // local-only executor runs; keep the complete-track cue assertions.
+            if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)))
+                throw new InvalidOperationException("The complete sidecar could not be prepared and selected.");
             if (bounded) throw new InvalidOperationException("Embedded sidecar was requested with a finite position/duration window.");
             mpv.Seek(902);
             await Until(() => ((string?)Call(mpv, "ReadUpscalingProperty", "sub-text"))?.Contains("LATE_CUE") == true);
             mpv.Seek(12);
             await Until(() => ((string?)Call(mpv, "ReadUpscalingProperty", "sub-text"))?.Contains("EARLY_CUE") == true);
-            Call(service, "SelectSubtitleTrack", track);
+            if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)))
+                throw new InvalidOperationException("The loaded sidecar could not be selected again.");
             if (reads != 1) throw new InvalidOperationException("Selecting a loaded sidecar fetched it again.");
             Call(service, "LoadSubtitles");
             if (((System.Collections.IDictionary)Field(service, "_loadedExternalSubtitleSids")!).Count != 0)

@@ -853,7 +853,7 @@ public partial class PlaybackManager : IDisposable
         var baseUrl = _apiClient.BaseUrl;
         var token = _apiClient.AccessToken;
         return CurrentSession.SubtitleUrls
-            .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+            .Where(s => IsServerSubtitleResource(s.Url))
             .Select(s =>
         {
             var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
@@ -864,6 +864,15 @@ public partial class PlaybackManager : IDisposable
                 url = UrlHelper.AppendToken(url, token);
             return (s, url);
         }).ToList();
+    }
+
+    private static bool IsServerSubtitleResource(string resource)
+    {
+        if (string.IsNullOrWhiteSpace(resource)) return false;
+        var value = resource.Trim();
+        if (value.StartsWith('\\') || value.StartsWith("//", StringComparison.Ordinal)) return false;
+        return value.StartsWith('/') || !Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            uri.Scheme is "http" or "https";
     }
 
     /// <summary>Only integrated subtitle routes use account credentials; advertised worker/CDN URLs carry their own authority.</summary>

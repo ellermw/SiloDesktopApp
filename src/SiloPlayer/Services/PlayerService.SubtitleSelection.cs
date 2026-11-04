@@ -24,27 +24,46 @@ public partial class PlayerService
     }
     private SubtitleSelectionOperation? _subtitleSelectionOperation;
     private SubtitleSelectionOperation? _subtitleReadOperation;
-    private sealed record PreparedSubtitleReload(SubtitleSelectionOperation Owner, int MediaFileId, int Index,
+    private sealed record PreparedSubtitleReload(SubtitleSelectionOperation? Owner, int MediaFileId, int Index,
         string TrackId, string? SyncKey, string Path, long PlayRequest, string? Content,
         SiloPlayer.Core.Api.ApiRequestContext Context);
     private PreparedSubtitleReload? _preparedSubtitleReload;
 
     private void PrepareSubtitleFileForReload(PlaybackStartResponse previous, PlaybackStartResponse granted, int? index)
     {
-        var owner = Volatile.Read(ref _subtitleSelectionOperation);
         var after = granted.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.Index == index);
         var before = after == null || string.IsNullOrEmpty(after.TrackId) ? null :
             previous.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.TrackId == after.TrackId);
-        // A track-change may fall back to another file. Never carry bytes by
-        // ordinal across that boundary or assume a new grant kept its identity.
-        if (owner == null || owner.Context is not { } context || !_activeAuthority.ApiClient.IsCurrentContext(context) ||
-            before == null || after == null || previous.MediaFileId != granted.MediaFileId ||
+        PrepareSubtitleReload(previous.MediaFileId, before, granted, after);
+    }
+
+    private void PrepareAppliedSubtitleFileForReload()
+    {
+        // Every replacement load, including audio/quality/recovery, can carry
+        // already applied bytes once when the granted identity is unchanged.
+        if (_preparedSubtitleReload != null || _playbackManager?.CurrentSession is not { } granted ||
+            _activeSubtitleServerIndex < 0 || _executedSubtitleContext is not { } context ||
+            !_activeAuthority.ApiClient.IsCurrentContext(context)) return;
+        var after = granted.SubtitleUrls.FirstOrDefault(t => !t.Unplayable &&
+            t.Index == (_pendingInitialServerSubtitleIndex ?? _playbackManager.SubtitleSelectionForLoad));
+        PrepareSubtitleReload(_executedSubtitleFileId, _executedSubtitleTrack, granted, after);
+    }
+
+    private void PrepareSubtitleReload(int? previousFileId, SubtitleTrackInfo? before,
+        PlaybackStartResponse granted, SubtitleTrackInfo? after)
+    {
+        var owner = Volatile.Read(ref _subtitleSelectionOperation);
+        var context = owner?.Context ?? _executedSubtitleContext;
+        // Never carry bytes by ordinal across a file or authority boundary.
+        // An automatic applied selection has no manual owner, but owns bytes.
+        if (context is not { } captured || !_activeAuthority.ApiClient.IsCurrentContext(captured) ||
+            before == null || after == null || previousFileId != granted.MediaFileId ||
             string.IsNullOrEmpty(before.TrackId) || before.TrackId != after.TrackId || before.SyncKey != after.SyncKey) return;
         lock (_subtitleTrackStateLock)
         {
             if (!_prefetchedSubtitleFiles.TryGetValue(before.Index, out var path)) return;
             _preparedSubtitleReload = new(owner, granted.MediaFileId, after.Index, after.TrackId!, after.SyncKey, path,
-                Volatile.Read(ref _playRequestGeneration), ContentId, context);
+                Volatile.Read(ref _playRequestGeneration), ContentId, captured);
         }
     }
 
@@ -54,7 +73,7 @@ public partial class PlayerService
     {
         var prepared = _preparedSubtitleReload; _preparedSubtitleReload = null;
         if (prepared == null || !ReferenceEquals(prepared.Owner, Volatile.Read(ref _subtitleSelectionOperation)) ||
-            prepared.Owner.Token.IsCancellationRequested || prepared.PlayRequest != Volatile.Read(ref _playRequestGeneration) ||
+            prepared.Owner?.Token.IsCancellationRequested == true || prepared.PlayRequest != Volatile.Read(ref _playRequestGeneration) ||
             prepared.Content != ContentId || !_activeAuthority.ApiClient.IsCurrentContext(prepared.Context) ||
             _playbackManager?.CurrentSession is not { } session || session.MediaFileId != prepared.MediaFileId ||
             !session.SubtitleUrls.Any(t => !t.Unplayable && t.Index == prepared.Index && t.TrackId == prepared.TrackId && t.SyncKey == prepared.SyncKey) ||

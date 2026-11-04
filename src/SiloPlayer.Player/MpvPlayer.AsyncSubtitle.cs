@@ -10,6 +10,8 @@ public sealed partial class MpvPlayer
     private ulong _asyncSubtitleCommandId;
     private readonly SemaphoreSlim _asyncSubtitleAddLane = new(1, 1);
     private long _asyncSubtitleFileGeneration;
+    private long _asyncSubtitleFileRequest;
+    private Task _asyncSubtitleFileTransition = Task.CompletedTask;
     private long _explicitSubtitleRevision;
     private string _explicitSubtitleSid = "no";
 
@@ -39,9 +41,74 @@ public sealed partial class MpvPlayer
 
     private async Task<(int Sid, long FileGeneration)> AddSubtitleInLaneAsync(string url, string? title, string? language, CancellationToken ct)
     {
+        long request;
+        Task transition;
+        lock (_asyncSubtitleGate)
+        {
+            request = _asyncSubtitleFileRequest;
+            transition = _asyncSubtitleFileTransition;
+        }
+        await transition.WaitAsync(ct).ConfigureAwait(false);
         await _asyncSubtitleAddLane.WaitAsync(ct).ConfigureAwait(false);
-        try { return await AddSubtitleUnselectedCoreAsync(url, title, language, ct).ConfigureAwait(false); }
+        try
+        {
+            Task<(int Sid, long FileGeneration)> pending;
+            lock (_asyncSubtitleGate)
+            {
+                if (request != _asyncSubtitleFileRequest) throw new OperationCanceledException();
+                pending = AddSubtitleUnselectedCoreAsync(url, title, language, ct);
+            }
+            return await pending.ConfigureAwait(false);
+        }
         finally { _asyncSubtitleAddLane.Release(); }
+    }
+
+    private void SubmitSubtitleFileTransition(Action submit)
+    {
+        lock (_asyncSubtitleGate)
+        {
+            var request = ++_asyncSubtitleFileRequest;
+            using (var lease = EnterNative())
+                foreach (var id in _asyncSubtitleCommands.Keys)
+                    if (lease.Active) mpv_abort_async_command(_mpvHandle, id);
+            // Abort only requests cancellation. Keep the outgoing file epoch
+            // until the real reply and exact-URL/SID cleanup have drained.
+            if (_asyncSubtitleAddLane.Wait(0))
+            {
+                try
+                {
+                    _asyncSubtitleFileTransition = Task.CompletedTask;
+                    _asyncSubtitleFileGeneration++;
+                    submit();
+                }
+                finally { _asyncSubtitleAddLane.Release(); }
+                return;
+            }
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _asyncSubtitleFileTransition = completion.Task;
+            _ = CompleteSubtitleFileTransitionAsync(request, submit, completion);
+        }
+    }
+
+    private async Task CompleteSubtitleFileTransitionAsync(long request, Action submit, TaskCompletionSource completion)
+    {
+        await _asyncSubtitleAddLane.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            lock (_asyncSubtitleGate)
+            {
+                if (request != _asyncSubtitleFileRequest || _disposed) return;
+                _asyncSubtitleFileGeneration++;
+                submit();
+            }
+        }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex) { ReportErrorSafely($"Deferred file transition failed: {ex.Message}"); }
+        finally
+        {
+            _asyncSubtitleAddLane.Release();
+            completion.TrySetResult();
+        }
     }
 
     private async Task CleanupRetiredSubtitleAddAsync(Task<(int Sid, long FileGeneration)> pending)
@@ -66,7 +133,7 @@ public sealed partial class MpvPlayer
         ct.ThrowIfCancellationRequested();
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         ulong id;
-        long fileGeneration, selectionRevision;
+        long fileGeneration, fileRequest, selectionRevision;
         int previousSid;
         HashSet<int> previousIds;
         var submissionError = 0;
@@ -74,13 +141,14 @@ public sealed partial class MpvPlayer
         {
             ThrowIfNotInitialized();
             fileGeneration = _asyncSubtitleFileGeneration;
+            fileRequest = _asyncSubtitleFileRequest;
             selectionRevision = _explicitSubtitleRevision;
             previousSid = (int)Math.Round(GetPropertyDouble("sid"));
             previousIds = GetSubtitleTrackIds(externalOnly: true).ToHashSet();
             id = ++_asyncSubtitleCommandId;
             _asyncSubtitleCommands.Add(id, completion);
-            // auto is supported; completion below preserves the applied SID
-            // even if mpv's default-selection rule temporarily selects the add.
+            // auto cannot outlive this native file: replacement commands drain
+            // this lane and its cleanup first. Completion preserves applied SID.
             var args = new[] { "sub-add", url, "auto", title ?? "", language ?? "" };
             var pointers = new IntPtr[args.Length + 1];
             try
@@ -136,7 +204,7 @@ public sealed partial class MpvPlayer
                             using var lease = EnterNative();
                             if (lease.Active) mpv_set_property_string(_mpvHandle, "sid", restore);
                         }
-                        if (ct.IsCancellationRequested || !added)
+                        if (ct.IsCancellationRequested || fileRequest != _asyncSubtitleFileRequest || !added)
                         {
                             Command("sub-remove", sid.ToString(System.Globalization.CultureInfo.InvariantCulture));
                             sid = 0;

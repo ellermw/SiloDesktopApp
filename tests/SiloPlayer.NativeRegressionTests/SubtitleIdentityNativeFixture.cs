@@ -680,6 +680,9 @@ internal static partial class SubtitleIdentityNativeFixture
             Require(unselectedSid > 0 && mpv.GetSubtitleTrackIds(externalOnly: true).Contains(unselectedSid) && mpv.GetPropertyDouble("sid") <= 0,
                 "An asynchronous unselected sub-add enabled captions while Off.");
             Program.Log("PASS: subtitle identity uses actual loaded Matroska tracks across index-only gap and sidecar addition; unavailable forged service/native callbacks preserve selection/preferences; Off and genuine pause survive.");
+            await CheckAppliedSidecarReloadAsync(service, manager, mpv, subtitles, wire, assets);
+            await CheckRetiredAddBeforeFileLoadAsync(mpv, subtitles, assets);
+            await CheckCastSubtitleLaneAsync(service, manager, mpv, subtitles, wire, parent.DispatcherQueue);
         }
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
     }
