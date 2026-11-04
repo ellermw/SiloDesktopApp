@@ -76,7 +76,7 @@ internal static class PlaybackSpeedMenuNativeFixture
             var list = (ListView)Get(menu, "_list")!;
             Require(list.Items.Count == 1 && Row("speed").IsEnabled && player.CanChangeVideoPlaybackRate,
                 "Empty quality ladder hid or disabled normal-video Speed while optional settings read was held.");
-            await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-settings");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-settings.png");
             Select("speed");
             await Until(() => Menu(player) is { } current && !ReferenceEquals(current, settingsMenu)
                 && Get(current, "_list") is ListView { XamlRoot: not null }, "Settings did not hand off to the native Speed caller.");
