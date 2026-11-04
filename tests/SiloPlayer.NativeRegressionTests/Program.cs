@@ -75,7 +75,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
     private static readonly string[] NativeAudioCases = ["", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
         "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
         "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure",
-        "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor"];
+        "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor", "terminal-held-failure"];
     public IXamlType GetXamlType(Type type) => _provider.GetXamlType(type);
     public IXamlType GetXamlType(string name) => _provider.GetXamlType(name);
     public XmlnsDefinition[] GetXmlnsDefinitions() => _provider.GetXmlnsDefinitions();

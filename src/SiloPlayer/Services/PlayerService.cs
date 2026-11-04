@@ -5371,6 +5371,7 @@ public partial class PlayerService : IDisposable
 
     private async Task SwitchAudioTrackCoreAsync(int trackIndex, Func<bool>? acceptSelection = null)
     {
+        if (_playbackTerminalState != null) return;
         if (acceptSelection != null && !acceptSelection()) return;
         var authority = _activeAuthority;
         var manager = _playbackManager;
@@ -5395,7 +5396,7 @@ public partial class PlayerService : IDisposable
         var audioPreference = CaptureAudioPreference(trackIndex);
         using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(_playbackCts?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
         var ct = switchCts.Token;
-        bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
+        bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && _playbackTerminalState == null &&
             ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager) && CurrentSelection();
         await CancelAndDrainTransportRestartsAsync(ct);
         if (!CurrentSwitch() || (acceptSelection != null && !acceptSelection())) return;
