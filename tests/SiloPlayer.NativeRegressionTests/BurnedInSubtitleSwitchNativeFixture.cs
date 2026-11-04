@@ -100,10 +100,14 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 wire.FailNextTrackChange = true;
             }
             var replansBeforeText = wire.Replans.Count;
+            var survivingSession = manager.CurrentSession;
+            var survivingIntent = manager.CaptureLocalSubtitleIntent();
+            var writesBeforeText = wire.PreferenceWrites;
+            var loadBeforeText = Get(service, "_fileLoadGeneration");
             SemaphoreSlim? heldRecovery = null;
             try
             {
-                await Loaded(async () =>
+                async Task SwitchSubtitle()
                 {
                     if (overlapRecovery)
                     {
@@ -114,25 +118,25 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                         ? service.SetSubtitleTrackAndPersistAsync(0, null, null)
                         : service.SetSubtitleTrackAndPersistAsync(Spanish + 1, spanish.Language, spanish));
                     if (heldRecovery != null) { heldRecovery.Release(); heldRecovery = null; }
-                });
+                }
+                if (failSwitch) await SwitchSubtitle();
+                else await Loaded(SwitchSubtitle);
             }
             finally { heldRecovery?.Release(); }
             if (failSwitch)
             {
-                var expected = selectOff ? -1 : Spanish;
-                await Until(() => !service.IsLoading);
-                Require(!manager.CurrentSession!.IsSubtitleBurnedIn, "Failure recovery retained the outgoing burned-in subtitle.");
-                Require(manager.SubtitleSelectionForLoad == expected,
-                    "Failure recovery lost the viewer's requested subtitle selection.");
-                await Until(() => service.ActiveSubtitleServerIndex == expected &&
-                    (selectOff ? mpv.GetPropertyDouble("sid") <= 0 : NativeSidMatches(service, mpv, Spanish)));
-                await Until(() => mpv.IsPaused == startPaused && service.IsPaused == startPaused);
-                Require(mpv.IsPaused == startPaused && service.IsPaused == startPaused,
-                    "Failure recovery used the helper's temporary pause instead of viewer intent.");
-                Require(selectOff ? mpv.GetPropertyDouble("sid") <= 0 : NativeSidMatches(service, mpv, Spanish),
-                    "Recovered native subtitle selection does not match the accepted plan.");
-                Program.Log($"Subtitle recovery {failureMode}: next-load={manager.SubtitleSelectionForLoad}, active={service.ActiveSubtitleServerIndex}, mode={manager.CurrentSession?.SubtitleMode}, native paused={mpv.IsPaused}, viewer paused={service.IsPaused}.");
-                Program.Log("PASS: failed burned-in subtitle switch retains track and pause intent through actual native recovery.");
+                await Until(() => !service.IsLoading && mpv.IsPaused == startPaused && service.IsPaused == startPaused);
+                await Task.Delay(500);
+                Require(ReferenceEquals(manager.CurrentSession, survivingSession) && manager.CurrentSession!.IsSubtitleBurnedIn &&
+                    manager.CaptureLocalSubtitleIntent() == survivingIntent && manager.SubtitleSelectionForLoad == Dvd &&
+                    service.ActiveSubtitleServerIndex == Dvd && mpv.GetPropertyDouble("sid") <= 0,
+                    "A rejected subtitle switch did not retain the outgoing burn-in plan and executed intent.");
+                Require(wire.Replans.Count == replansBeforeText + 1 && wire.PreferenceWrites == writesBeforeText &&
+                    Equals(Get(service, "_fileLoadGeneration"), loadBeforeText) && Get(service, "_playbackTerminalState") == null &&
+                    Get(service, "_pendingSubtitlePreferenceIndex") == null && !(bool)Get(service, "_prematureEofRecoveryActive")! &&
+                    !(bool)Get(service, "_switchingContent")!,
+                    "A rejected subtitle switch retried, reloaded, entered terminal recovery or saved an unexecuted preference.");
+                Program.Log($"PASS: rejected burned-in subtitle switch ({failureMode}) keeps healthy native playback, previous selection and viewer pause without retrying.");
                 return;
             }
             Require(wire.Replans.Count == replansBeforeText + 1 && SelectedSubtitle(wire.Replans[^1]) == Spanish,
@@ -147,6 +151,55 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             await Until(() => service.ActiveSubtitleServerIndex == Spanish && NativeSidMatches(service, mpv, Spanish));
             Require(media.SubtitleRequests > 0, "Native player never fetched the served subtitle bytes.");
             Program.Log("PASS: actual PlayerService replans a burned-in DVD subtitle away for Off and for a text track, and the text pick survives a quality reload with a matching native sid.");
+
+            // Persistent rejection (both terminal decisions and request errors)
+            // must never turn a healthy stream into terminal playback recovery.
+            foreach (var terminalRejection in new[] { false, true })
+            foreach (var paused in new[] { false, true })
+            foreach (var requested in new[] { Dvd, -1, Spanish })
+            {
+                var baseline = requested == Dvd ? Spanish : Dvd;
+                var baselineTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == baseline);
+                if (service.ActiveSubtitleServerIndex != baseline)
+                    await Loaded(() => service.SetSubtitleTrackAndPersistAsync(baseline + 1, baselineTrack.Language, baselineTrack));
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var retainedSession = manager.CurrentSession;
+                var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                var retainedUrl = manager.StreamUrl;
+                var retainedSid = mpv.GetPropertyDouble("sid");
+                var loadGeneration = Get(service, "_fileLoadGeneration");
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                wire.RejectTrackChanges = true;
+                wire.TerminalTrackRejection = terminalRejection;
+                try
+                {
+                    for (var pick = 0; pick < 2; pick++)
+                    {
+                        var positionBeforePick = mpv.Position;
+                        Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", requested, true)!,
+                            "A rejected subtitle was reported as executed.");
+                        await Until(() => !service.IsLoading && mpv.IsPaused == paused && service.IsPaused == paused);
+                        await Task.Delay(100);
+                        if (!paused) await Until(() => mpv.Position > positionBeforePick + 0.02);
+                        else Require(Math.Abs(mpv.Position - positionBeforePick) < 0.5,
+                            "A rejected subtitle switch moved the paused playback position.");
+                        Require(ReferenceEquals(manager.CurrentSession, retainedSession) && manager.StreamUrl == retainedUrl &&
+                            manager.CaptureLocalSubtitleIntent() == retainedIntent && manager.SubtitleSelectionForLoad == baseline &&
+                            service.ActiveSubtitleServerIndex == baseline && mpv.GetPropertyDouble("sid") == retainedSid &&
+                            Equals(Get(service, "_fileLoadGeneration"), loadGeneration) && wire.PreferenceWrites == writes &&
+                            wire.Replans.Count == replans + pick + 1 && Get(service, "_playbackTerminalState") == null &&
+                            Get(service, "_pendingSubtitlePreferenceIndex") == null && Get(service, "_pendingSubtitlePreferenceOwner") == null &&
+                            Get(service, "_pendingInitialServerSubtitleIndex") == null && !(bool)Get(service, "_switchingContent")! &&
+                            !(bool)Get(service, "_prematureEofRecoveryActive")!,
+                            "Persistent subtitle rejection changed the stream/intent/pause, saved a preference, retried or entered terminal recovery.");
+                    }
+                }
+                finally { wire.RejectTrackChanges = false; }
+            }
+            Program.Log("PASS: persistent terminal/request rejection of bitmap, Off and text picks retains the executed stream, intent and pause without reloads, retries or preference writes.");
 
             // Pre-play choices must change the composited video plan before
             // its first load, without saving an automatic/startup preference.
@@ -287,6 +340,41 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     "A rebound burn-in/text plan loaded the outgoing index, replanned again, or lost its executed preference/pause.");
             }
             Program.Log("PASS: burn-in replans rebind text and bitmap identities to new combined indices, execute once and save the rebound preference while preserving pause.");
+
+            // Older plans omit IDs. Only the accepted combined index can then
+            // attest which bitmap is actually composited into the current video.
+            var legacySession = manager.CurrentSession!;
+            var legacyDvd = legacySession.SubtitleUrls.Single(t => t.Index == Dvd + 10);
+            legacySession.SelectedSubtitleTrackId = "";
+            legacyDvd.TrackId = "";
+            var otherBitmap = new SubtitleTrackInfo { Index = 99, TrackId = "", Source = "embedded",
+                Codec = "dvd_subtitle", Language = "spa", Label = "Spanish (DVD)", Delivery = "burn_in_only" };
+            legacySession.SubtitleUrls.Add(otherBitmap);
+            Require((bool)Call(service, "SelectSubtitleTrack", legacyDvd)! &&
+                !(bool)Call(service, "SelectSubtitleTrack", otherBitmap)!,
+                "Blank IDs claimed that a different bitmap was already burned in, or refused the granted index.");
+            legacySession.SelectedSubtitleTrackIndex = null;
+            Require(!(bool)Call(service, "SelectSubtitleTrack", legacyDvd)!,
+                "A bitmap with neither a granted ID nor index was reported as executed.");
+            legacySession.SelectedSubtitleTrackIndex = legacyDvd.Index;
+            var legacyWrites = wire.PreferenceWrites;
+            var legacyReplans = wire.Replans.Count;
+            var legacyIntent = manager.CaptureLocalSubtitleIntent();
+            wire.RejectTrackChanges = true;
+            try
+            {
+                Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", otherBitmap.Index, true)!,
+                    "A different blank-ID bitmap was reported as selected without an accepted replan.");
+                Require(wire.Replans.Count == legacyReplans + 1 && wire.PreferenceWrites == legacyWrites &&
+                    service.ActiveSubtitleServerIndex == legacyDvd.Index && manager.CaptureLocalSubtitleIntent() == legacyIntent &&
+                    ReferenceEquals(manager.CurrentSession, legacySession),
+                    "A blank-ID bitmap pick skipped replanning or persisted an unexecuted choice.");
+                Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", legacyDvd.Index, false)! &&
+                    wire.Replans.Count == legacyReplans + 1 && wire.PreferenceWrites == legacyWrites,
+                    "Load-time selection failed to recognize the granted legacy burn-in index without replanning.");
+            }
+            finally { wire.RejectTrackChanges = false; }
+            Program.Log("PASS: blank bitmap IDs require the granted index; a different pick replans and a rejection retains the actual burned-in selection without persisting it.");
         }
         finally
         {
@@ -389,6 +477,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
     {
         private int _subtitle = -1;
         public bool FailNextTrackChange;
+        public bool RejectTrackChanges, TerminalTrackRejection;
         public bool DeclineTrackChanges;
         public bool ReindexSpanish, ReindexDvd;
         public int PreferenceWrites;
@@ -419,9 +508,11 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             else
             {
                 Replans.Add(body.Clone());
-                if (FailNextTrackChange && body.GetProperty("operation").GetString() == "track_change")
+                if ((FailNextTrackChange || RejectTrackChanges) && body.GetProperty("operation").GetString() == "track_change")
                 {
                     FailNextTrackChange = false;
+                    if (TerminalTrackRejection)
+                        return Json("""{"protocol_version":3,"outcome":"not_playable","terminal":{"reason":"subtitle_unavailable","message":"Synthetic persistent subtitle rejection.","retryable":true}}""");
                     throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
                 }
                 if (!DeclineTrackChanges || body.GetProperty("operation").GetString() != "track_change")

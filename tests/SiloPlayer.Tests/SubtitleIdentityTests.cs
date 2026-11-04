@@ -7,6 +7,56 @@ namespace SiloPlayer.Tests;
 public sealed class SubtitleIdentityTests
 {
     [Fact]
+    public void RejectedSubtitleReplanRestoresTheSurvivingStreamBeforeConsideringRecovery()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<SubtitleTransportResult> SetBitmapSubtitleBurnInAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task ReconcileDeferredSubtitleSelectionAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var failure = method.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
+        var retained = method.IndexOf("if (ReferenceEquals(manager.CurrentSession, session))", failure, StringComparison.Ordinal);
+        var recovery = method.IndexOf("_ = RunStreamRecoveryAsync(", failure, StringComparison.Ordinal);
+        Assert.True(retained > failure && recovery > retained);
+        var rollback = method[retained..recovery];
+        Assert.Contains("RestoreExecutedSubtitleSelection(reapply: false);", rollback);
+        Assert.Contains("manager.CaptureLocalSubtitleIntent() == selectionIntent", rollback);
+        Assert.Contains("_prematureEofRecoveryActive = false;", rollback);
+        Assert.Contains("_switchingContent = false;", rollback);
+        Assert.Contains("IsLoading = false;", rollback);
+        Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
+        Assert.Contains("RestorePlaybackStateAfterSubtitleChange(wasPaused, CurrentMediaPosition, allowSeek: false);", rollback);
+        Assert.Contains("ShowSubtitleSelectionUnavailable();", rollback);
+        Assert.Contains("return SubtitleTransportResult.Failed;", rollback);
+        Assert.DoesNotContain("BeginMpvLoad(", rollback);
+        Assert.DoesNotContain("EnterPlaybackTerminalState(", rollback);
+    }
+
+    [Fact]
+    public void BitmapExecutionUsesNonblankIdentityOrTheGrantedIndexInEverySelectionPath()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var helperStart = source.IndexOf("private static bool IsBurnedInSubtitle(", StringComparison.Ordinal);
+        var helperEnd = source.IndexOf("private static bool IsUnsupportedBitmapSubtitle(", helperStart, StringComparison.Ordinal);
+        var helper = source[helperStart..helperEnd];
+        Assert.Contains("!string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)", helper);
+        Assert.Contains("!string.IsNullOrWhiteSpace(track.TrackId)", helper);
+        Assert.Contains("session.SelectedSubtitleTrackIndex is int index && track.Index == index", helper);
+        foreach (var (startSignature, endSignature) in new[]
+        {
+            ("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", "private async Task SaveExecutedSubtitlePreferenceAsync("),
+            ("private async Task<bool> SelectSubtitleByServerIndexAsync(", "public int ActiveSubtitleServerIndex"),
+            ("private bool SelectSubtitleTrackForOwner(", "private bool SelectSubtitleSidecar("),
+        })
+        {
+            var start = source.IndexOf(startSignature, StringComparison.Ordinal);
+            var end = source.IndexOf(endSignature, start, StringComparison.Ordinal);
+            var method = source[start..end];
+            Assert.Contains("IsBurnedInSubtitle(", method);
+            Assert.DoesNotContain("string.Equals(burned.SelectedSubtitleTrackId, track.TrackId", method);
+        }
+    }
+
+    [Fact]
     public void ManagerRefusesUnavailableWithoutReplacingLatestChoice()
     {
         WithManager(manager =>

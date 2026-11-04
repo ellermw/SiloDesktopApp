@@ -1175,8 +1175,7 @@ public partial class PlayerService : IDisposable
         }
         else if (track != null && IsUnsupportedBitmapSubtitle(track))
         {
-            if (manager?.CurrentSession is { IsSubtitleBurnedIn: true } burned &&
-                string.Equals(burned.SelectedSubtitleTrackId, track.TrackId, StringComparison.Ordinal))
+            if (IsBurnedInSubtitle(manager?.CurrentSession, track))
                 selectionExecuted = true;
             else
             {
@@ -5104,6 +5103,13 @@ public partial class PlayerService : IDisposable
         // when the user selects one, matching the WebUI's active-track model.
     }
 
+    private static bool IsBurnedInSubtitle(PlaybackStartResponse? session, SubtitleTrackInfo track)
+        => session?.IsSubtitleBurnedIn == true &&
+           (!string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)
+               ? !string.IsNullOrWhiteSpace(track.TrackId) &&
+                 string.Equals(session.SelectedSubtitleTrackId, track.TrackId, StringComparison.Ordinal)
+               : session.SelectedSubtitleTrackIndex is int index && track.Index == index);
+
     private static bool IsUnsupportedBitmapSubtitle(SubtitleTrackInfo track)
     {
         if (string.Equals(track.Delivery, "burn_in_only", StringComparison.OrdinalIgnoreCase))
@@ -5161,7 +5167,10 @@ public partial class PlayerService : IDisposable
             ? pendingPause : CaptureUserPausedState();
         int? requestedIndex = track?.Index ?? postLoadSubtitleIndex;
         var transportMutationAttempted = false;
+        var reconcileDeferredSelection = false;
         await _transportRestartGate.WaitAsync(ct).ConfigureAwait(false);
+        var selectionIntent = manager.CaptureLocalSubtitleIntent();
+        var preferenceOwner = _pendingSubtitlePreferenceOwner;
         try
         {
             if (!CurrentOwner() || manager?.CurrentSession != session || _mpv == null ||
@@ -5238,6 +5247,39 @@ public partial class PlayerService : IDisposable
             LogToFile("player_subtitle_error.txt", ex.ToString());
             if (transportMutationAttempted && !_closing && ReferenceEquals(_playbackManager, manager))
             {
+                if (ReferenceEquals(manager.CurrentSession, session))
+                {
+                    // No replacement was adopted: the outgoing stream is still
+                    // healthy. Refuse the tentative choice, not the playback plan.
+                    _prematureEofRecoveryActive = false;
+                    _prematureEofRecoveryPosition = 0;
+                    _switchingContent = false;
+                    IsLoading = false;
+                    lock (_subtitleTrackStateLock)
+                    {
+                        if (ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) &&
+                            manager.CaptureLocalSubtitleIntent() == selectionIntent)
+                        {
+                            RestoreExecutedSubtitleSelection(reapply: false);
+                            if (preferenceOwner?.PreviousIntent == null)
+                                manager.RestoreLocalSubtitleIntent(new(true, _executedSubtitleTrack,
+                                    session.MediaFileId, selectionIntent.IsAutomatic));
+                            _pendingAutomaticSubtitleSelection = null;
+                            ShowSubtitleSelectionUnavailable();
+                        }
+                        else
+                        {
+                            // A newer deferred pick still needs an executor, but
+                            // must not be rolled back with the rejected request.
+                            reconcileDeferredSelection = true;
+                        }
+                    }
+                    mpv.SendScriptMessage("osc-set-loading", "false");
+                    if (loadingOwner != null)
+                        App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
+                    RestorePlaybackStateAfterSubtitleChange(wasPaused, CurrentMediaPosition, allowSeek: false);
+                    return SubtitleTransportResult.Failed;
+                }
                 _prematureEofRecoveryActive = true;
                 _switchingContent = true;
                 IsLoading = true;
@@ -5261,7 +5303,12 @@ public partial class PlayerService : IDisposable
                 ShowNotice("Subtitle switch failed", ex.Message, "error");
             }
         }
-        finally { _transportRestartGate.Release(); }
+        finally
+        {
+            _transportRestartGate.Release();
+            if (reconcileDeferredSelection && CurrentOwner())
+                await ReconcileDeferredSubtitleSelectionAsync(manager, session);
+        }
         return SubtitleTransportResult.Failed;
     }
 
@@ -5371,9 +5418,7 @@ public partial class PlayerService : IDisposable
                 await PrefetchSubtitleSidecarAsync(track);
                 // A newer choice or replacement file owns its own completion.
                 if (!CurrentSelection()) return false;
-                if (IsUnsupportedBitmapSubtitle(track) &&
-                    !(manager?.CurrentSession is { IsSubtitleBurnedIn: true } burned &&
-                      string.Equals(burned.SelectedSubtitleTrackId, track.TrackId, StringComparison.Ordinal)))
+                if (IsUnsupportedBitmapSubtitle(track) && !IsBurnedInSubtitle(session, track))
                 {
                     var result = alreadyReplanned ? SubtitleTransportResult.Failed :
                         await SetBitmapSubtitleBurnInAsync(track);
@@ -5567,8 +5612,7 @@ public partial class PlayerService : IDisposable
             // After a burn-in reload, the post-load selection lands here with
             // the track the plan already burns in. Replanning again would
             // reload and reselect it indefinitely.
-            if (_playbackManager?.CurrentSession is { IsSubtitleBurnedIn: true } burned &&
-                string.Equals(burned.SelectedSubtitleTrackId, track.TrackId, StringComparison.Ordinal))
+            if (IsBurnedInSubtitle(session, track))
                 return true;
             return false;
         }
