@@ -411,6 +411,7 @@ local function active_quality_label()
 end
 
 local function quality_choices_available()
+    if state.native_speed_scope then return true end
     if not state.quality_info then return false end
     local versions = state.watch_party and {} or (state.quality_info.versions or {})
     return #versions > 1 or #visible_quality_tiers() > 1
@@ -4688,10 +4689,10 @@ local function open_native_menu(kind, keyboard)
     local scope = state['native_' .. kind .. '_scope']
     if not scope then return false end
     if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1) or state.osc_disabled
-        or state.playback_loading or state.post_roll_active
+        or state.playback_loading or state.post_roll_active or state.playback_failure_visible
         or state.native_menu_sequence >= 9007199254740991 then return true end
     compute_layout()
-    local opener = ({audio='btn_audio', subtitle='btn_cc', quality='btn_quality', chapters='btn_chapters', stats='btn_stats', speed='btn_speed', more='btn_more', party='btn_party'})[kind]
+    local opener = ({audio='btn_audio', subtitle='btn_cc', quality='btn_quality', chapters='btn_chapters', stats='btn_stats', speed='btn_quality', more='btn_more', party='btn_party'})[kind]
     local anchor = state.layout[opener] or state.layout.btn_more
     if not anchor then return true end
     close_transport_menus(nil)
@@ -4863,6 +4864,7 @@ end
 
 local function activate_controller_focus()
     if native_menu_input("activate") then return true end
+    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then return open_native_menu('quality', true) end
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
     end
@@ -6233,6 +6235,13 @@ local function setup_script_messages()
             end
         end)
     end
+    mp.register_script_message('osc-native-speed-handoff', function(token, sequence)
+        -- The first host must acknowledge close/release before a second request.
+        -- A rotated scope or newer intent retires this exact handoff.
+        if state.native_menu_request or state.native_quality_scope ~= token or state.native_speed_scope ~= token
+            or tonumber(sequence) ~= state.native_menu_sequence then return end
+        open_native_menu('speed', true)
+    end)
     mp.register_script_message("osc-native-menu-closed", function(token, sequence, consume)
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end

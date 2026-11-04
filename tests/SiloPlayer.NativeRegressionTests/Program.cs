@@ -141,6 +141,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await VideoPlaybackRateNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-speed-menu")
+            {
+                await PlaybackSpeedMenuNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
             {
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
