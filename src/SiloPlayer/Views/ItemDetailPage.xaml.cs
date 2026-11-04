@@ -915,7 +915,9 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
-        if (args.PropertyName == nameof(ViewModel.UserRating))
+        if (args.PropertyName == nameof(ViewModel.BoxSet))
+            DispatcherQueue.TryEnqueue(BuildBoxSetRow);
+        else if (args.PropertyName == nameof(ViewModel.UserRating))
             DispatcherQueue.TryEnqueue(UpdateStarRating);
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
             DispatcherQueue.TryEnqueue(UpdateWatchedButton);
@@ -936,6 +938,10 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
     {
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated -= RefreshBoxSetRow;
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated += RefreshBoxSetRow;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated -= BoxSetLanguageChanged;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated += BoxSetLanguageChanged;
         SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged;
         SettingsViewModel.TitleArtPreferenceChanged += OnTitleArtPreferenceChanged;
         UpdateBackdropHeight();
@@ -1002,6 +1008,8 @@ public sealed partial class ItemDetailPage : Page
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
         _navigationCts = null;
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated -= RefreshBoxSetRow;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated -= BoxSetLanguageChanged;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         if (_rootElement != null)
         {
@@ -1090,7 +1098,8 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrEmpty(contentId))
         {
             _currentContentId = contentId;
-            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId);
+            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
+                _playerService?.PendingProgressSave ?? Task.CompletedTask);
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
                 return;
             if (ViewModel.Item == null)
@@ -1879,6 +1888,7 @@ public sealed partial class ItemDetailPage : Page
             SiblingEpisodesSection,
             CastSection,
             CrewSection,
+            BoxSetSection,
             SimilarSection,
             SubtitlesSection,
             StudiosText,
@@ -1907,7 +1917,7 @@ public sealed partial class ItemDetailPage : Page
             "movie" =>
             [
                 MediaLocationsSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, SimilarSection,
+                CastSection, CrewSection, BoxSetSection, SimilarSection,
             ],
             "series" =>
             [

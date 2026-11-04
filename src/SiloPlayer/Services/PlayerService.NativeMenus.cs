@@ -26,13 +26,22 @@ public partial class PlayerService
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         var version = ActiveVersion;
+        var versions = Versions.ToArray();
+        var audio = version?.AudioTracks?.ToArray() ?? [];
+        var chapters = version?.Chapters?.ToArray() ?? [];
+        var qualities = session?.AvailableQualities?.ToArray() ?? [];
+        var roomPlayback = IsWatchTogetherPlayback;
         var mpv = _mpv; var video = _videoWindow; var content = ContentId;
         var play = Volatile.Read(ref _playRequestGeneration);
         var file = Volatile.Read(ref _fileLoadGeneration);
         var playbackFile = Volatile.Read(ref _playbackFileGeneration);
         var epoch = Volatile.Read(ref _nativeMenuEpoch);
         var publication = Interlocked.Increment(ref _nativeMenuPublication);
-        bool Current() => !_closing && !_postRollActive &&
+        bool Current() => !_closing && !_postRollActive && _playbackTerminalState == null &&
+            roomPlayback == IsWatchTogetherPlayback && versions.SequenceEqual(Versions) &&
+            (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0) &&
+            (version?.Chapters?.SequenceEqual(chapters) ?? chapters.Length == 0) &&
+            (session?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
             State is PlayerState.Expanded or PlayerState.Fullscreen && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
             play == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration) &&
             playbackFile == Volatile.Read(ref _playbackFileGeneration) &&
@@ -46,8 +55,12 @@ public partial class PlayerService
         void Publish()
         {
             if (publication != Volatile.Read(ref _nativeMenuPublication) || !owner.IsCurrent()) return;
-            _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
-            _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
+            if (_nativeMenuOwner is { } retained && retained.IsCurrent()) owner = retained;
+            else
+            {
+                _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
+                _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
+            }
             mpv.SendScriptMessage("osc-native-audio-scope", version?.AudioTracks?.Count > 1 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-quality-scope", (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
         }

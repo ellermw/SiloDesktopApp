@@ -146,6 +146,59 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PlaybackSpeedMenuNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-admission")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyMenuAdmissionAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-lifecycle")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyMenuAdmissionAsync(parent, controls: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetMenuScopeAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-owner")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetMenuScopeAsync(parent, retiredOwnerChecks: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-unscoped")
+            {
+                await BoxSetUnscopedNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxsets-write")
+            {
+                await BoxSetNativeFixture.RunAsync(parent, invalidMemberChecks: false);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-room")
+            {
+                await BoxSetRoomNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-shell")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetShellRefreshAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-pointer")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxsets")
+            {
+                await BoxSetNativeFixture.RunAsync(parent);
+                await BoxSetUnscopedNativeFixture.RunAsync(parent);
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetShellRefreshAsync();
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
             {
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
@@ -166,6 +219,20 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 foreach (var mode in new[] { "normal", "retired", "release", "successor-failure", "successor-success" })
                     await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-quality-review" or "native-quality-terminal-legacy")
+            {
+                var failures = new List<Exception>();
+                var modes = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-terminal-legacy"
+                    ? new[] { "terminal-legacy-version", "terminal-legacy-quality" }
+                    : new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality" };
+                foreach (var mode in modes)
+                {
+                    try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
+                    catch (Exception error) { Program.Log($"FAIL [{mode}]: {error.Message}"); failures.Add(error); }
+                }
+                if (failures.Count > 0) throw new AggregateException("Native Quality review regressions failed.", failures);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-menu")
