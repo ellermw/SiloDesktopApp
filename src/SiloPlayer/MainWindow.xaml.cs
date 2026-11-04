@@ -1472,7 +1472,9 @@ public sealed partial class MainWindow : Window
                 if (_hydratedShellKey is { } shellKey &&
                     _shellHydrationCts is { IsCancellationRequested: false } owner)
                 {
-                    if (!_sidebarCustomizationReady)
+                    // Readiness retains the accepted menu during a transient
+                    // failure; unavailable customization still needs a retry.
+                    if (!_sidebarCustomizationReady || _uiCustomizationService.IsUnavailable)
                         _ = RunShellWorkAsync("home_catchup_ui_customization",
                             () => LoadSidebarCustomizationAsync(shellKey, owner.Token));
                     if (!_viewModel.HasCurrentLibrarySnapshot || !_sidebarPinsReady)

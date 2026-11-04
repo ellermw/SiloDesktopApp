@@ -27,7 +27,7 @@ internal static class SidebarReviewNativeFixture
     private static string MenuLabel = "Current menu";
     private static TaskCompletionSource<object>? HeldPins, HeldLibraries, HeldMenuRead, HeldMenuWrite;
     private static int PinReads, PinWrites, LibraryReads, MenuReads, MenuWrites;
-    private static bool FailSidebarReads;
+    private static bool FailSidebarReads, FailCustomizationReads;
     private static string PosterSize = "standard";
     private static Profile FirstProfile = new() { Id = "first", Name = "First", IsPrimary = true };
     private static readonly Profile SecondProfile = new() { Id = "second", Name = "Second", IsChild = true, LibraryRestrictionsEnabled = true, AllowedLibraryIds = [1] };
@@ -70,6 +70,7 @@ internal static class SidebarReviewNativeFixture
         if (mode.EndsWith("initial", StringComparison.Ordinal)) HeldMenuRead = Hold();
         if (mode.EndsWith("duplicates", StringComparison.Ordinal)) Pins = PinMap("Duplicate", duplicate: true);
         if (mode.EndsWith("move", StringComparison.Ordinal)) Pins = new Dictionary<string, object> { ["2"] = new[] { new { type = "section", id = "second-pin", label = "Second pin" } } };
+        if (mode == "sidebar-review-nonhome-catchup") PosterSize = "compact";
         window.ShowMainNavigation();
         await Until(() => LibraryRows(nav).Length == 2);
         if (HeldMenuRead == null && !mode.EndsWith("duplicates", StringComparison.Ordinal)) await Until(() => PrimaryRows(nav).Length == 2);
@@ -152,21 +153,52 @@ internal static class SidebarReviewNativeFixture
             var library = LibraryRows(nav)[0];
             await Until(() => library.MenuItems.Count == 1);
             var pin = library.MenuItems[0]; var primary = PrimaryRows(nav).Last();
+            var primaryRows = PrimaryRows(nav); var presentation = service.CardPresentation;
+            Check(presentation.PosterSize == "compact" && service.GetPosterColumnCount(1280) == 10,
+                "fixture establishes an accepted non-default card layout before transport failure");
             library.IsExpanded = true; nav.SelectedItem = library; library.Focus(FocusState.Keyboard); await Drain();
-            var reads = LibraryReads; var pinReads = PinReads;
-            FailSidebarReads = true;
+            var reads = LibraryReads; var pinReads = PinReads; var menuReads = MenuReads;
+            FailSidebarReads = FailCustomizationReads = true;
             Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext());
-            await Until(() => LibraryReads > reads && PinReads > pinReads); await Drain();
+            await Until(() => LibraryReads > reads && PinReads > pinReads && MenuReads > menuReads && service.IsUnavailable); await Drain();
             Check(ReferenceEquals(LibraryRows(nav)[0], library) && ReferenceEquals(library.MenuItems[0], pin) &&
                 PrimaryRows(nav).Contains(primary) && vm.HasCurrentLibrarySnapshot && library.IsExpanded &&
                 ReferenceEquals(nav.SelectedItem, library) && library.FocusState == FocusState.Keyboard,
                 "failed non-Home transport replacement preserves accepted native identity, data, selection, focus and expansion");
+            Check(primaryRows.SequenceEqual(PrimaryRows(nav)) && service.IsSupported && service.IsUnavailable &&
+                ReferenceEquals(service.CardPresentation, presentation) && service.GetPosterColumnCount(1280) == 10 &&
+                service.PrimaryMenuSource == "profile_client" && service.CardPresentationSource == "profile_client",
+                "failed effective-settings replacement retains custom primary nodes and accepted card presentation while editing is unavailable");
+            FailCustomizationReads = false;
+            MenuLabel = "Recovered menu"; PosterSize = "large";
+            menuReads = MenuReads;
+            var retryContext = api.CaptureContext();
+            await service.EnsureLoadedAsync(); await Drain();
+            Check(api.CaptureContext() == retryContext && MenuReads > menuReads && !service.IsUnavailable &&
+                primaryRows.SequenceEqual(PrimaryRows(nav)) && Equals(primary.Content, MenuLabel) &&
+                service.CardPresentation.PosterSize == "large" && service.GetPosterColumnCount(1280) == 6,
+                "EnsureLoaded retries a failed replacement in the same request context and updates retained menu nodes and card layout");
             FailSidebarReads = false;
             Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext()); await Drain();
             Check(ReferenceEquals(LibraryRows(nav)[0], library) && ReferenceEquals(library.MenuItems[0], pin),
                 "successful non-Home catch-up reconciles retained nodes in place");
             var writes = PinWrites; Invoke(Unpin(library)); await Until(() => PinWrites == writes + 1);
             Check(PinWrites == writes + 1, "transport catch-up retains useful pin callback ownership");
+
+            FailCustomizationReads = true;
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext());
+            await Until(() => service.IsUnavailable); await Drain();
+            navigation.Navigate<HomePage>();
+            await Until(() => navigation.Frame!.Content is HomePage page && page.IsLoaded && !page.ViewModel.IsLoading);
+            await Drain();
+            Check(primaryRows.SequenceEqual(PrimaryRows(nav)) && service.CardPresentation.PosterSize == "large",
+                "accepted customization also survives repeated failure and navigation to Home");
+            FailCustomizationReads = false;
+            MenuLabel = "Home retry menu"; PosterSize = "compact"; menuReads = MenuReads;
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext());
+            await Until(() => !service.IsUnavailable && service.CardPresentation.PosterSize == "compact" && Equals(primary.Content, MenuLabel));
+            Check(MenuReads > menuReads && primaryRows.SequenceEqual(PrimaryRows(nav)),
+                "loaded Home catch-up retries unavailable customization even when the accepted sidebar was already ready");
         }
         else if (mode.EndsWith("save", StringComparison.Ordinal) || mode.EndsWith("reset", StringComparison.Ordinal) || mode.EndsWith("clear", StringComparison.Ordinal))
         {
@@ -486,7 +518,11 @@ internal static class SidebarReviewNativeFixture
         if ((path.Contains("nav.primary_menu") || path.Contains("ui.card_presentation")) && request.Method != HttpMethod.Get)
         { MenuWrites++; return Json(HeldMenuWrite == null ? new { } : await HeldMenuWrite.Task); }
         if (path == "/api/v2/settings/values/effective" && request.RequestUri.Query.Contains("nav.primary_menu"))
-        { MenuReads++; return Json(HeldMenuRead == null ? EffectiveMenu() : await HeldMenuRead.Task); }
+        {
+            MenuReads++;
+            if (FailCustomizationReads) return new(HttpStatusCode.ServiceUnavailable);
+            return Json(HeldMenuRead == null ? EffectiveMenu() : await HeldMenuRead.Task);
+        }
         if (path == "/api/v2/settings/contract/capabilities") return Json(new { api_version = 1, manifest_revision = 22, client_families = new[] { "desktop", "web" }, supports_batched_effective = true, supports_idempotent_writes = true });
         if (path == "/api/v2/settings/plugins") return Json(new { items = new[] { new { id = 7, plugin_id = "Fixture", routes = new[] { new { path = "/fixture", navigable = true, navigation_kind = "user", navigation_label = "Fixture" } } } } });
         return Json(new { items = Array.Empty<object>(), settings = Array.Empty<object>(), sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() });

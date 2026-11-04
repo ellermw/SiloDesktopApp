@@ -22,6 +22,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     private bool _loaded;
     private ApiRequestContext _loadedContext;
+    private ApiIdentityContext _acceptedIdentity;
     private long _generation;
 
     public bool IsSupported { get; private set; }
@@ -58,22 +59,13 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
 
     private async Task RefreshAsync(ApiRequestContext context, long generation, CancellationToken cancellationToken)
     {
+        var identity = settingsApi.CaptureIdentityContext();
         await _loadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (!IsCurrent(context, generation)) return;
-            SettingsContractCapabilities capability;
-            try
-            {
-                capability = await settingsApi.GetContractCapabilitiesAsync(context, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (ApiException ex) when (ex.StatusCode is 404 or 405)
-            {
-                if (!IsCurrent(context, generation)) return;
-                Reset(context, generation, supported: false, unavailable: false);
-                return;
-            }
+            var capability = await settingsApi.GetContractCapabilitiesAsync(context, cancellationToken)
+                .ConfigureAwait(false);
 
             if (!IsCurrent(context, generation)) return;
             if (!capability.SupportsRevision5Customization)
@@ -113,6 +105,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
 
                 IsSupported = true;
                 IsUnavailable = false;
+                _acceptedIdentity = identity;
                 _loaded = true;
                 _loadedContext = context;
                 _loadedGeneration = generation;
@@ -123,10 +116,28 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         {
             throw;
         }
+        catch (ApiException ex) when (ex.StatusCode is 404 or 405)
+        {
+            Reset(context, generation, supported: false, unavailable: false);
+        }
         catch
         {
-            if (!IsCurrent(context, generation)) return;
-            Reset(context, generation, supported: false, unavailable: true);
+            var retained = false;
+            lock (_stateGate)
+            {
+                if (!IsCurrent(context, generation)) return;
+                if (IsSupported && _acceptedIdentity == identity)
+                {
+                    // A transient replacement failure must not discard the
+                    // accepted same-owner layout. Editing stays disabled, and
+                    // EnsureLoadedAsync must still retry this request context.
+                    IsUnavailable = true;
+                    _loaded = false;
+                    retained = true;
+                }
+            }
+            if (retained) Changed?.Invoke(this, EventArgs.Empty);
+            else Reset(context, generation, supported: false, unavailable: true);
         }
         finally
         {
@@ -268,7 +279,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             PrimaryMenu = null;
             PrimaryMenuSource = "default";
             Shortcuts = new NavigationShortcutDocument();
-            _loaded = true;
+            _loaded = !unavailable;
             _loadedContext = context;
             _loadedGeneration = generation;
         }
