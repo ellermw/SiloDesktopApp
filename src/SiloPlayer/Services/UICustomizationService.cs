@@ -24,6 +24,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     private ApiRequestContext _loadedContext;
     private ApiIdentityContext _acceptedIdentity;
     private long _generation;
+    private long _writeEpoch;
 
     public bool IsSupported { get; private set; }
     public bool IsUnavailable { get; private set; }
@@ -47,6 +48,9 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     private bool IsCurrent(ApiRequestContext context, long generation) =>
         generation == Volatile.Read(ref _generation) && settingsApi.IsCurrentContext(context);
 
+    private bool IsCurrent(ApiRequestContext context, long generation, long writeEpoch) =>
+        writeEpoch == Volatile.Read(ref _writeEpoch) && IsCurrent(context, generation);
+
     public async Task EnsureLoadedAsync(CancellationToken cancellationToken = default)
     {
         lock (_stateGate)
@@ -61,18 +65,20 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     {
         var identity = settingsApi.CaptureIdentityContext();
         await _loadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // Successful mutations retire older reads without retiring other writes.
+        var writeEpoch = Volatile.Read(ref _writeEpoch);
         var capabilityReadSucceeded = false;
         try
         {
-            if (!IsCurrent(context, generation)) return;
+            if (!IsCurrent(context, generation, writeEpoch)) return;
             var capability = await settingsApi.GetContractCapabilitiesAsync(context, cancellationToken)
                 .ConfigureAwait(false);
             capabilityReadSucceeded = true;
 
-            if (!IsCurrent(context, generation)) return;
+            if (!IsCurrent(context, generation, writeEpoch)) return;
             if (!capability.SupportsRevision5Customization)
             {
-                Reset(context, generation, supported: false, unavailable: false);
+                Reset(context, generation, writeEpoch, supported: false, unavailable: false);
                 return;
             }
 
@@ -85,12 +91,12 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
                     ],
                     ct: cancellationToken)
                 .ConfigureAwait(false);
-            if (!IsCurrent(context, generation)) return;
+            if (!IsCurrent(context, generation, writeEpoch)) return;
             var values = response.Settings.ToDictionary(entry => entry.Key, StringComparer.Ordinal);
 
             lock (_stateGate)
             {
-                if (!IsCurrent(context, generation)) return;
+                if (!IsCurrent(context, generation, writeEpoch)) return;
                 CardPresentation = values.TryGetValue(UICustomizationSettingKeys.CardPresentation, out var cards)
                     ? ParseCardPresentation(cards.Value)
                     : CardPresentation.Default;
@@ -120,14 +126,14 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         }
         catch (ApiException ex) when (!capabilityReadSucceeded && ex.StatusCode is 404 or 405)
         {
-            Reset(context, generation, supported: false, unavailable: false);
+            Reset(context, generation, writeEpoch, supported: false, unavailable: false);
         }
         catch
         {
             var retained = false;
             lock (_stateGate)
             {
-                if (!IsCurrent(context, generation)) return;
+                if (!IsCurrent(context, generation, writeEpoch)) return;
                 if (IsSupported && _acceptedIdentity == identity)
                 {
                     // A transient replacement failure must not discard the
@@ -139,7 +145,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
                 }
             }
             if (retained) Changed?.Invoke(this, EventArgs.Empty);
-            else Reset(context, generation, supported: false, unavailable: true);
+            else Reset(context, generation, writeEpoch, supported: false, unavailable: true);
         }
         finally
         {
@@ -164,6 +170,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         lock (_stateGate)
         {
             if (!IsCurrent(context, generation)) return false;
+            Interlocked.Increment(ref _writeEpoch);
             CardPresentation = normalized;
             CardPresentationSource = "profile_client";
             _loaded = true;
@@ -187,6 +194,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         lock (_stateGate)
         {
             if (!IsCurrent(context, generation)) return false;
+            Interlocked.Increment(ref _writeEpoch);
             _loaded = false;
         }
         await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
@@ -207,7 +215,12 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             "profile_device",
             ct: cancellationToken).ConfigureAwait(false);
         if (!IsCurrent(context, generation)) return false;
-        _loaded = false;
+        lock (_stateGate)
+        {
+            if (!IsCurrent(context, generation)) return false;
+            Interlocked.Increment(ref _writeEpoch);
+            _loaded = false;
+        }
         await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
         lock (_stateGate)
             return IsCurrent(context, generation) && _loaded &&
@@ -232,6 +245,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         lock (_stateGate)
         {
             if (!IsCurrent(context, generation)) return false;
+            Interlocked.Increment(ref _writeEpoch);
             PrimaryMenu = document;
             PrimaryMenuSource = "profile_client";
             _loaded = true;
@@ -252,7 +266,12 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
             "profile_client",
             ct: cancellationToken).ConfigureAwait(false);
         if (!IsCurrent(context, generation)) return false;
-        _loaded = false;
+        lock (_stateGate)
+        {
+            if (!IsCurrent(context, generation)) return false;
+            Interlocked.Increment(ref _writeEpoch);
+            _loaded = false;
+        }
         await RefreshAsync(context, generation, cancellationToken).ConfigureAwait(false);
         lock (_stateGate)
             return IsCurrent(context, generation) && _loaded &&
@@ -276,11 +295,11 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     // Always reserve the complete series/title/episode metadata caption.
     public double CardCaptionHeight => 76;
 
-    private void Reset(ApiRequestContext context, long generation, bool supported, bool unavailable)
+    private void Reset(ApiRequestContext context, long generation, long writeEpoch, bool supported, bool unavailable)
     {
         lock (_stateGate)
         {
-            if (!IsCurrent(context, generation)) return;
+            if (!IsCurrent(context, generation, writeEpoch)) return;
             IsSupported = supported;
             IsUnavailable = unavailable;
             CardPresentation = CardPresentation.Default;

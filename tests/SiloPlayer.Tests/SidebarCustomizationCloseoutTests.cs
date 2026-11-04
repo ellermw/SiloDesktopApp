@@ -91,6 +91,55 @@ public sealed class SidebarCustomizationCloseoutTests
         else Assert.Equal(operation == "save" ? "Draft" : "Accepted", service.PrimaryMenu!.Items.Last().Label);
     }
 
+    [Theory]
+    [InlineData(false, 200)]
+    [InlineData(true, 200)]
+    [InlineData(false, 404)]
+    [InlineData(true, 404)]
+    public async Task SuccessfulSaveRetiresAnInFlightEffectiveSettingsRead(bool saveMenu, int readStatus)
+    {
+        using var wire = new Wire { MenuSource = "profile", CardSource = "profile" };
+        using var http = new HttpClient(wire);
+        var client = Client(http); var service = new UICustomizationService(new SettingsApi(client));
+        await service.EnsureLoadedAsync();
+        var context = client.CaptureContext();
+        var changes = 0;
+        service.Changed += (_, _) => changes++;
+        wire.HoldEffectiveRead = true;
+        wire.EffectiveStatus = readStatus;
+        var refresh = service.RefreshAsync();
+        await wire.EffectiveReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        try
+        {
+            var save = saveMenu
+                ? service.SavePrimaryMenuAsync([PrimaryMenuItem.Builtin("home"), new() { Type = "library", LibraryId = 1, Label = "Saved" }])
+                : service.SaveCardPresentationAsync(new() { PosterSize = "large" });
+            Assert.True(await save.WaitAsync(TimeSpan.FromSeconds(3)));
+        }
+        finally { wire.EffectiveReadRelease.TrySetResult(); }
+        await refresh.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(context, client.CaptureContext());
+        Assert.Equal(saveMenu ? "Saved" : "Accepted", service.PrimaryMenu!.Items.Last().Label);
+        Assert.Equal(saveMenu ? "compact" : "large", service.CardPresentation.PosterSize);
+        Assert.Equal(saveMenu ? "profile_client" : "profile", service.PrimaryMenuSource);
+        Assert.Equal(saveMenu ? "profile" : "profile_client", service.CardPresentationSource);
+        Assert.True(service.IsSupported);
+        Assert.False(service.IsUnavailable);
+        Assert.Equal(1, changes);
+        var reads = wire.EffectiveReads;
+        await service.EnsureLoadedAsync();
+        Assert.Equal(reads, wire.EffectiveReads);
+
+        wire.EffectiveStatus = 200;
+        wire.MenuLabel = "Fresh";
+        wire.PosterSize = "standard";
+        await service.RefreshAsync();
+        Assert.Equal("Fresh", service.PrimaryMenu!.Items.Last().Label);
+        Assert.Equal("standard", service.CardPresentation.PosterSize);
+        Assert.Equal(2, changes);
+    }
+
     [Fact]
     public void SelectedProfileMetadataRefreshNotifiesShellWithoutChangingRequestAuthority()
     {
@@ -118,7 +167,10 @@ public sealed class SidebarCustomizationCloseoutTests
     {
         public int CapabilityStatus = 200, EffectiveStatus = 200, EffectiveReads, Writes;
         public string MenuLabel = "Accepted";
-        public bool HoldWrite;
+        public string PosterSize = "compact", MenuSource = "profile_client", CardSource = "profile_client";
+        public bool HoldWrite, HoldEffectiveRead;
+        public readonly TaskCompletionSource EffectiveReadEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource EffectiveReadRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource WriteEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource WriteRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -130,12 +182,20 @@ public sealed class SidebarCustomizationCloseoutTests
             if (path == "/api/v2/settings/values/effective")
             {
                 EffectiveReads++;
-                if (EffectiveStatus != 200) return new((HttpStatusCode)EffectiveStatus);
-                return Json(new { items = new object[]
+                // Snapshot before the hold so a later successful write cannot
+                // change the response that was already in flight.
+                var response = EffectiveStatus != 200 ? new HttpResponseMessage((HttpStatusCode)EffectiveStatus) : Json(new { items = new object[]
                 {
-                    new { key = "nav.primary_menu", value = new { items = new object[] { new { type = "builtin", destination = "home" }, new { type = "library", library_id = 1, label = MenuLabel } } }, source = "profile_client" },
-                    new { key = "ui.card_presentation", value = new { poster_size = "compact", caption = "title_metadata" }, source = "profile_client" },
+                    new { key = "nav.primary_menu", value = new { items = new object[] { new { type = "builtin", destination = "home" }, new { type = "library", library_id = 1, label = MenuLabel } } }, source = MenuSource },
+                    new { key = "ui.card_presentation", value = new { poster_size = PosterSize, caption = "title_metadata" }, source = CardSource },
                 } });
+                if (HoldEffectiveRead)
+                {
+                    HoldEffectiveRead = false;
+                    EffectiveReadEntered.TrySetResult();
+                    await EffectiveReadRelease.Task.WaitAsync(ct);
+                }
+                return response;
             }
             if (request.Method != HttpMethod.Get && (path.Contains("nav.primary_menu") || path.Contains("ui.card_presentation")))
             {
