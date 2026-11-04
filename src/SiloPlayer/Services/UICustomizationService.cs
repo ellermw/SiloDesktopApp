@@ -124,12 +124,9 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         {
             throw;
         }
-        catch (ApiException ex) when (!capabilityReadSucceeded && ex.StatusCode is 404 or 405)
+        catch (Exception ex)
         {
-            Reset(context, generation, writeEpoch, supported: false, unavailable: false);
-        }
-        catch
-        {
+            var missingCapability = !capabilityReadSucceeded && ex is ApiException { StatusCode: 404 or 405 };
             var retained = false;
             lock (_stateGate)
             {
@@ -145,7 +142,7 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
                 }
             }
             if (retained) Changed?.Invoke(this, EventArgs.Empty);
-            else Reset(context, generation, writeEpoch, supported: false, unavailable: true);
+            else Reset(context, generation, writeEpoch, supported: false, unavailable: !missingCapability);
         }
         finally
         {

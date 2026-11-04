@@ -27,7 +27,7 @@ internal static class SidebarReviewNativeFixture
     private static string MenuLabel = "Current menu";
     private static TaskCompletionSource<object>? HeldPins, HeldLibraries, HeldMenuRead, HeldMenuWrite;
     private static int PinReads, PinWrites, LibraryReads, MenuReads, MenuWrites;
-    private static bool FailSidebarReads, FailCustomizationReads;
+    private static bool FailSidebarReads, FailLibraryReads, FailCustomizationReads;
     private static string PosterSize = "standard";
     private static Profile FirstProfile = new() { Id = "first", Name = "First", IsPrimary = true };
     private static readonly Profile SecondProfile = new() { Id = "second", Name = "Second", IsChild = true, LibraryRestrictionsEnabled = true, AllowedLibraryIds = [1] };
@@ -205,6 +205,7 @@ internal static class SidebarReviewNativeFixture
             await Until(() => !service.IsUnavailable && service.CardPresentation.PosterSize == "compact" && Equals(primary.Content, MenuLabel));
             Check(MenuReads > menuReads && primaryRows.SequenceEqual(PrimaryRows(nav)),
                 "loaded Home catch-up retries unavailable customization even when the accepted sidebar was already ready");
+            await CheckFailedLibraryReplacementRetryAsync(window, provider, nav);
         }
         else if (mode.EndsWith("save", StringComparison.Ordinal) || mode.EndsWith("reset", StringComparison.Ordinal) || mode.EndsWith("clear", StringComparison.Ordinal))
         {
@@ -345,6 +346,47 @@ internal static class SidebarReviewNativeFixture
             HeldLibraries.SetResult(Libraries()); HeldLibraries = null;
         }
         if (Failures.Count > 0) throw new InvalidOperationException("Sidebar review failures: " + string.Join("; ", Failures));
+    }
+    private static async Task CheckFailedLibraryReplacementRetryAsync(MainWindow window, IServiceProvider provider, NavigationView nav)
+    {
+        var navigation = provider.GetRequiredService<NavigationService>();
+        var api = provider.GetRequiredService<SiloApiClient>();
+        var vm = provider.GetRequiredService<MainViewModel>();
+        navigation.Navigate<LibraryPage>(vm.Libraries[0]);
+        await Until(() => navigation.Frame!.Content is LibraryPage page && page.IsLoaded && !page.ViewModel.IsLoading);
+        var library = LibraryRows(nav)[0];
+        var primary = PrimaryRows(nav);
+        var accepted = vm.Libraries.ToArray();
+        var reads = LibraryReads; var pinReads = PinReads;
+        FailLibraryReads = true;
+        try
+        {
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext());
+            await Until(() => LibraryReads > reads && PinReads > pinReads && !vm.IsLoadingLibraries);
+            await Drain();
+            Check(vm.NeedsLibraryReload && vm.HasCurrentLibrarySnapshot && accepted.SequenceEqual(vm.Libraries) &&
+                ReferenceEquals(LibraryRows(nav)[0], library) && primary.SequenceEqual(PrimaryRows(nav)),
+                "failed library-only replacement remains retryable without retiring accepted libraries or primary nodes");
+            Check((bool)typeof(MainWindow).GetField("_sidebarPinsReady", Instance)!.GetValue(window)!,
+                "successful pin replacement is ready despite the failed library read");
+
+            navigation.Navigate<HomePage>();
+            await Until(() => navigation.Frame!.Content is HomePage page && page.IsLoaded && !page.ViewModel.IsLoading);
+            await Drain();
+            FailLibraryReads = false;
+            ProfileLibraries = new { items = new[] { new { id = 1, name = "Recovered library", type = "movies" }, new { id = 2, name = "Two", type = "series" } } };
+            reads = LibraryReads; pinReads = PinReads;
+            var context = api.InvalidateAccessContext();
+            Call(window, "OnReadCatchUpRequested", context);
+            await Until(() => !vm.NeedsLibraryReload && Equals(library.Content, "Recovered library"));
+            await Drain();
+            Check(api.CaptureContext() == context && LibraryReads > reads && PinReads == pinReads,
+                "later Home catch-up retries the failed library read without rereading ready pins");
+            Check(ReferenceEquals(LibraryRows(nav)[0], library) && ReferenceEquals(library.Tag, vm.Libraries[0]) &&
+                primary.SequenceEqual(PrimaryRows(nav)) && vm.HasCurrentLibrarySnapshot,
+                "successful Home retry updates accepted metadata in place and clears library retry readiness");
+        }
+        finally { FailLibraryReads = false; ProfileLibraries = null; }
     }
     private static async Task CheckHeldHomeNavigationAsync(MainWindow window, IServiceProvider provider, NavigationView nav, bool holdPins)
     {
@@ -569,7 +611,7 @@ internal static class SidebarReviewNativeFixture
         if (path == "/api/v2/user/libraries")
         {
             LibraryReads++;
-            if (FailSidebarReads) return new(HttpStatusCode.ServiceUnavailable);
+            if (FailSidebarReads || FailLibraryReads) return new(HttpStatusCode.ServiceUnavailable);
             return Json(HeldLibraries == null ? ProfileLibraries ?? Libraries() : await HeldLibraries.Task);
         }
         if (path.Contains("sidebar_pins"))

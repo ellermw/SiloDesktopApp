@@ -14,6 +14,8 @@ public partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _libraryLoadCts;
     private long _libraryLoadGeneration;
     public bool HasCurrentLibrarySnapshot { get; private set; }
+    // Retry readiness is separate from the accepted snapshot used by the sidebar.
+    public bool NeedsLibraryReload { get; private set; } = true;
 
     public MainViewModel(CatalogApi catalogApi, AuthService authService)
     {
@@ -36,6 +38,7 @@ public partial class MainViewModel : ObservableObject
     public void RetireLibraries()
     {
         HasCurrentLibrarySnapshot = false;
+        NeedsLibraryReload = true;
         Interlocked.Increment(ref _libraryLoadGeneration);
         _libraryLoadCts?.Cancel();
         _libraryLoadCts = null;
@@ -52,6 +55,7 @@ public partial class MainViewModel : ObservableObject
         var generation = Interlocked.Increment(ref _libraryLoadGeneration);
 
         var context = _catalogApi.CaptureContext();
+        NeedsLibraryReload = true;
         IsLoadingLibraries = true;
         try
         {
@@ -64,6 +68,7 @@ public partial class MainViewModel : ObservableObject
             }
 
             HasCurrentLibrarySnapshot = true;
+            NeedsLibraryReload = false;
             Libraries.Clear();
             foreach (var lib in libraries)
             {
@@ -76,7 +81,8 @@ public partial class MainViewModel : ObservableObject
         }
         catch
         {
-            // Non-fatal, sidebar just won't show libraries
+            // Keep the accepted snapshot, but leave NeedsLibraryReload set so
+            // a later catch-up retries the failed replacement.
         }
         finally
         {

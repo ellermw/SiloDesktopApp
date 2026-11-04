@@ -36,6 +36,85 @@ public sealed class SidebarCustomizationCloseoutTests
     }
 
     [Theory]
+    [InlineData(404, false)]
+    [InlineData(405, false)]
+    [InlineData(404, true)]
+    [InlineData(405, true)]
+    public async Task CapabilityFailureRetainsAcceptedLayoutAndRetriesSameOwner(int status, bool changeRequestContext)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = Client(http); var service = new UICustomizationService(new SettingsApi(client));
+        await service.EnsureLoadedAsync();
+        var acceptedMenu = service.PrimaryMenu; var acceptedCards = service.CardPresentation;
+        var acceptedShortcuts = service.Shortcuts;
+        var identity = client.CaptureIdentityContext();
+        if (changeRequestContext) client.InvalidateAccessContext();
+        else service.Invalidate();
+        var context = client.CaptureContext();
+        var effectiveReads = wire.EffectiveReads;
+        wire.CapabilityStatus = status;
+        await service.EnsureLoadedAsync();
+
+        Assert.True(service.IsSupported);
+        Assert.True(service.IsUnavailable);
+        Assert.Same(acceptedMenu, service.PrimaryMenu);
+        Assert.Same(acceptedCards, service.CardPresentation);
+        Assert.Same(acceptedShortcuts, service.Shortcuts);
+        Assert.Equal("profile_client", service.PrimaryMenuSource);
+        Assert.Equal("profile_client", service.CardPresentationSource);
+        Assert.Equal(effectiveReads, wire.EffectiveReads);
+        var capabilityReads = wire.CapabilityReads;
+        wire.CapabilityStatus = 200; wire.MenuLabel = "Recovered";
+        await service.EnsureLoadedAsync();
+        Assert.Equal(context, client.CaptureContext());
+        Assert.Equal(identity, client.CaptureIdentityContext());
+        Assert.Equal(capabilityReads + 1, wire.CapabilityReads);
+        Assert.Equal(effectiveReads + 1, wire.EffectiveReads);
+        Assert.True(service.IsSupported);
+        Assert.False(service.IsUnavailable);
+        Assert.Equal("Recovered", service.PrimaryMenu!.Items.Last().Label);
+        await service.EnsureLoadedAsync();
+        Assert.Equal(capabilityReads + 1, wire.CapabilityReads);
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(405)]
+    public async Task MissingCapabilityDoesNotRetainAnotherIdentitysLayout(int status)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = Client(http); var service = new UICustomizationService(new SettingsApi(client));
+        await service.EnsureLoadedAsync();
+        client.SetProfile("replacement");
+        wire.CapabilityStatus = status;
+        await service.EnsureLoadedAsync();
+        Assert.False(service.IsSupported);
+        Assert.False(service.IsUnavailable);
+        Assert.Null(service.PrimaryMenu);
+        Assert.Equal("standard", service.CardPresentation.PosterSize);
+        Assert.Equal("title_metadata", service.CardPresentation.Caption);
+        Assert.Empty(service.Shortcuts.Items);
+        Assert.Equal(1, wire.EffectiveReads);
+    }
+
+    [Fact]
+    public async Task AuthoritativeOlderManifestReplacesAcceptedLayoutWithDefaults()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var service = new UICustomizationService(new SettingsApi(Client(http)));
+        await service.EnsureLoadedAsync();
+        wire.ManifestRevision = 4;
+        service.Invalidate(); await service.EnsureLoadedAsync();
+        Assert.False(service.IsSupported);
+        Assert.False(service.IsUnavailable);
+        Assert.Null(service.PrimaryMenu);
+        Assert.Equal("standard", service.CardPresentation.PosterSize);
+        Assert.Equal("title_metadata", service.CardPresentation.Caption);
+        Assert.Empty(service.Shortcuts.Items);
+        Assert.Equal(1, wire.EffectiveReads);
+    }
+
+    [Theory]
     [InlineData(404)]
     [InlineData(405)]
     public async Task MissingCapabilityIsUnsupportedInsteadOfARetryableEffectiveRead(int status)
@@ -47,6 +126,8 @@ public sealed class SidebarCustomizationCloseoutTests
         Assert.False(service.IsUnavailable);
         Assert.Null(service.PrimaryMenu);
         Assert.Equal(0, wire.EffectiveReads);
+        await service.EnsureLoadedAsync();
+        Assert.Equal(1, wire.CapabilityReads);
     }
 
     [Theory]
@@ -200,7 +281,7 @@ public sealed class SidebarCustomizationCloseoutTests
 
     private sealed class Wire : HttpMessageHandler
     {
-        public int CapabilityStatus = 200, EffectiveStatus = 200, EffectiveReads, Writes;
+        public int CapabilityStatus = 200, ManifestRevision = 22, CapabilityReads, EffectiveStatus = 200, EffectiveReads, Writes;
         public string MenuLabel = "Accepted", ShortcutLabel = "Original shortcut";
         public string PosterSize = "compact", MenuSource = "profile_client", CardSource = "profile_client";
         public bool HoldWrite, HoldEffectiveRead;
@@ -212,8 +293,11 @@ public sealed class SidebarCustomizationCloseoutTests
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/api/v2/settings/contract/capabilities")
-                return CapabilityStatus == 200 ? Json(new { api_version = 1, manifest_revision = 22,
+            {
+                CapabilityReads++;
+                return CapabilityStatus == 200 ? Json(new { api_version = 1, manifest_revision = ManifestRevision,
                     client_families = new[] { "desktop", "web" }, supports_batched_effective = true, supports_idempotent_writes = true }) : new((HttpStatusCode)CapabilityStatus);
+            }
             if (path == "/api/v2/settings/values/effective")
             {
                 EffectiveReads++;

@@ -1477,9 +1477,12 @@ public sealed partial class MainWindow : Window
                     if (!_sidebarCustomizationReady || _uiCustomizationService.IsUnavailable)
                         _ = RunShellWorkAsync("home_catchup_ui_customization",
                             () => LoadSidebarCustomizationAsync(shellKey, owner.Token));
-                    if (!_viewModel.HasCurrentLibrarySnapshot || !_sidebarPinsReady)
+                    if (_viewModel.NeedsLibraryReload)
                         _ = RunShellWorkAsync("home_catchup_library_navigation",
-                            () => LoadShellNavigationAsync(shellKey, owner.Token));
+                            () => _viewModel.ReloadLibrariesAsync(owner.Token));
+                    if (!_sidebarPinsReady)
+                        _ = RunShellWorkAsync("home_catchup_sidebar_pins",
+                            () => RefreshSidebarPinsAsync(shellKey, owner.Token));
                 }
                 return;
             }
