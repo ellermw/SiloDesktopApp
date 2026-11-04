@@ -160,6 +160,13 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
             var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (menuProbe == "shift-tab")
+            {
+                PlaybackMenuKeyboardNativeFixture.Verify(menu);
+                Require(mpv.IsPaused, "Keyboard-only navigation changed genuine pause.");
+                Call(menu, "Input", "cancel");
+                return;
+            }
             if (menuProbe == "geometry")
             {
                 var originals = ((System.Collections.IEnumerable)Get(menu, "_choices")!).Cast<object>().ToArray();
@@ -845,9 +852,11 @@ internal static class PlaybackAudioMenuNativeFixture
         private readonly WinEventCallback _callback;
         private GCHandle _callbackRoot;
         private IntPtr _hook;
+        private readonly string? _evidenceName;
 
-        internal ForegroundOwnershipProbe(IntPtr main)
+        internal ForegroundOwnershipProbe(IntPtr main, string? evidenceName = null)
         {
+            _evidenceName = evidenceName;
             _roles[main.ToInt64()] = "fixture-main";
             _callback = (_, _, hwnd, _, _, thread, eventTime) =>
             {
@@ -910,7 +919,7 @@ internal static class PlaybackAudioMenuNativeFixture
                 observation.EventThread, observation.EventTime, observation.CallbackTick,
                 observation.PhaseAtDelivery, observation.ForegroundAtDelivery, observation.ForegroundProcessAtDelivery,
             }).ToArray();
-            var caseName = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            var caseName = _evidenceName ?? Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (string.IsNullOrEmpty(caseName)) caseName = "normal";
             File.WriteAllText(Path.Combine(Program.ResultDirectory, caseName + "-foreground.json"), JsonSerializer.Serialize(new
             {
