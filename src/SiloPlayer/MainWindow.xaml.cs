@@ -3300,7 +3300,9 @@ public sealed partial class MainWindow : Window
         }
         catch
         {
-            // A failed replacement read must not discard accepted same-owner pins.
+            // Retain accepted same-owner pins, but let a later Home catch-up retry.
+            if (_apiClient.IsCurrentContext(context) && shellKey != null && IsCurrentShellHydration(shellKey, cancellationToken))
+                _sidebarPinsReady = false;
             return;
         }
         if (!_apiClient.IsCurrentContext(context) || shellKey == null || !IsCurrentShellHydration(shellKey, cancellationToken))
