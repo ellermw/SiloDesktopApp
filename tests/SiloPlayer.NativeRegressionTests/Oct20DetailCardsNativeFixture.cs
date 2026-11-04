@@ -143,7 +143,7 @@ internal static class Oct20DetailCardsNativeFixture
             siblings.Clear(); siblings.Add(new() { ContentId = "viewed", UserData = new() }); siblings.Add(other);
             Call(page, "BuildSiblingEpisodeCards");
             var siblingPanel = (StackPanel)page.FindName("SiblingEpisodesPanel");
-            ((ScrollViewer)page.FindName("SiblingEpisodesScrollViewer")).Content = null;
+            ((ScrollView)page.FindName("SiblingEpisodesScrollViewer")).Content = null;
             parent.Children.Remove(groups);
             parent.Children.Insert(0, siblingPanel); detached.Add(siblingPanel);
             foreach (var button in Find<Button>(siblingPanel)) button.ApplyTemplate();
