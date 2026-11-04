@@ -54,10 +54,11 @@ public partial class PlayerService
             // A profile change retires publication but can leave this same
             // operation's flags behind. A successor's flags are never ours.
             if (owner.Revision != _playbackBusyRevision || !BusyPlaybackMatches(owner)) return null;
-            releaseState?.Invoke();
             SetSwitchingContent(false);
             IsLoading = false;
-            return new(owner, _playbackBusyRevision);
+            var releasedRevision = _playbackBusyRevision;
+            releaseState?.Invoke();
+            return new(owner, releasedRevision);
         }
     }
 
