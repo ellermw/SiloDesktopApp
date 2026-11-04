@@ -3474,21 +3474,35 @@ public sealed partial class ItemDetailPage : Page
         var api = App.Services.GetRequiredService<PlaybackApi>();
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var authority = client.CaptureContext();
+        var navigation = _navigationCts;
+        var libraryId = ViewModel.LibraryId;
+        // Realtime refreshes can replace the mounted season list during a read.
+        var seasons = ViewModel.Seasons.ToArray();
+        bool Current() => client.IsCurrentContext(authority) && ReferenceEquals(_navigationCts, navigation)
+            && ReferenceEquals(ViewModel.Item, item) && ViewModel.LibraryId == libraryId && IsCurrentDetail(item.ContentId);
+        if (!Current()) return;
         try
         {
             var capabilities = await api.GetWatchTogetherCapabilitiesAsync();
-            if (!client.IsCurrentContext(authority) || !IsCurrentDetail(item.ContentId)) return;
+            if (!Current()) return;
             if (!capabilities.Allowed || capabilities.State != "available" || !capabilities.StagedSelection) { App.Services.GetRequiredService<ToastService>().Error("Watch Together is unavailable on this server."); return; }
             var target = await ResolvePlayableContentIdForPlaybackAsync();
+            if (!Current()) return;
             var panel = new StackPanel { Spacing = 14, Width = Math.Min(400, Math.Max(240, XamlRoot.Size.Width - 100)) };
             panel.Children.Add(new TextBlock { Text = item.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             var targetChoice = new ComboBox { Header = "Episode", HorizontalAlignment = HorizontalAlignment.Stretch };
             if (item.Type is "series" or "season")
             {
                 if (item.Type == "series")
-                    foreach (var season in ViewModel.Seasons)
-                        foreach (var ep in (await App.Services.GetRequiredService<CatalogApi>().GetEpisodesAsync(item.ContentId, season.SeasonNumber, ViewModel.LibraryId)).Episodes)
+                {
+                    foreach (var season in seasons)
+                    {
+                        var episodes = await App.Services.GetRequiredService<CatalogApi>().GetEpisodesAsync(item.ContentId, season.SeasonNumber, libraryId);
+                        if (!Current()) return;
+                        foreach (var ep in episodes.Episodes)
                             targetChoice.Items.Add(new ComboBoxItem { Content = $"S{season.SeasonNumber} E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
+                    }
+                }
                 else
                     foreach (var ep in ViewModel.Episodes) targetChoice.Items.Add(new ComboBoxItem { Content = $"E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
                 targetChoice.SelectedItem = targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(e => Equals(e.Tag, target)) ?? targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault();
