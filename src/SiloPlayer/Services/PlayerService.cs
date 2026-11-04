@@ -3117,6 +3117,25 @@ public partial class PlayerService : IDisposable
         {
             if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
             RetireForeignSubtitleSelections();
+            var subtitleFailureSession = _playbackManager?.CurrentSession;
+            if (subtitleFailureSession is { SubtitleReconciliationFailed: true, IsSubtitleBurnedIn: true })
+            {
+                lock (_subtitleTrackStateLock)
+                {
+                    // The manager kept the playable burn-in grant after rejection.
+                    // Do not let an outgoing initial slot reissue the failed pick,
+                    // or persist a deferred preference that was never executed.
+                    // A newer manager-owned choice still wins over that grant.
+                    _pendingInitialServerSubtitleIndex = null;
+                    _pendingAutomaticSubtitleSelection = null;
+                    if (_pendingSubtitlePreferenceIndex.HasValue &&
+                        _pendingSubtitlePreferenceIndex != _playbackManager!.SubtitleSelectionForLoad)
+                    {
+                        _pendingSubtitlePreferenceIndex = null;
+                        _pendingSubtitlePreferenceOwner = null;
+                    }
+                }
+            }
             // Clearing/replacing the initial choice also retires its automatic
             // refinement; it must not overwrite a newer manager-owned choice.
             if (!_pendingInitialServerSubtitleIndex.HasValue) _pendingAutomaticSubtitleSelection = null;
@@ -3169,6 +3188,12 @@ public partial class PlayerService : IDisposable
             }
 
             if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+            if (subtitleFailureSession?.SubtitleReconciliationFailed == true &&
+                ReferenceEquals(subtitleFailureSession, _playbackManager?.CurrentSession))
+            {
+                subtitleFailureSession.SubtitleReconciliationFailed = false;
+                ShowSubtitleSelectionUnavailable();
+            }
             // Effective playback settings are profile/device scoped and may
             // change between sessions; they must not gate subtitle execution.
             await SendAutoSkipSettingsToOscAsync(ct);

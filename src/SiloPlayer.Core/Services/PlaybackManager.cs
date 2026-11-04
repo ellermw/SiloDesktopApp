@@ -753,8 +753,26 @@ public partial class PlaybackManager : IDisposable
         // (including burned-in subtitles). Only this plan's inventory supplies
         // positional indices; watch-detail indices never go on the wire here.
         if (HasPendingSubtitleSelection())
-            response = await ReplanAsync("track_change", response.Position, _qualityPreferenceV3,
-                selectedTracks => { }, failure: null, ct).ConfigureAwait(false);
+        {
+            var subtitleRevision = CaptureSubtitleRevision();
+            try
+            {
+                response = await ReplanAsync("track_change", response.Position, _qualityPreferenceV3,
+                    selectedTracks => { }, failure: null, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && ReferenceEquals(CurrentSession, response))
+            {
+                // The start was already accepted. A rejected subtitle refinement
+                // (including a request timeout) must not fail that playable plan.
+                // Local tracks/Off can still execute on load. For composited
+                // pixels, load the grant instead, retaining identity for a later
+                // replacement without retrying this failed choice on FILE_LOADED.
+                if (response.IsSubtitleBurnedIn)
+                    AcknowledgeSubtitleIntent(subtitleRevision);
+                response.SubtitleReconciliationFailed = true;
+                LogToStateTrace($"Replacement subtitle reconciliation failed; keeping accepted plan {response.PlanId}: {ex.Message}");
+            }
+        }
 
         return response;
     }
