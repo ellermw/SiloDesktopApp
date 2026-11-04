@@ -4699,6 +4699,7 @@ local function open_native_menu(kind, keyboard)
     state.compact_menu_visible = false
     state.dragging_seek = false
     state.dragging_volume = false
+    state.native_speed_handoff = nil
     state.native_menu_sequence = state.native_menu_sequence + 1
     local request = {
         owner = scope, kind = kind,
@@ -6224,6 +6225,7 @@ local function setup_script_messages()
             local scope = token and #token == 32 and token:match('^%x+$') and token or nil
             local key = 'native_' .. kind .. '_scope'
             if scope ~= state[key] then
+                if kind == 'quality' or kind == 'speed' then state.native_speed_handoff = nil end
                 local request = state.native_menu_request
                 if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
                     state.native_menu_request = nil
@@ -6238,13 +6240,19 @@ local function setup_script_messages()
     mp.register_script_message('osc-native-speed-handoff', function(token, sequence)
         -- The first host must acknowledge close/release before a second request.
         -- A rotated scope or newer intent retires this exact handoff.
+        local closed = state.native_speed_handoff
+        if not closed or closed.owner ~= token or closed.sequence ~= tonumber(sequence) then return end
+        state.native_speed_handoff = nil
         if state.native_menu_request or state.native_quality_scope ~= token or state.native_speed_scope ~= token
             or tonumber(sequence) ~= state.native_menu_sequence then return end
-        open_native_menu('speed', true)
+        open_native_menu('speed', closed.focus_name ~= nil)
     end)
     mp.register_script_message("osc-native-menu-closed", function(token, sequence, consume)
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
+        if request.kind == 'quality' then
+            state.native_speed_handoff = {owner=request.owner,sequence=request.sequence,focus_name=request.focus_name}
+        end
         state.native_menu_request = nil
         if consume == "true" then state.native_menu_pointer_block = request end
         if not state.osc_disabled then

@@ -64,7 +64,9 @@ internal static class PlaybackSpeedMenuNativeFixture
                 mp.register_script_message('speed-fixture-query',function(id)
                     compute_layout(); local r=state.layout.btn_quality or {}
                     mp.commandv('script-message','silo-speed-fixture-state',id,require('mp.utils').format_json({
-                        x=r.cx or 0,y=r.cy or 0,w=r.w or 0,scope=state.native_speed_scope or ''}))
+                        x=r.cx or 0,y=r.cy or 0,w=r.w or 0,scope=state.native_speed_scope or '',
+                        kind=state.native_menu_request and state.native_menu_request.kind or '',
+                        request_focus=state.native_menu_request and state.native_menu_request.focus_name or '',focus=state.controller_focus_name or ''}))
                 end)
                 mp.commandv('script-message','silo-speed-fixture-ready')
                 """);
@@ -79,6 +81,9 @@ internal static class PlaybackSpeedMenuNativeFixture
                 && Get(current, "_list") is ListView { XamlRoot: not null }, "Settings did not hand off to the native Speed caller.");
             menu = Menu(player)!; list = (ListView)Get(menu, "_list")!; Watch(menu);
             Require(Gate(player).CurrentCount == 0, "Speed lost the shared native-menu lease.");
+            var childOrigin = await Query();
+            Require(childOrigin.GetProperty("kind").GetString() == "speed" && childOrigin.GetProperty("request_focus").GetString() == "",
+                "Pointer settings handoff invented controller focus for the Speed child.");
             wire.ReadRelease.TrySetResult();
             await Until(() => player.DesiredVideoPlaybackRate == 1.35 && list.Items.Cast<ListViewItem>().Any(row => row.Tag is "rate:1.35"),
                 "Valid stored custom speed is not represented by the actual native controls.");
@@ -111,23 +116,49 @@ internal static class PlaybackSpeedMenuNativeFixture
             wire.FailWrites = false; Select("rate:0.75");
             await Until(() => player.VideoPlaybackRateError == null && !player.VideoPlaybackRatePending, "Same-rate native retry did not recover.");
             player.SetWatchTogetherPlayback(true); player.NativePlaybackRate = 1.04;
-            await Until(() => list.Items.Count == 1 && !((ListViewItem)list.Items[0]).IsEnabled, "Room did not disable native manual Speed.");
+            await Until(() => Menu(player) == null, "Joining a room did not retire the old solo Speed owner.");
+            Require(Gate(player).CurrentCount == 1, "Room attachment leaked the retired menu lease.");
+            await ReopenSpeed();
+            Require(list.Items.Count == 1 && !((ListViewItem)list.Items[0]).IsEnabled, "Reopened room Speed is not a read-only saved preference.");
             Require(AutomationProperties.GetName((ListViewItem)list.Items[0]).Contains("0.75×")
                 && AutomationProperties.GetName((ListViewItem)list.Items[0]).Contains("Watch Party"), "Room drift replaced viewer desire or lost the disabled reason.");
             var roomWrites = wire.Writes.Count; Call(menu, "Input", "activate");
             Require(wire.Writes.Count == roomWrites && player.NativePlaybackRate == 1.04, "Disabled room Speed changed or persisted a drift rate.");
             player.SetWatchTogetherPlayback(false);
-            await Until(() => list.Items.Count == 9 && player.NativePlaybackRate == 0.75, "Room departure did not restore desired Speed controls/rate.");
+            await Until(() => Menu(player) == null && player.NativePlaybackRate == 0.75, "Room departure did not retire the room owner and restore desired rate.");
+            Require(Gate(player).CurrentCount == 1, "Room departure leaked the native menu lease.");
+            await ReopenSpeed();
+            Require(list.Items.Count == 9 && list.Items.Cast<ListViewItem>().All(row => row.IsEnabled) && wire.Writes.Count == roomWrites,
+                "Reopened solo Speed failed to restore editable presets without a room-drift write.");
             player.SetPaused(false); await Until(() => !mpv.IsPaused, "Playing Speed precondition failed.");
             Select("rate:1.25"); await Until(() => !player.VideoPlaybackRatePending, "Playing Speed save did not settle.");
             Require(!mpv.IsPaused && player.NativePlaybackRate == 1.25, "Native Speed forced a playing viewer to pause.");
+            var oldFileMenu = menu; var writesBeforeLoad = wire.Writes.Count;
+            var reloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Reloaded() => reloaded.TrySetResult(); mpv.FileLoaded += Reloaded;
+            try { mpv.LoadFile(media.Origin + "/video.y4m"); await reloaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
+            finally { mpv.FileLoaded -= Reloaded; }
+            await Until(() => Menu(player) == null, "Actual media reload retained the old Speed presentation.");
+            Call(oldFileMenu, "Input", "activate");
+            Require(wire.Writes.Count == writesBeforeLoad && Gate(player).CurrentCount == 1,
+                "Retired file's Speed callback wrote preferences or leaked its lease.");
+            await Until(() => Get(player, "_loadedMediaInitCts") == null, "Reloaded media publication did not settle.");
+            await ReopenSpeed();
             client.SetProfile("replacement"); var retired = menu;
             Call(retired, "Input", "activate"); await Until(() => Menu(player) == null, "Retired profile kept Speed presentation alive.");
-            Require(Gate(player).CurrentCount == 1, "Speed profile retirement leaked the shared lease.");
+            Require(Gate(player).CurrentCount == 1 && wire.Writes.Count == writesBeforeLoad, "Speed profile retirement leaked its lease or wrote stale preferences.");
             Program.Log("PASS: actual empty-ladder OSC settings→native Speed; custom value/presets, pending/latest failure/retry, no seek/pause, room drift/disabled/departure and profile retirement.");
 
             ListViewItem Row(string id) => list.Items.Cast<ListViewItem>().Single(row => (string)row.Tag == id);
             void Select(string id) { list.SelectedItem = Row(id); Call(menu, "Input", "activate"); }
+            async Task ReopenSpeed()
+            {
+                menu = await OpenSettings(); list = (ListView)Get(menu, "_list")!;
+                var parentMenu = menu; Select("speed");
+                await Until(() => Menu(player) is { } child && !ReferenceEquals(child, parentMenu) &&
+                    Get(child, "_list") is ListView { XamlRoot: not null }, "Reopened settings did not hand off to Speed.");
+                menu = Menu(player)!; list = (ListView)Get(menu, "_list")!; Watch(menu);
+            }
         }
         finally
         {

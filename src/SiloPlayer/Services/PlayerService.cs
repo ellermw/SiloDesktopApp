@@ -5971,6 +5971,7 @@ public partial class PlayerService : IDisposable
         {
             case "silo-native-audio-open":
             case "silo-native-quality-open":
+            case "silo-native-speed-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;

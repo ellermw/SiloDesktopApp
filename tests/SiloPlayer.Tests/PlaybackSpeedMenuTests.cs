@@ -4,6 +4,15 @@ namespace SiloPlayer.Tests;
 
 public sealed class PlaybackSpeedMenuTests
 {
+    [Fact]
+    public void ValidFloatingPointNoiseUsesOneCanonicalIdentifier()
+    {
+        var rows = PlaybackSpeedMenuModel.Build(1.3499999999999999, true, false, false);
+        var current = Assert.Single(rows.Where(row => row.IsCurrent));
+        Assert.Equal(1.35, current.Rate);
+        Assert.Equal("rate:1.35", current.Id);
+    }
+
     [Theory]
     [InlineData(0.25)]
     [InlineData(1.35)]

@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Services.PlaybackMenus;
 
 namespace SiloPlayer.Services;
@@ -15,21 +17,54 @@ public partial class PlayerService
         var options = PlaybackQualityMenuModel.Build(Versions.ToArray(), session, SelectedQualityMenuId,
             RequestedMediaFileId, IsWatchTogetherPlayback, IsQualitySwitchActive || _switchingContent,
             BufferingQualityPlaybackInfo);
-        var choices = options.Select(row => new PlaybackMenuChoice(row.Id, row.Title, row.Metadata,
+        IReadOnlyList<PlaybackMenuChoice> Choices()
+        {
+            var rows = options.Select(row => new PlaybackMenuChoice(row.Id, row.Title, row.Metadata,
             row.Badges, row.IsCurrent, row.IsEnabled,
             row.Kind == PlaybackQualityMenuOptionKind.Information ? "" : row.DisabledReason.Length > 0
                 ? row.DisabledReason : row.IsEnabled ? "" : "A playback change is already in progress.",
-            IsPending: row.IsPending)).ToArray();
-        return new PlaybackChoiceMenu(owner.Video, request.Anchor, "Quality", choices,
-            () => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request), id =>
+            IsPending: row.IsPending)).ToList();
+            if (CanPresentNativeSpeed)
+                rows.Add(new("speed", "Playback speed", DesiredVideoPlaybackRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "×", [],
+                    IsPending: VideoPlaybackRatePending));
+            return rows;
+        }
+        bool Current() => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request);
+        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(12, 4, 12, 12) };
+        PlaybackChoiceMenu? menu = null;
+        void Refresh()
+        {
+            if (!Current()) { menu?.Close(PlaybackMenuCloseReason.OwnerRetired); return; }
+            error.Text = VideoPlaybackRateError ?? "";
+            error.Visibility = CanPresentNativeSpeed && error.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            menu?.UpdateChoices(Choices());
+        }
+        void Changed()
+        {
+            if (_nativeMenuDispatcher?.HasThreadAccess == true) Refresh();
+            else _nativeMenuDispatcher?.TryEnqueue(Refresh);
+        }
+        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, CanPresentNativeSpeed ? "Playback settings" : "Quality", Choices(),
+            Current, id =>
             {
+                if (id == "speed")
+                {
+                    if (owner.IsCurrent() && CanPresentNativeSpeed)
+                        owner.Mpv.SendScriptMessage("osc-native-speed-handoff", request.OwnerToken,
+                            request.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    return;
+                }
                 var option = options.FirstOrDefault(row => row.Id == id && row.IsEnabled);
                 if (option != null && owner.IsCurrent() && !IsLoading && !_switchingContent)
                 {
                     var selection = Interlocked.Increment(ref _nativeQualitySelection);
                     _ = SelectNativeQualityAsync(owner, option, selection);
                 }
-            }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
+            }, reason => { VideoPlaybackRateChanged -= Changed; finish(reason); },
+            root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer: error);
+        VideoPlaybackRateChanged += Changed;
+        Refresh();
+        return menu;
     }
 
     private async Task SelectNativeQualityAsync(NativeMenuOwner owner, PlaybackQualityMenuOption option, long selection)

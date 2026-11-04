@@ -2,6 +2,62 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Fact]
+    public void PointerSettingsHandoffRetainsPointerOrigin()
+    {
+        var output=CaptureStats(1920,1080,1920,1080,false,setup:"""
+            local s=osc_test_state
+            s.osc_disabled=false;s.visible=true;s.current_alpha=1;s.target_alpha=1
+            local token='11111111111111111111111111111111'
+            native_handlers['osc-native-quality-scope'](token);native_handlers['osc-native-speed-scope'](token)
+            osc_test_layout();local r=s.layout.btn_quality
+            native_handlers['osc-mouse-down'](tostring(r.cx),tostring(r.cy))
+            local first=native_requests[1]
+            native_handlers['osc-native-menu-closed'](token,first[4],'true')
+            native_handlers['osc-native-speed-handoff'](token,first[4])
+            local child=s.native_menu_request
+            native_handlers['osc-native-menu-closed'](token,tostring(child.sequence),'false')
+            mp.set_property('user-data/speed-result',tostring(#native_requests)..':'..tostring(child.kind)..':'..tostring(child.focus_name==nil)..':'..tostring(s.controller_focus_name==nil))
+            """,rawAss:true,resultProperty:"user-data/speed-result",beforeScript:NativeSpeedProbe);
+        Assert.Equal("2:speed:true:true",output);
+    }
+
+    [Fact]
+    public void BlockedSpeedHandoffConsumesItsExactClosedCapability()
+    {
+        var output=CaptureStats(1920,1080,1920,1080,false,setup:"""
+            local s=osc_test_state
+            s.osc_disabled=false;s.visible=true;s.current_alpha=1;s.target_alpha=1
+            local token='11111111111111111111111111111111'
+            native_handlers['osc-native-quality-scope'](token);native_handlers['osc-native-speed-scope'](token)
+            osc_test_layout();s.controller_focus_name='btn_quality';osc_test_activate()
+            local first=native_requests[1]
+            native_handlers['osc-native-menu-closed'](token,first[4],'false')
+            s.playback_loading=true;native_handlers['osc-native-speed-handoff'](token,first[4])
+            s.playback_loading=false;native_handlers['osc-native-speed-handoff'](token,first[4])
+            mp.set_property('user-data/speed-result',tostring(#native_requests)..':'..tostring(s.native_menu_request==nil))
+            """,rawAss:true,resultProperty:"user-data/speed-result",beforeScript:NativeSpeedProbe);
+        Assert.Equal("1:true",output);
+    }
+
+    [Fact]
+    public void ClosedAudioRequestCannotAuthorizeSpeedHandoff()
+    {
+        var output=CaptureStats(1920,1080,1920,1080,false,setup:"""
+            local s=osc_test_state
+            s.osc_disabled=false;s.visible=true;s.current_alpha=1;s.target_alpha=1
+            s.audio_tracks={{index=0,title='A'},{index=1,title='B'}}
+            local token='11111111111111111111111111111111'
+            native_handlers['osc-native-quality-scope'](token);native_handlers['osc-native-speed-scope'](token);native_handlers['osc-native-audio-scope'](token)
+            osc_test_layout();s.controller_focus_name='btn_audio';osc_test_activate()
+            local request=s.native_menu_request
+            native_handlers['osc-native-menu-closed'](token,tostring(request.sequence),'false')
+            native_handlers['osc-native-speed-handoff'](token,tostring(request.sequence))
+            mp.set_property('user-data/speed-result',tostring(#native_requests)..':'..tostring(s.native_menu_request==nil))
+            """,rawAss:true,resultProperty:"user-data/speed-result",beforeScript:NativeSpeedProbe);
+        Assert.Equal("0:true",output);
+    }
+
     private static readonly string NativeSpeedProbe = NativeAudioProbe.Replace("args[2] == 'silo-native-audio-open'",
         "(args[2] == 'silo-native-quality-open' or args[2] == 'silo-native-speed-open')") + "\n" + """
         speed_unrelated={}

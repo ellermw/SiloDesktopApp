@@ -62,7 +62,8 @@ public partial class PlayerService
                 _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             }
             mpv.SendScriptMessage("osc-native-audio-scope", version?.AudioTracks?.Count > 1 ? owner.Token : "");
-            mpv.SendScriptMessage("osc-native-quality-scope", (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-quality-scope", CanPresentNativeSpeed || (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-speed-scope", CanPresentNativeSpeed ? owner.Token : "");
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -79,6 +80,7 @@ public partial class PlayerService
             _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
             owner?.Mpv.SendScriptMessage("osc-native-audio-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-quality-scope", "");
+            owner?.Mpv.SendScriptMessage("osc-native-speed-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -117,6 +119,7 @@ public partial class PlayerService
             {
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
+                "speed" => CreateNativeSpeedMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }
