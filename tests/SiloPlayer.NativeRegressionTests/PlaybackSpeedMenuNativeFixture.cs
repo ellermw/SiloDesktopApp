@@ -64,7 +64,7 @@ internal static class PlaybackSpeedMenuNativeFixture
                 mp.register_script_message('speed-fixture-query',function(id)
                     compute_layout(); local r=state.layout.btn_quality or {}
                     mp.commandv('script-message','silo-speed-fixture-state',id,require('mp.utils').format_json({
-                        x=r.cx or 0,y=r.cy or 0,w=r.w or 0,scope=state.native_speed_scope or '',
+                        x=r.cx or 0,y=r.cy or 0,w=r.w or 0,alpha=state.current_alpha,scope=state.native_speed_scope or '',
                         kind=state.native_menu_request and state.native_menu_request.kind or '',
                         request_focus=state.native_menu_request and state.native_menu_request.focus_name or '',focus=state.controller_focus_name or ''}))
                 end)
@@ -76,6 +76,7 @@ internal static class PlaybackSpeedMenuNativeFixture
             var list = (ListView)Get(menu, "_list")!;
             Require(list.Items.Count == 1 && Row("speed").IsEnabled && player.CanChangeVideoPlaybackRate,
                 "Empty quality ladder hid or disabled normal-video Speed while optional settings read was held.");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-settings");
             Select("speed");
             await Until(() => Menu(player) is { } current && !ReferenceEquals(current, settingsMenu)
                 && Get(current, "_list") is ListView { XamlRoot: not null }, "Settings did not hand off to the native Speed caller.");
@@ -113,6 +114,7 @@ internal static class PlaybackSpeedMenuNativeFixture
             await Until(() => player.VideoPlaybackRateError != null && !player.VideoPlaybackRatePending, "Current Speed save failure was hidden.");
             Require(Menu(player) != null && Descendants<TextBlock>((Grid)Get(menu, "_root")!).Any(text => text.Text.Contains("could not save")),
                 "Current Speed failure has no visible native retry feedback.");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-save-error");
             wire.FailWrites = false; Select("rate:0.75");
             await Until(() => player.VideoPlaybackRateError == null && !player.VideoPlaybackRatePending, "Same-rate native retry did not recover.");
             player.SetWatchTogetherPlayback(true); player.NativePlaybackRate = 1.04;
@@ -122,8 +124,13 @@ internal static class PlaybackSpeedMenuNativeFixture
             Require(list.Items.Count == 1 && !((ListViewItem)list.Items[0]).IsEnabled, "Reopened room Speed is not a read-only saved preference.");
             Require(AutomationProperties.GetName((ListViewItem)list.Items[0]).Contains("0.75×")
                 && AutomationProperties.GetName((ListViewItem)list.Items[0]).Contains("Watch Party"), "Room drift replaced viewer desire or lost the disabled reason.");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-room");
             var roomWrites = wire.Writes.Count; Call(menu, "Input", "activate");
             Require(wire.Writes.Count == roomWrites && player.NativePlaybackRate == 1.04, "Disabled room Speed changed or persisted a drift rate.");
+            Require(Call(mpv, "Command", (object)new[] { "keypress", "ESC" }) is true, "Read-only Speed Escape command failed.");
+            await Until(() => Menu(player) == null && Gate(player).CurrentCount == 1,
+                "Read-only room Speed trapped Escape or leaked the shared lease.");
+            await ReopenSpeed();
             player.SetWatchTogetherPlayback(false);
             await Until(() => Menu(player) == null && player.NativePlaybackRate == 0.75, "Room departure did not retire the room owner and restore desired rate.");
             Require(Gate(player).CurrentCount == 1, "Room departure leaked the native menu lease.");
@@ -179,6 +186,10 @@ internal static class PlaybackSpeedMenuNativeFixture
         async Task<object> OpenSettings()
         {
             mpv.SendScriptMessage("osc-show"); var geometry = await Query();
+            var visibleDeadline = DateTime.UtcNow.AddSeconds(3);
+            while (geometry.GetProperty("alpha").GetDouble() < 0.1 && DateTime.UtcNow < visibleDeadline)
+            { await Task.Delay(20); geometry = await Query(); }
+            Require(geometry.GetProperty("alpha").GetDouble() >= 0.1, "Actual settings gear never became visible for the pointer gesture.");
             Require(geometry.GetProperty("w").GetDouble() > 0, "Actual settings gear is absent with an empty quality ladder.");
             var x = geometry.GetProperty("x").ToString(); var y = geometry.GetProperty("y").ToString();
             mpv.SendScriptMessage("osc-mouse-move", x, y); mpv.SendScriptMessage("osc-mouse-down", x, y);

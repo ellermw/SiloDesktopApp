@@ -146,6 +146,14 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PlaybackSpeedMenuNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-speed-all")
+            {
+                await VideoPlaybackRateNativeFixture.RunAsync();
+                await PlaybackSpeedMenuNativeFixture.RunAsync(_window);
+                foreach (var mode in new[] { "normal", "retired", "release", "successor-failure", "successor-success" })
+                    await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-admission")
             {
                 await EpisodeQuickPlayNativeFixture.VerifyMenuAdmissionAsync(parent);
