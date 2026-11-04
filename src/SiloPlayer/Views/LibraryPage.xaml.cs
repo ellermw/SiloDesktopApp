@@ -625,7 +625,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(); });
+        DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(structural: false); });
     }
 
     private void QueueRecommendedRefresh()
@@ -686,7 +686,13 @@ public sealed partial class LibraryPage : Page,
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_isNavigated || (message.Context is {} owner && !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(owner))) return;
-            if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.ItemMetadataRefreshed) QueueGroupedCatalogRefresh();
+            if (message.Kind is MediaSurfaceChangeKind.ItemMetadataRefreshed or MediaSurfaceChangeKind.CollectionChanged)
+                QueueGroupedCatalogRefresh();
+            else if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared
+                or MediaSurfaceChangeKind.FavoriteAdded or MediaSurfaceChangeKind.FavoriteRemoved
+                or MediaSurfaceChangeKind.WatchlistAdded or MediaSurfaceChangeKind.WatchlistRemoved
+                or MediaSurfaceChangeKind.RatingChanged or MediaSurfaceChangeKind.PlaybackProgress)
+                QueueGroupedCatalogRefresh(structural: false);
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item => message.Kind switch
             {
                 MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
@@ -2654,7 +2660,7 @@ public sealed partial class LibraryPage : Page,
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
             _ = ViewModel.EnsureLetterIndexAsync();
-            if (_groupedCatalogDirty) QueueGroupedCatalogRefresh();
+            if (_groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
             return;
         }
 
@@ -2666,7 +2672,7 @@ public sealed partial class LibraryPage : Page,
             await ViewModel.LoadCommand.ExecuteAsync(null);
             try { await overlayWarmup; } catch { }
             _libraryCatalogLoaded = _isNavigated && ViewModel.Library is not null && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
-            if (_libraryCatalogLoaded && _groupedCatalogDirty) QueueGroupedCatalogRefresh();
+            if (_libraryCatalogLoaded && _groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
         }
         finally
         {

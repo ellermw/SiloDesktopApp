@@ -237,6 +237,7 @@ internal static class LibraryLettersNativeFixture
                 if (grouped)
                 {
                     await VerifyGroupedRefreshViewportAsync(page, wire, client);
+                    await VerifyStructuralGroupedRefreshAsync(page, wire, client);
                     if (type == "mixed") await VerifyRestoredBrowseTypeAsync(frame, page, wire);
                     wire.Grouped = false; catalog.InvalidateLibraryCache();
                     await Until(() => page.ViewModel.Library is { BoxSetsEnabled: false } && page.ViewModel.GetWindowItem(0)?.Type == "movie");
@@ -257,6 +258,41 @@ internal static class LibraryLettersNativeFixture
             await Task.Delay(150); navigation.Frame = null; field.SetValue(null, previous);
         }
     }
+    private static async Task VerifyStructuralGroupedRefreshAsync(LibraryPage page, Wire wire, SiloApiClient client)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var model = page.ViewModel;
+        var oldStart = model.WindowStartIndex;
+        if (oldStart != 0) throw new InvalidOperationException("Structural regression requires a retained earlier window.");
+        wire.CatalogIndexShift = -1;
+        wire.CatalogWindowStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.CatalogWindowGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var receive = typeof(LibraryPage).GetMethod("OnRecommendedRealtimeEvent", flags)!;
+            using var payload = JsonDocument.Parse("{}");
+            receive.Invoke(page, ["catalog", "scan", payload.RootElement]);
+            // A later state event must not downgrade the pending structural read.
+            page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedMarked,
+                "member", context: client.CaptureContext()));
+            await wire.CatalogWindowStarted.Task.WaitAsync(TimeSpan.FromSeconds(6));
+            page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedCleared,
+                "member", context: client.CaptureContext()));
+            wire.CatalogWindowGate.TrySetResult();
+            await Until(() => typeof(LibraryPage).GetField("_groupedRefreshCts", flags)!.GetValue(page) == null && !model.IsLoading);
+            var reads = wire.CatalogScopes.Count;
+            await model.EnsureRangeLoadedAsync(0, 59);
+            if (wire.CatalogScopes.Count <= reads || model.GetWindowItem(0)?.ContentId != "item--1")
+                throw new InvalidOperationException("Structural scan served an earlier offset from the old cache after coalesced viewer-state events.");
+            Program.Log("PASS: actual catalog scan retains structural ownership across coalesced state events and reloads earlier offsets after insertion.");
+        }
+        finally
+        {
+            wire.CatalogWindowGate.TrySetResult();
+            wire.CatalogWindowGate = null; wire.CatalogWindowStarted = null; wire.CatalogIndexShift = 0;
+        }
+    }
+
     private static async Task VerifyGroupedRefreshViewportAsync(LibraryPage page, Wire wire, SiloApiClient client)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -379,6 +415,7 @@ internal static class LibraryLettersNativeFixture
         internal bool RejectNextCursor;
         internal bool Grouped;
         internal int CurrentLibraryId, PlayedCount = 1;
+        internal int CatalogIndexShift;
         internal string CurrentType = "movie";
         internal string? LastOrder, LastGenre, LastIndexOrder;
         internal bool FailIndex, OmitWindowTotals;
@@ -434,7 +471,7 @@ internal static class LibraryLettersNativeFixture
                 }
                 var count = Math.Min(limit, 1000 - offset);
                 var skipTotal = query.ContainsKey("skip_total");
-                return CompleteCatalogAsync(Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = grouped && index % 2 == 0 ? "box_set" : "movie", box_set = grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
+                return CompleteCatalogAsync(Reply(new { items = Enumerable.Range(offset, count).Select(index => index + CatalogIndexShift).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = grouped && index % 2 == 0 ? "box_set" : "movie", box_set = grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
                     total = OmitWindowTotals && skipTotal ? 0 : 1000, total_exact = !skipTotal, window_cursor = query["library_id"] + ":" + limit + ":0:" + query.GetValueOrDefault("group", ""),
                     page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) + ":" + query.GetValueOrDefault("group", "") } }), skipTotal, ct);
             }

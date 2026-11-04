@@ -14,6 +14,7 @@ public sealed partial class LibraryPage
     private long _groupedLibraryVisit;
     private long _libraryFlagsRead;
     private bool _groupedCatalogDirty;
+    private long _groupedStructureRequested, _groupedStructureApplied;
     private bool _libraryFlagsDirty;
     private long _nextGroupedCatalogRefreshAt;
     private const int GroupedCatalogRefreshCooldownMilliseconds = 5000;
@@ -45,9 +46,10 @@ public sealed partial class LibraryPage
         pending.Cancel(); pending.Dispose();
     }
 
-    private void QueueGroupedCatalogRefresh()
+    private void QueueGroupedCatalogRefresh(bool structural = true)
     {
         if (!IsBoxSetLibrary) return;
+        if (structural) _groupedStructureRequested++;
         _groupedCatalogDirty = true;
         if (!CanRefreshGroupedGrid || _groupedRefreshCts is not null) return;
         var owner = _groupedRefreshCts = new();
@@ -73,15 +75,18 @@ public sealed partial class LibraryPage
                     if (!Current()) break;
                     if (ViewModel.IsLetterJumpInProgress) { await Task.Delay(100, token); continue; }
                     _groupedCatalogDirty = false;
+                    var structuralRevision = _groupedStructureRequested;
+                    var requiresStructure = structuralRevision != _groupedStructureApplied;
                     _nextGroupedCatalogRefreshAt = Environment.TickCount64 + GroupedCatalogRefreshCooldownMilliseconds;
                     var layout = GetGridLayout();
                     var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
-                    var result = await ViewModel.RefreshGroupedCatalogCoreAsync(range.StartIndex,
-                        Math.Max(1, range.EndIndex - range.StartIndex + 1), token);
+                    var result = await ViewModel.RefreshGroupedCatalogForChangeAsync(range.StartIndex,
+                        Math.Max(1, range.EndIndex - range.StartIndex + 1), token, stateOnly: !requiresStructure);
                     if (result != LibraryViewModel.GroupedRefreshResult.Completed) _groupedCatalogDirty = true;
                     if (!Current() || result == LibraryViewModel.GroupedRefreshResult.Failed) break;
                     if (result == LibraryViewModel.GroupedRefreshResult.Completed)
                     {
+                        _groupedStructureApplied = structuralRevision;
                         QueueRenderVirtualGrid(force: true);
                         ScheduleVisibleRangeLoad(force: true);
                     }
@@ -106,7 +111,7 @@ public sealed partial class LibraryPage
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_isNavigated && visit == _groupedLibraryVisit && ViewModel.Library?.Id == libraryId && catalog.IsCurrentIdentityContext(owner))
-                QueueGroupedCatalogRefresh();
+                QueueGroupedCatalogRefresh(structural: false);
         });
     }
 

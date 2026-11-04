@@ -538,7 +538,16 @@ public partial class LibraryViewModel : ObservableObject
     public Task<GroupedRefreshResult> RefreshGroupedCatalogAsync(int startIndex, int itemCount)
         => RefreshGroupedCatalogCoreAsync(startIndex, itemCount, CancellationToken.None);
 
-    internal async Task<GroupedRefreshResult> RefreshGroupedCatalogCoreAsync(int startIndex, int itemCount, CancellationToken ct)
+    public Task<GroupedRefreshResult> RefreshGroupedCatalogStateAsync(int startIndex, int itemCount)
+        => RefreshGroupedCatalogForChangeAsync(startIndex, itemCount, CancellationToken.None, stateOnly: true);
+
+    internal Task<GroupedRefreshResult> RefreshGroupedCatalogCoreAsync(int startIndex, int itemCount, CancellationToken ct)
+        => RefreshGroupedCatalogForChangeAsync(startIndex, itemCount, ct, stateOnly: false);
+
+    private bool CanPreserveGroupedStateOrder => !UseAdvancedRules && string.IsNullOrEmpty(SelectedWatchStatus)
+        && SelectedSort is "title" or "year" or "added_at" or "release_date" or "rating_imdb";
+
+    internal async Task<GroupedRefreshResult> RefreshGroupedCatalogForChangeAsync(int startIndex, int itemCount, CancellationToken ct, bool stateOnly)
     {
         if (Library is null || itemCount <= 0 || !await EnsureGroupingAsync()) return GroupedRefreshResult.Failed;
         if (!IsGroupedCatalog) return GroupedRefreshResult.Completed;
@@ -546,25 +555,41 @@ public partial class LibraryViewModel : ObservableObject
         var version = _queryVersion;
         var jump = _letterJumpVersion;
         var key = LetterQueryKey();
+        var group = _catalogGroup;
+        var preserveOrder = stateOnly && CanPreserveGroupedStateOrder;
         using var pending = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
         try
         {
             // Read a replacement without touching live cards, cursors or totals.
-            // The first read deliberately has no snapshot/continuation from the old window.
+            // A continuation token fences insertions, not removals, metadata or
+            // viewer-state ordering. Only a proven state-independent query may
+            // retain adjacent slots after an explicitly state-only change.
             CatalogResponse? replacement = null;
             await FetchWindowAsync(startIndex, itemCount, false, response => replacement = response,
-                snapshot: null, ct: pending.Token, publishState: false);
+                snapshot: preserveOrder ? _snapshot : null, ct: pending.Token, publishState: false);
             if (pending.IsCancellationRequested || version != _queryVersion || key != LetterQueryKey())
                 return GroupedRefreshResult.Failed;
             if (IsLetterJumpInProgress || jump != _letterJumpVersion) return GroupedRefreshResult.Deferred;
             if (replacement is null) return GroupedRefreshResult.Failed;
 
-            // This is a range replacement, not a new query. Keep adjacent/sparse
-            // pages, cursor ownership and unrelated scroll loads alive.
-            RetireOverlappingCatalogReads(startIndex, Math.Max(itemCount, replacement.Items.Count));
+            if (preserveOrder)
+                RetireOverlappingCatalogReads(startIndex, Math.Max(itemCount, replacement.Items.Count));
+            else
+            {
+                // Retain mounted cards until the read succeeds, then retire all
+                // old offsets and continuations together before publishing.
+                StartNewCatalogQuery(preserveExtent: true);
+                // The retained extent is provisional in the new catalog. Its
+                // previous exact count must not clip newly inserted tail rows.
+                _hasExactTotal = false;
+                _catalogGroup = group;
+                _groupingTask = Task.FromResult(true);
+                Items.Reset(TotalCount);
+                IsLoading = false;
+            }
             _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + replacement.Items.Count);
-            ApplyWindowResponse(startIndex, replacement, false, preserveAdjacent: true);
-            UpdateCachedRange(startIndex, replacement.Items);
+            ApplyWindowResponse(startIndex, replacement, false, preserveAdjacent: preserveOrder);
+            if (preserveOrder) UpdateCachedRange(startIndex, replacement.Items);
             RememberWindow(startIndex, replacement, false);
             WindowLoaded?.Invoke();
             _exactCountQueryVersion = _queryVersion;
