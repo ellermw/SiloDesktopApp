@@ -5,6 +5,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Controls;
+using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.Views;
 
@@ -12,7 +13,14 @@ internal static partial class RetainedLibraryNativeFixture
 {
     private static async Task CheckActivationAndDepartureAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings)
     {
-        foreach (var scenario in new[] { "same-tab", "other-tab", "library-switch", "explicit", "reload", "year-debounce", "rule-debounce", "language", "genre-history", "year-before-refresh", "rule-before-refresh", "person-before-refresh" })
+        string[] scenarios = [ "same-tab", "other-tab", "library-switch", "explicit", "reload", "year-debounce", "rule-debounce", "language", "genre-history", "year-before-refresh", "rule-before-refresh", "person-before-refresh" ];
+        var requestedScenario = Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARY_ACTIVATION_CASE");
+        if (!string.IsNullOrEmpty(requestedScenario))
+        {
+            if (!scenarios.Contains(requestedScenario, StringComparer.Ordinal)) throw new InvalidOperationException("Unknown library activation scenario.");
+            scenarios = [requestedScenario];
+        }
+        foreach (var scenario in scenarios)
         {
             wire.LibraryId++; wire.Remember = true; wire.Search = "?tab=recommended";
             settings.LibraryPageState.Invalidate();
@@ -104,18 +112,20 @@ internal static partial class RetainedLibraryNativeFixture
                 {
                     await Ready(); await Until(() => page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
                     NumberBox? yearRule = null;
-                    var year = (TextBox)page.FindName("YearMinBox");
                     QueryFilterEditor? editor = null;
                     var actor = (AutoSuggestBox)page.FindName("ActorBox");
                     if (scenario == "person-before-refresh") actor.Text = "Uncommitted actor";
-                    else if (scenario == "year-before-refresh") year.Text = "1999";
                     else
                     {
                         Click("OpenFiltersButton");
                         await Until(() => ((SlideSheet)page.FindName("FiltersSheet")).IsOpen);
                         editor = Field<QueryFilterEditor>(page, "_sharedFilterEditor");
-                        yearRule = Descendants<NumberBox>(editor).First();
+                        var header = scenario == "year-before-refresh" ? "Year From" : "Year To";
+                        await Until(() => Descendants<NumberBox>(editor).Any(input => input.Header as string == header && input.IsLoaded));
+                        yearRule = Descendants<NumberBox>(editor).Single(input => input.Header as string == header);
                         yearRule.Value = 1999;
+                        await Until(() => Field<object?>(page, "_advancedFilterDebounceTimer") != null);
+                        Require(HasYearRule(scenario == "year-before-refresh" ? "gte" : "lte", "1999"), "The visible shared year control did not stage its exact rule.");
                     }
                     var refreshReads = wire.StateReads;
                     wire.Search = "?tab=recommended";
@@ -123,8 +133,7 @@ internal static partial class RetainedLibraryNativeFixture
                     await Until(() => wire.StateReads > refreshReads);
                     await Task.Delay(100); // Inspect before the 400/500 ms draft debounce commits.
                     Require(Tab() == "Library" && (scenario == "person-before-refresh" ? actor.Text == "Uncommitted actor" :
-                        yearRule == null ? year.Text == "1999" :
-                        yearRule.Value == 1999 && ReferenceEquals(editor, Field<QueryFilterEditor>(page, "_sharedFilterEditor"))),
+                        yearRule?.Value == 1999 && ReferenceEquals(editor, Field<QueryFilterEditor>(page, "_sharedFilterEditor"))),
                         "An invalidation delivered after a local draft overwrote that draft before its debounce.");
                     if (scenario == "person-before-refresh")
                     {
@@ -148,19 +157,29 @@ internal static partial class RetainedLibraryNativeFixture
                         ((ComboBox)page.FindName("OrderComboBox")).SelectedIndex = 0;
                         await Until(() => page.ViewModel.IsLoading && wire.CatalogReads > catalogReads);
                     }
-                    else if (scenario == "year-debounce")
-                        ((TextBox)page.FindName("YearMinBox")).Text = "1999";
                     else
                     {
                         Click("OpenFiltersButton");
                         await Until(() => ((SlideSheet)page.FindName("FiltersSheet")).IsOpen);
                         var editor = Field<QueryFilterEditor>(page, "_sharedFilterEditor");
-                        Descendants<NumberBox>(editor).First().Value = 2001;
+                        var header = scenario == "year-debounce" ? "Year From" : "Year To";
+                        await Until(() => Descendants<NumberBox>(editor).Any(input => input.Header as string == header && input.IsLoaded));
+                        var yearRule = Descendants<NumberBox>(editor).Single(input => input.Header as string == header);
+                        yearRule.Value = scenario == "year-debounce" ? 1999 : 2001;
                         await Until(() => Field<object?>(page, "_advancedFilterDebounceTimer") != null);
+                        Require(HasYearRule(scenario == "year-debounce" ? "gte" : "lte", scenario == "year-debounce" ? "1999" : "2001"),
+                            "The visible shared year control did not stage its exact rule before departure.");
                     }
                     await Leave();
                     var expected = scenario == "reload" ? "order=desc" : scenario == "year-debounce" ? "1999" : "2001";
                     await Until(() => wire.StateWrites > writes && Uri.UnescapeDataString(wire.Search).Contains(expected, StringComparison.Ordinal));
+                    if (scenario != "reload")
+                    {
+                        var saved = Uri.UnescapeDataString(wire.Search);
+                        Require(saved.Contains("[field]=year", StringComparison.Ordinal) &&
+                            saved.Contains(scenario == "year-debounce" ? "[op]=gte" : "[op]=lte", StringComparison.Ordinal) &&
+                            saved.Contains("[value]=" + expected, StringComparison.Ordinal), "Departure did not save the exact shared year rule.");
+                    }
                     Require(Field<object?>(page, "_yearDebounceTimer") == null && Field<object?>(page, "_advancedFilterDebounceTimer") == null,
                         "Filter debounce survived departure.");
                     catalogReads = wire.CatalogReads;
@@ -168,6 +187,9 @@ internal static partial class RetainedLibraryNativeFixture
                     await Until(() => page.IsLoaded && wire.CatalogReads > catalogReads);
                     wire.CatalogGate?.SetResult(); wire.CatalogGate = null;
                     await Until(() => page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading && Field<bool>(page, "_libraryCatalogLoaded"));
+                    if (scenario != "reload")
+                        Require(page.ViewModel.UseAdvancedRules && HasYearRule(scenario == "year-debounce" ? "gte" : "lte", expected),
+                            "Back did not restore the exact saved shared year rule.");
                 }
                 else
                 {
@@ -193,6 +215,8 @@ internal static partial class RetainedLibraryNativeFixture
             }
 
             string Tab() => Field<string>(page!, "_currentTab");
+            bool HasYearRule(string op, string value) => page!.ViewModel.AdvancedGroups.SelectMany(group => group.Rules)
+                .Any(rule => rule.Field == "year" && rule.Op == op && QueryRuleValues.Format(rule.Value) == value);
             void Click(string name) => ((IInvokeProvider)new ButtonAutomationPeer((Button)page!.FindName(name)).GetPattern(PatternInterface.Invoke)).Invoke();
             async Task Ready() => await Until(() => Field<bool>(page!, "_libraryStateApplied"));
             async Task Leave() { frame.Navigate(typeof(Page)); await Until(() => !page!.IsLoaded); }

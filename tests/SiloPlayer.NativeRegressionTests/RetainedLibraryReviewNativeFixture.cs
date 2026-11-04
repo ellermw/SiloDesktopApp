@@ -12,6 +12,16 @@ internal static partial class RetainedLibraryNativeFixture
 {
     private static async Task CheckReviewAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings, AuthService auth)
     {
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARY_STATE_ORDERING_CASE")))
+        {
+            await CheckReportedStateOrderingsAsync(parent, navigation, wire, settings);
+            return;
+        }
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARY_ACTIVATION_CASE")))
+        {
+            await CheckActivationAndDepartureAsync(parent, navigation, wire, settings);
+            return;
+        }
         await CheckActivationAndDepartureAsync(parent, navigation, wire, settings);
         await CheckReportedStateOrderingsAsync(parent, navigation, wire, settings);
         var failures = new List<string>();

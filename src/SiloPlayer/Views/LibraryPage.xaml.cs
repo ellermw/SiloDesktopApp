@@ -325,6 +325,7 @@ public sealed partial class LibraryPage : Page,
             _stateEntryParameter = null;
             _stateSnapshot = null;
             _retainedSearch = null;
+            _temporaryGenreView = false;
             HeaderGrid.Visibility = Visibility.Collapsed;
             FilterBar.Visibility = Visibility.Collapsed;
             ActiveFiltersBar.Visibility = Visibility.Collapsed;
@@ -401,7 +402,8 @@ public sealed partial class LibraryPage : Page,
             var edited = sameLibrary && (edit != _stateEdit || HasLibraryFilterDraft);
             var pendingSearch = snapshot is not { Remember: false } && _pendingStateSaves.TryGetValue((identity, library.Id), out var pending)
                 ? pending.Search : null;
-            var retain = sameLibrary && !differentExplicitEntry && (edited || snapshot == null || historyReturn && !snapshot.Value.Remember || snapshot.Value.Remember &&
+            var sameTemporaryEntry = _temporaryGenreView && !newRequest && ReferenceEquals(_stateEntryParameter, e.Parameter);
+            var retain = sameLibrary && (!_temporaryGenreView || sameTemporaryEntry) && !differentExplicitEntry && (edited || snapshot == null || historyReturn && !snapshot.Value.Remember || snapshot.Value.Remember &&
                 (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch || HasUnsavedLibraryState(library.Id, identity)));
             var savedSearch = pendingSearch ?? snapshot?.Search;
             var restoredState = retain ? CaptureLibraryViewState(_currentTab) :
@@ -414,6 +416,7 @@ public sealed partial class LibraryPage : Page,
             var requestedGenre = replayRoute ? navigationArgs?.InitialGenre : null;
             var state = restoredState ?? (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
             var temporaryGenreView = !string.IsNullOrWhiteSpace(requestedGenre) && state.Match == "any" && state.QueryGroups.Count > 0;
+            _temporaryGenreView = temporaryGenreView || retain && sameTemporaryEntry;
             if (temporaryGenreView)
             {
                 // The two-level query contract cannot wrap an OR query in an AND.

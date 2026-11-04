@@ -12,7 +12,7 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
     internal sealed class Session
     {
         private SemaphoreSlim _operations = new(1, 1);
-        private SettingsRequestContext? _operationOwner;
+        private SettingsIdentityContext? _operationOwner;
         internal readonly object Sync = new();
         internal long Generation;
         internal Document? Confirmed;
@@ -22,7 +22,9 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
             lock (Sync)
             {
                 if (!settings.IsCurrentSettingsContext(owner)) throw new OperationCanceledException("Library settings owner changed.");
-                if (_operationOwner != owner) { _operationOwner = owner; _operations = new(1, 1); }
+                var identity = settings.CaptureSettingsIdentityContext();
+                if (!settings.IsCurrentSettingsContext(owner)) throw new OperationCanceledException("Library settings owner changed.");
+                if (_operationOwner != identity) { _operationOwner = identity; _operations = new(1, 1); }
                 return _operations;
             }
         }
@@ -127,6 +129,8 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
                 lock (State.Sync)
                 {
                     if (generation != State.Generation) continue;
+                    if (remember && value == null)
+                        throw new InvalidOperationException("The saved library view uses an unsupported format. Your changes could not be saved.");
                     if (remember && value != null && libraries.GetValueOrDefault(libraryId.ToString()) != search)
                     {
                         var id = libraryId.ToString();

@@ -19,6 +19,9 @@ public sealed partial class LibraryPage
     private long _stateVisit, _stateEdit, _stateLanguage;
     private string? _retainedSearch;
     private bool _libraryStateApplied;
+    // An explicit genre may temporarily replace an unrepresentable outer OR
+    // query. This visit must never overwrite that retained settings document.
+    private bool _temporaryGenreView;
     private bool _applyingLibraryState, _stateEventsAttached, _stateRefreshQueued, _stateRefreshAgain;
     private DispatcherTimer? _stateSaveTimer;
     private CancellationTokenSource? _stateRestoreCancellation;
@@ -30,11 +33,17 @@ public sealed partial class LibraryPage
     {
         internal readonly Dictionary<(SettingsIdentityContext Owner, int Id), LibraryStateSave> Pending = new();
         internal readonly HashSet<LibraryStateSave> InFlight = new();
+        internal readonly Dictionary<(SettingsIdentityContext Owner, int Id), long> Edits = new();
+        internal long NextEdit;
     }
     private static readonly ConditionalWeakTable<SettingsApi, LibraryStateSaveQueue> StateSaveQueues = new();
     private LibraryStateSaveQueue StateSaveQueue => StateSaveQueues.GetValue(_stateSettings, _ => new());
     private Dictionary<(SettingsIdentityContext Owner, int Id), LibraryStateSave> _pendingStateSaves => StateSaveQueue.Pending;
     private HashSet<LibraryStateSave> _stateSavesInFlight => StateSaveQueue.InFlight;
+    private long CurrentLibraryStateEdit(SettingsIdentityContext owner, int id)
+        => StateSaveQueue.Edits.GetValueOrDefault((owner, id));
+    private long AdvanceLibraryStateEdit(SettingsIdentityContext owner, int id)
+        => StateSaveQueue.Edits[(owner, id)] = ++StateSaveQueue.NextEdit;
     private bool HasLibraryFilterDraft => _yearDebounceTimer != null || _advancedFilterDebounceTimer != null ||
         NullIfWhiteSpace(ActorBox.Text) != ViewModel.SelectedActor ||
         NullIfWhiteSpace(DirectorBox.Text) != ViewModel.SelectedDirector ||
@@ -139,7 +148,7 @@ public sealed partial class LibraryPage
                 var previous = _stateSnapshot;
                 _stateSnapshot = snapshot;
                 // Opt-out changes future activation/save eligibility, never current user intent.
-                if (!snapshot.Value.Remember || snapshot == previous || snapshot.Value.Search == _retainedSearch ||
+                if (_temporaryGenreView || !snapshot.Value.Remember || snapshot == previous || snapshot.Value.Search == _retainedSearch ||
                     HasLibraryFilterDraft || HasUnsavedLibraryState(id, _stateSettings.CaptureSettingsIdentityContext())) return;
                 var state = ParseOwnedLibrarySearch(snapshot.Value.Search, visit, owner, id);
                 if (state == null) return;
@@ -171,19 +180,27 @@ public sealed partial class LibraryPage
     {
         if (!_isNavigated || !_libraryStateApplied || id != _activeLibraryId || _applyingLibraryState || _stateIdentity is not { } owner || !_stateSettings.IsCurrentSettingsIdentityContext(owner)) return;
         var search = FormatLibrarySearch(state);
-        if (search == _retainedSearch) return;
+        if (search == _retainedSearch &&
+            (!_pendingStateSaves.TryGetValue((owner, id), out var pending) || pending.Edit == CurrentLibraryStateEdit(owner, id))) return;
         _retainedSearch = search;
         ++_stateEdit;
+        var edit = AdvanceLibraryStateEdit(owner, id);
+        if (_temporaryGenreView) return;
         if (_stateSnapshot is { Remember: false } ||
             _stateSettings.LibraryPageState.TryGetConfirmed(id, out var confirmed) && !confirmed.Remember) return;
-        _pendingStateSaves[(owner, id)] = new(id, search, owner, _stateEdit);
+        _pendingStateSaves[(owner, id)] = new(id, search, owner, edit);
         _stateSaveTimer ??= CreateStateSaveTimer();
         _stateSaveTimer.Stop(); _stateSaveTimer.Start();
     }
 
     private void MarkLibraryStateEdited()
     {
-        if (_isNavigated && !_suppressFilterEvents && !_applyingLibraryState) ++_stateEdit;
+        if (_isNavigated && !_suppressFilterEvents && !_applyingLibraryState)
+        {
+            ++_stateEdit;
+            if (_stateIdentity is { } owner && _activeLibraryId is { } id && _stateSettings.IsCurrentSettingsIdentityContext(owner))
+                AdvanceLibraryStateEdit(owner, id);
+        }
     }
 
     private DispatcherTimer CreateStateSaveTimer()
@@ -233,7 +250,7 @@ public sealed partial class LibraryPage
             if (!_stateSettings.IsCurrentSettingsIdentityContext(save.Owner)) { _pendingStateSaves.Remove(key); return; }
             // Leave the latest edit queued for the next activation/departure, even while detached.
             if (_pendingStateSaves.TryGetValue(key, out var latest) && latest == save &&
-                (_activeLibraryId != save.Id || save.Edit == _stateEdit))
+                save.Edit == CurrentLibraryStateEdit(save.Owner, save.Id))
                 App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember library view: {ex.Message}");
         }
         finally { _stateSavesInFlight.Remove(save); }

@@ -125,6 +125,28 @@ public sealed class RetainedLibraryStateTests
         Assert.Equal("one", wire.Libraries[11]); Assert.Equal("two", wire.Libraries[22]);
     }
 
+    [Fact]
+    public async Task AccessInvalidationKeepsSameIdentityWritesSerialized()
+    {
+        using var wire = new Wire(); wire.PutGate = new();
+        var previous = wire.Store.WriteAsync(11, "first"); await wire.PutStarted.Task;
+        wire.Client.InvalidateAccessContext();
+        var next = new LibraryPageStateStore(wire.Settings).WriteAsync(22, "second");
+        try
+        {
+            await Task.Delay(100);
+            Assert.Equal(1, wire.Writes);
+            Assert.False(next.IsCompleted);
+        }
+        finally
+        {
+            wire.PutGate.TrySetResult();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => previous);
+            await next;
+        }
+        Assert.Equal("first", wire.Libraries[11]); Assert.Equal("second", wire.Libraries[22]);
+    }
+
     [Theory]
     [InlineData("profile")]
     [InlineData("server")]
@@ -253,7 +275,7 @@ public sealed class RetainedLibraryStateTests
     {
         using var wire = new Wire { StateDocument = JsonSerializer.Deserialize<JsonElement>(json) };
         Assert.Null(await wire.Store.ReadAsync(9));
-        await wire.Store.WriteAsync(9, "?tab=library");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => wire.Store.WriteAsync(9, "?tab=library"));
         Assert.Equal(0, wire.Writes);
         Assert.Equal(json, wire.StateDocument.Value.GetRawText());
     }

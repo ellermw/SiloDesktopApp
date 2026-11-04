@@ -13,7 +13,14 @@ internal static partial class RetainedLibraryNativeFixture
 {
     private static async Task CheckReportedStateOrderingsAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings)
     {
-        foreach (var scenario in new[] { "opt-out-genre-history", "opt-out-shell-refresh", "opt-out-cross-library", "failed-shell-refresh", "failed-cross-library", "same-library-genre-back", "shell-refresh", "any-genre", "genre-empty-groups", "audiobook-author", "audiobook-narrator", "audiobook-series", "access-opt-out-mounted", "access-opt-out-detached", "access-held-read", "reconnect-mounted", "reconnect-detached", "reconnect-in-flight", "cross-library-held", "cross-library-failed" })
+        string[] scenarios = [ "opt-out-genre-history", "opt-out-shell-refresh", "opt-out-cross-library", "failed-shell-refresh", "failed-cross-library", "same-library-genre-back", "shell-refresh", "any-genre", "genre-empty-groups", "audiobook-author", "audiobook-narrator", "audiobook-series", "access-opt-out-mounted", "access-opt-out-detached", "access-held-read", "reconnect-mounted", "reconnect-detached", "reconnect-in-flight", "cross-library-held", "cross-library-failed" ];
+        var requestedScenario = Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARY_STATE_ORDERING_CASE");
+        if (!string.IsNullOrEmpty(requestedScenario))
+        {
+            if (!scenarios.Contains(requestedScenario, StringComparer.Ordinal)) throw new InvalidOperationException("Unknown library-state ordering scenario.");
+            scenarios = [requestedScenario];
+        }
+        foreach (var scenario in scenarios)
         {
             wire.LibraryId++; wire.Remember = !scenario.StartsWith("opt-out-", StringComparison.Ordinal) && !scenario.StartsWith("access-opt-out-", StringComparison.Ordinal);
             wire.Search = "?tab=library"; wire.FailPut = false;
@@ -191,9 +198,16 @@ internal static partial class RetainedLibraryNativeFixture
                     Require(wire.StateWrites == initialWrites && wire.Search == originalSearch && page.ViewModel.AdvancedRulesMatch == "any",
                         "Genre activation/departure persisted a replacement for the user's saved OR query.");
                     ((ComboBox)page.FindName("OrderComboBox")).SelectedIndex = 0;
-                    await Until(() => wire.StateWrites > initialWrites && wire.Search.Contains("order=desc", StringComparison.Ordinal));
-                    Require(wire.Search.Contains("match=any", StringComparison.Ordinal) && wire.Search.Contains("Crime", StringComparison.Ordinal),
-                        "Editing the temporary view silently changed its match operator or lost the genre.");
+                    await Until(() => page.ViewModel.SelectedOrder == "desc");
+                    await Task.Delay(750); // Existing save debounce must have had an opportunity to run.
+                    Require(wire.StateWrites == initialWrites && wire.Search == originalSearch &&
+                        page.ViewModel.AdvancedRulesMatch == "any" && page.ViewModel.SelectedGenres.Contains("Crime"),
+                        "Editing the temporary genre view replaced the persisted OR query or changed the current route.");
+                    await Leave();
+                    frame.Navigate(typeof(LibraryPage), library); page = (LibraryPage)frame.Content; await Ready();
+                    Require(!page.ViewModel.SelectedGenres.Contains("Crime") && page.ViewModel.AdvancedGroups.Count == 2 &&
+                        page.ViewModel.AdvancedRulesMatch == "any" && wire.Search == originalSearch,
+                        "A new unqualified entry retained the temporary genre route instead of the preserved saved OR query.");
                 }
                 else if (scenario == "genre-empty-groups")
                 {
@@ -257,6 +271,19 @@ internal static partial class RetainedLibraryNativeFixture
                         await Ready();
                         Require(Tab() == "Collections", "Catch-up or detached return discarded the unsaved view for the same identity.");
                         await Task.Delay(200); // Let the activation's failed retry release its write gate.
+                        if (scenario == "reconnect-mounted")
+                        {
+                            // Departure can retry through the old page. Start a
+                            // distinct failed retry only after the replacement
+                            // is mounted, so its own visible-intent check owns
+                            // this unique feedback rather than an old toast.
+                            wire.PutErrorMessage += " mounted-replacement-retry";
+                            var beforeMountedRetry = wire.StateWrites;
+                            Program.Log($"Replacement retry checkpoint: pageEdit={Field<long>(page, "_stateEdit")}, writes={beforeMountedRetry}, tab={Tab()}.");
+                            settings.LibraryPageState.Invalidate();
+                            await Until(() => wire.StateWrites > beforeMountedRetry);
+                            await Until(SaveError);
+                        }
                         writes = wire.StateWrites; wire.FailPut = false;
                         settings.LibraryPageState.Invalidate();
                         await Until(() => wire.StateWrites > writes && wire.Search.Contains("tab=collections", StringComparison.Ordinal));
