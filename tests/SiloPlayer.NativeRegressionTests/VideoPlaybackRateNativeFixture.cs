@@ -81,7 +81,7 @@ internal static class VideoPlaybackRateNativeFixture
             service.SetWatchTogetherPlayback(true);
             Require(service.NativePlaybackRate == 1 && service.DesiredVideoPlaybackRate == 0.75 && wire.Writes.Count == writes,
                 "Room join retained the viewer's solo speed or saved the synchronization baseline as preference.");
-            var roomPlayer = new RoomPlayback(service) { Position = 9.5 };
+            var roomPlayer = new RoomPlayback(service, mpv) { Position = 9.5 };
             var sync = new WatchPartySyncController(roomPlayer, _ => { });
             sync.SetSnapshot(new() { RoomId = "synthetic-rate-room", Phase = "playing", PlaybackState = "playing",
                 SelectionRevision = 1, SelectedContentId = "synthetic-video" });
@@ -89,9 +89,12 @@ internal static class VideoPlaybackRateNativeFixture
             sync.QueueCommand(new() { CommandId = "rate-play", SessionId = "synthetic-session", SelectionRevision = 1,
                 Action = "play", PlaybackState = "playing", PositionSeconds = 10 }, 0);
             sync.Tick(0);
-            Require(Math.Abs(service.NativePlaybackRate - 1.02) < .00001 && !mpv.IsPaused,
-                "Real room play command did not nudge actual libmpv from the room baseline.");
-            roomPlayer.Position = 11; sync.Tick(1000);
+            Require(service.NativePlaybackRate == 1 && !roomPlayer.Paused,
+                "The authoritative first room play failed to start actual media at the room baseline.");
+            roomPlayer.Position = 10.5; sync.Tick(1000);
+            Require(Math.Abs(service.NativePlaybackRate - 1.02) < .00001,
+                "Room clock drift did not nudge actual libmpv from the room baseline.");
+            roomPlayer.Position = 12; sync.Tick(2000);
             Require(service.NativePlaybackRate == 1 && service.DesiredVideoPlaybackRate == 0.75 && wire.Writes.Count == writes && roomPlayer.Seeks == 0,
                 "Room drift convergence restored solo speed, changed viewer desire, persisted drift or sought.");
             sync.SetSession(null);
@@ -165,11 +168,11 @@ internal static class VideoPlaybackRateNativeFixture
 
     // Exercise the real controller against actual native rate/pause, using only
     // a deterministic canonical clock for the simulated room's transport.
-    private sealed class RoomPlayback(PlayerService service) : IWatchPartyPlayback
+    private sealed class RoomPlayback(PlayerService service, MpvPlayer mpv) : IWatchPartyPlayback
     {
         public double Position { get; set; }
         public double Duration => 60;
-        public bool Paused => service.IsPaused;
+        public bool Paused => mpv.GetPropertyFlag("pause");
         public bool Buffering => false;
         public bool Busy => service.IsLoading;
         public bool Loaded => true;
