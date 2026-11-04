@@ -18,6 +18,10 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("authority.ApiClient.IsCurrentIdentityContext(selectionIdentity)", receipt);
         Assert.Contains("selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration)", receipt);
         Assert.Contains("selectionRoomGeneration == Volatile.Read(ref _roomPlaybackGeneration)", receipt);
+        var accepted = receipt.IndexOf("return true;", StringComparison.Ordinal);
+        Assert.Contains("return false;", receipt[accepted..]);
+        var commonGuard = method.IndexOf("if (_closing ||", ack, StringComparison.Ordinal);
+        Assert.Contains("_playbackTerminalState != null", method[commonGuard..oldFileGuard]);
     }
 
     [Fact]

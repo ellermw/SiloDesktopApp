@@ -1435,8 +1435,9 @@ public partial class PlayerService : IDisposable
                     manager?.CaptureLocalSubtitleIntent() == admittedIntent && (acceptActivation?.Invoke() ?? true))
                     return true;
             }
+            return false;
         }
-        if (_closing || ownerToken.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority) ||
+        if (_closing || _playbackTerminalState != null || ownerToken.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority) ||
             !ReferenceEquals(manager, _playbackManager) || !ReferenceEquals(mpv, _mpv) ||
             !authority.ApiClient.IsCurrentIdentityContext(selectionIdentity) ||
             selectionPlayGeneration != Volatile.Read(ref _playRequestGeneration) ||
