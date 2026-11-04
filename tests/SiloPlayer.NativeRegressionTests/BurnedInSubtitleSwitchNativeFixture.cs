@@ -203,6 +203,83 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             await Until(() => Get(service, "_loadedMediaInitCts") == null && service.ActiveSubtitleServerIndex == Spanish);
             Program.Log("PASS: a deferred manual text pick survives quality-plan reindexing, saves its executed index exactly once and cannot persist a different row at its outgoing index.");
 
+            // Cancel an actual seek replan before it submits a native load.
+            // A rejected bitmap pick must resume the surviving stream; a newer
+            // deferred text pick must still execute if bitmap work is superseded
+            // during the drain (there will be no FILE_LOADED to consume it).
+            foreach (var paused in new[] { false, true })
+            foreach (var superseded in new[] { false, true })
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                var baseline = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Spanish);
+                await service.SetSubtitleTrackAndPersistAsync(Spanish + 1, baseline.Language, baseline);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.BeforeSeek = async ct =>
+                {
+                    entered.TrySetResult();
+                    try { await Task.Delay(Timeout.Infinite, ct); }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        canceled.TrySetResult();
+                        if (superseded) await release.Task;
+                        throw;
+                    }
+                };
+                var plan = Get(service, "_activeTransportPlan");
+                var retained = manager.CurrentSession;
+                var intent = manager.CaptureLocalSubtitleIntent();
+                var generation = Get(service, "_fileLoadGeneration");
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                Task<bool>? pick = null;
+                try
+                {
+                    Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("remux", media.Origin + "/media.wav"));
+                    Call(service, "QueueTransportRestartForSeek", 20d, false);
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(service.IsLoading && service.IsSwitchingContent && Get(service, "_fileLoadTimeoutCts") == null,
+                        "Seek cancellation fixture did not hold a seek before native loading.");
+                    wire.FailNextTrackChange = !superseded;
+                    var bitmap = retained!.SubtitleUrls.Single(t => t.Index == Dvd);
+                    pick = (Task<bool>)Call(service, "TrySetSubtitleTrackAndPersistAsync", Dvd + 1, bitmap.Language, bitmap)!;
+                    await canceled.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    if (superseded)
+                    {
+                        var latest = retained.SubtitleUrls.Single(t => t.Index == English);
+                        await service.SetSubtitleTrackAndPersistAsync(English + 1, latest.Language, latest);
+                        Require(!pick.IsCompleted && (int?)Get(service, "_pendingSubtitlePreferenceIndex") == English &&
+                            wire.PreferenceWrites == writes, "Newer text pick was not deferred during the seek drain.");
+                    }
+                    release.TrySetResult();
+                    Require(!await pick.WaitAsync(TimeSpan.FromSeconds(6)),
+                        "Rejected or superseded bitmap selection reported success after canceling the seek.");
+                    var expected = superseded ? English : Spanish;
+                    await Until(() => !service.IsLoading && !service.IsSwitchingContent &&
+                        mpv.IsPaused == paused && service.IsPaused == paused && service.ActiveSubtitleServerIndex == expected);
+                    Require(ReferenceEquals(manager.CurrentSession, retained) && NativeSidMatches(service, mpv, expected) &&
+                        (superseded ? manager.SubtitleSelectionForLoad == English : manager.CaptureLocalSubtitleIntent() == intent) &&
+                        wire.PreferenceWrites == writes + (superseded ? 1 : 0) && wire.Replans.Count == replans + (superseded ? 1 : 2) &&
+                        Equals(Get(service, "_fileLoadGeneration"), generation) && Get(service, "_fileLoadTimeoutCts") == null &&
+                        Get(service, "_seekRestartCts") == null && Get(service, "_pendingSubtitlePreferenceOwner") == null &&
+                        Get(service, "_restorePausedAfterLoad") == null && !(bool)Get(service, "_prematureEofRecoveryActive")! &&
+                        Get(service, "_playbackTerminalState") == null,
+                        "Canceled seek left orphaned loading/pause state, lost the latest pick, or persisted/reloaded a refused bitmap.");
+                }
+                finally
+                {
+                    release.TrySetResult(); wire.BeforeSeek = null; wire.FailNextTrackChange = false;
+                    if (pick != null) try { await pick.WaitAsync(TimeSpan.FromSeconds(6)); } catch (Exception) { }
+                    Set(service, "_activeTransportPlan", plan);
+                }
+            }
+            var restoreSpanish = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Spanish);
+            await service.SetSubtitleTrackAndPersistAsync(Spanish + 1, restoreSpanish.Language, restoreSpanish);
+            Program.Log("PASS: rejected and superseded bitmap picks after canceling an in-flight seek retire orphaned loading, preserve viewer pause and execute newer deferred text without a native reload.");
+
             // Reject a bitmap pick while a quality replacement is still held
             // before FILE_LOADED. The subtitle request does not own that load's
             // pause slot, loading flags, timeout, or overlay.
@@ -1015,6 +1092,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         public Func<CancellationToken, Task>? BeforeTrackRejection;
         public Func<CancellationToken, Task>? BeforeTrackChange;
         public Func<CancellationToken, Task>? BeforeQualityChange;
+        public Func<CancellationToken, Task>? BeforeSeek;
         public Func<CancellationToken, Task>? BeforeStart;
         public bool DeclineTrackChanges;
         public bool ReindexSpanish, ReindexDvd, ReuseSpanishIndex;
@@ -1057,6 +1135,11 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             else
             {
                 Replans.Add(body.Clone());
+                if (body.GetProperty("operation").GetString() == "seek_reanchor" && BeforeSeek is { } beforeSeek)
+                {
+                    BeforeSeek = null;
+                    await beforeSeek(ct);
+                }
                 if (body.GetProperty("operation").GetString() == "quality_change" && BeforeQualityChange is { } beforeQuality)
                 {
                     BeforeQualityChange = null;
