@@ -132,7 +132,13 @@ public partial class PlayerService
             if (requested.Id is > 0 || !string.IsNullOrEmpty(requested.SyncKey))
             {
                 var exact = tracks.Where(t => requested.Id is > 0 ? t.Id == requested.Id : t.SyncKey == requested.SyncKey).ToList();
-                return exact.Count == 1 && !exact[0].Unplayable ? exact[0] : null;
+                // Refreshed downloads have a stored Id, but a new v3 grant
+                // carries that identity only in SyncKey. Never use the ordinal
+                // or discard duplicate/unavailable identities to make a match.
+                if (exact.Count == 0 && !string.IsNullOrEmpty(requested.SyncKey))
+                    exact = tracks.Where(t => t.SyncKey == requested.SyncKey).ToList();
+                return exact.Count == 1 && !exact[0].Unplayable &&
+                    (requested.Id is not > 0 || exact[0].Id is not > 0 || exact[0].Id == requested.Id) ? exact[0] : null;
             }
             return tracks.FirstOrDefault(t => !t.Unplayable && t.Index == requested.Index);
         }

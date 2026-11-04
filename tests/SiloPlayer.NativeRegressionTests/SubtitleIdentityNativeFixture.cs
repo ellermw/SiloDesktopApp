@@ -99,6 +99,56 @@ internal static partial class SubtitleIdentityNativeFixture
                     Require(wire.SavedLabels.Last() == "Legacy display" && mpv.IsPaused,
                         "Raw v3 downloaded labels changed the existing legacy display-label preference contract.");
                     Program.Log("PASS: actual refresh/select/save preserves six raw v3 label shapes and a legacy display-label control.");
+
+                    // Queue the actual refreshed Id-bearing row, then replace
+                    // the grant with v3's SyncKey-only stored identity.
+                    session.ProtocolVersion = 3;
+                    wire.SubtitleList = """{"subtitles":[{"id":100,"media_file_id":42,"language":"en","format":"srt","title":"Queued download"}]}""";
+                    var queuedWrites = wire.PreferenceWrites;
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, true);
+                    await service.RefreshSubtitlesAfterAiAsync(42, 100).WaitAsync(TimeSpan.FromSeconds(5));
+                    var refreshed = session.SubtitleUrls.Single(track => track.Id == 100);
+                    Require(refreshed.TrackId == null && refreshed.SyncKey == "stored-100" &&
+                        HasPendingPreference(service) && wire.PreferenceWrites == queuedWrites,
+                        "A refreshed download did not retain its queued manual choice without an early preference write.");
+                    var decision = new PlaybackDecisionResponseV3
+                    {
+                        Outcome = "playable",
+                        PlaybackPlan = new()
+                        {
+                            Delivery = "original_http", EffectiveMediaFileId = 42,
+                            Subtitle = new() { Inventory = [new() { CombinedIndex = 40, TrackId = "granted-download",
+                                SyncKey = "stored-100", Source = "downloaded", Language = "en", Codec = "srt",
+                                Url = subtitles.Origin + "/queued-download.srt" }] }
+                        }
+                    };
+                    var adopt = typeof(PlaybackManager).GetMethod("AdoptProtocolV3Decision", BindingFlags.NonPublic | BindingFlags.Static)!;
+                    var granted = (PlaybackStartResponse)adopt.Invoke(null, [decision, "reload", "original", null])!;
+                    var grantedTrack = granted.SubtitleUrls.Single();
+                    Require(grantedTrack.Id == null && grantedTrack.Index != refreshed.Index,
+                        "The queued download control did not cross the v3 Id/ordinal boundary.");
+                    typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, granted);
+                    var replacementLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    void ReplacementLoaded() => replacementLoaded.TrySetResult();
+                    mpv.FileLoaded += ReplacementLoaded;
+                    try { mpv.LoadFile(Path.Combine(assets, "tracks.mkv")); await replacementLoaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+                    finally { mpv.FileLoaded -= ReplacementLoaded; }
+                    mpv.Pause();
+                    typeof(PlayerService).GetProperty("IsLoading")!.SetValue(service, false);
+                    var beforeApplication = subtitles.Requests;
+                    var initializer = new CancellationTokenSource();
+                    Set(service, "_loadedMediaInitCts", initializer);
+                    await ((Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), initializer)!).WaitAsync(TimeSpan.FromSeconds(5));
+                    var appliedSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+                    Require(service.ActiveSubtitleServerIndex == grantedTrack.Index && appliedSid > 0 && mpv.IsPaused &&
+                        mpv.GetSubtitleTrackIds(externalOnly: true).SequenceEqual(new[] { appliedSid }) &&
+                        subtitles.Requests == beforeApplication + 1 && wire.PreferenceWrites == queuedWrites + 1,
+                        "A refreshed download crossing a same-file v3 grant was refused, applied more than once, or lost its single preference save.");
+                    await ((Task)Call(service, "CompleteExecutedSubtitleSelectionAsync", Get(service, "_subtitleSelectionOperation"), grantedTrack)!).WaitAsync(TimeSpan.FromSeconds(5));
+                    Require(wire.PreferenceWrites == queuedWrites + 1 && subtitles.Requests == beforeApplication + 1 &&
+                        mpv.GetPropertyDouble("sid") == appliedSid,
+                        "A repeated completion duplicated the downloaded subtitle application or preference save.");
+                    Program.Log("PASS: refreshed downloaded identity crosses a same-file v3 grant and executes/saves exactly once.");
                 }
                 else if (closeout is "mime-busy" or "mime-ready")
                 {
@@ -149,6 +199,25 @@ internal static partial class SubtitleIdentityNativeFixture
                     session.SubtitleUrls.Remove(unavailableDuplicate);
                     var legacy = new SubtitleTrackInfo { Index = 20, Source = "external", Language = "ja" };
                     Require(ReferenceEquals(Call(service, "ResolveReloadSubtitleChoice", legacy, (int?)42), reused), "Same-file legacy ordinal compatibility was removed.");
+                    var stored = new SubtitleTrackInfo { Id = 123, Index = 20, SyncKey = "stored-123", Source = "downloaded" };
+                    var adopted = new SubtitleTrackInfo { Index = 23, SyncKey = "stored-123", Source = "downloaded" };
+                    session.SubtitleUrls.Add(adopted);
+                    Require(ReferenceEquals(Call(service, "ResolveReloadSubtitleChoice", stored, (int?)42), adopted),
+                        "A v3 stored row without Id failed its unique same-file SyncKey match.");
+                    adopted.Unplayable = true;
+                    Require(Call(service, "ResolveReloadSubtitleChoice", stored, (int?)42) is null, "An unavailable stored identity was selected.");
+                    adopted.Unplayable = false;
+                    adopted.Id = 456;
+                    Require(Call(service, "ResolveReloadSubtitleChoice", stored, (int?)42) is null, "A SyncKey match overrode a conflicting stored Id.");
+                    adopted.Id = null;
+                    var duplicate = new SubtitleTrackInfo { Index = 24, SyncKey = "stored-123", Unplayable = true };
+                    session.SubtitleUrls.Add(duplicate);
+                    Require(Call(service, "ResolveReloadSubtitleChoice", stored, (int?)42) is null,
+                        "An unavailable duplicate was discarded to manufacture a unique stored identity.");
+                    session.SubtitleUrls.Remove(duplicate);
+                    session.SubtitleUrls.Remove(adopted);
+                    Require(Call(service, "ResolveReloadSubtitleChoice", stored, (int?)42) is null,
+                        "A missing stored identity borrowed the reused ordinal.");
                 }
                 else if (closeout == "preplay-legacy")
                 {

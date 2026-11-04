@@ -5444,6 +5444,11 @@ public partial class PlayerService : IDisposable
         lock (_subtitleTrackStateLock) return _subtitleSidecarGeneration;
     }
 
+    // Native format probing/bitmap downloads need substantially more time than
+    // the small managed-text read. Still bound stalls and honor owner retirement.
+    private static readonly TimeSpan SubtitleUrlFallbackTimeout = TimeSpan.FromMinutes(5);
+    private TimeProvider _subtitleUrlFallbackTimeProvider = TimeProvider.System;
+
     private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
     {
         if (track.Unplayable) return SubtitlePrefetchOutcome.Error;
@@ -5514,8 +5519,9 @@ public partial class PlayerService : IDisposable
         async Task<SubtitlePrefetchOutcome> ReadUrlFallbackAsync()
         {
             if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
-            using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token);
-            fallbackBudget.CancelAfter(TimeSpan.FromSeconds(8));
+            using var fallbackDeadline = new CancellationTokenSource(SubtitleUrlFallbackTimeout, _subtitleUrlFallbackTimeProvider);
+            using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token, fallbackDeadline.Token);
+            ShowNotice("Loading subtitle", "Large or bitmap subtitles can take a few minutes to load. Your current captions stay applied; choose another subtitle to cancel this download.", "info");
             try
             {
                 // Keep the applied SID until the download completes. No UI or

@@ -94,6 +94,31 @@ internal static partial class SubtitleIdentityNativeFixture
         var writes = wire.PreferenceWrites; var priorSid = mpv.GetPropertyDouble("sid");
         var track = new SubtitleTrackInfo { Index = 40, TrackId = "deadline", Source = "external", Codec = "opaque", Language = "en", Url = server.Origin + "/deadline.probe" };
         manager.CurrentSession.SubtitleUrls.Add(track);
+        // Exercise the production deadline without a five-minute fixture wait.
+        // A successful read beyond the former eight-second budget must survive.
+        var clock = new FallbackDeadlineClock();
+        Set(service, "_subtitleUrlFallbackTimeProvider", clock);
+        var slow = server.HoldNextNative();
+        var slowPick = service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track);
+        try
+        {
+            await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Require(clock.DueTime == TimeSpan.FromMinutes(5), "Native fallback did not use its separate five-minute deadline.");
+            clock.Advance(TimeSpan.FromSeconds(9));
+            Require(!slowPick.IsCompleted, "A pending native sidecar was refused at the managed text deadline.");
+            slow.Release.TrySetResult();
+            await slowPick.WaitAsync(TimeSpan.FromSeconds(5));
+            Require(service.ActiveSubtitleServerIndex == track.Index && mpv.GetPropertyDouble("sid") > 0 && mpv.IsPaused &&
+                wire.PreferenceWrites == writes + 1,
+                "A native fallback past eight seconds on the controlled clock failed to apply and save once.");
+        }
+        finally { slow.Release.TrySetResult(); }
+        await service.SetSubtitleTrackAndPersistAsync(3, prior.Language, prior);
+        writes = wire.PreferenceWrites;
+        // Do not let the success cache bypass the subsequent stalled-read test.
+        track = new SubtitleTrackInfo { Index = 41, TrackId = "stalled-deadline", Source = "external", Codec = "opaque",
+            Language = "en", Url = server.Origin + "/stalled-deadline.probe" };
+        manager.CurrentSession.SubtitleUrls.Add(track);
         var held = server.HoldNextNative();
         var pending = service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track);
         NativeGateHold? hold = null;
@@ -103,13 +128,16 @@ internal static partial class SubtitleIdentityNativeFixture
             var owner = Get(service, "_subtitleReadOperation")!;
             var originalToken = (CancellationToken)owner.GetType().GetProperty("Token")!.GetValue(owner)!;
             hold = await NativeGateHold.EnterAsync(Get(mpv, "_asyncSubtitleGate")!);
-            var clock = Stopwatch.StartNew();
-            await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            Require(clock.DueTime == TimeSpan.FromMinutes(5), "The stalled fallback lost its production deadline.");
+            clock.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromMilliseconds(1));
+            Require(!pending.IsCompleted, "A current-owner native fallback timed out before its bitmap/oversized budget.");
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            await pending.WaitAsync(TimeSpan.FromSeconds(2));
             Require(!held.Release.Task.IsCompleted && !originalToken.IsCancellationRequested && ReferenceEquals(owner, Get(service, "_subtitleReadOperation")) &&
                 service.ActiveSubtitleServerIndex == prior.Index && mpv.GetPropertyDouble("sid") == priorSid && mpv.IsPaused &&
                 wire.PreferenceWrites == writes && !((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).ContainsKey(track.Index),
                 "The native fallback deadline depended on owner retirement/reply release or changed current SID/pause/preferences/cache.");
-            Program.Log($"PASS: actual current-owner native fallback refuses within its eight-second budget while HTTP/reply remain held ({clock.Elapsed.TotalSeconds:F2}s observed).");
+            Program.Log("PASS: native fallback survives the old text deadline and refuses at its five-minute deadline while HTTP/reply remain held (controlled timer).");
         }
         finally
         {
@@ -117,6 +145,7 @@ internal static partial class SubtitleIdentityNativeFixture
             held.Release.TrySetResult();
             if (hold != null) await hold.ReleaseAsync();
             await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            Set(service, "_subtitleUrlFallbackTimeProvider", TimeProvider.System);
         }
         await WaitNativeAsync(() => ((SemaphoreSlim)Get(mpv, "_asyncSubtitleAddLane")!).CurrentCount == 1);
         Require(mpv.GetPropertyDouble("sid") == priorSid && wire.PreferenceWrites == writes,
@@ -158,6 +187,51 @@ internal static partial class SubtitleIdentityNativeFixture
         var clock = Stopwatch.StartNew();
         while (!ready() && clock.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(20);
         Require(ready(), "The actual native lifecycle did not reach its bounded completion state.");
+    }
+
+    // Only the URL fallback's one-shot deadline uses this provider. Native
+    // HTTP/replies remain genuinely held, and owner cancellation stays real.
+    private sealed class FallbackDeadlineClock : TimeProvider
+    {
+        private DeadlineTimer? timer;
+        public TimeSpan DueTime { get; private set; }
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            Require(period == Timeout.InfiniteTimeSpan, "Fallback deadline must be a one-shot timer.");
+            DueTime = dueTime;
+            return timer = new DeadlineTimer(callback, state, dueTime);
+        }
+        public void Advance(TimeSpan elapsed) => timer!.Advance(elapsed);
+
+        private sealed class DeadlineTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
+        {
+            private readonly object gate = new();
+            private TimeSpan remaining = dueTime;
+            private bool disposed;
+            public void Advance(TimeSpan elapsed)
+            {
+                lock (gate)
+                {
+                    if (disposed || remaining == Timeout.InfiniteTimeSpan) return;
+                    remaining -= elapsed;
+                    if (remaining > TimeSpan.Zero) return;
+                    remaining = Timeout.InfiniteTimeSpan;
+                }
+                callback(state);
+            }
+            public bool Change(TimeSpan due, TimeSpan period)
+            {
+                Require(period == Timeout.InfiniteTimeSpan, "Fallback deadline must remain one-shot.");
+                lock (gate)
+                {
+                    if (disposed) return false;
+                    remaining = due;
+                    return true;
+                }
+            }
+            public void Dispose() { lock (gate) disposed = true; }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
     }
 
     private sealed class NativeGateHold

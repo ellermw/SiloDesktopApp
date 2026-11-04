@@ -1332,8 +1332,13 @@ public sealed class PlayerServiceSourceTests
         var end = source.IndexOf("var read = await SubtitleSidecarReader.ReadAsync(", start, StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         var fallback = source[start..end];
-        Assert.Contains("using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token);", fallback);
-        Assert.Contains("fallbackBudget.CancelAfter(TimeSpan.FromSeconds(8));", fallback);
+        Assert.Contains("private static readonly TimeSpan SubtitleUrlFallbackTimeout = TimeSpan.FromMinutes(5);", source);
+        Assert.Contains("private TimeProvider _subtitleUrlFallbackTimeProvider = TimeProvider.System;", source);
+        Assert.Contains("using var fallbackDeadline = new CancellationTokenSource(SubtitleUrlFallbackTimeout, _subtitleUrlFallbackTimeProvider);", fallback);
+        Assert.Contains("using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token, fallbackDeadline.Token);", fallback);
+        Assert.DoesNotContain("CancelAfter(TimeSpan.FromSeconds(8))", fallback);
+        Assert.Contains("ShowNotice(\"Loading subtitle\"", fallback);
+        Assert.Contains("choose another subtitle to cancel this download", fallback);
         Assert.Contains("await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, track.Label, track.Language, fallbackBudget.Token)", fallback);
         Assert.Contains("return bounded.IsCancellationRequested || !CurrentOwner()", fallback);
         Assert.Contains("? SubtitlePrefetchOutcome.Retired : SubtitlePrefetchOutcome.Error;", fallback);
