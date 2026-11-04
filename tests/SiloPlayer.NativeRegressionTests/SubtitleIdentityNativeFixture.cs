@@ -57,7 +57,7 @@ internal static class SubtitleIdentityNativeFixture
                 : embedded.Any(t => t.Id == 1 && t.StreamIndex == 1) && embedded.Any(t => t.Id == 2 && t.StreamIndex == 2)),
                 "Loaded Matroska subtitle identities do not match the attested demuxer namespace.");
             var closeout = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
-            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "async-service" or "retired-read-cache")
+            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "async-service" or "async-core-probe" or "retired-read-cache")
             {
                 if (closeout == "cast-off")
                 {
@@ -210,6 +210,32 @@ internal static class SubtitleIdentityNativeFixture
                             "The new inventory choice reused old bytes or failed to execute/persist under its own read.");
                     }
                     finally { held.Release.TrySetResult(); }
+                }
+                else if (closeout == "async-core-probe")
+                {
+                    // The HTTP phase is structurally held. Query the actual
+                    // native core from a dedicated owned thread, never the UI.
+                    Require(mpv.GetPropertyDouble("duration") > 0, "Core probe requires loaded media before the held command.");
+                    var held = subtitles.HoldNext();
+                    var pending = mpv.AddSubtitleUnselectedAsync(subtitles.Origin + "/held-core.srt", "Core responsiveness probe", "en", CancellationToken.None);
+                    Task<double>? query = null;
+                    try
+                    {
+                        await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        query = Task.Factory.StartNew(() =>
+                        {
+                            entered.TrySetResult();
+                            return mpv.GetPropertyDouble("time-pos");
+                        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                        await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        var responsive = await Task.WhenAny(query, Task.Delay(TimeSpan.FromSeconds(1))) == query;
+                        Require(!pending.IsCompleted, "The core probe lost its held native HTTP boundary.");
+                        Program.Log($"PROBE: actual mpv time-pos query completed while async sub-add HTTP was held: {responsive}.");
+                    }
+                    finally { held.Release.TrySetResult(); }
+                    await pending.WaitAsync(TimeSpan.FromSeconds(5));
+                    if (query != null) await query.WaitAsync(TimeSpan.FromSeconds(5));
                 }
                 else if (closeout == "async-lifecycle")
                 {
