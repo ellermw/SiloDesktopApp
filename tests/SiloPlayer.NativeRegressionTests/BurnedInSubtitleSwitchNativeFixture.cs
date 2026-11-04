@@ -152,6 +152,55 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             Require(media.SubtitleRequests > 0, "Native player never fetched the served subtitle bytes.");
             Program.Log("PASS: actual PlayerService replans a burned-in DVD subtitle away for Off and for a text track, and the text pick survives a quality reload with a matching native sid.");
 
+            // Reject a bitmap pick while a quality replacement is still held
+            // before FILE_LOADED. The subtitle request does not own that load's
+            // pause slot, loading flags, timeout, or overlay.
+            foreach (var paused in new[] { false, true })
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                media.BeforeMediaResponse = () => { entered.TrySetResult(); return release.Task; };
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                try
+                {
+                    await Loaded(async () =>
+                    {
+                        await (Task)Call(service, "SwitchQualityTierAsync", "480p", null, null)!;
+                        await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        var generation = Get(service, "_fileLoadGeneration");
+                        var timeoutOwner = Get(service, "_fileLoadTimeoutCts");
+                        var accepted = manager.CurrentSession;
+                        var intent = manager.CaptureLocalSubtitleIntent();
+                        Require(service.IsLoading && service.IsSwitchingContent &&
+                            (bool?)Get(service, "_restorePausedAfterLoad") == paused,
+                            "The pending-load rejection fixture did not hold the replacement load's pause ownership.");
+                        wire.FailNextTrackChange = true;
+                        var bitmap = accepted!.SubtitleUrls.Single(t => t.Index == Dvd);
+                        await service.SetSubtitleTrackAndPersistAsync(Dvd + 1, bitmap.Language, bitmap);
+                        Require(service.IsLoading && service.IsSwitchingContent &&
+                            (bool?)Get(service, "_restorePausedAfterLoad") == paused &&
+                            Equals(Get(service, "_fileLoadGeneration"), generation) &&
+                            ReferenceEquals(Get(service, "_fileLoadTimeoutCts"), timeoutOwner) &&
+                            ReferenceEquals(manager.CurrentSession, accepted) && manager.CaptureLocalSubtitleIntent() == intent &&
+                            wire.PreferenceWrites == writes && wire.Replans.Count == replans + 2,
+                            "Rejected burn-in stole a pending replacement load's state, pause ownership, intent or preference.");
+                        release.TrySetResult();
+                    });
+                    await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
+                        mpv.IsPaused == paused && service.IsPaused == paused);
+                    Require(Get(service, "_restorePausedAfterLoad") == null && service.ActiveSubtitleServerIndex == Spanish &&
+                        NativeSidMatches(service, mpv, Spanish) && wire.PreferenceWrites == writes &&
+                        wire.Replans.Count == replans + 2,
+                        "The held FILE_LOADED failed to consume its original pause and subtitle state after burn-in rejection.");
+                }
+                finally { release.TrySetResult(); media.BeforeMediaResponse = null; wire.FailNextTrackChange = false; }
+            }
+            Program.Log("PASS: rejected bitmap replans during held quality loads preserve loading and pause ownership until the original FILE_LOADED completes.");
+
             // Persistent rejection (both terminal decisions and request errors)
             // must never turn a healthy stream into terminal playback recovery.
             foreach (var terminalRejection in new[] { false, true })
@@ -619,6 +668,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         private readonly HttpListener _listener = new();
         public string Origin { get; }
         public int SubtitleRequests;
+        public Func<Task>? BeforeMediaResponse;
         public MediaServer(string wavePath)
         {
             const int samples = 60 * 8000;
@@ -638,6 +688,8 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     HttpListenerContext context;
                     try { context = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
                     var isMedia = context.Request.Url!.AbsolutePath == "/media.wav";
+                    if (isMedia && Interlocked.Exchange(ref BeforeMediaResponse, null) is { } beforeMedia)
+                        await beforeMedia();
                     if (!isMedia) Interlocked.Increment(ref SubtitleRequests);
                     // The origin ignores Range and returns the complete file.
                     var bytes = isMedia ? wave

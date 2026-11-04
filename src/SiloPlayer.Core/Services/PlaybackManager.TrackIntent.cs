@@ -60,12 +60,29 @@ public partial class PlaybackManager
             var track = subtitleIndex.HasValue ? CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index == subtitleIndex) : null;
             if (subtitleIndex.HasValue && track == null) throw new InvalidOperationException("The selected subtitle is no longer in the active inventory.");
             if (track?.Unplayable == true) throw new InvalidOperationException("The selected subtitle is unavailable.");
-            _hasViewerSubtitle = true; _viewerSubtitle = track;
-            _subtitleSelectionIsAutomatic = isAutomatic;
-            _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
-            _unavailableSubtitleReportedFile = null;
-            ++_subtitleRevision;
+            RecordLocalSubtitleSelectionCore(track, isAutomatic);
         }
+    }
+
+    /// <summary>Records a native gesture only while its exact session and row still own the inventory.</summary>
+    public bool TryRecordLocalSubtitleSelection(PlaybackStartResponse session, SubtitleTrackInfo? track, bool isAutomatic = false)
+    {
+        lock (_trackIntentGate)
+        {
+            if (!ReferenceEquals(session, CurrentSession) || track != null &&
+                (track.Unplayable || !session.SubtitleUrls.Contains(track))) return false;
+            RecordLocalSubtitleSelectionCore(track, isAutomatic);
+            return true;
+        }
+    }
+
+    private void RecordLocalSubtitleSelectionCore(SubtitleTrackInfo? track, bool isAutomatic)
+    {
+        _hasViewerSubtitle = true; _viewerSubtitle = track;
+        _subtitleSelectionIsAutomatic = isAutomatic;
+        _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
+        _unavailableSubtitleReportedFile = null;
+        ++_subtitleRevision;
     }
 
     public void RecordLocalAudioSelection(int audioIndex)
@@ -98,7 +115,7 @@ public partial class PlaybackManager
                     var desired = MatchCurrentSubtitle();
                     if (desired != null || !KeepGrantedSubtitleWhenUnmatched())
                         return desired?.Index ?? -1;
-                    // An unmatched Auto or cross-file choice is not explicit Off.
+                    // An unmatched retained choice is not explicit Off.
                 }
                 return GrantedSubtitleSelection()?.Index ?? -1;
             }
@@ -127,8 +144,8 @@ public partial class PlaybackManager
                 return;
             }
             var desired = MatchCurrentSubtitle();
-            // A missing cross-file choice is not Off. Keep the accepted grant
-            // and the source intent, but report an unfulfilled manual choice.
+            // A missing choice is not Off, even on the same file. Keep the
+            // accepted grant and source intent, but report an unfulfilled manual choice.
             // Automatic Off also needs reconsideration on a different file.
             if (desired == null && (KeepGrantedSubtitleWhenUnmatched() ||
                 _subtitleSelectionIsAutomatic && CurrentSession?.MediaFileId != _viewerSubtitleFile))
@@ -201,8 +218,7 @@ public partial class PlaybackManager
         return matches.Length == 1 ? matches[0] : null;
     }
 
-    private bool KeepGrantedSubtitleWhenUnmatched()
-        => _viewerSubtitle != null && (_subtitleSelectionIsAutomatic || CurrentSession?.MediaFileId != _viewerSubtitleFile);
+    private bool KeepGrantedSubtitleWhenUnmatched() => _viewerSubtitle != null;
 
     private SubtitleTrackInfo? MatchCurrentSubtitle()
     {

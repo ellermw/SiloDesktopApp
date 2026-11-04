@@ -32,6 +32,14 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("_switchingContent = false;", rollback);
         Assert.Contains("IsLoading = false;", rollback);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
+        Assert.Contains("var preservePendingLoad = !loadStarted && _restorePausedAfterLoad.HasValue;", rollback);
+        var ownLoadingState = rollback.IndexOf("if (!preservePendingLoad)", StringComparison.Ordinal);
+        var clearLoading = rollback.IndexOf("_switchingContent = false;", StringComparison.Ordinal);
+        Assert.True(ownLoadingState >= 0 && clearLoading > ownLoadingState);
+        var inheritedLoad = rollback.IndexOf("if (preservePendingLoad) return;", StringComparison.Ordinal);
+        Assert.True(inheritedLoad > clearLoading);
+        foreach (var ownLoadMutation in new[] { "HideLoadingOverlay", "_restorePausedAfterLoad = null;", "RestorePlaybackStateAfterSubtitleChange" })
+            Assert.True(rollback.IndexOf(ownLoadMutation, StringComparison.Ordinal) > inheritedLoad);
         Assert.Contains("bool PauseIntent() => IsWatchTogetherPlayback ? _roomPlaybackPaused : _subtitleReplanPauseIntent ?? wasPaused;", method);
         Assert.Contains("_subtitleReplanPauseIntent = PauseIntent();", method);
         Assert.Contains("if (_subtitleReplanPauseIntent.HasValue) _subtitleReplanPauseIntent = paused;", source);
@@ -391,7 +399,8 @@ public sealed class SubtitleIdentityTests
         var start = source.IndexOf("private void SendSubtitleListToOsc()", StringComparison.Ordinal);
         var end = source.IndexOf("private void SendAudioTrackListToOsc()", start, StringComparison.Ordinal);
         var publish = source[start..end];
-        Assert.Contains("_executedSubtitleFileId == session.MediaFileId ? _executedSubtitleTrack?.Index ?? -1 : -1", publish);
+        Assert.Contains("_executedSubtitleFileId == session.MediaFileId && _executedSubtitleTrack is { } executed &&", publish);
+        Assert.Contains("tracks.Contains(executed) ? executed.Index : -1", publish); // Unbound rows cannot highlight a reused index.
         Assert.DoesNotContain("(_pendingInitialServerSubtitleIndex ?? -1)", publish);
     }
 

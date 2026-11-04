@@ -18,6 +18,7 @@ internal static class SubtitleIdentityNativeFixture
         {
             subtitles.MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv"));
             await RefreshedDownloadedSubtitlesAsync(assets);
+            await RefreshedDownloadedSubtitlesAsync(assets, storedIdentity: false);
             await FreshPrePlayWithoutRouteAsync(subtitles.Origin);
         }
         using var wire = new Wire(); using var http = new HttpClient(wire);
@@ -574,7 +575,7 @@ internal static class SubtitleIdentityNativeFixture
         }
     }
 
-    private static async Task RefreshedDownloadedSubtitlesAsync(string assets)
+    private static async Task RefreshedDownloadedSubtitlesAsync(string assets, bool storedIdentity = true)
     {
         using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "japanese.srt")));
         using var wire = new Wire { InventoryHost = new Uri(subtitles.Origin).Host };
@@ -588,7 +589,8 @@ internal static class SubtitleIdentityNativeFixture
         var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         mpv.FileLoaded += () => loaded.TrySetResult(); mpv.LoadFile(Path.Combine(assets, "tracks.mkv"));
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
-        var original = new SubtitleTrackInfo { Index = 1, Id = 100, TrackId = "download:100", SyncKey = "stored-100",
+        var original = new SubtitleTrackInfo { Index = 1, Id = storedIdentity ? 100 : null,
+            TrackId = "download:100", SyncKey = storedIdentity ? "stored-100" : null,
             Source = "downloaded", Codec = "srt", Language = "en", Url = subtitles.Origin + "/english.srt" };
         var session = new PlaybackStartResponse { SessionId = "refresh", ProtocolVersion = 3, MediaFileId = 42,
             SelectedSubtitleTrackId = original.TrackId, SelectedSubtitleTrackIndex = original.Index,
@@ -616,6 +618,66 @@ internal static class SubtitleIdentityNativeFixture
             manager.RecordLocalSubtitleSelection(1);
             wire.DownloadedInventory = new() { Subtitles =
                 [new() { Id = 200, Language = "ja", Format = "srt" }, new() { Id = 100, Language = "en", Format = "srt" }] };
+
+            if (!storedIdentity)
+            {
+                var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var notices = 0;
+                var substitutedHighlights = 0;
+                void Observe(string[] message)
+                {
+                    if (message.FirstOrDefault() == "silo-refresh-active" && message.Length > 1 && message[1] != "-1")
+                        Interlocked.Increment(ref substitutedHighlights);
+                    if (message.FirstOrDefault() == "silo-refresh-ready") ready.TrySetResult();
+                    if (message.FirstOrDefault() == "silo-refresh-notice") Interlocked.Increment(ref notices);
+                    if (message.FirstOrDefault() == "silo-refresh-drained") drained.TrySetResult();
+                }
+                mpv.ScriptMessageReceived += Observe;
+                try
+                {
+                    var probe = Path.Combine(Program.ResultDirectory, "refresh-unbound.lua");
+                    await File.WriteAllTextAsync(probe, """
+                        local mp = require 'mp'
+                        mp.register_script_message('osc-show-notice', function()
+                            mp.commandv('script-message', 'silo-refresh-notice')
+                        end)
+                        mp.register_script_message('osc-set-active-subtitle', function(index)
+                            mp.commandv('script-message', 'silo-refresh-active', index)
+                        end)
+                        mp.register_script_message('silo-refresh-drain', function()
+                            mp.commandv('script-message', 'silo-refresh-drained')
+                        end)
+                        mp.commandv('script-message', 'silo-refresh-ready')
+                        """);
+                    Call(mpv, "Command", (object)new[] { "load-script", probe });
+                    await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    var intent = manager.CaptureLocalSubtitleIntent();
+                    var writes = wire.PreferenceWrites;
+                    foreach (var refresh in new[] { 1, 2 })
+                    {
+                        await service.RefreshSubtitlesAfterAiAsync(42);
+                        Require(mpv.GetPropertyDouble("sid") == originalSid &&
+                            ReferenceEquals(Get(service, "_executedSubtitleTrack"), original) &&
+                            service.ActiveSubtitleServerIndex == -1 && !sids.ContainsKey(1) && !files.ContainsKey(1) &&
+                            Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                            manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes && mpv.IsPaused,
+                            $"Refresh {refresh} retired an identity-unknown playing download or lent its index/cache to another row.");
+                    }
+                    Call(mpv, "Command", (object)new[] { "script-message", "silo-refresh-drain" });
+                    await drained.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(Volatile.Read(ref notices) == 0 && Volatile.Read(ref substitutedHighlights) == 0,
+                        "An identity-unknown download was falsely reported as removed or highlighted a different refreshed row.");
+                    var explicitPick = session.SubtitleUrls.Single(track => track.Id == 200);
+                    await service.SetSubtitleTrackAndPersistAsync(explicitPick.Index + 1, explicitPick.Language, explicitPick);
+                    Require(service.ActiveSubtitleServerIndex == explicitPick.Index && sids[explicitPick.Index] != originalSid &&
+                        mpv.GetPropertyDouble("sid") == sids[explicitPick.Index] && wire.PreferenceWrites == writes + 1,
+                        "An explicit pick after an unbound refresh reused the old SID or failed to execute its own subtitle.");
+                }
+                finally { mpv.ScriptMessageReceived -= Observe; }
+                Program.Log("PASS: a plan download without sync_key remains executing and unbound across refreshes, without false removal feedback, cache substitution or preference writes.");
+                return;
+            }
 
             await service.RefreshSubtitlesAfterAiAsync(42);
             var retained = session.SubtitleUrls.Single(track => track.Id == 100);

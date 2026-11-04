@@ -52,7 +52,12 @@ public partial class PlaybackManager : IDisposable
 
     public string? SessionId => _sessionId;
     public WatchDetailResponse? WatchDetail { get; private set; }
-    public PlaybackStartResponse? CurrentSession { get; private set; }
+    private PlaybackStartResponse? _currentSession;
+    public PlaybackStartResponse? CurrentSession
+    {
+        get { lock (_trackIntentGate) return _currentSession; }
+        private set { lock (_trackIntentGate) _currentSession = value; }
+    }
     public string? StreamUrl { get; private set; }
     public string QualityPreference => _qualityPreferenceV3;
     // Auto names the viewer's mode; every fixed checkmark names delivery.
