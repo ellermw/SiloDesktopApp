@@ -359,6 +359,7 @@ internal static class LibraryLettersNativeFixture
         model.LetterJumpRequested += Jumped;
         try
         {
+            await Until(() => button.IsLoaded && button.IsEnabled);
             ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
             await jump.Task.WaitAsync(TimeSpan.FromSeconds(3));
             // The page applies that model event on its dispatcher, then WinUI settles ChangeView.
