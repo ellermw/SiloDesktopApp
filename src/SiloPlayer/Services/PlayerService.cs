@@ -1395,6 +1395,12 @@ public partial class PlayerService : IDisposable
         }
     }
 
+    /// <summary>All final writes, including retired identities, required by a normal update close.</summary>
+    internal Task AllPendingProgressSaves
+    {
+        get { lock (_progressSaveGate) return _pendingProgressSave; }
+    }
+
     private ApiIdentityContext? ProgressIdentityFor(PlaybackManager? manager) =>
         _playbackProgressOwner is { } owner && ReferenceEquals(owner.Manager, manager) ? owner.Identity : null;
 
@@ -1402,7 +1408,7 @@ public partial class PlayerService : IDisposable
     {
         lock (_progressSaveGate)
         {
-            _pendingProgressSave = _pendingProgressSave.IsCompleted ? save : Task.WhenAll(_pendingProgressSave, save);
+            _pendingProgressSave = Task.WhenAll(_pendingProgressSave, save);
             _profileProgressSaves.RemoveAll(entry => entry.Save.IsCompleted);
             if (local) _profileProgressSaves.Add((save, identity));
         }
