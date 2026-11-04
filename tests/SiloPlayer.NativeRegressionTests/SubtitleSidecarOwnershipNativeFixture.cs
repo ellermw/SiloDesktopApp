@@ -37,7 +37,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: " + scenario + ": " + ex); }
         }
-        foreach (var scenario in new[] { "quality-failed-pick", "audio-failed-pick", "version-failed-pick", "invalidation-noop-pick", "invalidation-noop-read", "inventory-removed", "inventory-unplayable" })
+        foreach (var scenario in new[] { "quality-failed-pick", "audio-failed-pick", "version-failed-pick", "seek-failed-pick", "invalidation-noop-pick", "invalidation-noop-read", "inventory-removed", "inventory-unplayable" })
         {
             try
             {
@@ -166,8 +166,17 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 else
                 {
                     wire.RejectReplan = scenario != "version-failed-pick"; wire.RejectStart = !wire.RejectReplan;
-                    switching = scenario == "quality-failed-pick" ? service.SelectQualityAsync("720p") :
-                        scenario == "audio-failed-pick" ? service.SwitchAudioTrackAsync(0) : service.SwitchVersionAsync(Version());
+                    if (scenario == "seek-failed-pick")
+                    {
+                        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("remux", wave));
+                        service.SeekTo(15);
+                        switching = Task.CompletedTask; // The seek restart owns its asynchronous lifetime.
+                    }
+                    else
+                    {
+                        switching = scenario == "quality-failed-pick" ? service.SelectQualityAsync("720p") :
+                            scenario == "audio-failed-pick" ? service.SwitchAudioTrackAsync(0) : service.SwitchVersionAsync(Version());
+                    }
                     await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 }
                 Require(service.IsSwitchingContent, "The fixture missed the transport switch window.");
@@ -176,6 +185,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "The pick was not queued without saving during the switch.");
                 if (gateHeld) { gate.Release(); gateHeld = false; }
                 wire.ReplanRelease.TrySetResult(); await switching.WaitAsync(TimeSpan.FromSeconds(5));
+                if (scenario == "seek-failed-pick")
+                    await Until(() => Get(service, "_seekRestartCts") == null);
             }
             mpv.SendScriptMessage("switch-race-barrier");
             Require(await drained.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "1" && notices.Any(n => n.Contains("Subtitle unavailable", StringComparison.Ordinal)),
@@ -230,9 +241,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         var ready = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var drained = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var autoSkipConfigured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var notices = new ConcurrentQueue<string>();
         void Observe(string[] message)
         {
+            if (message.FirstOrDefault() == "loaded-sidecar-auto-skip") autoSkipConfigured.TrySetResult();
             if (message.Length < 2) return;
             if (message[0] == "loaded-sidecar-ready") ready.TrySetResult(message[1]);
             if (message[0] == "loaded-sidecar-drained") drained.TrySetResult(message[1]);
@@ -245,6 +258,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             await File.WriteAllTextAsync(probe, """
                 local mp = require 'mp'
                 local active = '-1'
+                local intro_mode_ready = false
+                mp.register_script_message('osc-set-intro-mode', function() intro_mode_ready = true end)
+                mp.register_script_message('osc-set-auto-skip', function()
+                    if intro_mode_ready then mp.commandv('script-message', 'loaded-sidecar-auto-skip') end
+                end)
                 local default_selected = false
                 for _, track in ipairs(mp.get_property_native('track-list', {})) do
                     if track.type == 'sub' and track.default and track.id == mp.get_property_native('sid') then
@@ -275,6 +293,9 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
             Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0,
                 "Default native captions remained visible during the loaded-file sidecar read.");
+            await autoSkipConfigured.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            Require(!pending.IsCompleted && !subtitles.Release.Task.IsCompleted,
+                "Auto-skip settings must reach the OSC while the initial sidecar read is still held.");
             if (scenario == "sync-stop")
             {
                 mpv.SendScriptMessage("loaded-sidecar-pending");
@@ -950,6 +971,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 subtitles.MediaRelease.TrySetResult();
                 await loaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
                 await wire.SettingsEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                // Settings now start concurrently with subtitle execution; hold
+                // them until the same executed-caption boundary is established.
+                await Until(() => Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                    service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") > 0);
                 Require(!service.IsLoading && Get(service, "_pendingInitialServerSubtitleIndex") == null &&
                     service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") > 0,
                     "Fixture missed the executed-subtitle/optional-settings-await interval.");

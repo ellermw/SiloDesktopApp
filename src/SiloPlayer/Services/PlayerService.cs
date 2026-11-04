@@ -864,6 +864,10 @@ public partial class PlayerService : IDisposable
                     _recoveryPauseIntentOverride = _idleRemuxResume.DesiredPaused;
                     _ = RecoverInterruptedStreamAsync(mediaPosition, "idle-remux-resume");
                 }
+                else
+                {
+                    RefusePendingSubtitleSelectionWithoutLoad();
+                }
             }
         }
         finally
@@ -2908,20 +2912,22 @@ public partial class PlayerService : IDisposable
             _mpv?.SendScriptMessage("osc-set-auto-skip", "false", "false", "false");
             SendMarkersToOsc();
 
-            var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
-                (_playbackManager?.CurrentSession?.ProtocolVersion >= 3 ? _playbackManager.SubtitleSelectionForLoad : (int?)null);
-            if (resolvedSubtitleIndex is int initialSubtitleIndex)
+            async Task SelectInitialSubtitleAsync()
             {
-                _pendingInitialServerSubtitleIndex = null;
-                if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-                await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
+                var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
+                    (_playbackManager?.CurrentSession?.ProtocolVersion >= 3 ? _playbackManager.SubtitleSelectionForLoad : (int?)null);
+                if (resolvedSubtitleIndex is int initialSubtitleIndex)
+                {
+                    _pendingInitialServerSubtitleIndex = null;
+                    if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+                    await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
+                }
             }
 
-            if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-            // Effective playback settings are profile/device scoped and may
-            // change between sessions. Resolve them without delaying first
-            // frame; the Lua OSC applies them on its next position tick.
-            await SendAutoSkipSettingsToOscAsync(ct);
+            // Resolve profile/device settings independently of potentially slow
+            // subtitle reads, without delaying either first frame or captions.
+            // Observe both workers before retiring this load's cancellation owner.
+            await Task.WhenAll(SendAutoSkipSettingsToOscAsync(ct), SelectInitialSubtitleAsync());
 
             if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
             await SendSubtitleAiAvailabilityToOscAsync(ct);
