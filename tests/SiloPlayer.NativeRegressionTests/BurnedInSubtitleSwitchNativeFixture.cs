@@ -373,11 +373,15 @@ internal static class BurnedInSubtitleSwitchNativeFixture
 
                 async Task SettledReplacement()
                 {
-                    var expected = burnedGrant ? Dvd : requested;
+                    // A different file's Spanish row has a different TrackId;
+                    // it cannot replace the viewer's retained source identity.
+                    var expected = burnedGrant ? Dvd : -1;
                     await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
                         service.ActiveSubtitleServerIndex == expected);
                     Require(manager.CurrentSession!.MediaFileId == target.FileId && mpv.GetPropertyDouble("duration") > 0 &&
-                        (expected == Spanish ? NativeSidMatches(service, mpv, Spanish) : mpv.GetPropertyDouble("sid") <= 0) &&
+                        (requested != Spanish || manager.CaptureLocalSubtitleIntent().Track?.TrackId !=
+                            manager.CurrentSession.SubtitleUrls.Single(t => t.Index == Spanish).TrackId) &&
+                        mpv.GetPropertyDouble("sid") <= 0 &&
                         mpv.IsPaused && service.IsPaused && Get(service, "_playbackTerminalState") == null &&
                         !manager.CurrentSession.SubtitleReconciliationFailed && wire.PreferenceWrites == writes &&
                         Get(service, "_pendingSubtitlePreferenceIndex") == null,

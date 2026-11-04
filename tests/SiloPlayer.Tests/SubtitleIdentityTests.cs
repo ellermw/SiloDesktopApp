@@ -90,17 +90,60 @@ public sealed class SubtitleIdentityTests
         });
     }
 
-    [Fact]
-    public void LatestChoiceRebindsOnlyAvailableInventoryRows()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void LatestChoiceNeverReplacesAnUnavailableOrMissingIdentity(bool missing, bool reusedIndex)
     {
         WithManager(manager =>
         {
-            var original = new SubtitleTrackInfo { Index = 2, TrackId = "old", Language = "eng", Codec = "ass" };
+            var original = new SubtitleTrackInfo { Index = 2, TrackId = "old", Language = "eng", Codec = "ass", Source = "embedded" };
             var session = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [original] };
             typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
             manager.RecordLocalSubtitleSelection(2);
-            session.SubtitleUrls = [new() { Index = 2, TrackId = "old", Language = "eng", Codec = "ass", Unplayable = true }, new() { Index = 8, Language = "eng", Codec = "ass" }];
+            var intent = manager.CaptureLocalSubtitleIntent();
+            session.SubtitleUrls = [new() { Index = reusedIndex ? 2 : 8, TrackId = "other", Language = "eng", Codec = "ass", Source = "embedded" }];
+            if (!missing) session.SubtitleUrls.Add(new() { Index = 2, TrackId = "old", Language = "eng", Codec = "ass", Source = "embedded", Unplayable = true });
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            Assert.Equal(intent, manager.CaptureLocalSubtitleIntent());
+        });
+    }
+
+    [Fact]
+    public void LatestChoiceRequiresAUniquePlayableIdentityButAllowsItsIndexToChange()
+    {
+        WithManager(manager =>
+        {
+            var session = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls =
+                [new() { Index = 2, TrackId = "chosen", Language = "eng", Codec = "ass" }] };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+            manager.RecordLocalSubtitleSelection(2);
+            session.SubtitleUrls = [new() { Index = 8, TrackId = "chosen", Language = "eng", Codec = "ass" }];
             Assert.Equal(8, manager.SubtitleSelectionForLoad);
+            session.SubtitleUrls.Add(new() { Index = 9, TrackId = "chosen", Unplayable = true });
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+        });
+    }
+
+    [Theory]
+    [InlineData("embedded", "ass", "", 8)]
+    [InlineData("external", "ass", "", -1)]
+    [InlineData("embedded", "subrip", "", -1)]
+    [InlineData("embedded", "ass", "new-identity", -1)]
+    public void LegacyRebindingRequiresTheSameSourceCodecAndAnIdentitylessRow(string source, string codec, string trackId, int expected)
+    {
+        WithManager(manager =>
+        {
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager,
+                new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls =
+                    [new() { Index = 2, Language = "eng", Codec = "ass", Source = "embedded" }] });
+            manager.RecordLocalSubtitleSelection(2);
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager,
+                new PlaybackStartResponse { MediaFileId = 43, SubtitleUrls =
+                    [new() { Index = 8, TrackId = trackId, Language = "en", Codec = codec, Source = source }] });
+            Assert.Equal(expected, manager.SubtitleSelectionForLoad);
         });
     }
 

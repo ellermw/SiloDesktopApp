@@ -185,10 +185,17 @@ public partial class PlaybackManager
     private SubtitleTrackInfo? MatchCurrentSubtitle()
     {
         if (_viewerSubtitle == null) return null;
-        var tracks = CurrentSession?.SubtitleUrls.Where(t => !t.Unplayable).ToList() ?? [];
-        var identities = tracks.Where(t => !string.IsNullOrWhiteSpace(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId).Take(2).ToArray();
-        if (identities.Length != 0) return identities.Length == 1 ? identities[0] : null;
-        var candidates = tracks.Where(t => MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
+        var inventory = CurrentSession?.SubtitleUrls ?? [];
+        if (!string.IsNullOrWhiteSpace(_viewerSubtitle.TrackId))
+        {
+            // An absent, unavailable or ambiguous identity is not permission to
+            // select a different row with similar metadata (or a reused index).
+            var identities = inventory.Where(t => t.TrackId == _viewerSubtitle.TrackId).Take(2).ToArray();
+            return identities.Length == 1 && !identities[0].Unplayable ? identities[0] : null;
+        }
+        var candidates = inventory.Where(t => !t.Unplayable && string.IsNullOrWhiteSpace(t.TrackId) &&
+            Equal(t.Source, _viewerSubtitle.Source) && Equal(t.Codec, _viewerSubtitle.Codec) &&
+            MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
             t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
         // An index identifies a legacy row only within the same file. Across
         // versions, equally good metadata is ambiguous, not a first-row choice.

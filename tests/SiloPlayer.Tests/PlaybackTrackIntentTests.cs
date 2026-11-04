@@ -64,7 +64,8 @@ public sealed class PlaybackTrackIntentTests
             Assert.Equal("https://intent.invalid/api/v2/stream", scope.Manager.StreamUrl);
             Assert.True(accepted.SubtitleReconciliationFailed);
             Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
-            var desiredIndex = subtitle.HasValue ? fileId == 44 ? 0 : 1 : -1;
+            // Version 44 has different authoritative IDs, not the source row.
+            var desiredIndex = subtitle.HasValue && fileId == 42 ? 1 : -1;
             Assert.Equal(burnedIn ? scope.Wire.InitialSubtitleSelection : desiredIndex,
                 scope.Manager.SubtitleSelectionForLoad);
             Assert.Equal("track_change", Assert.Single(scope.Wire.Replans).GetProperty("operation").GetString());
@@ -257,27 +258,40 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
     }
 
-    [Fact]
-    public async Task ReorderedVersionUsesTrackSignatureForAudioAndSubtitle()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReorderedVersionUsesSubtitleMetadataOnlyWithoutAuthoritativeIds(bool legacy)
     {
-        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        using var scope = new Fixture();
+        scope.Wire.OmitTrackIds = legacy;
+        await scope.Manager.StartSessionAsync(42);
         scope.Manager.RecordLocalSubtitleSelection(1);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
         scope.Manager.RecordLocalAudioSelection(1);
         await scope.Manager.StartReplacementSessionAsync(44, 14);
         var body = scope.Wire.Starts[1];
         Assert.False(body.TryGetProperty("subtitle_track_index", out _));
-        Assert.Equal(0, scope.Manager.SubtitleSelectionForLoad);
-        Assert.Equal("spa", scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == scope.Manager.SubtitleSelectionForLoad).Language);
+        Assert.Equal(legacy ? 0 : -1, scope.Manager.SubtitleSelectionForLoad);
+        if (legacy)
+            Assert.Equal("spa", scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == scope.Manager.SubtitleSelectionForLoad).Language);
+        else
+            Assert.False(scope.Wire.Replans[^1].GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
         Assert.Equal(0, body.GetProperty("audio_track_index").GetInt32());
     }
 
     [Theory]
-    [InlineData("en-GB", "eng-gb", "en")]
-    [InlineData("pt-BR", "por_br", "pt-PT")]
-    [InlineData("zh-Hant", "zho-Hant", "zh-Hans")]
-    public async Task VersionSwitchKeepsRegionalSubtitleIdentity(string requested, string matching, string other)
+    [InlineData("en-GB", "eng-gb", "en", false)]
+    [InlineData("pt-BR", "por_br", "pt-PT", false)]
+    [InlineData("zh-Hant", "zho-Hant", "zh-Hans", false)]
+    [InlineData("en-GB", "eng-gb", "en", true)]
+    [InlineData("pt-BR", "por_br", "pt-PT", true)]
+    [InlineData("zh-Hant", "zho-Hant", "zh-Hans", true)]
+    public async Task VersionSwitchKeepsRegionalSubtitleIdentity(string requested, string matching, string other, bool legacy)
     {
         using var scope = new Fixture();
+        scope.Wire.OmitTrackIds = legacy;
         await scope.Manager.StartSessionAsync(42);
         var desired = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
         desired.Language = requested;
@@ -290,8 +304,11 @@ public sealed class PlaybackTrackIntentTests
         ];
         await scope.Manager.StartReplacementSessionAsync(44, 14);
         Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
-        Assert.Equal(1, scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
-        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        if (legacy)
+            Assert.Equal(1, scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+        else
+            Assert.False(scope.Wire.Replans[^1].GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        Assert.Equal(legacy ? 1 : -1, scope.Manager.SubtitleSelectionForLoad);
     }
 
     [Theory]
@@ -579,12 +596,47 @@ public sealed class PlaybackTrackIntentTests
         {
             await scope.Manager.StartReplacementSessionAsync(file, 14);
             Assert.False(scope.Wire.Starts[^1].TryGetProperty("subtitle_track_index", out _));
-            var subtitle = scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle");
-            Assert.Equal(1, subtitle.GetProperty("index").GetInt32());
-            Assert.Equal(omitTrackIds ? "" : $"sub:{file}:1", subtitle.GetProperty("id").GetString());
-            Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+            var selected = scope.Wire.Replans[^1].GetProperty("selected_tracks");
+            if (file == 42 || omitTrackIds)
+            {
+                var subtitle = selected.GetProperty("subtitle");
+                Assert.Equal(1, subtitle.GetProperty("index").GetInt32());
+                Assert.Equal(omitTrackIds ? "" : $"sub:{file}:1", subtitle.GetProperty("id").GetString());
+                Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+            }
+            else
+            {
+                Assert.False(selected.TryGetProperty("subtitle", out _));
+                Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+            }
             Assert.Equal("eng", scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1).Language);
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnavailableOrMissingIdentityNeverSendsAnotherSameLanguageRow(bool missing)
+    {
+        using var scope = new Fixture();
+        var session = await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(0);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        var chosen = session.SubtitleUrls.Single(t => t.Index == 0);
+        session.SubtitleUrls =
+        [
+            new() { Index = 0, TrackId = "other", Language = chosen.Language, Codec = "ass", Source = "external" },
+        ];
+        if (!missing)
+            session.SubtitleUrls.Add(new() { Index = 7, TrackId = chosen.TrackId, Language = chosen.Language,
+                Codec = chosen.Codec, Source = chosen.Source, Unplayable = true });
+
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Null(await scope.Manager.ReplanCurrentSubtitleAsync(12));
+        Assert.Empty(scope.Wire.Replans);
+        await scope.Manager.ReplanQualityAsync("720p", 13);
+        Assert.False(Assert.Single(scope.Wire.Replans).GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
     }
 
     private sealed class Fixture : IDisposable

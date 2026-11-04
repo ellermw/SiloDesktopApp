@@ -14,6 +14,11 @@ internal static class SubtitleIdentityNativeFixture
     {
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
         using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt")));
+        if (!unresolvedOnly && !regionalOnly)
+        {
+            subtitles.MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv"));
+            await FreshPrePlayWithoutRouteAsync(subtitles.Origin);
+        }
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://subtitle-identity.invalid"); api.SetProfile("fixture");
         using var auth = new AuthService(api, new AuthApi(api));
@@ -496,6 +501,74 @@ internal static class SubtitleIdentityNativeFixture
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
     }
 
+    private static async Task FreshPrePlayWithoutRouteAsync(string origin)
+    {
+        using var wire = new Wire { InitialPlaybackUrl = origin + "/media.mkv" };
+        using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://subtitle-identity.invalid"); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        using var service = new PlayerService(new(api), new(api), auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "subtitle-identity-fresh-preplay")), new SettingsApi(api));
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        Set(service, "_mpv", mpv);
+        Call(service, "WireMpvEvents");
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var notice = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Observe(string[] message)
+        {
+            if (message.FirstOrDefault() == "silo-initial-refusal-ready") ready.TrySetResult();
+            if (message.FirstOrDefault() == "silo-initial-refusal-notice" && message.Length > 1) notice.TrySetResult(message[1]);
+        }
+        mpv.ScriptMessageReceived += Observe;
+        try
+        {
+            var probe = Path.Combine(Program.ResultDirectory, "identity-initial-refusal.lua");
+            await File.WriteAllTextAsync(probe, """
+                local mp = require 'mp'
+                mp.register_script_message('osc-show-notice', function(payload)
+                    mp.commandv('script-message', 'silo-initial-refusal-notice', payload)
+                end)
+                mp.commandv('script-message', 'silo-initial-refusal-ready')
+                """);
+            Call(mpv, "Command", (object)new[] { "load-script", probe });
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            var watch = new WatchDetailResponse
+            {
+                ContentId = "fresh-preplay", Type = "movie", PreparedFileId = 42,
+                Versions = [new() { FileId = 42, Duration = 60, Container = "mkv",
+                    AudioTracks = [new() { Language = "eng", Default = true }],
+                    SubtitleTracks = [new() { Index = 77, Language = "eng", Codec = "webvtt" }] }],
+            };
+            wire.InitialWatchDetail = watch;
+            await service.PlayAsync("fresh-preplay", fromStart: true, fileId: 42,
+                subtitleSelection: 0, prefetchedWatchDetail: watch);
+            using var payload = JsonDocument.Parse(await notice.Task.WaitAsync(TimeSpan.FromSeconds(8)));
+            Require(payload.RootElement.GetProperty("message").GetString()!.Contains("another subtitle", StringComparison.OrdinalIgnoreCase),
+                "A fresh unroutable pre-play choice did not show actionable feedback.");
+            for (var attempt = 0; attempt < 200 && (service.IsLoading || Get(service, "_loadedMediaInitCts") != null); attempt++)
+                await Task.Delay(20);
+            var manager = (PlaybackManager)Get(service, "_playbackManager")!;
+            Require(manager != null && !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
+                service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                !manager.CaptureLocalSubtitleIntent().HasSelection && manager.IsSubtitleSelectionAutomatic &&
+                manager.SubtitleSelectionForLoad == -1 && Get(service, "_pendingExplicitInitialSubtitleOwner") == null &&
+                Get(service, "_pendingSubtitlePreferenceOwner") == null && Get(service, "_pendingSubtitlePreferenceIndex") == null &&
+                wire.PreferenceWrites == 0 && wire.Replans == 0,
+                "A fresh unroutable pre-play choice retained unexecuted intent, changed the selection or saved a preference.");
+            await manager.ReplanQualityAsync("720p", 0);
+            Require(wire.ReplanRequests.Count == 1 &&
+                !wire.ReplanRequests[0].GetProperty("selected_tracks").TryGetProperty("subtitle", out _),
+                "A quality replan resent the refused pre-play subtitle.");
+            Program.Log("PASS: fresh PlayAsync refuses an index-only WebVTT pre-play pick with actionable feedback, restores automatic intent and does not resend it on a quality replan.");
+        }
+        finally
+        {
+            mpv.ScriptMessageReceived -= Observe;
+            await service.CloseAsync();
+            Set(service, "_mpv", null);
+        }
+    }
+
     private static async Task ExpectUnavailableAsync(Func<Task> action)
     {
         try { await action(); }
@@ -512,6 +585,7 @@ internal static class SubtitleIdentityNativeFixture
         private readonly HttpListener _listener = new();
         public string Origin { get; }
         public volatile bool Fail;
+        public byte[]? MediaBytes;
         public int Requests;
         public SubtitleServer(byte[] bytes)
         {
@@ -525,6 +599,17 @@ internal static class SubtitleIdentityNativeFixture
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
                     Interlocked.Increment(ref Requests);
+                    if (request.Request.Url?.AbsolutePath == "/media.mkv" && MediaBytes is { } media)
+                    {
+                        var start = long.Parse((request.Request.Headers["Range"] ?? "bytes=0-").Split('=')[1].Split('-')[0]);
+                        if (start >= media.Length) { request.Response.StatusCode = 416; request.Response.Close(); continue; }
+                        request.Response.StatusCode = 206;
+                        request.Response.Headers["Content-Range"] = $"bytes {start}-{media.Length - 1}/{media.Length}";
+                        request.Response.ContentLength64 = media.Length - start;
+                        await request.Response.OutputStream.WriteAsync(media.AsMemory((int)start));
+                        request.Response.Close();
+                        continue;
+                    }
                     if (Fail)
                     {
                         request.Response.StatusCode = 503;
@@ -541,12 +626,49 @@ internal static class SubtitleIdentityNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public int PreferenceWrites, Replans;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public string? InitialPlaybackUrl;
+        public WatchDetailResponse? InitialWatchDetail;
+        public List<JsonElement> ReplanRequests = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "subtitle-identity.invalid") throw new InvalidOperationException("Unexpected fixture networking.");
-            if (request.RequestUri.AbsolutePath.Contains("-prefs/")) PreferenceWrites++;
-            if (request.RequestUri.AbsolutePath.EndsWith("/replan")) Replans++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
+            var path = request.RequestUri.AbsolutePath;
+            if (path.Contains("-prefs/")) PreferenceWrites++;
+            if (path.EndsWith("/replan"))
+            {
+                Replans++;
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                ReplanRequests.Add(body.RootElement.Clone());
+            }
+            if (InitialPlaybackUrl != null)
+            {
+                if (path.StartsWith("/api/v2/watch/", StringComparison.Ordinal))
+                    return Json(JsonSerializer.Serialize(InitialWatchDetail,
+                        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }));
+                if (path.EndsWith("/capabilities"))
+                    return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
+                if (path.EndsWith("/start") || path.EndsWith("/replan"))
+                    return Json(JsonSerializer.Serialize(new
+                    {
+                        protocol_version = 3, outcome = "playable", session_id = "fresh-preplay",
+                        playback_plan = new
+                        {
+                            plan_id = $"initial-{Replans}", plan_attempt_key = "key", session_id = "fresh-preplay",
+                            effective_media_file_id = 42, delivery = "original_http", active_quality = "original",
+                            stream = new { url = InitialPlaybackUrl }, timeline = new { can_seek_anywhere = true },
+                            source = new { duration_seconds = 60 },
+                            selected_tracks = new { audio = new { id = "file:42:audio:0", index = 0 } },
+                            subtitle = new { mode = "off", inventory = new[]
+                            {
+                                new { track_id = "index-only", combined_index = 9, stream_index = 77,
+                                    language = "eng", codec = "webvtt", source = "embedded", native_selectable = false },
+                            } },
+                        },
+                    }));
+            }
+            return Json("{}");
         }
+        private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
+            { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
     }
 }

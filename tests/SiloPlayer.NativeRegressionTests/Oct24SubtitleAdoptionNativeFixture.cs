@@ -73,13 +73,14 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             await manager.StartReplacementSessionAsync(44, 12);
             Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!,
                 "The outgoing menu was interpreted against the newly adopted file.");
-            await Load(0, 12);
-            Require(Get(service, "_pendingInitialServerSubtitleIndex") == null && wire.PreferenceWrites == preferencesBeforeSwitch,
+            await Load(-1, 12); // The new file has no row with the chosen TrackId.
+            Require(manager.CaptureLocalSubtitleIntent().Track?.TrackId == "sub:42:1" &&
+                Get(service, "_pendingInitialServerSubtitleIndex") == null && wire.PreferenceWrites == preferencesBeforeSwitch,
                 "A foreign pending index survived the load or persisted a different-language preference.");
             await manager.StartReplacementSessionAsync(42, 12); await Load(1, 12);
             await manager.StartReplacementSessionAsync(43, 13); await Load(-1, 13);
             await manager.StartReplacementSessionAsync(42, 14); await Load(1, 14);
-            await manager.StartReplacementSessionAsync(44, 15); await Load(0, 15);
+            await manager.StartReplacementSessionAsync(44, 15); await Load(-1, 15);
             await service.SetSubtitleTrackAndPersistAsync(0, null, null);
             await manager.ReplanQualityAsync("360p", 16); await Load(-1, 16);
             Require(wire.Replans.Any(p => p.GetProperty("operation").GetString() == "track_change" &&
