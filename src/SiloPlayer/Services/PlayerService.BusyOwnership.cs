@@ -76,4 +76,36 @@ public partial class PlayerService
             if (release.Revision == _playbackBusyRevision && BusyPlaybackMatches(release.Owner)) action();
         }
     }
+
+    // Legacy OSC selection must guard EOF before UI dispatch, but that early
+    // claim also needs a lifetime when dispatch/drain retires the selection.
+    private void DispatchLegacyPlaybackSwitch(Microsoft.UI.Dispatching.DispatcherQueue dispatcher,
+        bool quality, Func<Func<bool>, Task> selection)
+    {
+        var authority = _activeAuthority;
+        var context = authority.ApiClient.CaptureContext();
+        var claim = BeginPlaybackBusy(loading: false, claimState: () => _qualitySwitchActive = quality);
+        bool ContextCurrent() => ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context);
+        bool Current() => ContextCurrent() && OwnsPlaybackBusy(claim);
+        async Task InvokeSelectionAsync()
+        {
+            try { if (Current()) await selection(Current); }
+            catch (OperationCanceledException) { }
+            catch (Exception error)
+            {
+                ReleasePlaybackBusy(claim, () =>
+                {
+                    _qualitySwitchActive = false;
+                    if (!ContextCurrent()) return;
+                    LogToFile("player_quality_switch_error.txt", error.ToString());
+                    var (title, detail) = DescribePlaybackError(error);
+                    ErrorMessage = detail;
+                    ShowNotice(title, detail, "error");
+                });
+            }
+            finally { ReleasePlaybackBusy(claim, () => _qualitySwitchActive = false); }
+        }
+        if (!dispatcher.TryEnqueue(() => _ = InvokeSelectionAsync()))
+            ReleasePlaybackBusy(claim, () => _qualitySwitchActive = false);
+    }
 }

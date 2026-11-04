@@ -20,6 +20,7 @@ internal static class PlaybackQualityMenuNativeFixture
 
     internal static async Task RunAsync(Window window, string mode = "normal")
     {
+        mode = Environment.GetEnvironmentVariable("SILO_NATIVE_QUALITY_CASE") ?? mode;
         using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(window));
         window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
         using var media = new PlaybackAudioMenuNativeFixture.MediaServer();
@@ -76,6 +77,95 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
             Call(service, "SendQualityInfoToOsc");
+            if (mode.StartsWith("legacy-", StringComparison.Ordinal))
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var transportGate = (SemaphoreSlim)Get(service, "_transportRestartGate")!;
+                await transportGate.WaitAsync();
+                var drainGeneration = (long)Get(service, "_seekRestartGeneration")!;
+                var initialError = service.ErrorMessage;
+                try
+                {
+                    var qualityAction = mode == "legacy-quality";
+                    mpv.SendScriptMessage(qualityAction ? "silo-quality-select" : "silo-version-select", qualityAction ? "720p" : "71");
+                    await Until(() => (bool)Get(service, "_switchingContent")! && (!qualityAction || service.IsQualitySwitchActive) &&
+                        (long)Get(service, "_seekRestartGeneration")! > drainGeneration,
+                        "Legacy dispatch did not enter its actual held transport drain.");
+                    api.SetProfile("retired-during-legacy-drain");
+                }
+                finally { transportGate.Release(); }
+                await Until(() => !(bool)Get(service, "_switchingContent")! && !service.IsLoading && !service.IsQualitySwitchActive,
+                    "Retired legacy dispatch stranded its pre-dispatch busy claim.");
+                Require(wire.Qualities.IsEmpty && wire.Files.Count == 1 && mpv.IsPaused && service.ErrorMessage == initialError,
+                    "Retired legacy dispatch replanned, loaded a version or changed pause.");
+                Program.Log($"PASS: actual OSC {mode} releases its pre-dispatch claim after profile retirement during the real transport drain, without stale replan/load.");
+                return;
+            }
+            if (mode == "republish")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var retained = await Open();
+                var publication = (long)Get(service, "_nativeMenuPublication")!;
+                Call(service, "SendQualityInfoToOsc");
+                await Until(() => (long)Get(service, "_nativeMenuPublication")! > publication, "Quality did not republish.");
+                await Task.Delay(150); await Query();
+                Require(ReferenceEquals(Menu(service), retained) && Gate(service).CurrentCount == 0,
+                    "Unchanged media publication dismissed the current native Quality menu.");
+                Call(retained, "Input", "cancel");
+                Require(Gate(service).CurrentCount == 1 && mpv.IsPaused, "Retained Quality failed to release its lease or changed pause.");
+                Program.Log("PASS: unchanged actual quality publication retains the same native menu, input lease and genuine pause.");
+                return;
+            }
+            if (mode == "room-modes" || mode == "room-explanation")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var sameSession = manager.CurrentSession;
+                var sameFile = (long)Get(service, "_playbackFileGeneration")!;
+                var localMenu = await Open();
+                service.SetWatchTogetherPlayback(true);
+                if (mode == "room-modes")
+                    await Until(() => Menu(service) == null, "Attaching this same file to a room retained enabled local version rows.");
+                else Call(localMenu, "Input", "cancel");
+                Call(service, "SendQualityInfoToOsc");
+                var roomMenu = await Open();
+                var roomList = (ListView)Get(roomMenu, "_list")!;
+                Require(!roomList.Items.OfType<ListViewItem>().Any(row => row.Tag is string id && id.StartsWith("file:")),
+                    "Room attachment retained local version actions.");
+                const string explanation = "The room controls the source version. Streaming quality is your own choice.";
+                var info = roomList.Items.OfType<ListViewItem>().Single(row => row.Tag is "room-version");
+                var spoken = Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(info);
+                Require(spoken.Split(explanation, StringSplitOptions.None).Length == 2, "The room explanation is repeated in its native accessible row.");
+                service.SetWatchTogetherPlayback(false);
+                await Until(() => Menu(service) == null, "Leaving the room retained its locked version inventory.");
+                var detachedMenu = await Open();
+                Require(((ListView)Get(detachedMenu, "_list")!).Items.OfType<ListViewItem>().Any(row => row.Tag is "file:71" && row.IsEnabled),
+                    "Leaving the room did not restore local version choices.");
+                Require(ReferenceEquals(manager.CurrentSession, sameSession) && (long)Get(service, "_playbackFileGeneration")! == sameFile,
+                    "The room permission fixture replaced the session or file.");
+                Call(detachedMenu, "Input", "cancel");
+                Program.Log("PASS: same-session/file room attachment and departure refresh native version permissions; its explanation appears once.");
+                return;
+            }
+            if (mode == "terminal")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                await Open();
+                var initialOwner = Get(service, "_nativeMenuOwner")!;
+                Set(service, "_transportHasFirstOutput", true);
+                Call(service, "EnterPlaybackTerminalState", new InvalidOperationException("Synthetic interrupted playback"),
+                    0d, "quality-fixture", true, manager.CurrentSession);
+                await Until(() => Menu(service) == null, "Terminal failure did not retire the existing menu.");
+                Call(service, "SendQualityInfoToOsc");
+                await Task.Delay(100);
+                var currentOwner = Get(service, "_nativeMenuOwner") ?? initialOwner;
+                var token = (string)currentOwner.GetType().GetProperty("Token")!.GetValue(currentOwner)!;
+                Call(service, "OnScriptMessage", (object)new[] { "silo-native-quality-open", token, "999", "100", "100", "40", "40", "1280", "720" });
+                await Task.Delay(200);
+                Require(Menu(service) == null && Gate(service).CurrentCount == 1 && wire.Qualities.IsEmpty,
+                    "A late publication/queued opener created native Quality above terminal Retry/Exit.");
+                Program.Log("PASS: actual terminal transition retires the existing menu and rejects a late publication/queued Quality opener.");
+                return;
+            }
             if (mode is "successor-failure" or "successor-success")
             {
                 using var cancellation = new CancellationTokenSource();
@@ -186,10 +276,13 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(menu, "Input", "home"); Call(menu, "Input", "down");
             Require(list.SelectedItem is ListViewItem { Tag: "file:71" }, "Version source ID was replaced by its row index.");
             service.SetPaused(false);
+            await Until(() => !mpv.IsPaused && !service.IsPaused, "The viewer did not enter playing intent before selecting a version.");
+            var versionLoad = (long)Get(service, "_playbackFileGeneration")!;
             Call(menu, "Input", "activate");
-            await Until(() => wire.Files.Contains(71) && manager.CurrentSession?.MediaFileId == 71 && !service.IsLoading,
+            await Until(() => wire.Files.Contains(71) && manager.CurrentSession?.MediaFileId == 71 &&
+                (long)Get(service, "_playbackFileGeneration")! > versionLoad && !service.IsLoading,
                 "Version selection did not use the existing replacement-session workflow.");
-            Require(!mpv.IsPaused && !service.IsPaused, "Version selection paused a playing viewer.");
+            await Until(() => !mpv.IsPaused && !service.IsPaused, "Version selection paused a playing viewer.");
             Call(service, "StopPlaybackStallWatchdog");
 
             Property(service, "IsWatchTogetherPlayback", true); Call(service, "SendQualityInfoToOsc");
