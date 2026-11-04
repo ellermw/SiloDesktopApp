@@ -848,11 +848,11 @@ public sealed partial class MpvOscRuntimeTests
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,
-        string beforeScript = "", string resultProperty = "user-data/stats-test-output")
+        string beforeScript = "", string resultProperty = "user-data/stats-test-output", string? scriptOverride = null)
     {
         var root = FindRepositoryRoot();
         var probe = Path.Combine(Path.GetTempPath(), $"silo-stats-{Guid.NewGuid():N}.lua");
-        var script = Path.Combine(root, "libs", "mpv", "scripts", "silo-osc.lua").Replace('\\', '/');
+        var script = (scriptOverride ?? Path.Combine(root, "libs", "mpv", "scripts", "silo-osc.lua")).Replace('\\', '/');
         // Run the real OSC inside bundled mpv with controlled input/output
         // properties. Capture the rendered ASS, not the Lua source text.
         File.WriteAllText(probe, $$"""

@@ -2038,7 +2038,11 @@ local function render_osc()
             tostring(viewers) .. (viewers == 1 and " viewer" or " viewers"),
             math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
 
-        local policy_label
+        local policy_label = party.is_host
+            and (party.guest_control_policy == "guest_play_pause"
+                and "Guests can pause & resume" or "Only you control playback")
+            or (party.can_control_transport
+                and "You can pause & resume" or "Host controls playback")
         if native_party then
             local rect = L.btn_party
             table.insert(state.watch_party_actions, {x=rect.x,y=rect.y,w=rect.w,h=rect.h,action='native-party'})
@@ -2046,17 +2050,11 @@ local function render_osc()
                 draw_rounded_rect(ass, panel_x, panel_y, panel_x+panel_w, panel_y+panel_h,
                     math.floor(12*sc), config.text_color, 'DF', ma)
             end
-        elseif party.is_host then
-            policy_label = party.guest_control_policy == "guest_play_pause"
-                and "Guests can pause & resume" or "Only you control playback"
-        else
-            policy_label = party.can_control_transport
-                and "You can pause & resume" or "Host controls playback"
         end
         draw_text(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(64 * sc),
             policy_label, math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
 
-        if party.is_host then
+        if party.is_host and not native_party then
             draw_rect(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(82 * sc),
                 panel_x + panel_w - math.floor(12 * sc), panel_y + math.floor(83 * sc),
                 config.text_color, "EB", ma)
@@ -6274,6 +6272,10 @@ local function setup_script_messages()
             local scope = token and #token == 32 and token:match('^%x+$') and token or nil
             local key = 'native_' .. kind .. '_scope'
             if scope ~= state[key] then
+                if kind == 'party' then
+                    state.watch_party_end_confirm = false
+                    state.watch_party_actions = {}
+                end
                 if scope and state.native_dialog_request and state.native_dialog_request.kind == kind
                     and state.native_dialog_request.owner ~= scope then state.native_dialog_request = nil end
                 local request = state.native_menu_request
