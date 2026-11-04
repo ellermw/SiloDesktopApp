@@ -141,6 +141,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")
+            {
+                await OscHudStatesNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
             {
                 await HomeRowReviewNativeFixture.RunAsync(parent);
