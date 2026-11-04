@@ -152,6 +152,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", previous); }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-all")
+            {
+                foreach (var mode in new[] { "normal", "retired", "release", "successor-failure", "successor-success" })
+                    await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-menu")
             {
                 await PlaybackQualityMenuNativeFixture.RunAsync(_window);
