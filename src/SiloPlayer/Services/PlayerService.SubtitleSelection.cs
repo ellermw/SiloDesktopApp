@@ -84,6 +84,18 @@ public partial class PlayerService
         ReferenceEquals(preference.Authority, _activeAuthority) && ReferenceEquals(preference.Manager, _playbackManager) &&
         preference.Authority.ApiClient.IsCurrentContext(preference.Context);
 
+    private void RefusePendingSubtitleSelectionWithoutLoad()
+    {
+        // No FILE_LOADED will consume a pick queued during an aborted/no-op
+        // switch. Keep the applied choice, and never replay this pick on an
+        // unrelated later load or report an unapplied preference as saved.
+        if (_switchingContent || IsLoading || !_pendingInitialServerSubtitleIndex.HasValue ||
+            Volatile.Read(ref _subtitleSelectionOperation) is not { Accepted: true } owner ||
+            !IsCurrentSubtitleChoice(owner)) return;
+        RestoreExecutedSubtitleSelection(reapply: false);
+        ShowSubtitleSelectionUnavailable();
+    }
+
     private async Task CompleteExecutedSubtitleSelectionAsync(SubtitleSelectionOperation? owner, SubtitleTrackInfo? applied)
     {
         if (!ReferenceEquals(owner, Volatile.Read(ref _subtitleSelectionOperation))) return;

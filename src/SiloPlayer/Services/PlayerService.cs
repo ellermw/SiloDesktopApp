@@ -1112,12 +1112,14 @@ public partial class PlayerService : IDisposable
             while (true)
             {
                 var readLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
+                var readSession = manager?.CurrentSession;
                 var readOutcome = await PrefetchSubtitleSidecarAsync(track);
                 if (!CurrentChoice()) return false;
-                if (readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration))
+                if (readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||
+                    !ReferenceEquals(readSession, manager?.CurrentSession))
                 {
-                    // Cancel the old file read, retaining the latest manual
-                    // intent across a compatible quality/burn-in reload.
+                    // Cancel the old file/grant read, retaining the latest
+                    // manual intent across a compatible quality/burn-in reload.
                     while (CurrentChoice() && (_switchingContent || IsLoading || Volatile.Read(ref _loadedMediaInitCts) != null))
                         await Task.Delay(50);
                     if (!CurrentChoice()) return false;
@@ -1130,6 +1132,11 @@ public partial class PlayerService : IDisposable
                     choice.RequestedTrack = track;
                     selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
                     continue;
+                }
+                if (ResolveReloadSubtitleChoice(track, choice.SourceFile) == null)
+                {
+                    ShowSubtitleSelectionUnavailable();
+                    return false;
                 }
                 if (readOutcome == SubtitlePrefetchOutcome.Retired)
                 {
@@ -1147,10 +1154,31 @@ public partial class PlayerService : IDisposable
             }
         }
         if (!CurrentChoice()) return false;
+        // A replan can replace the inventory while the sidecar read awaits.
+        // Validate against the current grant before recording any intent.
+        if (track != null)
+        {
+            track = ResolveReloadSubtitleChoice(track, choice.SourceFile);
+            if (track == null || !_switchingContent && !IsLoading && !HasSubtitleSelectionRoute(track))
+            {
+                ShowSubtitleSelectionUnavailable();
+                return false;
+            }
+        }
+        try
+        {
+            if (manager?.CurrentSession?.ProtocolVersion >= 3)
+                manager.RecordLocalSubtitleSelection(track?.Index);
+        }
+        catch (InvalidOperationException)
+        {
+            // The inventory can change again between resolution and recording.
+            ShowSubtitleSelectionUnavailable();
+            return false;
+        }
         choice.Accepted = true;
+        deferLocalSelection = _switchingContent || IsLoading;
         var selectedSubtitleIndex = track?.Index ?? -1;
-        if (manager?.CurrentSession?.ProtocolVersion >= 3)
-            manager.RecordLocalSubtitleSelection(track?.Index);
         if (deferLocalSelection || _pendingInitialServerSubtitleIndex.HasValue)
             _pendingInitialServerSubtitleIndex = selectedSubtitleIndex;
         var wasPaused = CaptureUserPausedState();
@@ -1177,7 +1205,7 @@ public partial class PlayerService : IDisposable
             mpv.SetSubtitleTrack(0);
             selectionExecuted = mpv.GetPropertyDouble("sid") <= 0;
         }
-        if (!CurrentChoice()) return false;
+        if (!CurrentChoice() || !choice.Accepted) return false;
         // Queued calls return without waiting for FILE_LOADED. The manual
         // operation survives and only verified execution can claim its save.
         if (transportReloadScheduled || _switchingContent || IsLoading ||
@@ -3246,6 +3274,7 @@ public partial class PlayerService : IDisposable
         _switchingContent = false;
         _qualitySwitchActive = false;
         IsLoading = false;
+        RefusePendingSubtitleSelectionWithoutLoad();
 
         var terminal = error as PlaybackPlanTerminalException;
         var description = terminal != null
@@ -4780,6 +4809,8 @@ public partial class PlayerService : IDisposable
                 IsLoading = false;
                 var (title, detail) = DescribePlaybackError(ex);
                 ShowNotice(title, detail, "error");
+                if (ReferenceEquals(_playbackManager, manager))
+                    RefusePendingSubtitleSelectionWithoutLoad();
             }
         }
     }
@@ -4841,6 +4872,7 @@ public partial class PlayerService : IDisposable
                 ErrorMessage = detail;
                 ShowNotice(title, detail, "error");
                 SendAudioTrackListToOsc();
+                RefusePendingSubtitleSelectionWithoutLoad();
             }
             return;
         }
@@ -4901,6 +4933,15 @@ public partial class PlayerService : IDisposable
                 _mpv.SetSubtitleTrack(0);
                 _activeSubtitleServerIndex = loadedSession.IsSubtitleBurnedIn
                     ? loadedSession.SubtitleUrls.FirstOrDefault(t => t.TrackId == loadedSession.SelectedSubtitleTrackId)?.Index ?? -1 : -1;
+            }
+            if (preparedSubtitle != null)
+            {
+                // Detach the one-use carry before a new session's sync teardown
+                // deletes the outgoing files/cache. Re-register it only after
+                // that teardown, so SendSubtitleListToOsc cannot discard it.
+                _subtitleSyncFiles.Remove(preparedSubtitle.Path);
+                EnsureSubtitleSync();
+                _subtitleSyncFiles.Add(preparedSubtitle.Path);
             }
             // Same-session reloads keep the subtitle-sync lifecycle alive, so
             // remove this file's downloads here instead of accumulating them.
@@ -5076,6 +5117,7 @@ public partial class PlayerService : IDisposable
                 if (!wasPaused)
                     _mpv?.Play();
                 ShowNotice("Subtitle switch failed", ex.Message, "error");
+                RefusePendingSubtitleSelectionWithoutLoad();
             }
         }
         finally { _transportRestartGate.Release(); }
@@ -5103,15 +5145,21 @@ public partial class PlayerService : IDisposable
         var context = authority.ApiClient.CaptureContext();
         var sidecarGeneration = CurrentSubtitleSidecarGeneration();
         var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
-        bool CurrentSelectionOwner() => ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) &&
-            !_closing && !_switchingContent && !IsLoading && ReferenceEquals(mpv, _mpv) &&
+        bool CurrentFileOwner() => ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) &&
+            !_closing && ReferenceEquals(mpv, _mpv) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(authority, _activeAuthority) &&
             authority.ApiClient.IsCurrentContext(context) &&
             Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration;
+        bool CurrentSelectionOwner() => CurrentFileOwner() && !_switchingContent && !IsLoading;
         bool CurrentSelection() => CurrentSelectionOwner() && CurrentSubtitleSidecarGeneration() == sidecarGeneration;
         if (track != null)
         {
             var readOutcome = await PrefetchSubtitleSidecarAsync(track);
+            // A no-op invalidation may temporarily cover the end of this read.
+            // Wait for it rather than dropping the consumed initial choice.
+            // A real load retires CurrentFileOwner through its generation.
+            while (CurrentFileOwner() && (_switchingContent || IsLoading))
+                await Task.Delay(50);
             if (readOutcome == SubtitlePrefetchOutcome.Retired)
             {
                 // Sync cleanup can retire just the read (and its sidecar
@@ -5151,6 +5199,9 @@ public partial class PlayerService : IDisposable
             ShowSubtitleSelectionUnavailable();
             return false;
         }
+        while (CurrentFileOwner() && (_switchingContent || IsLoading))
+            await Task.Delay(50);
+        if (!CurrentSelection()) return false;
         mpv.SetSubtitleTrack(0);
         if (!CurrentSelection() || mpv.GetPropertyDouble("sid") > 0) return false;
         await CompleteExecutedSubtitleSelectionAsync(manualChoice, null);
@@ -5307,6 +5358,7 @@ public partial class PlayerService : IDisposable
         var authority = _activeAuthority;
         var context = authority.ApiClient.CaptureContext();
         var manager = _playbackManager;
+        var session = manager?.CurrentSession;
         var mpv = _mpv;
         Uri url;
         lock (_subtitleTrackStateLock)
@@ -5321,6 +5373,7 @@ public partial class PlayerService : IDisposable
         }
         bool CurrentOwner() => !_closing && ReferenceEquals(authority, _activeAuthority) &&
             authority.ApiClient.IsCurrentContext(context) && ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) &&
+            ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(selection, Volatile.Read(ref _subtitleReadOperation)) && !selection.Token.IsCancellationRequested &&
             ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) &&
             CurrentSubtitleSidecarGeneration() == generation && loadedMediaGeneration == Volatile.Read(ref _loadedMediaInitGeneration);
@@ -6183,6 +6236,7 @@ public partial class PlayerService : IDisposable
             ErrorMessage = detail;
             ShowNotice(title, detail, "error");
             _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+            RefusePendingSubtitleSelectionWithoutLoad();
         }
     }
 
@@ -7314,6 +7368,7 @@ public partial class PlayerService : IDisposable
         catch (Exception ex)
         {
             _switchingContent = false;
+            RefusePendingSubtitleSelectionWithoutLoad();
             LogToFile(
                 "player_recovery_error.txt",
                 $"Unhandled plan invalidation recovery failure: {ex}");
@@ -7347,6 +7402,8 @@ public partial class PlayerService : IDisposable
             if (replacement == null)
             {
                 _switchingContent = false;
+                if (ReferenceEquals(_playbackManager, manager))
+                    RefusePendingSubtitleSelectionWithoutLoad();
                 return new CommandResult();
             }
 
@@ -7366,6 +7423,8 @@ public partial class PlayerService : IDisposable
                 !ReferenceEquals(manager.CurrentSession, replacement))
             {
                 _switchingContent = false;
+                if (ReferenceEquals(_playbackManager, manager))
+                    RefusePendingSubtitleSelectionWithoutLoad();
                 return new CommandResult { Status = "rejected", Error = "playback_session_changed" };
             }
 
@@ -7383,6 +7442,8 @@ public partial class PlayerService : IDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             _switchingContent = false;
+            if (ReferenceEquals(_playbackManager, manager))
+                RefusePendingSubtitleSelectionWithoutLoad();
             return new CommandResult { Status = "rejected", Error = "playback_canceled" };
         }
         catch (Exception ex)
