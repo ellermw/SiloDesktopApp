@@ -185,21 +185,57 @@ public partial class PlaybackManager
     private SubtitleTrackInfo? MatchCurrentSubtitle()
     {
         if (_viewerSubtitle == null) return null;
-        var tracks = CurrentSession?.SubtitleUrls.Where(t => !t.Unplayable).ToList() ?? [];
-        var identities = tracks.Where(t => !string.IsNullOrWhiteSpace(t.TrackId) && t.TrackId == _viewerSubtitle.TrackId).Take(2).ToArray();
-        if (identities.Length != 0) return identities.Length == 1 ? identities[0] : null;
-        var candidates = tracks.Where(t => MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
+        var inventory = CurrentSession?.SubtitleUrls ?? [];
+        var sameFile = CurrentSession?.MediaFileId == _viewerSubtitleFile;
+        var hasIdentity = !string.IsNullOrWhiteSpace(_viewerSubtitle.TrackId);
+        if (hasIdentity)
+        {
+            // Unavailable rows still attest identity. Filtering them first can
+            // turn a duplicate ID into a false unique match or pick a lookalike.
+            var identities = inventory.Where(t => t.TrackId == _viewerSubtitle.TrackId).Take(2).ToArray();
+            if (identities.Length > 0)
+                return identities.Length == 1 && !identities[0].Unplayable ? identities[0] : null;
+        }
+        if (sameFile && Equal(_viewerSubtitle.Source, "downloaded"))
+        {
+            // A stored subtitle can cross the ID-less refresh/plan boundary.
+            // Its stored key, never its current list position, links the rows.
+            var key = SubtitleStoredKey(_viewerSubtitle);
+            if (key != null)
+            {
+                var stored = inventory.Where(t => Equal(t.Source, _viewerSubtitle.Source) &&
+                    SubtitleStoredKey(t) == key).Take(2).ToArray();
+                if (stored.Length > 0)
+                    return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
+            }
+            return null;
+        }
+        var candidates = inventory.Where(t => !t.Unplayable && (!sameFile || !hasIdentity) &&
+            Equal(t.Source, _viewerSubtitle.Source) && SubtitleCodec(t.Codec) == SubtitleCodec(_viewerSubtitle.Codec) &&
+            MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
             t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
-        // An index identifies a legacy row only within the same file. Across
-        // versions, equally good metadata is ambiguous, not a first-row choice.
-        if (CurrentSession?.MediaFileId == _viewerSubtitleFile &&
-            candidates.FirstOrDefault(t => t.Index == _viewerSubtitle.Index) is { } sameFile) return sameFile;
+        // Only two identityless rows in the same file share a legacy index.
+        // Across versions equally good metadata remains ambiguous.
+        if (sameFile && !hasIdentity && candidates.FirstOrDefault(t =>
+            string.IsNullOrWhiteSpace(t.TrackId) && t.Index == _viewerSubtitle.Index) is { } legacy) return legacy;
         var ranked = candidates.OrderByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).Take(2).ToArray();
         return ranked.Length == 1 || ranked.Length == 2 &&
             SubtitleScore(ranked[0].Language, ranked[0].Source, ranked[0].Codec, ranked[0].Label, _viewerSubtitle) >
             SubtitleScore(ranked[1].Language, ranked[1].Source, ranked[1].Codec, ranked[1].Label, _viewerSubtitle)
                 ? ranked[0] : null;
     }
+
+    private static string? SubtitleStoredKey(SubtitleTrackInfo track)
+        => !string.IsNullOrWhiteSpace(track.SyncKey) ? track.SyncKey : track.Id is > 0 ? $"stored-{track.Id}" : null;
+
+    private static string SubtitleCodec(string? codec) => codec?.Trim().ToLowerInvariant() switch
+    {
+        "srt" => "subrip",
+        "ssa" => "ass",
+        "vtt" => "webvtt",
+        var value => value ?? "",
+    };
+
     private void CaptureReplacementSubtitleIntent()
     {
         lock (_trackIntentGate)
@@ -268,7 +304,7 @@ public partial class PlaybackManager
         => !UnknownSubtitleLanguage(language) && !UnknownSubtitleLanguage(desired.Language) &&
            CanonicalLanguage(language) == CanonicalLanguage(desired.Language) ||
            UnknownSubtitleLanguage(language) && UnknownSubtitleLanguage(desired.Language) &&
-           Equal(source, desired.Source) && Equal(codec, desired.Codec) &&
+           Equal(source, desired.Source) && SubtitleCodec(codec) == SubtitleCodec(desired.Codec) &&
            Equal(label ?? "", SubtitleIdentityLabel(desired) ?? "");
     // Adapted legacy rows can use the language itself as a synthesized label.
     private static string? SubtitleIdentityLabel(SubtitleTrackInfo track)
@@ -282,5 +318,5 @@ public partial class PlaybackManager
     }
     private static int SubtitleScore(string? language, string? source, string? codec, string? label, SubtitleTrackInfo desired)
         => (CanonicalLanguage(language) == CanonicalLanguage(desired.Language) ? 64 : 0) +
-           (Equal(source, desired.Source) ? 4 : 0) + (Equal(codec, desired.Codec) ? 1 : 0) + (Equal(label, desired.Label) ? 8 : 0);
+           (Equal(source, desired.Source) ? 4 : 0) + (SubtitleCodec(codec) == SubtitleCodec(desired.Codec) ? 1 : 0) + (Equal(label, desired.Label) ? 8 : 0);
 }

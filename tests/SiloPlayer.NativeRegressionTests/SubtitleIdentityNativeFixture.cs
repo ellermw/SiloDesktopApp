@@ -43,6 +43,12 @@ internal static class SubtitleIdentityNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         try
         {
+            var refreshCase = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
+            if (refreshCase is "refresh-reindex" or "refresh-held" or "refresh-removed")
+            {
+                await CheckDownloadedRefreshAsync(refreshCase, service, manager, session, mpv, api, wire, subtitles);
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE") == "legacy-preplay")
             {
                 session.SubtitleUrls = [];
@@ -287,6 +293,27 @@ internal static class SubtitleIdentityNativeFixture
                 using var payload = JsonDocument.Parse(await inventory.Task.WaitAsync(TimeSpan.FromSeconds(4)));
                 Require(payload.RootElement.GetArrayLength() == 6 && payload.RootElement.EnumerateArray().Single(t => t.GetProperty("index").GetInt32() == 3).GetProperty("unplayable").GetBoolean(),
                     "Production OSC payload lost unavailable row or its combined ordinal.");
+
+                var missingNative = session.SubtitleUrls.Single(track => track.Index == 1);
+                var savedUrl = missingNative.Url;
+                try
+                {
+                    missingNative.Url = "";
+                    inventory = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Call(service, "SendSubtitleListToOsc");
+                    using var unavailablePayload = JsonDocument.Parse(await inventory.Task.WaitAsync(TimeSpan.FromSeconds(4)));
+                    Require(unavailablePayload.RootElement.EnumerateArray().Single(t => t.GetProperty("index").GetInt32() == 1).GetProperty("unplayable").GetBoolean() &&
+                        !unavailablePayload.RootElement.EnumerateArray().Single(t => t.GetProperty("index").GetInt32() == 2).GetProperty("unplayable").GetBoolean(),
+                        "Actual OSC payload enabled an unrouteable native row or disabled its verified native peer.");
+                    missingNative.Url = savedUrl;
+                    inventory = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Call(service, "SendSubtitleListToOsc");
+                    using var restoredPayload = JsonDocument.Parse(await inventory.Task.WaitAsync(TimeSpan.FromSeconds(4)));
+                    Require(!restoredPayload.RootElement.EnumerateArray().Single(t => t.GetProperty("index").GetInt32() == 1).GetProperty("unplayable").GetBoolean(),
+                        "Actual OSC republish retained a disabled row after its sidecar route returned.");
+                    Program.Log("PASS: actual OSC payload disables the full unrouteable row, retains a verified native peer and reenables a restored sidecar route.");
+                }
+                finally { missingNative.Url = savedUrl; }
 
                 var originalInventory = session.SubtitleUrls;
                 var automaticNoRoute = new SubtitleTrackInfo { Index = 9, Source = "embedded", Codec = "webvtt",
@@ -547,6 +574,88 @@ internal static class SubtitleIdentityNativeFixture
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
     }
 
+    private static async Task CheckDownloadedRefreshAsync(string scenario, PlayerService service, PlaybackManager manager,
+        PlaybackStartResponse session, MpvPlayer mpv, SiloApiClient api, Wire wire, SubtitleServer subtitles)
+    {
+        api.SetBaseUrl(subtitles.Origin);
+        wire.ExpectedHost = new Uri(subtitles.Origin).Host;
+        var embedded = session.SubtitleUrls.Single(track => track.Index == 2);
+        embedded.Index = 0; embedded.Url = "";
+        var retained = new SubtitleTrackInfo { Index = 1, Id = 88, SyncKey = "stored-88", TrackId = "stored-track-88",
+            MediaFileId = 42, Source = "downloaded", Language = "spa", Codec = "srt", Url = subtitles.Origin + "/retained.srt" };
+        var other = new SubtitleTrackInfo { Index = 2, Id = 73, SyncKey = "stored-73", TrackId = "stored-track-73",
+            MediaFileId = 42, Source = "downloaded", Language = "eng", Codec = "srt", Url = subtitles.Origin + "/other.srt" };
+        session.SubtitleUrls = [embedded, retained, other];
+        Call(service, "SendSubtitleListToOsc");
+        Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!,
+            "Stored refresh baseline did not execute the actual retained subtitle.");
+        var priorSid = mpv.GetPropertyDouble("sid");
+        var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+        var files = (Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!;
+        Require(priorSid > 0 && map[1] == priorSid && files.TryGetValue(1, out _),
+            "Stored refresh baseline did not acquire a real native SID and owned downloaded file.");
+        var priorPath = files[1];
+        var writes = wire.PreferenceWrites;
+        var generation = Get(service, "_subtitleSidecarGeneration");
+        wire.StoredSubtitleResponse = scenario == "refresh-removed"
+            ? """{"subtitles":[{"id":73,"media_file_id":42,"language":"eng","format":"srt"}]}"""
+            : """{"subtitles":[{"id":73,"media_file_id":42,"language":"eng","format":"srt"},{"id":88,"media_file_id":42,"language":"spa","format":"srt"}]}""";
+        if (scenario == "refresh-held")
+        {
+            Call(service, "LoadSubtitles");
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            subtitles.BeforeWrite = () => { entered.TrySetResult(); return release.Task; };
+            var pending = (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!;
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                await service.RefreshSubtitlesAfterAiAsync(42).WaitAsync(TimeSpan.FromSeconds(4));
+                Require(wire.PreferenceWrites == writes, "Inventory refresh saved a still-unread manual subtitle.");
+                release.TrySetResult();
+                Require(await pending.WaitAsync(TimeSpan.FromSeconds(5)) && service.ActiveSubtitleServerIndex == 2 &&
+                    session.SubtitleUrls.Single(track => track.Index == 2).Id == 88 && manager.SubtitleSelectionForLoad == 2 &&
+                    mpv.GetPropertyDouble("sid") > 0 && map.TryGetValue(2, out var sid) && mpv.GetPropertyDouble("sid") == sid &&
+                    wire.StoredPreferenceIndices.ToArray().SequenceEqual(new[] { 1, 2 }) && mpv.IsPaused,
+                    "A retained manual download read failed to follow its stable ID through inventory reindexing or saved the outgoing index.");
+            }
+            finally
+            {
+                release.TrySetResult(); subtitles.BeforeWrite = null;
+                try { await pending.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+            }
+        }
+        else
+        {
+            await service.RefreshSubtitlesAfterAiAsync(42).WaitAsync(TimeSpan.FromSeconds(4));
+            Require(wire.PreferenceWrites == writes && Equals(Get(service, "_subtitleSidecarGeneration"), generation) && mpv.IsPaused,
+                "Metadata refresh saved a preference, pretended to load a new file or changed genuine pause.");
+            if (scenario == "refresh-removed")
+            {
+                Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
+                    Get(service, "_executedSubtitleTrack") == null && !map.Values.Contains((int)priorSid) && !files.Values.Contains(priorPath) && !File.Exists(priorPath) &&
+                    manager.CaptureLocalSubtitleIntent().Track?.Id == 88 && !manager.CaptureLocalSubtitleIntent().IsAutomatic &&
+                    Get(service, "_pendingSubtitlePreferenceOwner") == null,
+                    "Removed stored subtitle retained an executable SID/cache/highlight, invented Off preference or lost the viewer's retained identity.");
+                Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 2, true)! && wire.PreferenceWrites == writes,
+                    "A stale removed download index remained selectable or persisted.");
+            }
+            else
+            {
+                Require(service.ActiveSubtitleServerIndex == 2 && ReferenceEquals(session.SubtitleUrls.Single(track => track.Index == 2), retained) &&
+                    ReferenceEquals(Get(service, "_executedSubtitleTrack"), retained) && manager.SubtitleSelectionForLoad == 2 &&
+                    map.TryGetValue(2, out var sid) && sid == priorSid && !map.ContainsKey(1) &&
+                    files.TryGetValue(2, out var path) && path == priorPath && !files.ContainsKey(1) && mpv.GetPropertyDouble("sid") == priorSid,
+                    "Stored subtitle refresh rebound the current checkmark/native SID or cached bytes by old ordinal instead of retained ID.");
+                Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)! &&
+                    service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") > 0 && mpv.GetPropertyDouble("sid") != priorSid &&
+                    wire.StoredPreferenceIndices.ToArray().SequenceEqual(new[] { 1, 1 }) && map[2] == priorSid && File.Exists(priorPath),
+                    "Selecting the newly inserted row reused the retained row's old-index SID/bytes or saved the wrong index.");
+            }
+        }
+        Program.Log("PASS: actual downloaded subtitle " + scenario + " preserves stable identity, owned cache/SID, manual execution and exact preference authority.");
+    }
+
     private static async Task ExpectUnavailableAsync(Func<Task> action)
     {
         try { await action(); }
@@ -563,6 +672,7 @@ internal static class SubtitleIdentityNativeFixture
         private readonly HttpListener _listener = new();
         public string Origin { get; }
         public volatile bool Fail;
+        public Func<Task>? BeforeWrite;
         public int Requests;
         public SubtitleServer(byte[] bytes)
         {
@@ -576,6 +686,7 @@ internal static class SubtitleIdentityNativeFixture
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
                     Interlocked.Increment(ref Requests);
+                    if (BeforeWrite is { } beforeWrite) await beforeWrite();
                     if (Fail)
                     {
                         request.Response.StatusCode = 503;
@@ -592,12 +703,24 @@ internal static class SubtitleIdentityNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public int PreferenceWrites, Replans;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public string ExpectedHost = "subtitle-identity.invalid";
+        public string? StoredSubtitleResponse;
+        public readonly System.Collections.Concurrent.ConcurrentQueue<int> StoredPreferenceIndices = new();
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            if (request.RequestUri!.Host != "subtitle-identity.invalid") throw new InvalidOperationException("Unexpected fixture networking.");
-            if (request.RequestUri.AbsolutePath.Contains("-prefs/")) PreferenceWrites++;
+            if (request.RequestUri!.Host != ExpectedHost) throw new InvalidOperationException("Unexpected fixture networking.");
+            if (request.RequestUri.AbsolutePath.Contains("-prefs/"))
+            {
+                PreferenceWrites++;
+                if (StoredSubtitleResponse != null || ExpectedHost != "subtitle-identity.invalid")
+                {
+                    using var preference = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                    StoredPreferenceIndices.Enqueue(preference.RootElement.GetProperty("subtitle_track_index").GetInt32());
+                }
+            }
             if (request.RequestUri.AbsolutePath.EndsWith("/replan")) Replans++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                request.RequestUri.AbsolutePath == "/api/v2/subtitles/42" ? StoredSubtitleResponse ?? "{}" : "{}") };
         }
     }
 }

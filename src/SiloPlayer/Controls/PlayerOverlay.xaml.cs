@@ -1551,7 +1551,7 @@ public sealed partial class PlayerOverlay : UserControl
             await ShowPlayerDialogAsync(
                 "No compatible source",
                 "Add a text subtitle track first, or ask the server administrator to enable audio transcription.",
-                activeXamlRoot);
+                activeXamlRoot, activate, showDialog);
             return;
         }
 

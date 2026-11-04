@@ -29,6 +29,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         using var video = new MpvVideoWindow();
         using var mpv = new MpvPlayer();
         Action<string[]>? boundaryObserver = null;
+        TaskCompletionSource? aiStatusRelease = null;
         try
         {
             Set(wire, "AcceptStart", true);
@@ -36,7 +37,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
             window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1100, 800));
             window.AppWindow.Show(false);
             await Task.Delay(150);
-            manager.UseWatchDetail(new() { ContentId = "subtitle-dialog", Type = "movie", Versions = [Version()] });
+            var capabilityFallback = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_DIALOG_CASE") == "capability-fallback";
+            var version = Version();
+            if (capabilityFallback) version.AudioTracks = [];
+            manager.UseWatchDetail(new() { ContentId = "subtitle-dialog", Type = "movie", Versions = [version] });
             await manager.StartSessionAsync(42);
             video.Create(WinRT.Interop.WindowNative.GetWindowHandle(window)); video.Show();
             mpv.InitializeWithWindow(video.Hwnd); video.SetMpv(mpv);
@@ -46,12 +50,17 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Property(service, "Versions", manager.WatchDetail!.Versions);
             Call(service, "WireMpvEvents");
             var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var initialSubtitleGeneration = (long)Get(service, "_subtitleSidecarGeneration")!;
             void Loaded() => loaded.TrySetResult();
             mpv.FileLoaded += Loaded;
             try { mpv.LoadFile(media.Origin + "/video.y4m"); await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
             finally { mpv.FileLoaded -= Loaded; }
             Call(service, "StopPlaybackStallWatchdog");
             await Until(() => !service.IsLoading, "Subtitle shell file did not settle.");
+            if (capabilityFallback)
+                await Until(() => (long)Get(service, "_subtitleSidecarGeneration")! > initialSubtitleGeneration &&
+                    Get(service, "_loadedMediaInitCts") == null,
+                    "Capability fallback fixture initializer did not finish before its inventory was supplied.");
             service.SetPaused(true); await Until(() => mpv.IsPaused, "Subtitle shell pause did not settle.");
             manager.CurrentSession!.SubtitleUrls = [new()
             {
@@ -72,6 +81,61 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 requestType.GetProperty("Kind", Private | BindingFlags.Public)!.SetValue(request, "subtitle");
                 await (Task)Call(service, "HandleNativeMenuOpenAsync", request)!;
                 Require(Menu(service) != null, "Actual Subtitle caller did not open for dialog handoff.");
+            }
+            if (capabilityFallback)
+            {
+                foreach (var retirement in new[] { "none", "visible", "pending" })
+                {
+                    // The menu's cached translation capability is valid. The
+                    // actual dialog probe then flips to transcription only,
+                    // which has no audio source on this synthetic version.
+                    Set(wire, "SubtitleAiTranslationEnabled", true);
+                    Set(wire, "SubtitleAiTranscriptionEnabled", false);
+                    await (Task)Call(service, "SendSubtitleAiAvailabilityToOscAsync", CancellationToken.None)!;
+                    await Open();
+                    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    aiStatusRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var release = aiStatusRelease;
+                    Set(wire, "SubtitleAiTranslationEnabled", false);
+                    Set(wire, "SubtitleAiTranscriptionEnabled", true);
+                    Set(wire, "SubtitleAiStatusBoundary", (Func<CancellationToken, Task>)(ct =>
+                    {
+                        entered.TrySetResult();
+                        return release.Task.WaitAsync(ct);
+                    }));
+                    foreground.Observe("capability-fallback-" + retirement + "-before");
+                    Call(service, "InvokeNativeSubtitleAction", "ai");
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(Menu(service) == null && Gate(service).CurrentCount == 0 && Get(service, "_nativeSubtitleDialog") == null,
+                        "The actual AI capability probe did not retain its pending modal owner.");
+                    if (retirement == "pending") api.SetProfile("retired-pending-capability");
+                    release.TrySetResult();
+                    if (retirement == "pending")
+                    {
+                        await Until(() => Gate(service).CurrentCount == 1, "Retired AI capability probe stranded its dialog lease.");
+                        Require(Get(service, "_nativeSubtitleDialog") == null && Menu(service) == null,
+                            "Retired AI capability probe opened a stale alert.");
+                    }
+                    else
+                    {
+                        await Until(() => Get(service, "_nativeSubtitleDialog") is ContentDialog,
+                            "No-compatible-source alert bypassed the actual native dialog owner.");
+                        var alert = (ContentDialog)Get(service, "_nativeSubtitleDialog")!;
+                        await Until(() => alert.IsLoaded && alert.IsEnabled, "Background capability alert did not restore its controls.");
+                        Require(alert.Title?.ToString() == "No compatible source" && Gate(service).CurrentCount == 0 &&
+                            alert.XamlRoot != null && !ReferenceEquals(alert.XamlRoot, ((FrameworkElement)window.Content).XamlRoot),
+                            "Capability fallback lost its alert, supplied playback root or exact modal lease.");
+                        if (retirement == "visible") api.SetProfile("retired-visible-capability");
+                        else alert.Hide();
+                        await Until(() => Get(service, "_nativeSubtitleDialog") == null && Gate(service).CurrentCount == 1,
+                            "Capability fallback completion/retirement left its actual alert or dialog lease alive.");
+                    }
+                    Set(wire, "SubtitleAiStatusBoundary", null);
+                    Require(mpv.IsPaused && service.IsPaused, "Capability alert changed genuine paused playback.");
+                    foreground.Observe("capability-fallback-" + retirement + "-after");
+                    Program.Log("PASS: actual native AI capability fallback " + retirement + " retains scoped alert ownership, background focus and genuine pause.");
+                }
+                return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_DIALOG_CASE") == "retired-handoff")
             {
@@ -144,6 +208,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
         }
         finally
         {
+            aiStatusRelease?.TrySetResult();
+            Set(wire, "SubtitleAiStatusBoundary", null);
             if (boundaryObserver != null) mpv.ScriptMessageReceived -= boundaryObserver;
             Call(service, "UnwireMpvEvents"); Call(service, "CancelPendingLoadedMediaInitialization");
             Call(service, "CancelPendingFileLoadTimeout"); Call(service, "StopPlaybackStallWatchdog");

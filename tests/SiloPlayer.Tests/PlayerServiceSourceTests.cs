@@ -396,19 +396,18 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && current && (!IsWatchTogetherPlayback || !_roomPlaybackPaused) && _mpv?.IsPaused == true)", source);
         Assert.Contains("public void ReloadSubtitle(int sid)", mpv);
 
-        var refreshStart = source.IndexOf("public async Task RefreshSubtitlesAfterAiAsync", StringComparison.Ordinal);
-        var refreshEnd = source.IndexOf("private void WriteLiveSubtitleFileLocked", refreshStart, StringComparison.Ordinal);
-        Assert.True(refreshStart >= 0 && refreshEnd > refreshStart);
-        Assert.DoesNotContain("SwitchVersionAsync", source[refreshStart..refreshEnd]);
+        var refresh = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.SubtitleRefresh.cs"));
+        Assert.Contains("public async Task RefreshSubtitlesAfterAiAsync", refresh);
+        Assert.DoesNotContain("SwitchVersionAsync", refresh);
         Assert.Contains(
             "await TrySetSubtitleTrackAndPersistAsync(1, preferred.Language, preferred,",
-            source[refreshStart..refreshEnd],
+            refresh,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "RestorePlaybackStateAfterSubtitleChange(wasPaused, position",
-            source[refreshStart..refreshEnd],
+            refresh,
             StringComparison.Ordinal);
-        Assert.Contains("claimActivation: false, acceptActivation: activation).ConfigureAwait(false);", source[refreshStart..refreshEnd], StringComparison.Ordinal);
+        Assert.Contains("claimActivation: false, acceptActivation: activation).ConfigureAwait(false);", refresh, StringComparison.Ordinal);
 
         var beginStart = source.IndexOf("private void BeginLiveSubtitleTranslation", StringComparison.Ordinal);
         var beginEnd = source.IndexOf("private void ApplySubtitleTranslationCues", beginStart, StringComparison.Ordinal);

@@ -619,6 +619,130 @@ public sealed class PlaybackTrackIntentTests
         Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SameFileStableIdentityNeverFallsThroughToALookalike(bool automatic, bool unavailable)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var original = session.SubtitleUrls.Single(t => t.Index == 1);
+        scope.Manager.RecordLocalSubtitleSelection(1, automatic);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        SubtitleTrackInfo Copy(string? identity, int index) => new()
+        {
+            TrackId = identity, Index = index, Source = original.Source, Codec = original.Codec,
+            Language = original.Language, Label = original.Label, NativeTitle = original.NativeTitle,
+            Forced = original.Forced, HearingImpaired = original.HearingImpaired,
+        };
+        session.SubtitleUrls = [Copy("different-track", 1), Copy(null, 8)];
+        if (unavailable)
+        {
+            var missing = Copy(original.TrackId, 7); missing.Unplayable = true;
+            session.SubtitleUrls.Add(missing);
+        }
+
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+        Assert.Equal(automatic, scope.Manager.IsSubtitleSelectionAutomatic);
+    }
+
+    [Fact]
+    public async Task DuplicateStableIdentityCannotBeMadeUniqueByFilteringItsUnavailableRow()
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var original = session.SubtitleUrls.Single(t => t.Index == 1);
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        session.SubtitleUrls =
+        [
+            new() { TrackId = original.TrackId, Index = 7, Language = original.Language, Source = original.Source, Codec = original.Codec },
+            new() { TrackId = original.TrackId, Index = 8, Language = original.Language, Source = original.Source, Codec = original.Codec, Unplayable = true },
+        ];
+
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SameFileDownloadedChoiceBridgesPlanIdentityUsingItsUniqueStoredKey(bool originalHasIdentity, bool syncKey)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var original = session.SubtitleUrls.Single(t => t.Index == 1);
+        original.Source = "downloaded"; original.Id = 77; original.SyncKey = syncKey ? "stored-77" : null;
+        original.TrackId = originalHasIdentity ? "downloaded:77" : null;
+        original.Codec = "srt";
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        session.SubtitleUrls =
+        [
+            new() { TrackId = originalHasIdentity ? null : "downloaded:77", Id = syncKey ? null : 77,
+                SyncKey = syncKey ? "stored-77" : null, Index = 8, Source = "downloaded", Codec = "subrip", Language = original.Language },
+            new() { TrackId = "downloaded:88", Id = 88, SyncKey = "stored-88", Index = 1,
+                Source = "downloaded", Codec = "srt", Language = original.Language },
+        ];
+
+        Assert.Equal(8, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+        await scope.Manager.ReplanQualityAsync("720p", 12);
+        var submitted = Assert.Single(scope.Wire.Replans).GetProperty("selected_tracks").GetProperty("subtitle");
+        Assert.Equal(8, submitted.GetProperty("index").GetInt32());
+        Assert.Equal(originalHasIdentity ? "" : "downloaded:77", submitted.GetProperty("id").GetString());
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SameFileDownloadedChoiceRequiresUniqueStoredIdentity(bool originalHasIdentity, bool duplicate)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var original = session.SubtitleUrls.Single(t => t.Index == 1);
+        original.Source = "downloaded"; original.Id = 77; original.SyncKey = "stored-77";
+        original.TrackId = originalHasIdentity ? "downloaded:77" : null;
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        session.SubtitleUrls =
+        [
+            new() { Index = 1, Id = duplicate ? 77 : 88, Source = "downloaded", Codec = original.Codec, Language = original.Language, Label = original.Label },
+        ];
+        if (duplicate)
+            session.SubtitleUrls.Add(new() { Index = 8, SyncKey = "stored-77", Source = "downloaded", Codec = original.Codec,
+                Language = original.Language, Label = original.Label, Unplayable = true });
+
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
+    [Theory]
+    [InlineData("embedded", "subrip", "und", 8)]
+    [InlineData("embedded", "srt", "", 8)]
+    [InlineData("external", "srt", "und", -1)]
+    [InlineData("embedded", "ass", "und", -1)]
+    [InlineData("external", "srt", "spa", -1)]
+    [InlineData("embedded", "ass", "spa", -1)]
+    public async Task LegacySubtitleRebindingRequiresSourceAndCanonicalCodec(string source, string codec, string language, int expected)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var original = session.SubtitleUrls.Single(t => t.Index == 1);
+        original.TrackId = null; original.Language = language == "spa" ? "spa" : "und"; original.Label = null; original.NativeTitle = null;
+        original.Source = "embedded"; original.Codec = "srt";
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        session.SubtitleUrls = [new() { Index = 8, TrackId = "acquired-identity", Source = source, Codec = codec, Language = language }];
+
+        Assert.Equal(expected, scope.Manager.SubtitleSelectionForLoad);
+    }
+
     private static void SetUnknownLanguageInventory(Fixture scope, string language)
     {
         scope.Wire.OmitTrackIds = true;
