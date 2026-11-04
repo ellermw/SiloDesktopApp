@@ -62,11 +62,12 @@ public partial class PlayerService
                 _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             }
             mpv.SendScriptMessage("osc-native-audio-scope", version?.AudioTracks?.Count > 1 ? owner.Token : "");
-            mpv.SendScriptMessage("osc-native-quality-scope", (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-quality-scope", CanPresentNativeSpeed || (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-more-scope", owner.Token);
             mpv.SendScriptMessage("osc-native-stats-scope", owner.Token);
             mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-speed-scope", CanPresentNativeSpeed ? owner.Token : "");
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -88,6 +89,7 @@ public partial class PlayerService
             owner?.Mpv.SendScriptMessage("osc-native-more-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-stats-scope", "");
             owner?.Mpv.SendScriptMessage("osc-native-party-scope", "");
+            owner?.Mpv.SendScriptMessage("osc-native-speed-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -131,6 +133,7 @@ public partial class PlayerService
                 "more" => CreateNativeMoreMenu(owner, request, Finish),
                 "stats" => CreateNativeStatsMenu(owner, request, Finish),
                 "party" => CreateNativePartyMenu(owner, request, Finish),
+                "speed" => CreateNativeSpeedMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }

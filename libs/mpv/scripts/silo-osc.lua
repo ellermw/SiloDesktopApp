@@ -412,6 +412,7 @@ local function active_quality_label()
 end
 
 local function quality_choices_available()
+    if state.native_speed_scope then return true end
     if not state.quality_info then return false end
     local versions = state.watch_party and {} or (state.quality_info.versions or {})
     return #versions > 1 or #visible_quality_tiers() > 1
@@ -4720,16 +4721,17 @@ local function open_native_menu(kind, keyboard)
     if kind == 'party' and (state.playback_failure_visible or not state.watch_party or not state.watch_party.visible) then return true end
     if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1)
         or (kind == "chapters" and #state.chapters == 0) or state.osc_disabled
-        or state.playback_loading or state.post_roll_active
+        or state.playback_loading or state.post_roll_active or state.playback_failure_visible
         or state.native_menu_sequence >= 9007199254740991 then return true end
     compute_layout()
-    local opener = ({audio='btn_audio', subtitle='btn_cc', quality='btn_quality', chapters='btn_chapters', stats='btn_stats', speed='btn_speed', more='btn_more', party='btn_party'})[kind]
+    local opener = ({audio='btn_audio', subtitle='btn_cc', quality='btn_quality', chapters='btn_chapters', stats='btn_stats', speed='btn_quality', more='btn_more', party='btn_party'})[kind]
     local anchor = state.layout[opener] or state.layout.btn_more
     if not anchor then return true end
     close_transport_menus(nil)
     state.compact_menu_visible = false
     state.dragging_seek = false
     state.dragging_volume = false
+    state.native_speed_handoff = nil
     state.native_menu_sequence = state.native_menu_sequence + 1
     local request = {
         owner = scope, kind = kind,
@@ -4950,6 +4952,7 @@ local function activate_controller_focus()
     -- A focused Party opener expresses that intent. It must never run a
     -- buffering/failure action merely because that unrelated surface appeared.
     if state.controller_focus_name == 'btn_party' then return open_native_menu('party', true) end
+    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then return open_native_menu('quality', true) end
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
     end
@@ -6353,6 +6356,7 @@ local function setup_script_messages()
                 end
                 if scope and state.native_dialog_request and state.native_dialog_request.kind == kind
                     and state.native_dialog_request.owner ~= scope then state.native_dialog_request = nil end
+                if kind == 'quality' or kind == 'speed' then state.native_speed_handoff = nil end
                 local request = state.native_menu_request
                 if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
                     state.native_menu_request = nil
@@ -6365,11 +6369,23 @@ local function setup_script_messages()
             end
         end)
     end
+    mp.register_script_message('osc-native-speed-handoff', function(token, sequence)
+        -- The first host must acknowledge close/release before a second request.
+        -- A rotated scope or newer intent retires this exact handoff.
+        local closed = state.native_speed_handoff
+        if not closed or closed.owner ~= token or closed.sequence ~= tonumber(sequence) then return end
+        state.native_speed_handoff = nil
+        if state.native_menu_request or state.native_quality_scope ~= token or state.native_speed_scope ~= token
+            or tonumber(sequence) ~= state.native_menu_sequence then return end
+        open_native_menu('speed', closed.focus_name ~= nil)
+    end)
     mp.register_script_message("osc-native-menu-closed", function(token, sequence, consume)
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
         if request.kind == "more" then
             state.native_more_closed = { owner = request.owner, sequence = request.sequence, focus_name = request.focus_name }
+        elseif request.kind == 'quality' then
+            state.native_speed_handoff = {owner=request.owner,sequence=request.sequence,focus_name=request.focus_name}
         end
         state.native_menu_request = nil
         if consume == "true" then state.native_menu_pointer_block = request end

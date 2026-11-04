@@ -28,6 +28,7 @@ internal static class PlaybackQualityMenuNativeFixture
         using var wire = new Wire(media.Origin);
         using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://native-quality.fixture.invalid"); api.SetProfile("synthetic");
+        api.SetDeviceMetadata("quality-desktop", "Fixture", "Windows");
         using var auth = new AuthService(api, new AuthApi(api));
         var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
         using var service = new PlayerService(playback, catalog, auth, api,
@@ -90,7 +91,12 @@ internal static class PlaybackQualityMenuNativeFixture
                 {
                     Call(invalidMenu, "Input", "home"); Call(invalidMenu, "Input", "down");
                 }
-                else Call(invalidMenu, "Input", "end");
+                else
+                {
+                    Call(invalidMenu, "Input", "end");
+                    if (((ListView)Get(invalidMenu, "_list")!).SelectedItem is ListViewItem { Tag: "speed" })
+                        Call(invalidMenu, "Input", "up");
+                }
                 Call(invalidMenu, "Input", "activate");
                 await Until(() => mode == "version-invalid-url" ? wire.Files.Count > 1 : !wire.Qualities.IsEmpty,
                     "Native menu did not request its malformed playback decision.");
@@ -243,7 +249,10 @@ internal static class PlaybackQualityMenuNativeFixture
                 wire.HoldSuccessfulReplan = !wire.HoldFailedReplan;
                 var initialFile = (long)Get(service, "_playbackFileGeneration")!;
                 var initialError = service.ErrorMessage;
-                var heldMenu = await Open(); Call(heldMenu, "Input", "end"); Call(heldMenu, "Input", "activate");
+                var heldMenu = await Open(); Call(heldMenu, "Input", "end"); Call(heldMenu, "Input", "up");
+                Require(((ListView)Get(heldMenu, "_list")!).SelectedItem is ListViewItem { Tag: "quality:720p" },
+                    "Held successor case did not select the real server quality.");
+                Call(heldMenu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 wire.HoldSuccessorReplan = true;
                 var successor = (Task)Call(service, "RestartTransportForSeekAsync", 2d, false,
@@ -303,7 +312,10 @@ internal static class PlaybackQualityMenuNativeFixture
             {
                 wire.HoldFailedReplan = true;
                 var initialFile = (long)Get(service, "_playbackFileGeneration")!;
-                var pendingMenu = await Open(); Call(pendingMenu, "Input", "end"); Call(pendingMenu, "Input", "activate");
+                var pendingMenu = await Open(); Call(pendingMenu, "Input", "end"); Call(pendingMenu, "Input", "up");
+                Require(((ListView)Get(pendingMenu, "_list")!).SelectedItem is ListViewItem { Tag: "quality:720p" },
+                    "Retirement case did not select the real server quality.");
+                Call(pendingMenu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 Require(service.IsLoading && service.IsQualitySwitchActive, "The held quality action did not own busy state.");
                 api.SetProfile("replacement"); wire.ReleaseReplan.TrySetResult();
@@ -317,11 +329,15 @@ internal static class PlaybackQualityMenuNativeFixture
             }
             var menu = await Open();
             var list = (ListView)Get(menu, "_list")!;
-            Require(list.Items.Count == 5, "Native quality omitted versions or server ladder/Auto.");
+            Require(list.Items.Count == 6 && list.Items.OfType<ListViewItem>().Count(row => row.Tag is string id && id != "speed") == 5
+                && list.Items.OfType<ListViewItem>().Any(row => row.Tag is "speed" && row.IsEnabled),
+                "Native settings omitted existing versions/server ladder/Auto or the Speed navigation row.");
             await PlaybackAudioMenuNativeFixture.Capture(menu, "quality-initial");
             Require(mpv.IsPaused && wire.Qualities.IsEmpty, "Opening Quality changed playback.");
             Require((await Query()).GetProperty("legacy").GetBoolean() == false, "Native and legacy quality overlap.");
             Call(menu, "Input", "end");
+            Require(list.SelectedItem is ListViewItem { Tag: "speed" }, "End did not reach the Speed navigation row.");
+            Call(menu, "Input", "up");
             Require(list.SelectedItem is ListViewItem { Tag: "quality:720p" }, "End did not reach the last server quality.");
             Call(menu, "Input", "activate");
             await Until(() => wire.Qualities.Contains("720p") && !service.IsLoading && !service.IsQualitySwitchActive,
