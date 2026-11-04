@@ -96,6 +96,26 @@ public sealed class RetainedLibraryStateTests
     }
 
     [Fact]
+    public async Task ConfirmedOtherLibraryReadDoesNotWaitForInFlightWrite()
+    {
+        using var wire = new Wire { PutGate = new() };
+        wire.Libraries[22] = "second";
+        await wire.Store.ReadSnapshotAsync(11);
+        var write = wire.Store.WriteAsync(11, "new");
+        await wire.PutStarted.Task;
+        try
+        {
+            var reads = wire.Reads;
+            var read = new LibraryPageStateStore(wire.Settings).ReadSnapshotAsync(22);
+            Assert.Same(read, await Task.WhenAny(read, Task.Delay(500)));
+            Assert.Equal(new LibraryPageStateSnapshot(true, "second"), await read);
+            Assert.Equal(reads, wire.Reads);
+            Assert.False(write.IsCompleted);
+        }
+        finally { wire.PutGate.SetResult(); await write; }
+    }
+
+    [Fact]
     public async Task ConcurrentLibrariesMergeAcrossStoreWrappers()
     {
         using var wire = new Wire(); wire.PutGate = new();

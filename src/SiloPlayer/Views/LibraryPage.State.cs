@@ -21,7 +21,12 @@ public sealed partial class LibraryPage
     private bool _applyingLibraryState, _stateEventsAttached, _stateRefreshQueued, _stateRefreshAgain;
     private DispatcherTimer? _stateSaveTimer;
     private CancellationTokenSource? _stateRestoreCancellation;
-    private (int Id, string Search, SettingsRequestContext Owner, long Edit)? _pendingStateSave;
+    private readonly record struct LibraryStateSave(int Id, string Search, SettingsRequestContext Owner, long Edit);
+    private readonly Dictionary<(SettingsRequestContext Owner, int Id), LibraryStateSave> _pendingStateSaves = new();
+    private readonly HashSet<LibraryStateSave> _stateSavesInFlight = new();
+    private bool HasLibraryFilterDraft => _yearDebounceTimer != null || _advancedFilterDebounceTimer != null;
+    private bool HasUnsavedLibraryState(int id, SettingsRequestContext owner)
+        => _pendingStateSaves.ContainsKey((owner, id)) || _stateSavesInFlight.Any(save => save.Id == id && save.Owner == owner);
 
     private bool IsLibraryStateVisitCurrent(long visit, SettingsRequestContext owner, int libraryId)
         => _isNavigated && visit == _stateVisit && _activeLibraryId == libraryId &&
@@ -100,7 +105,8 @@ public sealed partial class LibraryPage
                 var previous = _stateSnapshot;
                 _stateSnapshot = snapshot;
                 // Opt-out changes future activation/save eligibility, never current user intent.
-                if (!snapshot.Value.Remember || snapshot == previous || snapshot.Value.Search == _retainedSearch) return;
+                if (!snapshot.Value.Remember || snapshot == previous || snapshot.Value.Search == _retainedSearch ||
+                    HasLibraryFilterDraft || HasUnsavedLibraryState(id, owner)) return;
                 var state = ParseOwnedLibrarySearch(snapshot.Value.Search, visit, owner, id);
                 if (state == null) return;
                 ApplyLibraryViewState(state);
@@ -135,7 +141,7 @@ public sealed partial class LibraryPage
         _retainedSearch = search;
         ++_stateEdit;
         if (_stateSettings.LibraryPageState.TryGetConfirmed(id, out var confirmed) && !confirmed.Remember) return;
-        _pendingStateSave = (id, search, owner, _stateEdit);
+        _pendingStateSaves[(owner, id)] = new(id, search, owner, _stateEdit);
         _stateSaveTimer ??= CreateStateSaveTimer();
         _stateSaveTimer.Stop(); _stateSaveTimer.Start();
     }
@@ -155,16 +161,36 @@ public sealed partial class LibraryPage
 
     private async Task FlushLibraryStateSaveAsync()
     {
-        _stateSaveTimer?.Stop(); var pending = _pendingStateSave; _pendingStateSave = null;
-        if (pending is not { } save || !_stateSettings.IsCurrentSettingsContext(save.Owner)) return;
-        var visit = _stateVisit;
-        try { await _stateSettings.LibraryPageState.WriteAsync(save.Id, save.Search); }
-        catch (OperationCanceledException) { }
+        _stateSaveTimer?.Stop();
+        var pending = _pendingStateSaves.Values.Where(save => !_stateSavesInFlight.Contains(save)).ToArray();
+        await Task.WhenAll(pending.Select(WriteLibraryStateSaveAsync));
+    }
+
+    private async Task WriteLibraryStateSaveAsync(LibraryStateSave save)
+    {
+        var key = (save.Owner, save.Id);
+        if (!_stateSettings.IsCurrentSettingsContext(save.Owner)) { _pendingStateSaves.Remove(key); return; }
+        _stateSavesInFlight.Add(save);
+        try
+        {
+            // Departure saves intentionally outlive the visit that captured them.
+            await _stateSettings.LibraryPageState.WriteAsync(save.Id, save.Search);
+            if (_pendingStateSaves.TryGetValue(key, out var latest) && latest == save)
+                _pendingStateSaves.Remove(key);
+            if (_stateOwner == save.Owner && _activeLibraryId == save.Id &&
+                _stateSettings.LibraryPageState.TryGetConfirmed(save.Id, out var confirmed) &&
+                (!confirmed.Remember || confirmed.Search == save.Search))
+                _stateSnapshot = confirmed;
+        }
+        catch (OperationCanceledException) when (!_stateSettings.IsCurrentSettingsContext(save.Owner)) { _pendingStateSaves.Remove(key); }
         catch (Exception ex)
         {
-            if (IsLibraryStateVisitCurrent(visit, save.Owner, save.Id) && save.Edit == _stateEdit)
+            if (!_stateSettings.IsCurrentSettingsContext(save.Owner)) { _pendingStateSaves.Remove(key); return; }
+            // Leave the latest edit queued for the next activation/departure, even while detached.
+            if (_activeLibraryId != save.Id || save.Edit == _stateEdit)
                 App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember library view: {ex.Message}");
         }
+        finally { _stateSavesInFlight.Remove(save); }
     }
 
     private static string FormatLibrarySearch(LibraryViewState state)

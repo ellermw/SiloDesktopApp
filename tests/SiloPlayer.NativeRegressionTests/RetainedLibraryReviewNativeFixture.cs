@@ -14,7 +14,7 @@ internal static partial class RetainedLibraryNativeFixture
     {
         await CheckActivationAndDepartureAsync(parent, navigation, wire, settings);
         var failures = new List<string>();
-        foreach (var scenario in new[] { "opt-out", "save-error" })
+        foreach (var scenario in new[] { "opt-out", "save-error", "two-edits", "two-edits-failed", "two-edits-confirmed-during-return", "departure-save-error" })
         {
             wire.LibraryId++; wire.Remember = true; wire.Search = "?tab=recommended";
             wire.FailHeldRead = false; wire.FailPut = false;
@@ -59,7 +59,7 @@ internal static partial class RetainedLibraryNativeFixture
                     frame.GoBack(); await Until(() => page.IsLoaded); await Settle();
                     Check(Tab() == "Collections", "Old owner's opt-out does not leak into unknown successor preference on return.");
                 }
-                else
+                else if (scenario == "save-error")
                 {
                     wire.PutErrorMessage = "Review obsolete save A failure"; wire.FailPut = true;
                     wire.PutGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -74,10 +74,72 @@ internal static partial class RetainedLibraryNativeFixture
                     Click("CollectionsTab"); await Until(() => Errors().Contains("Review current save failure", StringComparison.Ordinal));
                     Check(Tab() == "Collections", "A current save failure still emits its error and preserves the active view.");
                 }
+                else if (scenario is "two-edits" or "two-edits-failed" or "two-edits-confirmed-during-return")
+                {
+                    var writes = wire.StateWrites;
+                    Click("CollectionsTab");
+                    await Until(() => wire.StateWrites > writes && wire.Search.Contains("tab=collections", StringComparison.Ordinal));
+                    await Settle(); // First save B completes without any realtime echo.
+                    writes = wire.StateWrites;
+                    wire.FailPut = scenario == "two-edits-failed";
+                    wire.PutErrorMessage = "Review second edit departure failure";
+                    wire.PutGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Click("LibraryTab");
+                    await Until(() => wire.StateWrites > writes && page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
+                    var scroll = (ScrollViewer)page.FindName("LibraryScroller");
+                    scroll.ChangeView(null, 400, null, true);
+                    await Until(() => scroll.VerticalOffset > 350);
+                    var offset = scroll.VerticalOffset;
+                    var catalogReads = wire.CatalogReads;
+                    await Leave();
+                    if (scenario == "two-edits-failed")
+                    {
+                        wire.PutGate.SetResult(); wire.PutGate = null;
+                        await Until(() => Errors().Contains(wire.PutErrorMessage, StringComparison.Ordinal));
+                        wire.FailPut = false;
+                    }
+                    var ratings = wire.RatingReads;
+                    if (scenario == "two-edits-confirmed-during-return")
+                    {
+                        wire.RatingsGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        ((CatalogApi)SiloPlayer.App.Services.GetService(typeof(CatalogApi))!).InvalidateRatingCapability();
+                    }
+                    frame.GoBack(); await Until(() => page.IsLoaded);
+                    if (scenario == "two-edits-confirmed-during-return")
+                    {
+                        await Until(() => wire.RatingReads > ratings);
+                        wire.PutGate!.SetResult(); wire.PutGate = null;
+                        await Until(() => Field<LibraryPageStateSnapshot?>(page, "_stateSnapshot")?.Search?.Contains("tab=library", StringComparison.Ordinal) == true);
+                        wire.RatingsGate!.SetResult(); wire.RatingsGate = null;
+                    }
+                    await Task.Delay(200);
+                    Check(Tab() == "Library" && wire.CatalogReads == catalogReads && Math.Abs(scroll.VerticalOffset - offset) < 2,
+                        "Second local save (" + scenario + ") retains C rather than restoring the older confirmed B.");
+                    wire.PutGate?.SetResult(); wire.PutGate = null;
+                    await Until(() => wire.Search.Contains("tab=library", StringComparison.Ordinal));
+                    await Settle();
+                }
+                else
+                {
+                    wire.FailPut = true; wire.PutErrorMessage = "Review departure flush failure";
+                    wire.PutGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var writes = wire.StateWrites;
+                    Click("CollectionsTab");
+                    await Until(() => Tab() == "Collections");
+                    await Leave(); // Flush the queued edit before its save debounce.
+                    await Until(() => wire.StateWrites > writes);
+                    wire.PutGate.SetResult(); wire.PutGate = null;
+                    await Until(() => Errors().Contains(wire.PutErrorMessage, StringComparison.Ordinal));
+                    wire.FailPut = false; writes = wire.StateWrites;
+                    frame.GoBack(); await Until(() => page.IsLoaded);
+                    await Until(() => wire.StateWrites > writes && wire.Search.Contains("tab=collections", StringComparison.Ordinal));
+                    Check(Tab() == "Collections", "A failed departure flush reports its error and retries the unchanged dirty view on return.");
+                }
             }
             finally
             {
                 wire.PutGate?.TrySetResult(); wire.PutGate = null; wire.FailPut = false; wire.FailHeldRead = false;
+                wire.RatingsGate?.TrySetResult(); wire.RatingsGate = null;
                 frame.Navigate(typeof(Page)); parent.Children.Remove(frame);
                 if (page != null) await Until(() => !page.IsLoaded);
                 await Task.Delay(150);

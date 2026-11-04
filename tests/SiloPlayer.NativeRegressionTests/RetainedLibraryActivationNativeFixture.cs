@@ -12,7 +12,7 @@ internal static partial class RetainedLibraryNativeFixture
 {
     private static async Task CheckActivationAndDepartureAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings)
     {
-        foreach (var scenario in new[] { "same-tab", "other-tab", "library-switch", "explicit", "reload", "year-debounce", "rule-debounce", "language" })
+        foreach (var scenario in new[] { "same-tab", "other-tab", "library-switch", "explicit", "reload", "year-debounce", "rule-debounce", "language", "genre-history", "year-before-refresh", "rule-before-refresh" })
         {
             wire.LibraryId++; wire.Remember = true; wire.Search = "?tab=recommended";
             settings.LibraryPageState.Invalidate();
@@ -22,11 +22,11 @@ internal static partial class RetainedLibraryNativeFixture
             try
             {
                 var library = new Library { Id = wire.LibraryId, Name = "Activation fixture", Type = "movie" };
-                if (scenario is "reload" or "year-debounce" or "rule-debounce") wire.Search = "?tab=library";
+                if (scenario is "reload" or "year-debounce" or "rule-debounce" or "year-before-refresh" or "rule-before-refresh") wire.Search = "?tab=library";
                 if (scenario == "library-switch") wire.Search = "?tab=library&genre=Drama";
                 if (scenario is "same-tab" or "other-tab" or "explicit") wire.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 var reads = wire.StateReads;
-                frame.Navigate(typeof(LibraryPage), scenario == "explicit" ? new LibraryPage.NavigationArgs(library, "Library", "Crime") : (object)library);
+                frame.Navigate(typeof(LibraryPage), scenario is "explicit" or "genre-history" ? new LibraryPage.NavigationArgs(library, "Library", "Crime") : (object)library);
                 page = (LibraryPage)frame.Content;
                 await Until(() => page.IsLoaded && wire.StateReads > reads);
 
@@ -75,6 +75,56 @@ internal static partial class RetainedLibraryNativeFixture
                         Click("RecommendedTab");
                         Require(Field<long>(page, "_stateEdit") == currentEdit, "Same-tab click marked the view edited.");
                     }
+                }
+                else if (scenario == "genre-history")
+                {
+                    await Ready();
+                    await Until(() => page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
+                    await Task.Delay(750);
+                    var writes = wire.StateWrites;
+                    Click("ClearAllFiltersButton");
+                    await Until(() => page.ViewModel.SelectedGenres.Count == 0 && !page.ViewModel.IsLoading && wire.StateWrites > writes);
+                    await Task.Delay(150);
+                    var scroll = (ScrollViewer)page.FindName("LibraryScroller");
+                    scroll.ChangeView(null, 400, null, true);
+                    await Until(() => scroll.VerticalOffset > 350);
+                    var offset = scroll.VerticalOffset;
+                    var catalogReads = wire.CatalogReads;
+                    await Leave(); frame.GoBack(); await Until(() => page.IsLoaded);
+                    await Task.Delay(200);
+                    Require(ReferenceEquals(page, frame.Content) && page.ViewModel.SelectedGenres.Count == 0 &&
+                        wire.CatalogReads == catalogReads && Math.Abs(scroll.VerticalOffset - offset) < 2,
+                        "Back replayed the original genre parameter, reset the retained catalog/offset, or discarded the edited filter.");
+                    Click("CollectionsTab");
+                    await Until(() => wire.Search.Contains("tab=collections", StringComparison.Ordinal));
+                    await Leave(); frame.GoBack(); await Until(() => page.IsLoaded); await Task.Delay(200);
+                    Require(Tab() == "Collections", "Back replayed InitialTab after a later tab edit.");
+                }
+                else if (scenario is "year-before-refresh" or "rule-before-refresh")
+                {
+                    await Ready(); await Until(() => page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
+                    NumberBox? yearRule = null;
+                    var year = (TextBox)page.FindName("YearMinBox");
+                    QueryFilterEditor? editor = null;
+                    if (scenario == "year-before-refresh") year.Text = "1999";
+                    else
+                    {
+                        Click("OpenFiltersButton");
+                        await Until(() => ((SlideSheet)page.FindName("FiltersSheet")).IsOpen);
+                        editor = Field<QueryFilterEditor>(page, "_sharedFilterEditor");
+                        yearRule = Descendants<NumberBox>(editor).First();
+                        yearRule.Value = 1999;
+                    }
+                    var refreshReads = wire.StateReads;
+                    wire.Search = "?tab=recommended";
+                    settings.NotifyLocalizedSettingChanged("ui.library_page_state");
+                    await Until(() => wire.StateReads > refreshReads);
+                    await Task.Delay(100); // Inspect before the 400/500 ms draft debounce commits.
+                    Require(Tab() == "Library" && (yearRule == null ? year.Text == "1999" :
+                        yearRule.Value == 1999 && ReferenceEquals(editor, Field<QueryFilterEditor>(page, "_sharedFilterEditor"))),
+                        "An invalidation delivered after a local draft overwrote that draft before its debounce.");
+                    await Until(() => Uri.UnescapeDataString(wire.Search).Contains("1999", StringComparison.Ordinal));
+                    if (editor != null) ((SlideSheet)page.FindName("FiltersSheet")).IsOpen = false;
                 }
                 else if (scenario is "reload" or "year-debounce" or "rule-debounce")
                 {

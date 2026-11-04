@@ -311,8 +311,12 @@ public sealed partial class LibraryPage : Page,
         if (e.Parameter is NavigationArgs navigationArgs)
         {
             library = navigationArgs.Library;
-            requestedTab = navigationArgs.InitialTab;
-            requestedGenre = navigationArgs.InitialGenre;
+            // History replays the original parameter, not a new tab/genre request.
+            if (e.NavigationMode == NavigationMode.New)
+            {
+                requestedTab = navigationArgs.InitialTab;
+                requestedGenre = navigationArgs.InitialGenre;
+            }
         }
 
         LibraryUnavailableState.Visibility = library == null
@@ -393,13 +397,16 @@ public sealed partial class LibraryPage : Page,
                 snapshot = await RestoreLibraryStateAsync(library.Id, visit, owner);
                 if (!IsLibraryStateVisitCurrent(visit, owner, library.Id)) return;
             }
+            // An own save can confirm a newer document during metadata revalidation
+            // without changing the invalidation revision.
+            if (_stateSettings.LibraryPageState.TryGetConfirmed(library.Id, out var latestConfirmed)) snapshot = latestConfirmed;
             // A failed read cannot turn this owner's known opt-out into an unknown preference.
             if (snapshot == null && _stateSnapshot is { Remember: false }) snapshot = _stateSnapshot;
             // A newer same-library edit wins over the restore, but must not abandon
             // activation: an interrupted tab still needs its content loaded.
-            var edited = sameLibrary && edit != _stateEdit;
+            var edited = sameLibrary && (edit != _stateEdit || HasLibraryFilterDraft);
             var retain = sameLibrary && (edited || snapshot == null || snapshot.Value.Remember &&
-                (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch));
+                (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch || HasUnsavedLibraryState(library.Id, owner)));
             var state = retain ? CaptureLibraryViewState(_currentTab) :
                 ParseOwnedLibrarySearch(snapshot?.Search, visit, owner, library.Id) ??
                 (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
@@ -433,6 +440,7 @@ public sealed partial class LibraryPage : Page,
             // Only newly restored input establishes a baseline; retaining visible
             // input must not mark an unsaved edit as already persisted.
             if (!retain) _retainedSearch = snapshot?.Search;
+            FlushLibraryStateSave(); // Retry failed departure saves without blocking retained activation.
             if (requestedTab != null || requestedGenre != null)
                 ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));
             if (!retain) _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));

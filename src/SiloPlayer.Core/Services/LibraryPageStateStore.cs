@@ -73,6 +73,11 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
     public async Task<LibraryPageStateSnapshot> ReadSnapshotAsync(int libraryId, CancellationToken ct = default)
     {
         var owner = settings.CaptureSettingsContext();
+        EnsureOwner(owner, ct);
+        // A confirmed multi-library document is safe to read while a write is in flight.
+        lock (State.Sync)
+            if (State.Confirmed is { } confirmed && confirmed.Owner == owner && confirmed.Generation == State.Generation)
+                return Snapshot(confirmed, libraryId);
         var operations = State.OperationsFor(owner, settings);
         await operations.WaitAsync(ct);
         try
