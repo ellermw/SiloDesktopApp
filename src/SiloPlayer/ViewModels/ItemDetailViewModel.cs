@@ -154,8 +154,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                 item.Overview = refreshed.Overview;
                 item.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
                 item.MachineTranslatedFields = refreshed.MachineTranslatedFields;
+                var parentChanged = refreshed.HasAuthoritativeSeriesId && refreshed.SeriesId != item.SeriesId;
                 if (refreshed.HasAuthoritativeSeriesId) item.SeriesId = refreshed.SeriesId;
-                if (refreshed.SeriesTitle != null) item.SeriesTitle = refreshed.SeriesTitle;
+                if (refreshed.SeriesTitle != null || parentChanged) item.SeriesTitle = refreshed.SeriesTitle;
             }
             _seriesOverview = series;
             _overviewLibrary = library;
