@@ -158,9 +158,9 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var notices = new ConcurrentQueue<string>();
         void Observe(string[] message)
         {
-            if (message.FirstOrDefault() == "switch-race-ready") ready.TrySetResult();
-            if (message.FirstOrDefault() == "switch-race-drained" && message.Length > 1) drained.TrySetResult(message[1]);
-            if (message.FirstOrDefault() == "switch-race-notice" && message.Length > 1) notices.Enqueue(message[1]);
+            if (message.FirstOrDefault() == "silo-switch-race-ready") ready.TrySetResult();
+            if (message.FirstOrDefault() == "silo-switch-race-drained" && message.Length > 1) drained.TrySetResult(message[1]);
+            if (message.FirstOrDefault() == "silo-switch-race-notice" && message.Length > 1) notices.Enqueue(message[1]);
         }
         mpv.ScriptMessageReceived += Observe;
         var probe = Path.Combine(Program.ResultDirectory, scenario + ".lua");
@@ -169,12 +169,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             local active = '0' -- optimistic pending choice
             mp.register_script_message('osc-set-active-subtitle', function(index) active = index end)
             mp.register_script_message('osc-show-notice', function(payload)
-                mp.commandv('script-message', 'switch-race-notice', payload)
+                mp.commandv('script-message', 'silo-switch-race-notice', payload)
             end)
-            mp.register_script_message('switch-race-barrier', function()
-                mp.commandv('script-message', 'switch-race-drained', active)
+            mp.register_script_message('silo-switch-race-barrier', function()
+                mp.commandv('script-message', 'silo-switch-race-drained', active)
             end)
-            mp.commandv('script-message', 'switch-race-ready')
+            mp.commandv('script-message', 'silo-switch-race-ready')
             """);
         Call(mpv, "Command", (object)new[] { "load-script", probe });
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
@@ -256,7 +256,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 if (scenario == "seek-failed-pick")
                     await Until(() => Get(service, "_seekRestartCts") == null);
             }
-            mpv.SendScriptMessage("switch-race-barrier");
+            mpv.SendScriptMessage("silo-switch-race-barrier");
             Require(await drained.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "1" && notices.Any(n => n.Contains("Subtitle unavailable", StringComparison.Ordinal)),
                 "Refusal failed to restore the applied OSC choice with feedback.");
             Require(service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") == priorSid &&
@@ -290,7 +290,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         using var auth = new AuthService(api, new AuthApi(api));
         var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
         using var service = new PlayerService(playback, catalog, auth, api,
-            new SettingsService(Path.Combine(Program.ResultDirectory, "loaded-sidecar-" + scenario)), new SettingsApi(api));
+            new SettingsService(Path.Combine(Program.ResultDirectory, "silo-loaded-sidecar-" + scenario)), new SettingsApi(api));
         using var manager = new PlaybackManager(playback, catalog, auth, api);
         manager.UseWatchDetail(new() { ContentId = "movie", Versions = [Version()] }); await manager.StartSessionAsync(42);
         var track = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0);
@@ -319,23 +319,23 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var notices = new ConcurrentQueue<string>();
         void Observe(string[] message)
         {
-            if (message.FirstOrDefault() == "loaded-sidecar-auto-skip") autoSkipConfigured.TrySetResult();
+            if (message.FirstOrDefault() == "silo-loaded-sidecar-auto-skip") autoSkipConfigured.TrySetResult();
             if (message.Length < 2) return;
-            if (message[0] == "loaded-sidecar-ready") ready.TrySetResult(message[1]);
-            if (message[0] == "loaded-sidecar-drained") drained.TrySetResult(message[1]);
-            if (message[0] == "loaded-sidecar-notice") notices.Enqueue(message[1]);
+            if (message[0] == "silo-loaded-sidecar-ready") ready.TrySetResult(message[1]);
+            if (message[0] == "silo-loaded-sidecar-drained") drained.TrySetResult(message[1]);
+            if (message[0] == "silo-loaded-sidecar-notice") notices.Enqueue(message[1]);
         }
         mpv.ScriptMessageReceived += Observe;
         try
         {
-            var probe = Path.Combine(Program.ResultDirectory, "loaded-sidecar-" + scenario + ".lua");
+            var probe = Path.Combine(Program.ResultDirectory, "silo-loaded-sidecar-" + scenario + ".lua");
             await File.WriteAllTextAsync(probe, """
                 local mp = require 'mp'
                 local active = '-1'
                 local intro_mode_ready = false
                 mp.register_script_message('osc-set-intro-mode', function() intro_mode_ready = true end)
                 mp.register_script_message('osc-set-auto-skip', function()
-                    if intro_mode_ready then mp.commandv('script-message', 'loaded-sidecar-auto-skip') end
+                    if intro_mode_ready then mp.commandv('script-message', 'silo-loaded-sidecar-auto-skip') end
                 end)
                 local default_selected = false
                 for _, track in ipairs(mp.get_property_native('track-list', {})) do
@@ -344,14 +344,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     end
                 end
                 mp.register_script_message('osc-set-active-subtitle', function(index) active = index end)
-                mp.register_script_message('loaded-sidecar-pending', function() active = '0' end)
+                mp.register_script_message('silo-loaded-sidecar-pending', function() active = '0' end)
                 mp.register_script_message('osc-show-notice', function(payload)
-                    mp.commandv('script-message', 'loaded-sidecar-notice', payload)
+                    mp.commandv('script-message', 'silo-loaded-sidecar-notice', payload)
                 end)
-                mp.register_script_message('loaded-sidecar-barrier', function()
-                    mp.commandv('script-message', 'loaded-sidecar-drained', active)
+                mp.register_script_message('silo-loaded-sidecar-barrier', function()
+                    mp.commandv('script-message', 'silo-loaded-sidecar-drained', active)
                 end)
-                mp.commandv('script-message', 'loaded-sidecar-ready', tostring(default_selected))
+                mp.commandv('script-message', 'silo-loaded-sidecar-ready', tostring(default_selected))
                 """);
             Call(mpv, "Command", (object)new[] { "load-script", probe });
             Require(await ready.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "true" && mpv.GetPropertyDouble("sid") > 0,
@@ -372,7 +372,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 "Auto-skip settings must reach the OSC while the initial sidecar read is still held.");
             if (scenario == "sync-stop")
             {
-                mpv.SendScriptMessage("loaded-sidecar-pending");
+                mpv.SendScriptMessage("silo-loaded-sidecar-pending");
                 Call(service, "StopSubtitleSync");
             }
             subtitles.Release.TrySetResult();
@@ -384,7 +384,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 subtitles.FallbackRelease.TrySetResult();
             }
             await pending.WaitAsync(TimeSpan.FromSeconds(12));
-            mpv.SendScriptMessage("loaded-sidecar-barrier");
+            mpv.SendScriptMessage("silo-loaded-sidecar-barrier");
             if (urlFallbackRecovers)
             {
                 Require(await drained.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "0" &&
@@ -475,12 +475,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var noticeDrained = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         void ObserveNotice(string[] message)
         {
-            if (message.FirstOrDefault() == "busy-notice-ready") noticeReady.TrySetResult();
-            if (message.FirstOrDefault() == "busy-notice-drained" && message.Length > 1) noticeDrained.TrySetResult(message[1]);
-            if (message.FirstOrDefault() == "busy-notice" && message.Length > 1) notices.Enqueue(message[1]);
+            if (message.FirstOrDefault() == "silo-busy-notice-ready") noticeReady.TrySetResult();
+            if (message.FirstOrDefault() == "silo-busy-notice-drained" && message.Length > 1) noticeDrained.TrySetResult(message[1]);
+            if (message.FirstOrDefault() == "silo-busy-notice" && message.Length > 1) notices.Enqueue(message[1]);
         }
         mpv.ScriptMessageReceived += ObserveNotice;
-        var noticeProbe = Path.Combine(Program.ResultDirectory, "busy-notice-" + scenario + ".lua");
+        var noticeProbe = Path.Combine(Program.ResultDirectory, "silo-busy-notice-" + scenario + ".lua");
         await File.WriteAllTextAsync(noticeProbe, """
             local mp = require 'mp'
             local active_subtitle = '-1'
@@ -491,12 +491,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 active_subtitle = index
             end)
             mp.register_script_message('osc-show-notice', function(payload)
-                mp.commandv('script-message', 'busy-notice', payload)
+                mp.commandv('script-message', 'silo-busy-notice', payload)
             end)
-            mp.register_script_message('busy-notice-barrier', function()
-                mp.commandv('script-message', 'busy-notice-drained', active_subtitle)
+            mp.register_script_message('silo-busy-notice-barrier', function()
+                mp.commandv('script-message', 'silo-busy-notice-drained', active_subtitle)
             end)
-            mp.commandv('script-message', 'busy-notice-ready')
+            mp.commandv('script-message', 'silo-busy-notice-ready')
             """);
         Call(mpv, "Command", (object)new[] { "load-script", noticeProbe });
         await noticeReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
@@ -605,7 +605,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             if (scenario != "close")
             {
-                mpv.SendScriptMessage("busy-notice-barrier");
+                mpv.SendScriptMessage("silo-busy-notice-barrier");
                 await noticeDrained.Task.WaitAsync(TimeSpan.FromSeconds(4));
             }
             if (readFailure && !urlFallback || scenario is "no-context-sync-stop" or "fallback-load" or "fallback-sync-stop")
