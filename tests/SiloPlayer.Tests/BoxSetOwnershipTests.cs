@@ -42,7 +42,7 @@ public sealed class BoxSetOwnershipTests
     public async Task FailedBackgroundReadMustRevalidateBeforeNewPlayback(bool recovers)
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         var previous = vm.Detail;
         client.InvalidateAccessContext(); wire.DetailStatus = HttpStatusCode.ServiceUnavailable;
         await vm.RefreshAsync();
@@ -104,7 +104,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task DepartureCannotBeRevivedByQueuedRefresh()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
-        var set = new BoxSetViewModel(api); await set.LoadAsync("7", "2"); set.Cancel();
+        var set = new BoxSetViewModel(api); await set.LoadAsync("7", "12"); set.Cancel();
         var reads = wire.DetailReads; await set.RefreshAsync(); Assert.Equal(reads, wire.DetailReads); Assert.Null(set.Detail);
     }
     [Fact] public async Task DepartureCannotBeRevivedByQueuedRefreshForMovie()
@@ -184,7 +184,7 @@ public sealed class BoxSetOwnershipTests
     public async Task SetActionSelectsNormalMovieWithResponseLibraryAndRetiresOnDeparture(bool allPlayed)
     {
         using var wire = new Wire { AllPlayed = allPlayed }; using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         var calls = 0;
         await vm.PlayAsync((id, library, owner, ct) => { calls++; Assert.Equal(allPlayed ? "first" : "second", id); Assert.Equal(12, library); Assert.True(client.IsCurrentContext(owner)); Assert.False(ct.IsCancellationRequested); return Task.CompletedTask; });
         Assert.Equal(1, calls); vm.Cancel();
@@ -192,7 +192,8 @@ public sealed class BoxSetOwnershipTests
         Assert.Contains("Reopen", error.Message); Assert.Equal(1, calls);
     }
     [Theory]
-    [InlineData("12", true, true)]
+    [InlineData("2", true, true)]
+    [InlineData("12", true, false)]
     [InlineData("12", false, false)]
     [InlineData("99", true, false)]
     [InlineData("0", true, false)]
@@ -206,7 +207,7 @@ public sealed class BoxSetOwnershipTests
         if (allowed)
         {
             Assert.Equal(returned, vm.Detail?.LibraryId); Assert.Equal(DetailFailureKind.None, vm.Failure);
-            await vm.PlayAsync((_, library, _, _) => { calls++; Assert.Equal(12, library); return Task.CompletedTask; });
+            await vm.PlayAsync((_, library, _, _) => { calls++; Assert.Equal(2, library); return Task.CompletedTask; });
             Assert.Equal(1, calls);
         }
         else
@@ -218,11 +219,42 @@ public sealed class BoxSetOwnershipTests
         Assert.False(vm.IsLoading); vm.Cancel();
     }
 
+    [Theory]
+    [InlineData("8", "12")]
+    [InlineData("", "12")]
+    [InlineData("7", "2")]
+    [InlineData("8", "2")]
+    public async Task DedicatedDetailRejectsMismatchedResponseOnLoadAndRefresh(string returnedId, string returnedLibrary)
+    {
+        using var wire = new Wire { ReturnedId = returnedId, ReturnedLibrary = returnedLibrary };
+        using var http = new HttpClient(wire);
+        var vm = new BoxSetViewModel(new CatalogApi(Client(http)));
+        var calls = 0;
+        async Task AssertRejected()
+        {
+            Assert.Null(vm.Detail); Assert.Equal(DetailFailureKind.AccessDenied, vm.Failure); Assert.False(vm.IsLoading);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
+            Assert.Equal(0, calls);
+        }
+        try
+        {
+            await vm.LoadAsync("7", "12");
+            await AssertRejected();
+            wire.ReturnedId = "7"; wire.ReturnedLibrary = "12";
+            await vm.RefreshAsync();
+            Assert.NotNull(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure);
+            wire.ReturnedId = returnedId; wire.ReturnedLibrary = returnedLibrary;
+            await vm.RefreshAsync();
+            await AssertRejected();
+        }
+        finally { vm.Cancel(); }
+    }
+
     [Theory] [InlineData("profile")] [InlineData("access")] [InlineData("language")]
     public async Task RetiredActiveReadReleasesItsOwnLoadingWithoutPublishingStaleDetail(string change)
     {
         using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); var read = vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); var read = vm.LoadAsync("7", "12");
         await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.True(vm.IsLoading);
         if (change == "profile") client.SetProfile("other");
@@ -235,7 +267,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task RetiredOlderReadDoesNotReleaseTheNewerRequestLoading()
     {
         using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); var old = vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); var old = vm.LoadAsync("7", "12");
         await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var oldRelease = wire.Release;
         wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -250,7 +282,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task PrimaryActionRevalidatesAccessAndUsesTheCurrentTargetAndReadOwner()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         client.InvalidateAccessContext(); wire.AllPlayed = true;
         Assert.False(vm.IsCurrent); Assert.True(vm.CanPlay);
         var reads = wire.DetailReads; var calls = 0;
@@ -265,7 +297,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task FailedAccessRevalidationReportsARetryablePrimaryActionFailure()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         client.InvalidateAccessContext(); wire.DetailStatus = HttpStatusCode.ServiceUnavailable;
         var calls = 0;
         await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
@@ -275,7 +307,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task PrimaryActionCannotAdoptADifferentViewer()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         client.SetProfile("other"); var calls = 0;
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
         Assert.Contains("Reopen", error.Message); Assert.False(vm.CanPlay); Assert.Equal(0, calls); vm.Cancel();
@@ -284,7 +316,7 @@ public sealed class BoxSetOwnershipTests
     public async Task PrimaryActionReportsRetirementDuringAccessRevalidation(string change)
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         client.InvalidateAccessContext(); wire.Hold = true;
         wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
@@ -300,7 +332,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task DedicatedFailureAllowsRetryButUnavailableIsDistinct()
     {
         using var wire = new Wire { DetailStatus = HttpStatusCode.ServiceUnavailable }; using var http = new HttpClient(wire);
-        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "2"); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
+        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "12"); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
         wire.DetailStatus = HttpStatusCode.NotFound; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.NotFound, vm.Failure);
         wire.DetailStatus = HttpStatusCode.OK; await vm.RefreshAsync(); Assert.NotNull(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
     }
@@ -308,7 +340,7 @@ public sealed class BoxSetOwnershipTests
     {
         using var wire = new Wire { CapabilityStatus = HttpStatusCode.ServiceUnavailable }; using var http = new HttpClient(wire);
         var vm = new BoxSetViewModel(new CatalogApi(Client(http)));
-        await vm.LoadAsync("7", "2");
+        await vm.LoadAsync("7", "12");
         Assert.Equal(DetailFailureKind.Transient, vm.Failure); Assert.False(vm.IsLoading); Assert.Null(vm.Detail);
         wire.CapabilityStatus = HttpStatusCode.OK; await vm.RefreshAsync();
         Assert.NotNull(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
@@ -317,21 +349,21 @@ public sealed class BoxSetOwnershipTests
     public async Task ExplicitlyUnsupportedCapabilityIsUnavailable(int status)
     {
         using var wire = new Wire { CapabilityStatus = (HttpStatusCode)status, Supported = false }; using var http = new HttpClient(wire);
-        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "12");
         Assert.Equal(DetailFailureKind.NotFound, vm.Failure); Assert.Equal(0, wire.DetailReads); vm.Cancel();
     }
     [Theory] [InlineData(false)] [InlineData(true)]
     public async Task TransportTimeoutIsNotCallerCancellation(bool capability)
     {
         using var wire = new Wire { TimeoutDetail = !capability, TimeoutCapability = capability }; using var http = new HttpClient(wire);
-        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "12");
         Assert.Equal(DetailFailureKind.Transient, vm.Failure); Assert.False(vm.IsLoading); Assert.Null(vm.Detail);
         wire.TimeoutDetail = wire.TimeoutCapability = false; await vm.RefreshAsync(); Assert.NotNull(vm.Detail); vm.Cancel();
     }
     [Fact] public async Task BackgroundFailureKeepsSuccessfulDetailAndRow()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
-        var set = new BoxSetViewModel(api); await set.LoadAsync("7", "2"); var visible = set.Detail;
+        var set = new BoxSetViewModel(api); await set.LoadAsync("7", "12"); var visible = set.Detail;
         var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
         SetMovie(movie); await movie.RefreshBoxSetAsync(); var row = movie.BoxSet;
         wire.DetailStatus = HttpStatusCode.ServiceUnavailable;
@@ -350,7 +382,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task AcceptedStartSurvivesRefreshAndLanguageReadButNotDeparture()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken accepted = default; var completed = false;
         var start = vm.PlayAsync(async (_, _, _, ct) => { accepted = ct; await release.Task.WaitAsync(ct); completed = true; });
@@ -364,7 +396,7 @@ public sealed class BoxSetOwnershipTests
     public async Task AccessRevisionDuringAcceptedStartKeepsItsTokenAndMountedDetail(int status)
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         var visible = vm.Detail; Assert.NotNull(visible);
         var detailCleared = false;
         vm.PropertyChanged += (_, args) =>
@@ -391,7 +423,7 @@ public sealed class BoxSetOwnershipTests
     [Fact] public async Task AuthorityChangeRetiresAcceptedStart()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
-        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
         CancellationToken accepted = default;
         await vm.PlayAsync((_, _, _, ct) => { accepted = ct; return Task.CompletedTask; });
         client.SetProfile("other"); await vm.RefreshAsync(); Assert.True(accepted.IsCancellationRequested); vm.Cancel();
@@ -495,7 +527,7 @@ public sealed class BoxSetOwnershipTests
     {
         internal bool? Supported = true;
         internal bool Hold, AllPlayed, Enabled = true, OtherEnabled = true; internal int DetailReads;
-        internal string ReturnedLibrary = "12";
+        internal string ReturnedId = "7", ReturnedLibrary = "12";
         internal HttpStatusCode DetailStatus = HttpStatusCode.OK, CapabilityStatus = HttpStatusCode.OK;
         internal bool TimeoutDetail, TimeoutCapability, NoMembership;
         internal string? LastLibraryQuery, LastMembershipQuery;
@@ -521,7 +553,7 @@ public sealed class BoxSetOwnershipTests
                 if (TimeoutDetail) throw new TaskCanceledException("Synthetic transport timeout without caller cancellation.");
                 if (path.EndsWith("/box-set")) LastMembershipQuery = request.RequestUri.Query;
                 status = DetailStatus;
-                var detail = "{\"id\":\"7\",\"library_id\":\"" + ReturnedLibrary + "\",\"movie_count\":2,\"played_count\":" + (AllPlayed ? "2" : "1") + ",\"items\":[{\"type\":\"movie\",\"content_id\":\"first\",\"user_state\":{\"played\":true}},{\"type\":\"movie\",\"content_id\":\"second\",\"user_state\":{\"played\":" + AllPlayed.ToString().ToLowerInvariant() + "}}]}";
+                var detail = "{\"id\":\"" + ReturnedId + "\",\"library_id\":\"" + ReturnedLibrary + "\",\"movie_count\":2,\"played_count\":" + (AllPlayed ? "2" : "1") + ",\"items\":[{\"type\":\"movie\",\"content_id\":\"first\",\"user_state\":{\"played\":true}},{\"type\":\"movie\",\"content_id\":\"second\",\"user_state\":{\"played\":" + AllPlayed.ToString().ToLowerInvariant() + "}}]}";
                 json = path.EndsWith("/box-set") ? NoMembership ? "{\"box_set\":null}" : "{\"box_set\":" + detail + "}" : detail;
             }
             return new(status) { Content = new StringContent(json) };

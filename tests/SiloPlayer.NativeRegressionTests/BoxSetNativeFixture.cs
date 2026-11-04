@@ -44,7 +44,7 @@ internal static partial class BoxSetNativeFixture
         await VerifyInitialSurfaceInvalidationsAsync(parent, catalog, api, wire);
         var page = new BoxSetPage(catalog, api) { Width = 960, Height = 700 };
         parent.Children.Add(page);
-        await page.ViewModel.LoadAsync("7", "2"); await Task.Delay(120); page.UpdateLayout();
+        await page.ViewModel.LoadAsync("7", "12"); await Task.Delay(120); page.UpdateLayout();
         Check(page.ViewModel.Detail?.Items.Select(x => x.ContentId).SequenceEqual(new[] { "first", "second", "third" }) == true, "server release order");
         var play = Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay");
         Check(((TextBlock)play.Content).Text == "Continue · Second" && play.IsEnabled, "partial-watched primary action");

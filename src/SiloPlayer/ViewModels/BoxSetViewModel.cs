@@ -61,7 +61,8 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
             if (!Current()) return;
             var result = await catalog.GetBoxSetAsync(id, library, ct);
             if (!Current()) return;
-            if (!int.TryParse(result.LibraryId, out var returnedLibrary) || !eligibleLibraries.Contains(returnedLibrary))
+            if (result.Id != id || !int.TryParse(result.LibraryId, out var returnedLibrary)
+                || returnedLibrary != libraryId || !eligibleLibraries.Contains(returnedLibrary))
             { Detail = null; Failure = DetailFailureKind.AccessDenied; return; }
             Detail = result;
         }

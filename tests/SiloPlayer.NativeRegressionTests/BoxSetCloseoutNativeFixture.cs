@@ -104,7 +104,7 @@ internal static partial class BoxSetNativeFixture
             if (scenario == "access-denied")
             {
                 wire.Status = HttpStatusCode.Forbidden;
-                await page.ViewModel.LoadAsync("7", "2"); await DrainAsync(parent);
+                await page.ViewModel.LoadAsync("7", "12"); await DrainAsync(parent);
                 Check(page.ViewModel.Failure == DetailFailureKind.AccessDenied && page.ViewModel.Detail == null &&
                     Descendants(page).OfType<TextBlock>().Any(item => item.Text == "Box set unavailable") &&
                     Descendants(page).OfType<TextBlock>().Any(item => item.Text == DetailFailurePolicy.Message(DetailFailureKind.AccessDenied)) &&
@@ -121,7 +121,7 @@ internal static partial class BoxSetNativeFixture
             else
             {
                 wire.Hold = true;
-                var initial = page.ViewModel.LoadAsync("7", "2");
+                var initial = page.ViewModel.LoadAsync("7", "12");
                 await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
                 var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 page.Receive(new PlaybackProgressUpdated("second", 100, 100, true) { Persisted = saved.Task });
@@ -165,7 +165,7 @@ internal static partial class BoxSetNativeFixture
                 wire.Played = 1; wire.Hold = true;
                 wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                var initial = page.ViewModel.LoadAsync("7", "2");
+                var initial = page.ViewModel.LoadAsync("7", "12");
                 await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
                 Check(page.ViewModel.IsLoading && page.ViewModel.Detail == null, "initial membership is unknown while delivery is held");
                 var reads = wire.Reads;
