@@ -5679,6 +5679,24 @@ public partial class PlayerService : IDisposable
         }
     }
 
+    internal sealed record SubtitleMenuSnapshot(PlaybackStartResponse Session,
+        IReadOnlyList<(SubtitleTrackInfo Track, bool CanSelect)> Entries,
+        IReadOnlyList<SubtitleTrackInfo> SidecarTracks);
+
+    internal SubtitleMenuSnapshot? CaptureSubtitleMenuSnapshot()
+    {
+        var manager = _playbackManager;
+        if (manager == null) return null;
+        lock (manager.SubtitleInventorySyncRoot)
+        {
+            if (!ReferenceEquals(manager, _playbackManager) || manager.CurrentSession is not { } session) return null;
+            var tracks = session.SubtitleUrls.ToArray();
+            var routes = CaptureSubtitleSelectionRoutes(tracks);
+            return new(session, tracks.Select(track => (track, HasSubtitleSelectionRoute(track, routes))).ToArray(),
+                manager.GetSubtitleUrls(tracks).Select(pair => pair.Track).ToArray());
+        }
+    }
+
     private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track)
     {
         var manager = _playbackManager;
@@ -6114,22 +6132,27 @@ public partial class PlayerService : IDisposable
 
     private void SendSubtitleListToOsc()
     {
-        if (_mpv == null || _playbackManager?.CurrentSession is not { } session) return;
+        if (_mpv == null || CaptureSubtitleMenuSnapshot() is not { } menu) return;
+        var session = menu.Session;
 
         _subtitleMenuFileId = session.MediaFileId;
         if (!_switchingContent && !IsLoading) _subtitleVersionSwitchActive = false;
-        var tracks = session.SubtitleUrls ?? [];
-        var jsonTracks = tracks.Select(t => new Dictionary<string, object?>
+        var tracks = menu.Entries.Select(entry => entry.Track).ToArray();
+        var jsonTracks = menu.Entries.Select(entry =>
         {
-            ["index"] = t.Index,
-            ["language"] = t.Language ?? "",
-            ["label"] = t.Label ?? "",
-            ["source"] = t.Source ?? "embedded",
-            ["codec"] = t.Codec ?? "",
-            ["forced"] = t.Forced,
-            ["unplayable"] = t.Unplayable,
-            ["hearing_impaired"] = t.HearingImpaired,
-            ["media_file_id"] = t.MediaFileId
+            var t = entry.Track;
+            return new Dictionary<string, object?>
+            {
+                ["index"] = t.Index,
+                ["language"] = t.Language ?? "",
+                ["label"] = t.Label ?? "",
+                ["source"] = t.Source ?? "embedded",
+                ["codec"] = t.Codec ?? "",
+                ["forced"] = t.Forced,
+                ["unplayable"] = !entry.CanSelect,
+                ["hearing_impaired"] = t.HearingImpaired,
+                ["media_file_id"] = t.MediaFileId
+            };
         }).ToArray();
 
         var json = System.Text.Json.JsonSerializer.Serialize(jsonTracks);

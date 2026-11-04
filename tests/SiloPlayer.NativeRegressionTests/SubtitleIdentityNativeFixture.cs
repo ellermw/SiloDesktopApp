@@ -1,7 +1,9 @@
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
@@ -12,9 +14,11 @@ internal static class SubtitleIdentityNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent, bool unresolvedOnly = false, bool regionalOnly = false)
     {
+        var presentation = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
+        var presentationOnly = presentation is "presentation-flyout" or "presentation-osc";
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
         using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt")));
-        if (!unresolvedOnly && !regionalOnly)
+        if (!unresolvedOnly && !regionalOnly && !presentationOnly)
         {
             subtitles.MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv"));
             await RefreshedDownloadedSubtitlesAsync(assets);
@@ -52,6 +56,11 @@ internal static class SubtitleIdentityNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         try
         {
+            if (presentationOnly)
+            {
+                await VerifyPresentationAsync(parent, service, session, mpv, wire, presentation!);
+                return;
+            }
             if (regionalOnly)
             {
                 var initial = session.SubtitleUrls.Single(t => t.Index == 4);
@@ -566,6 +575,99 @@ internal static class SubtitleIdentityNativeFixture
             Program.Log("PASS: text/ASS burn-in grants execute by ID or legacy index without native/sidecar routes or duplicate downloads, retaining pause and saving only explicit executed preferences.");
         }
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
+    }
+
+    private static async Task VerifyPresentationAsync(StackPanel parent, PlayerService service,
+        PlaybackStartResponse session, MpvPlayer mpv, Wire wire, string scenario)
+    {
+        var unavailable = session.SubtitleUrls.Single(track => track.Index == 3);
+        unavailable.Url = "";
+        unavailable.Label = "Fixture unavailable without URL";
+        session.SubtitleUrls.Single(track => track.Index == 2).Label = "Fixture native available";
+        session.SubtitleUrls.Add(new() { Index = 9, Source = "embedded", Codec = "webvtt", Language = "en",
+            Label = "Fixture locally unavailable", StreamIndex = 99, ContainerTrackId = "99" });
+        var beforeSid = mpv.GetPropertyDouble("sid");
+        var beforeIndex = service.ActiveSubtitleServerIndex;
+        if (scenario == "presentation-flyout")
+        {
+            var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var previousServices = (IServiceProvider)servicesField.GetValue(null)!;
+            PlayerOverlay? overlay = null;
+            var mounted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnMounted(object sender, Microsoft.UI.Xaml.RoutedEventArgs args) => mounted.TrySetResult();
+            try
+            {
+                servicesField.SetValue(null, new PresentationServices(previousServices, service));
+                overlay = new PlayerOverlay(); overlay.Loaded += OnMounted;
+                parent.Children.Add(overlay);
+                await mounted.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Call(overlay, "PopulateSubtitleFlyout");
+                var list = (StackPanel)overlay.FindName("SubtitleListPanel");
+                Button? Row(string label) => list.Children.OfType<Button>().SingleOrDefault(button =>
+                    button.Content is Grid grid && grid.Children.OfType<StackPanel>().Any(descriptor =>
+                        descriptor.Children.OfType<TextBlock>().Any(text => text.Text.Contains(label, StringComparison.Ordinal))));
+                var row = Row(unavailable.Label);
+                Require(row != null && !row.IsEnabled && AutomationProperties.GetHelpText(row) == "Subtitle unavailable",
+                    "The actual native subtitle flyout hides the URL-less unavailable inventory row.");
+                var local = Row("Fixture locally unavailable");
+                Require(local != null && !local.IsEnabled && AutomationProperties.GetHelpText(local) == "Subtitle unavailable",
+                    "The actual native subtitle flyout enables a locally route-less inventory row.");
+                Require(Row("Fixture native available") is { IsEnabled: true } && list.Children.OfType<Button>().First().IsEnabled,
+                    "The actual native subtitle flyout disabled its Off and real playable track controls.");
+                Program.Log("PASS: actual mounted subtitle flyout retains URL-less/unroutable rows disabled and real playable/Off controls enabled.");
+            }
+            finally
+            {
+                if (overlay != null) { overlay.Loaded -= OnMounted; parent.Children.Remove(overlay); }
+                servicesField.SetValue(null, previousServices);
+            }
+        }
+        else
+        {
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var inventory = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Observe(string[] message)
+            {
+                if (message.FirstOrDefault() == "silo-presentation-ready") ready.TrySetResult();
+                if (message.FirstOrDefault() == "silo-presentation-inventory" && message.Length > 1) inventory.TrySetResult(message[1]);
+            }
+            mpv.ScriptMessageReceived += Observe;
+            try
+            {
+                var probe = Path.Combine(Program.ResultDirectory, "subtitle-presentation.lua");
+                await File.WriteAllTextAsync(probe, """
+                    local mp = require 'mp'
+                    mp.register_script_message('osc-set-subtitles', function(payload)
+                        mp.commandv('script-message', 'silo-presentation-inventory', payload)
+                    end)
+                    mp.commandv('script-message', 'silo-presentation-ready')
+                    """);
+                Call(mpv, "Command", (object)new[] { "load-script", probe });
+                await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Call(service, "SendSubtitleListToOsc");
+                using var document = JsonDocument.Parse(await inventory.Task.WaitAsync(TimeSpan.FromSeconds(4)));
+                var tracks = document.RootElement.EnumerateArray().ToArray();
+                Require(tracks.Single(track => track.GetProperty("index").GetInt32() == 9).GetProperty("unplayable").GetBoolean(),
+                    "The actual OSC payload enables a locally route-less subtitle row.");
+                Require(tracks.Single(track => track.GetProperty("index").GetInt32() == 3).GetProperty("unplayable").GetBoolean() &&
+                    !tracks.Single(track => track.GetProperty("index").GetInt32() == 2).GetProperty("unplayable").GetBoolean(),
+                    "OSC route availability lost the explicit unavailable or real native playable control.");
+                var castTracks = service.CaptureSiloCastState()["subtitleTracks"]!.AsArray();
+                Require(!castTracks.Any(track => track!["trackId"]!.GetValue<int>() == 10) &&
+                    castTracks.Any(track => track!["trackId"]!.GetValue<int>() == 3),
+                    "SiloCast availability diverged from the actual OSC selection routes.");
+                Program.Log("PASS: actual OSC payload disables route-less rows and agrees with SiloCast while keeping real native tracks playable.");
+            }
+            finally { mpv.ScriptMessageReceived -= Observe; }
+        }
+        Require(mpv.GetPropertyDouble("sid") == beforeSid && service.ActiveSubtitleServerIndex == beforeIndex &&
+            mpv.IsPaused && wire.PreferenceWrites == 0 && wire.Replans == 0,
+            "Subtitle presentation changed the applied selection, pause, preference or transport.");
+    }
+
+    private sealed class PresentationServices(IServiceProvider fallback, PlayerService service) : IServiceProvider
+    {
+        public object? GetService(Type type) => type == typeof(PlayerService) ? service : fallback.GetService(type);
     }
 
     private static async Task FreshPrePlayWithoutRouteAsync(string origin)

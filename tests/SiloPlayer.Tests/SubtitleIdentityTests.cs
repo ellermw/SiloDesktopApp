@@ -9,7 +9,7 @@ public sealed class SubtitleIdentityTests
     [Fact]
     public void RejectedSubtitleReplanRestoresTheSurvivingStreamBeforeConsideringRecovery()
     {
-        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs")).Replace("\r\n", "\n");
         var start = source.IndexOf("private async Task<SubtitleTransportResult> SetBitmapSubtitleBurnInAsync(", StringComparison.Ordinal);
         var end = source.IndexOf("private async Task ReconcileDeferredSubtitleSelectionAsync(", start, StringComparison.Ordinal);
         var method = source[start..end];

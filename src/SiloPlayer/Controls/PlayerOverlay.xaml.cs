@@ -1230,17 +1230,12 @@ public sealed partial class PlayerOverlay : UserControl
 
         // Subtitle tracks from the session, sorted by source priority:
         // external > downloaded > embedded (matches webui).
-        var subtitleUrls = _playerService.Manager?.GetSubtitleUrls() ?? [];
-        var sortedSubs = subtitleUrls
-            .Select((pair, idx) => (pair.Track, pair.FullUrl, OrigIndex: idx))
-            .OrderBy(s => SourceSortKey(s.Track.Source))
+        var menu = _playerService.CaptureSubtitleMenuSnapshot();
+        var sortedSubs = (menu?.Entries ?? [])
+            .OrderBy(entry => SourceSortKey(entry.Track.Source))
             .ToList();
 
-        // Build a map from original index → mpv track index (accounts for
-        // skipped bitmap subs). We need this because we render sorted but
-        // mpv's sid is the load order.
-
-        foreach (var (track, _, origIdx) in sortedSubs)
+        foreach (var (track, canSelect) in sortedSubs)
         {
             var langName = PlayerService.LanguageCodeToName(track.Language);
             var trackTitle = track.Label;
@@ -1253,7 +1248,7 @@ public sealed partial class PlayerOverlay : UserControl
             var label = langName;
             if (!string.IsNullOrEmpty(trackTitle) && !string.Equals(trackTitle, langName, StringComparison.OrdinalIgnoreCase))
                 label += $" \u2014 {trackTitle}";
-            if (string.IsNullOrEmpty(label)) label = $"Track {origIdx + 1}";
+            if (string.IsNullOrEmpty(label)) label = $"Track {track.Index + 1}";
             if (track.HearingImpaired && !label.Contains("SDH", StringComparison.OrdinalIgnoreCase)) label += " (SDH)";
             if (track.Forced && !label.Contains("Forced", StringComparison.OrdinalIgnoreCase)) label += " (Forced)";
             var format = SubtitleFormatLabel(track.Codec);
@@ -1281,19 +1276,18 @@ public sealed partial class PlayerOverlay : UserControl
             Grid.SetColumn(descriptor, 1);
             row.Children.Add(descriptor);
             var item = CreatePlayerMenuButton(row, isActive);
-            if (track.Unplayable)
+            if (!canSelect)
             {
                 badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
                 item.IsEnabled = false;
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, "Subtitle unavailable");
             }
-            int capturedMpvIndex = origIdx + 1;
             var capturedTrack = track;
             item.Click += (_, _) =>
             {
                 SubtitleFlyout.Hide();
                 _ = _playerService.SetSubtitleTrackAndPersistAsync(
-                    capturedMpvIndex, capturedTrack.Language, capturedTrack);
+                    capturedTrack.Index + 1, capturedTrack.Language, capturedTrack);
             };
             SubtitleListPanel.Children.Add(item);
         }
@@ -1372,7 +1366,7 @@ public sealed partial class PlayerOverlay : UserControl
                 var session = _playerService.Manager?.CurrentSession;
                 if (session == null) return;
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, subtitleUrls.FirstOrDefault().Track?.Language)
+                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, menu?.SidecarTracks.FirstOrDefault()?.Language)
                 {
                     XamlRoot = XamlRoot
                 };
