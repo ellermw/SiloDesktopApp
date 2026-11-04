@@ -117,7 +117,11 @@ internal static class PlaybackSpeedMenuNativeFixture
             await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-save-error");
             wire.FailWrites = false; Select("rate:0.75");
             await Until(() => player.VideoPlaybackRateError == null && !player.VideoPlaybackRatePending, "Same-rate native retry did not recover.");
-            player.SetWatchTogetherPlayback(true); player.NativePlaybackRate = 1.04;
+            var writesBeforeJoin = wire.Writes.Count;
+            player.SetWatchTogetherPlayback(true);
+            Require(player.NativePlaybackRate == 1 && player.DesiredVideoPlaybackRate == 0.75 && wire.Writes.Count == writesBeforeJoin,
+                "Room attachment retained solo speed or overwrote the saved viewer preference.");
+            player.NativePlaybackRate = 1.04;
             await Until(() => Menu(player) == null, "Joining a room did not retire the old solo Speed owner.");
             Require(Gate(player).CurrentCount == 1, "Room attachment leaked the retired menu lease.");
             await ReopenSpeed();
