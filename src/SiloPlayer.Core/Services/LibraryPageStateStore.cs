@@ -106,9 +106,11 @@ public sealed class LibraryPageStateStore(SettingsApi settings)
         finally { operations.Release(); }
     }
 
-    public async Task WriteAsync(int libraryId, string search, CancellationToken ct = default)
+    public Task WriteAsync(int libraryId, string search, CancellationToken ct = default)
+        => WriteAsync(settings.CaptureSettingsContext(), libraryId, search, ct);
+
+    public async Task WriteAsync(SettingsRequestContext owner, int libraryId, string search, CancellationToken ct = default)
     {
-        var owner = settings.CaptureSettingsContext();
         var operations = State.OperationsFor(owner, settings);
         await operations.WaitAsync(ct);
         try

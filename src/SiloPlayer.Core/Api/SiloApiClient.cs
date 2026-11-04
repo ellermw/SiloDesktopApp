@@ -22,6 +22,7 @@ public readonly record struct ProfileVerificationContext(
 
 public readonly record struct ApiRequestContext(long AuthenticationGeneration, long RequestContextGeneration, string BaseUrl, string? ProfileId);
 public readonly record struct SettingsRequestContext(ApiRequestContext Request, string? DeviceId, long DeviceGeneration);
+public readonly record struct SettingsIdentityContext(ApiIdentityContext Identity, string? DeviceId, long DeviceGeneration);
 /// <summary>Account/profile ownership, stable across read-cache/access refreshes.</summary>
 public readonly record struct ApiIdentityContext(long AuthenticationGeneration, long IdentityGeneration, string BaseUrl, string? ProfileId);
 public sealed record ApiResponse<T>(T Body, string? ETag);
@@ -72,6 +73,11 @@ public partial class SiloApiClient
     public SettingsRequestContext CaptureSettingsContext()
     {
         lock (_authStateGate) return new(new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
+    }
+
+    public SettingsIdentityContext CaptureSettingsIdentityContext()
+    {
+        lock (_authStateGate) return new(new(_authenticationGeneration, _identityGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
     }
 
     public ApiIdentityContext CaptureIdentityContext()

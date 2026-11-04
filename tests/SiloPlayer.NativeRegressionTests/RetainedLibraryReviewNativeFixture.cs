@@ -13,6 +13,7 @@ internal static partial class RetainedLibraryNativeFixture
     private static async Task CheckReviewAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings, AuthService auth)
     {
         await CheckActivationAndDepartureAsync(parent, navigation, wire, settings);
+        await CheckReportedStateOrderingsAsync(parent, navigation, wire, settings);
         var failures = new List<string>();
         foreach (var scenario in new[] { "opt-out", "save-error", "two-edits", "two-edits-failed", "two-edits-confirmed-during-return", "departure-save-error" })
         {
@@ -39,7 +40,11 @@ internal static partial class RetainedLibraryNativeFixture
                     {
                         await Leave(); settings.NotifyLocalizedSettingChanged("ui.library_page_state");
                         var reads = wire.StateReads; frame.GoBack(); await Until(() => page.IsLoaded && wire.StateReads > reads); await Settle();
-                        Check(Tab() == "Recommended", "Known opt-out survives failed detached revalidation, return " + (attempt + 1) + ".");
+                        Check(Tab() == "Collections", "Opt-out history return preserves the live tab despite failed revalidation.");
+                        await Leave(); settings.NotifyLocalizedSettingChanged("ui.library_page_state");
+                        reads = wire.StateReads; frame.Navigate(typeof(LibraryPage), library);
+                        await Until(() => page.IsLoaded && wire.StateReads > reads); await Settle();
+                        Check(Tab() == "Recommended", "Known opt-out survives failed revalidation on unqualified New activation " + (attempt + 1) + ".");
                         Click("CollectionsTab"); await Settle();
                     }
                     await Leave(); settings.NotifyLocalizedSettingChanged("ui.library_page_state");

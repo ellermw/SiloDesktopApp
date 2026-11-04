@@ -12,7 +12,7 @@ internal static partial class RetainedLibraryNativeFixture
 {
     private static async Task CheckActivationAndDepartureAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings)
     {
-        foreach (var scenario in new[] { "same-tab", "other-tab", "library-switch", "explicit", "reload", "year-debounce", "rule-debounce", "language", "genre-history", "year-before-refresh", "rule-before-refresh" })
+        foreach (var scenario in new[] { "same-tab", "other-tab", "library-switch", "explicit", "reload", "year-debounce", "rule-debounce", "language", "genre-history", "year-before-refresh", "rule-before-refresh", "person-before-refresh" })
         {
             wire.LibraryId++; wire.Remember = true; wire.Search = "?tab=recommended";
             settings.LibraryPageState.Invalidate();
@@ -22,7 +22,7 @@ internal static partial class RetainedLibraryNativeFixture
             try
             {
                 var library = new Library { Id = wire.LibraryId, Name = "Activation fixture", Type = "movie" };
-                if (scenario is "reload" or "year-debounce" or "rule-debounce" or "year-before-refresh" or "rule-before-refresh") wire.Search = "?tab=library";
+                if (scenario is "reload" or "year-debounce" or "rule-debounce" or "year-before-refresh" or "rule-before-refresh" or "person-before-refresh") wire.Search = "?tab=library";
                 if (scenario == "library-switch") wire.Search = "?tab=library&genre=Drama";
                 if (scenario is "same-tab" or "other-tab" or "explicit") wire.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 var reads = wire.StateReads;
@@ -100,13 +100,15 @@ internal static partial class RetainedLibraryNativeFixture
                     await Leave(); frame.GoBack(); await Until(() => page.IsLoaded); await Task.Delay(200);
                     Require(Tab() == "Collections", "Back replayed InitialTab after a later tab edit.");
                 }
-                else if (scenario is "year-before-refresh" or "rule-before-refresh")
+                else if (scenario is "year-before-refresh" or "rule-before-refresh" or "person-before-refresh")
                 {
                     await Ready(); await Until(() => page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
                     NumberBox? yearRule = null;
                     var year = (TextBox)page.FindName("YearMinBox");
                     QueryFilterEditor? editor = null;
-                    if (scenario == "year-before-refresh") year.Text = "1999";
+                    var actor = (AutoSuggestBox)page.FindName("ActorBox");
+                    if (scenario == "person-before-refresh") actor.Text = "Uncommitted actor";
+                    else if (scenario == "year-before-refresh") year.Text = "1999";
                     else
                     {
                         Click("OpenFiltersButton");
@@ -120,10 +122,19 @@ internal static partial class RetainedLibraryNativeFixture
                     settings.NotifyLocalizedSettingChanged("ui.library_page_state");
                     await Until(() => wire.StateReads > refreshReads);
                     await Task.Delay(100); // Inspect before the 400/500 ms draft debounce commits.
-                    Require(Tab() == "Library" && (yearRule == null ? year.Text == "1999" :
+                    Require(Tab() == "Library" && (scenario == "person-before-refresh" ? actor.Text == "Uncommitted actor" :
+                        yearRule == null ? year.Text == "1999" :
                         yearRule.Value == 1999 && ReferenceEquals(editor, Field<QueryFilterEditor>(page, "_sharedFilterEditor"))),
                         "An invalidation delivered after a local draft overwrote that draft before its debounce.");
-                    await Until(() => Uri.UnescapeDataString(wire.Search).Contains("1999", StringComparison.Ordinal));
+                    if (scenario == "person-before-refresh")
+                    {
+                        Require(page.ViewModel.SelectedActor == null, "Unchosen person text was committed by a refresh.");
+                        actor.Text = ""; // No longer an uncommitted draft: later external state can apply.
+                        wire.Search = "?tab=collections";
+                        settings.NotifyLocalizedSettingChanged("ui.library_page_state");
+                        await Until(() => Tab() == "Collections");
+                    }
+                    else await Until(() => Uri.UnescapeDataString(wire.Search).Contains("1999", StringComparison.Ordinal));
                     if (editor != null) ((SlideSheet)page.FindName("FiltersSheet")).IsOpen = false;
                 }
                 else if (scenario is "reload" or "year-debounce" or "rule-debounce")

@@ -298,6 +298,8 @@ public sealed partial class LibraryPage : Page,
         _isNavigated = true;
         var visit = ++_stateVisit;
         var owner = _stateSettings.CaptureSettingsContext();
+        var identity = _stateSettings.CaptureSettingsIdentityContext();
+        var isRefresh = App.Services.GetRequiredService<NavigationService>().IsRefreshingCurrentEntry;
         var language = _stateSettings.LocalizedReads.Generation;
         AttachLibraryStateEvents();
         _uiCustomizationService.Changed += UICustomization_Changed;
@@ -311,8 +313,9 @@ public sealed partial class LibraryPage : Page,
         if (e.Parameter is NavigationArgs navigationArgs)
         {
             library = navigationArgs.Library;
-            // History replays the original parameter, not a new tab/genre request.
-            if (e.NavigationMode == NavigationMode.New)
+            // History and shell refreshes replay the original parameter, not a
+            // new user tab/genre request. Capture refresh status before any await.
+            if (e.NavigationMode == NavigationMode.New && !isRefresh)
             {
                 requestedTab = navigationArgs.InitialTab;
                 requestedGenre = navigationArgs.InitialGenre;
@@ -328,6 +331,7 @@ public sealed partial class LibraryPage : Page,
             _libraryStateApplied = false;
             IsEnabled = true;
             _stateOwner = null;
+            _stateIdentity = null;
             _stateSnapshot = null;
             _retainedSearch = null;
             HeaderGrid.Visibility = Visibility.Collapsed;
@@ -350,6 +354,7 @@ public sealed partial class LibraryPage : Page,
             if (_stateLanguage != language) _stateSettings.LibraryPageState.Invalidate();
             if (_stateOwner != owner) _stateSnapshot = null;
             _stateOwner = owner;
+            _stateIdentity = identity;
             _stateLanguage = language;
             _pageStateContext = owner.Request;
             if (!sameLibrary)
@@ -405,10 +410,13 @@ public sealed partial class LibraryPage : Page,
             // A newer same-library edit wins over the restore, but must not abandon
             // activation: an interrupted tab still needs its content loaded.
             var edited = sameLibrary && (edit != _stateEdit || HasLibraryFilterDraft);
-            var retain = sameLibrary && (edited || snapshot == null || snapshot.Value.Remember &&
-                (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch || HasUnsavedLibraryState(library.Id, owner)));
+            var historyReturn = e.NavigationMode is NavigationMode.Back or NavigationMode.Forward;
+            var pendingSearch = snapshot is not { Remember: false } && _pendingStateSaves.TryGetValue((identity, library.Id), out var pending)
+                ? pending.Search : null;
+            var retain = sameLibrary && (edited || snapshot == null || historyReturn && !snapshot.Value.Remember || snapshot.Value.Remember &&
+                (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch || HasUnsavedLibraryState(library.Id, identity)));
             var state = retain ? CaptureLibraryViewState(_currentTab) :
-                ParseOwnedLibrarySearch(snapshot?.Search, visit, owner, library.Id) ??
+                ParseOwnedLibrarySearch(pendingSearch ?? snapshot?.Search, visit, owner, library.Id) ??
                 (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
             _currentAudiobookAxis = library.Type is "audiobook" or "audiobooks" ? state.Axis : "books";
             if (requestedTab is "Recommended" or "Library" or "Collections")
@@ -419,7 +427,12 @@ public sealed partial class LibraryPage : Page,
                 state.Genre = requestedGenre;
                 state.Genres = [requestedGenre];
                 foreach (var group in state.QueryGroups) group.Rules.RemoveAll(rule => rule.Field == "genre");
-                if (state.QueryGroups.Count > 0) state.QueryGroups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = requestedGenre }] });
+                if (state.QueryGroups.Count > 0)
+                {
+                    // The explicit genre is a constraint, never another OR alternative.
+                    state.Match = "all";
+                    state.QueryGroups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = requestedGenre }] });
+                }
             }
 
             if (!retain || !string.IsNullOrWhiteSpace(requestedGenre))
@@ -439,7 +452,7 @@ public sealed partial class LibraryPage : Page,
             IsEnabled = true;
             // Only newly restored input establishes a baseline; retaining visible
             // input must not mark an unsaved edit as already persisted.
-            if (!retain) _retainedSearch = snapshot?.Search;
+            if (!retain) _retainedSearch = pendingSearch ?? snapshot?.Search;
             FlushLibraryStateSave(); // Retry failed departure saves without blocking retained activation.
             if (requestedTab != null || requestedGenre != null)
                 ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));

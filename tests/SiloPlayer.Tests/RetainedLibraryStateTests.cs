@@ -147,12 +147,66 @@ public sealed class RetainedLibraryStateTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => save);
     }
 
+    [Theory]
+    [InlineData("profile")]
+    [InlineData("device")]
+    [InlineData("access")]
+    public async Task CapturedSettingsWriteCannotRebindToASuccessor(string change)
+    {
+        using var wire = new Wire();
+        var request = wire.Settings.CaptureSettingsContext();
+        switch (change)
+        {
+            case "profile": wire.Client.SetProfile("other"); break;
+            case "device": wire.Client.SetDeviceMetadata("other", "Other", "test"); break;
+            case "access": wire.Client.InvalidateAccessContext(); break;
+        }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wire.Store.WriteAsync(request, 11, "retired"));
+        Assert.Equal(0, wire.Writes);
+    }
+
+    [Fact]
+    public void AccessCatchUpRetiresReadContextButKeepsSettingsIdentity()
+    {
+        using var wire = new Wire();
+        var request = wire.Settings.CaptureSettingsContext();
+        var identity = wire.Settings.CaptureSettingsIdentityContext();
+        wire.Client.InvalidateAccessContext();
+        Assert.False(wire.Settings.IsCurrentSettingsContext(request));
+        Assert.True(wire.Settings.IsCurrentSettingsIdentityContext(identity));
+    }
+
+    [Theory]
+    [InlineData("profile")]
+    [InlineData("profile-aba")]
+    [InlineData("server")]
+    [InlineData("session")]
+    [InlineData("device")]
+    [InlineData("device-aba")]
+    public void SettingsIdentityRetiresAcrossActualOwnerChanges(string change)
+    {
+        using var wire = new Wire();
+        var identity = wire.Settings.CaptureSettingsIdentityContext();
+        switch (change)
+        {
+            case "profile": wire.Client.SetProfile("other"); break;
+            case "profile-aba": wire.Client.SetProfile("other"); wire.Client.SetProfile("profile"); break;
+            case "server": wire.Client.SetBaseUrl("https://other.invalid"); break;
+            case "session": wire.Client.ClearAuth(); break;
+            case "device": wire.Client.SetDeviceMetadata("other", "Other", "test"); break;
+            case "device-aba": wire.Client.SetDeviceMetadata("other", "Other", "test"); wire.Client.SetDeviceMetadata("device", "Same", "test"); break;
+        }
+        Assert.False(wire.Settings.IsCurrentSettingsIdentityContext(identity));
+    }
+
     [Fact]
     public void DeviceNameUpdateDoesNotRetireIdentity()
     {
         using var wire = new Wire(); var owner = wire.Settings.CaptureSettingsContext();
+        var identity = wire.Settings.CaptureSettingsIdentityContext();
         wire.Client.SetDeviceMetadata("device", "Renamed", "test");
         Assert.True(wire.Settings.IsCurrentSettingsContext(owner));
+        Assert.True(wire.Settings.IsCurrentSettingsIdentityContext(identity));
     }
 
     [Fact]

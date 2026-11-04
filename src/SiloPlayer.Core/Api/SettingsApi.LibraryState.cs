@@ -9,6 +9,8 @@ public partial class SettingsApi
     public LocalizedMediaReads LocalizedReads => client.LocalizedReads;
     public SettingsRequestContext CaptureSettingsContext() => client.CaptureSettingsContext();
     public bool IsCurrentSettingsContext(SettingsRequestContext owner) => CaptureSettingsContext() == owner;
+    public SettingsIdentityContext CaptureSettingsIdentityContext() => client.CaptureSettingsIdentityContext();
+    public bool IsCurrentSettingsIdentityContext(SettingsIdentityContext owner) => CaptureSettingsIdentityContext() == owner;
 
     internal Task WriteLibraryStateDocumentAsync(SettingsRequestContext owner, object value, CancellationToken ct)
     {
