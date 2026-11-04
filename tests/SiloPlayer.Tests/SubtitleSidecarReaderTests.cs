@@ -35,6 +35,7 @@ public sealed class SubtitleSidecarReaderTests
         using var wire = new Wire((_, _) => Busy("0")); using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
         Assert.Equal(SubtitleSidecarReadOutcome.Busy, result.Outcome);
+        Assert.True(result.WasBusy);
         Assert.False(result.CanUseUrlFallback);
         Assert.Equal(4, wire.Requests);
     }
@@ -79,15 +80,18 @@ public sealed class SubtitleSidecarReaderTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task BusyHistoryPreventsFallbackEvenWhenTheNextReadIsNotFound(bool priorBusy)
+    [InlineData(false, HttpStatusCode.NotFound)]
+    [InlineData(true, HttpStatusCode.NotFound)]
+    [InlineData(false, HttpStatusCode.InternalServerError)]
+    [InlineData(true, HttpStatusCode.InternalServerError)]
+    public async Task FinalNonBusyResponseAllowsUrlFallback(bool priorBusy, HttpStatusCode status)
     {
-        using var wire = new Wire((n, _) => priorBusy && n == 1 ? Busy("0") : new(HttpStatusCode.NotFound));
+        using var wire = new Wire((n, _) => priorBusy && n == 1 ? Busy("0") : new(status));
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
-        Assert.Equal(priorBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, result.Outcome);
-        Assert.Equal(!priorBusy, result.CanUseUrlFallback);
+        Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.False(result.WasBusy);
+        Assert.True(result.CanUseUrlFallback);
         Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
     }
 
@@ -130,14 +134,15 @@ public sealed class SubtitleSidecarReaderTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task TransportFailureAllowsUrlFallbackOnlyWithoutBusyHistory(bool priorBusy, bool ioFailure)
+    public async Task FinalTransportFailureAllowsUrlFallbackEvenAfterBusy(bool priorBusy, bool ioFailure)
     {
         using var wire = new Wire((n, _) => priorBusy && n == 1 ? Busy("0") :
             throw (ioFailure ? (Exception)new IOException("Interrupted body") : new HttpRequestException("Connection reset")));
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
-        Assert.Equal(priorBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, result.Outcome);
-        Assert.Equal(!priorBusy, result.CanUseUrlFallback);
+        Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.False(result.WasBusy);
+        Assert.True(result.CanUseUrlFallback);
         Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
     }
 

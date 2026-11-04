@@ -24,8 +24,9 @@ public static class SubtitleSidecarReader
         if (!url.IsAbsoluteUri || url.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, url, codec) == null)
             return new(SubtitleSidecarReadOutcome.Fallback);
         var busy = false;
-        // Busy history must never retry this URL through mpv. Other failures
-        // retain the supported URL route, but must not block the UI to use it.
+        var wasBusy = false;
+        // Failures describe the final attempt, not earlier retryable responses.
+        // Successful reads still retain their busy history.
         SubtitleSidecarRead Failure() => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: busy);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(Budget);
@@ -34,12 +35,13 @@ public static class SubtitleSidecarReader
         {
             for (var attempt = 0; attempt < MaxAttempts; attempt++)
             {
+                busy = false;
                 // Use the advertised URL verbatim. Account headers belong to
                 // API requests, never to a server-advertised CDN/worker URL.
                 using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
                 {
-                    busy = true;
+                    busy = wasBusy = true;
                     if (attempt == MaxAttempts - 1) return Failure();
                     var retry = response.Headers.RetryAfter;
                     var delay = retry?.Delta ?? (retry?.Date is { } date ? date - DateTimeOffset.UtcNow : DefaultDelay);
@@ -64,7 +66,7 @@ public static class SubtitleSidecarReader
                     buffer.Write(chunk, 0, read);
                 }
                 if (buffer.Length == 0) return Failure();
-                return new(SubtitleSidecarReadOutcome.Ready, buffer.ToArray(), extension, busy);
+                return new(SubtitleSidecarReadOutcome.Ready, buffer.ToArray(), extension, wasBusy);
             }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return Failure(); }
