@@ -52,7 +52,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAiRefreshOwnershipAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "translation-profile", "translation-newer-off", "translation-newer-track", "translation-before-completion-off", "translation-cycle", "translation-newer-claim", "translation-buffer-off", "translation-buffer-user-pause", "translation-arbitration-admission", "translation-arbitration-mutation" })
+        foreach (var scenario in new[] { "translation-profile", "translation-newer-off", "translation-newer-track", "translation-before-completion-off", "translation-cycle", "translation-newer-claim", "translation-buffer-off", "translation-buffer-user-pause", "translation-arbitration-admission", "translation-arbitration-mutation", "translation-read-lock-order" })
         {
             try { await CheckBusyAsync(parent, scenario); Program.Log("PASS: AI completion ownership " + scenario); }
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: AI completion " + scenario + ": " + ex); }
@@ -159,6 +159,27 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     (int)Get(service, "_liveSubtitleSid")! == priorSid && File.Exists(livePath),
                     "Held AI completion refresh published old-profile inventory, selected/persisted a track or removed current live cues after profile retirement.");
                 Program.Log("PASS: held AI completion inventory GET cannot mutate replacement-profile inventory/SID/preferences/live cues.");
+                return;
+            }
+            if (scenario == "translation-read-lock-order")
+            {
+                var stateGate = Get(service, "_subtitleTrackStateLock")!;
+                var begin = service.GetType().GetMethod("BeginSubtitleRead", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var oldRead = begin.Invoke(service, begin.GetParameters().Length == 0 ? [] : [null])!;
+                var oldToken = (CancellationToken)oldRead.GetType().GetProperty("Token")!.GetValue(oldRead)!;
+                var callbackRan = false;
+                var callbackHeldState = false;
+                using var registration = oldToken.Register(() =>
+                {
+                    callbackRan = true;
+                    callbackHeldState = Monitor.IsEntered(stateGate);
+                });
+                var cachedTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
+                await ((Task)Call(service, "PrefetchSubtitleSidecarForSelectionAsync", cachedTrack, (Func<bool>)(() => true))!)
+                    .WaitAsync(TimeSpan.FromSeconds(4));
+                Require(callbackRan && !callbackHeldState,
+                    "Subtitle read replacement invoked synchronous cancellation while owning the state lock.");
+                Program.Log("PASS: actual cached prefetch replaces and cancels its prior read outside the state lock.");
                 return;
             }
             if (scenario == "translation-arbitration-admission")
@@ -1075,7 +1096,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 Set(service, "_pendingInitialServerSubtitleIndex", 0);
                 pending = (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
             }
-            else if (scenario == "oversized-chunked") pending = (Task)Call(service, "PrefetchSubtitleSidecarAsync", manager.CurrentSession!.SubtitleUrls![0])!;
+            else if (scenario == "oversized-chunked") pending = (Task)Call(service, "PrefetchSubtitleSidecarAsync", manager.CurrentSession!.SubtitleUrls![0], null)!;
             else pending = (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, persist)!;
             await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
             if (scenario == "reload-gap")

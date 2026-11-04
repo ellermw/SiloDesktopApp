@@ -52,10 +52,19 @@ public partial class PlayerService
         public void Dispose() => source.Dispose();
     }
     private SubtitleReadOperation? _subtitleReadOperation;
-    private SubtitleReadOperation BeginSubtitleRead()
+    private SubtitleReadOperation? BeginSubtitleRead(Func<bool>? current = null)
     {
-        var next = new SubtitleReadOperation();
-        Interlocked.Exchange(ref _subtitleReadOperation, next)?.Cancel();
+        SubtitleReadOperation next;
+        SubtitleReadOperation? previous;
+        lock (_subtitleTrackStateLock)
+        {
+            if (current?.Invoke() == false) return null;
+            next = new SubtitleReadOperation();
+            previous = Interlocked.Exchange(ref _subtitleReadOperation, next);
+        }
+        // Cancellation can run callbacks synchronously. Neither callbacks nor
+        // prefetch I/O may run while owning the subtitle state lock.
+        previous?.Cancel();
         return next;
     }
     private void CancelSubtitleSelectionRead() => Volatile.Read(ref _subtitleReadOperation)?.Cancel();

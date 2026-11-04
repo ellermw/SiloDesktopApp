@@ -6183,25 +6183,20 @@ public partial class PlayerService : IDisposable
     private long CurrentSubtitleSidecarGeneration() => Interlocked.Read(ref _subtitleSidecarGeneration);
 
     private Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForSelectionAsync(SubtitleTrackInfo track, Func<bool> current)
-    {
-        lock (_subtitleTrackStateLock)
-        {
-            if (!current()) return Task.FromResult(SubtitlePrefetchOutcome.Retired);
-            return PrefetchSubtitleSidecarAsync(track);
-        }
-    }
+        => PrefetchSubtitleSidecarAsync(track, current);
 
-    private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
+    private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track, Func<bool>? current = null)
     {
         if (track.Unplayable) return SubtitlePrefetchOutcome.Error;
         if (_mpv == null) return SubtitlePrefetchOutcome.Retired;
         if (IsUnsupportedBitmapSubtitle(track) ||
             string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
             CanUseNativeEmbeddedSubtitleTrack() && ResolveNativeEmbeddedSid(track) > 0)
-            return SubtitlePrefetchOutcome.Ready;
+            return current?.Invoke() == false ? SubtitlePrefetchOutcome.Retired : SubtitlePrefetchOutcome.Ready;
         long generation;
         var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
-        using var selection = BeginSubtitleRead();
+        using var selection = BeginSubtitleRead(current);
+        if (selection == null) return SubtitlePrefetchOutcome.Retired;
         var manualChoice = _pendingSubtitlePreferenceOwner;
         var authority = _activeAuthority;
         var context = authority.ApiClient.CaptureContext();

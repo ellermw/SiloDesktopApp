@@ -3,6 +3,28 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void SubtitleReadAdmissionReleasesStateBeforeCancellationAndPrefetch()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForSelectionAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(", start, StringComparison.Ordinal);
+        Assert.DoesNotContain("lock (", source[start..end]);
+        Assert.Contains("PrefetchSubtitleSidecarAsync(track, current)", source[start..end]);
+        var selection = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.SubtitleSelection.cs"));
+        start = selection.IndexOf("private SubtitleReadOperation? BeginSubtitleRead(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Read admission must support rejecting a retired owner before exchanging operations.");
+        end = selection.IndexOf("private void CancelSubtitleSelectionRead()", start, StringComparison.Ordinal);
+        var admission = selection[start..end];
+        var gate = admission.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var gateEnd = admission.IndexOf('}', gate);
+        Assert.Contains("if (current?.Invoke() == false) return null;", admission[gate..gateEnd]);
+        Assert.Contains("Interlocked.Exchange(ref _subtitleReadOperation, next)", admission[gate..gateEnd]);
+        Assert.True(admission.IndexOf("previous?.Cancel();", StringComparison.Ordinal) > gateEnd,
+            "Cancellation callbacks must execute after releasing the state lock.");
+    }
+
+    [Fact]
     public void SubtitleAttachmentAdmissionCannotCancelAReadBeforeValidActivation()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
