@@ -1376,7 +1376,7 @@ public sealed partial class PlayerOverlay : UserControl
                     searchAuthority.ApiClient.IsCurrentContext(searchContext) && ReferenceEquals(manager, _playerService.Manager) &&
                     ReferenceEquals(session, manager?.CurrentSession);
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(searchAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault()?.Language)
+                var dialog = new SubtitleSearchDialog(searchAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault(t => t.Index == activeSubtitleIndex)?.Language)
                 {
                     XamlRoot = XamlRoot
                 };
