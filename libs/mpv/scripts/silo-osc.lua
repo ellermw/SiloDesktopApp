@@ -4884,7 +4884,7 @@ local function activate_utility_control(name, keyboard)
     elseif name == "btn_chapters" then
         open_transport_menu_from_controller("chapters", keyboard)
     elseif name == "btn_stats" then
-        toggle_stats()
+        toggle_stats(keyboard)
     elseif name == "btn_pip" then
         mp.commandv("script-message", "silo-pip-toggle")
     else
