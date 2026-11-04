@@ -3,6 +3,22 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void PlaybackRequestDoesNotReadItsDisposableTokenSourceAfterPublication()
+    {
+        // CancelPendingPlayRequest may dispose the published source while
+        // this request waits for the gate. Native request-supersession checks
+        // cover the resulting cancellation; this guards the lifetime boundary.
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task PlayRequestAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void PublishFullscreenVisualState(", start, StringComparison.Ordinal);
+        var request = source[start..end];
+        var publication = request.IndexOf("Interlocked.Exchange(ref _playRequestCts, ownerCts)", StringComparison.Ordinal);
+        Assert.True(publication >= 0);
+        Assert.InRange(request.IndexOf("ownerCts.Token", StringComparison.Ordinal), 0, publication - 1);
+        Assert.DoesNotContain("ownerCts.Token", request[publication..]);
+    }
+
+    [Fact]
     public void LocalCaptionCycleRetiresOldActivationWithoutChangingPreferenceProvenance()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
