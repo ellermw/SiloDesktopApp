@@ -7,6 +7,96 @@ namespace SiloPlayer.Tests;
 public sealed class BoxSetOwnershipTests
 {
     [Theory]
+    [InlineData("refresh", false)] [InlineData("refresh", true)]
+    [InlineData("access", false)] [InlineData("access", true)]
+    [InlineData("language", false)] [InlineData("language", true)]
+    public async Task SupersededPlaybackRevalidationCannotBorrowAnUnfinishedSuccessor(string change, bool denied)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
+        var retained = vm.Detail;
+        client.InvalidateAccessContext(); wire.Hold = true;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldRelease = wire.Release; var calls = 0;
+        var play = vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; });
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var successor = vm.RefreshAsync();
+        try
+        {
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Same(retained, vm.Detail); Assert.True(vm.IsLoading);
+            oldRelease.TrySetResult();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => play.WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.Equal(0, calls); Assert.True(vm.IsLoading);
+            wire.AllPlayed = true;
+            if (denied) wire.DetailStatus = HttpStatusCode.Forbidden;
+            wire.Release.TrySetResult(); await successor.WaitAsync(TimeSpan.FromSeconds(2));
+            if (denied)
+            {
+                Assert.Null(vm.Detail);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) => { calls++; return Task.CompletedTask; }));
+                Assert.Equal(0, calls);
+            }
+            else
+            {
+                await vm.PlayAsync((id, library, owner, ct) =>
+                { calls++; Assert.Equal("first", id); Assert.Equal(12, library); Assert.True(client.IsCurrentContext(owner)); Assert.False(ct.IsCancellationRequested); return Task.CompletedTask; });
+                Assert.Equal(1, calls);
+            }
+        }
+        finally { oldRelease.TrySetResult(); wire.Release.TrySetResult(); await successor; vm.Cancel(); }
+    }
+
+    [Fact]
+    public async Task PlaybackStartedDuringBackgroundRefreshMustValidateItsOwnCompletedRead()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12");
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshing = vm.RefreshAsync(); var release = wire.Release; var calls = 0;
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var play = vm.PlayAsync((id, _, owner, _) => { calls++; Assert.Equal("first", id); Assert.True(client.IsCurrentContext(owner)); return Task.CompletedTask; });
+        try
+        {
+            Assert.Equal(0, calls);
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            wire.AllPlayed = true; release.TrySetResult(); wire.Release.TrySetResult();
+            await Task.WhenAll(refreshing, play).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(1, calls);
+        }
+        finally { release.TrySetResult(); wire.Release.TrySetResult(); await refreshing; vm.Cancel(); }
+    }
+
+    [Theory]
+    [InlineData(null, "other", "movie", false)] [InlineData(12, "other", "movie", false)]
+    [InlineData(12, "film", "episode", false)] [InlineData(12, "film", "box_set", false)]
+    [InlineData(12, "film", "", false)] [InlineData(null, "film", "movie", true)] [InlineData(12, "film", "movie", true)]
+    public async Task MembershipMustContainTheRequestedRealMovie(int? library, string contentId, string type, bool valid)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var vm = new ItemDetailViewModel(new CatalogApi(Client(http)), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(vm, library); await vm.RefreshBoxSetAsync(); Assert.NotNull(vm.BoxSet);
+        wire.MembershipContentId = contentId; wire.MembershipType = type;
+        try
+        {
+            await vm.RefreshBoxSetAsync();
+            Assert.Equal(valid, vm.BoxSet != null);
+            var membership = typeof(ItemDetailViewModel).GetField("_boxSetMembership", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(vm);
+            Assert.Equal(valid, membership != null);
+            Assert.Equal("film", vm.Item!.ContentId); Assert.Null(vm.ErrorMessage);
+        }
+        finally { vm.CancelPendingLoads(); }
+    }
+
+    [Theory]
     [InlineData("access", 503, false)]
     [InlineData("access", 503, true)]
     [InlineData("transport", 503, false)]
@@ -528,6 +618,7 @@ public sealed class BoxSetOwnershipTests
         internal bool? Supported = true;
         internal bool Hold, AllPlayed, Enabled = true, OtherEnabled = true; internal int DetailReads;
         internal string ReturnedId = "7", ReturnedLibrary = "12";
+        internal string MembershipContentId = "film", MembershipType = "movie";
         internal HttpStatusCode DetailStatus = HttpStatusCode.OK, CapabilityStatus = HttpStatusCode.OK;
         internal bool TimeoutDetail, TimeoutCapability, NoMembership;
         internal string? LastLibraryQuery, LastMembershipQuery;
@@ -554,7 +645,15 @@ public sealed class BoxSetOwnershipTests
                 if (path.EndsWith("/box-set")) LastMembershipQuery = request.RequestUri.Query;
                 status = DetailStatus;
                 var detail = "{\"id\":\"" + ReturnedId + "\",\"library_id\":\"" + ReturnedLibrary + "\",\"movie_count\":2,\"played_count\":" + (AllPlayed ? "2" : "1") + ",\"items\":[{\"type\":\"movie\",\"content_id\":\"first\",\"user_state\":{\"played\":true}},{\"type\":\"movie\",\"content_id\":\"second\",\"user_state\":{\"played\":" + AllPlayed.ToString().ToLowerInvariant() + "}}]}";
-                json = path.EndsWith("/box-set") ? NoMembership ? "{\"box_set\":null}" : "{\"box_set\":" + detail + "}" : detail;
+                if (path.EndsWith("/box-set"))
+                {
+                    // A valid item-membership envelope contains the requested film;
+                    // dedicated detail order/targets stay first and second.
+                    detail = detail.Replace("\"content_id\":\"second\"", "\"content_id\":\"" + MembershipContentId + "\"")
+                        .Replace("{\"type\":\"movie\",\"content_id\":\"" + MembershipContentId + "\"", "{\"type\":\"" + MembershipType + "\",\"content_id\":\"" + MembershipContentId + "\"");
+                    json = NoMembership ? "{\"box_set\":null}" : "{\"box_set\":" + detail + "}";
+                }
+                else json = detail;
             }
             return new(status) { Content = new StringContent(json) };
         }

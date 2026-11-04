@@ -56,7 +56,8 @@ public partial class ItemDetailViewModel
                 // library must have its own flag. Explicit routes also require a match.
                 var detail = response.BoxSet;
                 if (detail != null && (!int.TryParse(detail.LibraryId, out var returnedLibrary)
-                    || !eligibleLibraries.Contains(returnedLibrary) || (library.HasValue && returnedLibrary != library.Value))) detail = null;
+                    || !eligibleLibraries.Contains(returnedLibrary) || (library.HasValue && returnedLibrary != library.Value)
+                    || !detail.Items.Any(member => BoxSetDetail.IsMovieMember(member) && member.ContentId == item.ContentId))) detail = null;
                 _boxSetMembership = detail;
                 BoxSet = detail is { Items.Count: > 0 } ? detail : null;
             }

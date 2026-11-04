@@ -15,6 +15,9 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     private BoxSetDetail? _detail;
     private bool _loading;
     private DetailFailureKind _failure;
+    private sealed record ValidatedRead(CancellationTokenSource Pending, CancellationToken Token,
+        ApiRequestContext Owner, long Language, BoxSetDetail Detail);
+    private ValidatedRead? _validatedRead;
     public BoxSetDetail? Detail { get => _detail; private set => SetProperty(ref _detail, value); }
     public bool IsLoading { get => _loading; private set => SetProperty(ref _loading, value); }
     public DetailFailureKind Failure { get => _failure; private set => SetProperty(ref _failure, value); }
@@ -25,15 +28,17 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     {
         _pending?.Cancel(); _pending?.Dispose(); _pending = null;
         _playLifetime?.Cancel(); _playLifetime?.Dispose(); _playLifetime = null;
-        _id = null; _library = null; Detail = null; IsLoading = false;
+        _id = null; _library = null; _validatedRead = null; Detail = null; IsLoading = false;
     }
-    public Task RefreshAsync() => _id is {} id && _library is {} library ? ReadAsync(id, library) : Task.CompletedTask;
+    public Task RefreshAsync() => RefreshReadAsync();
+    private Task<ValidatedRead?> RefreshReadAsync() => _id is {} id && _library is {} library
+        ? ReadAsync(id, library) : Task.FromResult<ValidatedRead?>(null);
     public Task LoadAsync(string id, string library)
     {
         Cancel();
         return ReadAsync(id, library);
     }
-    private async Task ReadAsync(string id, string library)
+    private async Task<ValidatedRead?> ReadAsync(string id, string library)
     {
         // Access revisions replace read ownership, not this viewer's accepted
         // playback lifetime or the last successfully mounted detail.
@@ -54,17 +59,19 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
         try
         {
             if (!int.TryParse(library, out var libraryId) || libraryId <= 0)
-            { if (Current()) { Detail = null; Failure = DetailFailureKind.NotFound; } return; }
+            { if (Current()) { Detail = null; Failure = DetailFailureKind.NotFound; } return null; }
             var eligibleLibraries = await catalog.GetBoxSetLibraryIdsAsync(ct, throwOnCapabilityFailure: true);
             if (!eligibleLibraries.Contains(libraryId))
-            { if (Current()) { Detail = null; Failure = DetailFailureKind.NotFound; } return; }
-            if (!Current()) return;
+            { if (Current()) { Detail = null; Failure = DetailFailureKind.NotFound; } return null; }
+            if (!Current()) return null;
             var result = await catalog.GetBoxSetAsync(id, library, ct);
-            if (!Current()) return;
+            if (!Current()) return null;
             if (result.Id != id || !int.TryParse(result.LibraryId, out var returnedLibrary)
                 || returnedLibrary != libraryId || !eligibleLibraries.Contains(returnedLibrary))
-            { Detail = null; Failure = DetailFailureKind.AccessDenied; return; }
+            { Detail = null; Failure = DetailFailureKind.AccessDenied; return null; }
             Detail = result;
+            if (!Current()) return null;
+            return _validatedRead = new(pending, ct, owner, language, result);
         }
         catch (OperationCanceledException) when (!Current()) { }
         catch (Exception ex)
@@ -81,26 +88,33 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
         // A retired read still owns its loading flag until a successor takes
         // the request slot. Context retirement must not strand that flag.
         finally { if (ReferenceEquals(_pending, pending)) IsLoading = false; }
+        return null;
     }
+    private bool IsValidatedReadCurrent(ValidatedRead? read) => read != null && !IsLoading
+        && ReferenceEquals(_pending, read.Pending) && !read.Token.IsCancellationRequested
+        && catalog.IsCurrentContext(read.Owner) && catalog.MetadataLanguageGeneration == read.Language
+        && ReferenceEquals(Detail, read.Detail);
     public async Task PlayAsync(Func<string, int, ApiRequestContext, CancellationToken, Task> play)
     {
         if (!CanPlay)
             throw new InvalidOperationException("This box set is no longer available for playback. Reopen it and try again.");
-        if (!IsCurrent || Failure != DetailFailureKind.None)
+        var lifetime = _playLifetime!;
+        var read = _validatedRead;
+        if (!IsValidatedReadCurrent(read) || Failure != DetailFailureKind.None)
         {
             // An access revision retires reads, not this viewer's intent. Re-read
             // under current authority before selecting a movie or entering a room.
             var identity = _identity;
-            await RefreshAsync();
-            if (!catalog.IsCurrentIdentityContext(identity) || !CanPlay)
+            read = await RefreshReadAsync();
+            if (!catalog.IsCurrentIdentityContext(identity) || !CanPlay || !ReferenceEquals(lifetime, _playLifetime))
                 throw new InvalidOperationException("This box set is no longer available for playback. Reopen it and try again.");
-            if (!IsCurrent || Failure != DetailFailureKind.None)
+            if (!IsValidatedReadCurrent(read) || Failure != DetailFailureKind.None)
                 throw new InvalidOperationException("Could not refresh this box set for playback. Please try again.");
         }
-        if (Detail is not {} detail || detail.PlayTarget is not {} movie || !int.TryParse(detail.LibraryId, out var library))
+        if (read?.Detail is not {} detail || detail.PlayTarget is not {} movie || !int.TryParse(detail.LibraryId, out var library))
             throw new InvalidOperationException("This box set is no longer available. Refresh it and try again.");
         // Refreshes (including the final save from the session being replaced) do
         // not own an accepted playback intent. Only visit/authority retirement does.
-        await play(movie.ContentId, library, _owner, _playLifetime!.Token);
+        await play(movie.ContentId, library, read.Owner, lifetime.Token);
     }
 }

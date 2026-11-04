@@ -241,7 +241,8 @@ internal static partial class BoxSetNativeFixture
     private sealed class NavigationServices(IServiceProvider original, NavigationService navigation) : IServiceProvider
     {
         internal CatalogApi? Catalog; internal SiloApiClient? Client;
-        public object? GetService(Type type) => type == typeof(NavigationService) ? navigation : type == typeof(CatalogApi) && Catalog != null ? Catalog : type == typeof(SiloApiClient) && Client != null ? Client : original.GetService(type);
+        internal ItemDetailViewModel? ItemDetail;
+        public object? GetService(Type type) => type == typeof(ItemDetailViewModel) && ItemDetail != null ? ItemDetail : type == typeof(NavigationService) ? navigation : type == typeof(CatalogApi) && Catalog != null ? Catalog : type == typeof(SiloApiClient) && Client != null ? Client : original.GetService(type);
     }
     private sealed class Wire : HttpMessageHandler
     {
