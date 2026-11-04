@@ -82,7 +82,7 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
-    public void LatestChoiceRebindsOnlyAvailableInventoryRows()
+    public void KnownUnavailableIdentityDoesNotBecomeAnotherAvailableTrack()
     {
         WithManager(manager =>
         {
@@ -90,8 +90,13 @@ public sealed class SubtitleIdentityTests
             var session = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [original] };
             typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
             manager.RecordLocalSubtitleSelection(2);
+            var intent = manager.CaptureLocalSubtitleIntent();
             session.SubtitleUrls = [new() { Index = 2, TrackId = "old", Language = "eng", Codec = "ass", Unplayable = true }, new() { Index = 8, Language = "eng", Codec = "ass" }];
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            Assert.Equal(intent, manager.CaptureLocalSubtitleIntent());
+            session.SubtitleUrls = [new() { Index = 8, TrackId = "old", Language = "eng", Codec = "ass" }];
             Assert.Equal(8, manager.SubtitleSelectionForLoad);
+            Assert.Equal(intent, manager.CaptureLocalSubtitleIntent());
         });
     }
 
