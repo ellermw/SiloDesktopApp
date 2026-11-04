@@ -252,6 +252,121 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             }
             Program.Log("PASS: rejected bitmap replans during held quality loads preserve loading and pause ownership until the original FILE_LOADED completes.");
 
+            // Start the pick before a quality replan has reached BeginMpvLoad,
+            // then reject it only after the new load owns a watchdog/pause slot.
+            foreach (var paused in new[] { false, true })
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var qualityReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var releaseQuality = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var rejectionReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var releaseRejection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var mediaReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var releaseMedia = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.BeforeQualityChange = ct => { qualityReady.TrySetResult(); return releaseQuality.Task.WaitAsync(ct); };
+                wire.BeforeTrackRejection = ct => { rejectionReady.TrySetResult(); return releaseRejection.Task.WaitAsync(ct); };
+                media.BeforeMediaResponse = () => { mediaReady.TrySetResult(); return releaseMedia.Task; };
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                try
+                {
+                    await Loaded(async () =>
+                    {
+                        var quality = (Task)Call(service, "SwitchQualityTierAsync", "480p", null, null)!;
+                        await qualityReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        Require(Get(service, "_fileLoadTimeoutCts") == null && service.IsLoading && service.IsSwitchingContent,
+                            "The queued-pick fixture did not hold quality before its native load.");
+                        wire.FailNextTrackChange = true;
+                        var bitmap = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Dvd);
+                        var pick = service.SetSubtitleTrackAndPersistAsync(Dvd + 1, bitmap.Language, bitmap);
+                        Require(!pick.IsCompleted && Get(service, "_subtitleReplanPauseIntent") != null,
+                            "The bitmap pick did not queue behind the held quality replan.");
+                        releaseQuality.TrySetResult();
+                        await quality.WaitAsync(TimeSpan.FromSeconds(6));
+                        await mediaReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        await rejectionReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        var timeoutOwner = Get(service, "_fileLoadTimeoutCts") as CancellationTokenSource;
+                        var generation = Get(service, "_fileLoadGeneration");
+                        Require(timeoutOwner != null && !timeoutOwner.IsCancellationRequested && mpv.IsPaused,
+                            "Quality did not begin a held load before rejecting the queued bitmap pick.");
+                        releaseRejection.TrySetResult();
+                        await pick.WaitAsync(TimeSpan.FromSeconds(4));
+                        Require(service.IsLoading && service.IsSwitchingContent && mpv.IsPaused &&
+                            (bool?)Get(service, "_restorePausedAfterLoad") == paused &&
+                            ReferenceEquals(Get(service, "_fileLoadTimeoutCts"), timeoutOwner) && timeoutOwner?.IsCancellationRequested == false &&
+                            Equals(Get(service, "_fileLoadGeneration"), generation) && manager.CaptureLocalSubtitleIntent() == retainedIntent &&
+                            service.ActiveSubtitleServerIndex == Spanish && wire.PreferenceWrites == writes && wire.Replans.Count == replans + 2,
+                            "A queued rejected bitmap pick stole the later quality load's flags, watchdog, pause or subtitle state.");
+                        releaseMedia.TrySetResult();
+                    });
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading &&
+                        mpv.IsPaused == paused && service.IsPaused == paused);
+                    Require(Get(service, "_restorePausedAfterLoad") == null && Get(service, "_fileLoadTimeoutCts") == null &&
+                        service.ActiveSubtitleServerIndex == Spanish && NativeSidMatches(service, mpv, Spanish) && wire.PreferenceWrites == writes,
+                        "FILE_LOADED lost its original pause/subtitle state after rejecting the earlier queued bitmap pick.");
+                }
+                finally
+                {
+                    releaseQuality.TrySetResult(); releaseRejection.TrySetResult(); releaseMedia.TrySetResult();
+                    wire.BeforeQualityChange = null; wire.BeforeTrackRejection = null;
+                    media.BeforeMediaResponse = null; wire.FailNextTrackChange = false;
+                }
+            }
+            Program.Log("PASS: bitmap picks queued behind quality replans cannot steal the later load's watchdog/loading/pause ownership when rejected before FILE_LOADED.");
+
+            // Recovery owns transient state before it has any native-load CTS.
+            // Reject a bitmap pick while the real replacement start is held.
+            foreach (var paused in new[] { false, true })
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var startReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var releaseStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.BeforeStart = ct => { startReady.TrySetResult(); return releaseStart.Task.WaitAsync(ct); };
+                wire.AutomaticSubtitle = Spanish;
+                var writes = wire.PreferenceWrites;
+                try
+                {
+                    await Loaded(async () =>
+                    {
+                        var recovery = (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 12d, "progress-reporting-failed")!;
+                        await startReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        var position = Get(service, "_prematureEofRecoveryPosition");
+                        var generation = Get(service, "_fileLoadGeneration");
+                        var intent = manager.CaptureLocalSubtitleIntent();
+                        Require(service.IsLoading && service.IsSwitchingContent && (bool)Get(service, "_prematureEofRecoveryActive")! &&
+                            Get(service, "_fileLoadTimeoutCts") == null,
+                            "The recovery rejection fixture did not hold a replacement start before native loading.");
+                        wire.FailNextTrackChange = true;
+                        var bitmap = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Dvd);
+                        await service.SetSubtitleTrackAndPersistAsync(Dvd + 1, bitmap.Language, bitmap);
+                        Require(!recovery.IsCompleted && service.IsLoading && service.IsSwitchingContent &&
+                            (bool)Get(service, "_prematureEofRecoveryActive")! && Equals(Get(service, "_prematureEofRecoveryPosition"), position) &&
+                            Get(service, "_fileLoadTimeoutCts") == null && Equals(Get(service, "_fileLoadGeneration"), generation) &&
+                            manager.CaptureLocalSubtitleIntent() == intent && service.ActiveSubtitleServerIndex == Spanish &&
+                            wire.PreferenceWrites == writes,
+                            "Rejected burn-in cleared another recovery's transient flags/position or changed its subtitle intent.");
+                        releaseStart.TrySetResult();
+                        await recovery.WaitAsync(TimeSpan.FromSeconds(6));
+                    });
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading &&
+                        mpv.IsPaused == paused && service.IsPaused == paused);
+                    Require(service.ActiveSubtitleServerIndex == Spanish && NativeSidMatches(service, mpv, Spanish) &&
+                        wire.PreferenceWrites == writes && Get(service, "_playbackTerminalState") == null,
+                        "The surviving recovery failed to finish with the original pause/subtitle after bitmap rejection.");
+                }
+                finally
+                {
+                    releaseStart.TrySetResult(); wire.BeforeStart = null;
+                    wire.AutomaticSubtitle = -1; wire.FailNextTrackChange = false;
+                }
+            }
+            Program.Log("PASS: rejected bitmap picks preserve an in-flight stream recovery's transient ownership before its load/watchdog exists, and recovery restores the original pause/subtitle.");
+
             // Persistent rejection (both terminal decisions and request errors)
             // must never turn a healthy stream into terminal playback recovery.
             foreach (var terminalRejection in new[] { false, true })
@@ -812,6 +927,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         public Func<CancellationToken, Task>? BeforeTrackRejection;
         public Func<CancellationToken, Task>? BeforeTrackChange;
         public Func<CancellationToken, Task>? BeforeQualityChange;
+        public Func<CancellationToken, Task>? BeforeStart;
         public bool DeclineTrackChanges;
         public bool ReindexSpanish, ReindexDvd, ReuseSpanishIndex;
         public int PreferenceWrites;
@@ -841,6 +957,11 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             if (path.EndsWith("/start"))
             {
                 Starts.Add(body.Clone());
+                if (BeforeStart is { } beforeStart)
+                {
+                    BeforeStart = null;
+                    await beforeStart(ct);
+                }
                 _file = int.Parse(body.GetProperty("file_id").GetString()!);
                 _subtitle = body.TryGetProperty("subtitle_track_index", out var initial) && initial.ValueKind == JsonValueKind.Number ? initial.GetInt32() : AutomaticSubtitle;
             }

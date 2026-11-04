@@ -32,16 +32,18 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("_switchingContent = false;", rollback);
         Assert.Contains("IsLoading = false;", rollback);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
-        var inheritedLoadCapture = method.IndexOf("var inheritedPendingLoad = Volatile.Read(ref _fileLoadTimeoutCts);", StringComparison.Ordinal);
+        var inheritedOwnerCapture = method.IndexOf("var inheritedTransportOperation = _switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive;", StringComparison.Ordinal);
         var beginReplanLoading = method.IndexOf("_switchingContent = true;", StringComparison.Ordinal);
-        Assert.True(inheritedLoadCapture >= 0 && beginReplanLoading > inheritedLoadCapture);
-        Assert.Contains("var preservePendingLoad = !loadStarted && inheritedPendingLoad != null &&", rollback);
-        Assert.Contains("ReferenceEquals(inheritedPendingLoad, Volatile.Read(ref _fileLoadTimeoutCts))", rollback);
-        Assert.DoesNotContain("var inheritedPendingLoad = _restorePausedAfterLoad.HasValue;", method);
-        var ownLoadingState = rollback.IndexOf("if (!preservePendingLoad)", StringComparison.Ordinal);
+        Assert.True(inheritedOwnerCapture >= 0 && beginReplanLoading > inheritedOwnerCapture);
+        Assert.Contains("var preserveTransportState = !loadStarted &&", rollback);
+        Assert.Contains("Volatile.Read(ref _fileLoadTimeoutCts) != null || inheritedTransportOperation &&", rollback);
+        Assert.Contains("(_switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive)", rollback);
+        Assert.DoesNotContain("var inheritedPendingLoad =", method);
+        Assert.DoesNotContain("_restorePausedAfterLoad.HasValue", rollback);
+        var ownLoadingState = rollback.IndexOf("if (!preserveTransportState)", StringComparison.Ordinal);
         var clearLoading = rollback.IndexOf("_switchingContent = false;", StringComparison.Ordinal);
         Assert.True(ownLoadingState >= 0 && clearLoading > ownLoadingState);
-        var inheritedLoad = rollback.IndexOf("if (preservePendingLoad) return;", StringComparison.Ordinal);
+        var inheritedLoad = rollback.IndexOf("if (preserveTransportState) return;", StringComparison.Ordinal);
         Assert.True(inheritedLoad > clearLoading);
         foreach (var ownLoadMutation in new[] { "HideLoadingOverlay", "_restorePausedAfterLoad = null;", "RestorePlaybackStateAfterSubtitleChange" })
             Assert.True(rollback.IndexOf(ownLoadMutation, StringComparison.Ordinal) > inheritedLoad);

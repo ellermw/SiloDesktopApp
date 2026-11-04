@@ -1203,16 +1203,16 @@ public partial class PlayerService : IDisposable
             // now: clearing sid after its pending load cannot remove its pixels.
             transportReloadScheduled = true;
         }
+        else if (track != null && IsBurnedInSubtitle(manager?.CurrentSession, track))
+        {
+            // An accepted plan can composite text/ASS as well as bitmap tracks.
+            selectionExecuted = true;
+        }
         else if (track != null && IsUnsupportedBitmapSubtitle(track))
         {
-            if (IsBurnedInSubtitle(manager?.CurrentSession, track))
-                selectionExecuted = true;
-            else
-            {
-                var result = await SetBitmapSubtitleBurnInAsync(track);
-                if (result == SubtitleTransportResult.Superseded) return false;
-                transportReloadScheduled = result == SubtitleTransportResult.ReloadScheduled;
-            }
+            var result = await SetBitmapSubtitleBurnInAsync(track);
+            if (result == SubtitleTransportResult.Superseded) return false;
+            transportReloadScheduled = result == SubtitleTransportResult.ReloadScheduled;
         }
         else if (track != null)
         {
@@ -5268,18 +5268,21 @@ public partial class PlayerService : IDisposable
         var wasPaused = (_switchingContent || IsLoading) && _restorePausedAfterLoad is bool pendingPause
             ? pendingPause : CaptureUserPausedState();
         bool PauseIntent() => IsWatchTogetherPlayback ? _roomPlaybackPaused : _subtitleReplanPauseIntent ?? wasPaused;
-        // Room pause/play can leave a pause slot even when no FILE_LOADED is
-        // pending. Only an actual inherited load owns the loading state.
-        var inheritedPendingLoad = Volatile.Read(ref _fileLoadTimeoutCts);
+        // Quality/audio/recovery can own the transient state before they have
+        // a FILE_LOADED watchdog. A stale room pause slot alone is not an owner.
+        var inheritedTransportOperation = _switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive;
         var selectionIntent = manager.CaptureLocalSubtitleIntent();
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
         void RefuseTentativeSubtitleSelection()
         {
-            // A rejected request never owns an already pending FILE_LOADED.
-            // Its loading state and pause slot still belong to that load.
-            var preservePendingLoad = !loadStarted && inheritedPendingLoad != null &&
-                ReferenceEquals(inheritedPendingLoad, Volatile.Read(ref _fileLoadTimeoutCts));
-            if (!preservePendingLoad)
+            // No load has started on this rejection path. Any current watchdog
+            // belongs to another operation, even if it began while we awaited
+            // the manager's replan gate. Preserve inherited recovery/replan state
+            // as well, unless that operation has already cleared its flags.
+            var preserveTransportState = !loadStarted &&
+                (Volatile.Read(ref _fileLoadTimeoutCts) != null || inheritedTransportOperation &&
+                    (_switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive));
+            if (!preserveTransportState)
             {
                 _prematureEofRecoveryActive = false;
                 _prematureEofRecoveryPosition = 0;
@@ -5306,7 +5309,7 @@ public partial class PlayerService : IDisposable
                     reconcileDeferredSelection = true;
                 }
             }
-            if (preservePendingLoad) return;
+            if (preserveTransportState) return;
             mpv.SendScriptMessage("osc-set-loading", "false");
             if (loadingOwner != null)
                 App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
@@ -5656,13 +5659,14 @@ public partial class PlayerService : IDisposable
     }
 
     private sealed record SubtitleRouteSnapshot(IReadOnlyList<NativeSubtitleTrack> EmbeddedTracks,
-        bool TrustworthyStreamIndex, bool TrustworthyContainerTrackId, bool LegacyTitles, HashSet<int> SidecarIndices);
+        bool TrustworthyStreamIndex, bool TrustworthyContainerTrackId, bool LegacyTitles, HashSet<int> SidecarIndices,
+        PlaybackStartResponse? Session);
 
     private SubtitleRouteSnapshot CaptureSubtitleSelectionRoutes(IEnumerable<SubtitleTrackInfo>? inventory = null)
     {
         var mpv = _mpv;
         var manager = _playbackManager;
-        if (manager == null) return new([], false, false, false, []);
+        if (manager == null) return new([], false, false, false, [], null);
         lock (manager.SubtitleInventorySyncRoot)
         {
             var native = mpv != null && CanUseNativeEmbeddedSubtitleTrack();
@@ -5671,7 +5675,7 @@ public partial class PlayerService : IDisposable
                 manager.CurrentSession?.ProtocolVersion < 3,
                 manager.GetSubtitleUrls(inventory).Where(pair =>
                     Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
-                    .Select(pair => pair.Track.Index).ToHashSet());
+                    .Select(pair => pair.Track.Index).ToHashSet(), manager.CurrentSession);
         }
     }
 
@@ -5686,7 +5690,7 @@ public partial class PlayerService : IDisposable
     private static bool HasSubtitleSelectionRoute(SubtitleTrackInfo track, SubtitleRouteSnapshot routes)
     {
         if (track.Unplayable) return false;
-        if (IsUnsupportedBitmapSubtitle(track)) return true;
+        if (IsBurnedInSubtitle(routes.Session, track) || IsUnsupportedBitmapSubtitle(track)) return true;
         if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
             ResolveNativeEmbeddedSidFromSnapshot(track, routes) > 0) return true;
         return routes.SidecarIndices.Contains(track.Index);
@@ -5777,15 +5781,10 @@ public partial class PlayerService : IDisposable
             if (!CurrentSelection()) return false;
             previousSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
         }
-        if (IsUnsupportedBitmapSubtitle(track))
-        {
-            // After a burn-in reload, the post-load selection lands here with
-            // the track the plan already burns in. Replanning again would
-            // reload and reselect it indefinitely.
-            if (IsBurnedInSubtitle(session, track))
-                return true;
-            return false;
-        }
+        // The plan's burn-in grant, not the row's codec/delivery, attests execution.
+        // Never add a second copy of an already composited text/ASS subtitle.
+        if (IsBurnedInSubtitle(session, track)) return true;
+        if (IsUnsupportedBitmapSubtitle(track)) return false;
 
         if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
             CanUseNativeEmbeddedSubtitleTrack())
@@ -5883,7 +5882,8 @@ public partial class PlayerService : IDisposable
 
     private async Task PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
     {
-        if (_mpv == null || track.Unplayable || IsUnsupportedBitmapSubtitle(track) ||
+        if (_mpv == null || track.Unplayable || IsBurnedInSubtitle(_playbackManager?.CurrentSession, track) ||
+            IsUnsupportedBitmapSubtitle(track) ||
             string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
             CanUseNativeEmbeddedSubtitleTrack() && ResolveNativeEmbeddedSid(track) > 0)
             return;
@@ -7731,9 +7731,22 @@ public partial class PlayerService : IDisposable
                     return retained;
                 }).ToList();
 
+                // Older plan downloads without stored keys cannot be proven gone
+                // by this inventory. Keep their exact rows at separate indices,
+                // never binding their SID/bytes to a metadata lookalike.
+                bool UnknownDownload(SubtitleTrackInfo? track) => track != null &&
+                    string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
+                    track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
+                foreach (var retained in previousDownloads.Where(track => UnknownDownload(track)))
+                {
+                    retained.Index = baseIndex + downloaded.Count;
+                    downloaded.Add(retained);
+                }
+
                 SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
                 {
                     if (track == null || existing.Contains(track)) return track;
+                    if (UnknownDownload(track) && downloaded.Contains(track)) return track.Unplayable ? null : track;
                     var candidates = string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)
                         ? downloaded : existing;
                     var matches = candidates.Where(candidate => !candidate.Unplayable &&
@@ -7767,13 +7780,6 @@ public partial class PlayerService : IDisposable
                         try { File.Delete(entry.Path); } catch { }
                     }
                 }
-                // Plan rows from older servers may have neither a stored ID
-                // nor sync_key. Failure to bind such a row is unknown, not proof
-                // of removal. Retain its executing SID, but never lend its old
-                // index/caches/highlight to an unrelated refreshed download.
-                bool UnknownDownload(SubtitleTrackInfo? track) => track != null &&
-                    string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
-                    track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
                 var activeTrack = previousRows.FirstOrDefault(row => row.Index == _activeSubtitleServerIndex).Track;
                 var activeRetired = _activeSubtitleServerIndex >= 0 && !RebindIndex(_activeSubtitleServerIndex).HasValue &&
                     !UnknownDownload(activeTrack);

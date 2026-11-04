@@ -19,6 +19,8 @@ internal static class SubtitleIdentityNativeFixture
             subtitles.MediaBytes = File.ReadAllBytes(Path.Combine(assets, "tracks.mkv"));
             await RefreshedDownloadedSubtitlesAsync(assets);
             await RefreshedDownloadedSubtitlesAsync(assets, storedIdentity: false);
+            await RefreshedDownloadedSubtitlesAsync(assets, storedIdentity: false, trackIdentity: false);
+            await BurnedInTextSubtitlesAsync(assets);
             await FreshPrePlayWithoutRouteAsync(subtitles.Origin);
         }
         using var wire = new Wire(); using var http = new HttpClient(wire);
@@ -507,6 +509,65 @@ internal static class SubtitleIdentityNativeFixture
         finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
     }
 
+    private static async Task BurnedInTextSubtitlesAsync(string assets)
+    {
+        using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt")));
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://subtitle-identity.invalid"); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        using var service = new PlayerService(new(api), new(api), auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "subtitle-burned-text")), new SettingsApi(api));
+        using var manager = new PlaybackManager(new(api), new(api), auth, api);
+        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [new() { FileId = 42 }] });
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        mpv.FileLoaded += () => loaded.TrySetResult(); mpv.LoadFile(Path.Combine(assets, "tracks.mkv"));
+        await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause(); mpv.SetSubtitleTrack(0);
+        Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+        typeof(PlayerService).GetProperty("State")!.SetValue(service, PlayerState.Expanded);
+        typeof(PlayerService).GetProperty("ContentId")!.SetValue(service, "movie");
+        // Use the real loaded native inventory, but no native route on the
+        // accepted HLS plan: only its burn-in grant can attest execution.
+        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("transcode", subtitles.Origin + "/master.m3u8"));
+        var nativeIds = mpv.GetSubtitleTrackIds().ToArray();
+        try
+        {
+            foreach (var codec in new[] { "srt", "ass" })
+            foreach (var hasUrl in new[] { false, true })
+            foreach (var hasIdentity in new[] { false, true })
+            {
+                var track = new SubtitleTrackInfo { Index = 8, TrackId = hasIdentity ? "burned-text" : null,
+                    Source = "embedded", Codec = codec, Language = "en", Delivery = "native",
+                    Url = hasUrl ? subtitles.Origin + "/captions.srt" : "" };
+                var other = new SubtitleTrackInfo { Index = 9, TrackId = "other-text", Source = "embedded",
+                    Codec = codec, Language = "ja", Delivery = "native" };
+                var session = new PlaybackStartResponse { SessionId = "burned-text", ProtocolVersion = 3, MediaFileId = 42,
+                    PlayMethod = "transcode", SubtitleMode = "burn_in", SelectedSubtitleTrackId = track.TrackId,
+                    SelectedSubtitleTrackIndex = track.Index, SubtitleUrls = [track, other] };
+                typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+                var writes = wire.PreferenceWrites;
+                Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)! &&
+                    service.ActiveSubtitleServerIndex == track.Index && ReferenceEquals(Get(service, "_executedSubtitleTrack"), track) &&
+                    wire.PreferenceWrites == writes,
+                    "Load-time selection refused the granted text/ASS burn-in or saved a preference.");
+                Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, true)! &&
+                    service.ActiveSubtitleServerIndex == track.Index && ReferenceEquals(Get(service, "_executedSubtitleTrack"), track) &&
+                    manager.SubtitleSelectionForLoad == track.Index && wire.PreferenceWrites == writes + 1,
+                    "Manual selection failed to execute/persist the granted text/ASS burn-in.");
+                Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", other.Index, true)! &&
+                    service.ActiveSubtitleServerIndex == track.Index && wire.PreferenceWrites == writes + 1,
+                    "A different unroutable row borrowed the text/ASS burn-in grant.");
+                Require(mpv.GetPropertyDouble("sid") <= 0 && mpv.GetSubtitleTrackIds().SequenceEqual(nativeIds) &&
+                    mpv.IsPaused && wire.Replans == 0 && Volatile.Read(ref subtitles.Requests) == 0 &&
+                    ((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).Count == 0 &&
+                    ((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).Count == 0,
+                    "The text/ASS burn-in grant caused a duplicate native/sidecar selection, download, replan or resume.");
+            }
+            Program.Log("PASS: text/ASS burn-in grants execute by ID or legacy index without native/sidecar routes or duplicate downloads, retaining pause and saving only explicit executed preferences.");
+        }
+        finally { Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null); }
+    }
+
     private static async Task FreshPrePlayWithoutRouteAsync(string origin)
     {
         using var wire = new Wire { InitialPlaybackUrl = origin + "/media.mkv" };
@@ -575,7 +636,7 @@ internal static class SubtitleIdentityNativeFixture
         }
     }
 
-    private static async Task RefreshedDownloadedSubtitlesAsync(string assets, bool storedIdentity = true)
+    private static async Task RefreshedDownloadedSubtitlesAsync(string assets, bool storedIdentity = true, bool trackIdentity = true)
     {
         using var subtitles = new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "japanese.srt")));
         using var wire = new Wire { InventoryHost = new Uri(subtitles.Origin).Host };
@@ -590,7 +651,7 @@ internal static class SubtitleIdentityNativeFixture
         mpv.FileLoaded += () => loaded.TrySetResult(); mpv.LoadFile(Path.Combine(assets, "tracks.mkv"));
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         var original = new SubtitleTrackInfo { Index = 1, Id = storedIdentity ? 100 : null,
-            TrackId = "download:100", SyncKey = storedIdentity ? "stored-100" : null,
+            TrackId = trackIdentity ? "download:100" : null, SyncKey = storedIdentity ? "stored-100" : null,
             Source = "downloaded", Codec = "srt", Language = "en", Url = subtitles.Origin + "/english.srt" };
         var session = new PlaybackStartResponse { SessionId = "refresh", ProtocolVersion = 3, MediaFileId = 42,
             SelectedSubtitleTrackId = original.TrackId, SelectedSubtitleTrackIndex = original.Index,
@@ -625,10 +686,15 @@ internal static class SubtitleIdentityNativeFixture
                 var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var notices = 0;
                 var substitutedHighlights = 0;
+                var retainedHighlights = 0;
                 void Observe(string[] message)
                 {
-                    if (message.FirstOrDefault() == "silo-refresh-active" && message.Length > 1 && message[1] != "-1")
-                        Interlocked.Increment(ref substitutedHighlights);
+                    if (message.FirstOrDefault() == "silo-refresh-active" && message.Length > 1)
+                    {
+                        if (message[1] == original.Index.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                            Interlocked.Increment(ref retainedHighlights);
+                        else Interlocked.Increment(ref substitutedHighlights);
+                    }
                     if (message.FirstOrDefault() == "silo-refresh-ready") ready.TrySetResult();
                     if (message.FirstOrDefault() == "silo-refresh-notice") Interlocked.Increment(ref notices);
                     if (message.FirstOrDefault() == "silo-refresh-drained") drained.TrySetResult();
@@ -659,15 +725,20 @@ internal static class SubtitleIdentityNativeFixture
                         await service.RefreshSubtitlesAfterAiAsync(42);
                         Require(mpv.GetPropertyDouble("sid") == originalSid &&
                             ReferenceEquals(Get(service, "_executedSubtitleTrack"), original) &&
-                            service.ActiveSubtitleServerIndex == -1 && !sids.ContainsKey(1) && !files.ContainsKey(1) &&
-                            Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                            session.SubtitleUrls.Contains(original) && original.Index == 3 && service.ActiveSubtitleServerIndex == 3 &&
+                            sids[3] == originalSid && files[3] == englishPath && File.Exists(englishPath) &&
+                            !sids.ContainsKey(1) && !files.ContainsKey(1) && !sids.ContainsKey(2) && !files.ContainsKey(2) &&
+                            (int?)Get(service, "_pendingInitialServerSubtitleIndex") == 3 && session.SelectedSubtitleTrackIndex == 3 &&
+                            manager.SubtitleSelectionForLoad == 3 && !manager.IsRetainedSubtitleUnavailable &&
+                            session.SubtitleUrls.Select(track => track.Index).Distinct().Count() == session.SubtitleUrls.Count &&
                             manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes && mpv.IsPaused,
-                            $"Refresh {refresh} retired an identity-unknown playing download or lent its index/cache to another row.");
+                            $"Refresh {refresh} lost an identity-unknown download's row/active state or lent its index/cache to another row.");
                     }
                     Call(mpv, "Command", (object)new[] { "script-message", "silo-refresh-drain" });
                     await drained.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                    Require(Volatile.Read(ref notices) == 0 && Volatile.Read(ref substitutedHighlights) == 0,
-                        "An identity-unknown download was falsely reported as removed or highlighted a different refreshed row.");
+                    Require(Volatile.Read(ref notices) == 0 && Volatile.Read(ref substitutedHighlights) == 0 &&
+                        Volatile.Read(ref retainedHighlights) == 2,
+                        "An identity-unknown download lost its OSC highlight, was falsely reported as removed or highlighted a different refreshed row.");
                     var explicitPick = session.SubtitleUrls.Single(track => track.Id == 200);
                     await service.SetSubtitleTrackAndPersistAsync(explicitPick.Index + 1, explicitPick.Language, explicitPick);
                     Require(service.ActiveSubtitleServerIndex == explicitPick.Index && sids[explicitPick.Index] != originalSid &&
@@ -675,7 +746,7 @@ internal static class SubtitleIdentityNativeFixture
                         "An explicit pick after an unbound refresh reused the old SID or failed to execute its own subtitle.");
                 }
                 finally { mpv.ScriptMessageReceived -= Observe; }
-                Program.Log("PASS: a plan download without sync_key remains executing and unbound across refreshes, without false removal feedback, cache substitution or preference writes.");
+                Program.Log($"PASS: a plan download without stored keys (TrackId={trackIdentity}) keeps its exact row, active highlight, pending/granted intent and SID/cache across refreshes without substitution or preference writes.");
                 return;
             }
 
