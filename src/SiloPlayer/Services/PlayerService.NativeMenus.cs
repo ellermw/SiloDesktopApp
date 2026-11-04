@@ -198,7 +198,7 @@ public partial class PlayerService
         {
             !string.Equals(language, title, StringComparison.OrdinalIgnoreCase) ? language : "",
             AudioMenuText(track.Layout, "", ""),
-            track.Bitrate is > 0 ? $"{track.Bitrate.Value / 1000d:0.#} kbps" : "",
+            AudioTrackDisplayText.FormatBitrate(track.Bitrate),
             track.SampleRate is > 0 ? $"{track.SampleRate.Value / 1000d:0.#} kHz" : "",
             track.BitDepth is > 0 ? $"{track.BitDepth}-bit" : "",
         }.Where(text => text.Length > 0));

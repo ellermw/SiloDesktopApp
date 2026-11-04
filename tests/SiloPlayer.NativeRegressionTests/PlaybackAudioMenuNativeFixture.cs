@@ -177,6 +177,15 @@ internal static partial class PlaybackAudioMenuNativeFixture
             var current = (ListViewItem)list.Items[37];
             Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "bitrate")
+            {
+                var name = AutomationProperties.GetName(current);
+                Require(name.Contains("640 kbps", StringComparison.Ordinal) && name.Contains("48 kHz", StringComparison.Ordinal),
+                    "Native Audio changed the supplied 640 kbps unit or lost the independent 48000 Hz conversion: " + name);
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native Audio preserves supplied 640 kbps while converting 48000 Hz to 48 kHz.");
+                return;
+            }
             var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (menuProbe == "shift-tab")
             {
@@ -743,6 +752,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         {
             Title = i == 71 ? "A deliberately long multilingual audio label — 日本語 — " + new string('x', 180) : i == 1 ? "" : i == 2 ? "Duplicate title" : $"Audio source {i}",
             Language = i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
+            Bitrate = i == 37 ? 640 : null, SampleRate = i == 37 ? 48000 : null,
         }).ToList(),
     };
 

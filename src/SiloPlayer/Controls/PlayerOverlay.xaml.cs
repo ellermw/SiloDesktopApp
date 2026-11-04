@@ -1873,7 +1873,7 @@ public sealed partial class PlayerOverlay : UserControl
             {
                 !string.Equals(langName, title, StringComparison.OrdinalIgnoreCase) ? langName : "",
                 !string.IsNullOrWhiteSpace(at.Layout) && !string.Equals(at.Layout, channelLabel, StringComparison.OrdinalIgnoreCase) ? at.Layout : "",
-                at.Bitrate is > 0 ? $"{at.Bitrate.Value / 1000.0:0.#} kbps" : "",
+                AudioTrackDisplayText.FormatBitrate(at.Bitrate),
                 at.SampleRate is > 0 ? $"{at.SampleRate.Value / 1000.0:0.#} kHz" : "",
                 at.BitDepth is > 0 ? $"{at.BitDepth}-bit" : "",
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
