@@ -43,6 +43,29 @@ internal static class SubtitleIdentityNativeFixture
         await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); mpv.Pause();
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE") == "ambiguous-rebind")
+            {
+                foreach (var stableId in new[] { false, true })
+                {
+                    var requested = new SubtitleTrackInfo { Index = 1, TrackId = stableId ? "identity-88" : null,
+                        Id = stableId ? null : 88, Source = "downloaded", Codec = "srt", Language = "spa" };
+                    var available = new SubtitleTrackInfo { Index = 7, TrackId = requested.TrackId, Id = requested.Id,
+                        Source = requested.Source, Codec = requested.Codec, Language = requested.Language };
+                    var unavailableDuplicate = new SubtitleTrackInfo { Index = 8, TrackId = requested.TrackId, Id = requested.Id,
+                        Source = requested.Source, Codec = requested.Codec, Language = requested.Language, Unplayable = true };
+                    session.SubtitleUrls = [available];
+                    Require(ReferenceEquals(Call(service, "ResolveCurrentSubtitleChoice", requested, 42), available),
+                        "A unique available strong identity did not rebind to its current row.");
+                    session.SubtitleUrls = [unavailableDuplicate];
+                    Require(Call(service, "ResolveCurrentSubtitleChoice", requested, 42) == null,
+                        "An unavailable strong identity remained executable.");
+                    session.SubtitleUrls = [available, unavailableDuplicate];
+                    Require(Call(service, "ResolveCurrentSubtitleChoice", requested, 42) == null,
+                        "An unavailable duplicate made a strong subtitle identity falsely unique during actual service rebinding.");
+                }
+                Program.Log("PASS: actual service rebinding requires unique available TrackId/stored ID across the full inventory, including unavailable attestations.");
+                return;
+            }
             var refreshCase = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
             if (refreshCase is "refresh-reindex" or "refresh-held" or "refresh-removed")
             {
@@ -338,6 +361,7 @@ internal static class SubtitleIdentityNativeFixture
                         var signature = new SubtitleTrackSignature { Source = requestedSource, Language = playable.Language,
                             Codec = playable.Codec, Label = "" };
                         Call(service, "ResolveInitialSubtitleSelection", automaticWatch, automaticVersion, session, null, null, signature);
+                        Program.Log($"Pre-play signature {requestedSource}/{playableIndex}: pending={Get(service, "_pendingInitialServerSubtitleIndex") ?? "null"}, manager={manager.SubtitleSelectionForLoad}, route={Call(service, "HasSubtitleSelectionRoute", playable)}, source={playable.Source}, track={playable.TrackId}, id={playable.Id}.");
                         Require((int?)Get(service, "_pendingInitialServerSubtitleIndex") == playableIndex &&
                             manager.SubtitleSelectionForLoad == playableIndex,
                             "Pre-play signature bound an unavailable duplicate instead of the playable row.");

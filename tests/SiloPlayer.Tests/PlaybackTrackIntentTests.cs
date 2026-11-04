@@ -698,6 +698,33 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FullyIdentitylessDownloadedRowsKeepStrictLegacyRebinding(bool automatic)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var original = session.SubtitleUrls.Single(t => t.Index == 1);
+        original.TrackId = null; original.Id = null; original.SyncKey = null;
+        original.Source = "downloaded";
+        scope.Manager.RecordLocalSubtitleSelection(1, automatic);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        SubtitleTrackInfo Copy(int index) => new()
+        {
+            Index = index, Source = original.Source, Codec = original.Codec, Language = original.Language,
+            Label = original.Label, Forced = original.Forced, HearingImpaired = original.HearingImpaired,
+        };
+        session.SubtitleUrls = [Copy(1), Copy(7)];
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        session.SubtitleUrls = [Copy(7)];
+        Assert.Equal(7, scope.Manager.SubtitleSelectionForLoad);
+        session.SubtitleUrls.Add(Copy(8));
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+        Assert.Equal(automatic, scope.Manager.IsSubtitleSelectionAutomatic);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]

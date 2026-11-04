@@ -6137,14 +6137,16 @@ public partial class PlayerService : IDisposable
     {
         var session = _playbackManager?.CurrentSession;
         if (session == null || session.MediaFileId != sourceFile) return null;
-        var matches = session.SubtitleUrls.Where(candidate => !candidate.Unplayable &&
-            (!string.IsNullOrWhiteSpace(requested.TrackId) ? candidate.TrackId == requested.TrackId :
-                requested.Id.HasValue ? candidate.Id == requested.Id :
-                candidate.Index == requested.Index && candidate.Source == requested.Source && candidate.Codec == requested.Codec &&
+        var matches = session.SubtitleUrls.Where(candidate =>
+            !string.IsNullOrWhiteSpace(requested.TrackId) ? candidate.TrackId == requested.TrackId :
+                requested.Id is > 0 ? candidate.Id == requested.Id :
+                !candidate.Unplayable && candidate.Index == requested.Index && candidate.Source == requested.Source && candidate.Codec == requested.Codec &&
                 MediaLanguageCatalog.Normalize(candidate.Language) == MediaLanguageCatalog.Normalize(requested.Language) &&
                 candidate.Label == requested.Label && candidate.Forced == requested.Forced &&
-                candidate.HearingImpaired == requested.HearingImpaired)).Take(2).ToArray();
-        return matches.Length == 1 ? matches[0] : null;
+                candidate.HearingImpaired == requested.HearingImpaired).Take(2).ToArray();
+        // Unavailable rows still attest a strong identity; excluding them
+        // before counting can make a duplicate ID look uniquely executable.
+        return matches.Length == 1 && !matches[0].Unplayable ? matches[0] : null;
     }
 
     private void CommitExecutedSubtitleSelection(SubtitleTrackInfo? track)

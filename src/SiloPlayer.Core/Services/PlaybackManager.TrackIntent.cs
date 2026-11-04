@@ -207,8 +207,8 @@ public partial class PlaybackManager
                     SubtitleStoredKey(t) == key).Take(2).ToArray();
                 if (stored.Length > 0)
                     return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
+                return null;
             }
-            return null;
         }
         var candidates = inventory.Where(t => !t.Unplayable && (!sameFile || !hasIdentity) &&
             Equal(t.Source, _viewerSubtitle.Source) && SubtitleCodec(t.Codec) == SubtitleCodec(_viewerSubtitle.Codec) &&
