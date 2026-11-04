@@ -54,7 +54,7 @@ internal static class EpisodeOverviewNativeFixture
             await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Call(page, "BuildSiblingEpisodeCards");
             ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
-            ((ScrollViewer)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
+            ((ScrollView)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
             page.UpdateLayout();
             var overview = (ExpandableDescription)page.FindName("OverviewText");
             var firstRail = (StackPanel)page.FindName("SiblingEpisodesPanel");
@@ -264,7 +264,7 @@ internal static class EpisodeOverviewNativeFixture
                     Overview = "An unwatched sibling plot", StillUrl = "https://episode-overview.fixture.invalid/still.png", StillIsEpisodeStill = true });
                 Call(page, "ApplyEpisodeSpoilers"); Call(page, "BuildSiblingEpisodeCards");
                 ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
-                ((ScrollViewer)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
+                ((ScrollView)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
                 var protectedRail = (StackPanel)page.FindName("SiblingEpisodesPanel");
                 Image? Still() => Descendants(protectedRail).OfType<Image>().FirstOrDefault(image => image.Source is BitmapImage { PixelWidth: > 0 });
                 await Until(() => Still() != null); page.UpdateLayout();
@@ -781,11 +781,11 @@ internal static class EpisodeOverviewNativeFixture
             Call(page, "BuildSiblingEpisodeCards");
             ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
             ((FrameworkElement)page.FindName("SiblingEpisodesLoadingSkeleton")).Visibility = Visibility.Collapsed;
-            var rail = (ScrollViewer)page.FindName("SiblingEpisodesScrollViewer");
+            var rail = (ScrollView)page.FindName("SiblingEpisodesScrollViewer");
             rail.Visibility = Visibility.Visible;
             page.UpdateLayout();
             await Until(() => rail.ScrollableWidth > 160);
-            rail.ChangeView(160, null, null, true);
+            rail.ScrollTo(160, 0, new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
             await Until(() => rail.HorizontalOffset > 0);
             var offset = rail.HorizontalOffset;
             var cards = ((StackPanel)page.FindName("SiblingEpisodesPanel")).Children.ToArray();

@@ -1085,6 +1085,14 @@ internal static partial class RealtimeSeriesStateNativeFixture
                     Check(page.CanPreserveOnReconnect, "A settled auto-mode timeout should not require a reconnect remount.");
                     continue;
                 }
+                if (overview)
+                {
+                    // This interruption case owns no successful successor. The
+                    // separate late-configuration control exercises that handoff.
+                    var scopeTimer = (Microsoft.UI.Dispatching.DispatcherQueueTimer?)typeof(ItemDetailPage)
+                        .GetField("_overviewScopeTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page);
+                    scopeTimer?.Stop();
+                }
                 client.InvalidateAccessContext();
                 Check(!page.CanPreserveOnReconnect, "Retired translation work must not preserve a disabled or missing button.");
                 wire.ReleaseCompanion?.TrySetResult();
