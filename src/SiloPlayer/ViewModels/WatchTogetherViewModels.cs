@@ -276,37 +276,10 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task TogglePolicyAsync()
-    {
-        var r = Room;
-        if (r == null || string.IsNullOrEmpty(RoomId)) return;
-        if (IsBusy) return;
-        IsBusy = true;
-        try
-        {
-            var next = r.GuestControlPolicy == "guest_play_pause" ? "host_only" : "guest_play_pause";
-            var resp = await _playbackApi.UpdateWatchTogetherRoomPolicyAsync(RoomId, next);
-            Room = resp.Room;
-        }
-        catch (Exception ex) { ErrorMessage = $"Policy update failed: {ex.Message}"; }
-        finally { IsBusy = false; }
-    }
+    private Task TogglePolicyAsync() => RunPlaybackPanelMutationAsync("toggle-policy");
 
     [RelayCommand]
-    private async Task CloseRoomAsync()
-    {
-        if (string.IsNullOrEmpty(RoomId) || IsBusy) return;
-        ++_initializationGeneration;
-        IsBusy = true;
-        try
-        {
-            await _playbackApi.CloseWatchTogetherRoomAsync(RoomId);
-            ClosedReason = "host_left";
-            await StopWebSocketAsync();
-        }
-        catch (Exception ex) { ErrorMessage = $"Failed to close room: {ex.Message}"; }
-        finally { IsBusy = false; }
-    }
+    private Task CloseRoomAsync() => RunPlaybackPanelMutationAsync("end");
 
     public async Task VoteAsync(string suggestionId)
     {

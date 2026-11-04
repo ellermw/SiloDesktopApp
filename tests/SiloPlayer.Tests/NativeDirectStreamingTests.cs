@@ -5,6 +5,7 @@ using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using SiloPlayer.Player;
 
 namespace SiloPlayer.Tests;
@@ -204,8 +205,18 @@ public sealed class NativeDirectStreamingTests
             var requestCount = source.Requests.Count;
             player.LoadFile(source.Url.Replace("/stream/direct/", "/legacy/"), "Bearer fixture-account-token");
             player.Play();
-            await WaitUntilAsync(() => source.Requests.Count > requestCount && player.Position > 524,
-                TimeSpan.FromSeconds(10));
+            try
+            {
+                await WaitUntilAsync(() => source.Requests.Count > requestCount && player.Position > 524,
+                    TimeSpan.FromSeconds(10));
+            }
+            finally
+            {
+                // Preserve server-side evidence for an intermittent native TLS
+                // failure. Expected early HTTP probe closes remain separate.
+                await File.WriteAllTextAsync(Path.Combine(logDirectory, "fixture-tls-handshakes.json"),
+                    JsonSerializer.Serialize(source.TlsHandshakes));
+            }
             Assert.Contains(source.Requests.Skip(requestCount), range => range.To is null);
             Assert.Contains("Authorization: Bearer fixture-account-token", source.AuthorizationHeaders);
         }
@@ -241,6 +252,7 @@ public sealed class NativeDirectStreamingTests
         public ConcurrentQueue<string> Paths { get; } = new();
         public ConcurrentQueue<string> AuthorizationHeaders { get; } = new();
         public ConcurrentQueue<Exception> Errors { get; } = new();
+        public ConcurrentQueue<string> TlsHandshakes { get; } = new();
         public string Url { get; }
 
         public HttpMessageHandler CreateHandler()
@@ -292,12 +304,17 @@ public sealed class NativeDirectStreamingTests
 
         private async Task ServeAsync(TcpClient client, int connectionNumber)
         {
+            var authenticated = _certificate == null;
             using (client)
             try
             {
                 using Stream stream = _certificate == null ? client.GetStream() : new SslStream(client.GetStream());
                 if (stream is SslStream tls)
+                {
                     await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions { ServerCertificate = _certificate }, _stop.Token);
+                    authenticated = true;
+                    TlsHandshakes.Enqueue($"connection={connectionNumber}; negotiated={tls.SslProtocol}; cipher={tls.NegotiatedCipherSuite}");
+                }
                 using var reader = new StreamReader(stream, leaveOpen: true);
                 while (!_stop.IsCancellationRequested)
                 {
@@ -375,9 +392,17 @@ public sealed class NativeDirectStreamingTests
                 if (!persistent || interrupt) return;
                 }
             }
-            catch (IOException) { /* mpv closes probing and seek requests early */ }
+            catch (IOException ex)
+            {
+                if (!authenticated) TlsHandshakes.Enqueue($"connection={connectionNumber}; handshake-failed={ex}");
+                // mpv closes authenticated probing and seek requests early.
+            }
             catch (OperationCanceledException) { }
-            catch (Exception ex) { Errors.Enqueue(ex); }
+            catch (Exception ex)
+            {
+                if (!authenticated) TlsHandshakes.Enqueue($"connection={connectionNumber}; handshake-failed={ex}");
+                Errors.Enqueue(ex);
+            }
         }
 
         public async ValueTask DisposeAsync()

@@ -65,3 +65,9 @@ Hold `SiloOct18Build` for every .NET build/test; use fresh isolated outputs and 
 ## Design review
 
 A separate builder check found no significant unanswered product decisions beyond the full-box-set versus compatibility-first choice. Its busy-sidecar scope caveat is included explicitly above. Playback and non-playback researchers checked the corresponding design claims against pinned primary source. Detailed findings are in `docs/research/2026-11-02-playback-delta.md`, `2026-11-02-boxsets-delta.md` and `2026-11-02-other-server-delta.md`. These reviews are source/design evidence; implementation and its independent Standards/Spec gates remain to be done after the owner's design decision.
+
+## PR3 implementation note — server grant boundary
+
+Busy refusal preserves the last actually applied subtitle and saved preference while the loaded transport owner is still current. Text readiness is checked before a burned-to-text replan; authorized local bytes can cross that one replacement only for the same effective file, stable track identity, sync key, initiating manual owner and API context.
+
+The pinned server can select an alternate file for a track-change refusal. It commits the replacement and can retire the old transcode/proxy grant before returning the response; there is no client-load acknowledgement or general predecessor lease. A server-selected alternate is therefore a new transport owner. Keep its valid grant, resolve the requested identity in its inventory, expose actual captions Off until its text read succeeds, preserve existing preferences on busy failure, and show retry guidance. Do not roll the manager back to an obsolete server revision or claim old burned-transport survival across that server commit. No new server API is introduced.

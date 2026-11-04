@@ -3,10 +3,190 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void PlaybackRequestDoesNotReadItsDisposableTokenSourceAfterPublication()
+    {
+        // CancelPendingPlayRequest may dispose the published source while
+        // this request waits for the gate. Native request-supersession checks
+        // cover the resulting cancellation; this guards the lifetime boundary.
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task PlayRequestAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void PublishFullscreenVisualState(", start, StringComparison.Ordinal);
+        var request = source[start..end];
+        var publication = request.IndexOf("Interlocked.Exchange(ref _playRequestCts, ownerCts)", StringComparison.Ordinal);
+        Assert.True(publication >= 0);
+        Assert.InRange(request.IndexOf("ownerCts.Token", StringComparison.Ordinal), 0, publication - 1);
+        Assert.DoesNotContain("ownerCts.Token", request[publication..]);
+    }
+
+    [Fact]
+    public void LocalCaptionCycleRetiresOldActivationWithoutChangingPreferenceProvenance()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private void CycleSubtitleBackward()", StringComparison.Ordinal);
+        var end = source.IndexOf("private bool HasSubtitleSelectionRoute(", start, StringComparison.Ordinal);
+        var cycle = source[start..end];
+        var executed = cycle.IndexOf("if (selected.Sid == 0 ? actualSid > 0", StringComparison.Ordinal);
+        var retire = cycle.IndexOf("Interlocked.Exchange(ref _subtitleActivationIntent, new object());", StringComparison.Ordinal);
+        var intent = cycle.IndexOf("manager!.TryRecordLocalSubtitleSelection(session, selected.Track,", StringComparison.Ordinal);
+        Assert.True(executed >= 0 && intent > executed && retire > intent);
+        Assert.Contains("isAutomatic: manager.IsSubtitleSelectionAutomatic", cycle[intent..]);
+        Assert.Contains("mpv.SetSubtitleTrack(previousSid > 0", cycle[intent..retire]);
+        Assert.DoesNotContain("SaveExecutedSubtitlePreferenceAsync", cycle);
+        Assert.DoesNotContain("SaveSubtitlePrefsAsync", cycle);
+    }
+
+    [Fact]
+    public void SubtitleAddUsesSupportedNativeFlagsAndKeepsLanguageOnlyMetadata()
+    {
+        // The pinned mpv command accepts select/auto/cached; sid's "no"
+        // property value is not a sub-add command flag.
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Player", "MpvPlayer.cs"));
+        var start = source.IndexOf("public bool AddSubtitle(", StringComparison.Ordinal);
+        var end = source.IndexOf("public void ReloadSubtitle(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        Assert.Contains("new List<string> { \"sub-add\", url, select ? \"select\" : \"auto\" }", method);
+        Assert.DoesNotContain("select ? \"select\" : \"no\"", method);
+        Assert.Contains("!string.IsNullOrEmpty(title) || !string.IsNullOrEmpty(lang)", method);
+        Assert.Contains("args.Add(title ?? \"\");", method);
+        Assert.Contains("args.Add(lang);", method);
+    }
+
+    [Fact]
+    public void FailedSubtitleReadCannotRollbackAnAcceptedFileToOutgoingIntent()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private bool RestoreExecutedSubtitleSelection(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void ShowSubtitleSelectionUnavailable(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var restore = method.IndexOf("_playbackManager!.RestoreLocalSubtitleIntent(previousIntent);", StringComparison.Ordinal);
+        var condition = method.LastIndexOf("if (session?.ProtocolVersion", restore, StringComparison.Ordinal);
+        Assert.Contains("previousIntent.MediaFileId == session.MediaFileId", method[condition..restore]);
+        Assert.Contains("_pendingSubtitlePreferenceOwner = null;", method);
+        Assert.DoesNotContain("RecordLocalSubtitleSelection(null", method);
+    }
+
+    [Fact]
+    public void RemappedSubtitleReloadAcknowledgesOnlyItsAdmittedLogicalChoice()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task SaveExecutedSubtitlePreferenceAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var ack = method.IndexOf("if (transportReloadScheduled && admittedIntent != null)", StringComparison.Ordinal);
+        var oldFileGuard = method.IndexOf("manager?.CurrentSession?.MediaFileId != selectionFileId", StringComparison.Ordinal);
+        Assert.InRange(ack, 0, oldFileGuard - 1);
+        var receipt = method[ack..oldFileGuard];
+        Assert.Contains("ReferenceEquals(selectionActivationIntent, Volatile.Read(ref _subtitleActivationIntent))", receipt);
+        Assert.Contains("manager?.CaptureLocalSubtitleIntent() == admittedIntent", receipt);
+        Assert.Contains("authority.ApiClient.IsCurrentIdentityContext(selectionIdentity)", receipt);
+        Assert.Contains("selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration)", receipt);
+        Assert.Contains("selectionRoomGeneration == Volatile.Read(ref _roomPlaybackGeneration)", receipt);
+        var accepted = receipt.IndexOf("return true;", StringComparison.Ordinal);
+        Assert.Contains("return false;", receipt[accepted..]);
+        var commonGuard = method.IndexOf("if (_closing ||", ack, StringComparison.Ordinal);
+        Assert.Contains("_playbackTerminalState != null", method[commonGuard..oldFileGuard]);
+    }
+
+    [Fact]
+    public void BitmapFollowupUsesRecordedIdentityAndRebindsOnlyLivePreferenceAuthority()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<SubtitleTransportResult> SetBitmapSubtitleBurnInAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task ReconcileDeferredSubtitleSelectionAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var loop = method.IndexOf("while (true)", StringComparison.Ordinal);
+        Assert.Contains("manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic)", method[..loop]);
+        Assert.Contains("manager.ReplanRecordedSubtitleSelectionAsync(position, ct)", method[loop..]);
+        Assert.DoesNotContain("manager.ReplanSubtitleAsync(", method[loop..]);
+        Assert.Contains("manager.CaptureLocalSubtitleIntent() != submittedIntent", method[loop..]);
+        Assert.Contains("pendingOwner.MediaFileId == submittedIntent.MediaFileId", method[loop..]);
+        Assert.Contains("_pendingSubtitlePreferenceOwner = pendingOwner with { MediaFileId = replanned.MediaFileId };", method[loop..]);
+        Assert.Contains("_pendingSubtitlePreferenceIndex = resolvedIndex;", method[loop..]);
+    }
+
+    [Fact]
+    public void ReplacementLoadPublishesOwnedBusyBeforeRetiringOutgoingSubtitleReads()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private void BeginOwnedMpvLoad(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void ConfigureAudioOutput(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var claim = method.IndexOf("var loadBusyOwner = BeginPlaybackBusy();", StringComparison.Ordinal);
+        var retire = method.IndexOf("CancelPendingLoadedMediaInitialization();", StringComparison.Ordinal);
+        Assert.InRange(claim, 0, retire - 1);
+        Assert.InRange(method.IndexOf("acceptBusy?.Invoke(loadBusyOwner);", StringComparison.Ordinal), claim, retire - 1);
+        var failure = method[method.IndexOf("catch", StringComparison.Ordinal)..];
+        Assert.Contains("ReleasePlaybackBusy(loadBusyOwner", failure);
+    }
+
+    [Fact]
+    public void SiloCastSubtitleInventoryUsesTheSameSelectionRouteAsItsControls()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SiloCast.cs"));
+        var capture = source[..source.IndexOf("public async Task ApplySiloCastControlAsync", StringComparison.Ordinal)];
+        Assert.Contains(".Where(HasSubtitleSelectionRoute)", capture);
+        Assert.Contains("!HasSubtitleSelectionRoute(subtitleTrack)", source);
+    }
+
+    [Fact]
+    public void SubtitleReadAdmissionReleasesStateBeforeCancellationAndPrefetch()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForSelectionAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(", start, StringComparison.Ordinal);
+        Assert.DoesNotContain("lock (", source[start..end]);
+        Assert.Contains("PrefetchSubtitleSidecarAsync(track, current)", source[start..end]);
+        var selection = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.SubtitleSelection.cs"));
+        start = selection.IndexOf("private SubtitleReadOperation? BeginSubtitleRead(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Read admission must support rejecting a retired owner before exchanging operations.");
+        end = selection.IndexOf("private void CancelSubtitleSelectionRead()", start, StringComparison.Ordinal);
+        var admission = selection[start..end];
+        var gate = admission.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var gateEnd = admission.IndexOf('}', gate);
+        Assert.Contains("if (current?.Invoke() == false) return null;", admission[gate..gateEnd]);
+        Assert.Contains("Interlocked.Exchange(ref _subtitleReadOperation, next)", admission[gate..gateEnd]);
+        Assert.True(admission.IndexOf("previous?.Cancel();", StringComparison.Ordinal) > gateEnd,
+            "Cancellation callbacks must execute after releasing the state lock.");
+    }
+
+    [Fact]
+    public void SubtitleAttachmentAdmissionCannotCancelAReadBeforeValidActivation()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task SaveExecutedSubtitlePreferenceAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var admission = method.IndexOf("if (acceptActivation?.Invoke() == false) return false;", StringComparison.Ordinal);
+        Assert.True(admission > 0);
+        Assert.DoesNotContain("CancelSubtitleSelectionRead();", method[..admission]);
+        Assert.DoesNotContain("_pendingLegacySubtitleSelection = null;", method[..admission]);
+        var detached = method.IndexOf("Interlocked.Exchange(ref _subtitleReadOperation, null)", admission, StringComparison.Ordinal);
+        Assert.True(detached > admission, "Read retirement must follow accepted activation under the same state lock.");
+        Assert.Contains("retiredRead?.Cancel();", method[detached..], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SubtitleAttachmentMutationLocksRecheckTheirCurrentSelectionOwner()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task SaveExecutedSubtitlePreferenceAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        foreach (var mutation in new[] { "_activeSubtitleServerIndex = selectedSubtitleIndex;", "mpv.SetSubtitleTrack(0);", "CommitExecutedSubtitleSelection(track);" })
+        {
+            var at = method.IndexOf(mutation, StringComparison.Ordinal);
+            var gate = method.LastIndexOf("lock (_subtitleTrackStateLock)", at, StringComparison.Ordinal);
+            Assert.True(gate >= 0 && at > gate);
+            Assert.Contains("if (!CurrentReadChoice())", method[gate..at], StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void AudioAndQualityControlsCaptureTheirOwnerBeforeDrainingTransportWork()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        foreach (var signature in new[] { "public async Task SwitchAudioTrackAsync(int trackIndex)", "private async Task SwitchQualityTierAsync(string tierId," })
+        foreach (var signature in new[] { "private async Task SwitchAudioTrackCoreAsync(int trackIndex", "private async Task SwitchQualityTierAsync(string tierId," })
         {
             var start = source.IndexOf(signature, StringComparison.Ordinal);
             Assert.True(start >= 0, $"Missing owner-scoped control: {signature}");
@@ -16,7 +196,7 @@ public sealed class PlayerServiceSourceTests
             Assert.True(capturedScope > start && capturedManager > start && capturedScope < drain && capturedManager < drain);
             Assert.Contains("ReferenceEquals(authority, _activeAuthority)", source[capturedScope..drain]);
             Assert.Contains("ReferenceEquals(manager, _playbackManager)", source[capturedScope..drain]);
-            Assert.StartsWith("\n        if (!CurrentSwitch()) return;", source[(drain + "await CancelAndDrainTransportRestartsAsync(ct);".Length)..].Replace("\r", ""));
+            Assert.StartsWith("\n        if (!CurrentSwitch()", source[(drain + "await CancelAndDrainTransportRestartsAsync(ct);".Length)..].Replace("\r", ""));
         }
     }
 
@@ -118,14 +298,24 @@ public sealed class PlayerServiceSourceTests
 
         Assert.Contains("CanUseNativeEmbeddedSubtitleTrack()", source, StringComparison.Ordinal);
         Assert.Contains("TransportKind == PlaybackTransportKind.DirectProgressive", source, StringComparison.Ordinal);
-        Assert.Contains("SelectSubtitleSidecar(track)", source, StringComparison.Ordinal);
+        Assert.Contains("SelectSubtitleSidecar(track, CurrentSelection)", source, StringComparison.Ordinal);
         // The server windows embedded text extraction only for an explicit
         // position/duration, and nothing slides a window during playback
         // (the XAML overlay tick that once did is never activated). A windowed
         // sidecar therefore lost every cue ~10 minutes after selection.
         // The complete-track URL is added directly, or downloaded whole first.
-        Assert.Contains("var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
-        Assert.Contains("_mpv.AddSubtitle(source, label, track.Language, select: true);", source, StringComparison.Ordinal);
+        Assert.Contains("source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
+        var sidecar = source[source.IndexOf("private bool SelectSubtitleSidecar(", StringComparison.Ordinal)..];
+        sidecar = sidecar[..sidecar.IndexOf("private long CurrentSubtitleSidecarGeneration()", StringComparison.Ordinal)];
+        var add = sidecar.IndexOf("mpv.AddSubtitle(source, label, track.Language, select: false)", StringComparison.Ordinal);
+        var ownerCheck = sidecar.IndexOf("if (!currentSelection() || !added || newIds.Length != 1)", add, StringComparison.Ordinal);
+        var cleanup = sidecar.IndexOf("if (added && newIds.Length == 1) mpv.RemoveSubtitle(newIds[0]);", ownerCheck, StringComparison.Ordinal);
+        var select = sidecar.IndexOf("mpv.SetSubtitleTrack(sid);", cleanup, StringComparison.Ordinal);
+        Assert.True(add >= 0 && ownerCheck > add && cleanup > ownerCheck && select > cleanup,
+            "A complete sidecar add must verify its owner and uniquely owned native ID without deleting ambiguous concurrent additions.");
+        Assert.Contains("fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", sidecar[ownerCheck..cleanup]);
+        Assert.DoesNotContain("foreach (var addedSid in newIds)", sidecar[ownerCheck..select]);
+        Assert.DoesNotContain("if (_activeSubtitleServerIndex < 0)", sidecar[cleanup..select]);
         Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
         Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TickSubtitleWindows", source, StringComparison.Ordinal);
@@ -186,9 +376,14 @@ public sealed class PlayerServiceSourceTests
         var method = source[methodStart..methodEnd];
 
         Assert.Contains("requested.External == true ? \"external\" : \"embedded\"", method, StringComparison.Ordinal);
-        Assert.Contains("sourceInventory.IndexOf(requested)", method, StringComparison.Ordinal);
-        Assert.Contains("ElementAtOrDefault(sourceOrdinal)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourceInventory.IndexOf(requested)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("ElementAtOrDefault(sourceOrdinal)", method, StringComparison.Ordinal);
         Assert.Contains("string.Equals(track.Source, requestedSource", method, StringComparison.Ordinal);
+        Assert.Contains("track.StreamIndex == streamIndex", method, StringComparison.Ordinal);
+        Assert.Contains("identities.Length == 1 && !identities[0].Unplayable", method, StringComparison.Ordinal);
+        Assert.Contains("if (matches.Length == 1) selectedTrack = matches[0];", method, StringComparison.Ordinal);
+        Assert.Contains("track.Forced == (requested.Forced == true)", method, StringComparison.Ordinal);
+        Assert.Contains("track.HearingImpaired == (requested.HearingImpaired == true)", method, StringComparison.Ordinal);
     }
 
 
@@ -214,21 +409,22 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("osc-set-translation-buffering", source);
         Assert.Contains("if (_resumeAfterLiveSubtitleBuffer)", source);
         Assert.Contains("_mpv.Pause();", source);
-        Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && _mpv?.IsPaused == true)", source);
+        Assert.Contains("var current = _liveSubtitleActivation?.Invoke() != false;", source);
+        Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && current && (!IsWatchTogetherPlayback || !_roomPlaybackPaused) && _mpv?.IsPaused == true)", source);
         Assert.Contains("public void ReloadSubtitle(int sid)", mpv);
 
-        var refreshStart = source.IndexOf("public async Task RefreshSubtitlesAfterAiAsync", StringComparison.Ordinal);
-        var refreshEnd = source.IndexOf("private void WriteLiveSubtitleFileLocked", refreshStart, StringComparison.Ordinal);
-        Assert.True(refreshStart >= 0 && refreshEnd > refreshStart);
-        Assert.DoesNotContain("SwitchVersionAsync", source[refreshStart..refreshEnd]);
+        var refresh = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.SubtitleRefresh.cs"));
+        Assert.Contains("public async Task RefreshSubtitlesAfterAiAsync", refresh);
+        Assert.DoesNotContain("SwitchVersionAsync", refresh);
         Assert.Contains(
-            "await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false);",
-            source[refreshStart..refreshEnd],
+            "await TrySetSubtitleTrackAndPersistAsync(1, preferred.Language, preferred,",
+            refresh,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "RestorePlaybackStateAfterSubtitleChange(wasPaused, position",
-            source[refreshStart..refreshEnd],
+            refresh,
             StringComparison.Ordinal);
+        Assert.Contains("claimActivation: false, acceptActivation: activation).ConfigureAwait(false);", refresh, StringComparison.Ordinal);
 
         var beginStart = source.IndexOf("private void BeginLiveSubtitleTranslation", StringComparison.Ordinal);
         var beginEnd = source.IndexOf("private void ApplySubtitleTranslationCues", beginStart, StringComparison.Ordinal);
@@ -345,12 +541,13 @@ public sealed class PlayerServiceSourceTests
     {
         var root = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        var methodStart = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync()", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync()", methodStart, StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync(", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync(", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
 
-        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId);", method, StringComparison.Ordinal);
+        Assert.Contains("dialog.SubtitleDownloadStarted += () => activation = BeginSubtitleActivationIntent();", method, StringComparison.Ordinal);
+        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId, snapshot.IsCurrent, activation);", method, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "RestorePlaybackStateAfterSubtitleChange(snapshot.WasPaused, snapshot.Position, allowSeek: true)",
             method,
@@ -526,7 +723,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("var replacementAccepted = false;", source, StringComparison.Ordinal);
         Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"version-switch-failed\")", source, StringComparison.Ordinal);
         Assert.Contains("var transportMutationAttempted = false;", source, StringComparison.Ordinal);
-        Assert.Contains("RunStreamRecoveryAsync(CurrentMediaPosition, \"subtitle-switch-failed\", manager, wasPaused, ct)", source, StringComparison.Ordinal);
+        Assert.Contains("RunStreamRecoveryAsync(CurrentMediaPosition, \"subtitle-switch-failed\", manager, PauseIntent(), ct)", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -539,14 +736,13 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        var methodStart = source.IndexOf("private async Task SelectSubtitleByServerIndexAsync", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("private void SelectSubtitleTrack", methodStart, StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private bool SelectSubtitleTrack", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0);
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
-        Assert.Contains("SetSubtitleTrackAndPersistAsync(0, null, null)", method);
-        Assert.Contains("SetSubtitleTrackAndPersistAsync(mpvTrackIndex, track.Language, track)", method);
+        Assert.Contains("TrySetSubtitleTrackAndPersistAsync(serverTrackIndex < 0 ? 0 : 1, track?.Language, track)", method);
         Assert.Contains("osc-set-active-subtitle", method);
     }
 
@@ -782,7 +978,7 @@ public sealed class PlayerServiceSourceTests
             "SiloPlayer",
             "Services",
             "PlayerService.cs"));
-        var methodStart = source.IndexOf("public async Task SwitchAudioTrackAsync", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task SwitchAudioTrackCoreAsync", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("// ── Subtitles", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
@@ -1077,30 +1273,31 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("private PlaybackUiSnapshot CapturePlaybackUiSnapshot()", source, StringComparison.Ordinal);
         Assert.Contains("private void RestorePlaybackUiSnapshot(PlaybackUiSnapshot snapshot, bool activatePlaybackSurface)", source, StringComparison.Ordinal);
 
-        var searchStart = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync()", StringComparison.Ordinal);
-        var searchEnd = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync()", searchStart, StringComparison.Ordinal);
+        var searchStart = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync(", StringComparison.Ordinal);
+        var searchEnd = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync(", searchStart, StringComparison.Ordinal);
         Assert.True(searchStart >= 0 && searchEnd > searchStart);
         var search = source[searchStart..searchEnd];
         Assert.Contains("var snapshot = CapturePlaybackUiSnapshot();", search, StringComparison.Ordinal);
         Assert.Contains("RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);", search, StringComparison.Ordinal);
-        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId);", search, StringComparison.Ordinal);
+        Assert.Contains("dialog.SubtitleDownloadStarted += () => activation = BeginSubtitleActivationIntent();", search, StringComparison.Ordinal);
+        Assert.Contains("await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId, snapshot.IsCurrent, activation);", search, StringComparison.Ordinal);
         Assert.DoesNotContain("RestorePlaybackStateAfterSubtitleChange(snapshot.WasPaused, snapshot.Position, allowSeek: true);", search, StringComparison.Ordinal);
         Assert.DoesNotContain("SwitchVersionAsync", search, StringComparison.Ordinal);
         Assert.DoesNotContain("_videoWindow?.Hide()", search, StringComparison.Ordinal);
         Assert.Contains("PlaybackDialogHost.ShowAsync", search, StringComparison.Ordinal);
-        Assert.Contains("osc-subtitle-dialog-closed", search, StringComparison.Ordinal);
+        Assert.Contains("NotifySubtitleDialogClosed(snapshot, nativeRequest)", search, StringComparison.Ordinal);
 
-        var appearanceStart = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync()", StringComparison.Ordinal);
-        var appearanceEnd = source.IndexOf("private async Task ShowSubtitleAiDialogAsync()", appearanceStart, StringComparison.Ordinal);
+        var appearanceStart = source.IndexOf("private async Task ShowSubtitleAppearanceDialogAsync(", StringComparison.Ordinal);
+        var appearanceEnd = source.IndexOf("private async Task ShowSubtitleAiDialogAsync(", appearanceStart, StringComparison.Ordinal);
         Assert.True(appearanceStart >= 0 && appearanceEnd > appearanceStart);
         var appearance = source[appearanceStart..appearanceEnd];
         Assert.Contains("var snapshot = CapturePlaybackUiSnapshot();", appearance, StringComparison.Ordinal);
         Assert.Contains("RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);", appearance, StringComparison.Ordinal);
         Assert.DoesNotContain("_videoWindow?.Hide()", appearance, StringComparison.Ordinal);
         Assert.Contains("PlaybackDialogHost.ShowAsync", appearance, StringComparison.Ordinal);
-        Assert.Contains("osc-subtitle-dialog-closed", appearance, StringComparison.Ordinal);
+        Assert.Contains("NotifySubtitleDialogClosed(snapshot, nativeRequest)", appearance, StringComparison.Ordinal);
 
-        var aiStart = source.IndexOf("private async Task ShowSubtitleAiDialogAsync()", StringComparison.Ordinal);
+        var aiStart = source.IndexOf("private async Task ShowSubtitleAiDialogAsync(", StringComparison.Ordinal);
         var aiEnd = source.IndexOf("private sealed record PlaybackUiSnapshot", aiStart, StringComparison.Ordinal);
         Assert.True(aiStart >= 0 && aiEnd > aiStart);
         var ai = source[aiStart..aiEnd];
@@ -1108,7 +1305,15 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);", ai, StringComparison.Ordinal);
         Assert.DoesNotContain("_videoWindow?.Hide()", ai, StringComparison.Ordinal);
         Assert.Contains("PlaybackDialogHost.ShowAsync", ai, StringComparison.Ordinal);
-        Assert.Contains("osc-subtitle-dialog-closed", ai, StringComparison.Ordinal);
+        Assert.Contains("NotifySubtitleDialogClosed(snapshot, nativeRequest)", ai, StringComparison.Ordinal);
+
+        var closeStart = source.IndexOf("private void NotifySubtitleDialogClosed(", StringComparison.Ordinal);
+        var closeEnd = source.IndexOf("private void RestorePlaybackUiSnapshot(", closeStart, StringComparison.Ordinal);
+        var close = source[closeStart..closeEnd];
+        Assert.Contains("osc-subtitle-dialog-closed", close, StringComparison.Ordinal);
+        Assert.Contains("request.OwnerToken", close, StringComparison.Ordinal);
+        Assert.Contains("request.Sequence.ToString", close, StringComparison.Ordinal);
+        Assert.Contains("snapshot.IsCurrent() ? \"true\" : \"false\"", close, StringComparison.Ordinal);
 
         var host = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -1120,7 +1325,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("presenter.SetBorderAndTitleBar(false, false);", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(hostHwnd);", host, StringComparison.Ordinal);
         Assert.Contains("public static async Task<bool> ShowAsync(", host, StringComparison.Ordinal);
-        Assert.Contains("restorePlayerInput = GetForegroundWindow() == hostHwnd;", host, StringComparison.Ordinal);
+        Assert.Contains("restorePlayerInput = GetForegroundWindow() == hostHwnd", host, StringComparison.Ordinal);
         Assert.Contains("_videoWindow?.EnterFullscreen(activate: activatePlaybackSurface);", source, StringComparison.Ordinal);
         Assert.Contains("if (restorePlayerInput)", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(videoHwnd);", host, StringComparison.Ordinal);
@@ -1278,7 +1483,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("description = description with { CanRetry = false };", terminal);
 
         var failureStart = source.IndexOf("private void HandleMpvFailure", StringComparison.Ordinal);
-        var failureEnd = source.IndexOf("public async Task SwitchVersionAsync", failureStart, StringComparison.Ordinal);
+        var failureEnd = source.IndexOf("private async Task SwitchVersionCoreAsync", failureStart, StringComparison.Ordinal);
         Assert.Contains("_closing || State == PlayerState.Idle || _playbackTerminalState != null", source[failureStart..failureEnd]);
         var endStart = source.IndexOf("private void HandleMpvEndSignal", StringComparison.Ordinal);
         var endGuard = source.IndexOf("var pos = CurrentMediaPosition;", endStart, StringComparison.Ordinal);
@@ -1290,8 +1495,8 @@ public sealed class PlayerServiceSourceTests
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        var start = source.IndexOf("public async Task SwitchVersionAsync", StringComparison.Ordinal);
-        var end = source.IndexOf("public async Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
+        var start = source.IndexOf("private async Task SwitchVersionCoreAsync", StringComparison.Ordinal);
+        var end = source.IndexOf("public Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         var method = source[start..end];
         Assert.Contains("var previousSession = manager.CurrentSession;", method);
@@ -1322,7 +1527,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("if (_idleRemuxResume.IsReopening)", refusal);
         Assert.Contains("EnterPlaybackTerminalState(ex, mediaPosition, \"idle-remux-resume\", _idleRemuxResume.DesiredPaused)", refusal);
         var healthy = refusal[refusal.IndexOf("else", StringComparison.Ordinal)..];
-        Assert.Contains("_switchingContent = false;", healthy);
+        Assert.Contains("SetSwitchingContent(false);", healthy);
         Assert.Contains("IsLoading = false;", healthy);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", healthy);
         Assert.Contains("DescribePlaybackError(ex)", healthy);
@@ -1405,16 +1610,25 @@ public sealed class PlayerServiceSourceTests
         // libmpv's synchronous sub-add of an HTTP URL blocks its caller (the UI
         // thread for player-overlay selections) for the whole download.
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        var prefetch = source[source.IndexOf("private async Task PrefetchSubtitleSidecarAsync(", StringComparison.Ordinal)..];
-        prefetch = prefetch[..prefetch.IndexOf("private int ResolveNativeEmbeddedSid(", StringComparison.Ordinal)];
+        var prefetchStart = source.IndexOf("private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(", StringComparison.Ordinal);
+        Assert.True(prefetchStart >= 0, "Subtitle prefetch method was not found.");
+        var prefetchEnd = source.IndexOf("private int ResolveNativeEmbeddedSid(", prefetchStart, StringComparison.Ordinal);
+        Assert.True(prefetchEnd > prefetchStart, "Subtitle prefetch method boundary was not found.");
+        var prefetch = source[prefetchStart..prefetchEnd];
         // Same request mpv makes: no account header for worker/CDN sidecars.
-        Assert.Contains("SubtitleSyncDownloadClient.GetAsync(url,", prefetch, StringComparison.Ordinal);
+        Assert.Contains("SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url, track.Codec, bounded.Token)", prefetch, StringComparison.Ordinal);
         Assert.DoesNotContain("CreateAuthenticatedRequest", prefetch, StringComparison.Ordinal);
+        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;", prefetch, StringComparison.Ordinal);
+        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Error) return SubtitlePrefetchOutcome.Error;", prefetch, StringComparison.Ordinal);
+        Assert.Contains("authority.ApiClient.IsCurrentContext(context)", prefetch, StringComparison.Ordinal);
         Assert.Contains("generation != _subtitleSidecarGeneration", prefetch, StringComparison.Ordinal);
         Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch, StringComparison.Ordinal);
         // The size cap applies while reading, not after buffering the body.
         Assert.DoesNotContain("ReadAsByteArrayAsync", prefetch, StringComparison.Ordinal);
-        Assert.Contains("if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return;", prefetch, StringComparison.Ordinal);
+        var reader = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Core", "Services", "SubtitleSidecarReader.cs"));
+        Assert.Contains("if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return Failure();", reader, StringComparison.Ordinal);
+        Assert.Contains("http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token)", reader, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateAuthenticatedRequest", reader, StringComparison.Ordinal);
         // Same-session reloads delete and unregister this file's downloads.
         var load = source[source.IndexOf("private void LoadSubtitles()", StringComparison.Ordinal)..];
         load = load[..load.IndexOf("private static bool IsUnsupportedBitmapSubtitle(", StringComparison.Ordinal)];
@@ -1425,13 +1639,20 @@ public sealed class PlayerServiceSourceTests
         var sync = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SubtitleSync.cs"));
         var stop = sync[sync.IndexOf("private void StopSubtitleSync()", StringComparison.Ordinal)..];
         stop = stop[..stop.IndexOf("private void EnsureSubtitleSync()", StringComparison.Ordinal)];
-        var invalidate = stop.IndexOf("lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _subtitleSidecarGeneration++; }", StringComparison.Ordinal);
-        Assert.InRange(invalidate, stop.IndexOf("lock (_subtitleSyncGate)", StringComparison.Ordinal), stop.IndexOf("_subtitleSyncFiles.Clear();", StringComparison.Ordinal));
+        var invalidate = stop.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var filesClear = stop.IndexOf("_subtitleSyncFiles.Clear();", StringComparison.Ordinal);
+        Assert.InRange(invalidate, stop.IndexOf("lock (_subtitleSyncGate)", StringComparison.Ordinal), filesClear);
+        var lockEnd = stop.IndexOf('}', invalidate);
+        Assert.InRange(lockEnd, invalidate, filesClear);
+        var invalidation = stop[invalidate..lockEnd];
+        Assert.Contains("_prefetchedSubtitleFiles.Clear();", invalidation, StringComparison.Ordinal);
+        Assert.Contains("_preparedSubtitleReload = null;", invalidation, StringComparison.Ordinal);
+        Assert.Contains("_subtitleSidecarGeneration++;", invalidation, StringComparison.Ordinal);
 
-        var persist = source[source.IndexOf("public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
+        var persist = source[source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track,", StringComparison.Ordinal)..];
         AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != selected");
-        var persistSelect = persist.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
-        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", persistSelect, StringComparison.Ordinal);
+        var persistSelect = persist.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
+        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentReadChoice);", persistSelect, StringComparison.Ordinal);
         // Restoration uses the state from just before the sub-add, not from before the download.
         Assert.InRange(persist.IndexOf("wasPaused = CaptureUserPausedState();", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
         Assert.InRange(persist.IndexOf("position = CurrentMediaPosition;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
@@ -1441,14 +1662,18 @@ public sealed class PlayerServiceSourceTests
         Assert.InRange(handOff, loadChanged, persistSelect);
         Assert.DoesNotContain("return;", persist[loadChanged..persistSelect], StringComparison.Ordinal);
         Assert.True(persist.IndexOf("SaveSubtitlePrefsAsync(", persistSelect, StringComparison.Ordinal) > persistSelect);
-        var byIndex = source[source.IndexOf("private async Task SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
-        AssertPrefetchedThenCurrentBeforeSelection(byIndex, "_activeSubtitleServerIndex != serverTrackIndex");
+        var byIndex = source[source.IndexOf("private async Task<bool> SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
+        var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentSelection);", StringComparison.Ordinal);
+        var byIndexSelect = byIndex.IndexOf("SelectSubtitleTrackForOwner(track, CurrentSelection)", byIndexPrefetch, StringComparison.Ordinal);
+        Assert.InRange(byIndex.IndexOf("if (!CurrentSelection()) return false;", byIndexPrefetch, StringComparison.Ordinal), byIndexPrefetch, byIndexSelect);
+        Assert.Contains("CurrentSubtitleSidecarGeneration() == sidecarGeneration", byIndex);
+        Assert.Contains("Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration", byIndex);
     }
 
     private static void AssertPrefetchedThenCurrentBeforeSelection(string method, string currentCheck)
     {
-        var select = method.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
-        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", select, StringComparison.Ordinal);
+        var select = method.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
+        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentReadChoice);", select, StringComparison.Ordinal);
         var captured = method.LastIndexOf("var sidecarGeneration = CurrentSubtitleSidecarGeneration();", prefetch, StringComparison.Ordinal);
         var current = method.IndexOf(currentCheck, prefetch, StringComparison.Ordinal);
         var loadCurrent = method.IndexOf("CurrentSubtitleSidecarGeneration() != sidecarGeneration", prefetch, StringComparison.Ordinal);

@@ -2,8 +2,295 @@ using System.Runtime.InteropServices;
 
 namespace SiloPlayer.Tests;
 
-public sealed class MpvOscRuntimeTests
+public sealed partial class MpvOscRuntimeTests
 {
+    // Match the application's P/Invoke library lifetime. Keep the module loaded
+    // while still creating and destroying a fresh mpv context for every case.
+    private static readonly Lazy<IntPtr> SharedLibrary = new(() =>
+        NativeLibrary.Load(Path.Combine(FindRepositoryRoot(), "libs", "mpv", "libmpv-2.dll")));
+
+    [Fact]
+    public void CaptionShortcutRemembersARowOnlyWithinItsMediaFile()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":0,"language":"en"},{"index":1,"language":"es"}]', '42')
+            handlers['osc-set-active-subtitle']('0')
+            handlers['osc-set-active-subtitle']('-1')
+            handlers['osc-set-subtitles']('[{"index":1,"language":"es"},{"index":0,"language":"en"}]', '42')
+            keys['silo-captions-toggle']()
+            handlers['osc-set-active-subtitle']('-1')
+            -- The same indices now describe the opposite languages on episode B.
+            handlers['osc-set-subtitles']('[{"index":1,"language":"en"},{"index":0,"language":"es"}]', '44')
+            local reset = state.last_subtitle == -1 and state.active_subtitle == -1
+            keys['silo-captions-toggle']()
+            handlers['osc-set-subtitles']('[]', '45')
+            reset = reset and state.last_subtitle == -1 and state.active_subtitle == -1
+            mp.set_property('user-data/caption-file', tostring(reset)..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/caption-file", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("true:0,1", output);
+    }
+
+    [Fact]
+    public void SubtitleRightClickUsesLocalHostCycleWithoutPersistedSelections()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            state.subtitle_tracks = {{index=3, unplayable=true}, {index=8}, {index=12}}
+            state.active_subtitle = -1
+            osc_test_layout()
+            state.mouse_x, state.mouse_y = state.layout.btn_cc.x + 2, state.layout.btn_cc.y + 2
+            right(); right()
+            mp.set_property('user-data/cycle-subtitles', tostring(state.active_subtitle)..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/cycle-subtitles", beforeScript: """
+            intents = {}
+            local add = mp.add_key_binding
+            mp.add_key_binding = function(key, name, fn, flags)
+                if key == 'mbtn_right' then right = fn end
+                return add(key, name, fn, flags)
+            end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-cycle' then table.insert(intents, 'local-cycle') end
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, 'persist:'..args[3]) end
+                if args[1] == 'cycle' and args[2] == 'sub' then table.insert(intents, 'native-cycle') end
+                return command(...)
+            end
+            """);
+        Assert.Equal("-1:local-cycle,local-cycle", output);
+    }
+
+    [Fact]
+    public void CaptionShortcutTurnsOffExecutedTrackAfterSameFileInventoryRefresh()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":8,"language":"en"}]', '42')
+            handlers['osc-set-active-subtitle']('8')
+            handlers['osc-set-subtitles']('[{"index":8,"language":"en"},{"index":12,"language":"es"}]', '42')
+            handlers['osc-set-active-subtitle']('8') -- host republishes executed identity
+            local highlighted = state.active_subtitle
+            keys['silo-captions-toggle']()
+            mp.set_property('user-data/refreshed-caption', tostring(highlighted)..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/refreshed-caption", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("8:-1", output);
+    }
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
+    public void SubtitleInventoryForAnotherFileRetiresOpenMenuAndItsHitTargets(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            for _, replacement in ipairs({
+                {id='44', json='[{"index":1,"language":"es"}]'},
+                {id='45', json='[]'}
+            }) do
+                handlers['osc-set-subtitles']('[{"index":1,"language":"en"}]', '42')
+                state.subtitle_menu_visible = true
+                state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+                osc_test_layout(); osc_test_render_subtitles()
+                local stale
+                for _, item in ipairs(state.subtitle_menu_items) do if item.index == 1 then stale = item end end
+                assert(stale and state.subtitle_menu_overlay.data:find('English', 1, true), 'Missing original painted row')
+                handlers['osc-set-subtitles'](replacement.json, replacement.id)
+                assert(not state.subtitle_menu_visible and #state.subtitle_menu_items == 0
+                    and state.subtitle_menu_overlay.data == '' and state.keyboard_menu_kind == nil
+                    and state.keyboard_menu_index == 0, 'Previous file menu remained active')
+                osc_test_menu_activate()
+                state.mouse_x, state.mouse_y = stale.x + 5, stale.y + 5
+                osc_test_mouse_down()
+            end
+            mp.set_property('user-data/subtitle-file-menu', tostring(selections))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-file-menu", beforeScript: """
+            handlers, selections = {}, 0
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then selections = selections + 1; return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("0", output);
+    }
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
+    public void SameFileSubtitleRefreshRepaintsRowsAndClampsKeyboardFocus(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            handlers['osc-set-subtitles']('[{"index":1,"language":"en"}]', '42')
+            state.subtitle_menu_visible = true
+            state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+            osc_test_layout(); osc_test_render_subtitles()
+            handlers['osc-set-subtitles']('[{"index":1,"language":"es","unplayable":true}]', '42')
+            assert(state.subtitle_menu_visible and state.subtitle_menu_overlay.data:find('Spanish', 1, true)
+                and state.subtitle_menu_overlay.data:find('Unavailable', 1, true)
+                and not state.subtitle_menu_overlay.data:find('English', 1, true), 'Same-file refresh kept old paint')
+            local row
+            for _, item in ipairs(state.subtitle_menu_items) do if item.index == 1 then row = item end end
+            assert(row and row.disabled, 'Same-file refresh kept enabled hit targets')
+            osc_test_menu_activate()
+            state.mouse_x, state.mouse_y = row.x + 5, row.y + 5
+            osc_test_mouse_down()
+            state.keyboard_menu_index = 99
+            handlers['osc-set-subtitles']('[]', '42')
+            local count = #osc_test_menu_items('subtitles', state.subtitle_menu_items)
+            assert(state.subtitle_menu_visible and state.keyboard_menu_index == count
+                and count > 0 and not state.subtitle_menu_overlay.data:find('Spanish', 1, true), 'Focus or paint survived shrinking inventory')
+            mp.set_property('user-data/subtitle-refresh-menu', tostring(selections))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-refresh-menu", beforeScript: """
+            handlers, selections = {}, 0
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then selections = selections + 1; return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("0", output);
+    }
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
+    public void UnavailableSubtitleRemainsVisibleButRefusesKeyboardAndPointer(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","codec":"webvtt","source":"embedded","unplayable":true},{"index":12,"language":"ja","source":"embedded"}]')
+            state.subtitle_menu_visible = true
+            state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+            osc_test_layout(); osc_test_render_subtitles()
+            local unavailable
+            for _, item in ipairs(state.subtitle_menu_items) do if item.index == 7 then unavailable = item end end
+            assert(unavailable, 'Unavailable track disappeared')
+            local visible = state.subtitle_menu_overlay.data:find('Unavailable', 1, true) ~= nil
+            osc_test_menu_activate()
+            state.subtitle_menu_visible = true; osc_test_render_subtitles()
+            state.mouse_x, state.mouse_y = unavailable.x + 5, unavailable.y + 5
+            osc_test_mouse_down()
+            mp.set_property('user-data/subtitle-unavailable', tostring(visible) .. ':' .. tostring(unavailable.disabled == true) .. ':' .. tostring(selections))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-unavailable", beforeScript: """
+            handlers, selections = {}, 0
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then selections = selections + 1 end
+                return command(...)
+            end
+            """);
+        Assert.Equal("true:true:0", output);
+    }
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
+    public void CaptionsSkipRouteDisabledRowsUntilTheHostRepublishesAnAvailableRoute(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","unplayable":true},{"index":12,"language":"ja","unplayable":false}]', '42')
+            handlers['osc-set-active-subtitle']('-1')
+            state.subtitle_menu_visible = true
+            state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+            osc_test_layout(); osc_test_render_subtitles()
+            local row
+            for _, item in ipairs(state.subtitle_menu_items) do if item.index == 7 then row = item end end
+            assert(row and row.disabled and state.subtitle_menu_overlay.data:find('Unavailable', 1, true), 'Route-disabled row was hidden or actionable')
+            osc_test_menu_activate()
+            state.mouse_x, state.mouse_y = row.x + 5, row.y + 5
+            osc_test_mouse_down()
+            assert(#intents == 0, 'Route-disabled pointer/keyboard selection dispatched')
+            keys['silo-captions-toggle']()
+            assert(table.concat(intents, ',') == '12', 'CC selected the route-disabled row before a playable row')
+            handlers['osc-set-active-subtitle']('-1')
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","unplayable":true}]', '42')
+            keys['silo-captions-toggle']()
+            assert(#intents == 1 and state.active_subtitle == -1, 'CC selected the only route-disabled row')
+            -- FILE_LOADED/host inventory publication can establish a route;
+            -- the row must become selectable without mutating the saved choice.
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","unplayable":false}]', '42')
+            keys['silo-captions-toggle']()
+            mp.set_property('user-data/subtitle-route-refresh', table.concat(intents, ','))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-route-refresh", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("12,7", output);
+    }
+
     [Theory]
     [InlineData("content")]
     [InlineData("file")]
@@ -848,11 +1135,11 @@ public sealed class MpvOscRuntimeTests
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,
-        string beforeScript = "", string resultProperty = "user-data/stats-test-output")
+        string beforeScript = "", string resultProperty = "user-data/stats-test-output", string? scriptOverride = null)
     {
         var root = FindRepositoryRoot();
         var probe = Path.Combine(Path.GetTempPath(), $"silo-stats-{Guid.NewGuid():N}.lua");
-        var script = Path.Combine(root, "libs", "mpv", "scripts", "silo-osc.lua").Replace('\\', '/');
+        var script = (scriptOverride ?? Path.Combine(root, "libs", "mpv", "scripts", "silo-osc.lua")).Replace('\\', '/');
         // Run the real OSC inside bundled mpv with controlled input/output
         // properties. Capture the rendered ASS, not the Lua source text.
         File.WriteAllText(probe, $$"""
@@ -888,7 +1175,7 @@ public sealed class MpvOscRuntimeTests
             {{beforeScript}}
             local source = assert(io.open([[{{script}}]], 'r'))
             local code = source:read('*a'); source:close()
-            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu'))()
+            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc'))()
             mp.add_timeout(0.05, function()
                 local ok, err = pcall(function()
                     {{setup}}
@@ -900,7 +1187,7 @@ public sealed class MpvOscRuntimeTests
                 mp.commandv('script-message', 'osc-toggle-stats')
             end)
             """);
-        var library = NativeLibrary.Load(Path.Combine(root, "libs", "mpv", "libmpv-2.dll"));
+        var library = SharedLibrary.Value;
         var handle = LoadDelegate<MpvCreate>(library, "mpv_create")();
         try
         {
@@ -920,6 +1207,7 @@ public sealed class MpvOscRuntimeTests
             }
             Assert.NotNull(rendered);
             var ass = rendered!.StartsWith('"') ? System.Text.Json.JsonSerializer.Deserialize<string>(rendered)! : rendered;
+            Assert.False(ass.StartsWith("Lua error:", StringComparison.Ordinal), ass);
             if (rawAss) return ass;
             var text = System.Text.RegularExpressions.Regex.Replace(ass, @"\{[^}]*\}|\\N", "")
                 .Replace("\r", "").Replace("\n", "");
@@ -928,7 +1216,6 @@ public sealed class MpvOscRuntimeTests
         finally
         {
             LoadDelegate<MpvTerminateDestroy>(library, "mpv_terminate_destroy")(handle);
-            NativeLibrary.Free(library);
             File.Delete(probe);
         }
     }
@@ -955,7 +1242,7 @@ public sealed class MpvOscRuntimeTests
 
         try
         {
-            library = NativeLibrary.Load(libraryPath);
+            library = SharedLibrary.Value;
             var create = LoadDelegate<MpvCreate>(library, "mpv_create");
             var setOption = LoadDelegate<MpvSetOptionString>(library, "mpv_set_option_string");
             var initialize = LoadDelegate<MpvInitialize>(library, "mpv_initialize");
@@ -992,8 +1279,6 @@ public sealed class MpvOscRuntimeTests
         {
             if (handle != IntPtr.Zero)
                 terminate?.Invoke(handle);
-            if (library != IntPtr.Zero)
-                NativeLibrary.Free(library);
         }
 
         try

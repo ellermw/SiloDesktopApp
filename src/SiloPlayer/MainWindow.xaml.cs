@@ -2641,12 +2641,18 @@ public sealed partial class MainWindow : Window
     }
 
     public void HideLoadingOverlay(object? owner = null)
+        => HideLoadingOverlay(owner, static collapse => collapse());
+
+    internal void HideLoadingOverlay(object? owner, Action<Action> runIfCurrent)
     {
         var currentOwner = owner ?? _legacyLoadingOverlayOwner;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
-            LoadingOverlay.Visibility = Visibility.Collapsed;
+            runIfCurrent(() =>
+            {
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
+                LoadingOverlay.Visibility = Visibility.Collapsed;
+            });
         });
     }
 
@@ -2679,8 +2685,8 @@ public sealed partial class MainWindow : Window
         LocalLog.AppendLine("state_trace.txt", msg);
     }
 
-    public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
-        => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot);
+    public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null, Func<bool>? isCurrent = null, bool activate = true, Func<ContentDialog, Task>? showDialog = null)
+        => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot, isCurrent, activate, showDialog);
 
     public void NavigateToHome()
     {

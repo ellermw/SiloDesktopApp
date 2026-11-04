@@ -218,8 +218,10 @@ public sealed class MpvOscScriptTests
         Assert.Contains(
             "local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y",
             script);
-        Assert.Contains("state.layout.btn_audio.y) - math.floor(8 * sc)", script);
-        Assert.Contains("state.layout.btn_chapters.y) - math.floor(8 * sc)", script);
+        Assert.Contains("local anchor = state.layout.btn_audio or state.layout.btn_more", script);
+        Assert.Contains("local anchor = state.layout.btn_chapters or state.layout.btn_more", script);
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(
+            script, @"anchor\.y\) - math\.floor\(8 \* sc\)").Count >= 2);
         Assert.True(
             System.Text.RegularExpressions.Regex.Matches(
                 script,

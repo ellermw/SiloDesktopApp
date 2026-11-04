@@ -277,6 +277,9 @@ internal static partial class EpisodeQuickPlayNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
+        internal bool SubtitleAiEnabled;
+        internal bool SubtitleAiTranslationEnabled = true, SubtitleAiTranscriptionEnabled;
+        internal Func<CancellationToken, Task>? SubtitleAiStatusBoundary;
         internal List<Uri> Watches { get; } = [];
         internal List<JsonElement> Starts { get; } = [];
         internal double ResumePosition = 91;
@@ -298,6 +301,16 @@ internal static partial class EpisodeQuickPlayNativeFixture
         {
             Check(request.RequestUri!.Host == "quickplay.fixture.invalid", "External quick-play fixture request refused.");
             var path = request.RequestUri.AbsolutePath;
+            if (SubtitleAiEnabled && path == "/api/v2/subtitles/ai/status")
+            {
+                if (SubtitleAiStatusBoundary is { } boundary) await boundary(ct);
+                return Json(JsonSerializer.Serialize(new
+                {
+                    enabled = SubtitleAiTranslationEnabled, transcribe_enabled = SubtitleAiTranscriptionEnabled,
+                }));
+            }
+            if (SubtitleAiEnabled && path == "/api/v2/subtitles/providers/status")
+                return Json("""{"enabled":false}""");
             lock (Requests) Requests.Add((path, request.Headers.TryGetValues("X-Profile-Id", out var profiles) ? profiles.Single() : null));
             if (path == "/still") return new(HttpStatusCode.OK) { Content = new ByteArrayContent(File.ReadAllBytes(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "audiobook-cover.png"))) };
             if (path == "/api/v2/catalog/search/capabilities") return Json("""{"box_sets":true}""");
