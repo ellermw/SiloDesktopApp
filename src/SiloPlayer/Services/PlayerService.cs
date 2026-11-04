@@ -84,6 +84,10 @@ public partial class PlayerService : IDisposable
         public PlaybackManager.SubtitleSelectionIntent? RequestedIntent { get; init; }
         public SubtitleTrackInfo? RequestedTrack { get; init; }
         public bool FollowsVersionSwitch { get; init; }
+        // Accessed only under _subtitleTrackStateLock. An active picker owns
+        // its own completion; only an explicitly deferred pick needs a rescue.
+        public bool NeedsDeferredExecution { get; set; }
+        public bool DeferredExecutionStarted { get; set; }
     }
     private SubtitlePreferenceOwner? _pendingSubtitlePreferenceOwner;
     private sealed record InitialSubtitleOwner(PlaybackManager? Manager, int MediaFileId,
@@ -1235,6 +1239,7 @@ public partial class PlayerService : IDisposable
             // in-flight burn-in request) consumes the latest recorded intent.
             // An already accepted same-file burn-in plan must instead replan
             // now: clearing sid after its pending load cannot remove its pixels.
+            MarkSubtitleSelectionDeferred(preferenceOwner);
             transportReloadScheduled = true;
         }
         else if (track != null && IsBurnedInSubtitle(manager?.CurrentSession, track))
@@ -1268,6 +1273,7 @@ public partial class PlayerService : IDisposable
             {
                 // The latest manual choice wins over an older pending choice,
                 // but only FILE_LOADED may select or restore the new file.
+                MarkSubtitleSelectionDeferred(preferenceOwner);
                 transportReloadScheduled = true;
             }
             else
@@ -1287,6 +1293,7 @@ public partial class PlayerService : IDisposable
                     // A file load replaced the subtitle tracks during the download. It
                     // applies the recorded selection and restores playback itself;
                     // its preference is saved only after that execution.
+                    MarkSubtitleSelectionDeferred(preferenceOwner);
                     transportReloadScheduled = true;
                 }
                 else
@@ -1308,7 +1315,11 @@ public partial class PlayerService : IDisposable
         }
         else
         {
-            if (deferLocalSelection) transportReloadScheduled = true;
+            if (deferLocalSelection)
+            {
+                MarkSubtitleSelectionDeferred(preferenceOwner);
+                transportReloadScheduled = true;
+            }
             else
             {
                 lock (_subtitleTrackStateLock)
@@ -5551,32 +5562,46 @@ public partial class PlayerService : IDisposable
         return SubtitleTransportResult.Failed;
     }
 
+    private void MarkSubtitleSelectionDeferred(SubtitlePreferenceOwner owner)
+    {
+        lock (_subtitleTrackStateLock)
+        {
+            if (ReferenceEquals(owner, _pendingSubtitlePreferenceOwner) && !owner.DeferredExecutionStarted)
+                owner.NeedsDeferredExecution = true;
+        }
+    }
+
     private async Task ReconcileDeferredSubtitleSelectionAsync(PlaybackManager manager, PlaybackStartResponse? survivingSession)
     {
-        var owner = _pendingSubtitlePreferenceOwner;
-        if (_closing || _switchingContent || IsLoading || !ReferenceEquals(manager, _playbackManager) ||
-            survivingSession == null ||
-            owner == null || owner.Token.IsCancellationRequested || !ReferenceEquals(owner.Authority, _activeAuthority) ||
-            !ReferenceEquals(owner.Manager, manager) || owner.MediaFileId != survivingSession.MediaFileId ||
-            _pendingSubtitlePreferenceIndex is not int requested) return;
-
-        if (!ReferenceEquals(manager.CurrentSession, survivingSession))
+        SubtitlePreferenceOwner? owner;
+        int requested;
+        lock (_subtitleTrackStateLock)
         {
-            // A plan was adopted but its transport never loaded. In particular,
-            // a burn-in grant is not proof that the surviving video contains it.
-            // Roll back the unexecuted choice rather than save a false success
-            // or strand intent for an unrelated future reload.
-            lock (_subtitleTrackStateLock)
+            owner = _pendingSubtitlePreferenceOwner;
+            if (_closing || _switchingContent || IsLoading || !ReferenceEquals(manager, _playbackManager) ||
+                survivingSession == null ||
+                owner == null || !owner.NeedsDeferredExecution || owner.DeferredExecutionStarted ||
+                owner.Token.IsCancellationRequested || !ReferenceEquals(owner.Authority, _activeAuthority) ||
+                !ReferenceEquals(owner.Manager, manager) || owner.MediaFileId != survivingSession.MediaFileId ||
+                _pendingSubtitlePreferenceIndex is not int pending) return;
+            requested = pending;
+
+            if (!ReferenceEquals(manager.CurrentSession, survivingSession))
             {
-                if (!ReferenceEquals(owner, _pendingSubtitlePreferenceOwner) || _switchingContent || IsLoading) return;
+                // A plan was adopted but its transport never loaded. In particular,
+                // a burn-in grant is not proof that the surviving video contains it.
+                // Roll back the unexecuted choice rather than save a false success
+                // or strand intent for an unrelated future reload.
                 RestoreExecutedSubtitleSelection(reapply: false);
                 ShowSubtitleSelectionUnavailable();
+                return;
             }
-            return;
+            // No FILE_LOADED will consume this slot after a rejected/no-op replan.
+            owner.NeedsDeferredExecution = false;
+            owner.DeferredExecutionStarted = true;
+            _pendingInitialServerSubtitleIndex = null;
+            _pendingAutomaticSubtitleSelection = null;
         }
-        // No FILE_LOADED will consume this slot after a rejected/no-op replan.
-        _pendingInitialServerSubtitleIndex = null;
-        _pendingAutomaticSubtitleSelection = null;
         if (!await SelectSubtitleByServerIndexAsync(requested, persist: false) &&
             ReferenceEquals(owner, _pendingSubtitlePreferenceOwner) &&
             ReferenceEquals(survivingSession, manager.CurrentSession) && !_switchingContent && !IsLoading)
@@ -5615,7 +5640,18 @@ public partial class PlayerService : IDisposable
             Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration;
         if (!persist)
         {
-            lock (_subtitleTrackStateLock) _activeSubtitleServerIndex = serverTrackIndex;
+            lock (_subtitleTrackStateLock)
+            {
+                _activeSubtitleServerIndex = serverTrackIndex;
+                if (CurrentSelection() && _pendingSubtitlePreferenceIndex == serverTrackIndex &&
+                    _pendingSubtitlePreferenceOwner is { } pendingOwner)
+                {
+                    // FILE_LOADED (or the one rescue executor) now owns this
+                    // read. A late picker cannot re-arm it while prefetch waits.
+                    pendingOwner.NeedsDeferredExecution = false;
+                    pendingOwner.DeferredExecutionStarted = true;
+                }
+            }
         }
         if (serverTrackIndex >= 0 && (track == null || track.Unplayable ||
             (!persist || !_switchingContent && !IsLoading) && !HasSubtitleSelectionRoute(track)))

@@ -538,7 +538,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
                     Require(service.ActiveSubtitleServerIndex == 0 && manager.SubtitleSelectionForLoad == 0 &&
                         (int?)Get(service, "_pendingSubtitlePreferenceIndex") == 0 && wire.PreferenceWrites == 1 &&
-                        seen.IsEmpty && notices.IsEmpty,
+                        seen.IsEmpty && notices.IsEmpty && subtitles.EnglishRequests == 1,
                         "A superseded persist:false bitmap worker rolled back or published over the newer pending choice.");
                     subtitles.Release.TrySetResult();
                     await latest.WaitAsync(TimeSpan.FromSeconds(5));
@@ -774,6 +774,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         public int MediaRequests;
         public bool HoldOnlyFirstSubtitle;
         private int _englishRequests;
+        public int EnglishRequests => Volatile.Read(ref _englishRequests);
         public HeldSubtitleServer(bool oversized)
         {
             this.oversized = oversized;
