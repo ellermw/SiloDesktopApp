@@ -25,6 +25,10 @@ public class PlaybackStartResponse
     public int? SelectedSubtitleTrackIndex { get; set; }
     public string SubtitleMode { get; set; } = "off";
 
+    /// <summary>A replacement start survived a rejected subtitle refinement; show local feedback.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool SubtitleReconciliationFailed { get; set; }
+
     /// <summary>
     /// The server composites the selected subtitle into the video (plan
     /// subtitle mode <c>burn_in</c>). Turning subtitles off or choosing another

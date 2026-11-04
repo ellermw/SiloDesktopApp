@@ -34,6 +34,95 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(subtitle ?? -1, scope.Manager.SubtitleSelectionForLoad);
     }
 
+    [Theory]
+    [InlineData(42, false, 1)]
+    [InlineData(42, false, null)]
+    [InlineData(42, true, 1)]
+    [InlineData(42, true, null)]
+    [InlineData(44, false, 1)]
+    [InlineData(44, false, null)]
+    [InlineData(44, true, 1)]
+    [InlineData(44, true, null)]
+    public async Task RejectedReplacementSubtitleKeepsAcceptedVersionOrProgressRestartPlan(
+        int fileId, bool burnedIn, int? subtitle)
+    {
+        foreach (var failure in new[] { "error", "terminal", "timeout" })
+        {
+            using var scope = new Fixture();
+            await scope.Manager.StartSessionAsync(42);
+            scope.Manager.RecordLocalSubtitleSelection(subtitle);
+            var intent = scope.Manager.CaptureLocalSubtitleIntent();
+            scope.Wire.InitialSubtitleSelection = fileId == 44 ? 1 : 0;
+            scope.Wire.BurnInSubtitles = burnedIn;
+            scope.Wire.NextReplanFailure = failure;
+
+            var accepted = await scope.Manager.StartReplacementSessionAsync(fileId, 19);
+
+            Assert.Same(accepted, scope.Manager.CurrentSession);
+            Assert.Equal(fileId, accepted.MediaFileId);
+            Assert.Equal("plan-2-0", accepted.PlanId); // The start, not a failed replan.
+            Assert.Equal("https://intent.invalid/api/v2/stream", scope.Manager.StreamUrl);
+            Assert.True(accepted.SubtitleReconciliationFailed);
+            Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+            var desiredIndex = subtitle.HasValue ? fileId == 44 ? 0 : 1 : -1;
+            Assert.Equal(burnedIn ? scope.Wire.InitialSubtitleSelection : desiredIndex,
+                scope.Manager.SubtitleSelectionForLoad);
+            Assert.Equal("track_change", Assert.Single(scope.Wire.Replans).GetProperty("operation").GetString());
+            Assert.DoesNotContain(scope.Wire.Paths, path => path.Contains("-prefs/", StringComparison.Ordinal));
+
+            // A later progress-failure restart stays on the accepted version,
+            // and a persistent rejection still cannot discard its playable start.
+            scope.Wire.NextReplanFailure = failure;
+            var restarted = await scope.Manager.StartReplacementSessionAsync(accepted.MediaFileId, 20);
+            Assert.Same(restarted, scope.Manager.CurrentSession);
+            Assert.Equal(fileId, restarted.MediaFileId);
+            Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+            Assert.Equal(2, scope.Wire.Replans.Count);
+            Assert.All(scope.Wire.Replans, request =>
+            {
+                Assert.Equal("track_change", request.GetProperty("operation").GetString());
+                Assert.False(request.TryGetProperty("failure", out _));
+            });
+        }
+    }
+
+    [Fact]
+    public async Task CallerCancellationDuringReplacementSubtitleReconcileStillPropagates()
+    {
+        using var scope = new Fixture();
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(null);
+        scope.Wire.BlockNext = true;
+        using var cts = new CancellationTokenSource();
+        var replacement = scope.Manager.StartReplacementSessionAsync(44, 19, ct: cts.Token);
+        await scope.Wire.Entered.Task;
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => replacement);
+        Assert.Equal(44, scope.Manager.CurrentSession!.MediaFileId);
+        Assert.False(scope.Manager.CurrentSession.SubtitleReconciliationFailed);
+    }
+
+    [Fact]
+    public async Task RejectedReplacementDoesNotAcknowledgeANewerViewerChoice()
+    {
+        using var scope = new Fixture();
+        await scope.Manager.StartSessionAsync(42);
+        scope.Manager.RecordLocalSubtitleSelection(null);
+        scope.Wire.BurnInSubtitles = true;
+        scope.Wire.NextReplanFailure = "error";
+        scope.Wire.BlockNext = true;
+        var replacement = scope.Manager.StartReplacementSessionAsync(42, 19);
+        await scope.Wire.Entered.Task;
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        scope.Wire.Release.SetResult();
+
+        var accepted = await replacement;
+        Assert.True(accepted.SubtitleReconciliationFailed);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+        Assert.Equal(1, scope.Manager.CaptureLocalSubtitleIntent().Track!.Index);
+    }
+
     [Fact]
     public async Task ManualVersionPrefersExactRegionalAudioBeforeSameLanguageTitleSimilarity()
     {
@@ -486,6 +575,8 @@ public sealed class PlaybackTrackIntentTests
         public List<string> Paths = [];
         public bool BlockNext;
         public bool FailNextReplan;
+        public string? NextReplanFailure;
+        public bool BurnInSubtitles;
         public bool OmitTrackIds;
         public int InitialSubtitleSelection;
         public int? ReplanSubtitleSelection;
@@ -515,9 +606,17 @@ public sealed class PlaybackTrackIntentTests
                     FailNextReplan = false;
                     throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
                 }
+                if (BlockNext) { BlockNext = false; Entered.SetResult(); await Release.Task.WaitAsync(ct); }
+                if (NextReplanFailure is { } failure)
+                {
+                    NextReplanFailure = null;
+                    if (failure == "terminal")
+                        return Json("""{"protocol_version":3,"outcome":"not_playable","terminal":{"reason":"subtitle_unavailable","message":"Synthetic subtitle rejection.","retryable":true}}""");
+                    if (failure == "timeout") throw new TaskCanceledException("Synthetic request timeout.");
+                    throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
+                }
                 if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selected)) _selected = selected.GetProperty("index").GetInt32();
                 else if (body.GetProperty("operation").GetString() == "track_change") _selected = -1;
-                if (BlockNext) { BlockNext = false; Entered.SetResult(); await Release.Task.WaitAsync(ct); }
                 if (ReplanSubtitleSelection is int granted) _selected = granted;
             }
             var version = Versions?.FirstOrDefault(v => v.FileId == _file) ?? Version(_file, _file == 44, _file == 43);
@@ -539,7 +638,7 @@ public sealed class PlaybackTrackIntentTests
                     protocol_version = 3, plan_id = $"plan-{Starts.Count}-{Replans.Count}", plan_attempt_key = "key", session_id = "session", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = "/stream" }, timeline = new { can_seek_anywhere = true },
                     selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = subtitleIdentity },
-                    subtitle = new { mode = _selected < 0 ? "off" : "native", track_id = OmitTrackIds ? "" : _selected < 0 ? null : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", inventory },
+                    subtitle = new { mode = _selected < 0 ? "off" : BurnInSubtitles ? "burn_in" : "native", track_id = OmitTrackIds ? "" : _selected < 0 ? null : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", inventory },
                 },
             }));
         }

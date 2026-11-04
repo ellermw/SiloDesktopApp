@@ -268,6 +268,67 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             }
             Program.Log("PASS: pre-play Off and text remove an automatic burn-in plan before native loading, execute the requested route and do not save preferences.");
 
+            // A rejected refinement after start adoption is not a playback
+            // failure. Exercise both real replacement callers, including the
+            // requested-version state used by the next progress restart.
+            manager.WatchDetail!.Versions.Add(Version(44));
+            foreach (var rejection in new[] { "error", "terminal", "timeout" })
+            foreach (var burnedGrant in new[] { false, true })
+            foreach (var requested in new[] { -1, Spanish })
+            {
+                wire.RejectTrackChanges = false;
+                var requestedTrack = manager.CurrentSession!.SubtitleUrls.FirstOrDefault(t => t.Index == requested);
+                await service.SetSubtitleTrackAndPersistAsync(requested + 1, requestedTrack?.Language, requestedTrack);
+                await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
+                    service.ActiveSubtitleServerIndex == requested);
+                service.SetPaused(true);
+                await Until(() => mpv.IsPaused && service.IsPaused);
+                var target = Version(manager.CurrentSession!.MediaFileId == 42 ? 44 : 42);
+                wire.AutomaticSubtitle = burnedGrant ? Dvd : English;
+                wire.RejectTrackChanges = true;
+                wire.TerminalTrackRejection = rejection == "terminal";
+                wire.TimeoutTrackRejection = rejection == "timeout";
+                var starts = wire.Starts.Count;
+                var replans = wire.Replans.Count;
+                var writes = wire.PreferenceWrites;
+                try
+                {
+                    await Loaded(() => service.SwitchVersionAsync(target));
+                    await SettledReplacement();
+                    Require((int?)Get(service, "_requestedMediaFileId") == target.FileId,
+                        "A rejected subtitle refinement left the requested version on the outgoing file.");
+                    await Loaded(() => (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 0d, "progress-reporting-failed")!);
+                    await SettledReplacement();
+                    Require(wire.Starts.Count == starts + 2 && wire.Replans.Count == replans + 2 &&
+                        wire.Starts.Skip(starts).All(start => start.GetProperty("file_id").GetString() == target.FileId.ToString()) &&
+                        wire.Replans.Skip(replans).All(replan => replan.GetProperty("operation").GetString() == "track_change"),
+                        "Replacement subtitle rejection retried, invoked failure recovery or restarted the old version.");
+                }
+                finally
+                {
+                    wire.RejectTrackChanges = false;
+                    wire.TerminalTrackRejection = false;
+                    wire.TimeoutTrackRejection = false;
+                }
+
+                async Task SettledReplacement()
+                {
+                    var expected = burnedGrant ? Dvd : requested;
+                    await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
+                        service.ActiveSubtitleServerIndex == expected);
+                    Require(manager.CurrentSession!.MediaFileId == target.FileId && mpv.GetPropertyDouble("duration") > 0 &&
+                        (expected == Spanish ? NativeSidMatches(service, mpv, Spanish) : mpv.GetPropertyDouble("sid") <= 0) &&
+                        mpv.IsPaused && service.IsPaused && Get(service, "_playbackTerminalState") == null &&
+                        !manager.CurrentSession.SubtitleReconciliationFailed && wire.PreferenceWrites == writes &&
+                        Get(service, "_pendingSubtitlePreferenceIndex") == null,
+                        "A rejected replacement refinement discarded playable video, retried the choice, lost pause or saved an unexecuted preference.");
+                }
+            }
+            wire.AutomaticSubtitle = -1;
+            await Loaded(() => service.SwitchVersionAsync(Version()));
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+            Program.Log("PASS: rejected/terminal/timed-out replacement subtitle refinements load the accepted version and progress-restart plans, keep local picks or burn-in grants, show feedback and preserve version/pause without failure recovery or preference writes.");
+
             var automaticWrites = wire.PreferenceWrites;
             manager.RecordLocalSubtitleSelection(Dvd, isAutomatic: true);
             await Loaded(() => (Task)Call(service, "SelectSubtitleByServerIndexAsync", Dvd, false)!);
@@ -410,9 +471,9 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             return map.TryGetValue(expected, out var sid) && mpv.GetPropertyDouble("sid") == sid && sid > 0;
     }
 
-    private static FileVersion Version() => new()
+    private static FileVersion Version(int fileId = 42) => new()
     {
-        FileId = 42, Duration = 60,
+        FileId = fileId, Duration = 60,
         AudioTracks = [new() { Language = "en", Default = true }],
         SubtitleTracks =
         [
@@ -475,14 +536,15 @@ internal static class BurnedInSubtitleSwitchNativeFixture
     /// <summary>Synthetic v3 server: track_change and quality_change replans keep the requested subtitle.</summary>
     private sealed class Wire(string origin) : HttpMessageHandler
     {
-        private int _subtitle = -1;
+        private int _subtitle = -1, _file = 42;
+        public int AutomaticSubtitle = -1;
         public bool FailNextTrackChange;
-        public bool RejectTrackChanges, TerminalTrackRejection;
+        public bool RejectTrackChanges, TerminalTrackRejection, TimeoutTrackRejection;
         public bool DeclineTrackChanges;
         public bool ReindexSpanish, ReindexDvd;
         public int PreferenceWrites;
         public int LastSubtitlePreferenceIndex = -2;
-        public List<JsonElement> Replans = [];
+        public List<JsonElement> Starts = [], Replans = [];
         private int CombinedIndex(int track)
             => (track == Spanish && ReindexSpanish || track == Dvd && ReindexDvd) ? track + 10 : track;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -504,7 +566,11 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
             using var doc = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); var body = doc.RootElement;
             if (path.EndsWith("/start"))
-                _subtitle = body.TryGetProperty("subtitle_track_index", out var initial) && initial.ValueKind == JsonValueKind.Number ? initial.GetInt32() : -1;
+            {
+                Starts.Add(body.Clone());
+                _file = int.Parse(body.GetProperty("file_id").GetString()!);
+                _subtitle = body.TryGetProperty("subtitle_track_index", out var initial) && initial.ValueKind == JsonValueKind.Number ? initial.GetInt32() : AutomaticSubtitle;
+            }
             else
             {
                 Replans.Add(body.Clone());
@@ -513,6 +579,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     FailNextTrackChange = false;
                     if (TerminalTrackRejection)
                         return Json("""{"protocol_version":3,"outcome":"not_playable","terminal":{"reason":"subtitle_unavailable","message":"Synthetic persistent subtitle rejection.","retryable":true}}""");
+                    if (TimeoutTrackRejection) throw new TaskCanceledException("Synthetic subtitle request timeout.");
                     throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
                 }
                 if (!DeclineTrackChanges || body.GetProperty("operation").GetString() != "track_change")
@@ -530,18 +597,18 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 protocol_version = 3, outcome = "playable", session_id = "fixture",
                 playback_plan = new
                 {
-                    plan_id = $"plan-{Replans.Count}", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = 42,
+                    plan_id = $"plan-{Starts.Count}-{Replans.Count}", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = origin + "/media.wav" }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = "file:42:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = $"sub:42:{_subtitle}", index = CombinedIndex(_subtitle) } },
+                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = $"sub:{_file}:{_subtitle}", index = CombinedIndex(_subtitle) } },
                     subtitle = new
                     {
                         mode = burned ? "burn_in" : _subtitle < 0 ? "off" : "render",
-                        track_id = _subtitle < 0 ? null : $"sub:42:{_subtitle}",
+                        track_id = _subtitle < 0 ? null : $"sub:{_file}:{_subtitle}",
                         inventory = new object[]
                         {
-                            new { track_id = "sub:42:0", combined_index = English, language = "eng", codec = "srt", source = "external", url = origin + "/eng.srt", label = "English", delivery = "sidecar" },
-                            new { track_id = "sub:42:1", combined_index = CombinedIndex(Spanish), language = "spa", codec = "srt", source = "external", url = origin + "/spa.srt", label = "Spanish", delivery = "sidecar" },
-                            new { track_id = "sub:42:2", combined_index = CombinedIndex(Dvd), language = "eng", codec = "dvd_subtitle", source = "embedded", label = "English (DVD)", delivery = "burn_in_only" },
+                            new { track_id = $"sub:{_file}:0", combined_index = English, language = "eng", codec = "srt", source = "external", url = origin + "/eng.srt", label = "English", delivery = "sidecar" },
+                            new { track_id = $"sub:{_file}:1", combined_index = CombinedIndex(Spanish), language = "spa", codec = "srt", source = "external", url = origin + "/spa.srt", label = "Spanish", delivery = "sidecar" },
+                            new { track_id = $"sub:{_file}:2", combined_index = CombinedIndex(Dvd), language = "eng", codec = "dvd_subtitle", source = "embedded", label = "English (DVD)", delivery = "burn_in_only" },
                         },
                     },
                 },
