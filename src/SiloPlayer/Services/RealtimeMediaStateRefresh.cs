@@ -58,7 +58,8 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
             || Text(data, "change") is not ("watched" or "progress" or "favorite" or "watchlist" or "rating" or "not_interested")
             || Text(data, "content_id") is not { Length: > 0 } id
             || string.IsNullOrWhiteSpace(id) || string.IsNullOrEmpty(context.ProfileId)
-            || (data.TryGetProperty("profile_id", out _) && Text(data, "profile_id") != context.ProfileId)) return;
+            || (data.TryGetProperty("profile_id", out var profile) && profile.ValueKind == JsonValueKind.String
+                && profile.GetString() != context.ProfileId)) return;
         var series = Text(data, "series_id");
         var viewerState = Text(data, "change") is "favorite" or "watchlist" or "rating" or "not_interested";
         Queue(context, [id], string.IsNullOrWhiteSpace(series) ? [] : [series], false, viewerState ? [id] : []);

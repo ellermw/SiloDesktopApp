@@ -248,6 +248,33 @@ public sealed class RealtimeMediaStateRefreshTests
     }
 
     [Theory]
+    [InlineData("null")]
+    [InlineData("7")]
+    [InlineData("true")]
+    [InlineData("false")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    public void NonStringProfileIdsStillInvalidateAndRefreshTheCapturedProfile(string profileJson)
+    {
+        using var fixture = new Fixture();
+        using var json = JsonDocument.Parse(
+            $$"""{"profile_id": {{profileJson}}, "content_id": "episode", "series_id": "series", "change": "watched"}""");
+        fixture.Refresh.ReceiveRealtime("user_state", "user_state.changed", json.RootElement);
+
+        var immediate = Assert.Single(fixture.Messages);
+        Assert.False(immediate.RefreshDetails);
+        Assert.Equal(fixture.Client.CaptureContext(), immediate.Context);
+        Assert.Equal(new[] { "episode" }, immediate.ContentIds);
+        Assert.Equal(new[] { "series" }, immediate.SeriesIds);
+
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.Equal(immediate.Context, batch.Context);
+        Assert.Equal(new[] { "episode" }, batch.ContentIds);
+        Assert.Equal(new[] { "series" }, batch.SeriesIds);
+    }
+
+    [Theory]
     [InlineData("other", "progress", "episode", "user_state", "user_state.changed")]
     [InlineData("profile", "unknown", "episode", "user_state", "user_state.changed")]
     [InlineData("other", "favorite", "series", "user_state", "user_state.changed")]
