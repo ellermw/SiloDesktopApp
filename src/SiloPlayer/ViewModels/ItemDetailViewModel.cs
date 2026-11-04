@@ -75,10 +75,10 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (message.Context is { } context && !_catalogApi.IsCurrentContext(context)) return;
         _detailPrefetchCache.Invalidate(message.ContentId);
-        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
+        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && IsBoxSetMemberOrReading(message.ContentId)) _ = RefreshBoxSetAsync();
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
         {
-            if (IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
+            if (IsBoxSetMemberOrReading(message.ContentId)) _ = RefreshBoxSetAsync();
             ApplyWatchedChange(message);
             return;
         }
@@ -225,7 +225,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
-        if (Item is { Type: "movie" } movie && (movie.ContentId == message.ContentId || _boxSetMembership?.Items.Any(x => x.ContentId == message.ContentId) == true)) _ = RefreshBoxSetAfterPlaybackAsync(message);
+        if (IsBoxSetMemberOrReading(message.ContentId)) _ = RefreshBoxSetAfterPlaybackAsync(message);
         _detailPrefetchCache.Invalidate(message.ContentId);
         var episodeSpoilersChanged = false;
         foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))

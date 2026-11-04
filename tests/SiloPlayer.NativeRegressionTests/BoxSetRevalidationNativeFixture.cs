@@ -19,7 +19,14 @@ internal static partial class BoxSetNativeFixture
             parent.Children.Add(page);
             await page.ViewModel.LoadAsync("7", "12"); await DrainAsync(parent);
             var detail = page.ViewModel.Detail;
+            var expectedCards = detail!.Items.Count(BoxSetDetail.IsMovieMember);
+            var readyUntil = DateTime.UtcNow.AddSeconds(2);
+            while (DateTime.UtcNow < readyUntil && (!page.IsLoaded ||
+                Descendants(page).OfType<PosterCard>().Count() != expectedCards ||
+                Descendants(page).OfType<PosterCard>().Any(card => !card.IsLoaded))) await Task.Delay(10);
             var cards = Descendants(page).OfType<PosterCard>().ToArray();
+            Check(page.IsLoaded && expectedCards > 0 && cards.Length == expectedCards && cards.All(card => card.IsLoaded),
+                "Revalidation fixture must capture actual loaded member controls before invalidation.");
             api.InvalidateAccessContext(); wire.Hold = true;
             wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
             wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);

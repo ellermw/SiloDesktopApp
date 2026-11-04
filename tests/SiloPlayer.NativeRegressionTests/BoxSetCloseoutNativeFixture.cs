@@ -19,6 +19,11 @@ internal static partial class BoxSetNativeFixture
     private static async Task RunCloseoutAsync(StackPanel parent, CatalogApi catalog, SiloApiClient api,
         Wire wire, NavigationService navigation, string scenario)
     {
+        if (scenario == "initial-membership-progress")
+        {
+            await VerifyInitialMovieMembershipProgressAsync(parent);
+            return;
+        }
         if (scenario == "revalidation-receipt")
         {
             await VerifyRevalidationReceiptAsync(parent, catalog, api, wire);
