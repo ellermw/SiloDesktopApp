@@ -26,7 +26,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "add-selection-flags", "newer-off", "newer-track", "reload-gap", "manual-reload-gap", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-retired-with-prior", "load-start-retired-newer-off", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
+        string[] scenarios = [ "add-selection-flags", "newer-off", "newer-track", "reload-gap", "manual-reload-gap", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-retired-with-prior", "load-start-retired-newer-off", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" ];
+        var requestedScenario = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_OWNERSHIP_CASE");
+        if (!string.IsNullOrEmpty(requestedScenario))
+        {
+            Require(scenarios.Contains(requestedScenario, StringComparer.Ordinal), "Unknown sidecar ownership scenario.");
+            scenarios = [requestedScenario];
+        }
+        foreach (var scenario in scenarios)
         {
             try
             {
@@ -1245,6 +1252,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             else if (scenario == "manual-reload-gap")
             {
                 var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                var intent = manager.CaptureLocalSubtitleIntent();
+                Program.Log($"Manual replacement after initializer completion: active={service.ActiveSubtitleServerIndex}, sid={mpv.GetPropertyDouble("sid")}, mapped={string.Join(",", map.Select(pair => $"{pair.Key}:{pair.Value}"))}, pendingIndex={Get(service, "_pendingSubtitlePreferenceIndex") ?? "null"}, pendingOwner={Get(service, "_pendingSubtitlePreferenceOwner") != null}, pendingInitial={Get(service, "_pendingInitialServerSubtitleIndex") ?? "null"}, managerIndex={manager.SubtitleSelectionForLoad}, intentIndex={intent.Track?.Index}, intentAutomatic={intent.IsAutomatic}, intentFile={intent.MediaFileId}, sessionFile={manager.CurrentSession?.MediaFileId}, executedFile={Get(service, "_executedSubtitleFileId") ?? "null"}, loadGeneration={Get(service, "_fileLoadGeneration")}, initializerGeneration={Get(service, "_loadedMediaInitGeneration")}, sidecarGeneration={Get(service, "_subtitleSidecarGeneration")}, previousSidecarGeneration={generation}, loading={service.IsLoading}, initializing={Get(service, "_loadedMediaInitCts") != null}, oldPendingStatus={pending.Status}, oldPendingResult={(pending is Task<bool> selection ? selection.Result.ToString() : "non-boolean")}, preferences={string.Join(",", wire.RequestedPreferences)}, OSC={string.Join(",", observations)}.");
                 Require(service.ActiveSubtitleServerIndex == 0 && map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid,
                     "The latest pending manual choice was not adopted after compatible replacement initialization.");
                 Require(wire.RequestedPreferences.ToArray().SequenceEqual(new[] { 0 }),
