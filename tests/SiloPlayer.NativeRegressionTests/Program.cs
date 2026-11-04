@@ -194,7 +194,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await NativePartyActionsFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-party-menu" or "native-party-end" or "native-party-stale")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-party-menu" or "native-party-end" or "native-party-stale" or "native-party-direct")
             {
                 await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY")![13..]);
                 Program.Log("PASS: native regression run completed."); Exit(); return;

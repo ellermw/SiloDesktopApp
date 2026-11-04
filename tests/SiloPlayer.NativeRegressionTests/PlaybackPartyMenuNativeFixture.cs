@@ -116,6 +116,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     System.Reflection.BindingFlags.NonPublic)!, [0d, "synthetic-failure", true, true, null]));
                 InvokeRow("stop");
                 Require(wire.PartyCalls == 0, "Retired Party intent dispatched Stop while an unrelated playback failure owned the surface.");
+                await SendOpenGesture(); await Task.Delay(120);
+                Require(Menu(player) == null && ((SemaphoreSlim)Get(player, "_playbackDialogGate")!).CurrentCount == 1,
+                    "An initial Party request during playback failure retained a closed native menu or shared lease.");
                 Set(player, "_playbackTerminalState", null);
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 InvokeRow("end"); await Until(() => Get(player, "_nativePartyEndDialog") is ContentDialog { XamlRoot: not null }, "End confirmation was not opened.");
@@ -142,6 +145,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 "End confirmation overlapped native menu or failed to acquire released shared lease.");
             var dialog = (ContentDialog)Get(player, "_nativePartyEndDialog")!;
             await MediaParityNativeFixture.CaptureAsync(dialog, "party-end-confirmation.png");
+            Require(dialog.IsEnabled && dialog.IsPrimaryButtonEnabled && dialog.DefaultButton == ContentDialogButton.Close
+                && Descendants<Button>(dialog).Where(button => button.Name is "PrimaryButton" or "CloseButton").All(button => button.IsEnabled && button.IsTabStop),
+                "Background initial-focus suppression left confirmation controls or safe default unusable.");
             Require(wire.Ends == 0, "Opening End confirmation issued DELETE.");
             if (mode == "end")
             {
@@ -179,11 +185,19 @@ internal static partial class PlaybackAudioMenuNativeFixture
             void InvokeRow(string id)
             {
                 var row = Row(id); list.SelectedItem = row; list.ScrollIntoView(row); list.UpdateLayout();
+                if (id == "end" && mode == "direct")
+                {
+                    windows.Phase("direct-end-begin"); Call(menu, "Input", "activate"); windows.Phase("direct-end-returned");
+                    if (Get(player, "_nativePartyEndDialog") is ContentDialog direct) windows.WatchDialog(direct, PartyOwnedDialogWindow(video.Hwnd));
+                    return;
+                }
                 var peer = FrameworkElementAutomationPeer.CreatePeerForElement(row) ?? new ListViewItemAutomationPeer(row);
                 using var veto = new OwnMenuActivationVeto(MenuHwnd(menu));
                 windows.Phase("uia-row-" + id + "-begin");
                 ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
                 windows.Phase("uia-row-" + id + "-returned");
+                if (id == "end" && Get(player, "_nativePartyEndDialog") is ContentDialog pending)
+                    windows.WatchDialog(pending, PartyOwnedDialogWindow(video.Hwnd));
             }
             void PressPrimary(ContentDialog target)
             {
@@ -214,12 +228,16 @@ internal static partial class PlaybackAudioMenuNativeFixture
             queries[id] = completion; mpv.SendScriptMessage("osc-party-fixture-query", id);
             try { return await completion.Task.WaitAsync(TimeSpan.FromSeconds(3)); } finally { queries.TryRemove(id, out _); }
         }
-        async Task<object> Open()
+        async Task SendOpenGesture()
         {
             var state = await Query(); Require(state.GetProperty("w").GetDouble() > 0, "Party opener geometry is absent.");
             var x = state.GetProperty("x").ToString(); var y = state.GetProperty("y").ToString();
             mpv.SendScriptMessage("osc-show"); mpv.SendScriptMessage("osc-mouse-move", x, y); mpv.SendScriptMessage("osc-mouse-down", x, y);
             mpv.SendScriptMessage("osc-mouse-up", x, y); mpv.SendScriptMessage("osc-video-click", x, y);
+        }
+        async Task<object> Open()
+        {
+            await SendOpenGesture();
             await Until(() => Menu(player) is { } current && ((ListView)Get(current, "_list")!).XamlRoot != null, "Actual Party opener did not show native controls.");
             var result = Menu(player)!; foreground.WatchMenu((Window)Get(result, "_window")!, MenuHwnd(result)); return result;
         }
@@ -267,6 +285,19 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(_hook != IntPtr.Zero, "Cannot record fixture window activation trace.");
         }
         internal void Phase(string phase) { _phase = phase; _foreground.Observe(phase); }
+        internal void WatchDialog(ContentDialog dialog, IntPtr hwnd)
+        {
+            _foreground.RegisterWindow(hwnd, "party-confirmation-host");
+            dialog.Loaded += (_, _) => Phase("dialog-loaded");
+            dialog.Opened += (_, _) => Phase("dialog-opened");
+            dialog.GettingFocus += (_, args) =>
+            {
+                _events.Add(new { tick = Environment.TickCount64, phase = "dialog-getting-focus", focusState = args.FocusState.ToString(),
+                    newElement = args.NewFocusedElement?.GetType().Name, oldElement = args.OldFocusedElement?.GetType().Name });
+                Phase("dialog-getting-focus");
+            };
+            dialog.GotFocus += (_, _) => Phase("dialog-got-focus");
+        }
         public void Dispose()
         {
             PartyUnhookWindowsHookEx(_hook); _hook = IntPtr.Zero; GC.KeepAlive(_callback);

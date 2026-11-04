@@ -25,6 +25,7 @@ public partial class PlayerService
         bool RoomCurrent() => owner.IsCurrent() && _playbackTerminalState == null && ReferenceEquals(coordinator!.ActiveRoom, room)
             && room.Room?.RoomId == roomId && room.ClosedReason == null;
         bool Current() => RoomCurrent() && _nativeMenuGate.IsCurrent(request);
+        if (!RoomCurrent()) return null;
         var footer = new StackPanel { Spacing = 8, Margin = new Thickness(12, 6, 12, 12), MaxHeight = 270 };
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
         var policy = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = .8 };
@@ -186,12 +187,20 @@ public partial class PlayerService
             };
             if (!isCurrent()) return;
             watch.Start();
-            await PlaybackDialogHost.ShowAsync(owner.Video.Hwnd, async (xamlRoot, _) =>
+            await PlaybackDialogHost.ShowAsync(owner.Video.Hwnd, async (xamlRoot, hostHwnd) =>
             {
                 if (!isCurrent()) return;
                 dialog.XamlRoot = xamlRoot;
                 App.Services.GetService<AccessibilityService>()?.ApplySaved(dialog);
-                await dialog.ShowAsync();
+                // ContentDialog focuses its default button while loading even
+                // when its host used Show(false). Keep background controls
+                // unfocusable only through that initial pass; Loaded restores
+                // normal keyboard/controller/pointer behavior before interaction.
+                void EnableAfterLoad(object sender, RoutedEventArgs args) => dialog.IsEnabled = true;
+                var background = !PlaybackDialogHost.IsForegroundOwnedBy(hostHwnd);
+                if (background) { dialog.IsEnabled = false; dialog.Loaded += EnableAfterLoad; }
+                try { await dialog.ShowAsync(); }
+                finally { dialog.Loaded -= EnableAfterLoad; }
             }, activate, isCurrent);
         }
         catch (Exception) { if (isCurrent()) ShowNotice("Watch Party", "The confirmation could not open. Try again.", "error"); }
