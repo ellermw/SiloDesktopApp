@@ -154,7 +154,8 @@ internal static class PlaybackStatsMenuNativeFixture
             {
                 var reopened = await Open(route); await Until(() => ((ListView)Get(reopened, "_list")!).Items.Count >= 25, route + " did not populate Stats.");
                 if (route == "key") Command(mpv, "keypress", "i");
-                else Call(reopened, "Input", "cancel");
+                else Require(Call(reopened, "HandleKeyboardInput", Windows.System.VirtualKey.I) is true,
+                    "The actual native Stats keyboard bridge did not consume its custom I dismiss key.");
                 await UntilAsync(async () => !(await Query()).GetProperty("pending").GetBoolean(), "Unretired " + route);
             }
             foreground.Observe("stats-complete");
