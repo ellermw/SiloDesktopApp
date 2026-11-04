@@ -399,7 +399,7 @@ public sealed class ItemDetailCurrentParityTests
     [Fact]
     public void DetailPageCarriesCurrentOnViewTranslationContract()
     {
-        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.Overview.cs");
         var api = Read("src", "SiloPlayer.Core", "Api", "CatalogApi.cs");
         var model = Read("src", "SiloPlayer.Core", "Models", "Catalog", "MediaItemDetail.cs");
 

@@ -265,10 +265,21 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
+                    <StackPanel x:Name="BoxSetSearchSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,24" Spacing="12" AutomationProperties.Name="Box sets">
+                        <TextBlock Text="Box sets" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold" />
+                        <ItemsRepeater x:Name="BoxSetSearchRepeater" ElementPrepared="BoxSetSearch_Prepared">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout x:Name="BoxSetSearchGridLayout" MinItemWidth="178" MinItemHeight="310" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate><DataTemplate><ContentControl /></DataTemplate></ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </StackPanel>
+
                     <!-- People results section -->
-                    <StackPanel x:Name="PeopleSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,24">
+                    <StackPanel x:Name="PeopleSection" Grid.Row="1" Visibility="Collapsed" Margin="0,0,0,24">
                         <StackPanel Visibility="{x:Bind ViewModel.PeopleError, Mode=OneWay, Converter={StaticResource NullToVis}}" Spacing="8">
                             <TextBlock Text="{x:Bind ViewModel.PeopleError, Mode=OneWay}" TextWrapping="Wrap" />
                             <Button Content="Retry people" Click="RetryPeople_Click" HorizontalAlignment="Left" />
@@ -327,7 +338,7 @@
                         </ItemsRepeater>
                     </StackPanel>
 
-                    <ItemsRepeater x:Name="ResultsRepeater" Grid.Row="1" ElementPrepared="ResultsRepeater_ElementPrepared">
+                    <ItemsRepeater x:Name="ResultsRepeater" Grid.Row="2" ElementPrepared="ResultsRepeater_ElementPrepared">
                         <ItemsRepeater.Layout>
                             <UniformGridLayout
                                 x:Name="ResultsGridLayout"
@@ -344,12 +355,12 @@
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
 
-                    <ProgressRing x:Name="SearchLoadMoreRing" Grid.Row="2"
+                    <ProgressRing x:Name="SearchLoadMoreRing" Grid.Row="3"
                                   IsActive="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay}"
                                   Visibility="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                                   HorizontalAlignment="Center" Width="24" Height="24" Margin="0,16" />
 
-                    <StackPanel x:Name="RequestResultsSection" Grid.Row="3" Visibility="Collapsed" Margin="0,36,0,0" Spacing="12">
+                    <StackPanel x:Name="RequestResultsSection" Grid.Row="4" Visibility="Collapsed" Margin="0,36,0,0" Spacing="12">
                         <Grid>
                             <StackPanel Spacing="7">
                                 <TextBlock x:Name="RequestResultsEyebrow" Text="Discover · Outside your library" FontSize="11" CharacterSpacing="140" FontWeight="SemiBold" Foreground="#FFD8B46A" />
@@ -374,7 +385,7 @@
                     </StackPanel>
 
                     <!-- Skeleton while search results load (inline rows) -->
-                    <ItemsRepeater x:Name="SearchLoadingRepeater" Grid.Row="4"
+                    <ItemsRepeater x:Name="SearchLoadingRepeater" Grid.Row="5"
                                    ElementPrepared="SearchLoadingRepeater_ElementPrepared"
                                    Visibility="Collapsed">
                         <ItemsRepeater.Layout>
@@ -394,7 +405,7 @@
                     </ItemsRepeater>
 
                     <!-- Error -->
-                    <StackPanel Grid.Row="5" Spacing="8" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                    <StackPanel Grid.Row="6" Spacing="8" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
                     <TextBlock
                         Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                         Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
@@ -407,7 +418,7 @@
 
                     <!-- No results -->
                     <TextBlock
-                        Grid.Row="6"
+                        Grid.Row="7"
                         x:Name="NoResultsText"
                         Text="No items found."
                         FontSize="14"

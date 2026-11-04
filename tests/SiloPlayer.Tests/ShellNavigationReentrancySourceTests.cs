@@ -53,7 +53,7 @@ public sealed class ShellNavigationReentrancySourceTests
         Assert.Contains("!ViewModel.IsEpisodesLoading", health);
         Assert.Contains("_seasonEpisodesLoads == 0", health);
         foreach (var member in new[] { "!_isTranslatingEpisodes", "_episodesTranslationStatusReads == 0", "!_episodesTranslationInterrupted",
-            "!_isTranslatingOverview", "_overviewTranslationStatusReads == 0", "!_overviewTranslationInterrupted",
+            "_translationCts == null", "_overviewPendingOwner == null", "_overviewTranslationStatusReads == 0", "!_overviewTranslationInterrupted",
             "_detailArtworkLoads == 0", "!_detailArtworkInterrupted" })
             Assert.Contains(member, health);
         Assert.Contains("!ViewModel.SeasonsLoadFailed", health);
@@ -88,12 +88,14 @@ public sealed class ShellNavigationReentrancySourceTests
             Assert.Contains($"if (completed) _interruptedCardArtwork.Remove({border})", load);
             Assert.Contains($"else _interruptedCardArtwork.Add({border})", load);
         }
-        var configure = MethodBody(page, "private async Task ConfigureOnViewTranslationAsync(");
+        var overview = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.Overview.cs");
+        var configure = MethodBody(overview, "private async Task ConfigureOnViewTranslationAsync(");
         Assert.Contains("++_overviewTranslationStatusReads", configure);
         Assert.Contains("--_overviewTranslationStatusReads", configure);
         Assert.Contains("_overviewTranslationInterrupted = true", configure);
         var departed = MethodBody(page, "protected override void OnNavigatedFrom(");
-        Assert.Contains("_isTranslatingOverview = false", departed);
+        Assert.Contains("_translationCts?.Cancel();", departed);
+        Assert.Contains("_translationCts = null;", departed);
         Assert.Contains("_overviewTranslationInterrupted = false", departed);
         Assert.Contains("_detailArtworkInterrupted = false", departed);
     }

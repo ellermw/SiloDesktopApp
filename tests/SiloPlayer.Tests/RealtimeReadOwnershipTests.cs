@@ -919,6 +919,43 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Fact]
+    public async Task RetiredLegacyViewerFallbackCannotConsumeTheNewLoadsInitialInvalidation()
+    {
+        using var f = new Fixture();
+        f.Wire.OmitViewerState = true; f.Wire.HoldPersonalListCapability = true;
+        var retired = f.Vm.LoadInLibraryAsync(EpisodeA, 9);
+        var fallback = await f.Wire.NextAsync();
+        Assert.Equal(EpisodeA, f.Vm.Item!.ContentId);
+
+        f.Wire.OmitViewerState = false; f.Wire.HoldDetails = true;
+        var loading = f.Vm.LoadInLibraryAsync(Series, 9);
+        var initial = await f.Wire.NextAsync();
+        Assert.Null(f.Vm.Item);
+        f.Wire.Count = 2; f.Wire.Target = EpisodeB; f.Wire.Favorite = true;
+        f.Raw(Series, "watched"); f.Clock.Advance(200);
+        Assert.False(retired.IsCompleted);
+
+        // Let the old transport observe cancellation only after the new load
+        // has retained its event. The fallback swallows that cancellation.
+        fallback.Release();
+        await retired.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(f.Vm.Item);
+        Assert.True(f.Vm.IsLoading);
+        f.Wire.HoldDetails = false; initial.Release();
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(Series, f.Vm.Item!.ContentId);
+        Assert.Equal(2, f.Vm.Item.UserData!.WatchedCount);
+        Assert.Equal(EpisodeB, f.Vm.Item.PlayContentId);
+        Assert.True(f.Vm.IsFavorite);
+        Assert.True(f.Vm.IsSeries);
+        Assert.Equal(3, f.Wire.DetailReads);
+        Assert.False(f.Vm.IsLoading);
+        Assert.Null(f.Vm.ErrorMessage);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+    }
+
+    [Fact]
     public async Task EventWhileInitialScopedDetailIsNullCannotPublishItsOldCountsOrTarget()
     {
         using var f = new Fixture();
@@ -1855,7 +1892,7 @@ public sealed class RealtimeReadOwnershipTests
         internal string? DetailSeriesId;
         internal bool Played;
         internal string? Target = EpisodeA;
-        internal bool HoldDetails, HoldSeasons, HoldEpisodes, HoldViewerReads, OmitViewerState;
+        internal bool HoldDetails, HoldSeasons, HoldEpisodes, HoldViewerReads, OmitViewerState, HoldPersonalListCapability;
         internal bool Favorite, Watchlist, NotInterested;
         internal int? Rating;
         internal Action? OnWrite;
@@ -1896,7 +1933,8 @@ public sealed class RealtimeReadOwnershipTests
             var hold = false;
             if (path == "/api/v2/capabilities/personal-lists")
             {
-                body = new { membership_supported = true };
+                hold = HoldPersonalListCapability;
+                body = new { membership_supported = !HoldPersonalListCapability };
             }
             else if (path.StartsWith("/api/v2/ratings/"))
             {
@@ -1951,7 +1989,13 @@ public sealed class RealtimeReadOwnershipTests
             if (hold)
             {
                 var read = new Read(); lock (_all) _all.Add(read); _held.Writer.TryWrite(read);
-                try { await read.Pending.WaitAsync(ct); }
+                try
+                {
+                    // Model a legacy fallback transport that settles after
+                    // cancellation rather than completing on the cancel call.
+                    if (path == "/api/v2/capabilities/personal-lists") await read.Pending;
+                    else await read.Pending.WaitAsync(ct);
+                }
                 finally { read.MarkSettled(); }
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(snapshot, Encoding.UTF8, "application/json") };

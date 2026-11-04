@@ -7,6 +7,8 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
@@ -561,6 +563,29 @@ internal static class RealtimeSeriesStateNativeFixture
             wire.SeasonCount = 0;
             await Refresh();
             await UntilAsync(() => Visible("SeasonsSection") == Visibility.Collapsed && Visible("EpisodesSection") == Visibility.Collapsed);
+
+            // Recover a failed single-season read through the actual XAML
+            // button, without a reconnect or another collection notification.
+            wire.EmptyEpisodes = false; wire.FailEpisodes = true; wire.SeasonCount = 1;
+            await Refresh();
+            await UntilAsync(() => Visible("EpisodesLoadError") == Visibility.Visible
+                && (int)typeof(ItemDetailPage).GetField("_seasonEpisodesLoads", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)! == 0);
+            var retry = Descendants<Button>((DependencyObject)page.FindName("EpisodesLoadError"))
+                .Single(button => button.Content as string == "Try again");
+            wire.FailEpisodes = false; wire.HeldCompanion = "episodes";
+            wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            ((IInvokeProvider)new ButtonAutomationPeer(retry).GetPattern(PatternInterface.Invoke)).Invoke();
+            await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(Visible("EpisodesLoadingSkeleton") == Visibility.Visible
+                && Visible("EpisodesLoadError") == Visibility.Collapsed && Visible("EpisodesPanel") == Visibility.Collapsed,
+                "The actual single-season Try again button did not show the retry skeleton.");
+            wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult();
+            await UntilAsync(() => vm.Episodes.Count == 2 && Visible("EpisodesPanel") == Visibility.Visible
+                && Visible("EpisodesLoadingSkeleton") == Visibility.Collapsed);
+            Check(Visible("EpisodesLoadError") == Visibility.Collapsed && vm.EpisodesSeasonContentId == "season"
+                && Descendants<Button>((DependencyObject)page.FindName("EpisodesPanel")).Any(button => button.Tag as string == "loaded"),
+                "The actual single-season Try again button did not mount recovered canonical episode rows.");
         }
         finally
         {
