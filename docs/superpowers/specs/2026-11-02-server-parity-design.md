@@ -68,6 +68,8 @@ A separate builder check found no significant unanswered product decisions beyon
 
 ## PR3 implementation note — server grant boundary
 
+Non-busy text prefetch failures (including the eight-second managed-read budget, the 16 MiB buffering cap, and temporary-file write failures) retain the existing mpv URL route. That fallback uses an asynchronous, owner-cancellable, unselected `sub-add`; only its verified current-file SID may be selected and persisted. The managed buffering cap is not a new limit on mpv's existing URL reader. Any busy history suppresses this fallback. Deferred picks on a burned-in plan must pass the same readiness check before initiating a burn-in-removal replan.
+
 Busy refusal preserves the last actually applied subtitle and saved preference while the loaded transport owner is still current. Text readiness is checked before a burned-to-text replan; authorized local bytes can cross that one replacement only for the same effective file, stable track identity, sync key, initiating manual owner and API context.
 
 The pinned server can select an alternate file for a track-change refusal. It commits the replacement and can retire the old transcode/proxy grant before returning the response; there is no client-load acknowledgement or general predecessor lease. A server-selected alternate is therefore a new transport owner. Keep its valid grant, resolve the requested identity in its inventory, expose actual captions Off until its text read succeeds, preserve existing preferences on busy failure, and show retry guidance. Do not roll the manager back to an obsolete server revision or claim old burned-transport survival across that server commit. No new server API is introduced.

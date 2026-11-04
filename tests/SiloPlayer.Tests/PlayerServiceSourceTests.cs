@@ -1291,7 +1291,21 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url,", prefetch);
         Assert.DoesNotContain("CreateAuthenticatedRequest", prefetch);
         Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;", prefetch);
-        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Error) return SubtitlePrefetchOutcome.Error;", prefetch);
+        Assert.Contains("return read.CanUseUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;", prefetch);
+        Assert.Contains("allowUrlFallback = !read.WasBusy;", prefetch);
+        Assert.Contains("return allowUrlFallback ? await ReadUrlFallbackAsync() : SubtitlePrefetchOutcome.Error;", prefetch);
+        var fallbackRead = prefetch.IndexOf("await mpv.AddSubtitleUnselectedAsync(", StringComparison.Ordinal);
+        var fallbackLock = prefetch.IndexOf("lock (_subtitleTrackStateLock)", fallbackRead, StringComparison.Ordinal);
+        var fallbackOwner = prefetch.IndexOf("if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;", fallbackLock, StringComparison.Ordinal);
+        var fallbackCache = prefetch.IndexOf("_loadedExternalSubtitleSids[track.Index] = sid;", fallbackOwner, StringComparison.Ordinal);
+        Assert.True(fallbackRead >= 0 && fallbackLock > fallbackRead && fallbackOwner > fallbackLock && fallbackCache > fallbackOwner);
+        var nativeFallback = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Player", "MpvPlayer.AsyncSubtitle.cs"));
+        Assert.Contains("mpv_command_async(_mpvHandle, id, pointers)", nativeFallback);
+        Assert.Contains("mpv_abort_async_command(_mpvHandle, id)", nativeFallback);
+        Assert.Contains("\"sub-add\", url, \"auto\"", nativeFallback);
+        Assert.DoesNotContain("mpv_command(", nativeFallback);
+        Assert.Contains("if (!_prefetchedSubtitleFiles.ContainsKey(track.Index) &&", source);
+        Assert.Contains("SubtitleSidecarFile.Extension(null, remote, track.Codec) != null) return false;", source);
         Assert.Contains("generation != _subtitleSidecarGeneration", prefetch);
         Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch);
         Assert.Contains("authority.ApiClient.IsCurrentContext(context)", prefetch);
@@ -1307,6 +1321,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("_subtitleSidecarGeneration++;", stop);
 
         var persist = source[source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
+        Assert.Contains("if (track != null && (!deferLocalSelection || manager?.CurrentSession?.IsSubtitleBurnedIn == true))", persist);
         var persistSelect = persist.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
         var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", persistSelect, StringComparison.Ordinal);
         Assert.InRange(persist.IndexOf("if (!CurrentChoice()) return false;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);

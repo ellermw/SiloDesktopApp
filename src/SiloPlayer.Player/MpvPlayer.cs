@@ -943,6 +943,10 @@ public sealed partial class MpvPlayer : IDisposable
                         HandlePropertyChange(ev);
                         break;
 
+                    case MPV_EVENT_COMMAND_REPLY:
+                        CompleteAsyncSubtitleCommand(ev);
+                        break;
+
                     case MPV_EVENT_FILE_LOADED:
                         _diagnostics?.Record("file_loaded", new { position = Position, duration = Duration });
                         lock (_upscalingLock) _upscalingFileLoaded = true;
@@ -1279,6 +1283,7 @@ public sealed partial class MpvPlayer : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        CancelAsyncSubtitleCommands();
         Interlocked.Or(ref _nativeLeases, NativeTeardownFlag);
         _diagnostics?.Dispose();
 

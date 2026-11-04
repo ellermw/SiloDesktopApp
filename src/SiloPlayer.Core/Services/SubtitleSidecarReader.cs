@@ -4,7 +4,12 @@ using System.Net;
 namespace SiloPlayer.Core.Services;
 
 public enum SubtitleSidecarReadOutcome { Ready, Fallback, Busy, Error }
-public sealed record SubtitleSidecarRead(SubtitleSidecarReadOutcome Outcome, byte[]? Bytes = null, string? Extension = null, bool WasBusy = false);
+public sealed record SubtitleSidecarRead(SubtitleSidecarReadOutcome Outcome, byte[]? Bytes = null, string? Extension = null, bool WasBusy = false)
+{
+    // Error describes this bounded prefetch, not refusal of the playback
+    // choice. Only a non-busy failure may try the asynchronous mpv URL route.
+    public bool CanUseUrlFallback => !WasBusy && Outcome is SubtitleSidecarReadOutcome.Error or SubtitleSidecarReadOutcome.Fallback;
+}
 
 /// <summary>Bounded text-sidecar reads. Only a subtitle read's 503 is retried.</summary>
 public static class SubtitleSidecarReader
@@ -19,8 +24,8 @@ public static class SubtitleSidecarReader
         if (!url.IsAbsoluteUri || url.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, url, codec) == null)
             return new(SubtitleSidecarReadOutcome.Fallback);
         var busy = false;
-        // Fallback is only for formats outside this reader. A failed text
-        // read must never retry the same URL through synchronous mpv sub-add.
+        // Busy history must never retry this URL through mpv. Other failures
+        // retain the supported URL route, but must not block the UI to use it.
         SubtitleSidecarRead Failure() => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: busy);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(Budget);
