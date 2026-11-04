@@ -483,7 +483,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunBurnReadinessAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var choice in new[] { "busy-text", "ready-then-busy", "changed-file-busy", "changed-file-newer" })
+        foreach (var choice in new[] { "busy-text", "ready-then-busy", "changed-file-busy", "changed-file-newer", "changed-file-cast", "changed-file-cast-newer-off" })
         {
             try
             {
@@ -518,23 +518,26 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         service.SetPaused(true); Call(service, "SendSubtitleListToOsc"); Call(service, "WireMpvEvents");
         var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void Loaded() => loaded.TrySetResult(); service.ContentLoaded += Loaded;
-        var selected = choice == "bitmap" || choice.StartsWith("bitmap-", StringComparison.Ordinal) ? 2 : choice == "off" ? -1 : 0;
+        var castChoice = choice.StartsWith("changed-file-cast", StringComparison.Ordinal);
+        var selected = choice == "bitmap" || choice.StartsWith("bitmap-", StringComparison.Ordinal) ? 2 : choice == "off" ? -1 : castChoice ? 1 : 0;
         var track = selected < 0 ? null : manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == selected);
-        if (choice is "busy-text" or "ready-then-busy" or "changed-file-busy" or "changed-file-newer")
+        if (choice is "busy-text" or "ready-then-busy" or "changed-file-busy" or "changed-file-newer" || castChoice)
         {
             wire.HoldNextReplan = false;
             wire.SidecarReadCount = () => subtitles.EngRequests;
             subtitles.BusyResponses = choice == "busy-text" ? 100 : 0;
             subtitles.BusyAfter = choice == "ready-then-busy" ? 1 : int.MaxValue;
             wire.ChangeFileOnReplan = choice.StartsWith("changed-file-", StringComparison.Ordinal);
-            wire.HoldNextReplan = choice == "changed-file-newer";
+            wire.HoldNextReplan = choice is "changed-file-newer" or "changed-file-cast-newer-off";
             subtitles.BusyChangedFile = choice == "changed-file-busy";
             subtitles.MediaRelease.TrySetResult();
             Set(service, "_activeSubtitleServerIndex", 2); manager.RecordLocalSubtitleSelection(2);
             var noticeLogStart = new FileInfo(Path.Combine(Program.ResultDirectory, "mpv_log.txt")).Length;
             try
             {
-                var originalChoice = service.SetSubtitleTrackAndPersistAsync(1, track!.Language, track);
+                var originalChoice = castChoice
+                    ? service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = track!.Index + 1 })
+                    : service.SetSubtitleTrackAndPersistAsync(1, track!.Language, track);
                 Task? newerChoice = null;
                 if (choice == "changed-file-newer")
                 {
@@ -543,10 +546,35 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     newerChoice = service.SetSubtitleTrackAndPersistAsync(2, spanish.Language, spanish);
                     wire.ReplanRelease.TrySetResult();
                 }
-                await originalChoice.WaitAsync(TimeSpan.FromSeconds(12));
+                if (choice == "changed-file-cast-newer-off")
+                {
+                    await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    newerChoice = service.SetSubtitleTrackAndPersistAsync(0, null, null);
+                    wire.ReplanRelease.TrySetResult();
+                }
+                Exception? commandError = null;
+                try { await originalChoice.WaitAsync(TimeSpan.FromSeconds(12)); }
+                catch (ArgumentException error) when (castChoice) { commandError = error; }
                 if (newerChoice != null) await newerChoice.WaitAsync(TimeSpan.FromSeconds(12));
                 await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
-                if (choice == "busy-text")
+                if (castChoice)
+                {
+                    var superseded = choice.EndsWith("-newer-off", StringComparison.Ordinal);
+                    var expectedIndex = superseded ? -1 : 8;
+                    Program.Log($"Changed-file Cast: superseded={superseded}, error={commandError?.GetType().Name ?? "none"}, file={manager.CurrentSession!.MediaFileId}, active={service.ActiveSubtitleServerIndex}, prefs={string.Join(',', wire.RequestedPreferences)}, sid={mpv.GetPropertyDouble("sid")}.");
+                    Require(superseded ? commandError is ArgumentException : commandError == null,
+                        "SiloCast rejected an accepted remapped subtitle or acknowledged a request superseded by newer Off.");
+                    Require(manager.CurrentSession!.MediaFileId == 43 && service.ActiveSubtitleServerIndex == expectedIndex &&
+                        manager.SubtitleSelectionForLoad == expectedIndex && wire.RequestedPreferences.SequenceEqual(new[] { expectedIndex }) &&
+                        (superseded ? mpv.GetPropertyDouble("sid") <= 0 : mpv.GetPropertyDouble("sid") > 0),
+                        "Changed-file SiloCast acknowledgement lost actual SID, latest intent, or exactly-once granted-file preference.");
+                    using var castLog = new FileStream(Path.Combine(Program.ResultDirectory, "mpv_log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    castLog.Seek(noticeLogStart, SeekOrigin.Begin);
+                    using var castReader = new StreamReader(castLog);
+                    Require(!castReader.ReadToEnd().Contains("Reconnecting playback", StringComparison.Ordinal),
+                        "A valid changed-file SiloCast choice unnecessarily entered transport recovery.");
+                }
+                else if (choice == "busy-text")
                 {
                     Require(wire.Replans == 0 && manager.CurrentSession!.IsSubtitleBurnedIn && service.ActiveSubtitleServerIndex == 2 &&
                         manager.SubtitleSelectionForLoad == 2 && wire.PreferenceWrites == 0,

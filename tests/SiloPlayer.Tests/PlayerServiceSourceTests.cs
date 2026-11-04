@@ -3,6 +3,24 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void RemappedSubtitleReloadAcknowledgesOnlyItsAdmittedLogicalChoice()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private async Task SaveExecutedSubtitlePreferenceAsync(", start, StringComparison.Ordinal);
+        var method = source[start..end];
+        var ack = method.IndexOf("if (transportReloadScheduled && admittedIntent != null)", StringComparison.Ordinal);
+        var oldFileGuard = method.IndexOf("manager?.CurrentSession?.MediaFileId != selectionFileId", StringComparison.Ordinal);
+        Assert.InRange(ack, 0, oldFileGuard - 1);
+        var receipt = method[ack..oldFileGuard];
+        Assert.Contains("ReferenceEquals(selectionActivationIntent, Volatile.Read(ref _subtitleActivationIntent))", receipt);
+        Assert.Contains("manager?.CaptureLocalSubtitleIntent() == admittedIntent", receipt);
+        Assert.Contains("authority.ApiClient.IsCurrentIdentityContext(selectionIdentity)", receipt);
+        Assert.Contains("selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration)", receipt);
+        Assert.Contains("selectionRoomGeneration == Volatile.Read(ref _roomPlaybackGeneration)", receipt);
+    }
+
+    [Fact]
     public void BitmapFollowupUsesRecordedIdentityAndRebindsOnlyLivePreferenceAuthority()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));

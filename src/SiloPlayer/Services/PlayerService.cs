@@ -1203,6 +1203,11 @@ public partial class PlayerService : IDisposable
         var mpv = _mpv;
         var selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
         var selectionFileId = manager?.CurrentSession?.MediaFileId;
+        var selectionIdentity = authority.ApiClient.CaptureIdentityContext();
+        var selectionPlayGeneration = Volatile.Read(ref _playRequestGeneration);
+        var selectionRoomGeneration = Volatile.Read(ref _roomPlaybackGeneration);
+        object selectionActivationIntent;
+        PlaybackManager.SubtitleSelectionIntent? admittedIntent = null;
         var selectedSubtitleIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
         var preferenceOwner = new SubtitlePreferenceOwner(authority, authority.ApiClient.CaptureContext(), manager, selectionFileId, GetPrefsKey(), ownerToken);
         var deferLocalSelection = _switchingContent || IsLoading || _subtitleVersionSwitchActive;
@@ -1213,6 +1218,7 @@ public partial class PlayerService : IDisposable
             retiredRead = Interlocked.Exchange(ref _subtitleReadOperation, null);
             _pendingLegacySubtitleSelection = null;
             if (claimActivation) Interlocked.Exchange(ref _subtitleActivationIntent, new object());
+            selectionActivationIntent = Volatile.Read(ref _subtitleActivationIntent);
             preferenceOwner = preferenceOwner with
             {
                 PreviousIntent = _pendingSubtitlePreferenceOwner?.PreviousIntent ?? manager?.CaptureLocalSubtitleIntent(),
@@ -1296,6 +1302,7 @@ public partial class PlayerService : IDisposable
             if (manager?.CurrentSession?.ProtocolVersion >= 3)
             {
                 manager.RecordLocalSubtitleSelection(selectedSubtitleIndex < 0 ? null : selectedSubtitleIndex);
+                admittedIntent = manager.CaptureLocalSubtitleIntent();
                 // PlaybackManager retains identity and rebinds it to each accepted
                 // inventory. A raw pending index must not outrank that resolution.
                 _pendingInitialServerSubtitleIndex = null;
@@ -1411,8 +1418,31 @@ public partial class PlayerService : IDisposable
         // BeginMpvLoad deliberately pauses the outgoing stream and FileLoaded
         // restores the captured user state. Never race that authority by
         // issuing Play/Pause while a replacement transport is still loading.
+        if (transportReloadScheduled && admittedIntent != null)
+        {
+            lock (_subtitleTrackStateLock)
+            {
+                // Acceptance belongs to the retained logical choice, even when
+                // its new file has another combined index. A newer manual/ABA
+                // choice must never inherit this request's acknowledgement.
+                if (!_closing && !ownerToken.IsCancellationRequested && _playbackTerminalState == null &&
+                    ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager) &&
+                    ReferenceEquals(mpv, _mpv) && manager?.CurrentSession != null &&
+                    authority.ApiClient.IsCurrentIdentityContext(selectionIdentity) &&
+                    selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
+                    selectionRoomGeneration == Volatile.Read(ref _roomPlaybackGeneration) &&
+                    ReferenceEquals(selectionActivationIntent, Volatile.Read(ref _subtitleActivationIntent)) &&
+                    manager?.CaptureLocalSubtitleIntent() == admittedIntent && (acceptActivation?.Invoke() ?? true))
+                    return true;
+            }
+        }
         if (_closing || ownerToken.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority) ||
-            !ReferenceEquals(manager, _playbackManager) ||
+            !ReferenceEquals(manager, _playbackManager) || !ReferenceEquals(mpv, _mpv) ||
+            !authority.ApiClient.IsCurrentIdentityContext(selectionIdentity) ||
+            selectionPlayGeneration != Volatile.Read(ref _playRequestGeneration) ||
+            selectionRoomGeneration != Volatile.Read(ref _roomPlaybackGeneration) ||
+            !ReferenceEquals(selectionActivationIntent, Volatile.Read(ref _subtitleActivationIntent)) ||
+            acceptActivation?.Invoke() == false ||
             (manager?.CurrentSession?.MediaFileId != selectionFileId && !preferenceOwner.FollowsVersionSwitch) ||
             _activeSubtitleServerIndex != selectedSubtitleIndex) return false;
         if (transportReloadScheduled || _switchingContent || IsLoading ||
