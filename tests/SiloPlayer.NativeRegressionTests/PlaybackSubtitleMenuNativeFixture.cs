@@ -52,6 +52,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
         }).ToList();
         session.SubtitleUrls[36].SyncKey = "stored-1036";
         session.SubtitleUrls[37].Url = media.Origin + "/missing-subtitle.vtt";
+        session.SubtitleUrls[38].Url = media.Origin + "/held-subtitle.vtt";
+        session.SubtitleUrls[0].Unplayable = true;
+        session.SubtitleUrls[0].Url = "";
+        session.SubtitleUrls[1].Url = "";
         wire.EnableSubtitleSync = true;
         Set(service, "_subtitlePreferences", new SubtitlePreferenceSnapshot(api.CaptureContext(), new SubtitleAppearance(), "default", 0, "default", false));
         Set(service, "_subtitlePreferenceAuthority", service.ActiveAuthority);
@@ -74,6 +78,17 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(method != null, "Native Subtitle does not have a shared production menu entry point.");
             var menu = await Open(); var list = (ListView)Get(menu, "_list")!;
             Require(list.Items.Count >= 71, "Native Subtitle omitted Off or original source inventory.");
+            var actualRows = ((System.Collections.IEnumerable)Get(menu, "_choices")!).Cast<object>().ToArray();
+            foreach (var index in new[] { 1000, 1003 })
+            {
+                var disabled = actualRows.Single(row => row.GetType().GetProperty("Id")!.GetValue(row)?.ToString() == index.ToString());
+                Require(!(bool)disabled.GetType().GetProperty("IsEnabled")!.GetValue(disabled)! &&
+                    !string.IsNullOrWhiteSpace(disabled.GetType().GetProperty("DisabledReason")!.GetValue(disabled)?.ToString()),
+                    "Full unavailable or route-less subtitle inventory was omitted or remained actionable.");
+            }
+            list.SelectedIndex = 1; Call(menu, "Input", "activate");
+            Require(Menu(service) != null && service.ActiveSubtitleServerIndex < 0 && !wire.SubtitleSavedIndices.Any(),
+                "A disabled actual Subtitle row dispatched or persisted a choice.");
             var root = (Grid)Get(menu, "_root")!;
             Require(Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Add subtitles"), "Subtitle upload/search handoff is unreachable.");
             Require(Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Subtitle appearance"), "Subtitle appearance handoff is unreachable.");
@@ -121,6 +136,25 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     "Failed sidecar replaced accepted current/preference despite unchanged native SID; Subtitle delivery requires reconciled PR75/77 backend outcomes.");
                 return;
             }
+            var acceptedSidBeforePending = mpv.GetPropertyDouble("sid");
+            menu = await Open(); list = (ListView)Get(menu, "_list")!; list.SelectedIndex = 39;
+            Call(menu, "Input", "activate");
+            await media.SubtitleReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            menu = await Open();
+            var pendingRows = ((System.Collections.IEnumerable)Get(menu, "_choices")!).Cast<object>().ToArray();
+            bool RowFlag(int id, string flag)
+            {
+                var row = pendingRows.Single(row => row.GetType().GetProperty("Id")!.GetValue(row)?.ToString() == id.ToString());
+                return (bool)row.GetType().GetProperty(flag)!.GetValue(row)!;
+            }
+            Require(RowFlag(1108, "IsCurrent") && !RowFlag(1114, "IsCurrent") && RowFlag(1114, "IsPending") &&
+                mpv.GetPropertyDouble("sid") == acceptedSidBeforePending && !wire.SubtitleSavedIndices.Contains(1114),
+                "Native pending presentation replaced the executed checkmark, SID or preference before sidecar completion.");
+            Call(menu, "Input", "cancel"); media.ReleaseSubtitleRead.TrySetResult();
+            await Until(() => Get(service, "_nativeSubtitlePending") == null && service.ActiveSubtitleServerIndex == 1114 && wire.SubtitleSavedIndices.Contains(1114),
+                "Current held Subtitle selection did not execute after its sidecar became ready.");
+            await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1108, true)!;
+            Program.Log("PASS: actual unavailable rows remain inert; held native selection shows executed/current separately from pending until real SID execution.");
             menu = await Open(); root = (Grid)Get(menu, "_root")!;
             var later = Descendants<Button>(root).Single(button => AutomationProperties.GetName(button) == "Subtitle delay 100ms later");
             Require(later.IsEnabled, "Delay did not enable for current subtitles.");
@@ -162,6 +196,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         }
         finally
         {
+            media.ReleaseSubtitleRead.TrySetResult();
             if (Menu(service) is { } menu) Call(menu, "Input", "cancel");
             Call(service, "StopPlaybackStallWatchdog");
             video.Hide(); await service.CloseAsync(); foreground.Complete();

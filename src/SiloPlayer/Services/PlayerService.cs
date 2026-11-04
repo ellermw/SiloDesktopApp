@@ -1190,10 +1190,59 @@ public partial class PlayerService : IDisposable
                 FollowsVersionSwitch = selectedSubtitleIndex < 0 && _subtitleVersionSwitchActive,
             };
             _pendingAutomaticSubtitleSelection = null;
-            _activeSubtitleServerIndex = selectedSubtitleIndex;
             _pendingSubtitlePreferenceIndex = selectedSubtitleIndex;
             _pendingSubtitlePreferenceOwner = preferenceOwner;
             _pendingInitialSubtitleFileId = selectionFileId;
+
+        }
+        bool CurrentReadChoice() => !_closing && !ownerToken.IsCancellationRequested &&
+            ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) && ReferenceEquals(authority, _activeAuthority) &&
+            authority.ApiClient.IsCurrentContext(preferenceOwner.Context) && ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv);
+        void RetireReadChoice()
+        {
+            lock (_subtitleTrackStateLock)
+            {
+                if (!ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner)) return;
+                _pendingSubtitlePreferenceOwner = null; _pendingSubtitlePreferenceIndex = null;
+            }
+        }
+        // Pending text is a draft until readable. It cannot replace the applied
+        // manager intent when a busy/error/profile-retired read never executes.
+        if (track != null && !IsUnsupportedBitmapSubtitle(track) && !deferLocalSelection)
+        {
+            while (true)
+            {
+                var readGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
+                var readOutcome = await PrefetchSubtitleSidecarAsync(track);
+                if (!CurrentReadChoice()) { RetireReadChoice(); return false; }
+                if (readGeneration != Volatile.Read(ref _loadedMediaInitGeneration))
+                {
+                    while (CurrentReadChoice() && (_switchingContent || IsLoading || Volatile.Read(ref _loadedMediaInitCts) != null))
+                        await Task.Delay(50);
+                    if (!CurrentReadChoice()) { RetireReadChoice(); return false; }
+                    var currentSession = manager?.CurrentSession;
+                    if (currentSession?.MediaFileId != selectionFileId) { RetireReadChoice(); return false; }
+                    var requested = track;
+                    track = currentSession.SubtitleUrls.FirstOrDefault(candidate => !candidate.Unplayable &&
+                        (!string.IsNullOrWhiteSpace(requested.TrackId) ? candidate.TrackId == requested.TrackId :
+                            candidate.Index == requested.Index && candidate.Source == requested.Source && candidate.Codec == requested.Codec));
+                    if (track == null || !HasSubtitleSelectionRoute(track)) { RetireReadChoice(); return false; }
+                    selectedSubtitleIndex = track.Index;
+                    selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
+                    continue;
+                }
+                if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
+                {
+                    RetireReadChoice(); ShowSubtitleReadFailure(readOutcome); return false;
+                }
+                if (readOutcome == SubtitlePrefetchOutcome.Retired) { RetireReadChoice(); return false; }
+                break;
+            }
+        }
+        if (!CurrentReadChoice()) { RetireReadChoice(); return false; }
+        lock (_subtitleTrackStateLock)
+        {
+            _activeSubtitleServerIndex = selectedSubtitleIndex;
             if (manager?.CurrentSession?.ProtocolVersion >= 3)
             {
                 manager.RecordLocalSubtitleSelection(selectedSubtitleIndex < 0 ? null : selectedSubtitleIndex);
@@ -1203,21 +1252,6 @@ public partial class PlayerService : IDisposable
             }
             else if (deferLocalSelection || _pendingInitialServerSubtitleIndex.HasValue)
                 _pendingInitialServerSubtitleIndex = selectedSubtitleIndex;
-        }
-        // A replacement must not commit burned pixels before its text choice
-        // is ready. The same captured preference owner owns this preflight.
-        if (track != null && !IsUnsupportedBitmapSubtitle(track) && !deferLocalSelection)
-        {
-            var readOutcome = await PrefetchSubtitleSidecarAsync(track);
-            if (!ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) ||
-                !ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(preferenceOwner.Context)) return false;
-            if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
-            {
-                RestoreExecutedSubtitleSelection(reapply: false);
-                ShowSubtitleReadFailure(readOutcome);
-                return false;
-            }
-            if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
         }
         var wasPaused = CaptureUserPausedState();
         var position = CurrentMediaPosition;

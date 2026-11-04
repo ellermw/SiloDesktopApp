@@ -806,6 +806,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
 
     internal sealed class MediaServer : IDisposable
     {
+        internal readonly TaskCompletionSource SubtitleReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseSubtitleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly HttpListener _listener = new();
         internal string Origin { get; }
         internal MediaServer()
@@ -826,8 +828,13 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 {
                     HttpListenerContext context;
                     try { context = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
-                    if (context.Request.Url?.AbsolutePath == "/fixture-subtitle.vtt")
+                    if (context.Request.Url?.AbsolutePath is "/fixture-subtitle.vtt" or "/held-subtitle.vtt")
                     {
+                        if (context.Request.Url.AbsolutePath == "/held-subtitle.vtt")
+                        {
+                            SubtitleReadStarted.TrySetResult();
+                            await ReleaseSubtitleRead.Task;
+                        }
                         var subtitle = Encoding.UTF8.GetBytes("WEBVTT\n\n00:00.000 --> 01:00.000\nSynthetic subtitle\n");
                         context.Response.ContentType = "text/vtt"; context.Response.ContentLength64 = subtitle.Length;
                         try { await context.Response.OutputStream.WriteAsync(subtitle); context.Response.Close(); } catch (HttpListenerException) { }
@@ -873,7 +880,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 }
             });
         }
-        public void Dispose() => _listener.Close();
+        public void Dispose() { ReleaseSubtitleRead.TrySetResult(); _listener.Close(); }
     }
 
     /// <summary>

@@ -17,6 +17,26 @@ public partial class PlayerService
     private int ExecutedSubtitleIndex => _playbackManager?.CurrentSession?.MediaFileId == _executedSubtitleFileId
         ? _executedSubtitleTrack?.Index ?? -1 : -1;
     private ContentDialog? _nativeSubtitleDialog;
+    private async Task HandoffNativeSubtitleDialogAsync(string action, PlaybackMenuRequest request, PlaybackUiSnapshot owner)
+    {
+        try
+        {
+            if (!owner.IsCurrent()) return;
+            if (action == "add") await ShowSubtitleSearchDialogAsync(request);
+            else if (action == "appearance") await ShowSubtitleAppearanceDialogAsync(request);
+            else await ShowSubtitleAiDialogAsync(request);
+        }
+        catch (Exception)
+        {
+            if (owner.IsCurrent()) ShowNotice("Subtitle tool unavailable", "Please try opening the subtitle tool again.", "error");
+        }
+        finally
+        {
+            // Early refusal and exceptions must complete the same handshake as
+            // an opened dialog. A duplicate scoped completion is ignored by Lua.
+            NotifySubtitleDialogClosed(owner, request);
+        }
+    }
     private async Task ShowOwnedSubtitleDialogAsync(ContentDialog dialog, PlaybackUiSnapshot owner, IntPtr hwnd)
     {
         if (!owner.IsCurrent()) return;
@@ -76,13 +96,12 @@ public partial class PlayerService
                     break;
                 case "add": case "appearance": case "ai":
                     if (id == "ai" && !NativeSubtitleAiAvailable) return;
+                    var dialogOwner = CapturePlaybackUiSnapshot();
                     owner.Mpv.SendScriptMessage("osc-native-subtitle-dialog-opening", request.OwnerToken, request.Sequence.ToString(CultureInfo.InvariantCulture));
                     menu?.Close(PlaybackMenuCloseReason.Selection);
                     // Close synchronously releases this exact menu's dialog lease.
                     if (!InventoryCurrent()) return;
-                    if (id == "add") _ = ShowSubtitleSearchDialogAsync(request);
-                    else if (id == "appearance") _ = ShowSubtitleAppearanceDialogAsync(request);
-                    else _ = ShowSubtitleAiDialogAsync(request);
+                    _ = HandoffNativeSubtitleDialogAsync(id, request, dialogOwner);
                     return;
             }
             refresh();

@@ -352,10 +352,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                         "A new-file grant was rolled back to an obsolete server plan.");
                     Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
                         "A busy new-file read highlighted an obsolete index or persisted an unapplied preference.");
-                    var exhaustedOwner = Get(service, "_subtitleSelectionOperation")!;
-                    Require(!(bool)exhaustedOwner.GetType().GetProperty("Accepted")!.GetValue(exhaustedOwner)! &&
-                        (int)exhaustedOwner.GetType().GetField("PreferenceClaimed")!.GetValue(exhaustedOwner)! == 0,
-                        "The exhausted manual operation retained preference acceptance or claimed an unapplied completion.");
+                    Require(Get(service, "_pendingSubtitlePreferenceOwner") == null && Get(service, "_pendingSubtitlePreferenceIndex") == null,
+                        "Exhausted manual selection retained unapplied preference authority.");
                     subtitles.BusyChangedFile = false;
                     // Re-run automatic selection from the retained valid grant,
                     // not a new viewer preference. It may execute successfully
@@ -364,18 +362,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     Require(service.ActiveSubtitleServerIndex == 7 && mpv.GetPropertyDouble("sid") > 0 &&
                         wire.PreferenceWrites == 0 && wire.Replans == 1,
                         $"Changed-file owner was redundantly replanned or its exhausted preference revived: replans={wire.Replans}, writes={wire.PreferenceWrites}, active={service.ActiveSubtitleServerIndex}, sid={mpv.GetPropertyDouble("sid")}.");
-                    Require(ReferenceEquals(exhaustedOwner, Get(service, "_subtitleSelectionOperation")) &&
-                        !(bool)exhaustedOwner.GetType().GetProperty("Accepted")!.GetValue(exhaustedOwner)! &&
-                        (int)exhaustedOwner.GetType().GetField("PreferenceClaimed")!.GetValue(exhaustedOwner)! == 0,
-                        "Automatic grant selection adopted or completed a retired manual operation.");
+                    Require(Get(service, "_pendingSubtitlePreferenceOwner") == null && Get(service, "_pendingSubtitlePreferenceIndex") == null,
+                        "Automatic grant selection revived retired manual preference authority.");
                     var retryTrack = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 7);
                     await service.SetSubtitleTrackAndPersistAsync(8, retryTrack.Language, retryTrack);
-                    var retryOwner = Get(service, "_subtitleSelectionOperation")!;
-                    Require(!ReferenceEquals(exhaustedOwner, retryOwner) &&
-                        (bool)retryOwner.GetType().GetProperty("Accepted")!.GetValue(retryOwner)! &&
-                        (int)retryOwner.GetType().GetField("PreferenceClaimed")!.GetValue(retryOwner)! == 1 &&
+                    Require(Get(service, "_pendingSubtitlePreferenceOwner") == null && Get(service, "_pendingSubtitlePreferenceIndex") == null &&
+                        service.ActiveSubtitleServerIndex == 7 && mpv.GetPropertyDouble("sid") > 0 &&
                         wire.RequestedPreferences.SequenceEqual(new[] { 7 }),
-                        "A fresh explicit retry did not persist the successfully executed granted-file choice once.");
+                        "Fresh explicit retry did not execute and persist its granted-file preference exactly once.");
                     using var logStream = new FileStream(Path.Combine(Program.ResultDirectory, "mpv_log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     logStream.Seek(noticeLogStart, SeekOrigin.Begin);
                     using var logReader = new StreamReader(logStream);

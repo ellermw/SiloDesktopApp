@@ -2,6 +2,33 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Fact]
+    public void NativeSubtitleDialogHandoffRetainsInputOwnershipAfterTheMenuCloses()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            native_probe_time = 10
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local token = '11111111111111111111111111111111'
+            native_handlers['osc-native-subtitle-scope'](token)
+            osc_test_layout(); s.controller_focus_name = 'btn_cc'; osc_test_activate()
+            local request = native_requests[1]
+            native_handlers['osc-native-subtitle-dialog-opening'](token, request[4])
+            native_handlers['osc-native-menu-closed'](token, request[4], 'false')
+            native_probe_time = 12
+            native_intents = {}
+            native_handlers['osc-video-click']('100','100')
+            native_keys['silo-seek-fwd']()
+            native_keys['silo-window-minimize']()
+            local before_close = #native_intents
+            native_handlers['osc-subtitle-dialog-closed'](token, request[4], 'true')
+            native_handlers['osc-video-click']('100','100')
+            mp.set_property('user-data/native-subtitle-input', tostring(before_close)..':'..tostring(#native_intents > before_close))
+            """, rawAss: true, resultProperty: "user-data/native-subtitle-input", beforeScript: NativeSubtitleProbe);
+        Assert.Equal("0:true", output);
+    }
+
     private static string NativeSubtitleProbe => NativeAudioProbe.Replace("args[2] == 'silo-native-audio-open'", "args[2] == 'silo-native-subtitle-open'");
 
     [Theory]
