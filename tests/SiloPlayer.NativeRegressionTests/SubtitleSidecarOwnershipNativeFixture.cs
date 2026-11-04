@@ -92,22 +92,29 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
         var notices = new ConcurrentQueue<string>();
         var noticeReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var noticeDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var noticeDrained = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         void ObserveNotice(string[] message)
         {
             if (message.FirstOrDefault() == "silo-busy-notice-ready") noticeReady.TrySetResult();
-            if (message.FirstOrDefault() == "silo-busy-notice-drained") noticeDrained.TrySetResult();
+            if (message.FirstOrDefault() == "silo-busy-notice-drained" && message.Length > 1) noticeDrained.TrySetResult(message[1]);
             if (message.FirstOrDefault() == "silo-busy-notice" && message.Length > 1) notices.Enqueue(message[1]);
         }
         mpv.ScriptMessageReceived += ObserveNotice;
         var noticeProbe = Path.Combine(Program.ResultDirectory, "silo-busy-notice-" + scenario + ".lua");
         await File.WriteAllTextAsync(noticeProbe, """
             local mp = require 'mp'
+            local active_subtitle = '-1'
+            mp.register_script_message('osc-set-active-subtitle', function(index)
+                active_subtitle = index
+            end)
+            mp.register_script_message('busy-set-pending-subtitle', function(index)
+                active_subtitle = index
+            end)
             mp.register_script_message('osc-show-notice', function(payload)
                 mp.commandv('script-message', 'silo-busy-notice', payload)
             end)
             mp.register_script_message('silo-busy-notice-barrier', function()
-                mp.commandv('script-message', 'silo-busy-notice-drained')
+                mp.commandv('script-message', 'silo-busy-notice-drained', active_subtitle)
             end)
             mp.commandv('script-message', 'silo-busy-notice-ready')
             """);
@@ -194,6 +201,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 }
                 else
                 {
+                    // Model the OSC shortcut's optimistic pending highlight.
+                    mpv.SendScriptMessage("busy-set-pending-subtitle", "0");
                     await Task.Run(() => Call(service, "StopSubtitleSync"));
                     Require(cancellationGeneration == readGeneration, "Sync-stop regression unexpectedly changed the load generation.");
                 }
@@ -216,18 +225,20 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 mpv.SendScriptMessage("silo-busy-notice-barrier");
                 await noticeDrained.Task.WaitAsync(TimeSpan.FromSeconds(4));
             }
-            if (readFailure)
+            if (readFailure || scenario == "no-context-sync-stop")
             {
                 Require(notices.Any(n => n.Contains("could not be loaded", StringComparison.Ordinal)) &&
                     !notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal)),
-                    "Permanent subtitle failure was missing actionable feedback or mislabeled as busy.");
+                    "Failed or interrupted subtitle read was missing actionable feedback or mislabeled as busy.");
             }
             if (scenario is "exhausted" or "missing-native-503")
                 Require(notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal)) &&
                     !notices.Any(n => n.Contains("could not be loaded", StringComparison.Ordinal)), "Busy exhaustion lost its distinct retry notice.");
-            if (noContext)
+            if (scenario == "no-context-sync-stop")
+                Require(await noticeDrained.Task == "1", "A still-current retired read did not restore the applied OSC highlight.");
+            if (scenario is "no-context-load" or "newer-off" or "newer-track" or "profile")
                 Require(!notices.Any(n => n.Contains("still preparing", StringComparison.Ordinal) || n.Contains("could not be loaded", StringComparison.Ordinal)),
-                    "A retired read emitted a busy/error notice.");
+                    "A superseded or reload-retired read emitted a busy/error notice.");
             if (readFailure || translationCompleted || scenario is "exhausted" or "profile" or "superseded-exhausted" or "missing-native-503" or "no-context-sync-stop")
             {
                 Require(service.ActiveSubtitleServerIndex == 1, "Busy failure replaced the accepted server subtitle selection.");
@@ -288,7 +299,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunBitmapOwnershipAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var choice in new[] { "bitmap-stolen-busy", "bitmap-retired-profile" })
+        foreach (var choice in new[] { "bitmap-stolen-busy", "bitmap-retired-profile", "bitmap-access-refresh" })
         {
             try { await CheckAcceptedReloadAsync(parent, choice); Program.Log("PASS: bitmap callback ownership " + choice); }
             catch (Exception ex) { failures.Add(choice + ": " + ex.Message); Program.Log("CASE FAIL: bitmap ownership " + choice + ": " + ex); }
@@ -460,11 +471,24 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 var bitmapPending = service.SetSubtitleTrackAndPersistAsync(3, track!.Language, track);
                 await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 if (choice == "bitmap-stolen-busy") Call(service, "BeginPlaybackBusy", true, null);
+                else if (choice == "bitmap-access-refresh")
+                    Require(api.TryInvalidateAccessContext(api.CaptureContext(), out _), "Bitmap fixture did not advance the read cache epoch.");
                 else api.SetProfile("replacement-profile");
                 var successorRevision = (long)Get(service, "_playbackBusyRevision")!;
                 wire.ReplanRelease.TrySetResult();
                 await bitmapPending.WaitAsync(TimeSpan.FromSeconds(8));
                 mpv.SendScriptMessage("bitmap-drain"); await drained.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                if (choice == "bitmap-access-refresh")
+                {
+                    Require((long)Get(service, "_playbackFileGeneration")! > beforeFile,
+                        "A read-cache refresh retired accepted bitmap playback despite unchanged identity.");
+                    subtitles.MediaRelease.TrySetResult();
+                    await loaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                    await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
+                    Require(service.ActiveSubtitleServerIndex == 2 && manager.CurrentSession!.IsSubtitleBurnedIn && mpv.IsPaused && wire.PreferenceWrites == 0,
+                        "Accepted bitmap playback lost its applied choice/pause or reused an expired settings-write context after read refresh.");
+                    return;
+                }
                 Require((long)Get(service, "_playbackFileGeneration")! == beforeFile && wire.PreferenceWrites == 0,
                     "Retired bitmap callback loaded a transport or persisted a choice after its owner departed.");
                 if (choice == "bitmap-stolen-busy")
