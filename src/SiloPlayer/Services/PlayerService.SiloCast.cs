@@ -28,7 +28,13 @@ public partial class PlayerService
             {
                 var subtitleInventory = manager.CurrentSession?.SubtitleUrls ?? [];
                 var routes = CaptureSubtitleSelectionRoutes(subtitleInventory);
-                foreach (var t in subtitleInventory.Where(t => HasSubtitleSelectionRoute(t, routes)))
+                // Before native initialization, lack of a loaded route is not
+                // evidence that a server choice is unavailable. Keep its wire ID;
+                // control execution still validates the actual route.
+                var advertisedSubtitles = _mpv == null
+                    ? subtitleInventory.Where(t => !t.Unplayable)
+                    : subtitleInventory.Where(t => HasSubtitleSelectionRoute(t, routes));
+                foreach (var t in advertisedSubtitles)
                     subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
                         ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
                 selectedSubtitleTrackId = State == PlayerState.Idle || _activeSubtitleServerIndex < 0

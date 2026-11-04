@@ -6824,7 +6824,7 @@ public partial class PlayerService : IDisposable
             case "silo-subtitle-select":
                 if (args.Length > 1 && int.TryParse(args[1], out var subIdx))
                 {
-                    _ = SelectSubtitleByServerIndexAsync(subIdx);
+                    dispatch.TryEnqueue(() => _ = SelectSubtitleByServerIndexAsync(subIdx));
                 }
                 break;
             case "silo-subtitle-cycle":
@@ -7849,8 +7849,23 @@ public partial class PlayerService : IDisposable
                 }
                 if (_liveSubtitleSid <= 0)
                 {
-                    _mpv.AddSubtitle(_liveSubtitlePath, "AI translation", null, select: true);
-                    _liveSubtitleSid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
+                    var mpv = _mpv;
+                    var previousIds = mpv.GetSubtitleTrackIds().ToHashSet();
+                    // Add without selecting so a rejected add cannot borrow or
+                    // disturb the viewer's SID. Only this path's new ID is ours.
+                    var added = mpv.AddSubtitle(_liveSubtitlePath, "AI translation", null, select: false);
+                    var ownedIds = mpv.GetSubtitleTrackIds(externalOnly: true, externalFilename: _liveSubtitlePath)
+                        .Where(id => !previousIds.Contains(id)).ToArray();
+                    var newSid = ownedIds.Length == 1 ? ownedIds[0] : 0;
+                    if (ReferenceEquals(mpv, _mpv) && loadGeneration == Volatile.Read(ref _fileLoadGeneration) && newSid > 0)
+                    {
+                        if (added)
+                        {
+                            _liveSubtitleSid = newSid;
+                            mpv.SetSubtitleTrack(newSid);
+                        }
+                        else mpv.RemoveSubtitle(newSid);
+                    }
                 }
                 else
                 {

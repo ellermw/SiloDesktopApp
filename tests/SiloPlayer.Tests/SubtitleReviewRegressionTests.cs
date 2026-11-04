@@ -128,6 +128,37 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void LiveTranslationClaimsOnlyItsNewExternalTrackAfterASuccessfulAdd()
+    {
+        var live = Between(Read("PlayerService.cs"), "private void ApplySubtitleTranslationCues(",
+            "private void ApplySubtitleTranslationCompleted(");
+        var previous = live.IndexOf("var previousIds = mpv.GetSubtitleTrackIds().ToHashSet();", StringComparison.Ordinal);
+        var add = live.IndexOf("var added = mpv.AddSubtitle(_liveSubtitlePath, \"AI translation\", null, select: false);", StringComparison.Ordinal);
+        var identify = live.IndexOf("mpv.GetSubtitleTrackIds(externalOnly: true, externalFilename: _liveSubtitlePath)", StringComparison.Ordinal);
+        var delta = live.IndexOf(".Where(id => !previousIds.Contains(id)).ToArray();", StringComparison.Ordinal);
+        var unique = live.IndexOf("var newSid = ownedIds.Length == 1 ? ownedIds[0] : 0;", StringComparison.Ordinal);
+        var sameLoad = live.IndexOf("if (ReferenceEquals(mpv, _mpv) && loadGeneration == Volatile.Read(ref _fileLoadGeneration) && newSid > 0)", StringComparison.Ordinal);
+        var success = live.IndexOf("if (added)", StringComparison.Ordinal);
+        var claim = live.IndexOf("_liveSubtitleSid = newSid;", StringComparison.Ordinal);
+        var select = live.IndexOf("mpv.SetSubtitleTrack(newSid);", StringComparison.Ordinal);
+        Assert.True(previous >= 0 && add > previous && identify > add && delta > identify && unique > delta &&
+            sameLoad > unique && success > sameLoad && claim > success && select > claim);
+        Assert.Contains("else mpv.RemoveSubtitle(newSid);", live);
+        Assert.DoesNotContain("Math.Max(1,", live);
+        Assert.DoesNotContain("_liveSubtitleSid = Math", live);
+        Assert.DoesNotContain("select: true", live);
+    }
+
+    [Fact]
+    public void OscSubtitleSelectionIsDispatchedBeforeRunningSelectionWork()
+    {
+        var selection = Between(Read("PlayerService.cs"), "case \"silo-subtitle-select\":", "case \"silo-subtitle-cycle\":");
+        Assert.Contains("int.TryParse(args[1], out var subIdx)", selection);
+        Assert.Contains("dispatch.TryEnqueue(() => _ = SelectSubtitleByServerIndexAsync(subIdx));", selection);
+        Assert.Equal(1, selection.Split("SelectSubtitleByServerIndexAsync(", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
     public void CorrectedCuesAreBoundedBeforeWritingEvenWithoutAContentLength()
     {
         var reload = Reload();
