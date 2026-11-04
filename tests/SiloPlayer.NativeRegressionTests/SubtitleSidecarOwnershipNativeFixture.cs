@@ -892,8 +892,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             var selectOff = scenario.EndsWith("-off", StringComparison.Ordinal) || retiredBitmap && !supersededBitmap;
             if (retiredBitmap)
             {
-                var bitmap = new SubtitleTrackInfo { Index = 2, Language = "eng", Codec = "dvdsub", Source = "embedded" };
-                if (manager.CurrentSession!.SubtitleUrls.All(track => track.Index != 2)) manager.CurrentSession.SubtitleUrls.Add(bitmap);
+                var bitmap = manager.CurrentSession!.SubtitleUrls.SingleOrDefault(track => track.Index == 2);
+                if (bitmap == null)
+                {
+                    bitmap = new SubtitleTrackInfo { Index = 2, Language = "eng", Codec = "dvdsub", Source = "embedded" };
+                    manager.CurrentSession.SubtitleUrls.Add(bitmap);
+                }
                 heldRestart = (SemaphoreSlim)Get(service, "_transportRestartGate")!;
                 await heldRestart.WaitAsync();
                 var restartGeneration = (long)Get(service, "_seekRestartGeneration")!;
@@ -1093,7 +1097,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 // its subtitle helper, before the replacement load cancels it.
                 var owner = new CancellationTokenSource();
                 Set(service, "_loadedMediaInitCts", owner);
-                Set(service, "_pendingInitialServerSubtitleIndex", 0);
+                manager.RecordLocalSubtitleSelection(0, isAutomatic: true);
                 pending = (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
             }
             else if (scenario == "oversized-chunked") pending = (Task)Call(service, "PrefetchSubtitleSidecarAsync", manager.CurrentSession!.SubtitleUrls![0], null)!;
