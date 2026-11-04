@@ -17,6 +17,7 @@ internal static class LibraryLettersNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent, Window window, bool grouped = false)
     {
+        var postSaveOnly = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "grouped-post-save";
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = (IServiceProvider)field.GetValue(null)!;
         using var wire = new Wire { Grouped = grouped }; using var http = new HttpClient(wire);
@@ -97,10 +98,39 @@ internal static class LibraryLettersNativeFixture
                     wire.PlayedCount = 2;
                     page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedMarked, "member", context: client.CaptureContext()));
                     await Until(() => page.ViewModel.GetWindowItem(600)?.BoxSet?.PlayedCount == 2);
+                    await Until(() => !page.ViewModel.IsLoading &&
+                        typeof(LibraryPage).GetField("_groupedRefreshCts", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page) == null &&
+                        !(bool)typeof(LibraryPage).GetField("_groupedCatalogDirty", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!);
+                    if (postSaveOnly)
+                    {
+                        ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("RecommendedTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+                        await Until(() => ((FrameworkElement)page.FindName("LibraryContentArea")).Visibility == Visibility.Collapsed);
+                    }
                     var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    page.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("member", 100, 100, true) { Persisted = persisted.Task });
+                    var progress = new SiloPlayer.Messaging.PlaybackProgressUpdated("member", 100, 100, true) { Persisted = persisted.Task };
+                    // Capture completion of the real callback in the focused
+                    // retained-tab case; default coverage uses public Receive.
+                    var completion = postSaveOnly ? (Task)typeof(LibraryPage).GetMethod("RefreshGroupedAfterPlaybackAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [progress])! : null;
+                    if (!postSaveOnly) page.Receive(progress);
+                    var readContext = client.CaptureContext();
+                    client.InvalidateAccessContext();
+                    if (client.IsCurrentContext(readContext)) throw new InvalidOperationException("Fixture did not retire the captured read context.");
+                    if (page.ViewModel.GetWindowItem(600)?.BoxSet?.PlayedCount != 2 || persisted.Task.IsCompleted)
+                        throw new InvalidOperationException("Grouped post-save fixture did not retain its settled pre-write count while persistence was held.");
                     wire.PlayedCount = 3; persisted.TrySetResult();
+                    if (completion != null)
+                    {
+                        await completion.WaitAsync(TimeSpan.FromSeconds(2));
+                        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        if (!page.DispatcherQueue.TryEnqueue(() => drained.TrySetResult())) throw new InvalidOperationException("Post-save callback drain was rejected.");
+                        await drained.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                        if (!(bool)typeof(LibraryPage).GetField("_groupedCatalogDirty", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!)
+                            throw new InvalidOperationException("The completed post-save callback lost retained grouped refresh ownership after an access-only revision.");
+                        ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("LibraryTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+                    }
                     await Until(() => page.ViewModel.GetWindowItem(600)?.BoxSet?.PlayedCount == 3);
+                    Program.Log("PASS: actual grouped post-save refresh survives access-only retirement and updates the current aggregate count.");
+                    if (postSaveOnly) return;
                     page.ViewModel.SelectedGenre = "Drama";
                     var orderControl = (ComboBox)page.FindName("OrderComboBox"); orderControl.SelectedIndex = 0;
                     await Until(() => page.ViewModel.SelectedOrder == "desc" && !page.ViewModel.IsLoading && page.ViewModel.LetterIndex is not null);

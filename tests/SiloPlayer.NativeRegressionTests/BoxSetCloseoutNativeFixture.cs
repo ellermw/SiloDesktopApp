@@ -19,6 +19,46 @@ internal static partial class BoxSetNativeFixture
     private static async Task RunCloseoutAsync(StackPanel parent, CatalogApi catalog, SiloApiClient api,
         Wire wire, NavigationService navigation, string scenario)
     {
+        if (scenario == "artwork-identity")
+        {
+            const string poster = "AAAAAAAAAAAAAAAAAAAAAA==", backdrop = "AQEBAQEBAQEBAQEBAQEBAQ==";
+            const string caller = "AgICAgICAgICAgICAgICAg==";
+            (string? CallerUrl, string? CallerHash, string? PosterUrl, string? PosterHash, string? BackdropUrl, string? BackdropHash, string? ExpectedUrl, string? ExpectedHash)[] cases =
+            [
+                ("https://boxsets-native.invalid/caller", caller, "https://boxsets-native.invalid/poster", poster, null, null, "https://boxsets-native.invalid/caller", caller),
+                (null, caller, "https://boxsets-native.invalid/poster", poster, null, null, "https://boxsets-native.invalid/poster", poster),
+                (null, caller, null, poster, "https://boxsets-native.invalid/backdrop", backdrop, "https://boxsets-native.invalid/backdrop", backdrop),
+                ("https://boxsets-native.invalid/poster", null, "https://boxsets-native.invalid/poster", poster, null, null, "https://boxsets-native.invalid/poster", poster),
+                ("https://boxsets-native.invalid/caller", null, "https://boxsets-native.invalid/poster", poster, null, null, "https://boxsets-native.invalid/caller", null),
+                (null, null, null, poster, "https://boxsets-native.invalid/backdrop", null, "https://boxsets-native.invalid/backdrop", null),
+                (null, caller, null, poster, "https://boxsets-native.invalid/backdrop", backdrop, "https://boxsets-native.invalid/backdrop", backdrop)
+            ];
+            var aggregate = new BoxSetCard();
+            parent.Children.Add(aggregate);
+            try
+            {
+                await DrainAsync(parent);
+                foreach (var row in cases)
+                {
+                    aggregate.SetSummary(new() { Id = "7", LibraryId = "12", Title = "Synthetic artwork",
+                        PosterUrl = row.PosterUrl, PosterThumbhash = row.PosterHash,
+                        BackdropUrl = row.BackdropUrl, BackdropThumbhash = row.BackdropHash }, row.CallerUrl, row.CallerHash);
+                    typeof(BoxSetCard).GetMethod("CancelArtworkLoad", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(aggregate, null);
+                    parent.UpdateLayout();
+                    var actualUrl = (string?)typeof(BoxSetCard).GetField("_artworkUrl", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(aggregate);
+                    var fallback = Descendants(aggregate).OfType<DefaultArtwork>().Single();
+                    Check(actualUrl == row.ExpectedUrl && fallback.Thumbhash == row.ExpectedHash,
+                        "aggregate artwork URL and actual fallback thumbhash must name the same selected image branch");
+                }
+                Program.Log("PASS:7 actual aggregate caller/poster/backdrop placeholder identity and same-URL refresh cases.");
+            }
+            finally
+            {
+                typeof(BoxSetCard).GetMethod("CancelArtworkLoad", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(aggregate, null);
+                parent.Children.Remove(aggregate);
+            }
+            return;
+        }
         if (scenario == "aggregate-tap")
         {
             var calls = 0;

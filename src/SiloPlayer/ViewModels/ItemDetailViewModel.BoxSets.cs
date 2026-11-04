@@ -18,9 +18,9 @@ public partial class ItemDetailViewModel
     public BoxSetDetail? BoxSet { get => _boxSet; private set => SetProperty(ref _boxSet, value); }
     private async Task RefreshBoxSetAfterPlaybackAsync(SiloPlayer.Messaging.PlaybackProgressUpdated message)
     {
-        var item = Item; var library = LibraryId; var lifetime = _boxSetLifetime; var owner = _catalogApi.CaptureContext();
+        var item = Item; var library = LibraryId; var lifetime = _boxSetLifetime; var owner = _catalogApi.CaptureIdentityContext();
         try { await message.Persisted; } catch { return; }
-        if (Item?.ContentId == item?.ContentId && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime && _catalogApi.IsCurrentContext(owner)) await RefreshBoxSetAsync();
+        if (Item?.ContentId == item?.ContentId && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime && _catalogApi.IsCurrentIdentityContext(owner)) await RefreshBoxSetAsync();
     }
     private void RetireBoxSet()
     {

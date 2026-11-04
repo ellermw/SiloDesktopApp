@@ -94,12 +94,12 @@ public sealed partial class LibraryPage
         var visit = _groupedLibraryVisit;
         var libraryId = ViewModel.Library?.Id;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
-        var context = catalog.CaptureContext();
+        var owner = catalog.CaptureIdentityContext();
         try { await message.Persisted; }
         catch { /* A failed write still permits re-reading the accepted server state. */ }
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_isNavigated && visit == _groupedLibraryVisit && ViewModel.Library?.Id == libraryId && catalog.IsCurrentContext(context))
+            if (_isNavigated && visit == _groupedLibraryVisit && ViewModel.Library?.Id == libraryId && catalog.IsCurrentIdentityContext(owner))
                 QueueGroupedCatalogRefresh();
         });
     }

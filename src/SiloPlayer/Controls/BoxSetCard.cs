@@ -46,8 +46,16 @@ public sealed class BoxSetCard : Button
     }
     public void SetSummary(BoxSetSummary set, string? posterUrl = null, string? posterThumbhash = null)
     {
-        var artworkUrl = !string.IsNullOrWhiteSpace(posterUrl) ? posterUrl : !string.IsNullOrWhiteSpace(set.PosterUrl) ? set.PosterUrl : set.BackdropUrl;
-        var thumbhash = posterThumbhash ?? set.PosterThumbhash;
+        var callerPoster = !string.IsNullOrWhiteSpace(posterUrl);
+        var summaryPoster = !string.IsNullOrWhiteSpace(set.PosterUrl);
+        var artworkUrl = callerPoster ? posterUrl : summaryPoster ? set.PosterUrl : set.BackdropUrl;
+        // A placeholder belongs to its image. A caller can borrow the summary
+        // poster hash only when it selected that exact URL; URL-less artwork
+        // keeps the existing best-available placeholder fallback.
+        var thumbhash = callerPoster ? posterThumbhash ?? (posterUrl == set.PosterUrl ? set.PosterThumbhash : null)
+            : summaryPoster ? set.PosterThumbhash
+            : !string.IsNullOrWhiteSpace(set.BackdropUrl) ? set.BackdropThumbhash
+            : posterThumbhash ?? set.PosterThumbhash ?? set.BackdropThumbhash;
         var identityChanged = Summary?.Id != set.Id || Summary?.LibraryId != set.LibraryId;
         var artworkChanged = _panel is null || identityChanged || _artworkUrl != artworkUrl;
         Summary = set;

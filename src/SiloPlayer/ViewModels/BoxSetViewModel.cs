@@ -85,7 +85,7 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     {
         if (!CanPlay)
             throw new InvalidOperationException("This box set is no longer available for playback. Reopen it and try again.");
-        if (!IsCurrent)
+        if (!IsCurrent || Failure != DetailFailureKind.None)
         {
             // An access revision retires reads, not this viewer's intent. Re-read
             // under current authority before selecting a movie or entering a room.

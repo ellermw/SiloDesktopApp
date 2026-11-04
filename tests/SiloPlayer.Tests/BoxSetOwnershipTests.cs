@@ -6,6 +6,60 @@ using SiloPlayer.ViewModels;
 namespace SiloPlayer.Tests;
 public sealed class BoxSetOwnershipTests
 {
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public async Task FailedBackgroundReadMustRevalidateBeforeNewPlayback(bool recovers)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "2");
+        var previous = vm.Detail;
+        client.InvalidateAccessContext(); wire.DetailStatus = HttpStatusCode.ServiceUnavailable;
+        await vm.RefreshAsync();
+        Assert.True(vm.IsCurrent); Assert.Same(previous, vm.Detail); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
+        var reads = wire.DetailReads; var calls = 0;
+        wire.AllPlayed = true; if (recovers) wire.DetailStatus = HttpStatusCode.OK;
+        try
+        {
+            if (recovers)
+                await vm.PlayAsync((id, library, _, _) =>
+                { calls++; Assert.Equal("first", id); Assert.Equal(12, library); return Task.CompletedTask; });
+            else
+                await Assert.ThrowsAsync<InvalidOperationException>(() => vm.PlayAsync((_, _, _, _) =>
+                { calls++; return Task.CompletedTask; }));
+            Assert.True(wire.DetailReads > reads);
+            Assert.Equal(recovers ? 1 : 0, calls);
+        }
+        finally { vm.Cancel(); }
+    }
+
+    [Theory]
+    [InlineData("access")][InlineData("profile")][InlineData("aba")]
+    [InlineData("departure")][InlineData("library")][InlineData("item")]
+    public async Task MembershipPostSaveRefreshKeepsStableViewerIdentityAndVisit(string change)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(vm); await vm.RefreshBoxSetAsync(); Assert.Equal(1, vm.BoxSet?.PlayedCount);
+        var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = (Task)typeof(ItemDetailViewModel).GetMethod("RefreshBoxSetAfterPlaybackAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(vm,
+                [new SiloPlayer.Messaging.PlaybackProgressUpdated("film", 100, 100, true) { Persisted = saved.Task }])!;
+        var reads = wire.DetailReads;
+        if (change == "access") client.InvalidateAccessContext();
+        if (change is "profile" or "aba") client.SetProfile("other");
+        if (change == "aba") client.SetProfile("alpha");
+        if (change == "departure") vm.CancelPendingLoads();
+        if (change == "library") typeof(ItemDetailViewModel).GetProperty(nameof(vm.LibraryId))!.SetValue(vm, 2);
+        if (change == "item") vm.Item = new MediaItemDetail { ContentId = "other", Type = "movie" };
+        wire.AllPlayed = true; saved.SetResult();
+        try
+        {
+            await pending.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(reads + (change == "access" ? 1 : 0), wire.DetailReads);
+            if (change == "access") Assert.Equal(2, vm.BoxSet?.PlayedCount);
+        }
+        finally { saved.TrySetResult(); vm.CancelPendingLoads(); }
+    }
+
     [Fact] public async Task MoviePublishesBeforeOptionalRowAndDepartureRetiresIt()
     {
         using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
