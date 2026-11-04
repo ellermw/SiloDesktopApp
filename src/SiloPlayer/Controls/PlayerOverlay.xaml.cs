@@ -1440,12 +1440,12 @@ public sealed partial class PlayerOverlay : UserControl
     private bool CanShowSubtitleAi()
     {
         var status = _subtitleAiStatus;
-        var session = _playerService.Manager?.CurrentSession;
+        var menu = _playerService.CaptureSubtitleMenuSnapshot();
+        var session = menu?.Session;
         if (status == null || session == null) return false;
 
         var canTranslate = status.Enabled &&
-            (_playerService.Manager?.GetSubtitleUrls() ?? [])
-                .Any(pair => IsTranslatableSubtitleSource(pair.Track));
+            menu!.Entries.Any(entry => IsTranslatableSubtitleSource(entry.Track));
         var version = _playerService.Versions.FirstOrDefault(item => item.FileId == session.MediaFileId);
         var canTranscribe = status.TranscribeEnabled && version?.AudioTracks?.Count > 0;
         return canTranslate || canTranscribe;
@@ -1506,9 +1506,14 @@ public sealed partial class PlayerOverlay : UserControl
         if (session == null) return;
         var authority = _playerService.ActiveAuthority;
         var api = authority.PlaybackApi;
+        var identity = authority.ApiClient.CaptureIdentityContext();
+        bool Current() => ReferenceEquals(authority, _playerService.ActiveAuthority) &&
+            authority.ApiClient.IsCurrentIdentityContext(identity) &&
+            ReferenceEquals(session, _playerService.Manager?.CurrentSession);
         SubtitleAiStatus capability;
         try { capability = await api.GetSubtitleAiStatusAsync(); }
-        catch (Exception ex) { await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot); return; }
+        catch (Exception ex) { if (Current()) await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot); return; }
+        if (!Current()) return;
         if (!capability.Enabled && !capability.TranscribeEnabled)
         {
             await ShowPlayerDialogAsync("AI subtitles unavailable", "This Silo server has not enabled subtitle translation or transcription.", activeXamlRoot);
@@ -1516,8 +1521,10 @@ public sealed partial class PlayerOverlay : UserControl
         }
 
         var version = _playerService.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId);
-        var subtitleTracks = (_playerService.Manager?.GetSubtitleUrls() ?? [])
-            .Select(pair => pair.Track)
+        var menu = _playerService.CaptureSubtitleMenuSnapshot();
+        if (!ReferenceEquals(menu?.Session, session)) return;
+        var subtitleTracks = menu!.Entries
+            .Select(entry => entry.Track)
             .Where(IsTranslatableSubtitleSource)
             .ToList();
         var audioTracks = version?.AudioTracks ?? [];
@@ -1537,6 +1544,7 @@ public sealed partial class PlayerOverlay : UserControl
         {
             try { quota = await api.GetSubtitleAiQuotaAsync(); } catch { }
         }
+        if (!Current()) return;
         var dialog = new SubtitleAiDialog(
             subtitleTracks,
             audioTracks,
@@ -1545,7 +1553,7 @@ public sealed partial class PlayerOverlay : UserControl
             quota,
             async selection =>
             {
-                if (!ReferenceEquals(authority, _playerService.ActiveAuthority) || !ReferenceEquals(session, _playerService.Manager?.CurrentSession))
+                if (!Current())
                     throw new InvalidOperationException(
                         "Playback changed while the subtitle tool was open. Open it again for the current item.");
 
