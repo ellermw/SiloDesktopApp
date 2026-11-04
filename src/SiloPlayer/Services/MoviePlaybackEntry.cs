@@ -13,16 +13,24 @@ public static class MoviePlaybackEntry
         Func<bool> isCurrentOwner, Func<string, int, ApiRequestContext, CancellationToken, Task> playStandalone)
     {
         var client = App.Services.GetRequiredService<SiloApiClient>();
-        bool Current() => !ct.IsCancellationRequested && isCurrentOwner() && client.IsCurrentContext(owner);
-        if (!Current() || !BoxSetDetail.IsMovieMember(movie)) return;
+        var identity = client.CaptureIdentityContext();
+        bool Current() => !ct.IsCancellationRequested && isCurrentOwner() && client.IsCurrentIdentityContext(identity)
+            && identity.AuthenticationGeneration == owner.AuthenticationGeneration && identity.BaseUrl == owner.BaseUrl && identity.ProfileId == owner.ProfileId;
+        if (!Current() || !BoxSetDetail.IsMovieMember(movie))
+            throw new InvalidOperationException("This movie is no longer available for playback. Reopen the box set and try again.");
         var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
         if (coordinator.ActiveRoom is not {} room)
         {
             await playStandalone(movie.ContentId, libraryId, owner, ct);
             return;
         }
-        bool CurrentRoom() => Current() && ReferenceEquals(coordinator.ActiveRoom, room);
-        if (!CurrentRoom()) return;
+        var roomId = room.RoomId; var roomToken = room.RoomToken;
+        void RequireCurrentRoom()
+        {
+            if (!Current() || !ReferenceEquals(coordinator.ActiveRoom, room) || room.RoomId != roomId || room.RoomToken != roomToken)
+                throw new InvalidOperationException("The current Watch Party changed. Open the room and try again.");
+        }
+        RequireCurrentRoom();
         var player = App.Services.GetRequiredService<PlayerService>();
         if (room.Room is { Phase: "playing" } playing && playing.SelectedContentId == movie.ContentId
             && player.ContentId == movie.ContentId && room.AttachedSessionId is {} attached && attached == player.Manager?.SessionId)
@@ -30,18 +38,28 @@ public static class MoviePlaybackEntry
             coordinator.RequestTransport("play", player.UserSeekPosition, isPaused: false);
             return;
         }
-        if (room.RoomId == null || room.RoomToken == null) return;
+        if (string.IsNullOrWhiteSpace(roomId) || string.IsNullOrWhiteSpace(roomToken))
+            throw new InvalidOperationException("This Watch Party is not ready yet. Open the room and try again.");
         var playback = App.Services.GetRequiredService<PlaybackApi>();
-        if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
+        try
         {
-            var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, movie.ContentId, libraryId: libraryId, ct: ct);
-            if (!CurrentRoom()) return;
-            room.Room = response.Room;
+            if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
+            {
+                var response = await playback.StageWatchTogetherRoomItemAsync(roomId, movie.ContentId, libraryId: libraryId, ct: ct,
+                    expectedIdentityContext: identity);
+                RequireCurrentRoom();
+                room.Room = response.Room;
+            }
+            else
+                await playback.CreateWatchTogetherSuggestionAsync(roomId, roomToken, movie.ContentId, "movie", movie.Title,
+                    posterUrl: movie.PosterUrl, ct: ct, expectedIdentityContext: identity);
+            RequireCurrentRoom();
+            App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
+            { RoomId = roomId, RoomAccessToken = roomToken });
         }
-        else
-            await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, movie.ContentId, "movie", movie.Title,
-                posterUrl: movie.PosterUrl, ct: ct);
-        if (CurrentRoom()) App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
-        { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
+        catch (OperationCanceledException ex)
+        {
+            throw new InvalidOperationException("Could not confirm this movie in the Watch Party. Open the room to check its selection and try again.", ex);
+        }
     }
 }

@@ -80,6 +80,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; _visit++; _knownMembership = null; ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async Task PlayPrimaryAsync()
     {
+        var identity = _client.CaptureIdentityContext(); var visit = _visit;
         await ViewModel.PlayAsync((id, library, owner, ct) =>
         {
             // PlayAsync may have revalidated access and selected a new first
@@ -87,9 +88,9 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             var movie = ViewModel.Detail?.Items.FirstOrDefault(item => item.ContentId == id);
             if (movie is null) throw new InvalidOperationException("This movie is no longer available. Refresh the box set and try again.");
             return MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
-                () => !ct.IsCancellationRequested && _catalog.IsCurrentContext(owner),
+                () => _active && visit == _visit && _client.IsCurrentIdentityContext(identity),
                 (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>().PlayAsync(target,
-                    libraryId: scope, expectedContext: context, cancellationToken: cancellation));
+                    libraryId: scope, expectedContext: context, expectedIdentityContext: identity, cancellationToken: cancellation));
         });
     }
     public void Render()
@@ -145,7 +146,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             if (!play.IsEnabled || _playPending) return;
             _playPending = true; play.IsEnabled = false;
             try { await PlayPrimaryAsync(); }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (!_active) { }
             catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
             finally { _playPending = false; if (ViewModel.Detail is {} current && _renderedSet != null) UpdateDetail(current); }
         };

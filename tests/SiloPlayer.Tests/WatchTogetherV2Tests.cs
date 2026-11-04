@@ -47,6 +47,48 @@ public sealed class WatchTogetherV2Tests
         Assert.Equal("silo.room.v2", second.Protocol);
     }
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task AcceptedMovieRoomActionRetainsIdentityAcrossAccessRevision(bool stage, bool refreshAccess)
+    {
+        using var handler = new RoomHandler { HoldMutation = true };
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test"); client.SetProfile("viewer");
+        var api = new PlaybackApi(client); var identity = client.CaptureIdentityContext();
+        Task action = stage
+            ? api.StageWatchTogetherRoomItemAsync("room", "movie", libraryId: 12, expectedIdentityContext: identity)
+            : api.CreateWatchTogetherSuggestionAsync("room", "proof", "movie", "movie", "Film", expectedIdentityContext: identity);
+        await handler.MutationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (refreshAccess) client.InvalidateAccessContext();
+        else client.SetProfile("other");
+        handler.ReleaseMutation.TrySetResult();
+        if (refreshAccess)
+        {
+            await action;
+            Assert.Single(handler.Requests.Where(request => request.Uri.AbsolutePath.EndsWith(stage ? "/staged-selection" : "/suggestions")
+                && request.Body.TryGetProperty("content_id", out _)));
+            if (!stage)
+            {
+                Assert.Equal(3, handler.Requests.Count); // one mutation, two suggestion pages
+                Assert.All(handler.Requests, request => Assert.Equal("proof", request.RoomProof));
+            }
+        }
+        else
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => action);
+            Assert.Single(handler.Requests); // a retired viewer cannot fetch suggestions
+        }
+        var dispatched = handler.Requests.Count;
+        client.SetProfile("replacement");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stage
+            ? api.StageWatchTogetherRoomItemAsync("room", "movie", expectedIdentityContext: identity)
+            : api.CreateWatchTogetherSuggestionAsync("room", "proof", "movie", "movie", "Film", expectedIdentityContext: identity));
+        Assert.Equal(dispatched, handler.Requests.Count);
+    }
+
     private static PlaybackApi CreateApi(HttpMessageHandler handler)
     {
         var client = new SiloApiClient(new HttpClient(handler));
@@ -57,12 +99,20 @@ public sealed class WatchTogetherV2Tests
     private sealed class RoomHandler : HttpMessageHandler
     {
         public List<(Uri Uri, string? RoomProof, JsonElement Body)> Requests { get; } = [];
+        public bool HoldMutation;
+        public TaskCompletionSource MutationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseMutation { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var uri = request.RequestUri!;
             var json = request.Content == null ? "{}" : await request.Content.ReadAsStringAsync(ct);
             Requests.Add((uri, request.Headers.TryGetValues("X-Room-Token", out var proof) ? proof.Single() : null,
                 JsonDocument.Parse(json).RootElement.Clone()));
+            if (HoldMutation && request.Method != HttpMethod.Get)
+            {
+                MutationStarted.TrySetResult();
+                await ReleaseMutation.Task.WaitAsync(ct);
+            }
             if (uri.AbsolutePath.EndsWith("/vote")) return new(HttpStatusCode.NoContent);
             if (uri.AbsolutePath.EndsWith("/ws-ticket")) return Json($$"""{"ticket":"ticket-{{Requests.Count}}","protocol":"silo.room.v2","expires_in":30,"max_connection_seconds":300}""");
             if (request.Method == HttpMethod.Get)
