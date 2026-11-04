@@ -465,7 +465,8 @@ public sealed class PlaybackTrackIntentTests
         await scope.Manager.ReplanRecordedSubtitleSelectionAsync(12);
         Assert.Equal("sub:44:0", scope.Wire.Replans.Single().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString());
         await scope.Manager.StartReplacementSessionAsync(42, 14);
-        Assert.Equal(1, scope.Wire.Starts.Last().GetProperty("subtitle_track_index").GetInt32());
+        Assert.False(scope.Wire.Starts.Last().TryGetProperty("subtitle_track_index", out _));
+        Assert.Equal(1, scope.Wire.Replans.Last().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
     }
 
     [Theory]
@@ -474,14 +475,17 @@ public sealed class PlaybackTrackIntentTests
     [InlineData(null, "und")]
     public async Task SameFileReloadPreservesIdentitylessUnknownLanguageChoice(string? trackId, string language)
     {
-        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        using var scope = new Fixture();
+        SetUnknownLanguageInventory(scope, language);
+        await scope.Manager.StartSessionAsync(42);
         var track = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
         track.TrackId = trackId; track.Language = language;
         scope.Manager.RecordLocalSubtitleSelection(1);
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
 
         await scope.Manager.StartReplacementSessionAsync(42, 14);
-        Assert.Equal(1, scope.Wire.Starts[1].GetProperty("subtitle_track_index").GetInt32());
+        Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+        Assert.Equal(1, scope.Wire.Replans.Last().GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
     }
 
@@ -490,7 +494,9 @@ public sealed class PlaybackTrackIntentTests
     [InlineData("und")]
     public async Task QualityReplanSendsIdentitylessUnknownLanguageChoiceInsteadOfOff(string language)
     {
-        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        using var scope = new Fixture();
+        SetUnknownLanguageInventory(scope, language);
+        await scope.Manager.StartSessionAsync(42);
         var track = scope.Manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
         track.TrackId = null; track.Language = language;
         scope.Manager.RecordLocalSubtitleSelection(1);
@@ -522,6 +528,18 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
         await scope.Manager.StartReplacementSessionAsync(42, 14);
         Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+    }
+
+    private static void SetUnknownLanguageInventory(Fixture scope, string language)
+    {
+        scope.Wire.OmitTrackIds = true;
+        scope.Wire.UnlabelledSubtitleLanguage = language;
+        foreach (var version in scope.Manager.WatchDetail!.Versions)
+        foreach (var track in version.SubtitleTracks!.Where(t => t.Language == "spa"))
+        {
+            track.Language = language;
+            track.Title = null;
+        }
     }
 
     private sealed class Fixture : IDisposable

@@ -93,21 +93,21 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var noticeDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void ObserveNotice(string[] message)
         {
-            if (message.FirstOrDefault() == "busy-notice-ready") noticeReady.TrySetResult();
-            if (message.FirstOrDefault() == "busy-notice-drained") noticeDrained.TrySetResult();
-            if (message.FirstOrDefault() == "busy-notice" && message.Length > 1) notices.Enqueue(message[1]);
+            if (message.FirstOrDefault() == "silo-busy-notice-ready") noticeReady.TrySetResult();
+            if (message.FirstOrDefault() == "silo-busy-notice-drained") noticeDrained.TrySetResult();
+            if (message.FirstOrDefault() == "silo-busy-notice" && message.Length > 1) notices.Enqueue(message[1]);
         }
         mpv.ScriptMessageReceived += ObserveNotice;
-        var noticeProbe = Path.Combine(Program.ResultDirectory, "busy-notice-" + scenario + ".lua");
+        var noticeProbe = Path.Combine(Program.ResultDirectory, "silo-busy-notice-" + scenario + ".lua");
         await File.WriteAllTextAsync(noticeProbe, """
             local mp = require 'mp'
             mp.register_script_message('osc-show-notice', function(payload)
-                mp.commandv('script-message', 'busy-notice', payload)
+                mp.commandv('script-message', 'silo-busy-notice', payload)
             end)
-            mp.register_script_message('busy-notice-barrier', function()
-                mp.commandv('script-message', 'busy-notice-drained')
+            mp.register_script_message('silo-busy-notice-barrier', function()
+                mp.commandv('script-message', 'silo-busy-notice-drained')
             end)
-            mp.commandv('script-message', 'busy-notice-ready')
+            mp.commandv('script-message', 'silo-busy-notice-ready')
             """);
         Call(mpv, "Command", (object)new[] { "load-script", noticeProbe });
         await noticeReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
@@ -194,7 +194,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             if (scenario != "close")
             {
-                mpv.SendScriptMessage("busy-notice-barrier");
+                mpv.SendScriptMessage("silo-busy-notice-barrier");
                 await noticeDrained.Task.WaitAsync(TimeSpan.FromSeconds(4));
             }
             if (readFailure)

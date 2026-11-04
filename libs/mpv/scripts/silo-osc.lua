@@ -158,6 +158,8 @@ local state = {
     audio_tracks = {},
     active_audio = -1,
     native_audio_scope = nil,
+    native_subtitle_scope = nil,
+    native_subtitle_dialog_request = nil,
     native_menu_sequence = 0,
     native_menu_request = nil,
     native_menu_pointer_block = nil,
@@ -4747,6 +4749,7 @@ local function toggle_transport_menu_from_button(mx, my)
     end
 
     if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
+        if open_native_menu("subtitle") then return true end
         local opening = not state.subtitle_menu_visible
         close_transport_menus("subtitles")
         state.subtitle_menu_visible = opening
@@ -4849,6 +4852,7 @@ local function open_transport_menu_from_controller(kind)
         set_keyboard_transport_menu(kind, state.chapter_menu_visible)
         render_chapter_menu()
     elseif kind == "subtitles" then
+        if open_native_menu("subtitle", true) then return end
         state.subtitle_menu_visible = not state.subtitle_menu_visible
         set_keyboard_transport_menu(kind, state.subtitle_menu_visible)
         render_subtitle_menu()
@@ -5458,7 +5462,22 @@ local function observe_properties()
         state.subtitle_ai_available = (val == "true" or val == "1")
     end)
 
-    mp.register_script_message("osc-subtitle-dialog-closed", function()
+    mp.register_script_message("osc-native-subtitle-dialog-opening", function(token, sequence)
+        local request = state.native_menu_request
+        if request and request.kind == 'subtitle' and request.owner == token and request.sequence == tonumber(sequence) then
+            state.native_subtitle_dialog_request = {owner=token,sequence=request.sequence,focus_name=request.focus_name}
+        end
+    end)
+    mp.register_script_message("osc-subtitle-dialog-closed", function(token, sequence, restore)
+        if token then
+            local request = state.native_subtitle_dialog_request
+            if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
+            state.native_subtitle_dialog_request = nil
+            if restore == 'true' and not state.osc_disabled and request.focus_name then
+                state.controller_focus_name = request.focus_name; show_osc(); request_tick()
+            end
+            return
+        end
         local restore_focus = state.restore_subtitle_focus_after_dialog
         state.restore_subtitle_focus_after_dialog = false
         if restore_focus then
@@ -6236,7 +6255,7 @@ end
 --------------------------------------------------------------------------------
 
 local function setup_script_messages()
-    for _, menu_kind in ipairs({'audio','quality','chapters','speed','stats','more','party'}) do
+    for _, menu_kind in ipairs({'audio','subtitle','quality','chapters','speed','stats','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
             local scope = token and #token == 32 and token:match('^%x+$') and token or nil
@@ -6246,6 +6265,8 @@ local function setup_script_messages()
                 if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
                     state.native_menu_request = nil
                 end
+                if kind == "subtitle" and scope and state.native_subtitle_dialog_request
+                    and state.native_subtitle_dialog_request.owner ~= scope then state.native_subtitle_dialog_request = nil end
                 state[key] = scope
                 -- Sequences span all kinds sharing one host/gate. Rotating an
                 -- unrelated capability cannot reset a live request sequence.
@@ -6258,7 +6279,7 @@ local function setup_script_messages()
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
         state.native_menu_request = nil
         if consume == "true" then state.native_menu_pointer_block = request end
-        if not state.osc_disabled then
+        if not state.osc_disabled and not state.native_subtitle_dialog_request then
             state.controller_focus_name = request.focus_name
             show_osc()
         end
