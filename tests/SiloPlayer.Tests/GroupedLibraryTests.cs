@@ -286,16 +286,35 @@ public sealed class GroupedLibraryTests
         model.CancelCatalogLoads();
     }
 
-    [Fact]
-    public async Task CapabilityFailureCannotFlattenTheQueryAndTheNextReadRetries()
+    [Theory]
+    [InlineData("status")]
+    [InlineData("timeout")]
+    [InlineData("connection")]
+    public async Task CapabilityFailureBrowsesUngroupedUntilANewQueryRetries(string failure)
     {
-        using var wire = new Wire { CapabilityStatus = HttpStatusCode.ServiceUnavailable }; var model = wire.Create();
-        await model.LoadCommand.ExecuteAsync(null);
-        Assert.Empty(wire.Catalog); Assert.NotNull(model.ErrorMessage);
-        wire.CapabilityStatus = HttpStatusCode.OK;
-        await model.LoadWindowAsync(0, 60, force: true);
-        Assert.NotEmpty(wire.Catalog); Assert.All(wire.Catalog, request => Assert.Equal("box_set", request.Group));
-        Assert.Null(model.ErrorMessage); model.CancelCatalogLoads();
+        using var wire = new Wire { CapabilityFailure = failure }; var model = wire.Create();
+        try
+        {
+            await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+            Assert.NotEmpty(wire.Catalog); Assert.False(model.IsGroupedCatalog);
+            Assert.Equal(1000, model.TotalCount); Assert.Equal(1000, model.DisplayTotalCount);
+            Assert.Equal("movie", model.GetWindowItem(0)!.Type); Assert.Null(model.ErrorMessage);
+            Assert.Contains(wire.CatalogRanges, request => request.IncludeTotal);
+            wire.CapabilityFailure = null;
+            await model.LoadWindowAsync(800, 60, force: true); await model.EnsureLetterIndexAsync();
+            // Recovery cannot change the shape under already issued cursors.
+            Assert.NotNull(model.GetWindowItem(800)); Assert.NotEmpty(wire.Letters);
+            Assert.All(wire.Catalog, request => Assert.Null(request.Group));
+            Assert.All(wire.Letters, body => Assert.False(body.TryGetProperty("group", out _)));
+            var reads = wire.Catalog.Count; var indexes = wire.Letters.Count;
+            await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+            Assert.True(model.IsGroupedCatalog); Assert.NotNull(model.GetWindowItem(0)!.BoxSet);
+            Assert.True(wire.Catalog.Count > reads); Assert.True(wire.Letters.Count > indexes);
+            Assert.All(wire.Catalog.Skip(reads), request => Assert.Equal("box_set", request.Group));
+            Assert.All(wire.Letters.Skip(indexes), body => Assert.Equal("box_set", body.GetProperty("group").GetString()));
+            Assert.Null(model.ErrorMessage);
+        }
+        finally { model.CancelCatalogLoads(); }
     }
 
     [Fact]
@@ -318,6 +337,7 @@ public sealed class GroupedLibraryTests
         public int CapabilityReads, FailWindowFromStart;
         public HttpStatusCode CapabilityStatus = HttpStatusCode.OK, CatalogStatus = HttpStatusCode.OK;
         public bool HoldCapabilities;
+        public string? CapabilityFailure;
         public readonly TaskCompletionSource CapabilitiesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseCapabilities = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient? Client;
         public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -336,6 +356,9 @@ public sealed class GroupedLibraryTests
             {
                 CapabilityReads++;
                 CapabilitiesStarted.TrySetResult(); if (HoldCapabilities) await ReleaseCapabilities.Task;
+                if (CapabilityFailure == "timeout") throw new TaskCanceledException("Synthetic capability timeout without caller cancellation.");
+                if (CapabilityFailure == "connection") throw new HttpRequestException("Synthetic capability connection reset.");
+                if (CapabilityFailure == "status") return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}") };
                 if (CapabilityStatus != HttpStatusCode.OK) return new(CapabilityStatus) { Content = new StringContent("{}") };
                 return Json(JsonSerializer.Serialize(new { box_sets = Supported, letter_index = LetterSupport }));
             }

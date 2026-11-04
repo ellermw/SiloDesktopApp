@@ -41,6 +41,7 @@ internal static partial class BoxSetNativeFixture
             await RunCloseoutAsync(parent, catalog, api, wire, navigation, closeout);
             return;
         }
+        await VerifyInitialSurfaceInvalidationsAsync(parent, catalog, api, wire);
         var page = new BoxSetPage(catalog, api) { Width = 960, Height = 700 };
         parent.Children.Add(page);
         await page.ViewModel.LoadAsync("7", "2"); await Task.Delay(120); page.UpdateLayout();
@@ -251,11 +252,15 @@ internal static partial class BoxSetNativeFixture
         internal string Title="The Very Long Adventure Box Set";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
-            var path=request.RequestUri!.AbsolutePath; if(path.Contains("box-sets/")) { Reads++; Started.TrySetResult(); if(Hold) await Release.Task; } object body;
+            var path=request.RequestUri!.AbsolutePath; object body;
             if(path.EndsWith("capabilities")) body=new { box_sets=true };
             else if(path.EndsWith("libraries")) body=new { items=new[] { new { id=2,box_sets_enabled=true }, new { id=12,box_sets_enabled=true } } };
             else body=new { id="7",library_id="12",title=Title,overview="A synthetic release-ordered collection with missing artwork.",movie_count=Empty?0:3,played_count=Played,first_year=2001,last_year=2011,items=Empty?Array.Empty<object>():new object[] { new { content_id="first",type="movie",title="First",user_state=new { played=true } },new { content_id="second",type="movie",title="Second",user_state=new { played=Played==3 } },new { content_id="third",type="movie",title="Third",user_state=new { played=Played==3 } } } };
-            return new HttpResponseMessage(path.Contains("box-sets/")?Status:path.EndsWith("capabilities")?CapabilityStatus:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };
+            // Freeze the server snapshot before holding delivery, so a mutation
+            // during an initial read cannot magically update that old response.
+            var response = new HttpResponseMessage(path.Contains("box-sets/")?Status:path.EndsWith("capabilities")?CapabilityStatus:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };
+            if(path.Contains("box-sets/")) { Reads++; Started.TrySetResult(); if(Hold) await Release.Task; }
+            return response;
         }
     }
 }

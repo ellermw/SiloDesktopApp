@@ -436,6 +436,9 @@ public sealed partial class LibraryPage : Page,
             ViewModel.SelectedSort = restoredSort;
             Controls.PosterCard.CurrentSortKey = restoredSort;
             ViewModel.SelectedOrder = state.Order;
+            // A changed restored type retires the retained query and its extent.
+            // Do not let the cached-page path skip loading the replacement.
+            if (ViewModel.SelectedType != state.MediaType) _libraryCatalogLoaded = false;
             ViewModel.SelectedType = state.MediaType;
             ViewModel.SelectedGenre = state.Genre;
             ViewModel.SelectedGenres = _selectedGenres.ToList();

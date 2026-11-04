@@ -146,6 +146,48 @@ internal static partial class BoxSetNativeFixture
         finally { wire.Release.TrySetResult(); page.ViewModel.Cancel(); parent.Children.Remove(page); }
     }
 
+    private static async Task VerifyInitialSurfaceInvalidationsAsync(StackPanel parent, CatalogApi catalog, SiloApiClient api, Wire wire)
+    {
+        foreach (var kind in new[] { MediaSurfaceChangeKind.WatchedMarked, MediaSurfaceChangeKind.WatchedCleared, MediaSurfaceChangeKind.ItemMetadataRefreshed })
+        {
+            var page = new BoxSetPage(catalog, api) { Width = 960, Height = 700 };
+            parent.Children.Add(page);
+            try
+            {
+                await DrainAsync(parent);
+                for (var i = 0; i < 100 && !page.IsLoaded; i++) await Task.Delay(10);
+                Check(page.IsLoaded, "box-set page is active before initial-read invalidation");
+                wire.Played = 1; wire.Hold = true;
+                wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var initial = page.ViewModel.LoadAsync("7", "2");
+                await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                Check(page.ViewModel.IsLoading && page.ViewModel.Detail == null, "initial membership is unknown while delivery is held");
+                var reads = wire.Reads;
+                wire.Played = kind == MediaSurfaceChangeKind.WatchedCleared ? 0 : 3;
+                page.Receive(new MediaSurfaceChanged(kind, "second", context: api.CaptureContext()));
+                for (var i = 0; i < 100 && wire.Reads == reads; i++) await Task.Delay(10);
+                Check(wire.Reads > reads, kind + " during the initial read must request a post-mutation snapshot");
+                wire.Hold = false; wire.Release.TrySetResult(); await initial;
+                for (var i = 0; i < 100 && page.ViewModel.IsLoading; i++) await Task.Delay(10);
+                await DrainAsync(parent); page.UpdateLayout();
+                Check(page.ViewModel.Detail?.PlayedCount == wire.Played &&
+                    Descendants(page).OfType<TextBlock>().Any(text => text.Text.Contains(wire.Played + " / 3 watched")),
+                    kind + " must render the refreshed count rather than the held initial snapshot");
+                var settledReads = wire.Reads;
+                page.Receive(new MediaSurfaceChanged(kind, "unrelated", context: api.CaptureContext()));
+                await DrainAsync(parent);
+                Check(wire.Reads == settledReads, "known non-members must not trigger a refresh after initial loading");
+            }
+            finally
+            {
+                wire.Hold = false; wire.Release.TrySetResult(); wire.Played = 1;
+                page.ViewModel.Cancel(); parent.Children.Remove(page); await DrainAsync(parent);
+            }
+        }
+        Program.Log("PASS: watched/cleared/metadata invalidations during held initial box-set membership replace stale snapshots and refresh visible counts.");
+    }
+
     private static Task DrainAsync(StackPanel parent)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
