@@ -1370,7 +1370,7 @@ public sealed partial class PlayerOverlay : UserControl
                 var session = _playerService.Manager?.CurrentSession;
                 if (session == null) return;
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, subtitleUrls.FirstOrDefault().Track?.Language)
+                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault(t => t.Index == activeSubtitleIndex)?.Language)
                 {
                     XamlRoot = XamlRoot
                 };

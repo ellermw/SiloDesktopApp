@@ -126,6 +126,19 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
+    public void LegacyFlyoutSearchUsesRetainedInventoryLanguage()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
+        var start = source.IndexOf("private void PopulateSubtitleFlyout()", StringComparison.Ordinal);
+        var end = source.IndexOf("private void SubtitleFlyout_Opening(", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+        Assert.Contains("var subtitleTracks = _playerService.Manager?.CurrentSession?.SubtitleUrls ?? [];", method, StringComparison.Ordinal);
+        Assert.Contains("new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault(t => t.Index == activeSubtitleIndex)?.Language)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("subtitleUrls", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdaptedPlanKeepsIdentityAndUnavailableOrdinals()
     {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
