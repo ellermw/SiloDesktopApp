@@ -2663,9 +2663,8 @@ public sealed partial class LibraryPage : Page,
     private async Task EnsureLibraryCatalogLoadedAsync()
     {
         using var timing = LibraryPerformanceTrace.Measure("library-open");
-        // Returning navigation already awaited policy, including a failed read.
-        if (_libraryFlagsDirty && _libraryFlagsAttemptedVisit != _groupedLibraryVisit)
-            await RefreshLibraryFlagsAsync();
+        // Failed policy reads remain retryable, even while this visit's catalog is cached.
+        if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();
         if (!_isNavigated || ViewModel.Library is null) return;
         if (_libraryCatalogLoaded)
         {

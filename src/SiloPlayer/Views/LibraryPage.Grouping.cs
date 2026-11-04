@@ -13,7 +13,6 @@ public sealed partial class LibraryPage
     private CancellationTokenSource? _groupedRefreshCts;
     private long _groupedLibraryVisit;
     private long _libraryFlagsRead;
-    private long _libraryFlagsAttemptedVisit = -1;
     private bool _groupedCatalogDirty;
     private long _groupedStructureRequested, _groupedStructureApplied;
     private bool _libraryFlagsDirty;
@@ -145,7 +144,6 @@ public sealed partial class LibraryPage
     {
         if (!_isNavigated || _activeLibraryId is not {} libraryId) return;
         var visit = _groupedLibraryVisit;
-        _libraryFlagsAttemptedVisit = visit;
         var read = ++_libraryFlagsRead;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var context = catalog.CaptureContext();
@@ -182,8 +180,8 @@ public sealed partial class LibraryPage
             if (!_isNavigated || visit != _groupedLibraryVisit || read != _libraryFlagsRead || !catalog.IsCurrentContext(context)) return;
             _libraryFlagsDirty = true;
             LocalLog.AppendException("catalog_errors.txt", ex, "library_flags_refresh");
-            // Retain the previous window and retry on the next visit or policy
-            // invalidation, not again when this visit opens the Library tab.
+            // Retain the previous window and retry when the Library tab is
+            // selected again, on the next visit or on policy invalidation.
             App.Services.GetRequiredService<ToastService>().Error(ex);
         }
     }
