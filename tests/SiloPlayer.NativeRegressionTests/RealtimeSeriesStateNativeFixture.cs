@@ -322,7 +322,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                     wire.FailEpisodes = false;
                     Program.Log($"PASS: captured unknown-episode event refreshes mounted native {type} aggregate/season counts and leaves sibling state/badge untouched.");
                 }
-                finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
+                finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); RemovePage(parent, page, navigation); }
             }
             await VerifySeriesLayoutRefreshAsync(parent, wire, client);
             await VerifyPageCompanionReadRacesAsync(parent, wire, client);
@@ -467,7 +467,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
             {
                 wire.HeldCompanion = null; wire.EpisodeSeasonNumber = 1; wire.EpisodeResponseStatus = HttpStatusCode.OK;
                 olderRelease.TrySetResult(); newerRelease.TrySetResult(); navigation.Cancel();
-                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); RemovePage(parent, page, navigation);
             }
         }
     }
@@ -601,7 +601,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
             wire.SeasonCount = 1; wire.EmptyEpisodes = false; wire.FailEpisodes = false;
             wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult();
             navigation.Cancel(); vm.PropertyChanged -= handler; vm.CancelPendingLoads();
-            WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+            WeakReferenceMessenger.Default.UnregisterAll(vm); RemovePage(parent, page, navigation);
         }
     }
 
@@ -679,7 +679,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
         {
             wire.CompanionFailure = null; wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult(); navigation.Cancel();
             page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel);
-            parent.Children.Remove(page); parent.Children.Remove(still); parent.Children.Remove(poster);
+            RemovePage(parent, page, navigation); parent.Children.Remove(still); parent.Children.Remove(poster);
             slot.SetValue(null, original); Directory.Delete(cache, recursive: true);
         }
     }
@@ -750,7 +750,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
         {
             wire.ParentSeries = null; wire.OmitTarget = false; wire.EmptyEpisodes = false;
             vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm);
-            parent.Children.Remove(page);
+            RemovePage(parent, page, navigation);
         }
     }
 
@@ -819,7 +819,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 wire.ParentSeries = null; wire.OmitTarget = false; wire.Target = "new-target";
                 wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult(); navigation.Cancel();
                 vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm);
-                parent.Children.Remove(page);
+                RemovePage(parent, page, navigation);
             }
         }
     }
@@ -892,7 +892,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
         {
             wire.OmitTarget = false; wire.EmptyEpisodes = false;
             vm.PropertyChanged -= handler; vm.CancelPendingLoads();
-            WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+            WeakReferenceMessenger.Default.UnregisterAll(vm); RemovePage(parent, page, navigation);
         }
     }
 
@@ -948,7 +948,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 navigation.Cancel(); wire.QueuedEpisodeReads = null; wire.OmitTarget = false;
                 foreach (var read in reads) read.Response.TrySetResult(Response(0));
                 if (operation != null) try { await operation.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
-                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); RemovePage(parent, page, navigation);
             }
         }
         foreach (var type in new[] { "series", "season" })
@@ -979,7 +979,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
             {
                 wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult(); navigation.Cancel();
                 if (read != null) try { await read.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
-                page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel); parent.Children.Remove(page);
+                page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel); RemovePage(parent, page, navigation);
             }
         }
         Check(failures.Count == 0, "Page companion read failures: " + string.Join(", ", failures));
@@ -1024,7 +1024,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
             {
                 wire.TitleLogoStatus = HttpStatusCode.NotFound; wire.TitleLogoInvalid = false; wire.MetadataStatus = HttpStatusCode.OK;
                 navigation.Cancel(); page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel);
-                parent.Children.Remove(page); slot.SetValue(null, original);
+                RemovePage(parent, page, navigation); slot.SetValue(null, original);
             }
         }
         Check(failures.Count == 0, "Settled optional-read cases failed: " + string.Join(", ", failures));
@@ -1100,7 +1100,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult(); wire.TranslationOnView = "button";
                 navigation.Cancel();
                 if (operation != null) await operation.WaitAsync(TimeSpan.FromSeconds(5));
-                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); RemovePage(parent, page, navigation);
             }
             Program.Log($"PASS: mounted {type} reconnect during {(overview ? "overview" : "episode")} translation {phase} requires remount, including after stale work settles.");
         }
@@ -1166,7 +1166,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 finally
                 {
                     replacement.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(replacement.ViewModel);
-                    parent.Children.Remove(replacement);
+                    RemovePage(parent, replacement);
                 }
                 Program.Log($"PASS: mounted {type} reconnect during title-art {phase} requires remount before and after retirement; replacement resolves its title.");
             }
@@ -1176,7 +1176,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 try { if (operation != null) await operation.WaitAsync(TimeSpan.FromSeconds(5)); }
                 finally
                 {
-                    vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+                    vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); RemovePage(parent, page, navigation);
                     slot.SetValue(null, original);
                     Directory.Delete(cache, recursive: true);
                 }
@@ -1277,7 +1277,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 finally
                 {
                     replacement.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(replacement.ViewModel);
-                    parent.Children.Remove(replacement);
+                    RemovePage(parent, replacement);
                 }
                 Program.Log($"PASS: mounted {type} failed {phase} read requires reconnect remount and recovers its content.");
             }
@@ -1287,7 +1287,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 try { if (operation != null) await operation.WaitAsync(TimeSpan.FromSeconds(5)); }
                 finally
                 {
-                    page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel); parent.Children.Remove(page);
+                    page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel); RemovePage(parent, page, navigation);
                     slot.SetValue(null, original); Directory.Delete(cache, recursive: true);
                 }
             }
@@ -1316,6 +1316,20 @@ internal static partial class RealtimeSeriesStateNativeFixture
 
     private static async Task UntilAsync(Func<bool> condition)
     { for (var i = 0; i < 250; i++) { if (condition()) return; await Task.Delay(20); } throw new TimeoutException("Native realtime state did not refresh."); }
+    private static void RemovePage(StackPanel parent, ItemDetailPage page, CancellationTokenSource? ownedNavigation = null)
+    {
+        // The fixture owns these injected sources, sometimes shared by a remount.
+        // Exercise actual route teardown without transferring their disposal.
+        var field = typeof(ItemDetailPage).GetField("_navigationCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        field.SetValue(page, null);
+        ownedNavigation?.Cancel();
+        Microsoft.UI.Xaml.Navigation.NavigationEventArgs? departure = null;
+        var frame = new Frame();
+        frame.Navigated += (_, args) => departure = args;
+        Check(frame.Navigate(typeof(Page)) && departure != null, "Fixture route teardown needs real navigation arguments.");
+        typeof(ItemDetailPage).GetMethod("OnNavigatedFrom", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, [departure]);
+        parent.Children.Remove(page);
+    }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private static void Set(object target, string field, object value) => target.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
     private static void Call(object target, string method) => target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, null);

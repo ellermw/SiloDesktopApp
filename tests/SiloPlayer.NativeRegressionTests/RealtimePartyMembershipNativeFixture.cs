@@ -101,7 +101,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 finally
                 {
                     vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm);
-                    parent.Children.Remove(page); wire.PartyResponse = null;
+                    RemovePage(parent, page, navigation); wire.PartyResponse = null;
                 }
             }
         }
