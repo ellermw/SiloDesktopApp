@@ -68,7 +68,7 @@ public partial class PlayerService : IDisposable
     /// </summary>
     private int? _pendingSubtitleSelection;
     private sealed record LegacyInitialSubtitleSelection(int Ordinal, PlaybackAuthorityScope Authority,
-        ApiRequestContext Context, PlaybackManager Manager, PlaybackStartResponse Session, long PlayGeneration,
+        ApiIdentityContext Context, PlaybackManager Manager, PlaybackStartResponse Session, long PlayGeneration,
         CancellationToken Token);
     private LegacyInitialSubtitleSelection? _pendingLegacySubtitleSelection;
     private int? _pendingInitialServerSubtitleIndex;
@@ -3953,7 +3953,7 @@ public partial class PlayerService : IDisposable
             _pendingSubtitleSelection = explicitSelection;
             _pendingInitialServerSubtitleIndex = null;
             _pendingLegacySubtitleSelection = new(explicitSelection.Value, _activeAuthority,
-                _activeAuthority.ApiClient.CaptureContext(), legacyManager, session,
+                _activeAuthority.ApiClient.CaptureIdentityContext(), legacyManager, session,
                 Volatile.Read(ref _playRequestGeneration), _playbackCts?.Token ?? CancellationToken.None);
             return;
         }
@@ -4267,7 +4267,7 @@ public partial class PlayerService : IDisposable
         _pendingSubtitleSelection = null;
         if (request.Token.IsCancellationRequested || _closing ||
             !ReferenceEquals(request.Authority, _activeAuthority) ||
-            !request.Authority.ApiClient.IsCurrentContext(request.Context) ||
+            !request.Authority.ApiClient.IsCurrentIdentityContext(request.Context) ||
             !ReferenceEquals(request.Manager, _playbackManager) ||
             !ReferenceEquals(request.Session, request.Manager.CurrentSession) ||
             request.PlayGeneration != Volatile.Read(ref _playRequestGeneration) ||
@@ -5523,7 +5523,7 @@ public partial class PlayerService : IDisposable
         if (mpv == null || manager?.CurrentSession is not { } session) return SubtitleTransportResult.Superseded;
         var authority = _activeAuthority;
         var authorityToken = _authorityLifetimeCts.Token;
-        var context = authority.ApiClient.CaptureContext();
+        var identity = authority.ApiClient.CaptureIdentityContext();
         var video = _videoWindow;
         var content = ContentId;
         var playGeneration = Volatile.Read(ref _playRequestGeneration);
@@ -5532,7 +5532,7 @@ public partial class PlayerService : IDisposable
         var loadingOwner = _playbackCts;
         var ct = loadingOwner?.Token ?? CancellationToken.None;
         bool CurrentOwner() => !_closing && !ct.IsCancellationRequested && !authorityToken.IsCancellationRequested &&
-            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(identity) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) &&
             content == ContentId && playGeneration == Volatile.Read(ref _playRequestGeneration) &&
             fileGeneration == Volatile.Read(ref _playbackFileGeneration) && roomGeneration == Volatile.Read(ref _roomPlaybackGeneration) &&

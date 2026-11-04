@@ -288,7 +288,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunBitmapOwnershipAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var choice in new[] { "bitmap-stolen-busy", "bitmap-retired-profile" })
+        foreach (var choice in new[] { "bitmap-stolen-busy", "bitmap-retired-profile", "bitmap-access-refresh" })
         {
             try { await CheckAcceptedReloadAsync(parent, choice); Program.Log("PASS: bitmap callback ownership " + choice); }
             catch (Exception ex) { failures.Add(choice + ": " + ex.Message); Program.Log("CASE FAIL: bitmap ownership " + choice + ": " + ex); }
@@ -460,11 +460,24 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 var bitmapPending = service.SetSubtitleTrackAndPersistAsync(3, track!.Language, track);
                 await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 if (choice == "bitmap-stolen-busy") Call(service, "BeginPlaybackBusy", true, null);
+                else if (choice == "bitmap-access-refresh")
+                    Require(api.TryInvalidateAccessContext(api.CaptureContext(), out _), "Bitmap fixture did not advance the read cache epoch.");
                 else api.SetProfile("replacement-profile");
                 var successorRevision = (long)Get(service, "_playbackBusyRevision")!;
                 wire.ReplanRelease.TrySetResult();
                 await bitmapPending.WaitAsync(TimeSpan.FromSeconds(8));
                 mpv.SendScriptMessage("bitmap-drain"); await drained.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                if (choice == "bitmap-access-refresh")
+                {
+                    Require((long)Get(service, "_playbackFileGeneration")! > beforeFile,
+                        "A read-cache refresh retired accepted bitmap playback despite unchanged identity.");
+                    subtitles.MediaRelease.TrySetResult();
+                    await loaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                    await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
+                    Require(service.ActiveSubtitleServerIndex == 2 && manager.CurrentSession!.IsSubtitleBurnedIn && mpv.IsPaused && wire.PreferenceWrites == 0,
+                        "Accepted bitmap playback lost its applied choice/pause or reused an expired settings-write context after read refresh.");
+                    return;
+                }
                 Require((long)Get(service, "_playbackFileGeneration")! == beforeFile && wire.PreferenceWrites == 0,
                     "Retired bitmap callback loaded a transport or persisted a choice after its owner departed.");
                 if (choice == "bitmap-stolen-busy")

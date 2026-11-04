@@ -52,6 +52,9 @@ internal static class SubtitleIdentityNativeFixture
                 {
                     session.ProtocolVersion = protocol;
                     Call(service, "ResolveInitialSubtitleSelection", watch, version, session, null, 1, null);
+                    if (protocol == 3)
+                        Require(api.TryInvalidateAccessContext(api.CaptureContext(), out _),
+                            "Legacy fixture did not advance its read cache epoch without changing account/profile identity.");
                     await Initialize();
                     Require(mpv.GetPropertyDouble("sid") == 2 && mpv.IsPaused && wire.PreferenceWrites == 0,
                         "Legacy explicit pre-play ordinal was discarded when both response and watch metadata inventories were absent.");
