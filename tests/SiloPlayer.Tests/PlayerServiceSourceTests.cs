@@ -3,6 +3,22 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void LocalCaptionCycleRetiresOldActivationWithoutChangingPreferenceProvenance()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private void CycleSubtitleBackward()", StringComparison.Ordinal);
+        var end = source.IndexOf("private bool HasSubtitleSelectionRoute(", start, StringComparison.Ordinal);
+        var cycle = source[start..end];
+        var executed = cycle.IndexOf("if (selected.Sid == 0 ? actualSid > 0", StringComparison.Ordinal);
+        var retire = cycle.IndexOf("Interlocked.Exchange(ref _subtitleActivationIntent, new object());", StringComparison.Ordinal);
+        var intent = cycle.IndexOf("manager!.RecordLocalSubtitleSelection(selected.Track?.Index,", StringComparison.Ordinal);
+        Assert.True(executed >= 0 && retire > executed && intent > retire);
+        Assert.Contains("isAutomatic: manager.IsSubtitleSelectionAutomatic", cycle[intent..]);
+        Assert.DoesNotContain("SaveExecutedSubtitlePreferenceAsync", cycle);
+        Assert.DoesNotContain("SaveSubtitlePrefsAsync", cycle);
+    }
+
+    [Fact]
     public void SubtitleAddUsesSupportedNativeFlagsAndKeepsLanguageOnlyMetadata()
     {
         // The pinned mpv command accepts select/auto/cached; sid's "no"

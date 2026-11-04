@@ -6063,7 +6063,7 @@ public partial class PlayerService : IDisposable
             _pendingSubtitlePreferenceOwner = null;
             _activeSubtitleServerIndex = selected.Track?.Index ?? -1;
             if (session.ProtocolVersion >= 3) manager!.RecordLocalSubtitleSelection(selected.Track?.Index,
-                isAutomatic: false);
+                isAutomatic: manager.IsSubtitleSelectionAutomatic);
             CommitExecutedSubtitleSelection(selected.Track);
             mpv.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }

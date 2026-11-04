@@ -400,7 +400,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     await SettledReplacement();
                     Require((int?)Get(service, "_requestedMediaFileId") == target.FileId,
                         "A rejected subtitle refinement left the requested version on the outgoing file.");
-                    await Loaded(() => (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 0d, "progress-reporting-failed")!);
+                    await Loaded(() => (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 0d, "progress-reporting-failed", null)!);
                     await SettledReplacement();
                     Require(wire.Starts.Count == starts + 2 && wire.Replans.Count == replans + 2 &&
                         wire.Starts.Skip(starts).All(start => start.GetProperty("file_id").GetString() == target.FileId.ToString()) &&
@@ -588,7 +588,22 @@ internal static class BurnedInSubtitleSwitchNativeFixture
 
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready) { for (var i = 0; i < 200 && !ready(); i++) await Task.Delay(20); Require(ready(), "Native subtitle state did not settle."); }
-    private static object? Call(object target, string method, params object?[] args) => target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, args);
+    private static object? Call(object target, string method, params object?[] args)
+    {
+        var member = target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var parameters = member.GetParameters();
+        if (args.Length < parameters.Length)
+        {
+            var supplied = args.ToList();
+            foreach (var parameter in parameters.Skip(args.Length))
+            {
+                if (!parameter.HasDefaultValue) throw new TargetParameterCountException($"Missing required fixture argument {parameter.Name} for {method}.");
+                supplied.Add(parameter.DefaultValue);
+            }
+            args = supplied.ToArray();
+        }
+        return member.Invoke(target, args);
+    }
     private static object? Get(object target, string field) => target.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(target);
     private static void Set(object target, string field, object? value) => target.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
     private static void Property(object target, string name, object value) => target.GetType().GetProperty(name)!.SetValue(target, value);
