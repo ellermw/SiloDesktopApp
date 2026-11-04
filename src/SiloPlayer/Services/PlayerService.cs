@@ -5917,67 +5917,92 @@ public partial class PlayerService : IDisposable
     /// </summary>
     private long CurrentSubtitleSidecarGeneration() => Interlocked.Read(ref _subtitleSidecarGeneration);
 
-    private async Task PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
+    private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
     {
-        if (_mpv == null || track.Unplayable || IsUnsupportedBitmapSubtitle(track) ||
+        if (track.Unplayable) return SubtitlePrefetchOutcome.Error;
+        if (_mpv == null) return SubtitlePrefetchOutcome.Retired;
+        if (IsUnsupportedBitmapSubtitle(track) ||
             string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
             CanUseNativeEmbeddedSubtitleTrack() && ResolveNativeEmbeddedSid(track) > 0)
-            return;
+            return SubtitlePrefetchOutcome.Ready;
         long generation;
         var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
+        using var selection = BeginSubtitleRead();
+        var manualChoice = _pendingSubtitlePreferenceOwner;
+        var authority = _activeAuthority;
+        var context = authority.ApiClient.CaptureContext();
+        var manager = _playbackManager;
+        var mpv = _mpv;
         Uri url;
         lock (_subtitleTrackStateLock)
         {
-            if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
-            var pair = _playbackManager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
+            if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
+            var pair = manager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
             if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var parsed) ||
                 parsed.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, parsed, track.Codec) == null)
-                return;
+                return SubtitlePrefetchOutcome.Fallback;
             url = parsed;
             generation = _subtitleSidecarGeneration;
         }
+        bool CurrentOwner() => !_closing && ReferenceEquals(authority, _activeAuthority) &&
+            authority.ApiClient.IsCurrentContext(context) && ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) &&
+            ReferenceEquals(selection, Volatile.Read(ref _subtitleReadOperation)) && !selection.Token.IsCancellationRequested &&
+            ReferenceEquals(manualChoice, _pendingSubtitlePreferenceOwner) &&
+            CurrentSubtitleSidecarGeneration() == generation && loadedMediaGeneration == Volatile.Read(ref _loadedMediaInitGeneration);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(_authorityLifetimeCts.Token, selection.Token,
+            manualChoice?.Token ?? CancellationToken.None);
+        using var watchStop = new CancellationTokenSource();
+        // Profile changes have no cancellation event. Observe captured context
+        // during requests as well as delays so retired reads stop promptly.
+        async Task WatchOwnerAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(50, watchStop.Token).ConfigureAwait(false);
+                    if (!CurrentOwner()) { bounded.Cancel(); return; }
+                }
+            }
+            catch (OperationCanceledException) when (watchStop.IsCancellationRequested) { }
+        }
+        var watch = WatchOwnerAsync();
         string? path = null;
         try
         {
-            // Same request mpv would make: the URL carries any account token,
-            // and worker/CDN sidecars must never receive an Authorization header.
-            using var bounded = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            using var response = await SubtitleSyncDownloadClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
-            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes) return;
-            var extension = SubtitleSidecarFile.Extension(response.Content.Headers.ContentType?.MediaType, url, track.Codec);
-            if (extension == null) return;
-            // Chunked or mislabeled bodies are capped while reading, not after buffering.
-            using var buffer = new MemoryStream();
-            await using (var body = await response.Content.ReadAsStreamAsync(bounded.Token))
-            {
-                var chunk = new byte[81920];
-                int read;
-                while ((read = await body.ReadAsync(chunk, bounded.Token)) > 0)
-                {
-                    if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return;
-                    buffer.Write(chunk, 0, read);
-                }
-            }
-            var bytes = buffer.ToArray();
-            if (bytes.Length == 0) return;
-            path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + extension);
-            await File.WriteAllBytesAsync(path, bytes, bounded.Token);
+            if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+            // Same URL mpv would request; never attach account Authorization
+            // to server-advertised CDN/worker sidecars.
+            var read = await SubtitleSidecarReader.ReadAsync(SubtitleSyncDownloadClient, url, track.Codec, bounded.Token);
+            if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Error) return SubtitlePrefetchOutcome.Error;
+            if (read.Outcome == SubtitleSidecarReadOutcome.Fallback) return SubtitlePrefetchOutcome.Fallback;
+            path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + read.Extension);
+            await File.WriteAllBytesAsync(path, read.Bytes!, bounded.Token);
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             {
-                if (generation != _subtitleSidecarGeneration ||
-                    loadedMediaGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||
-                    _closing || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
+                if (generation != _subtitleSidecarGeneration || !CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+                if (_prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
                 _prefetchedSubtitleFiles[track.Index] = path;
                 _subtitleSyncFiles.Add(path);
                 path = null;
             }
+            return SubtitlePrefetchOutcome.Ready;
         }
-        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException or UnauthorizedAccessException)
+        catch (OperationCanceledException) { return SubtitlePrefetchOutcome.Retired; }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException)
         {
             LogToFile("state_trace.txt", $"Subtitle sidecar prefetch skipped: {ex.GetType().Name}");
+            return CurrentOwner() ? SubtitlePrefetchOutcome.Error : SubtitlePrefetchOutcome.Retired;
         }
-        finally { if (path != null) try { File.Delete(path); } catch { } }
+        finally
+        {
+            watchStop.Cancel();
+            await watch;
+            if (path != null) try { File.Delete(path); } catch { }
+        }
     }
 
     private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track)

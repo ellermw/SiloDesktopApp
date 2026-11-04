@@ -1230,17 +1230,15 @@ public sealed partial class PlayerOverlay : UserControl
 
         // Subtitle tracks from the session, sorted by source priority:
         // external > downloaded > embedded (matches webui).
-        var subtitleUrls = _playerService.Manager?.GetSubtitleUrls() ?? [];
-        var sortedSubs = subtitleUrls
-            .Select((pair, idx) => (pair.Track, pair.FullUrl, OrigIndex: idx))
+        var subtitleTracks = _playerService.Manager?.CurrentSession?.SubtitleUrls ?? [];
+        var sortedSubs = subtitleTracks
+            .Select((track, idx) => (Track: track, OrigIndex: idx))
             .OrderBy(s => SourceSortKey(s.Track.Source))
             .ToList();
 
-        // Build a map from original index → mpv track index (accounts for
-        // skipped bitmap subs). We need this because we render sorted but
-        // mpv's sid is the load order.
-
-        foreach (var (track, _, origIdx) in sortedSubs)
+        // Selection resolves the server track to its actual native/sidecar SID;
+        // keep the complete inventory here, including URL-less unavailable rows.
+        foreach (var (track, origIdx) in sortedSubs)
         {
             var langName = PlayerService.LanguageCodeToName(track.Language);
             var trackTitle = track.Label;
@@ -1277,13 +1275,13 @@ public sealed partial class PlayerOverlay : UserControl
             if (!string.IsNullOrWhiteSpace(source)) badges.Children.Add(CreatePlayerMenuBadge(source));
             if (track.Forced) badges.Children.Add(CreatePlayerMenuBadge("Forced", outline: true));
             if (track.HearingImpaired) badges.Children.Add(CreatePlayerMenuBadge("HI", outline: true));
+            if (track.Unplayable) badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
             if (badges.Children.Count > 0) descriptor.Children.Add(badges);
             Grid.SetColumn(descriptor, 1);
             row.Children.Add(descriptor);
             var item = CreatePlayerMenuButton(row, isActive);
             if (track.Unplayable)
             {
-                badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
                 item.IsEnabled = false;
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, "Subtitle unavailable");
             }
