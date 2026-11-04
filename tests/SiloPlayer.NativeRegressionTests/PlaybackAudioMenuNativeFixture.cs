@@ -160,6 +160,13 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
             var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (menuProbe == "shift-tab")
+            {
+                PlaybackMenuKeyboardNativeFixture.Verify(menu);
+                Require(mpv.IsPaused, "Keyboard-only navigation changed genuine pause.");
+                Call(menu, "Input", "cancel");
+                return;
+            }
             if (menuProbe == "geometry")
             {
                 var originals = ((System.Collections.IEnumerable)Get(menu, "_choices")!).Cast<object>().ToArray();

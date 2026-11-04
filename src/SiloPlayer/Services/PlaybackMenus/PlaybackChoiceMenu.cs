@@ -331,21 +331,33 @@ internal class PlaybackChoiceMenu
     private void OnKeyDown(object sender, KeyRoutedEventArgs args)
     {
         if (args.Key is not (VirtualKey.Escape or VirtualKey.GamepadB) && IsInFooter(args.OriginalSource as DependencyObject)) return;
-        var action = args.Key switch
+        if (HandleKeyboardInput(args.Key)) args.Handled = true;
+    }
+
+    private bool HandleKeyboardInput(VirtualKey key)
+    {
+        var shift = key == VirtualKey.Tab && (GetKeyState((int)VirtualKey.Shift) & 0x8000) != 0;
+        var action = KeyboardAction(key, shift);
+        if (action == null) return false;
+        Input(action);
+        return true;
+    }
+
+    private static string? KeyboardAction(VirtualKey key, bool shift) =>
+        key switch
         {
             VirtualKey.Escape or VirtualKey.GamepadB => "cancel",
             VirtualKey.Enter or VirtualKey.Space or VirtualKey.GamepadA => "activate",
             VirtualKey.Home => "home", VirtualKey.End => "end",
             VirtualKey.Up or VirtualKey.Left => "up",
-            VirtualKey.Down or VirtualKey.Right or VirtualKey.Tab => "down",
-            _ => (int)args.Key switch
+            VirtualKey.Down or VirtualKey.Right => "down",
+            VirtualKey.Tab => shift ? "up" : "down",
+            _ => (int)key switch
             {
                 0xCB or 0xCD or 0xD3 or 0xD6 => "up",
                 0xCC or 0xCE or 0xD4 or 0xD5 => "down", _ => null,
             },
         };
-        if (action != null) { args.Handled = true; Input(action); }
-    }
 
     internal void Input(string action)
     {
@@ -463,6 +475,7 @@ internal class PlaybackChoiceMenu
 
     [StructLayout(LayoutKind.Sequential)] private struct Rect { internal int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+    [DllImport("user32.dll")] private static extern short GetKeyState(int virtualKey);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
