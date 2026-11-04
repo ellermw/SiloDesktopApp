@@ -7,23 +7,31 @@ namespace SiloPlayer.Tests;
 public sealed class SubtitleIdentityTests
 {
     [Fact]
-    public void RejectedSubtitleReplanRestoresTheSurvivingStreamBeforeConsideringRecovery()
+    public void RejectedSubtitleReplanResumesOnlyTheUnchangedUnpreparedTransport()
     {
         var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs")).Replace("\r\n", "\n");
         var start = source.IndexOf("private async Task<SubtitleTransportResult> SetBitmapSubtitleBurnInAsync(", StringComparison.Ordinal);
         var end = source.IndexOf("private async Task ReconcileDeferredSubtitleSelectionAsync(", start, StringComparison.Ordinal);
         var method = source[start..end];
         var failure = method.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
-        var retained = method.IndexOf("if (!transportPreparationAttempted)", failure, StringComparison.Ordinal);
-        var recovery = method.IndexOf("_ = RunStreamRecoveryAsync(", failure, StringComparison.Ordinal);
-        Assert.True(retained > failure && recovery > retained);
-        var refusal = method[retained..recovery];
-        Assert.Contains("RefuseTentativeSubtitleSelection();", refusal);
-        Assert.Contains("return SubtitleTransportResult.Failed;", refusal);
+        Assert.Contains("return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Failed);", method[failure..]);
+        var rejectionStart = method.IndexOf("SubtitleTransportResult RefuseOrRecoverSubtitleSelection(", StringComparison.Ordinal);
+        var rejectionEnd = method.IndexOf("        try\n", rejectionStart, StringComparison.Ordinal);
+        Assert.True(rejectionStart >= 0 && rejectionEnd > rejectionStart);
+        var refusal = method[rejectionStart..rejectionEnd];
+        Assert.Contains("var recoverTransport = transportPreparationAttempted || !ReferenceEquals(manager.CurrentSession, session);", refusal);
+        var rollbackCall = refusal.IndexOf("RefuseTentativeSubtitleSelection(preserveTransportForRecovery: recoverTransport);", StringComparison.Ordinal);
+        var retained = refusal.IndexOf("if (!recoverTransport) return refusal;", StringComparison.Ordinal);
+        var recovery = refusal.IndexOf("_ = RunStreamRecoveryAsync(", StringComparison.Ordinal);
+        Assert.True(rollbackCall >= 0 && retained > rollbackCall && recovery > retained);
+        Assert.Contains("if (!loadStarted)", refusal[..rollbackCall]);
+        Assert.Contains("_switchingContent = true;", refusal[retained..recovery]);
+        Assert.Contains("IsLoading = true;", refusal[retained..recovery]);
+        Assert.Contains("return SubtitleTransportResult.ReloadScheduled;", refusal[recovery..]);
         Assert.DoesNotContain("BeginMpvLoad(", refusal);
         Assert.DoesNotContain("EnterPlaybackTerminalState(", refusal);
-        var rollbackStart = method.IndexOf("void RefuseTentativeSubtitleSelection()", StringComparison.Ordinal);
-        var rollbackEnd = method.IndexOf("        try\n", rollbackStart, StringComparison.Ordinal);
+        var rollbackStart = method.IndexOf("void RefuseTentativeSubtitleSelection(bool preserveTransportForRecovery)", StringComparison.Ordinal);
+        var rollbackEnd = rejectionStart;
         Assert.True(rollbackStart >= 0 && rollbackEnd > rollbackStart);
         var rollback = method[rollbackStart..rollbackEnd];
         Assert.Contains("RestoreExecutedSubtitleSelection(reapply: false);", rollback);
@@ -35,7 +43,7 @@ public sealed class SubtitleIdentityTests
         var inheritedOwnerCapture = method.IndexOf("var inheritedTransportOperation = _switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive;", StringComparison.Ordinal);
         var beginReplanLoading = method.IndexOf("_switchingContent = true;", StringComparison.Ordinal);
         Assert.True(inheritedOwnerCapture >= 0 && beginReplanLoading > inheritedOwnerCapture);
-        Assert.Contains("var preserveTransportState = !loadStarted &&", rollback);
+        Assert.Contains("var preserveTransportState = preserveTransportForRecovery || !loadStarted &&", rollback);
         Assert.Contains("Volatile.Read(ref _fileLoadTimeoutCts) != null || inheritedTransportOperation &&", rollback);
         Assert.Contains("(_switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive)", rollback);
         Assert.DoesNotContain("var inheritedPendingLoad =", method);
@@ -60,8 +68,7 @@ public sealed class SubtitleIdentityTests
         var superseded = method.IndexOf("if (replacement == null)", StringComparison.Ordinal);
         var adopted = method.IndexOf("replanned = replacement;", superseded, StringComparison.Ordinal);
         Assert.True(superseded > rollbackEnd && adopted > superseded);
-        Assert.Contains("RefuseTentativeSubtitleSelection();", method[superseded..adopted]);
-        Assert.Contains("return SubtitleTransportResult.Superseded;", method[superseded..adopted]);
+        Assert.Contains("return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);", method[superseded..adopted]);
         Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", method);
         Assert.DoesNotContain("manager.ReplanSubtitleAsync(requestedIndex", method);
         Assert.Contains("track != null && !session.SubtitleUrls.Contains(track)", method);
