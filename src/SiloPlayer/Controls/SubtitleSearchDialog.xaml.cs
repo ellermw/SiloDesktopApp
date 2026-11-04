@@ -48,6 +48,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     /// The returned server subtitle ID lets the caller refresh and select the
     /// exact track without recreating the active playback session.</summary>
     public event Action<long?>? SubtitleDownloaded;
+    /// <summary>Captures player selection intent before the accepted upload/download awaits.</summary>
+    public event Action? SubtitleDownloadStarted;
 
     public SubtitleSearchDialog(
         int mediaFileId,
@@ -335,6 +337,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         UploadStatusText.Text = "Uploading subtitle...";
         try
         {
+            SubtitleDownloadStarted?.Invoke();
             var response = await _playbackApi.UploadSubtitleAsync(
                 _mediaFileId,
                 _uploadFileName,
@@ -732,6 +735,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         StatusText.Text = $"Downloading {r.Language.ToUpperInvariant()} from {r.Provider}…";
         try
         {
+            SubtitleDownloadStarted?.Invoke();
             var response = await _playbackApi.DownloadSubtitleAsync(
                 _mediaFileId,
                 r,

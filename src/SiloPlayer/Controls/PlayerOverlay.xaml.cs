@@ -1380,10 +1380,12 @@ public sealed partial class PlayerOverlay : UserControl
                 {
                     XamlRoot = XamlRoot
                 };
+                Func<bool>? searchActivation = null;
+                dialog.SubtitleDownloadStarted += () => searchActivation = _playerService.BeginSubtitleActivationIntent();
                 dialog.SubtitleDownloaded += async subtitleId =>
                 {
                     if (!CurrentSearch()) return;
-                    await _playerService.RefreshSubtitlesAfterAiAsync(session.MediaFileId, subtitleId, CurrentSearch);
+                    await _playerService.RefreshSubtitlesAfterAiAsync(session.MediaFileId, subtitleId, CurrentSearch, searchActivation);
                     if (CurrentSearch()) PopulateSubtitleFlyout();
                 };
                 await dialog.ShowAsync();
@@ -1592,8 +1594,11 @@ public sealed partial class PlayerOverlay : UserControl
                         request.TargetLanguage = "";
                 }
 
+                var activation = _playerService.BeginSubtitleActivationIntent();
+                _playerService.RegisterSubtitleAiActivationIntent(0, session.MediaFileId, activation);
                 var started = await api.StartSubtitleAiAsync(request);
                 if (!CurrentJob()) return;
+                _playerService.RegisterSubtitleAiActivationIntent(started.Job.Id, session.MediaFileId, activation);
                 var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
                     ? request.SourceLanguage
                     : request.TargetLanguage;
@@ -1602,7 +1607,7 @@ public sealed partial class PlayerOverlay : UserControl
                     App.Services.GetService<ToastService>()?.Info(
                         "A job for this track is already in progress — it'll appear when it's ready.");
                 }
-                else
+                else if (activation())
                 {
                     _playerService.PrepareLiveSubtitleTranslation(
                         started.Job.Id,
@@ -1610,7 +1615,7 @@ public sealed partial class PlayerOverlay : UserControl
                         liveLanguage,
                         $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
                 }
-                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, CurrentJob);
+                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, CurrentJob, activation);
             },
             async () =>
             {
@@ -1628,7 +1633,7 @@ public sealed partial class PlayerOverlay : UserControl
         }
     }
 
-    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, Func<bool> isCurrent)
+    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, Func<bool> isCurrent, Func<bool> mayActivate)
     {
         if (jobId <= 0) return;
         for (var attempt = 0; attempt < 3600; attempt++)
@@ -1655,7 +1660,7 @@ public sealed partial class PlayerOverlay : UserControl
             }
             if (job.Status != "completed") continue;
             DispatcherQueue.TryEnqueue(() => { if (isCurrent()) _ = _playerService.RefreshSubtitlesAfterAiAsync(
-                mediaFileId, job.ResultSubtitleId, isCurrent); });
+                mediaFileId, job.ResultSubtitleId, isCurrent, mayActivate); });
             return;
         }
     }

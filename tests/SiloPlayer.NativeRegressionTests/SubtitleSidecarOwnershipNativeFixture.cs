@@ -49,13 +49,22 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
     }
 
-    internal static Task RunAiRefreshOwnershipAsync(StackPanel parent) => CheckBusyAsync(parent, "translation-profile");
+    internal static async Task RunAiRefreshOwnershipAsync(StackPanel parent)
+    {
+        var failures = new List<string>();
+        foreach (var scenario in new[] { "translation-profile", "translation-newer-off", "translation-newer-track", "translation-before-completion-off" })
+        {
+            try { await CheckBusyAsync(parent, scenario); Program.Log("PASS: AI completion ownership " + scenario); }
+            catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: AI completion " + scenario + ": " + ex); }
+        }
+        if (failures.Count > 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
 
     private static async Task CheckBusyAsync(StackPanel parent, string scenario)
     {
         var recovers = scenario.StartsWith("recovered", StringComparison.Ordinal) || scenario.StartsWith("viewer-", StringComparison.Ordinal);
         var readFailure = scenario is "timeout" or "oversized-declared" or "oversized-chunked" or "not-found" or "not-found-automatic";
-        var translationCompleted = scenario is "translation-completed" or "translation-profile";
+        var translationCompleted = scenario.StartsWith("translation-", StringComparison.Ordinal);
         var noContext = scenario.StartsWith("no-context-", StringComparison.Ordinal);
         using var subtitles = new HeldSubtitleServer(false) { BusyResponses = readFailure ? 0 : recovers ? 2 : 100,
             ReadFailure = readFailure ? scenario : null };
@@ -151,6 +160,64 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "Held AI completion refresh published old-profile inventory, selected/persisted a track or removed current live cues after profile retirement.");
                 Program.Log("PASS: held AI completion inventory GET cannot mutate replacement-profile inventory/SID/preferences/live cues.");
                 return;
+            }
+            if (scenario is "translation-newer-off" or "translation-newer-track" or "translation-before-completion-off")
+            {
+                subtitles.BusyResponses = 0;
+                wire.HoldSubtitleList = true;
+                if (scenario == "translation-newer-track")
+                {
+                    manager.CurrentSession!.SubtitleUrls.Add(new SubtitleTrackInfo
+                        { Index = 9, Id = 88, MediaFileId = 42, Source = "downloaded", Language = "spa", Codec = "srt", Url = subtitles.Origin + "/retained.srt" });
+                    wire.IncludeRetainedDownloaded = true;
+                }
+                var originalInventory = manager.CurrentSession!.SubtitleUrls;
+                var begin = typeof(PlayerService).GetMethod("BeginSubtitleActivationIntent");
+                var intent = begin?.Invoke(service, null) as Func<bool> ?? (() => true);
+                typeof(PlayerService).GetMethod("RegisterSubtitleAiActivationIntent")?.Invoke(service, [73L, 42, intent]);
+                using var completion = JsonDocument.Parse("""{"job_id":73,"file_id":42,"subtitle_id":73}""");
+                var beforeCompletion = scenario == "translation-before-completion-off";
+                var selected = scenario == "translation-newer-track" ? 9 : -1;
+                if (beforeCompletion)
+                {
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", selected, true)!;
+                    LateCue();
+                }
+                Task? refresh = null;
+                if (beforeCompletion)
+                    Call(service, "ApplySubtitleTranslationCompleted", completion.RootElement.Clone());
+                else
+                {
+                    var method = typeof(PlayerService).GetMethod("RefreshSubtitlesAfterAiAsync")!;
+                    object?[] arguments = method.GetParameters().Length switch
+                    {
+                        4 => [42, (long?)73, null, intent],
+                        3 => [42, (long?)73, null],
+                        _ => [42, (long?)73],
+                    };
+                    refresh = (Task)method.Invoke(service, arguments)!;
+                    await wire.SubtitleListEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", selected, true)!;
+                    LateCue();
+                }
+                var staleCompletionStartedRead = beforeCompletion && wire.SubtitleListEntered.Task.IsCompleted;
+                wire.SubtitleListRelease.TrySetResult();
+                if (refresh != null) await refresh.WaitAsync(TimeSpan.FromSeconds(8));
+                var selectedSid = mpv.GetPropertyDouble("sid");
+                Require(!staleCompletionStartedRead && ReferenceEquals(originalInventory, manager.CurrentSession.SubtitleUrls) &&
+                    service.ActiveSubtitleServerIndex == selected &&
+                    (selected != 9 || manager.CurrentSession.SubtitleUrls.Single(t => t.Index == 9).Id == 88) &&
+                    (selected < 0 ? selectedSid <= 0 : selectedSid > 0 && selectedSid != priorSid) &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1, selected }) && mpv.IsPaused,
+                    "An older AI completion refresh overrode the later manual subtitle intent, applied SID, current checkmark or saved preference.");
+                Program.Log("PASS: older stored AI completion cannot supersede later manual selection before completion or during its held inventory GET.");
+                return;
+
+                void LateCue()
+                {
+                    using var cue = JsonDocument.Parse("""{"job_id":73,"cues":[{"start":1,"end":2,"text":"A late old-job cue"}]}""");
+                    Call(service, "ApplySubtitleTranslationCues", cue.RootElement.Clone());
+                }
             }
             var pending = translationCompleted ? service.RefreshSubtitlesAfterAiAsync(42, 73) :
                 noContext ? Task.Run(() =>
@@ -1150,6 +1217,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     private sealed class Wire(string origin) : HttpMessageHandler
     {
         public bool HoldSubtitleList;
+        public bool IncludeRetainedDownloaded;
         public TaskCompletionSource SubtitleListEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource SubtitleListRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int PreferenceWrites;
@@ -1176,7 +1244,9 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (path == "/api/v2/subtitles/42")
             {
                 if (HoldSubtitleList) { SubtitleListEntered.TrySetResult(); await SubtitleListRelease.Task.WaitAsync(ct); }
-                return Json("""{"subtitles":[{"id":73,"media_file_id":42,"language":"eng","format":"srt","source":"downloaded"}]}""");
+                return Json(IncludeRetainedDownloaded
+                    ? """{"subtitles":[{"id":73,"media_file_id":42,"language":"eng","format":"srt","source":"downloaded"},{"id":88,"media_file_id":42,"language":"spa","format":"srt","source":"downloaded"}]}"""
+                    : """{"subtitles":[{"id":73,"media_file_id":42,"language":"eng","format":"srt","source":"downloaded"}]}""");
             }
             if (path.Contains("-prefs/", StringComparison.Ordinal))
             {
