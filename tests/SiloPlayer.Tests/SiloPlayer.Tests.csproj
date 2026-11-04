@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
+    <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackQualityMenuModel.cs" Link="Production\PlaybackQualityMenuModel.cs" />
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Letters.cs" Link="Production\LibraryViewModel.Letters.cs" />
@@ -39,6 +40,7 @@
     <Compile Include="..\..\src\SiloPlayer\Messaging\MediaSurfaceMessages.cs" Link="Production\MediaSurfaceMessages.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\DetailCacheInvalidation.cs" Link="Production\DetailCacheInvalidation.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\WatchDetailFreshness.cs" Link="Production\WatchDetailFreshness.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackMenuRequest.cs" Link="Production\PlaybackMenuRequest.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\EpisodeRailNavigation.cs" Link="Production\EpisodeRailNavigation.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
