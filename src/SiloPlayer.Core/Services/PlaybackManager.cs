@@ -232,7 +232,7 @@ public partial class PlaybackManager : IDisposable
         _sessionId = response.SessionId;
         CurrentSession = response;
         SessionRetirementPending = false;
-        AcknowledgeSubtitleIntent(subtitleRevision);
+        AcknowledgeGrantedSubtitleIntent(subtitleRevision);
         AcknowledgeAudioIntent(audioRevision);
         _lastReportedPosition = Math.Max(0, response.Position);
         _isPaused = response.IsPaused;
@@ -369,6 +369,7 @@ public partial class PlaybackManager : IDisposable
             TimelineOffsetSeconds = Math.Max(0, plan.Timeline.TimelineOffsetSeconds),
             CanSeekAnywhere = plan.Timeline.CanSeekAnywhere,
             SelectedSubtitleTrackId = plan.SelectedTracks.Subtitle?.Id ?? plan.Subtitle.TrackId,
+            SelectedSubtitleTrackIndex = plan.SelectedTracks.Subtitle?.Index,
             SubtitleMode = plan.Subtitle.Mode,
             SelectedSubtitleArtifactUrl = plan.Subtitle.Artifact?.Url,
             SubtitleTimingOriginSeconds = plan.Subtitle.Artifact?.TimingOriginSeconds ?? 0,
@@ -385,6 +386,10 @@ public partial class PlaybackManager : IDisposable
             },
             SubtitleUrls = plan.Subtitle.Inventory.Select(track => new SubtitleTrackInfo
             {
+                StreamIndex = track.StreamIndex,
+                ContainerTrackId = track.ContainerTrackId,
+                NativeSelectable = track.NativeSelectable,
+                Unplayable = track.Unplayable,
                 SyncKey = track.SyncKey,
                 TrackId = track.TrackId,
                 Index = track.CombinedIndex,
@@ -392,6 +397,7 @@ public partial class PlaybackManager : IDisposable
                 Language = track.Language ?? "",
                 Codec = track.Codec,
                 Label = string.IsNullOrWhiteSpace(track.Label) ? track.Language ?? "Subtitle" : track.Label,
+                NativeTitle = track.Label,
                 Source = track.Source,
                 Url = track.Url ?? "",
                 FontBundleUrl = track.FontBundleUrl,
@@ -432,17 +438,22 @@ public partial class PlaybackManager : IDisposable
     public Task<PlaybackStartResponse> ReplanSubtitleAsync(
         int? subtitleTrackIndex,
         double positionSeconds,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool isAutomatic = false)
     {
-        RecordLocalSubtitleSelection(subtitleTrackIndex);
-        return ReplanAsync(
+        RecordLocalSubtitleSelection(subtitleTrackIndex, isAutomatic);
+        return ReplanRecordedSubtitleSelectionAsync(positionSeconds, ct);
+    }
+
+    /// <summary>Submits the recorded identity after an accepted inventory replacement.</summary>
+    public Task<PlaybackStartResponse> ReplanRecordedSubtitleSelectionAsync(double positionSeconds, CancellationToken ct = default)
+        => ReplanAsync(
             "track_change",
             positionSeconds,
             _qualityPreferenceV3,
             selectedTracks => { },
             failure: null,
             ct);
-    }
 
     public Task<PlaybackStartResponse> ReplanSeekAsync(
         double positionSeconds,
@@ -656,7 +667,7 @@ public partial class PlaybackManager : IDisposable
         _qualityPreferenceV3 = qualityPreference;
         _sessionId = response.SessionId;
         CurrentSession = response;
-        AcknowledgeSubtitleIntent(subtitleRevision);
+        AcknowledgeGrantedSubtitleIntent(subtitleRevision);
         AcknowledgeAudioIntent(audioRevision);
         _lastReportedPosition = Math.Max(0, response.Position);
         StreamUrl = streamUrl;
@@ -687,7 +698,7 @@ public partial class PlaybackManager : IDisposable
         var previousSessionId = _sessionId;
         var previousSession = CurrentSession;
         var retiringTranscode = previousSession?.PlayMethod == "transcode";
-        var subtitleIndex = ReplacementSubtitleIndex(fileId);
+        CaptureReplacementSubtitleIntent();
         audioTrackIndex ??= ReplacementAudioIndex(fileId);
         Task<PlaybackStartResponse> StartReplacementAsync() => StartSessionAsync(
             fileId,
@@ -697,7 +708,6 @@ public partial class PlaybackManager : IDisposable
             forceDirectAudioSelection,
             qualityPreference: qualityPreference,
             ct: ct,
-            subtitleTrackIndex: subtitleIndex,
             preserveTrackIntent: true,
             expectedIdentityContext: owner);
 
@@ -737,6 +747,14 @@ public partial class PlaybackManager : IDisposable
                 previousSessionId,
                 Math.Max(0, previousFinalPosition ?? startPosition));
         }
+
+        // Start omission means Auto, not Off. Reconcile any different grant
+        // through the established track_change contract before loading video
+        // (including burned-in subtitles). Only this plan's inventory supplies
+        // positional indices; watch-detail indices never go on the wire here.
+        if (HasPendingSubtitleSelection())
+            response = await ReplanAsync("track_change", response.Position, _qualityPreferenceV3,
+                selectedTracks => { }, failure: null, ct).ConfigureAwait(false);
 
         return response;
     }

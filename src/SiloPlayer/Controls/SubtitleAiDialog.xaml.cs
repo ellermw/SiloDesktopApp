@@ -27,6 +27,7 @@ public sealed partial class SubtitleAiDialog : ContentDialog
     private readonly Func<Task<SubtitleAiQuota?>>? _refreshQuotaAsync;
     private string _mode;
     private bool _submitting;
+    public bool FocusOnOpen { get; set; } = true;
 
     public SubtitleAiDialog(
         IReadOnlyList<SubtitleTrackInfo> subtitleTracks,
@@ -58,7 +59,7 @@ public sealed partial class SubtitleAiDialog : ContentDialog
         ModeTabs.Visibility = _canTranslate && _canTranscribe
             ? Visibility.Visible
             : Visibility.Collapsed;
-        Opened += (_, _) => SourceComboBox.Focus(FocusState.Programmatic);
+        Opened += (_, _) => { if (FocusOnOpen) SourceComboBox.Focus(FocusState.Programmatic); };
         UpdateMode();
     }
 

@@ -12,7 +12,7 @@ internal sealed record PlaybackMenuRequest(string OwnerToken, long Sequence, Pla
     internal static bool TryParse(string[] message, [NotNullWhen(true)] out PlaybackMenuRequest? request)
     {
         request = null;
-        if (message.Length != 9 || message[0] is not ("silo-native-audio-open" or "silo-native-quality-open" or "silo-native-chapters-open" or "silo-native-speed-open" or "silo-native-stats-open" or "silo-native-more-open" or "silo-native-party-open")
+        if (message.Length != 9 || message[0] is not ("silo-native-subtitle-open" or "silo-native-audio-open" or "silo-native-quality-open" or "silo-native-chapters-open" or "silo-native-speed-open" or "silo-native-stats-open" or "silo-native-more-open" or "silo-native-party-open")
             || !Guid.TryParseExact(message[1], "N", out var scope) || scope == Guid.Empty
             || !long.TryParse(message[2], NumberStyles.None, CultureInfo.InvariantCulture, out var sequence)
             || sequence is <= 0 or > 9_007_199_254_740_991)

@@ -730,6 +730,12 @@ internal static partial class PlaybackAudioMenuNativeFixture
 
     private sealed class Wire(string origin, string mediaPath) : HttpMessageHandler
     {
+        internal bool EnableSubtitleSync;
+        internal readonly ConcurrentQueue<int> SubtitleSavedIndices = new();
+        internal int SubtitleSyncStarts, SubtitleTimingResets;
+        internal readonly TaskCompletionSource SubtitleSyncStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseSubtitleSync = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _subtitleTiming = 250;
         internal readonly ConcurrentQueue<int> AudioPicks = new();
         internal bool HoldFailedReplan;
         internal bool HoldSuccessfulReplan;
@@ -753,6 +759,30 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 PreferenceStarted.TrySetResult();
                 await ReleasePreference.Task;
                 return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}") };
+            }
+            if (request.Method == HttpMethod.Put && path.Contains("subtitle", StringComparison.Ordinal) && request.Content != null)
+            {
+                using var preference = JsonDocument.Parse(await request.Content.ReadAsStringAsync(ct));
+                if (preference.RootElement.TryGetProperty("subtitle_track_index", out var index)) SubtitleSavedIndices.Enqueue(index.GetInt32());
+            }
+            if (EnableSubtitleSync && path == "/api/v2/subtitles/sync/status") return Json("""{"state":"available","external":true}""");
+            if (EnableSubtitleSync && path.StartsWith("/api/v2/subtitles/42/sync", StringComparison.Ordinal))
+            {
+                if (request.Method == HttpMethod.Post)
+                {
+                    SubtitleSyncStarts++; SubtitleSyncStarted.TrySetResult();
+                    await ReleaseSubtitleSync.Task.WaitAsync(ct);
+                }
+                if (request.Method == HttpMethod.Put)
+                {
+                    Require(request.Headers.IfMatch.Count > 0, "Subtitle timing reset lost its ETag.");
+                    SubtitleTimingResets++; _subtitleTiming = 0;
+                }
+                var subtitle = new { key = "stored-1036", media_file_id = 42, source = "downloaded", language = "ja", format = "vtt",
+                    timing = new { offset_ms = _subtitleTiming, scale = 1 },
+                    sync = request.Method == HttpMethod.Post ? new { id = "1", status = "already_synced", trigger = "manual" } : null };
+                var response = Json(JsonSerializer.Serialize(path.EndsWith("/sync") ? (object)new { subtitles = new[] { subtitle } } : new { subtitle }));
+                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"subtitle-v1\""); return response;
             }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
@@ -797,6 +827,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
 
     internal sealed class MediaServer : IDisposable
     {
+        internal readonly TaskCompletionSource SubtitleReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseSubtitleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly HttpListener _listener = new();
         internal string Origin { get; }
         internal MediaServer()
@@ -817,6 +849,22 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 {
                     HttpListenerContext context;
                     try { context = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
+                    if (context.Request.Url?.AbsolutePath is "/fixture-subtitle.vtt" or "/held-subtitle.vtt")
+                    {
+                        if (context.Request.Url.AbsolutePath == "/held-subtitle.vtt")
+                        {
+                            SubtitleReadStarted.TrySetResult();
+                            await ReleaseSubtitleRead.Task;
+                        }
+                        var subtitle = Encoding.UTF8.GetBytes("WEBVTT\n\n00:00.000 --> 01:00.000\nSynthetic subtitle\n");
+                        context.Response.ContentType = "text/vtt"; context.Response.ContentLength64 = subtitle.Length;
+                        try { await context.Response.OutputStream.WriteAsync(subtitle); context.Response.Close(); } catch (HttpListenerException) { }
+                        continue;
+                    }
+                    if (context.Request.Url?.AbsolutePath == "/missing-subtitle.vtt")
+                    {
+                        context.Response.StatusCode = 404; context.Response.ContentLength64 = 0; context.Response.Close(); continue;
+                    }
                     if (context.Request.Url?.AbsolutePath == "/fixture-subtitle.vtt")
                     {
                         var subtitle = Encoding.UTF8.GetBytes("WEBVTT\n\n00:00.000 --> 01:00.000\nSynthetic subtitle\n");
@@ -853,7 +901,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 }
             });
         }
-        public void Dispose() => _listener.Close();
+        public void Dispose() { ReleaseSubtitleRead.TrySetResult(); _listener.Close(); }
     }
 
     /// <summary>

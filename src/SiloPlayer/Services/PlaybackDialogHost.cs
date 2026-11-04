@@ -129,6 +129,14 @@ internal static class PlaybackDialogHost
         return restorePlayerInput;
     }
 
+    internal static async Task ShowContentDialogAsync(Microsoft.UI.Xaml.Controls.ContentDialog dialog, bool activate)
+    {
+        void EnableAfterLoad(object sender, RoutedEventArgs args) => dialog.IsEnabled = true;
+        if (!activate) { dialog.IsEnabled = false; dialog.Loaded += EnableAfterLoad; }
+        try { await dialog.ShowAsync(); }
+        finally { dialog.Loaded -= EnableAfterLoad; }
+    }
+
     private static void CoverPlaybackSurface(IntPtr videoHwnd, IntPtr hostHwnd)
     {
         if (!GetWindowRect(videoHwnd, out var videoRect))
