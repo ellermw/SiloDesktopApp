@@ -278,6 +278,9 @@ internal static partial class RealtimeSeriesStateNativeFixture
                     try
                     {
                         await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        // Keep the captured initial response held, but allow the
+                        // independent mounted-state catch-up to read fresh rows.
+                        wire.HeldCompanion = null;
                         Check(!page.CanPreserveOnReconnect, "A held initial companion must remount on reconnect, even with empty rows.");
                         wire.Count = 5; wire.LoadedPlayed = false; wire.LoadedPosition = 600;
                         await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(),
