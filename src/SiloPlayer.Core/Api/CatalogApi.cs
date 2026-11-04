@@ -30,6 +30,8 @@ public partial class CatalogApi(SiloApiClient client)
     }
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
 
     public void InvalidateFilterCache()
     {

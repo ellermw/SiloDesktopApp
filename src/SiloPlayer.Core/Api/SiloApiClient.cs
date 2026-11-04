@@ -75,25 +75,26 @@ public partial class SiloApiClient
     public bool IsCurrentIdentityContext(ApiIdentityContext context) => CaptureIdentityContext() == context;
 
     public async Task<T> SendIdentityBoundRequestAsync<T>(ApiIdentityContext context, HttpMethod method,
-        string path, object? body, CancellationToken ct = default)
+        string path, object? body, CancellationToken ct = default, IReadOnlyDictionary<string, string>? headers = null)
     {
-        using var request = CreateIdentityBoundRequest(context, method, path, body);
+        using var request = CreateIdentityBoundRequest(context, method, path, body, headers);
         return await SendAsync<T>(request, ct).ConfigureAwait(false);
     }
 
     public async Task SendIdentityBoundNoContentAsync(ApiIdentityContext context, HttpMethod method,
-        string path, object? body, CancellationToken ct = default)
+        string path, object? body, CancellationToken ct = default, IReadOnlyDictionary<string, string>? headers = null)
     {
-        using var request = CreateIdentityBoundRequest(context, method, path, body);
+        using var request = CreateIdentityBoundRequest(context, method, path, body, headers);
         await SendNoContentAsync(request, ct).ConfigureAwait(false);
     }
 
-    private HttpRequestMessage CreateIdentityBoundRequest(ApiIdentityContext context, HttpMethod method, string path, object? body)
+    private HttpRequestMessage CreateIdentityBoundRequest(ApiIdentityContext context, HttpMethod method, string path, object? body,
+        IReadOnlyDictionary<string, string>? headers = null)
     {
         lock (_authStateGate)
         {
             if (!IsCurrentIdentityContext(context)) throw new OperationCanceledException("Playback identity changed.");
-            return CreateRequest(method, path, body, null);
+            return CreateRequest(method, path, body, headers);
         }
     }
 
