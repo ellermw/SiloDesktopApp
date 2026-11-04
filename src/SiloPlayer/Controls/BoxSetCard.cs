@@ -7,6 +7,9 @@ namespace SiloPlayer.Controls;
 /// <summary>Aggregate destination with no title mutation or quick-play surface.</summary>
 public sealed class BoxSetCard : Button
 {
+    private Grid? _artworkStack;
+    private StackPanel? _panel;
+    private TextBlock? _title, _subtitle;
     public BoxSetSummary? Summary { get; private set; }
     public event Action<BoxSetSummary>? Invoked;
     public BoxSetCard()
@@ -16,11 +19,22 @@ public sealed class BoxSetCard : Button
         // A nested aggregate owns its activation, not PosterCard's bubbling tap.
         Tapped += (_, args) => args.Handled = true;
     }
+    /// <summary>Fit the shared aggregate presentation inside a virtual catalog slot.</summary>
+    public void SetCatalogLayout(double width, double posterHeight, double height)
+    {
+        Width = width; Height = height; MinWidth = 0; Padding = new Thickness(0); BorderThickness = new Thickness(0);
+        HorizontalContentAlignment = HorizontalAlignment.Stretch; VerticalContentAlignment = VerticalAlignment.Top;
+        if (_artworkStack is null || _panel is null || _title is null || _subtitle is null) return;
+        _artworkStack.Height = Math.Max(1, posterHeight - 8); _artworkStack.Width = Math.Max(1, width - 8);
+        _panel.Spacing = 4;
+        _title.FontSize = 14; _title.MaxLines = 1; _title.TextWrapping = TextWrapping.NoWrap; _title.TextTrimming = TextTrimming.CharacterEllipsis;
+        _subtitle.FontSize = 11; _subtitle.MaxLines = 1; _subtitle.TextWrapping = TextWrapping.NoWrap; _subtitle.TextTrimming = TextTrimming.CharacterEllipsis;
+    }
     public void SetSummary(BoxSetSummary set, string? posterUrl = null, string? posterThumbhash = null)
     {
         Summary = set;
-        var panel = new StackPanel { Spacing = 6 };
-        var stack = new Grid { Height = 245, Margin = new Thickness(0, 8, 8, 0) };
+        var panel = _panel = new StackPanel { Spacing = 6 };
+        var stack = _artworkStack = new Grid { Height = 245, Margin = new Thickness(0, 8, 8, 0) };
         stack.Children.Add(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.DimGray), CornerRadius = new CornerRadius(9), Margin = new Thickness(8, -8, -8, 8) });
         stack.Children.Add(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Gray), CornerRadius = new CornerRadius(9), Margin = new Thickness(4, -4, -4, 4) });
         var face = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.DarkSlateGray) };
@@ -38,8 +52,8 @@ public sealed class BoxSetCard : Button
         AutomationProperties.SetName(progress, "Films watched");
         AutomationProperties.SetHelpText(progress, set.ProgressText);
         panel.Children.Add(progress);
-        panel.Children.Add(new TextBlock { Text = set.Title, TextWrapping = TextWrapping.Wrap, MaxLines = 2, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        panel.Children.Add(new TextBlock { Text = set.PlayedCount > 0 ? set.ProgressText : set.Years, TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(_title = new TextBlock { Text = set.Title, TextWrapping = TextWrapping.Wrap, MaxLines = 2, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        panel.Children.Add(_subtitle = new TextBlock { Text = set.PlayedCount > 0 ? set.ProgressText : set.Years, TextWrapping = TextWrapping.Wrap });
         Content = panel;
         AutomationProperties.SetName(this, $"{set.Title}, Box set, {set.MovieCount} films, {set.ProgressText}");
     }

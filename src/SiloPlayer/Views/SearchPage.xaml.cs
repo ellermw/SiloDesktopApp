@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Messaging;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Input;
@@ -11,7 +13,7 @@ using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
-public sealed record SearchNavigation(string Query, string? MediaScope = null);
+public sealed record SearchNavigation(string Query, string? MediaScope = null, int? LibraryId = null);
 
 public sealed partial class SearchPage : Page
 {
@@ -27,6 +29,7 @@ public sealed partial class SearchPage : Page
     private string? _searchFiltersTaskKey;
     private long _navigationGeneration;
     private readonly SiloPlayer.Core.Api.CatalogApi _catalogApi;
+    private readonly SiloPlayer.Core.Services.LocalizedMediaReads _localizedReads;
     private readonly CatalogSortChoices.Choice[] _resultSortChoices;
     private IReadOnlySet<string> _shownRatingSources = new HashSet<string>();
 
@@ -37,6 +40,7 @@ public sealed partial class SearchPage : Page
         this.InitializeComponent();
         CatalogToolbarChoices.Apply(ResultTypeCombo, ResultSortCombo, ResultOrderCombo);
         _catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
+        _localizedReads = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().LocalizedReads;
         _resultSortChoices = CatalogSortChoices.Capture(ResultSortCombo);
         UpdateResultSortChoices();
         ResultFiltersSheet.ConfigureFilterHeader(SearchQueryFilters.DetachModeSelector(), "Refine your catalog results");
@@ -44,6 +48,9 @@ public sealed partial class SearchPage : Page
         SearchLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
 
         ResultsRepeater.ItemsSource = ViewModel.Results;
+        BoxSetSearchRepeater.ItemsSource = ViewModel.BoxSets.Items;
+        ViewModel.BoxSets.Items.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateResultsState);
+        ViewModel.BoxSets.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateResultsState);
         PeopleRepeater.ItemsSource = ViewModel.PeopleResults;
         RequestResultsRepeater.ItemsSource = ViewModel.OutsideLibraryResults;
 
@@ -80,12 +87,23 @@ public sealed partial class SearchPage : Page
         };
         SizeChanged += SearchPage_SizeChanged;
         Loaded += (_, _) => PositionSearchSurface();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
+        {
+            if (change.Context is {} owner && !_catalogApi.IsCurrentContext(owner)) return;
+            if (change.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.ItemMetadataRefreshed)
+                DispatcherQueue.TryEnqueue(RefreshBoxSetSearch);
+        });
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) => RefreshBoxSetsAfterPlayback(change));
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        var generation = ++_navigationGeneration;
         _isNavigated = true;
+        ViewModel.BeginSearchVisit();
+        _catalogApi.LibraryCacheInvalidated += RefreshBoxSetSearch;
+        _localizedReads.Invalidated += BoxSetLanguageChanged;
         _uiCustomizationService.Changed += UICustomization_Changed;
 
         if (e.NavigationMode == NavigationMode.Back && !string.IsNullOrWhiteSpace(ViewModel.Query))
@@ -94,10 +112,13 @@ public sealed partial class SearchPage : Page
             PositionSearchSurface();
             UpdateScopeButtons();
             UpdateResultsState();
+            _ = ViewModel.RefreshBoxSetSearchAsync();
         }
         else
         {
             ViewModel.CancelPendingSearch();
+            ViewModel.BeginSearchVisit();
+            ViewModel.LibraryId = e.Parameter is SearchNavigation scoped ? scoped.LibraryId : null;
             ViewModel.Query = "";
             ViewModel.Results.Clear();
             ViewModel.PeopleResults.Clear();
@@ -114,7 +135,6 @@ public sealed partial class SearchPage : Page
         // scope loads without blocking typing; query facets remain deferred
         // until the user opens the filter sheet.
         _ = EnsureInitializedAsync();
-        var generation = ++_navigationGeneration;
         _shownRatingSources = _catalogApi.CachedShownRatingSources;
         UpdateResultSortChoices();
         _ = RefreshRatingSortChoicesAsync(generation);
@@ -187,19 +207,54 @@ public sealed partial class SearchPage : Page
             // the virtualized query window and request/discovery section settle.
             ResultCountPanel.Visibility = Visibility.Collapsed;
 
-            NoResultsText.Visibility = mediaCount == 0 && peopleCount == 0 && ViewModel.OutsideLibraryResults.Count == 0 && !ViewModel.IsLoading
+            NoResultsText.Visibility = mediaCount == 0 && peopleCount == 0 && ViewModel.BoxSets.Items.Count == 0
+                && !ViewModel.BoxSets.IsLoading && ViewModel.OutsideLibraryResults.Count == 0 && !ViewModel.IsLoading
                 ? Visibility.Visible : Visibility.Collapsed;
         }
 
         SearchLoadingRepeater.Visibility = hasQuery &&
-            ViewModel.IsLoading &&
+            (ViewModel.IsLoading || ViewModel.BoxSets.IsLoading) &&
             ViewModel.Results.Count == 0 &&
-            ViewModel.PeopleResults.Count == 0
+            ViewModel.PeopleResults.Count == 0 && ViewModel.BoxSets.Items.Count == 0
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
         UpdatePeopleSection();
+        BoxSetSearchSection.Visibility = ViewModel.BoxSets.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateRequestResults();
+    }
+
+    private void BoxSetLanguageChanged(long _) => DispatcherQueue.TryEnqueue(RefreshBoxSetSearch);
+
+    private void RefreshBoxSetSearch()
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(RefreshBoxSetSearch); return; }
+        if (_isNavigated) _ = ViewModel.RefreshBoxSetSearchAsync();
+    }
+
+    private async void RefreshBoxSetsAfterPlayback(PlaybackProgressUpdated change)
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => RefreshBoxSetsAfterPlayback(change)); return; }
+        if (!_isNavigated) return;
+        var visit = _navigationGeneration; var owner = _catalogApi.CaptureContext();
+        try { await change.Persisted; } catch { return; }
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentContext(owner)) RefreshBoxSetSearch();
+        });
+    }
+
+    private void BoxSetSearch_Prepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is not ContentControl host || args.Index < 0 || args.Index >= ViewModel.BoxSets.Items.Count) return;
+        var set = ViewModel.BoxSets.Items[args.Index]; var generation = ViewModel.BoxSets.Generation; var visit = _navigationGeneration;
+        var card = new BoxSetCard(); card.SetSummary(set); card.SetCatalogLayout(_catalogCardWidth, _catalogCardWidth * 1.5, (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight);
+        card.Invoked += summary =>
+        {
+            if (_isNavigated && visit == _navigationGeneration && ViewModel.BoxSets.CanOpen(summary, generation))
+                App.Services.GetRequiredService<NavigationService>().Navigate(typeof(BoxSetPage), new BoxSetNavigationArgs(summary.Id, summary.LibraryId));
+        };
+        host.Content = card;
     }
 
     private void UpdatePeopleSection()
@@ -511,11 +566,17 @@ public sealed partial class SearchPage : Page
         var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
         var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16d : 12d;
         ResultsGridLayout.MinColumnSpacing = ResultsGridLayout.MinRowSpacing = gap;
+        BoxSetSearchGridLayout.MinColumnSpacing = BoxSetSearchGridLayout.MinRowSpacing = gap;
         SearchLoadingGridLayout.MinColumnSpacing = SearchLoadingGridLayout.MinRowSpacing = gap;
         _catalogCardWidth = Math.Max(96, (contentWidth - (gap * (columns - 1))) / columns);
         ResultsGridLayout.MaximumRowsOrColumns = columns;
         ResultsGridLayout.MinItemWidth = _catalogCardWidth;
         ResultsGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
+        BoxSetSearchGridLayout.MaximumRowsOrColumns = columns;
+        BoxSetSearchGridLayout.MinItemWidth = _catalogCardWidth;
+        BoxSetSearchGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
+        for (var index = 0; index < ViewModel.BoxSets.Items.Count; index++)
+            if (BoxSetSearchRepeater.TryGetElement(index) is ContentControl { Content: BoxSetCard card }) card.SetCatalogLayout(_catalogCardWidth, _catalogCardWidth * 1.5, (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight);
         SearchLoadingGridLayout.MaximumRowsOrColumns = columns;
         SearchLoadingGridLayout.MinItemWidth = _catalogCardWidth;
         SearchLoadingGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
@@ -556,6 +617,8 @@ public sealed partial class SearchPage : Page
         _navigationGeneration++;
         _isNavigated = false;
         _uiCustomizationService.Changed -= UICustomization_Changed;
+        _catalogApi.LibraryCacheInvalidated -= RefreshBoxSetSearch;
+        _localizedReads.Invalidated -= BoxSetLanguageChanged;
         _searchDebounce?.Stop();
         ViewModel.CancelPendingSearch();
         base.OnNavigatedFrom(e);
