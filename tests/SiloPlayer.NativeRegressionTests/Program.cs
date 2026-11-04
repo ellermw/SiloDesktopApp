@@ -152,11 +152,34 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", previous); }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-menu")
+            {
+                await PlaybackQualityMenuNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-retired")
+            {
+                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "retired");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-release")
+            {
+                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "release");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-successors")
+            {
+                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "successor-failure");
+                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "successor-success");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-audio-menu")
             {
                 var selectedAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
                 var audioCases = string.IsNullOrEmpty(selectedAudioCase)
-                    ? new[] { "", "retired-replan", "retired-presentation", "own-load-failure" }
+                    ? new[] { "", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
+                        "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
+                        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure" }
                     : new[] { selectedAudioCase };
                 try
                 {

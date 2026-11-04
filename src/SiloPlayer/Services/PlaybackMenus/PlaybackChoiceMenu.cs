@@ -14,7 +14,7 @@ internal sealed record PlaybackMenuChoice(string Id, string Title, string Metada
     IReadOnlyList<string> Badges, bool IsCurrent = false, bool IsEnabled = true,
     string DisabledReason = "", bool CloseOnInvoke = true, bool IsPending = false);
 
-internal enum PlaybackMenuCloseReason { Selection, Cancel, OutsidePointer, Deactivated, OwnerRetired }
+internal enum PlaybackMenuCloseReason { Selection, PointerSelection, Cancel, OutsidePointer, Deactivated, OwnerRetired }
 
 /// <summary>A menu-sized owned surface. Playback and account authority stay with PlayerService.</summary>
 internal class PlaybackChoiceMenu
@@ -43,6 +43,7 @@ internal class PlaybackChoiceMenu
     private bool _nativeClosed;
     private bool _shown;
     private bool _focusOnLoad;
+    private bool _pointerSelection;
 
     internal PlaybackChoiceMenu(MpvVideoWindow owner, PlaybackMenuAnchor anchor, string title,
         IReadOnlyList<PlaybackMenuChoice> choices, Func<bool> isCurrent,
@@ -92,6 +93,9 @@ internal class PlaybackChoiceMenu
         try { _window.AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); } catch { /* Cosmetic only. */ }
         _root.Loaded += OnLoaded;
         _root.PreviewKeyDown += OnKeyDown;
+        _root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPointerPressed), true);
+        _root.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPointerReleased), true);
+        _root.AddHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPointerReleased), true);
         _list.ItemClick += OnItemClick;
         _list.SizeChanged += OnListSizeChanged;
         _wheelHandler = OnListPointerWheel;
@@ -302,16 +306,25 @@ internal class PlaybackChoiceMenu
         // clicks as well as UIA Invoke. Resolve only our exact owned row.
         var item = _list.Items.OfType<ListViewItem>()
             .FirstOrDefault(row => ReferenceEquals(row, args.ClickedItem) || ReferenceEquals(row.Content, args.ClickedItem));
-        if (item?.Tag is string id) Select(id);
+        if (item?.Tag is string id) Select(id, _pointerSelection);
     }
 
-    private void Select(string id)
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs args) => _pointerSelection = true;
+
+    private void OnPointerReleased(object sender, PointerRoutedEventArgs args)
+    {
+        // ItemClick runs in the release dispatch. Clear after that dispatch so
+        // later keyboard/UIA activation cannot inherit an earlier pointer.
+        _root.DispatcherQueue.TryEnqueue(() => _pointerSelection = false);
+    }
+
+    private void Select(string id, bool pointer = false)
     {
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         var choice = _choices.FirstOrDefault(choice => choice.Id == id);
         if (choice == null || !choice.IsEnabled) return;
         _keepSelectionVisible = true;
-        if (choice.CloseOnInvoke) Close(PlaybackMenuCloseReason.Selection);
+        if (choice.CloseOnInvoke) Close(pointer ? PlaybackMenuCloseReason.PointerSelection : PlaybackMenuCloseReason.Selection);
         _selected(id);
     }
 
@@ -336,6 +349,7 @@ internal class PlaybackChoiceMenu
 
     internal void Input(string action)
     {
+        _pointerSelection = false;
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         if (action == "cancel") { Close(PlaybackMenuCloseReason.Cancel); return; }
         if (action is "home" or "end" or "up" or "left" or "down" or "right") _keepSelectionVisible = true;
@@ -404,6 +418,9 @@ internal class PlaybackChoiceMenu
         _owner.ClearMenuDismissal(_dismiss);
         _owner.SurfaceChanged -= OnOwnerChanged;
         _root.Loaded -= OnLoaded; _root.PreviewKeyDown -= OnKeyDown;
+        _root.RemoveHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPointerPressed));
+        _root.RemoveHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnPointerReleased));
+        _root.RemoveHandler(UIElement.PointerCanceledEvent, new PointerEventHandler(OnPointerReleased));
         _list.ItemClick -= OnItemClick;
         _list.SizeChanged -= OnListSizeChanged;
         _list.RemoveHandler(UIElement.PointerWheelChangedEvent, _wheelHandler);

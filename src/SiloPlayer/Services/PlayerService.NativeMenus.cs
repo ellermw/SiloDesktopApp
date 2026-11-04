@@ -49,6 +49,7 @@ public partial class PlayerService
             _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             mpv.SendScriptMessage("osc-native-audio-scope", version?.AudioTracks?.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-quality-scope", (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -64,6 +65,7 @@ public partial class PlayerService
             _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
             owner?.Mpv.SendScriptMessage("osc-native-audio-scope", "");
+            owner?.Mpv.SendScriptMessage("osc-native-quality-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -71,8 +73,10 @@ public partial class PlayerService
     private async Task HandleNativeMenuOpenAsync(PlaybackMenuRequest request)
     {
         var owner = _nativeMenuOwner;
-        void Ack() => (owner?.Mpv ?? _mpv)?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
-            request.Sequence.ToString(CultureInfo.InvariantCulture), "true");
+        void Ack(PlaybackMenuCloseReason reason = PlaybackMenuCloseReason.OwnerRetired) =>
+            (owner?.Mpv ?? _mpv)?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
+                request.Sequence.ToString(CultureInfo.InvariantCulture),
+                reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
         if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
         { Ack(); return; }
         if (!_nativeMenuGate.TryOpen(request))
@@ -89,7 +93,7 @@ public partial class PlayerService
             _nativeMenuGate.TryClose(request.OwnerToken, request.Sequence);
             if (ReferenceEquals(_nativeMenuRequest, request)) _nativeMenuRequest = null;
             if (lease) { lease = false; _playbackDialogGate.Release(); }
-            Ack();
+            Ack(reason);
         }
         try
         {
@@ -99,6 +103,7 @@ public partial class PlayerService
             menu = request.Kind switch
             {
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
+                "quality" => CreateNativeQualityMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }

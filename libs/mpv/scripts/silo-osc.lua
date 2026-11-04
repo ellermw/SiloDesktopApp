@@ -160,6 +160,7 @@ local state = {
     native_audio_scope = nil,
     native_menu_sequence = 0,
     native_menu_request = nil,
+    native_menu_pointer_block = nil,
     audio_menu_visible = false,
     audio_menu_overlay = nil,
     audio_menu_items = {},
@@ -1205,6 +1206,7 @@ local function compute_layout()
         and _layout_series == state.series_context
         and _layout_audio_count == #state.audio_tracks
         and _layout_chapter_count == #state.chapters
+        and state.layout_quality_available == quality_choices_available()
         and state.layout.bar then return end
     _layout_w, _layout_h = W, H
     _layout_next_ep = state.next_ep_available
@@ -1212,6 +1214,7 @@ local function compute_layout()
     _layout_series = state.series_context
     _layout_audio_count = #state.audio_tracks
     _layout_chapter_count = #state.chapters
+    state.layout_quality_available = quality_choices_available()
     local L = state.layout
     local sc = ui_scale()
     local compact = W < math.floor(1024 * sc)
@@ -1903,29 +1906,31 @@ local function render_osc()
 
     local baudio = L.btn_audio
     if baudio then
-        draw_utility_state(baudio, state.audio_menu_visible or state.native_menu_request ~= nil)
+        draw_utility_state(baudio, state.audio_menu_visible or (state.native_menu_request
+            and (state.native_menu_request.kind or "audio") == "audio"))
         draw_audio_lines_icon(ass, baudio.cx, baudio.cy, math.floor(20 * sc),
             config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma)
     end
 
     local bq = L.btn_quality
     if bq then
+    local quality_active = state.quality_menu_visible or (state.native_menu_request and state.native_menu_request.kind == "quality")
     if utility_hover(bq) then
         draw_rounded_rect(ass, bq.x, bq.y, bq.x + bq.w, bq.y + bq.h,
             bq.h / 2, config.text_color, "EB", ma)
     end
-    if state.quality_menu_visible then
+    if quality_active then
         draw_circle(ass, bq.cx, bq.y + bq.h - math.floor(4 * sc),
             math.max(2, math.floor(2.2 * sc)), config.accent_color, "00", ma)
     end
     if bq.show_label then
         draw_settings_icon(ass, bq.x + math.floor(21 * sc), bq.cy, math.floor(18 * sc),
-            config.text_color, state.quality_menu_visible and "00" or "38", ma)
+            config.text_color, quality_active and "00" or "38", ma)
         draw_text(ass, bq.x + math.floor(41 * sc), bq.cy, ass_escape_text(active_quality_label()), math.floor(11 * sc),
-            config.text_color, state.quality_menu_visible and "00" or "38", ma, 4, nil, true)
+            config.text_color, quality_active and "00" or "38", ma, 4, nil, true)
     else
         draw_settings_icon(ass, bq.cx, bq.cy, math.floor(18 * sc),
-            config.text_color, state.quality_menu_visible and "00" or "38", ma)
+            config.text_color, quality_active and "00" or "38", ma)
     end
 
     end
@@ -4706,7 +4711,9 @@ local function open_native_menu(kind, keyboard)
     state.controller_focus_name = nil
     state.pressed_control = nil
     state.native_menu_request = request
-    consume_video_click()
+    -- Retain the opening gesture through its release, even if Escape closes
+    -- the host first. Only a fresh pointer-down starts a new video gesture.
+    if not keyboard then state.native_menu_pointer_block = request end
     mp.commandv("script-message", "silo-native-" .. kind .. "-open", request.owner, tostring(request.sequence),
         tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
         tostring(state.osd_width), tostring(state.osd_height))
@@ -4747,6 +4754,7 @@ local function toggle_transport_menu_from_button(mx, my)
     end
 
     if L.btn_quality and point_in_rect(mx, my, L.btn_quality) then
+        if open_native_menu("quality") then return true end
         local opening = not state.quality_menu_visible
         close_transport_menus("quality")
         state.quality_menu_visible = opening
@@ -4843,6 +4851,7 @@ local function open_transport_menu_from_controller(kind)
         set_keyboard_transport_menu(kind, state.subtitle_menu_visible)
         render_subtitle_menu()
     elseif kind == "quality" then
+        if open_native_menu("quality", true) then return end
         state.quality_menu_visible = not state.quality_menu_visible
         set_keyboard_transport_menu(kind, state.quality_menu_visible)
         render_quality_menu()
@@ -5023,6 +5032,7 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
+                if item.name == "btn_audio" and open_native_menu("audio", false) then return end
                 consume_video_click(); state.controller_focus_name = "overflow_" .. item.name; activate_controller_focus(); return
             end
         end
@@ -6219,7 +6229,6 @@ local function setup_script_messages()
                 state[key] = scope
                 -- Sequences span all kinds sharing one host/gate. Rotating an
                 -- unrelated capability cannot reset a live request sequence.
-                consume_video_click()
                 request_tick()
             end
         end)
@@ -6228,7 +6237,7 @@ local function setup_script_messages()
         local request = state.native_menu_request
         if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
         state.native_menu_request = nil
-        if consume == "true" then consume_video_click() end
+        if consume == "true" then state.native_menu_pointer_block = request end
         if not state.osc_disabled then
             state.controller_focus_name = request.focus_name
             show_osc()
@@ -6282,6 +6291,7 @@ local function setup_script_messages()
     -- Host app can send mouse button events
     mp.register_script_message("osc-mouse-down", function(x, y)
         if state.native_menu_request then return end
+        state.native_menu_pointer_block = nil
         state.mouse_x = tonumber(x) or state.mouse_x
         state.mouse_y = tonumber(y) or state.mouse_y
         handle_mouse_down()
@@ -6359,6 +6369,7 @@ local function setup_script_messages()
     -- clicking the video body works like every other media player.
     mp.register_script_message("osc-video-click", function(x, y)
         if state.native_menu_request then return end
+        if state.native_menu_pointer_block then return end
         if state.playback_failure_visible then return end
         if mp.get_time() <= (state.ignore_video_click_until or 0) then
             return

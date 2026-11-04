@@ -1278,7 +1278,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("description = description with { CanRetry = false };", terminal);
 
         var failureStart = source.IndexOf("private void HandleMpvFailure", StringComparison.Ordinal);
-        var failureEnd = source.IndexOf("public async Task SwitchVersionAsync", failureStart, StringComparison.Ordinal);
+        var failureEnd = source.IndexOf("private async Task SwitchVersionCoreAsync", failureStart, StringComparison.Ordinal);
         Assert.Contains("_closing || State == PlayerState.Idle || _playbackTerminalState != null", source[failureStart..failureEnd]);
         var endStart = source.IndexOf("private void HandleMpvEndSignal", StringComparison.Ordinal);
         var endGuard = source.IndexOf("var pos = CurrentMediaPosition;", endStart, StringComparison.Ordinal);
@@ -1290,7 +1290,7 @@ public sealed class PlayerServiceSourceTests
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        var start = source.IndexOf("public async Task SwitchVersionAsync", StringComparison.Ordinal);
+        var start = source.IndexOf("private async Task SwitchVersionCoreAsync", StringComparison.Ordinal);
         var end = source.IndexOf("public Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         var method = source[start..end];
@@ -1322,7 +1322,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("if (_idleRemuxResume.IsReopening)", refusal);
         Assert.Contains("EnterPlaybackTerminalState(ex, mediaPosition, \"idle-remux-resume\", _idleRemuxResume.DesiredPaused)", refusal);
         var healthy = refusal[refusal.IndexOf("else", StringComparison.Ordinal)..];
-        Assert.Contains("_switchingContent = false;", healthy);
+        Assert.Contains("SetSwitchingContent(false);", healthy);
         Assert.Contains("IsLoading = false;", healthy);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", healthy);
         Assert.Contains("DescribePlaybackError(ex)", healthy);
