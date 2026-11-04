@@ -29,6 +29,36 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:false:0:0", output);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public void VisibleStatsFallbackClosesOnceAfterLoadingOrPostrollEnds(bool loading, bool hostToggle)
+    {
+        var setup = """
+            native_probe_time=10
+            local s=osc_test_state
+            s.osc_disabled,s.visible,s.pause=false,true,true
+            s.current_alpha,s.target_alpha=1,1
+            native_handlers['osc-native-stats-scope']('11111111111111111111111111111111')
+            s.playback_loading=LOADING
+            s.post_roll_active=not LOADING
+            local toggle=HOST and native_handlers['osc-toggle-stats'] or native_keys['silo-osc-toggle-stats']
+            toggle()
+            local opened=s.stats_visible and s.native_menu_request==nil
+            native_handlers['osc-set-loading']('false')
+            native_handlers['osc-set-post-roll']('false')
+            native_handlers['osc-native-stats-scope']('22222222222222222222222222222222')
+            toggle()
+            mp.set_property('user-data/native-stats-result',tostring(opened)..':'..tostring(s.stats_visible)..':'..tostring(#native_requests)..':'..tostring(s.native_menu_request~=nil)..':'..tostring(#native_intents))
+            """.Replace("LOADING", loading ? "true" : "false").Replace("HOST", hostToggle ? "true" : "false");
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: setup, rawAss: true,
+            resultProperty: "user-data/native-stats-result",
+            beforeScript: NativeAudioProbe.Replace("== 'silo-native-audio-open'", "== 'silo-native-stats-open'"));
+        Assert.Equal("true:false:0:false:0", output);
+    }
+
     [Fact]
     public void NativeStatsPublishesDisplayedSectionsOnlyWhileTheMatchingPresentationIsOpen()
     {
