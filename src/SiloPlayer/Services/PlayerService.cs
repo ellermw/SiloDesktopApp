@@ -5166,16 +5166,22 @@ public partial class PlayerService : IDisposable
             try
             {
                 manager.SourceVersionPinned = true;
-                var session = await manager.StartReplacementSessionAsync(
+                var session = await manager.StartOwnedReplacementSessionAsync(
                     version.FileId,
                     currentPos,
+                    adopted =>
+                    {
+                        // This request owns this response even if a subsequent
+                        // subtitle refinement is canceled before the await returns.
+                        busyOwner = busyOwner with { Session = adopted };
+                        replacementAccepted = true;
+                        if (CurrentSwitch() && OwnsPlaybackBusy(busyOwner))
+                            _requestedMediaFileId = version.FileId;
+                    },
                     forceStartPosition: true,
                     previousFinalPosition: currentPos,
                     ct: ct);
-                busyOwner = busyOwner with { Session = session };
                 if (!CurrentSwitch() || !OwnsPlaybackBusy(busyOwner)) return;
-                replacementAccepted = true;
-                _requestedMediaFileId = version.FileId;
                 InvokeSubscribersSafely(SessionStarted, session.SessionId, nameof(SessionStarted));
                 var streamUrl = manager.StreamUrl;
                 if (string.IsNullOrWhiteSpace(streamUrl))

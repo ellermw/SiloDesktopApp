@@ -599,7 +599,8 @@ public partial class PlaybackManager : IDisposable
         string qualityPreference,
         Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
         PlaybackFailureV3? failure,
-        CancellationToken ct)
+        CancellationToken ct,
+        (PlaybackStartResponse Session, ApiIdentityContext Identity)? expectedOwner = null)
     {
         var plan = _currentPlanV3
             ?? throw new InvalidOperationException("The active playback session does not have a protocol-v3 plan.");
@@ -654,6 +655,12 @@ public partial class PlaybackManager : IDisposable
 
         ConfigureConnectionReplan(request);
         var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
+        if (expectedOwner is { } expected)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!_apiClient.IsCurrentIdentityContext(expected.Identity) || !ReferenceEquals(CurrentSession, expected.Session))
+                throw new OperationCanceledException("Playback owner changed.", ct);
+        }
         // Validate delivery before publishing any accepted plan/session fields.
         // On failure the caller still owns its original session and busy claim.
         var response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
@@ -684,7 +691,7 @@ public partial class PlaybackManager : IDisposable
     /// behind synchronous history/scrobble cleanup on DELETE. An account-limit
     /// refusal instead retires the outgoing session and retries once.
     /// </summary>
-    public async Task<PlaybackStartResponse> StartReplacementSessionAsync(
+    public Task<PlaybackStartResponse> StartReplacementSessionAsync(
         int fileId,
         double startPosition,
         bool forceStartPosition = true,
@@ -693,6 +700,39 @@ public partial class PlaybackManager : IDisposable
         double? previousFinalPosition = null,
         string? qualityPreference = null,
         CancellationToken ct = default)
+        => StartReplacementSessionCoreAsync(fileId, startPosition, forceStartPosition, audioTrackIndex,
+            forceDirectAudioSelection, previousFinalPosition, qualityPreference, onSessionAdopted: null, ct);
+
+    /// <summary>
+    /// Reports each adopted response before awaiting a subtitle refinement, so
+    /// the caller can retain its own busy ownership even if that refinement is canceled.
+    /// </summary>
+    public Task<PlaybackStartResponse> StartOwnedReplacementSessionAsync(
+        int fileId,
+        double startPosition,
+        Action<PlaybackStartResponse> onSessionAdopted,
+        bool forceStartPosition = true,
+        int? audioTrackIndex = null,
+        bool forceDirectAudioSelection = false,
+        double? previousFinalPosition = null,
+        string? qualityPreference = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onSessionAdopted);
+        return StartReplacementSessionCoreAsync(fileId, startPosition, forceStartPosition, audioTrackIndex,
+            forceDirectAudioSelection, previousFinalPosition, qualityPreference, onSessionAdopted, ct);
+    }
+
+    private async Task<PlaybackStartResponse> StartReplacementSessionCoreAsync(
+        int fileId,
+        double startPosition,
+        bool forceStartPosition,
+        int? audioTrackIndex,
+        bool forceDirectAudioSelection,
+        double? previousFinalPosition,
+        string? qualityPreference,
+        Action<PlaybackStartResponse>? onSessionAdopted,
+        CancellationToken ct)
     {
         var owner = _apiClient.CaptureIdentityContext();
         var previousSessionId = _sessionId;
@@ -740,6 +780,10 @@ public partial class PlaybackManager : IDisposable
             response = await StartReplacementAsync().ConfigureAwait(false);
         }
 
+        onSessionAdopted?.Invoke(response);
+        if (!_apiClient.IsCurrentIdentityContext(owner) || !ReferenceEquals(CurrentSession, response))
+            throw new OperationCanceledException("Playback owner changed.", ct);
+
         if (!string.IsNullOrWhiteSpace(previousSessionId) &&
             !string.Equals(previousSessionId, response.SessionId, StringComparison.Ordinal))
         {
@@ -754,13 +798,25 @@ public partial class PlaybackManager : IDisposable
         // positional indices; watch-detail indices never go on the wire here.
         if (HasPendingSubtitleSelection())
         {
+            var acceptedStart = response;
             var subtitleRevision = CaptureSubtitleRevision();
             try
             {
-                response = await ReplanAsync("track_change", response.Position, _qualityPreferenceV3,
-                    selectedTracks => { }, failure: null, ct).ConfigureAwait(false);
+                await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    // The gate can outlive this replacement. Never apply its
+                    // pending choice to a session adopted while it was queued.
+                    if (!_apiClient.IsCurrentIdentityContext(owner) || !ReferenceEquals(CurrentSession, response))
+                        throw new OperationCanceledException("Playback owner changed.", ct);
+                    EnsureBufferingReplanOwner();
+                    response = await ReplanCoreAsync("track_change", response.Position, _qualityPreferenceV3,
+                        selectedTracks => { }, failure: null, ct, expectedOwner: (response, owner)).ConfigureAwait(false);
+                }
+                finally { _replanGuard.Release(); }
             }
-            catch (Exception ex) when (!ct.IsCancellationRequested && ReferenceEquals(CurrentSession, response))
+            catch (Exception ex) when (!ct.IsCancellationRequested && _apiClient.IsCurrentIdentityContext(owner) &&
+                ReferenceEquals(CurrentSession, response))
             {
                 // The start was already accepted. A rejected subtitle refinement
                 // (including a request timeout) must not fail that playable plan.
@@ -772,6 +828,8 @@ public partial class PlaybackManager : IDisposable
                 response.SubtitleReconciliationFailed = true;
                 LogToStateTrace($"Replacement subtitle reconciliation failed; keeping accepted plan {response.PlanId}: {ex.Message}");
             }
+            if (!ReferenceEquals(response, acceptedStart))
+                onSessionAdopted?.Invoke(response);
         }
 
         return response;
