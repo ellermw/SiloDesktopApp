@@ -3954,7 +3954,7 @@ public partial class PlayerService : IDisposable
             _pendingInitialServerSubtitleIndex = null;
             _pendingLegacySubtitleSelection = new(explicitSelection.Value, _activeAuthority,
                 _activeAuthority.ApiClient.CaptureContext(), legacyManager, session,
-                Volatile.Read(ref _playGeneration), _playbackCts?.Token ?? CancellationToken.None);
+                Volatile.Read(ref _playRequestGeneration), _playbackCts?.Token ?? CancellationToken.None);
             return;
         }
 
@@ -4270,7 +4270,7 @@ public partial class PlayerService : IDisposable
             !request.Authority.ApiClient.IsCurrentContext(request.Context) ||
             !ReferenceEquals(request.Manager, _playbackManager) ||
             !ReferenceEquals(request.Session, request.Manager.CurrentSession) ||
-            request.PlayGeneration != Volatile.Read(ref _playGeneration) ||
+            request.PlayGeneration != Volatile.Read(ref _playRequestGeneration) ||
             _pendingInitialSubtitleFileId != request.Session.MediaFileId ||
             request.Session.SubtitleUrls.Count != 0 || request.Session.IsSubtitleBurnedIn || _mpv == null)
             return false;
