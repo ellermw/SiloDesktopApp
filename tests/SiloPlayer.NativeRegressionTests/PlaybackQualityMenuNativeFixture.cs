@@ -152,7 +152,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 try
                 {
                     Set(mpv, "_directOpen", null);
-                    var selection = await Open(); Call(selection, "Input", "end"); Call(selection, "Input", "activate");
+                    var selection = await Open(); SelectLastQuality(selection); Call(selection, "Input", "activate");
                     await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
                     await Until(() => !service.IsLoading && !service.IsQualitySwitchActive && !(bool)Get(service, "_switchingContent")!,
                         "Quality load failure stranded its own busy state.");
@@ -240,7 +240,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 wire.HoldSuccessfulReplan = mode == "access-quality";
                 var selection = await Open();
                 if (mode == "access-version") { Call(selection, "Input", "home"); Call(selection, "Input", "down"); }
-                else Call(selection, "Input", "end");
+                else SelectLastQuality(selection);
                 Call(selection, "Input", "activate");
                 await (mode == "access-version" ? wire.ReplacementStarted.Task : wire.ReplanStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
                 var identity = api.CaptureIdentityContext();
@@ -573,6 +573,12 @@ internal static class PlaybackQualityMenuNativeFixture
             queries[id] = reply;
             try { mpv.SendScriptMessage("quality-fixture-query", id, "quality"); return await reply.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
             finally { queries.TryRemove(id, out _); }
+        }
+        void SelectLastQuality(object menu)
+        {
+            Call(menu, "Input", "end");
+            if (((ListView)Get(menu, "_list")!).SelectedItem is ListViewItem { Tag: "speed" })
+                Call(menu, "Input", "up");
         }
         async Task<object> Open()
         {
