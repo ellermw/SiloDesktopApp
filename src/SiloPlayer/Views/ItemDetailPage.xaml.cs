@@ -980,10 +980,11 @@ public sealed partial class ItemDetailPage : Page
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
         var client = App.Services.GetRequiredService<SiloApiClient>();
-        var context = client.CaptureContext();
+        // Committed VM state survives access/read invalidation, but not an owner change.
+        var identity = client.CaptureIdentityContext();
         var item = ViewModel.Item;
         var navigation = _navigationCts;
-        bool Current() => client.IsCurrentContext(context) && ReferenceEquals(ViewModel.Item, item)
+        bool Current() => client.IsCurrentIdentityContext(identity) && ReferenceEquals(ViewModel.Item, item)
             && ReferenceEquals(_navigationCts, navigation) && navigation?.IsCancellationRequested != true;
         if (args.PropertyName == nameof(ViewModel.BoxSet))
             DispatcherQueue.TryEnqueue(BuildBoxSetRow);
