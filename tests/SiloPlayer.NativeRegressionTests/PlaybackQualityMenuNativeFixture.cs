@@ -27,6 +27,7 @@ internal static class PlaybackQualityMenuNativeFixture
         using var wire = new Wire(media.Origin);
         using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://native-quality.fixture.invalid"); api.SetProfile("synthetic");
+        api.SetDeviceMetadata("quality-desktop", "Fixture", "Windows");
         using var auth = new AuthService(api, new AuthApi(api));
         var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
         using var service = new PlayerService(playback, catalog, auth, api,
