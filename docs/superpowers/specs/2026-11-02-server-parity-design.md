@@ -31,7 +31,7 @@ In a separate focused PR, honor the subtitle-read route's retryable `503` and `R
 
 ### Episode descriptions
 
-When an episode has no nonblank overview, show the series overview resolved in the current library/language scope. Render the series translation status and translate that series description, rather than writing it to the episode. A series overview reveals no episode-specific plot and remains visible under episode spoiler protection. An episode's own overview retains current reveal/spoiler behavior. Missing/failed fallback must not block the detail page. Retire delayed reads/translations when the item, library, profile, language or page owner changes.
+When an episode has no nonblank overview, show the series overview resolved in the current library/language scope. Render the series translation status and translate that series description, rather than writing it to the episode. A series overview reveals no episode-specific plot and remains visible under episode spoiler protection. An episode's own overview retains reveal/spoiler behavior: hide an unwatched episode's hero plot while the preference is unknown or its initial read is in flight. A definitively failed optional read without a known hide value, or an older unsupported server, may use the visible default; retain known protection on same-viewer retries. Episode-card policy is unchanged. Missing/failed fallback must not block the detail page. Retire delayed reads/translations when the item, library, profile, language or page owner changes.
 
 ### Synced collection sort direction
 
