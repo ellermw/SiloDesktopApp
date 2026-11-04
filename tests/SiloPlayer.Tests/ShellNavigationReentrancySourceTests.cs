@@ -88,10 +88,21 @@ public sealed class ShellNavigationReentrancySourceTests
             Assert.Contains($"if (completed) _interruptedCardArtwork.Remove({border})", load);
             Assert.Contains($"else _interruptedCardArtwork.Add({border})", load);
         }
-        var configure = MethodBody(page, "private async Task ConfigureOnViewTranslationAsync(");
+        // Overview translation lives in its own partial; keep checking the
+        // actual lifecycle implementation rather than its former file location.
+        var overview = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.Overview.cs");
+        var configure = MethodBody(overview, "private async Task ConfigureOnViewTranslationAsync(");
         Assert.Contains("++_overviewTranslationStatusReads", configure);
         Assert.Contains("--_overviewTranslationStatusReads", configure);
+        Assert.Contains("finally", configure);
+        Assert.Contains("ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context)", configure);
         Assert.Contains("_overviewTranslationInterrupted = true", configure);
+        var translate = MethodBody(overview, "private async Task TranslateOverviewAsync(");
+        Assert.Contains("_isTranslatingOverview = true", translate);
+        Assert.Contains("_isTranslatingOverview = false", translate);
+        Assert.Contains("ReferenceEquals(_translationCts, cts)", translate);
+        Assert.Contains("ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context)", translate);
+        Assert.Contains("_overviewTranslationInterrupted = true", translate);
         var departed = MethodBody(page, "protected override void OnNavigatedFrom(");
         Assert.Contains("_isTranslatingOverview = false", departed);
         Assert.Contains("_overviewTranslationInterrupted = false", departed);
