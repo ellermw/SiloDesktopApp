@@ -34,7 +34,7 @@ public sealed partial class ItemDetailPage : Page
     private EpisodeSpoilerPreferences? _episodeSpoilerPreferences;
     private string? _revealedEpisodeOverviewId;
     private int _episodeSpoilerRevision;
-    private bool _isTranslatingOverview;
+    private (MediaItemDetail Item, int? Library, long WatchedRevision, bool HideImages, bool HideOverviews)? _episodeCardSpoilerOwner;
     private bool _translateButtonMode;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
@@ -108,6 +108,8 @@ public sealed partial class ItemDetailPage : Page
         UpdateThemeGradientColors();
 
         this.Loaded += OnPageLoaded;
+        Loaded += (_, _) => StartOverviewScopeWatch();
+        Unloaded += (_, _) => _overviewScopeTimer?.Stop();
         Unloaded += (_, _) => { if (!IsLoaded) RetireSiblingEpisodeScrollRequest(); };
         Loaded += (_, _) => ViewModel.SimilarItems.CollectionChanged += OnSimilarItemsChanged;
         Unloaded += (_, _) => ViewModel.SimilarItems.CollectionChanged -= OnSimilarItemsChanged;
@@ -859,6 +861,8 @@ public sealed partial class ItemDetailPage : Page
         MoveIntoHero(HeroMetadataRow);
         MoveIntoHero(ScoresPanel);
         MoveIntoHero(OverviewText);
+        MoveIntoHero(RevealEpisodeOverviewButton);
+        MoveIntoHero(OverviewTranslationLabel);
         MoveIntoHero(TranslateOverviewButton);
         MoveIntoHero(HeroCrewLine);
         MoveIntoHero(GenresBadgesPanel);
@@ -869,6 +873,8 @@ public sealed partial class ItemDetailPage : Page
         HeroMetadataRow.Margin = new Thickness(0, 6, 0, 0);
         ScoresPanel.Margin = new Thickness(0, 2, 0, 0);
         OverviewText.Margin = new Thickness(0, 4, 0, 0);
+        RevealEpisodeOverviewButton.Margin = new Thickness(0, 2, 0, 0);
+        OverviewTranslationLabel.Margin = new Thickness(0, 2, 0, 0);
         TranslateOverviewButton.Margin = new Thickness(0, 2, 0, 0);
         HeroCrewLine.Margin = new Thickness(0, 2, 0, 0);
         GenresBadgesPanel.Margin = new Thickness(0, 4, 0, 0);
@@ -933,6 +939,8 @@ public sealed partial class ItemDetailPage : Page
                     if (ViewModel.Item is { Type: "episode" })
                         BuildSiblingEpisodeCards();
                 }
+                else if (ViewModel.Item?.Type is "series" or "season")
+                    LayoutEpisodeGrid();
             });
     }
 
@@ -1000,6 +1008,7 @@ public sealed partial class ItemDetailPage : Page
         if (TrailerOverlay.Visibility == Visibility.Visible)
             CloseTrailerModal();
         base.OnNavigatedFrom(e);
+        _revealedEpisodeOverviewId = null;
 
         SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged;
         ++_titleArtRevision;
@@ -1061,6 +1070,14 @@ public sealed partial class ItemDetailPage : Page
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
         _navigationCts = new CancellationTokenSource();
+        _revealedEpisodeOverviewId = null;
+        _episodeCardSpoilerOwner = null;
+        ++_overviewConfigurationRevision;
+        _translationCts?.Cancel();
+        _translationCts?.Dispose();
+        _translationCts = null;
+        OverviewText.Opacity = 1;
+        TranslateOverviewButton.Visibility = Visibility.Collapsed;
         var navigationToken = _navigationCts.Token;
 
         // This page instance can be reused while navigating directly between
@@ -1163,7 +1180,6 @@ public sealed partial class ItemDetailPage : Page
                 EpisodesPanel.Visibility = Visibility.Visible;
             }
 
-            _ = ConfigureOnViewTranslationAsync(ViewModel.Item);
             if (ViewModel.Item?.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) == true)
                 _ = LoadEbookProgressAsync(ViewModel.Item);
 
@@ -1752,14 +1768,13 @@ public sealed partial class ItemDetailPage : Page
         MetaDot1.Visibility = Visibility.Collapsed;
         MetaDot2.Visibility = Visibility.Collapsed;
 
-        OverviewText.Text = item.Overview ?? "";
-        OverviewTranslationLabel.Visibility = !string.IsNullOrWhiteSpace(item.Overview) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields)
-            ? Visibility.Visible : Visibility.Collapsed;
+        RenderOverview();
+        ConfigureOverviewIfNeeded();
         TaglineTranslationLabel.Visibility = (item.Type is "movie" or "series") && TaglineText.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(item.Tagline) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields, "tagline")
             ? Visibility.Visible : Visibility.Collapsed;
         ApplyEpisodeSpoilers();
         _ = EnsureEpisodeSpoilersAsync();
-        if (string.IsNullOrWhiteSpace(item.PendingTranslationLanguage))
+        if (string.IsNullOrWhiteSpace(ViewModel.OverviewSource?.PendingTranslationLanguage))
             TranslateOverviewButton.Visibility = Visibility.Collapsed;
 
         // Current WebUI renders movie/series genres inline in HeroCrewLine,
@@ -2822,14 +2837,16 @@ public sealed partial class ItemDetailPage : Page
     private void ApplyEpisodeSpoilers()
     {
         if (!IsLoaded || ViewModel.Item is not { } item) return;
+        ApplyOverviewSpoilers();
+        if ((_overviewPendingOwner ?? _overviewConfiguredOwner) is { } overviewOwner &&
+            overviewOwner.Hidden != IsOverviewHidden(item))
+            ConfigureOverviewIfNeeded();
+        var cardOwner = (item, ViewModel.LibraryId, ViewModel.WatchedStateRevision,
+            _episodeSpoilerPreferences?.HideImages == true, _episodeSpoilerPreferences?.HideOverviews == true);
+        // Overview loading/reveal changes do not retire unchanged card actions or still loads.
+        if (_episodeCardSpoilerOwner == cardOwner) return;
+        _episodeCardSpoilerOwner = cardOwner;
         ++_episodeSpoilerRevision;
-        var hidden = item.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true
-            && EpisodeSpoilerPolicy.IsUnwatched(item.UserData?.Played, item.UserData?.IsInProgress, item.UserData?.PositionSeconds)
-            && _revealedEpisodeOverviewId != item.ContentId;
-        OverviewText.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
-        RevealEpisodeOverviewButton.Visibility = hidden && !string.IsNullOrWhiteSpace(item.Overview) ? Visibility.Visible : Visibility.Collapsed;
-        OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(item.Overview) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
-        if (hidden) TranslateOverviewButton.Visibility = Visibility.Collapsed;
         if (ViewModel.Episodes.Count > 0 && item.Type is "series" or "season") LayoutEpisodeGrid();
         if (item.Type == "episode") BuildSiblingEpisodeCards();
     }
@@ -2837,7 +2854,6 @@ public sealed partial class ItemDetailPage : Page
     {
         _revealedEpisodeOverviewId = ViewModel.Item?.ContentId;
         ApplyEpisodeSpoilers();
-        _ = ConfigureOnViewTranslationAsync(ViewModel.Item);
     }
 
     private async Task ConfigureResetProgressAsync(MediaItemDetail item, MenuFlyoutItem action)
@@ -2851,123 +2867,6 @@ public sealed partial class ItemDetailPage : Page
                 action.Visibility = MediaItemActionPolicy.CanResetProgress(item.Type, item.UserData?.PositionSeconds, capability.ClearResumePosition) ? Visibility.Visible : Visibility.Collapsed;
         }
         catch { action.Visibility = Visibility.Collapsed; }
-    }
-
-    private async Task ConfigureOnViewTranslationAsync(MediaItemDetail? item)
-    {
-        if (item == null || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)
-            || item.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true
-                && EpisodeSpoilerPolicy.IsUnwatched(item.UserData?.Played, item.UserData?.IsInProgress, item.UserData?.PositionSeconds)
-                && _revealedEpisodeOverviewId != item.ContentId)
-        {
-            TranslateOverviewButton.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        try
-        {
-            var api = App.Services.GetRequiredService<CatalogApi>();
-            var context = api.CaptureContext();
-            var status = await api.GetMetadataAiStatusAsync(_navigationCts?.Token ?? default);
-            if (!api.IsCurrentContext(context) || !IsCurrentDetail(item.ContentId)) return;
-            if (!status.Enabled)
-            {
-                TranslateOverviewButton.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            if (status.OnView.Equals("button", StringComparison.OrdinalIgnoreCase))
-            {
-                _translateButtonMode = true;
-                TranslateOverviewButton.Visibility = Visibility.Visible;
-                TranslateOverviewButton.IsEnabled = true;
-                TranslateOverviewButton.Content = "Translate description";
-            }
-            else if (status.OnView.Equals("auto", StringComparison.OrdinalIgnoreCase))
-            {
-                _translateButtonMode = false;
-                TranslateOverviewButton.Visibility = Visibility.Collapsed;
-                await TranslateOverviewAsync(item);
-            }
-            else
-            {
-                _translateButtonMode = false;
-                TranslateOverviewButton.Visibility = Visibility.Collapsed;
-            }
-        }
-        catch
-        {
-            TranslateOverviewButton.Visibility = Visibility.Collapsed;
-        }
-    }
-
-    private async void TranslateOverviewButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel.Item != null)
-            await TranslateOverviewAsync(ViewModel.Item);
-    }
-
-    private async Task TranslateOverviewAsync(MediaItemDetail item)
-    {
-        if (_isTranslatingOverview
-            || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)
-            || !IsCurrentDetail(item.ContentId)) return;
-        _isTranslatingOverview = true;
-        _translationCts?.Cancel();
-        _translationCts?.Dispose();
-        _translationCts = CancellationTokenSource.CreateLinkedTokenSource(_navigationCts?.Token ?? default);
-        _translationCts.CancelAfter(TimeSpan.FromSeconds(45));
-        var ct = _translationCts.Token;
-        TranslateOverviewButton.Visibility = Visibility.Visible;
-        TranslateOverviewButton.IsEnabled = false;
-        TranslateOverviewButton.Content = "Translating…";
-        OverviewText.Opacity = 0.55;
-
-        try
-        {
-            var api = App.Services.GetRequiredService<CatalogApi>();
-            var context = api.CaptureContext();
-            await api.TranslateItemDescriptionAsync(item.ContentId, item.PendingTranslationLanguage!, ct);
-            if (!api.IsCurrentContext(context)) return;
-            while (!ct.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                if (!IsActiveDetail(item.ContentId, ct) || !api.IsCurrentContext(context)) return;
-                await ViewModel.ReloadAsync(item.ContentId);
-                if (!IsActiveDetail(item.ContentId, ct) || !api.IsCurrentContext(context)) return;
-                var refreshed = ViewModel.Item;
-                if (refreshed == null) continue;
-                OverviewText.Text = refreshed.Overview ?? "";
-                if (string.IsNullOrWhiteSpace(refreshed.PendingTranslationLanguage))
-                {
-                    UpdateUI();
-                    TranslateOverviewButton.Visibility = Visibility.Collapsed;
-                    break;
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // The page was left or the WebUI-equivalent 45 second poll window elapsed.
-        }
-        catch (Exception ex)
-        {
-            App.Services.GetRequiredService<Services.ToastService>().Error(ex);
-        }
-        finally
-        {
-            _isTranslatingOverview = false;
-            if (IsCurrentDetail(item.ContentId))
-            {
-                OverviewText.Opacity = 1;
-                if (_translateButtonMode && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage))
-                {
-                    TranslateOverviewButton.Visibility = Visibility.Visible;
-                    TranslateOverviewButton.IsEnabled = true;
-                    TranslateOverviewButton.Content = "Translate description";
-                }
-            }
-        }
     }
 
     private void UpdateScoresRow(MediaItemDetail item)

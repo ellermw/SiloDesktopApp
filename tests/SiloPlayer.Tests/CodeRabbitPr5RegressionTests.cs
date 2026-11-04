@@ -120,22 +120,18 @@ public sealed class CodeRabbitPr5RegressionTests
     }
 
     [Fact]
-    public void MangaAndTranslationReloadsCannotRepaintAReusedDetailPage()
+    public void MangaReloadsCannotRepaintAReusedDetailPage()
     {
         var source = Normalize(Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
         var manga = SliceMethod(source, "private async void MangaWatched_Click", "private async void MangaDownload_Click");
-        var translation = SliceMethod(source, "private async Task TranslateOverviewAsync", "private void UpdateScoresRow");
 
         Assert.Contains("var navigationToken = _navigationCts?.Token", manga);
         Assert.True(Count(manga, "IsActiveDetail(parentContentId, navigationToken.Value)") >= 2);
         Assert.Contains("MarkWatchedAsync(chapter.ContentId, navigationToken.Value)", manga);
         Assert.Contains("MarkUnwatchedAsync(chapter.ContentId, navigationToken.Value)", manga);
 
-        Assert.True(Count(translation, "IsActiveDetail(item.ContentId, ct)") >= 2);
-        var reload = translation.IndexOf("await ViewModel.ReloadAsync(item.ContentId);", StringComparison.Ordinal);
-        var postReloadGuard = translation.IndexOf("IsActiveDetail(item.ContentId, ct)", reload, StringComparison.Ordinal);
-        Assert.True(reload >= 0 && postReloadGuard > reload);
-        Assert.Contains("IsCurrentDetail(item.ContentId)", translation);
+        // Translation ownership is exercised through real controls in
+        // EpisodeOverviewNativeFixture and delayed reads in EpisodeOverviewTests.
     }
 
     [Fact]
