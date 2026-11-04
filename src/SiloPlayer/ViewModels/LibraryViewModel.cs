@@ -499,23 +499,25 @@ public partial class LibraryViewModel : ObservableObject
 
     private async Task<bool> ResolveGroupingAsync(Library? library, int version, CancellationToken ct)
     {
+        var supported = false;
         try
         {
             var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" }
                 && SelectedType is null or "" or "movie" or "video";
-            var supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
-            if (ct.IsCancellationRequested || version != _queryVersion || _catalogContext != _catalogApi.CaptureContext()
-                || _catalogLibraryScope != LibraryGroupingScope(Library)) return false;
-            _catalogGroup = supported ? "box_set" : null;
-            return true;
+            supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || version != _queryVersion) { return false; }
         catch (Exception ex)
         {
-            if (version == _queryVersion)
-                ErrorMessage = $"Failed to load catalog capabilities: {ex.Message}";
-            return false;
+            // Optional capabilities (including a transport timeout, not caller
+            // cancellation) must not block browsing. Keep this query ungrouped
+            // throughout its windows, counts and alphabet; a new query can retry.
+            SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex, "catalog_grouping_capabilities");
         }
+        if (ct.IsCancellationRequested || version != _queryVersion || _catalogContext != _catalogApi.CaptureContext()
+            || _catalogLibraryScope != LibraryGroupingScope(Library)) return false;
+        _catalogGroup = supported ? "box_set" : null;
+        return true;
     }
 
     public enum GroupedRefreshResult { Completed, Deferred, Failed }

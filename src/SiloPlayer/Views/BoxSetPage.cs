@@ -62,7 +62,9 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         DispatcherQueue.TryEnqueue(() =>
         {
             if (message.Context is {} context && !_catalog.IsCurrentContext(context)) return;
-            if (_knownMembership?.Items.Any(x => x.ContentId == message.ContentId) != true) return;
+            // Until the initial read completes, membership is unknown. A change
+            // must replace that read rather than let its pre-mutation state win.
+            if (!_active || (_knownMembership != null ? !_knownMembership.Items.Any(x => x.ContentId == message.ContentId) : !ViewModel.IsLoading)) return;
             if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.PlaybackProgress or MediaSurfaceChangeKind.ItemMetadataRefreshed) Refresh();
         });
     }
@@ -151,9 +153,10 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         play.Click += async (_, _) =>
         {
             if (!play.IsEnabled || _playPending) return;
+            var visit = _visit;
             _playPending = true; play.IsEnabled = false;
             try { await PlayPrimaryAsync(); }
-            catch (OperationCanceledException) when (!_active) { }
+            catch (Exception) when (!_active || visit != _visit) { }
             catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
             finally { _playPending = false; if (ViewModel.Detail is {} current && _renderedSet != null) UpdateDetail(current); }
         };

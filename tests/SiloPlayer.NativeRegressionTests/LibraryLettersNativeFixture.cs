@@ -237,6 +237,7 @@ internal static class LibraryLettersNativeFixture
                 if (grouped)
                 {
                     await VerifyGroupedRefreshViewportAsync(page, wire, client);
+                    if (type == "mixed") await VerifyRestoredBrowseTypeAsync(frame, page, wire);
                     wire.Grouped = false; catalog.InvalidateLibraryCache();
                     await Until(() => page.ViewModel.Library is { BoxSetsEnabled: false } && page.ViewModel.GetWindowItem(0)?.Type == "movie");
                     await Until(() => !Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().Any());
@@ -319,6 +320,38 @@ internal static class LibraryLettersNativeFixture
         }
     }
 
+    private static async Task VerifyRestoredBrowseTypeAsync(Frame frame, LibraryPage page, Wire wire)
+    {
+        page.ViewModel.SelectedSort = "year"; page.ViewModel.SelectedType = "movie";
+        var scroll = (ScrollViewer)page.FindName("LibraryScroller");
+        scroll.ChangeView(null, 0, null, true);
+        await page.ViewModel.LoadCommand.ExecuteAsync(null);
+        await Until(() => page.ViewModel.TotalCount > 0 && !page.ViewModel.IsLoading && scroll.VerticalOffset < 1);
+        try
+        {
+            foreach (var restoredType in new string?[] { "episode", "movie", null })
+            {
+                frame.Navigate(typeof(Page)); await Until(() => !page.IsLoaded);
+                // Simulate another client's saved browse scope changing while
+                // this exact LibraryPage and its completed catalog are cached.
+                wire.SavedSearch = "?tab=library&sort=year" + (restoredType == null ? "" : "&type=" + restoredType);
+                var reads = wire.CatalogScopes.Count;
+                frame.GoBack();
+                await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && page.ViewModel.SelectedType == restoredType &&
+                    wire.CatalogScopes.Count > reads && page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
+                var expectedGroup = restoredType == "episode" ? null : "box_set";
+                if (page.ViewModel.SelectedSort != "year" || page.ViewModel.TotalCount != 1000 ||
+                    wire.CatalogScopes.Skip(reads).Any(scope => scope.Type != restoredType || scope.Group != expectedGroup))
+                    throw new InvalidOperationException("Cached Library return did not reload under its restored non-title browse scope.");
+                await Until(() => Descendants(page).OfType<SiloPlayer.Controls.LibraryGridCard>().Any(card => card.MediaItem != null));
+                if (((TextBlock)page.FindName("LibraryEmptyText")).Visibility == Visibility.Visible)
+                    throw new InvalidOperationException("Changed restored browse type displayed an empty Library instead of reloaded cards.");
+            }
+            Program.Log("PASS: cached mixed Library returns reload movies/episodes/default scope under a non-title sort and render non-empty cards.");
+        }
+        finally { wire.SavedSearch = null; }
+    }
+
     private static async Task InvokeLetterAsync(Button button, LibraryViewModel model)
     {
         var jump = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -350,9 +383,16 @@ internal static class LibraryLettersNativeFixture
         internal bool FailIndex, OmitWindowTotals;
         internal TaskCompletionSource? LetterIndexGate, CatalogWindowGate, CountGate, CatalogWindowStarted;
         internal List<int> Seeks { get; } = [];
+        internal string? SavedSearch;
+        internal List<(string? Type, string? Group)> CatalogScopes { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (SavedSearch != null && path == "/api/v2/settings/values/effective")
+                return Reply(new { items = new object[] { new { key = "ui.remember_library_page_state", value = (object)true },
+                    new { key = "ui.library_page_state", value = (object)new { version = 1, libraries = new Dictionary<string, object> { [CurrentLibraryId.ToString()] = new { search = SavedSearch } } } } } });
+            if (SavedSearch != null && path.EndsWith("/settings/values/ui.library_page_state") && request.Method == HttpMethod.Put)
+                return Reply(new { key = "ui.library_page_state", value = new { } });
             if (path == "/api/v2/user/libraries") return Reply(new { items = new[] { new { id = CurrentLibraryId, type = CurrentType, enabled = true, box_sets_enabled = Grouped } } });
             if (path == "/api/v2/catalog/search/capabilities") return Reply(new { letter_index = true, box_sets = Grouped });
             if (path == "/api/v2/catalog/letters")
@@ -371,7 +411,9 @@ internal static class LibraryLettersNativeFixture
                 var query = request.RequestUri.Query.TrimStart('?').Split('&').Select(pair => pair.Split('=', 2))
                     .ToDictionary(pair => Uri.UnescapeDataString(pair[0]), pair => Uri.UnescapeDataString(pair[1]));
                 LastOrder = query.GetValueOrDefault("sort"); LastGenre = query.GetValueOrDefault("genre");
-                if (Grouped && query.GetValueOrDefault("group") != "box_set") MissingGroup++;
+                CatalogScopes.Add((query.GetValueOrDefault("type"), query.GetValueOrDefault("group")));
+                var grouped = query.GetValueOrDefault("group") == "box_set";
+                if (Grouped && (query.GetValueOrDefault("type") is null or "" or "movie" or "video") && !grouped) MissingGroup++;
                 var limit = int.Parse(query["limit"]); var offset = query.TryGetValue("seek", out var seek) ? int.Parse(seek) : 0;
                 if (query.ContainsKey("seek")) Seeks.Add(offset);
                 if (query.TryGetValue("cursor", out var cursor))
@@ -391,7 +433,7 @@ internal static class LibraryLettersNativeFixture
                 }
                 var count = Math.Min(limit, 1000 - offset);
                 var skipTotal = query.ContainsKey("skip_total");
-                return CompleteCatalogAsync(Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = Grouped && index % 2 == 0 ? "box_set" : "movie", box_set = Grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
+                return CompleteCatalogAsync(Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = grouped && index % 2 == 0 ? "box_set" : "movie", box_set = grouped && index % 2 == 0 ? new { id = index.ToString(), library_id = query["library_id"], title = "Box set " + index, movie_count = 3, played_count = PlayedCount } : null }),
                     total = OmitWindowTotals && skipTotal ? 0 : 1000, total_exact = !skipTotal, window_cursor = query["library_id"] + ":" + limit + ":0:" + query.GetValueOrDefault("group", ""),
                     page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) + ":" + query.GetValueOrDefault("group", "") } }), skipTotal, ct);
             }

@@ -73,6 +73,59 @@ internal static partial class EpisodeQuickPlayNativeFixture
             finally { scope.Wire.ReleaseWatch.TrySetResult(); }
         }
         await VerifyBoxSetAbandonmentAsync(scope);
+        await VerifyBoxSetDepartureAsync(scope);
+    }
+
+    private static async Task VerifyBoxSetDepartureAsync(LifecycleScope scope)
+    {
+        foreach (var boundary in new[] { "authority", "request", "watch", "revalidation-return" })
+        {
+            await scope.ResetAsync(); scope.Window.ShowMainNavigation(); scope.Wire.AcceptStart = true;
+            var navigation = scope.Services.GetRequiredService<NavigationService>();
+            Check(navigation.NavigateImmediately(typeof(BoxSetPage), new BoxSetNavigationArgs("7", "73")), "Could not enter box-set departure route.");
+            await Until(() => scope.Frame.Content is BoxSetPage ready && ready.IsLoaded && ready.ViewModel.Detail != null);
+            var page = (BoxSetPage)scope.Frame.Content;
+            var play = Descendants<Button>(page).Single(button => button.Name == "BoxSetPlay");
+            var toasts = Descendants<ToastContainer>((Microsoft.UI.Xaml.DependencyObject)scope.Window.Content).Single();
+            var stack = (StackPanel)toasts.FindName("ToastStack"); stack.Children.Clear();
+            SemaphoreSlim? held = null;
+            try
+            {
+                if (boundary is "authority" or "request")
+                {
+                    held = (SemaphoreSlim)GetField(scope.Player, boundary == "authority" ? "_authoritySwitchGate" : "_playRequestGate")!;
+                    await held.WaitAsync();
+                }
+                if (boundary == "watch") scope.Wire.HoldWatch = "boxset-film";
+                if (boundary == "revalidation-return")
+                {
+                    page.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+                    scope.Client.InvalidateAccessContext(); scope.Wire.HoldBoxSet = true;
+                }
+                Invoke(play);
+                if (boundary == "watch") await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                else if (boundary == "revalidation-return") await scope.Wire.BoundaryStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                else await Until(() => !play.IsEnabled && GetField(scope.Player, boundary == "request" ? "_playRequestCts" : "_scopedViewerPlayCts") != null);
+                scope.Frame.Navigate(typeof(Page));
+                await Until(() => !page.IsLoaded);
+                if (boundary == "revalidation-return")
+                {
+                    // Let the old read complete only after the same page is active
+                    // in a new visit. !_active alone cannot recognize that owner.
+                    scope.Wire.HoldBoxSet = false; scope.Frame.GoBack();
+                    await Until(() => ReferenceEquals(scope.Frame.Content, page) && page.IsLoaded && page.ViewModel.Detail != null && !page.ViewModel.IsLoading);
+                }
+            }
+            finally
+            {
+                held?.Release(); scope.Wire.ReleaseWatch.TrySetResult(); scope.Wire.ReleaseBoundary.TrySetResult(); scope.Wire.HoldBoxSet = false;
+            }
+            await Until(() => !(bool)GetField(page, "_playPending")!);
+            await Task.Delay(80);
+            Check(stack.Children.Count == 0 && scope.Wire.Starts.Count == 0,
+                "Leaving during " + boundary + " must retire box-set Play without any error toast or playback start.");
+            Program.Log("PASS: actual box-set departure during " + boundary + " is silent.");
+        }
     }
 
     private static async Task VerifyBoxSetAbandonmentAsync(LifecycleScope scope)

@@ -288,7 +288,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
         internal TaskCompletionSource BoundaryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal List<(string Path, string? Profile)> Requests = [];
-        internal bool AcceptStart, BoxSetsEnabled;
+        internal bool AcceptStart, BoxSetsEnabled, HoldBoxSet;
         internal int Stops, Suggestions, BoxSetReads;
         internal List<JsonElement> Stages = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -302,6 +302,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             if (BoxSetsEnabled && path == "/api/v2/catalog/box-sets/7")
             {
                 ++BoxSetReads;
+                if (HoldBoxSet) { BoundaryStarted.TrySetResult(); await ReleaseBoundary.Task; }
                 return Json("""{"id":"7","library_id":"73","title":"Fixture box set","movie_count":1,"items":[{"content_id":"boxset-film","type":"movie","title":"Fixture film"}]}""");
             }
             if (path == "/api/v2/settings/contract/capabilities") return Json("""{"api_version":1,"manifest_revision":17,"supports_batched_effective":true}""");
