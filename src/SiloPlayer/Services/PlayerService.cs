@@ -5283,11 +5283,16 @@ public partial class PlayerService : IDisposable
     public int ActiveSubtitleServerIndex => _activeSubtitleServerIndex;
 
     private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track)
+        => HasSubtitleSelectionRoute(track, ResolveNativeEmbeddedSid, null);
+
+    private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track,
+        Func<SubtitleTrackInfo, int> resolveNativeSid, IReadOnlySet<int>? sidecarIndices)
     {
         if (track.Unplayable) return false;
         if (IsUnsupportedBitmapSubtitle(track)) return true;
         if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
-            CanUseNativeEmbeddedSubtitleTrack() && ResolveNativeEmbeddedSid(track) > 0) return true;
+            CanUseNativeEmbeddedSubtitleTrack() && resolveNativeSid(track) > 0) return true;
+        if (sidecarIndices != null) return sidecarIndices.Contains(track.Index);
         return _playbackManager?.GetSubtitleUrls().Any(pair => pair.Track.Index == track.Index &&
             Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https") == true;
     }
@@ -5509,11 +5514,13 @@ public partial class PlayerService : IDisposable
         async Task<SubtitlePrefetchOutcome> ReadUrlFallbackAsync()
         {
             if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+            using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token);
+            fallbackBudget.CancelAfter(TimeSpan.FromSeconds(8));
             try
             {
                 // Keep the applied SID until the download completes. No UI or
                 // subtitle-state lock is held while mpv reads the remote URL.
-                var sid = await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, track.Label, track.Language, bounded.Token);
+                var sid = await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, track.Label, track.Language, fallbackBudget.Token);
                 lock (_subtitleTrackStateLock)
                 {
                     if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
@@ -5522,7 +5529,11 @@ public partial class PlayerService : IDisposable
                 }
                 return SubtitlePrefetchOutcome.Ready;
             }
-            catch (OperationCanceledException) { return SubtitlePrefetchOutcome.Retired; }
+            catch (OperationCanceledException)
+            {
+                return bounded.IsCancellationRequested || !CurrentOwner()
+                    ? SubtitlePrefetchOutcome.Retired : SubtitlePrefetchOutcome.Error;
+            }
             catch (ObjectDisposedException) when (!CurrentOwner()) { return SubtitlePrefetchOutcome.Retired; }
         }
         try
@@ -5569,12 +5580,19 @@ public partial class PlayerService : IDisposable
     private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track)
     {
         if (_mpv == null || track.Unplayable || !CanUseNativeEmbeddedSubtitleTrack()) return 0;
+        return ResolveNativeEmbeddedSid(track, _mpv.GetEmbeddedSubtitleTracks(),
+            _mpv.HasFfmpegTrackIndices(), _mpv.HasContainerTrackIds());
+    }
+
+    private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track, IReadOnlyList<NativeSubtitleTrack> loaded,
+        bool trustworthyStreamIndex, bool trustworthyContainerTrackId)
+    {
         // Pre-v3 rows carry their raw label directly; adapted v3 display labels
         // may instead be synthesized from the language and are not identity.
         var title = track.NativeTitle ?? (_playbackManager?.CurrentSession?.ProtocolVersion < 3 ? track.Label : null);
         return NativeSubtitleSelection.Resolve(new(0, track.StreamIndex, track.ContainerTrackId,
             track.Codec, track.Language, title, track.Forced, track.HearingImpaired),
-            _mpv.GetEmbeddedSubtitleTracks(), _mpv.HasFfmpegTrackIndices(), _mpv.HasContainerTrackIds());
+            loaded, trustworthyStreamIndex, trustworthyContainerTrackId);
     }
 
     private void SendTitleToOsc()

@@ -1291,6 +1291,69 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void SiloCastSubtitleRoutesReuseOneNativeAndUrlSnapshotPerCapture()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.SiloCast.cs"));
+        var start = source.IndexOf("public JsonObject CaptureSiloCastState()", StringComparison.Ordinal);
+        var end = source.IndexOf("public async Task ApplySiloCastControlAsync(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var capture = source[start..end];
+        var loopStart = capture.IndexOf("foreach (var t in subtitleTracks.Where", StringComparison.Ordinal);
+        Assert.True(loopStart > 0);
+        var snapshot = capture[..loopStart];
+        foreach (var read in new[] { "GetEmbeddedSubtitleTracks()", "HasFfmpegTrackIndices()", "HasContainerTrackIds()", "GetSubtitleUrls()" })
+        {
+            Assert.Equal(1, snapshot.Split(read, StringSplitOptions.None).Length - 1);
+            Assert.DoesNotContain(read, capture[loopStart..]);
+        }
+        Assert.Contains("ResolveNativeEmbeddedSid(track, nativeTracks, trustworthyStreamIndex, trustworthyContainerTrackId)", snapshot);
+        Assert.Contains("HasSubtitleSelectionRoute(t, resolveNativeSid, sidecarIndices)", capture[loopStart..]);
+        Assert.Contains("url.Scheme is \"http\" or \"https\"", snapshot);
+        Assert.Contains(".Select(pair => pair.Track.Index).ToHashSet()", snapshot);
+
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var resolverStart = service.IndexOf("private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track, IReadOnlyList<NativeSubtitleTrack> loaded,", StringComparison.Ordinal);
+        var resolverEnd = service.IndexOf("private void SendTitleToOsc()", resolverStart, StringComparison.Ordinal);
+        Assert.True(resolverStart >= 0 && resolverEnd > resolverStart);
+        var resolver = service[resolverStart..resolverEnd];
+        Assert.Contains("NativeSubtitleSelection.Resolve(", resolver);
+        Assert.Contains("loaded, trustworthyStreamIndex, trustworthyContainerTrackId", resolver);
+        Assert.DoesNotContain("_mpv.", resolver);
+        Assert.Contains("if (sidecarIndices != null) return sidecarIndices.Contains(track.Index);", service);
+    }
+
+    [Fact]
+    public void NativeSubtitleUrlFallbackHasADeadlineAndRetainsLateReplyCleanup()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("async Task<SubtitlePrefetchOutcome> ReadUrlFallbackAsync()", StringComparison.Ordinal);
+        var end = source.IndexOf("var read = await SubtitleSidecarReader.ReadAsync(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var fallback = source[start..end];
+        Assert.Contains("using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token);", fallback);
+        Assert.Contains("fallbackBudget.CancelAfter(TimeSpan.FromSeconds(8));", fallback);
+        Assert.Contains("await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, track.Label, track.Language, fallbackBudget.Token)", fallback);
+        Assert.Contains("return bounded.IsCancellationRequested || !CurrentOwner()", fallback);
+        Assert.Contains("? SubtitlePrefetchOutcome.Retired : SubtitlePrefetchOutcome.Error;", fallback);
+
+        var native = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Player", "MpvPlayer.AsyncSubtitle.cs"));
+        var publicStart = native.IndexOf("public async Task<int> AddSubtitleUnselectedAsync(", StringComparison.Ordinal);
+        var laneStart = native.IndexOf("private async Task<(int Sid, long FileGeneration)> AddSubtitleInLaneAsync(", publicStart, StringComparison.Ordinal);
+        Assert.True(publicStart >= 0 && laneStart > publicStart);
+        var caller = native[publicStart..laneStart];
+        Assert.Contains("pending.WaitAsync(ct)", caller);
+        Assert.Contains("CleanupRetiredSubtitleAddAsync(pending)", caller);
+        Assert.DoesNotContain("_asyncSubtitleAddLane.Release()", caller);
+        Assert.Contains("finally { _asyncSubtitleAddLane.Release(); }", native[laneStart..]);
+        Assert.Contains("await pending.ConfigureAwait(false)", native);
+        Assert.Contains("sid > 0 && fileGeneration == _asyncSubtitleFileGeneration", native);
+        Assert.Contains("Command(\"sub-remove\", sid.ToString", native);
+        Assert.Contains("if (ct.IsCancellationRequested || !added)", native);
+    }
+
+    [Fact]
     public void RemoteSidecarsAreDownloadedBeforeTheSynchronousSubAdd()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));

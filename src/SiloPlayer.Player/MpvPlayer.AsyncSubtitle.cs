@@ -20,12 +20,48 @@ public sealed partial class MpvPlayer
     /// </summary>
     public async Task<int> AddSubtitleUnselectedAsync(string url, string? title, string? language, CancellationToken ct)
     {
+        var pending = AddSubtitleInLaneAsync(url, title, language, ct);
+        try
+        {
+            var result = await pending.WaitAsync(ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            return result.Sid;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Abort is a request, not a guarantee that native I/O has stopped.
+            // Release the caller now, but keep the lane and late-SID cleanup
+            // alive until the actual reply so a retry cannot claim its track.
+            _ = CleanupRetiredSubtitleAddAsync(pending);
+            throw;
+        }
+    }
+
+    private async Task<(int Sid, long FileGeneration)> AddSubtitleInLaneAsync(string url, string? title, string? language, CancellationToken ct)
+    {
         await _asyncSubtitleAddLane.WaitAsync(ct).ConfigureAwait(false);
         try { return await AddSubtitleUnselectedCoreAsync(url, title, language, ct).ConfigureAwait(false); }
         finally { _asyncSubtitleAddLane.Release(); }
     }
 
-    private async Task<int> AddSubtitleUnselectedCoreAsync(string url, string? title, string? language, CancellationToken ct)
+    private async Task CleanupRetiredSubtitleAddAsync(Task<(int Sid, long FileGeneration)> pending)
+    {
+        try
+        {
+            var (sid, fileGeneration) = await pending.ConfigureAwait(false);
+            // Also cover cancellation racing a successfully completed add.
+            lock (_asyncSubtitleGate)
+            {
+                if (sid > 0 && fileGeneration == _asyncSubtitleFileGeneration)
+                    Command("sub-remove", sid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex) { ReportErrorSafely($"Retired subtitle add cleanup failed: {ex.Message}"); }
+    }
+
+    private async Task<(int Sid, long FileGeneration)> AddSubtitleUnselectedCoreAsync(string url, string? title, string? language, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -108,8 +144,9 @@ public sealed partial class MpvPlayer
                     }
                 }
             }
-            ct.ThrowIfCancellationRequested();
-            return added ? sid : 0;
+            // Return the identity even if cancellation raced the cleanup check.
+            // The caller's cancellation path can then remove that exact late SID.
+            return (added ? sid : 0, fileGeneration);
         }
         finally
         {
