@@ -215,6 +215,9 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     await Loaded(() => service.SetSubtitleTrackAndPersistAsync(baseline + 1, baselineTrack.Language, baselineTrack));
                 }
                 await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                Require(manager.SubtitleSelectionForLoad == baseline && service.ActiveSubtitleServerIndex == baseline &&
+                    (baseline == Dvd ? mpv.GetPropertyDouble("sid") <= 0 : NativeSidMatches(service, mpv, baseline)),
+                    "Rejected-pause fixture baseline was not applied before starting the held request.");
                 service.SetWatchTogetherPlayback(room);
                 service.SetPaused(paused);
                 await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
@@ -550,12 +553,17 @@ internal static class BurnedInSubtitleSwitchNativeFixture
 
         async Task Loaded(Func<Task> action)
         {
+            var subtitleGeneration = (long)Get(service, "_subtitleSidecarGeneration")!;
             var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void Ready() => loaded.TrySetResult(); service.ContentLoaded += Ready;
             try
             {
                 await action();
                 await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8));
+                // ContentLoaded is raised before the initializer installs its
+                // CTS. Require its new subtitle epoch before accepting null CTS.
+                await Until(() => (long)Get(service, "_subtitleSidecarGeneration")! > subtitleGeneration &&
+                    !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
                 Call(service, "StopPlaybackStallWatchdog");
             }
             finally { service.ContentLoaded -= Ready; }

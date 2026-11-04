@@ -1217,7 +1217,18 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "A pending manual choice was applied or persisted before replacement initialization finished.");
                 subtitles.MediaRelease.TrySetResult();
             }
-            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            if (scenario == "manual-reload-gap")
+            {
+                Program.Log($"Manual replacement before initializer completion: generation={Get(service, "_subtitleSidecarGeneration")}, previousGeneration={generation}, loading={service.IsLoading}, initializing={Get(service, "_loadedMediaInitCts") != null}, active={service.ActiveSubtitleServerIndex}, sid={mpv.GetPropertyDouble("sid")}, mapped={((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).Count}, preferenceWrites={wire.PreferenceWrites}.");
+                // The outgoing read can retire before the replacement's
+                // FILE_LOADED initializer even starts. A newer subtitle epoch
+                // proves that initializer ran; null CTS then proves it ended.
+                await Task.WhenAll(pending, Until(() =>
+                    (long)Get(service, "_subtitleSidecarGeneration")! > generation &&
+                    !service.IsLoading && Get(service, "_loadedMediaInitCts") == null))
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else await pending.WaitAsync(TimeSpan.FromSeconds(5));
             await Task.Delay(200); // Drain real libmpv client/Lua message delivery.
             var observations = seen.ToArray();
             if (scenario is "newer-off" or "newer-track")
