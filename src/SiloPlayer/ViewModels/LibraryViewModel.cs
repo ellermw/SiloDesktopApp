@@ -475,6 +475,14 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
+    partial void OnSelectedTypeChanged(string? value)
+    {
+        // Type is part of the catalog shape. Retire grouped cards, cursors and
+        // alphabet positions before a non-movie scope can reuse them.
+        StartNewCatalogQuery();
+        Items.Clear();
+    }
+
     private async Task<bool> EnsureGroupingAsync()
     {
         if (_catalogContext is null && _catalogLibraryScope is null)
@@ -493,7 +501,8 @@ public partial class LibraryViewModel : ObservableObject
     {
         try
         {
-            var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "mixed" };
+            var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "mixed" }
+                && SelectedType is null or "" or "movie" or "video";
             var supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
             if (ct.IsCancellationRequested || version != _queryVersion || _catalogContext != _catalogApi.CaptureContext()
                 || _catalogLibraryScope != LibraryGroupingScope(Library)) return false;

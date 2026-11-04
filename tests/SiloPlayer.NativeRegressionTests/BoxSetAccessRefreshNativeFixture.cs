@@ -5,6 +5,7 @@ using SiloPlayer.Controls;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
+using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
 internal static partial class EpisodeQuickPlayNativeFixture
@@ -70,6 +71,57 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 Program.Log($"PASS: box-set {handler} during held /watch in {(minimized ? "Minimized" : "Idle")} retains mounted route/controls/history and starts the accepted session.");
             }
             finally { scope.Wire.ReleaseWatch.TrySetResult(); }
+        }
+        await VerifyBoxSetAbandonmentAsync(scope);
+    }
+
+    private static async Task VerifyBoxSetAbandonmentAsync(LifecycleScope scope)
+    {
+        foreach (var boundary in new[] { "authority-superseded", "request-superseded", "watch-superseded", "close", "room-authority", "room-request" })
+        {
+            await scope.ResetAsync(); scope.Window.ShowMainNavigation(); scope.Wire.AcceptStart = true;
+            var navigation = scope.Services.GetRequiredService<NavigationService>();
+            Check(navigation.NavigateImmediately(typeof(BoxSetPage), new BoxSetNavigationArgs("7", "73")), "Could not enter box-set feedback route.");
+            await Until(() => scope.Frame.Content is BoxSetPage ready && ready.IsLoaded && ready.ViewModel.Detail != null);
+            var page = (BoxSetPage)scope.Frame.Content;
+            var play = Descendants<Button>(page).Single(button => button.Name == "BoxSetPlay");
+            var toasts = Descendants<ToastContainer>((Microsoft.UI.Xaml.DependencyObject)scope.Window.Content).Single();
+            ((StackPanel)toasts.FindName("ToastStack")).Children.Clear();
+            var coordinator = scope.Services.GetRequiredService<WatchTogetherCoordinator>();
+            SemaphoreSlim? held = null; Task? successor = null;
+            try
+            {
+                if (boundary is "authority-superseded" or "close" or "room-authority")
+                    held = (SemaphoreSlim)GetField(scope.Player, "_authoritySwitchGate")!;
+                if (boundary is "request-superseded" or "room-request")
+                    held = (SemaphoreSlim)GetField(scope.Player, "_playRequestGate")!;
+                if (held != null) await held.WaitAsync();
+                if (boundary == "watch-superseded") scope.Wire.HoldWatch = "boxset-film";
+                Invoke(play);
+                if (boundary == "watch-superseded") await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                else await Until(() => !play.IsEnabled && GetField(scope.Player,
+                    boundary is "request-superseded" or "room-request" ? "_playRequestCts" : "_scopedViewerPlayCts") != null);
+                if (boundary.EndsWith("superseded"))
+                    successor = scope.Player.PlayAsync("newer-intent", expectedIdentityContext: scope.Client.CaptureIdentityContext());
+                else if (boundary == "close") await scope.Player.CloseAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                else coordinator.SetActiveRoom(new WatchTogetherRoomViewModel(scope.Playback, scope.Client)
+                {
+                    RoomId = "joined-room", RoomToken = "synthetic-proof",
+                    Room = new() { RoomId = "joined-room", Phase = "lobby", SelectedContentId = "room-film" },
+                });
+            }
+            finally
+            {
+                held?.Release(); scope.Wire.ReleaseWatch.TrySetResult();
+                if (successor != null) await successor.WaitAsync(TimeSpan.FromSeconds(3));
+            }
+            await Until(() => play.IsEnabled && Descendants<TextBlock>(toasts).Any(text =>
+                text.Text.Contains("Playback was interrupted") && text.Text.Contains("try again")));
+            Check(scope.Wire.Starts.Count == (successor == null ? 0 : 1)
+                && scope.Player.ContentId != "boxset-film", "Abandoned box-set primary action started its retired movie.");
+            if (boundary.StartsWith("room"))
+                Check(coordinator.ActiveRoom?.RoomId == "joined-room", "Abandoned standalone entry replaced the newly active room.");
+            Program.Log("PASS: actual box-set Play reports an actionable toast after " + boundary + ".");
         }
     }
 }

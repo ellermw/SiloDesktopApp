@@ -31,6 +31,92 @@ public sealed class GroupedLibraryTests
         model.CancelCatalogLoads();
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("movie", true)]
+    [InlineData("video", true)]
+    [InlineData("episode", false)]
+    [InlineData("series", false)]
+    [InlineData("audiobook", false)]
+    [InlineData("ebook", false)]
+    [InlineData("manga", false)]
+    public async Task MixedLibraryBrowseTypeScopesCatalogCountsSeekAndLetters(string? type, bool grouped)
+    {
+        foreach (var large in new[] { false, true })
+        {
+            using var wire = new Wire(); var model = wire.Create("mixed");
+            model.SelectedType = type;
+            if (large)
+            {
+                model.UseAdvancedRules = true;
+                model.AdvancedRules.Add(new QueryRule { Field = "title", Op = "contains", Value = new string('x', 34000) });
+            }
+            await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+            await model.JumpToLetterCommand.ExecuteAsync("M");
+            await model.EnsureRangeLoadedAsync(800, 859); await model.PrefetchAroundAsync(800, 859, true);
+            Assert.NotEmpty(wire.Catalog); Assert.NotEmpty(wire.Letters);
+            Assert.All(wire.Catalog, request =>
+            {
+                Assert.Equal(type, request.Type);
+                Assert.Equal(grouped ? "box_set" : null, request.Group);
+                Assert.Equal(large ? "POST" : "GET", request.Method);
+            });
+            Assert.All(wire.Letters, body =>
+            {
+                Assert.Equal(string.IsNullOrEmpty(type) ? null : type, body.TryGetProperty("type", out var scope) ? scope.GetString() : null);
+                Assert.Equal(grouped ? "box_set" : null, body.TryGetProperty("group", out var group) ? group.GetString() : null);
+            });
+            Assert.Contains(wire.CatalogRanges, request => request.IncludeTotal);
+            Assert.Equal(1000, model.DisplayTotalCount); Assert.NotNull(model.GetWindowItem(800));
+            model.CancelCatalogLoads();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChangingBrowseTypeRetiresGroupedCardsCursorsAndLetters(bool applyFilter)
+    {
+        using var wire = new Wire(); var model = wire.Create("mixed");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        Assert.True(model.IsGroupedCatalog); Assert.NotNull(model.GetWindowItem(0)!.BoxSet);
+        foreach (var type in new[] { "episode", "movie" })
+        {
+            var before = wire.Catalog.Count;
+            model.SelectedType = type;
+            Assert.False(model.IsGroupedCatalog); Assert.Null(model.GetWindowItem(0)); Assert.Null(model.LetterIndex);
+            if (applyFilter) await model.ApplyFilterCommand.ExecuteAsync(null);
+            else await model.LoadWindowAsync(0, 60);
+            await model.EnsureLetterIndexAsync();
+            Assert.Equal(type == "movie", model.IsGroupedCatalog);
+            Assert.Null(wire.CatalogRanges[before].Cursor);
+            Assert.All(wire.Catalog.Skip(before), request =>
+            {
+                Assert.Equal(type, request.Type);
+                Assert.Equal(type == "movie" ? "box_set" : null, request.Group);
+            });
+            Assert.Equal(type, wire.Letters.Last().GetProperty("type").GetString());
+            Assert.Equal(type == "movie", wire.Letters.Last().TryGetProperty("group", out _));
+        }
+        model.CancelCatalogLoads();
+    }
+
+    [Fact]
+    public async Task BrowseTypeChangeDuringCapabilityReadRetiresTheGroupedPreflight()
+    {
+        using var wire = new Wire { HoldCapabilities = true }; var model = wire.Create("mixed");
+        var old = model.LoadCommand.ExecuteAsync(null);
+        await wire.CapabilitiesStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        model.SelectedType = "episode";
+        wire.ReleaseCapabilities.TrySetResult(); await old;
+        await model.LoadWindowAsync(0, 60); await model.EnsureLetterIndexAsync();
+        Assert.NotEmpty(wire.Catalog);
+        Assert.All(wire.Catalog, request => { Assert.Equal("episode", request.Type); Assert.Null(request.Group); });
+        Assert.All(wire.Letters, body => { Assert.Equal("episode", body.GetProperty("type").GetString()); Assert.False(body.TryGetProperty("group", out _)); });
+        model.CancelCatalogLoads();
+    }
+
     [Fact]
     public async Task LargePostAndDescendingFilteredAlphabetKeepTheGroupedScope()
     {
@@ -127,6 +213,7 @@ public sealed class GroupedLibraryTests
     [InlineData("disable")]
     [InlineData("profile")]
     [InlineData("query")]
+    [InlineData("type")]
     [InlineData("navigation")]
     public async Task LateGroupedPageCannotPopulateRetiredScope(string change)
     {
@@ -137,6 +224,7 @@ public sealed class GroupedLibraryTests
         if (change == "disable") model.Library = new Library { Id = 9, Type = "movie", BoxSetsEnabled = false };
         if (change == "profile") wire.Client!.SetProfile("replacement");
         if (change == "query") { model.SelectedGenre = "Drama"; model.CancelCatalogLoads(); }
+        if (change == "type") model.SelectedType = "episode";
         if (change == "navigation") model.SuspendCatalogLoads();
         wire.Release.TrySetResult(); await read;
         Assert.Null(model.GetWindowItem(800)); model.CancelCatalogLoads();
@@ -232,7 +320,7 @@ public sealed class GroupedLibraryTests
         public readonly TaskCompletionSource CapabilitiesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseCapabilities = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SiloApiClient? Client;
         public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public readonly List<(string? Group, string Method, string? Order)> Catalog = [];
+        public readonly List<(string? Group, string Method, string? Order, string? Type)> Catalog = [];
         public readonly List<(int Start, string? Cursor, bool IncludeTotal)> CatalogRanges = [];
         public readonly List<JsonElement> Letters = [];
         public LibraryViewModel Create(string type = "movie", bool enabled = true)
@@ -263,7 +351,7 @@ public sealed class GroupedLibraryTests
                 string? Value(string key) => body.ValueKind == JsonValueKind.Object && body.TryGetProperty(key, out var member) ? member.ToString() : query.GetValueOrDefault(key);
                 var start = int.TryParse(Value("seek"), out var seek) ? seek : int.TryParse(Value("cursor")?.Replace("next-", ""), out var next) ? next : 0;
                 var limit = int.TryParse(Value("limit"), out var size) ? size : 100;
-                Catalog.Add((Value("group"), request.Method.Method, Value("order") ?? (Value("sort")?.StartsWith('-') == true ? "desc" : "asc")));
+                Catalog.Add((Value("group"), request.Method.Method, Value("order") ?? (Value("sort")?.StartsWith('-') == true ? "desc" : "asc"), Value("type")));
                 var includeTotal = Value("skip_total") != "true" && Value("skip_total") != "True";
                 CatalogRanges.Add((start, Value("cursor"), includeTotal));
                 if (HoldCatalog) { Started.TrySetResult(); await Release.Task; }

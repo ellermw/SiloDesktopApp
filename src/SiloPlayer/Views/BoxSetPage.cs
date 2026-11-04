@@ -89,8 +89,8 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             if (movie is null) throw new InvalidOperationException("This movie is no longer available. Refresh the box set and try again.");
             return MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
                 () => _active && visit == _visit && _client.IsCurrentIdentityContext(identity),
-                (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>().PlayAsync(target,
-                    libraryId: scope, expectedContext: context, expectedIdentityContext: identity, cancellationToken: cancellation));
+                (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>()
+                    .PlayPrimaryAsync(target, scope, context, identity, cancellation));
         });
     }
     public void Render()
