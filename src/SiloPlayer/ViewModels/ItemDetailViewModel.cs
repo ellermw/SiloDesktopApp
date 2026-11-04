@@ -100,12 +100,13 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (refreshed.ContentId != item.ContentId) { OverviewResolutionFailed = true; return null; }
             }
             if (!Current()) return null;
-            if (item.Type == "episode" && string.IsNullOrWhiteSpace((refreshed ?? item).Overview) &&
-                !string.IsNullOrWhiteSpace(item.SeriesId))
+            var source = refreshed ?? item;
+            if (source.Type == "episode" && string.IsNullOrWhiteSpace(source.Overview) &&
+                !string.IsNullOrWhiteSpace(source.SeriesId))
             {
-                series = await _catalogApi.GetItemDetailAsync(item.SeriesId, library, ct);
+                series = await _catalogApi.GetItemDetailAsync(source.SeriesId, library, ct);
                 if (!Current()) return null;
-                if (series.ContentId != item.SeriesId) { OverviewResolutionFailed = true; return null; }
+                if (series.ContentId != source.SeriesId) { OverviewResolutionFailed = true; return null; }
             }
             // Publish text, provenance and scope together, only after all required reads succeed.
             if (refreshed != null)
@@ -113,6 +114,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                 item.Overview = refreshed.Overview;
                 item.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
                 item.MachineTranslatedFields = refreshed.MachineTranslatedFields;
+                item.SeriesId = refreshed.SeriesId;
+                item.SeriesTitle = refreshed.SeriesTitle;
             }
             _seriesOverview = series;
             _overviewLibrary = library;

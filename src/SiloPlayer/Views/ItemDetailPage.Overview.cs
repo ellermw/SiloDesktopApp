@@ -8,7 +8,7 @@ namespace SiloPlayer.Views;
 public sealed partial class ItemDetailPage
 {
     private long _overviewConfigurationRevision;
-    // Spoiler transitions must reconfigure translation even when the source scope is unchanged.
+    // Spoiler transitions may enable translation, but must not retire an active translation.
     private sealed record OverviewConfigurationOwner(MediaItemDetail Item, int? Library, ApiRequestContext Context,
         long Language, CancellationTokenSource? Navigation, bool Hidden);
     private OverviewConfigurationOwner? _overviewConfiguredOwner, _overviewPendingOwner;
@@ -49,6 +49,14 @@ public sealed partial class ItemDetailPage
         if (ViewModel.Item is not { } item || !IsCurrentDetail(item.ContentId) || _navigationCts?.IsCancellationRequested == true) return;
         var api = App.Services.GetRequiredService<CatalogApi>();
         var owner = new OverviewConfigurationOwner(item, ViewModel.LibraryId, api.CaptureContext(), api.LocalizedReadGeneration, _navigationCts, IsOverviewHidden(item));
+        if (_translationCts is { IsCancellationRequested: false } && _overviewConfiguredOwner is { } configured &&
+            owner == (configured with { Hidden = owner.Hidden }))
+        {
+            // Only presentation changed: retain the POST/poll owner and remember the new visibility.
+            _overviewConfiguredOwner = owner;
+            RenderOverview();
+            return;
+        }
         if (owner == _overviewPendingOwner)
         {
             if (_overviewRetryAt is not { } retryAt || DateTimeOffset.UtcNow < retryAt) return;
@@ -75,14 +83,17 @@ public sealed partial class ItemDetailPage
         RevealEpisodeOverviewButton.Visibility = hidden ? Visibility.Visible : Visibility.Collapsed;
         OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(source?.Overview) &&
             MachineTranslationPresentation.HasField(source?.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
-        if (hidden || ViewModel.OverviewSource == null) TranslateOverviewButton.Visibility = Visibility.Collapsed;
+        TranslateOverviewButton.Visibility = !hidden && ViewModel.OverviewSource is { } current &&
+            !string.IsNullOrWhiteSpace(current.PendingTranslationLanguage) &&
+            (_translateButtonMode || _translationCts is { IsCancellationRequested: false })
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private bool IsOverviewHidden(MediaItemDetail owner) =>
         owner.Type == "episode" && !string.IsNullOrWhiteSpace(owner.Overview) &&
-        // Failed optional reads use the last known preference, or the base visible default.
+        // Match episode cards: use the current viewer's last known preference, or the visible default.
         ((_episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>()) is { } preferences &&
-            preferences.ShouldHideOverviews) &&
+            preferences.HideOverviews) &&
         EpisodeSpoilerPolicy.IsUnwatched(owner.UserData?.Played, owner.UserData?.IsInProgress, owner.UserData?.PositionSeconds) &&
         _revealedEpisodeOverviewId != owner.ContentId;
 
@@ -201,7 +212,7 @@ public sealed partial class ItemDetailPage
             ReferenceEquals(item, ViewModel.Item) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library;
         bool OwnerCurrent() => ControlsCurrent() &&
             ReferenceEquals(source, ViewModel.OverviewSource) && api.IsCurrentContext(context) &&
-            api.LocalizedReadGeneration == language && !IsOverviewHidden(item);
+            api.LocalizedReadGeneration == language;
         bool Current() => !ct.IsCancellationRequested && OwnerCurrent();
         TranslateOverviewButton.Visibility = Visibility.Visible;
         TranslateOverviewButton.IsEnabled = false;

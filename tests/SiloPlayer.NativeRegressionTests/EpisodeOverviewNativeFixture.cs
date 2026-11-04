@@ -27,8 +27,7 @@ internal static class EpisodeOverviewNativeFixture
         var client = new SiloApiClient(http); client.SetBaseUrl("https://episode-overview.fixture.invalid"); client.SetProfile("fixture");
         var api = new CatalogApi(client);
         using var spoilers = new EpisodeSpoilerPreferences(new SettingsApi(client));
-        await spoilers.EnsureLoadedAsync();
-        Check(spoilers.HideOverviews, "Fixture must enable actual episode spoiler preferences");
+        wire.HoldSpoilers = true; wire.OwnOverview = "First-paint episode plot.";
         var vm = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException("Unexpected unscoped read")));
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "episode-overview-images"));
         slot.SetValue(null, new Services(original, client, api, vm, spoilers, http, images));
@@ -40,9 +39,34 @@ internal static class EpisodeOverviewNativeFixture
             parent.Children.Add(page); await Task.Delay(100);
             Set(page, "_navigationCts", navigation); Set(page, "_currentContentId", "episode");
             await vm.LoadInLibraryAsync("episode", 42);
+            var firstSiblings = Field<List<Episode>>(page, "_siblingEpisodes");
+            firstSiblings.Add(new Episode { ContentId = "first-sibling", Title = "Sibling", Overview = "First-paint sibling plot." });
+            Call(page, "UpdateUI");
+            await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Call(page, "BuildSiblingEpisodeCards");
+            ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
+            ((ScrollViewer)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
+            page.UpdateLayout();
+            var overview = (ExpandableDescription)page.FindName("OverviewText");
+            var firstRail = (StackPanel)page.FindName("SiblingEpisodesPanel");
+            await Until(() => Descendants(firstRail).OfType<EpisodeCardCaption>().Count() == 1);
+            Check(!spoilers.IsLoadedForCurrentContext && overview.Text == wire.OwnOverview &&
+                overview.Visibility == Visibility.Visible &&
+                ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed &&
+                Descendants(firstRail).OfType<EpisodeCardCaption>().Single().Presentation.Overview == "First-paint sibling plot.",
+                "First paint uses the same visible-default policy for the episode plot and sibling captions while preferences are unknown");
+            wire.HoldSpoilers = false; wire.ReleaseSpoilers.TrySetResult();
+            await spoilers.EnsureLoadedAsync();
+            Check(spoilers.HideOverviews, "Fixture must enable actual episode spoiler preferences");
+            await Until(() => overview.Visibility == Visibility.Collapsed && vm.OverviewSource != null &&
+                Descendants(firstRail).OfType<EpisodeCardCaption>().SingleOrDefault()?.Presentation.Overview == "");
+            firstSiblings.Clear(); Call(page, "BuildSiblingEpisodeCards");
+            wire.Reset();
+            Program.Log("PASS: first-paint own plot and sibling captions share the visible default, then both apply the loaded spoiler preference.");
+
+            await vm.LoadInLibraryAsync("episode", 42);
             Call(page, "UpdateUI");
             await (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
-            var overview = (ExpandableDescription)page.FindName("OverviewText");
             Check(overview.Text == Wire.SeriesText, "Whitespace episode description must display the series overview");
             Check(wire.Paths.Contains("/api/v2/catalog/items/series?library_id=42"), "Series fallback must carry library scope");
             Check(overview.Visibility == Visibility.Visible && ((Button)page.FindName("RevealEpisodeOverviewButton")).Visibility == Visibility.Collapsed,
@@ -141,6 +165,48 @@ internal static class EpisodeOverviewNativeFixture
                     "The restored action translates the current episode overview");
             }
             Program.Log("PASS: watched/progress spoiler transitions restore own-overview translation without Reveal or reload.");
+
+            foreach (var stage in new[] { "post", "poll" })
+            foreach (var change in new[] { "watched", "progress", "reveal" })
+            {
+                wire.Reset(); wire.OwnOverview = "An automatically translated episode plot."; wire.OnView = "auto";
+                wire.HoldPost = stage == "post"; wire.HoldPoll = stage == "poll";
+                Set(page, "_revealedEpisodeOverviewId", null);
+                await vm.LoadInLibraryAsync("episode", 42);
+                vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "episode"));
+                var configuration = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
+                Call(page, "UpdateUI");
+                await (stage == "post" ? wire.PostEntered.Task : wire.PollEntered.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                var translation = Field<CancellationTokenSource>(page, "_translationCts");
+                var revision = Field<long>(page, "_overviewConfigurationRevision");
+
+                vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedCleared, "episode"));
+                Call(page, "ApplyEpisodeSpoilers");
+                Check(overview.Visibility == Visibility.Collapsed && button.Visibility == Visibility.Collapsed &&
+                    !translation.IsCancellationRequested && ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts")) &&
+                    Field<long>(page, "_overviewConfigurationRevision") == revision && wire.Posts.Count == 1,
+                    "Hiding an own plot during automatic translation changes only presentation, not its POST/poll owner");
+
+                if (change == "watched") vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "episode"));
+                else if (change == "progress") vm.Receive(new PlaybackProgressUpdated("episode", 60, 1200, false));
+                else Call(page, "RevealEpisodeOverviewButton_Click", button, new RoutedEventArgs());
+                Call(page, "ApplyEpisodeSpoilers"); Call(page, "RefreshRetiredOverviewScope");
+                await Task.Delay(550);
+                Check(overview.Visibility == Visibility.Visible && button.Visibility == Visibility.Visible && !button.IsEnabled &&
+                    (string)button.Content == "Translating…" && overview.Opacity == 0.55 &&
+                    !translation.IsCancellationRequested && ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts")) &&
+                    Field<long>(page, "_overviewConfigurationRevision") == revision && wire.Posts.Count == 1,
+                    $"A {change} transition during a held automatic {stage} retains the original translation and restores its busy presentation");
+
+                wire.ReleasePost.TrySetResult(); wire.ReleasePoll.TrySetResult();
+                await configuration;
+                Check(wire.Posts.Single() == "/api/v2/catalog/items/episode/translate-description|fr" && wire.PollReads > 0 &&
+                    vm.OverviewSource!.PendingTranslationLanguage == null && overview.Opacity == 1 &&
+                    button.Visibility == Visibility.Collapsed && Field<CancellationTokenSource?>(page, "_translationCts") == null,
+                    "The original automatic translation finishes polling without a duplicate POST after spoiler transitions");
+            }
+            Set(page, "_revealedEpisodeOverviewId", null);
+            Program.Log("PASS: watched/progress/reveal transitions preserve an in-flight automatic POST and poll without duplicate translations.");
 
             foreach (var mode in new[] { "button", "auto" })
             foreach (var change in new[] { "access", "same-profile" })

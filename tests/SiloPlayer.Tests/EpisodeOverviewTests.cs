@@ -39,6 +39,71 @@ public sealed class EpisodeOverviewTests
     }
 
     [Theory]
+    [InlineData("language", "series", "new-series")]
+    [InlineData("access", "series", "new-series")]
+    [InlineData("retry", "series", "new-series")]
+    [InlineData("language", null, "new-series")]
+    [InlineData("access", "series", null)]
+    public async Task RefreshedEpisodeUsesItsCurrentSeriesLink(string change, string? previousId, string? currentId)
+    {
+        using var scope = new Scope { SeriesId = previousId, FailSeries = change == "retry" };
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var episode = scope.Vm.Item;
+        await scope.Vm.ResolveOverviewAsync();
+        if (change == "language") scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        else if (change == "access") scope.Client.InvalidateAccessContext();
+        var reads = scope.Paths.Count;
+        scope.FailSeries = false; scope.SeriesId = currentId;
+        scope.SeriesTitle = currentId == null ? null : "Current series";
+
+        var source = await scope.Vm.ResolveOverviewAsync();
+
+        Assert.False(scope.Vm.OverviewResolutionFailed);
+        Assert.Same(episode, scope.Vm.Item);
+        Assert.Equal(currentId, episode!.SeriesId);
+        Assert.Equal(scope.SeriesTitle, episode.SeriesTitle);
+        Assert.DoesNotContain("/api/v2/catalog/items/series?library_id=42", scope.Paths.Skip(reads));
+        if (currentId == null)
+        {
+            Assert.Null(source);
+            Assert.Null(scope.Vm.OverviewSource);
+            Assert.Single(scope.Paths.Skip(reads));
+        }
+        else
+        {
+            Assert.Equal(currentId, source!.ContentId);
+            Assert.Contains($"/api/v2/catalog/items/{currentId}?library_id=42", scope.Paths.Skip(reads));
+            scope.Translated = true;
+            await scope.Vm.RefreshOverviewAsync(source, default);
+            Assert.Equal($"/api/v2/catalog/items/{currentId}?library_id=42", scope.Paths.Last());
+            Assert.Equal("Résumé traduit", source.Overview);
+            Assert.Null(source.PendingTranslationLanguage);
+        }
+    }
+
+    [Fact]
+    public async Task FailedRelinkedSeriesReadDoesNotPublishPartOfTheReplacement()
+    {
+        using var scope = new Scope();
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var episode = scope.Vm.Item;
+        var previous = await scope.Vm.ResolveOverviewAsync();
+        scope.Client.InvalidateAccessContext();
+        scope.SeriesId = "new-series"; scope.SeriesTitle = "Current series"; scope.FailSeries = true;
+        Assert.Null(await scope.Vm.ResolveOverviewAsync());
+        Assert.True(scope.Vm.OverviewResolutionFailed);
+        Assert.Equal("series", episode!.SeriesId);
+        Assert.Equal("Original series", episode.SeriesTitle);
+        Assert.Same(previous, scope.Vm.OverviewDisplaySource);
+        Assert.Null(scope.Vm.OverviewSource);
+
+        scope.FailSeries = false;
+        Assert.Equal("new-series", (await scope.Vm.ResolveOverviewAsync())!.ContentId);
+        Assert.Equal("new-series", episode.SeriesId);
+        Assert.Equal("Current series", episode.SeriesTitle);
+    }
+
+    [Theory]
     [InlineData("language", null)] [InlineData("access", null)]
     [InlineData("language", "")] [InlineData("access", "")]
     [InlineData("language", " \t\r\n ")] [InlineData("access", " \t\r\n ")]
@@ -414,7 +479,7 @@ public sealed class EpisodeOverviewTests
     private sealed class Scope : HttpMessageHandler
     {
         private readonly HttpClient _http;
-        internal string? Own = "", SeriesId = "series";
+        internal string? Own = "", SeriesId = "series", SeriesTitle = "Original series";
         internal string ItemType = "episode", TargetLanguage = "fr";
         internal string[] OwnMachineTranslatedFields = [];
         internal bool HoldSeries, FailSeries, Translated, HoldItem, FailItem;
@@ -432,15 +497,15 @@ public sealed class EpisodeOverviewTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.PathAndQuery; Paths.Add(path);
-            if (request.RequestUri.AbsolutePath.EndsWith("/series"))
+            if (request.RequestUri.AbsolutePath.EndsWith("/series") || request.RequestUri.AbsolutePath.EndsWith("/new-series"))
             {
                 if (HoldSeries) { Entered.TrySetResult(); await Release.Task; }
                 if (FailSeries) return new(HttpStatusCode.InternalServerError);
-                return Json(new { content_id = "series", type = "series", overview = Translated ? "Résumé traduit" : "Series summary",
+                return Json(new { content_id = request.RequestUri.AbsolutePath.Split('/').Last(), type = "series", overview = Translated ? "Résumé traduit" : "Series summary",
                     pending_translation_language = Translated ? null : "fr", machine_translated_fields = new[] { "overview" } });
             }
             var value = new { content_id = request.RequestUri.AbsolutePath.Split('/').Last(), type = ItemType,
-                overview = Own, series_id = SeriesId, pending_translation_language = TargetLanguage,
+                overview = Own, series_id = SeriesId, series_title = SeriesTitle, pending_translation_language = TargetLanguage,
                 machine_translated_fields = OwnMachineTranslatedFields, user_state = new { } };
             if (HoldItem) { Entered.TrySetResult(); await Release.Task; }
             if (FailItem) return new(HttpStatusCode.InternalServerError);
