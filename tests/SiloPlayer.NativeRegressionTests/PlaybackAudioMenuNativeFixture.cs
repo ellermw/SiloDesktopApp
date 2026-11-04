@@ -603,16 +603,37 @@ internal static class PlaybackAudioMenuNativeFixture
                 var opener = await Query();
                 NativeClick(opener.GetProperty("x").GetDouble(), opener.GetProperty("y").GetDouble());
                 await Task.Delay(600); // Isolate Audio from More's existing gesture timer.
-                var compact = await Query();
-                Require(compact.GetProperty("compactX").GetDouble() > 0, "Compact Audio row was unavailable.");
-                NativeClick(compact.GetProperty("compactX").GetDouble(), compact.GetProperty("compactY").GetDouble());
+                if (Menu(service) is { } parent && RequestKind() == "more")
+                {
+                    foreground.WatchMenu((Window)Get(parent, "_window")!, MenuHwnd(parent));
+                    var rows = (ListView)Get(parent, "_list")!;
+                    Require(rows.Items.OfType<ListViewItem>().Any(row => row.Tag is "audio" && row.IsEnabled),
+                        "Native More did not expose its enabled Audio action.");
+                    // Execute the actual native pointer-selection close/handoff
+                    // boundary; this is not a physical pointer-input assertion.
+                    Call(parent, "Select", "audio", true);
+                    await Until(() => !ReferenceEquals(Menu(service), parent) && RequestKind() == "audio",
+                        "Native More did not hand off its pointer-selected Audio action.");
+                }
+                else
+                {
+                    var compact = await Query();
+                    Require(compact.GetProperty("compactX").GetDouble() > 0, "Compact Audio row was unavailable.");
+                    NativeClick(compact.GetProperty("compactX").GetDouble(), compact.GetProperty("compactY").GetDouble());
+                }
             }
             else await TriggerOsc();
-            await Until(() => Menu(service) is { } shown && ((ListView)Get(shown, "_list")!).XamlRoot != null,
+            await Until(() => RequestKind() == "audio" && Menu(service) is { } shown &&
+                Get(shown, "_list") is ListView { XamlRoot: not null, Items.Count: 72 },
                 "Actual OSC Audio gesture produced no native Audio menu.");
             foreground.WatchMenu((Window)Get(Menu(service)!, "_window")!, MenuHwnd(Menu(service)!));
             foreground.Observe("menu-opened", MenuHwnd(Menu(service)!), "audio-menu");
             return Menu(service)!;
+        }
+        string? RequestKind()
+        {
+            var request = Get(service, "_nativeMenuRequest");
+            return request?.GetType().GetProperty("Kind")?.GetValue(request) as string;
         }
         void NativeClick(double x, double y)
         {
