@@ -28,6 +28,20 @@ public partial class PlaybackManager
         }
     }
 
+    /// <summary>
+    /// Restores an already executed choice by its source identity. A concurrent
+    /// grant may have replaced the inventory since the player resolved it.
+    /// </summary>
+    public void RecordExecutedSubtitleSelection(SubtitleTrackInfo? track, int mediaFileId)
+    {
+        lock (_trackIntentGate)
+        {
+            _hasViewerSubtitle = true; _viewerSubtitle = track;
+            _viewerSubtitleFile = mediaFileId;
+            ++_subtitleRevision;
+        }
+    }
+
     public void RecordLocalAudioSelection(int audioIndex)
     {
         lock (_trackIntentGate)

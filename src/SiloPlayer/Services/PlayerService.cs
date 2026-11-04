@@ -5237,35 +5237,54 @@ public partial class PlayerService : IDisposable
 
     private void RestoreExecutedSubtitleSelection(bool reapply)
     {
-        var session = _playbackManager?.CurrentSession;
-        var previous = _executedSubtitleTrack;
-        var retained = previous != null && session != null && session.MediaFileId == _executedSubtitleFileId
-            ? session.SubtitleUrls.FirstOrDefault(t => !t.Unplayable &&
-                (!string.IsNullOrWhiteSpace(previous.TrackId) ? t.TrackId == previous.TrackId :
-                    t.Index == previous.Index && t.Source == previous.Source && t.Codec == previous.Codec &&
-                    MediaLanguageCatalog.Normalize(t.Language) == MediaLanguageCatalog.Normalize(previous.Language) &&
-                    t.Forced == previous.Forced && t.HearingImpaired == previous.HearingImpaired))
-            : null;
-        // A retained native-only row may have no route in a replacement remux.
-        // Do not retain a highlight for subtitles the new file cannot execute.
-        if (retained != null && (!HasSubtitleSelectionRoute(retained) ||
-            reapply && !SelectSubtitleTrack(retained))) retained = null;
-        if (retained == null) _mpv?.SetSubtitleTrack(0);
-        _activeSubtitleServerIndex = retained?.Index ?? -1;
-        _pendingSubtitleSelection = _activeSubtitleServerIndex;
+        // Retire the refused pick even if native restoration fails. Refusal
+        // must never prevent the enclosing terminal/recovery handler finishing.
         _pendingInitialServerSubtitleIndex = null;
+        _pendingSubtitleSelection = _activeSubtitleServerIndex;
         if (Volatile.Read(ref _subtitleSelectionOperation) is { } refused) refused.Accepted = false;
-        if (session?.ProtocolVersion >= 3)
-            _playbackManager!.RecordLocalSubtitleSelection(retained?.Index);
-        CommitExecutedSubtitleSelection(retained);
+        try
+        {
+            var manager = _playbackManager;
+            var session = manager?.CurrentSession;
+            var previous = _executedSubtitleTrack;
+            var retained = previous != null && session != null && session.MediaFileId == _executedSubtitleFileId
+                ? session.SubtitleUrls.FirstOrDefault(t => !t.Unplayable &&
+                    (!string.IsNullOrWhiteSpace(previous.TrackId) ? t.TrackId == previous.TrackId :
+                        t.Index == previous.Index && t.Source == previous.Source && t.Codec == previous.Codec &&
+                        MediaLanguageCatalog.Normalize(t.Language) == MediaLanguageCatalog.Normalize(previous.Language) &&
+                        t.Forced == previous.Forced && t.HearingImpaired == previous.HearingImpaired))
+                : null;
+            // A retained native-only row may have no route in a replacement remux.
+            // Do not retain a highlight for subtitles the new file cannot execute.
+            if (retained != null && (!HasSubtitleSelectionRoute(retained) ||
+                reapply && !SelectSubtitleTrack(retained))) retained = null;
+            if (retained == null) _mpv?.SetSubtitleTrack(0);
+            _activeSubtitleServerIndex = retained?.Index ?? -1;
+            _pendingSubtitleSelection = _activeSubtitleServerIndex;
+            if (session?.ProtocolVersion >= 3)
+                manager!.RecordExecutedSubtitleSelection(retained, session.MediaFileId);
+            _executedSubtitleTrack = retained;
+            _executedSubtitleFileId = session?.MediaFileId;
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Subtitle selection restoration failed: {ex}");
+        }
     }
 
     private void ShowSubtitleSelectionUnavailable()
     {
         // Caption shortcuts optimistically paint their choice. Reassert the
         // retained choice when it has no executable route for this file.
-        _mpv?.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        ShowNotice("Subtitle unavailable", "This subtitle cannot be selected in the current stream. Choose another subtitle or turn subtitles off.", "warning");
+        try
+        {
+            _mpv?.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            ShowNotice("Subtitle unavailable", "This subtitle cannot be selected in the current stream. Choose another subtitle or turn subtitles off.", "warning");
+        }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Subtitle refusal feedback failed: {ex}");
+        }
     }
 
     private bool SelectSubtitleTrack(SubtitleTrackInfo track)
