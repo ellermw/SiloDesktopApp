@@ -57,7 +57,7 @@ internal static class SubtitleIdentityNativeFixture
                 : embedded.Any(t => t.Id == 1 && t.StreamIndex == 1) && embedded.Any(t => t.Id == 2 && t.StreamIndex == 2)),
                 "Loaded Matroska subtitle identities do not match the attested demuxer namespace.");
             var closeout = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
-            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "retired-read-cache")
+            if (closeout is "cast-off" or "cast-routes" or "reload-identity" or "preplay-legacy" or "async-add" or "async-lifecycle" or "async-service" or "retired-read-cache")
             {
                 if (closeout == "cast-off")
                 {
@@ -119,9 +119,43 @@ internal static class SubtitleIdentityNativeFixture
                         else if (retire == "inventory") legacySession.SubtitleUrls.Add(new() { Index = 20, TrackId = "identified", Source = "embedded" });
                         else if (retire == "manual") await service.SetSubtitleTrackAndPersistAsync(0, null, null);
                         else { var captured = api.CaptureContext(); api.TryInvalidateAccessContext(captured, out _); }
+                        var beforeApplyWrites = wire.PreferenceWrites;
                         Call(service, "TryApplyLegacyInitialSubtitleChoice");
-                        Require(mpv.GetPropertyDouble("sid") == (retire == "access" ? 2 : 0) && mpv.IsPaused,
+                        Require(mpv.GetPropertyDouble("sid") == (retire == "access" ? 2 : 0) && mpv.IsPaused && wire.PreferenceWrites == beforeApplyWrites,
                             "Legacy pre-play execution did not retain identity-only access compatibility or reject retired/populated/newer-manual ownership.");
+                    }
+                }
+                else if (closeout == "async-service")
+                {
+                    foreach (var retirement in new[] { "positive", "profile", "aba" })
+                    {
+                        api.SetProfile("fixture");
+                        await service.SetSubtitleTrackAndPersistAsync(0, null, null);
+                        var beforeFallbackWrites = wire.PreferenceWrites;
+                        var track = new SubtitleTrackInfo { Index = 30 + session.SubtitleUrls.Count, TrackId = retirement,
+                            Source = "external", Codec = "unknown-probe", Language = "en", Url = subtitles.Origin + "/" + retirement + ".probe" };
+                        session.SubtitleUrls.Add(track);
+                        var held = subtitles.HoldNext();
+                        var pending = service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track);
+                        try
+                        {
+                            await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                            if (retirement != "positive") api.SetProfile("retired");
+                            if (retirement == "aba") api.SetProfile("fixture");
+                            held.Release.TrySetResult();
+                            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+                            var cached = ((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).TryGetValue(track.Index, out var sid);
+                            if (retirement == "positive")
+                                Require(cached && sid > 2 && mpv.GetPropertyDouble("sid") == sid && service.ActiveSubtitleServerIndex == track.Index &&
+                                    wire.PreferenceWrites == beforeFallbackWrites + 1 && mpv.IsPaused,
+                                    "Supported asynchronous format fallback did not execute/persist its actual native SID under current service ownership.");
+                            else
+                                Require(!cached && mpv.GetPropertyDouble("sid") <= 0 && service.ActiveSubtitleServerIndex == -1 &&
+                                    wire.PreferenceWrites == beforeFallbackWrites && mpv.IsPaused,
+                                    "Retired profile/ABA URL fallback enabled captions, cached its SID or persisted a stale choice.");
+                            Program.Log($"PASS: actual service unknown-format async fallback {retirement} ownership/pause/preference.");
+                        }
+                        finally { held.Release.TrySetResult(); }
                     }
                 }
                 else if (closeout == "retired-read-cache")
