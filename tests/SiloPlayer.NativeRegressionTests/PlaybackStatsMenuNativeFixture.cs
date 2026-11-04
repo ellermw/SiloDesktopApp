@@ -1,0 +1,191 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Reflection;
+using System.Text.Json;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Player;
+using SiloPlayer.Services;
+using Windows.Graphics;
+
+/// <summary>Exercise the real playback-info collector and its owned read-only WinUI surface.</summary>
+internal static class PlaybackStatsMenuNativeFixture
+{
+    private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    internal static async Task RunAsync(Window window)
+    {
+        using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(window));
+        window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
+        using var media = new PlaybackAudioMenuNativeFixture.MediaServer();
+        using var wire = new PlaybackQualityMenuNativeFixture.Wire(media.Origin);
+        using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://native-quality.fixture.invalid"); api.SetProfile("synthetic");
+        using var auth = new AuthService(api, new AuthApi(api));
+        var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
+        using var service = new PlayerService(playback, catalog, auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "stats-settings")), new SettingsApi(api));
+        using var manager = new PlaybackManager(playback, catalog, auth, api);
+        var versions = new List<FileVersion>
+        {
+            new() { FileId = 41, Resolution = "1080p", CodecVideo = "hevc", Duration = 60 },
+            new() { FileId = 71, Resolution = "2160p", CodecVideo = "av1", Hdr = true, Duration = 60 },
+        };
+        manager.UseWatchDetail(new() { ContentId = "synthetic-quality", Type = "movie", Versions = versions });
+        await manager.StartSessionAsync(41);
+        using var video = new MpvVideoWindow(); using var mpv = new MpvPlayer();
+        video.Create(WinRT.Interop.WindowNative.GetWindowHandle(window)); video.Show();
+        mpv.InitializeWithWindow(video.Hwnd); video.SetMpv(mpv);
+        mpv.SetProperty("log-file", Path.Combine(Program.ResultDirectory, "stats-mpv.log"));
+        mpv.SetProperty("ao", "null"); mpv.SetProperty("loop-file", "inf");
+        Set(service, "_mpv", mpv); Set(service, "_videoWindow", video); Set(service, "_playbackManager", manager);
+        Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "synthetic-quality"); Property(service, "Versions", versions);
+        Call(service, "WireMpvEvents");
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queries = new ConcurrentDictionary<string, TaskCompletionSource<JsonElement>>();
+        var statsSamples = 0;
+        var activations = 0;
+        void Message(string[] args)
+        {
+            if (args.Length == 4 && args[0] == "silo-native-menu-input" && args[3] == "activate") Interlocked.Increment(ref activations);
+            if (args.Length == 4 && args[0] == "silo-native-stats-data") Interlocked.Increment(ref statsSamples);
+            if (args.Length > 0 && args[0] == "silo-stats-fixture-ready") ready.TrySetResult();
+            if (args.Length == 3 && args[0] == "silo-stats-fixture-state" && queries.TryRemove(args[1], out var response))
+            { using var json = JsonDocument.Parse(args[2]); response.TrySetResult(json.RootElement.Clone()); }
+        }
+        mpv.ScriptMessageReceived += Message;
+        try
+        {
+            var script = await File.ReadAllTextAsync(Path.Combine(Program.AppDirectory, "libs", "mpv", "scripts", "silo-osc.lua"));
+            var observed = Path.Combine(Program.ResultDirectory, "stats-observer.lua");
+            await File.WriteAllTextAsync(observed, script + """
+
+                mp.register_script_message('stats-fixture-query',function(id,kind)
+                    compute_layout()
+                    local r=state.layout[kind=='stats' and 'btn_stats' or 'btn_quality'] or {}
+                    mp.commandv('script-message','silo-stats-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=state.stats_visible or false,focus=state.controller_focus_name or '',pending=state.native_menu_request~=nil}))
+                end)
+                mp.commandv('script-message','silo-stats-fixture-ready')
+                """);
+            Command(mpv, "load-script", observed); await ready.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Loaded() => loaded.TrySetResult(); mpv.FileLoaded += Loaded;
+            try { mpv.LoadFile(media.Origin + "/video.y4m"); await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
+            finally { mpv.FileLoaded -= Loaded; }
+            Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
+            await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
+            Call(service, "SendQualityInfoToOsc");
+            // FILE_LOADED publishes audio/quality capabilities after renderer setup. Wait
+            // for its generation to settle before testing an unrelated menu interaction.
+            var publication = (long)Get(service, "_nativeMenuPublication")!;
+            await UntilAsync(async () => { await Task.Delay(400); var current = (long)Get(service, "_nativeMenuPublication")!; var stable = current == publication; publication = current; return stable; }, "Initial capability publication did not settle.");
+            var menu = await Open("pointer");
+            var list = (ListView)Get(menu, "_list")!;
+            await Until(() => list.Items.Count >= 25, "Native playback info did not receive the actual OSC diagnostic sections.");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "stats-initial.png");
+            var visibleRows = list.Items.OfType<ListViewItem>().Count(row =>
+            {
+                if (row.ActualHeight <= 0) return false;
+                var top = row.TransformToVisual(list).TransformPoint(new Windows.Foundation.Point()).Y;
+                return top >= 0 && top + row.ActualHeight <= list.ActualHeight;
+            });
+            var ids = list.Items.OfType<ListViewItem>().Select(row => (string)row.Tag).ToArray();
+            Require(ids.Select(id => id.Split('\n')[0]).Distinct().SequenceEqual(new[] { "PLAYER", "VIDEO INFO", "PLAYBACK STREAM INFO", "CURRENT SOURCE FILE" }), "Missing diagnostic section.");
+            Require(visibleRows >= 6, "Playback info used selection-menu density instead of a compact diagnostic layout.");
+            Require(mpv.IsPaused && wire.Qualities.IsEmpty, "Opening playback info changed playback.");
+            Command(mpv, "keypress", "END");
+            await Until(() => ReferenceEquals(list.SelectedItem, list.Items[list.Items.Count - 1]), "End did not navigate Stats.");
+            var last = list.SelectedItem;
+            Require(ReferenceEquals(last, list.Items[list.Items.Count - 1]), "Stats End did not reach the final diagnostic row.");
+            var sampleRow = list.Items.OfType<ListViewItem>().Single(row => (string)row.Tag == "PLAYBACK STREAM INFO\nVideo codec");
+            Require(!ids.Contains("PLAYER\nAuto-switched from"), "Unexpected initial source fallback.");
+            mpv.SendScriptMessage("osc-set-media-info", """{"requested_source":"fixture alternate"}""");
+            mpv.SendScriptMessage("osc-set-stream-info", "Direct Play", "Original", "HTTP", "updated-codec", "aac", "0");
+            var samples = Volatile.Read(ref statsSamples);
+            await Until(() => Volatile.Read(ref statsSamples) > samples, "Open native stats did not refresh at the visible-only cadence.");
+            await Until(() => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(sampleRow).Contains("updated-codec"), "Visible collector did not update the same semantic container.");
+            Require(list.Items.OfType<ListViewItem>().Any(row => (string)row.Tag == "PLAYER\nAuto-switched from"), "Conditional diagnostic row was not inserted.");
+            Require(ReferenceEquals(list.SelectedItem, last), "Native stats refresh replaced the focused semantic row.");
+            mpv.SendScriptMessage("osc-set-media-info", "{}");
+            await Until(() => !list.Items.OfType<ListViewItem>().Any(row => (string)row.Tag == "PLAYER\nAuto-switched from"), "Conditional diagnostic row did not disappear.");
+            Require(ReferenceEquals(list.SelectedItem, last) && list.Items.Contains(sampleRow), "Removing an optional row replaced surviving containers.");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "stats-end.png");
+            Command(mpv, "keypress", "ENTER"); await Until(() => Volatile.Read(ref activations) == 1, "mpv Enter did not reach the native menu."); await Query();
+            Require(ReferenceEquals(Menu(service), menu) && mpv.IsPaused && wire.Qualities.IsEmpty,
+                "Read-only diagnostics ran a playback action or dismissed on activation.");
+            Call(menu, "Input", "cancel");
+            await Until(() => Menu(service) == null, "Stats cancel stranded the native presentation.");
+            await UntilAsync(async () => !(await Query()).GetProperty("pending").GetBoolean(), "Stats close did not retire the OSC collector.");
+            samples = Volatile.Read(ref statsSamples); await Task.Delay(1200);
+            Require(Volatile.Read(ref statsSamples) == samples, "Native stats kept sampling after close.");
+            Require(Gate(service).CurrentCount == 1 && mpv.IsPaused, "Stats close changed pause or leaked its lease.");
+            foreach (var route in new[] { "key", "controller" })
+            {
+                var reopened = await Open(route); await Until(() => ((ListView)Get(reopened, "_list")!).Items.Count >= 25, route + " did not populate Stats.");
+                if (route == "key") Command(mpv, "keypress", "i");
+                else Call(reopened, "Input", "cancel");
+                await UntilAsync(async () => !(await Query()).GetProperty("pending").GetBoolean(), "Unretired " + route);
+            }
+            foreground.Observe("stats-complete");
+            Program.Log($"PASS: {ids.Length} rows, four sections, {visibleRows} fully visible; pointer, key and controller openers.");
+            Program.Log("PASS: native playback info actual OSC collector/native bounded scrolling, all four sections, live semantic-row retention, read-only activation, closed collector cadence and genuine pause. Synthetic only.");
+        }
+        finally
+        {
+            mpv.ScriptMessageReceived -= Message;
+            if (Menu(service) is { } menu) Call(menu, "Input", "cancel");
+            Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");
+            Set(service, "_videoWindow", null); Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+            video.Dispose(); mpv.Dispose(); await Task.Delay(40); foreground.Complete();
+        }
+
+        async Task<JsonElement> Query()
+        {
+            var id = Guid.NewGuid().ToString("N"); var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+            queries[id] = reply;
+            try { mpv.SendScriptMessage("stats-fixture-query", id, "stats"); return await reply.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
+            finally { queries.TryRemove(id, out _); }
+        }
+        async Task<object> Open(string route)
+        {
+            mpv.SendScriptMessage("osc-show"); var geometry = await Query();
+            Require(geometry.GetProperty("w").GetDouble() > 0, "Stats opener missing from actual OSC.");
+            var x = geometry.GetProperty("x").ToString(); var y = geometry.GetProperty("y").ToString();
+            if (route == "controller")
+            {
+                for (var i = 0; i < 40 && (await Query()).GetProperty("focus").GetString() != "btn_stats"; i++) mpv.SendScriptMessage("osc-controller-nav", "right");
+                Require((await Query()).GetProperty("focus").GetString() == "btn_stats", "Controller did not reach Stats.");
+                mpv.SendScriptMessage("osc-controller-activate");
+            }
+            else if (route == "key") Command(mpv, "keypress", "i");
+            else
+            {
+                mpv.SendScriptMessage("osc-mouse-move", x, y); mpv.SendScriptMessage("osc-mouse-down", x, y);
+                mpv.SendScriptMessage("osc-mouse-up", x, y); mpv.SendScriptMessage("osc-video-click", x, y);
+            }
+            await Until(() => Menu(service) is { } value && Get(value, "_list") is ListView { XamlRoot: not null },
+                "Actual OSC " + route + " produced no native Stats menu.");
+            Require(!(await Query()).GetProperty("legacy").GetBoolean(), "Legacy stats overlapped native stats.");
+            var menu = Menu(service)!; var native = (Window)Get(menu, "_window")!;
+            foreground.WatchMenu(native, WinRT.Interop.WindowNative.GetWindowHandle(native));
+            foreground.Observe("stats-opened"); return menu;
+        }
+    }
+
+    private static object? Menu(PlayerService service) => Get(service, "_nativeMenu");
+    private static SemaphoreSlim Gate(PlayerService service) => (SemaphoreSlim)Get(service, "_playbackDialogGate")!;
+    private static object? Get(object target, string name)
+    { for (var type = target.GetType(); type != null; type = type.BaseType) if (type.GetField(name, Private) is { } field) return field.GetValue(target); return null; }
+    private static void Set(object target, string name, object? value) => target.GetType().GetField(name, Private)!.SetValue(target, value);
+    private static void Property(object target, string name, object value) => target.GetType().GetProperty(name)!.SetValue(target, value);
+    private static object? Call(object target, string name, params object?[] args) => target.GetType().GetMethod(name, Private)!.Invoke(target, args);
+    private static void Command(MpvPlayer player, params string[] args) => Require(Call(player, "Command", (object)args) is true, "Stats fixture native command failed.");
+    private static void Require(bool success, string detail) { if (!success) throw new InvalidOperationException(detail); }
+    private static async Task Until(Func<bool> ready, string failure)
+    { var watch = Stopwatch.StartNew(); while (!ready()) { if (watch.Elapsed > TimeSpan.FromSeconds(8)) throw new InvalidOperationException(failure); await Task.Delay(20); } }
+    private static async Task UntilAsync(Func<Task<bool>> ready, string failure)
+    { var watch = Stopwatch.StartNew(); while (!await ready()) { if (watch.Elapsed > TimeSpan.FromSeconds(8)) throw new InvalidOperationException(failure); await Task.Delay(20); } }
+}

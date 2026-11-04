@@ -5915,9 +5915,14 @@ public partial class PlayerService : IDisposable
         switch (args[0])
         {
             case "silo-native-audio-open":
+            case "silo-native-stats-open":
             case "silo-native-quality-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
+                break;
+            case "silo-native-stats-data":
+                if (args.Length == 4)
+                    dispatch.TryEnqueue(() => HandleNativeStatsData(args[1], args[2], args[3]));
                 break;
             case "silo-native-menu-input":
                 if (args.Length == 4)

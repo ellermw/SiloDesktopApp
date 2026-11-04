@@ -236,7 +236,7 @@ internal static class PlaybackQualityMenuNativeFixture
         }
     }
 
-    private sealed class Wire(string origin) : HttpMessageHandler
+    internal sealed class Wire(string origin) : HttpMessageHandler
     {
         internal readonly ConcurrentQueue<string> Qualities = new();
         internal readonly ConcurrentQueue<int> Files = new();
