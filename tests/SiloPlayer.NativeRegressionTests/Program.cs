@@ -70,6 +70,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
 {
     private readonly SiloPlayer.SiloPlayer_XamlTypeInfo.XamlMetaDataProvider _provider = new();
     private Window? _window;
+    private static readonly string[] NativeQualityBaseCases = ["normal", "retired", "release", "successor-failure", "successor-success"];
+    private static readonly string[] NativeQualityReviewCases = ["legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality"];
+    private static readonly string[] NativeAudioCases = ["", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
+        "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
+        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure"];
     public IXamlType GetXamlType(Type type) => _provider.GetXamlType(type);
     public IXamlType GetXamlType(string name) => _provider.GetXamlType(name);
     public XmlnsDefinition[] GetXmlnsDefinitions() => _provider.GetXmlnsDefinitions();
@@ -215,9 +220,25 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", previous); }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-delivery")
+            {
+                foreach (var mode in NativeQualityBaseCases.Concat(NativeQualityReviewCases))
+                    await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
+                var originalAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+                try
+                {
+                    foreach (var audioCase in NativeAudioCases.Concat(new[] { "geometry", "resize" }))
+                    {
+                        Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", audioCase);
+                        await PlaybackAudioMenuNativeFixture.RunAsync(_window);
+                    }
+                }
+                finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", originalAudioCase); }
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-all")
             {
-                foreach (var mode in new[] { "normal", "retired", "release", "successor-failure", "successor-success" })
+                foreach (var mode in NativeQualityBaseCases)
                     await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
@@ -226,7 +247,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 var failures = new List<Exception>();
                 var modes = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-terminal-legacy"
                     ? new[] { "terminal-legacy-version", "terminal-legacy-quality" }
-                    : new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality" };
+                    : NativeQualityReviewCases;
                 foreach (var mode in modes)
                 {
                     try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
@@ -260,9 +281,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 var selectedAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
                 var audioCases = string.IsNullOrEmpty(selectedAudioCase)
-                    ? new[] { "", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
-                        "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
-                        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure" }
+                    ? NativeAudioCases
                     : new[] { selectedAudioCase };
                 try
                 {

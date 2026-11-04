@@ -21,7 +21,8 @@ internal static class PlaybackQualityMenuNativeFixture
     internal static async Task RunAsync(Window window, string mode = "normal")
     {
         mode = Environment.GetEnvironmentVariable("SILO_NATIVE_QUALITY_CASE") ?? mode;
-        using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(window));
+        using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(
+            WinRT.Interop.WindowNative.GetWindowHandle(window), "quality-" + mode);
         window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
         using var media = new PlaybackAudioMenuNativeFixture.MediaServer();
         using var wire = new Wire(media.Origin);
@@ -77,6 +78,32 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
             Call(service, "SendQualityInfoToOsc");
+            if (mode is "version-invalid-url" or "quality-invalid-url")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var originalSession = manager.CurrentSession;
+                var originalUrl = manager.StreamUrl;
+                var originalFile = (long)Get(service, "_playbackFileGeneration")!;
+                wire.InvalidDeliveryUrl = true;
+                var invalidMenu = await Open();
+                if (mode == "version-invalid-url")
+                {
+                    Call(invalidMenu, "Input", "home"); Call(invalidMenu, "Input", "down");
+                }
+                else Call(invalidMenu, "Input", "end");
+                Call(invalidMenu, "Input", "activate");
+                await Until(() => mode == "version-invalid-url" ? wire.Files.Count > 1 : !wire.Qualities.IsEmpty,
+                    "Native menu did not request its malformed playback decision.");
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                    "Invalid delivery URL stranded the menu's loading/switching owner.");
+                Require(ReferenceEquals(manager.CurrentSession, originalSession) && manager.StreamUrl == originalUrl &&
+                    (long)Get(service, "_playbackFileGeneration")! == originalFile,
+                    "Invalid delivery URL partially adopted a session or loaded a new file.");
+                Require(mpv.IsPaused && service.IsPaused && Gate(service).CurrentCount == 1,
+                    "Invalid playback decision changed viewer pause or leaked the native menu lease.");
+                Program.Log($"PASS: actual native {mode} preserves the accepted session/stream/file, releases busy state and retains genuine pause.");
+                return;
+            }
             if (mode == "version-room-race")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -377,6 +404,7 @@ internal static class PlaybackQualityMenuNativeFixture
         internal bool HoldSuccessfulReplan;
         internal bool HoldSuccessorReplan;
         internal bool HoldReplacementStart;
+        internal bool InvalidDeliveryUrl;
         internal readonly TaskCompletionSource ReplacementStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseReplacement = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReplacementReplied = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -423,7 +451,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 {
                     protocol_version = 3, plan_id = "quality-plan-" + Qualities.Count + "-" + Files.Count,
                     plan_attempt_key = "synthetic", session_id = "native-quality-fixture", effective_media_file_id = _file,
-                    delivery = "original_http", stream = new { url = origin + "/video.y4m" },
+                    delivery = "original_http", stream = new { url = InvalidDeliveryUrl ? "" : origin + "/video.y4m" },
                     timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
                     selected_tracks = new { }, subtitle = new { mode = "off", inventory = Array.Empty<object>() },
                     active_quality = quality == "auto" ? "original" : quality,
