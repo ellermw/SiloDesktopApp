@@ -29,6 +29,7 @@ public partial class PlayerService
         private readonly long _mediaFileLifetimeGeneration;
         private readonly CancellationToken _token;
         private PlaybackStartResponse _session;
+        private readonly long _manualSubtitleChoiceVersion;
 
         internal SubtitleOperationOwner(PlayerService player, PlaybackAuthorityScope authority,
             PlaybackManager manager, PlaybackStartResponse session)
@@ -38,6 +39,7 @@ public partial class PlayerService
             _playGeneration = Volatile.Read(ref player._playRequestGeneration);
             _content = player.ContentId; _mediaFileId = session.MediaFileId;
             _mediaFileLifetimeGeneration = manager.MediaFileLifetimeGeneration;
+            _manualSubtitleChoiceVersion = Volatile.Read(ref player._manualSubtitleChoiceVersion);
             _token = player._authorityLifetimeCts.Token;
         }
 
@@ -47,6 +49,11 @@ public partial class PlayerService
             _content == _player.ContentId;
 
         internal bool IsCurrent => Stable && ReferenceEquals(Volatile.Read(ref _session), _manager.CurrentSession);
+
+        // Accepted jobs may keep refreshing their file's inventory after a
+        // manual pick. Only automatic activation belongs to this choice epoch.
+        internal bool HasCurrentSubtitleChoice => _manualSubtitleChoiceVersion ==
+            Volatile.Read(ref _player._manualSubtitleChoiceVersion);
 
         // AI jobs belong to the media file, not one seek/quality/audio plan.
         // Ordinary selections still require the exact accepted response below.

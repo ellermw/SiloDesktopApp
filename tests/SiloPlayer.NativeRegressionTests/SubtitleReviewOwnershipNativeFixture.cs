@@ -39,6 +39,8 @@ internal static partial class SubtitleIdentityNativeFixture
         try
         {
             if (cue) await ReviewCorrectedCueAsync(assets, scenario, server, api, manager, service, mpv);
+            else if (scenario.StartsWith("review-ai-newer-", StringComparison.Ordinal))
+                await ReviewAiNewerChoiceAsync(scenario, server, wire, manager, service, mpv);
             else if (scenario == "review-owned-foreign-grant")
             {
                 var owner = Call(service, "CaptureSubtitleOperationOwner", session)!;
@@ -89,6 +91,48 @@ internal static partial class SubtitleIdentityNativeFixture
             Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
             Set(service, "_mpv", null); Set(service, "_playbackManager", null);
         }
+    }
+
+    private static async Task ReviewAiNewerChoiceAsync(string scenario, SubtitleServer server, Wire wire,
+        PlaybackManager manager, PlayerService service, MpvPlayer mpv)
+    {
+        mpv.Pause();
+        var english = new SubtitleTrackInfo { Index = 0, Source = "embedded", Language = "en", Codec = "subrip", ContainerTrackId = "2", StreamIndex = 1 };
+        manager.CurrentSession!.SubtitleUrls = [english];
+        var owner = Call(service, "CaptureSubtitleOperationOwner", manager.CurrentSession)!;
+        var path = Path.Combine(Program.ResultDirectory, scenario + ".vtt");
+        await File.WriteAllTextAsync(path, "WEBVTT\n\n");
+        Set(service, "_liveSubtitleJobId", 77L); Set(service, "_liveSubtitleFileId", 42);
+        Set(service, "_liveSubtitleOperationOwner", owner); Set(service, "_liveSubtitlePath", path);
+        Set(service, "_liveSubtitleFileLoadGeneration", Get(service, "_fileLoadGeneration"));
+        using var cues = JsonDocument.Parse("""{"job_id":77,"cues":[{"start":0,"end":5,"text":"owned cue"}]}""");
+        Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+        Require((int)Get(service, "_liveSubtitleSid")! > 0, "AI manual-choice control did not attach its initial owned cue.");
+        var selected = scenario == "review-ai-newer-native-cue" ? english : null;
+        await service.SetSubtitleTrackAndPersistAsync(selected == null ? 0 : selected.Index + 1, selected?.Language, selected);
+        var sid = mpv.GetPropertyDouble("sid");
+        var writes = wire.PreferenceWrites;
+        Program.Log($"AI newer-choice setup {scenario}: SID={sid}, active={service.ActiveSubtitleServerIndex}, executed={ReferenceEquals(Get(service, "_executedSubtitleTrack"), selected)}, prefs={writes}, nativePaused={mpv.GetPropertyFlag("pause")}.");
+        Require(service.ActiveSubtitleServerIndex == (selected?.Index ?? -1) && ReferenceEquals(Get(service, "_executedSubtitleTrack"), selected) &&
+            (selected == null ? sid <= 0 : sid == mpv.GetEmbeddedSubtitleTracks().Single(track => track.ContainerTrackId == "2").Id) &&
+            writes == 1 && mpv.GetPropertyFlag("pause"),
+            "AI newer-choice control did not establish the actual newer manual SID/row/preference/pause before completion.");
+        Require((bool)owner.GetType().GetProperty("IsCurrent", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owner)! &&
+            (bool)owner.GetType().GetProperty("IsCurrentForAi", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owner)!,
+            "A manual choice incorrectly retired the accepted AI file/save lifetime instead of just automatic activation.");
+        if (scenario.EndsWith("-completion", StringComparison.Ordinal))
+        {
+            wire.DownloadedInventory = new() { Subtitles = [new() { Id = 91, Language = "fr", Format = "srt" }] };
+            await ((Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, 91L, owner)!).WaitAsync(TimeSpan.FromSeconds(4));
+            Require(manager.CurrentSession!.SubtitleUrls.Any(track => track.Id == 91),
+                "Retiring automatic activation incorrectly suppressed the accepted job's background inventory refresh.");
+        }
+        else Call(service, "ApplySubtitleTranslationCues", cues.RootElement);
+        Program.Log($"AI newer-choice {scenario}: priorSID={sid}, actualSID={mpv.GetPropertyDouble("sid")}, active={service.ActiveSubtitleServerIndex}, prefsBefore={writes}, prefsAfter={wire.PreferenceWrites}, nativePaused={mpv.GetPropertyFlag("pause")}.");
+        Require(mpv.GetPropertyDouble("sid") == sid && service.ActiveSubtitleServerIndex == (selected?.Index ?? -1) &&
+            ReferenceEquals(Get(service, "_executedSubtitleTrack"), selected) && wire.PreferenceWrites == writes && mpv.GetPropertyFlag("pause"),
+            "An older AI cue/completion replaced or saved over a newer manual native/Off choice.");
+        Program.Log($"PASS: {scenario} preserves the actual newer SID, highlight, executed row, pause and preference.");
     }
 
     private static async Task ReviewAiHeldLoadAsync(string scenario, SubtitleServer server, PlaybackManager manager,

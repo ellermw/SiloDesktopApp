@@ -3,6 +3,25 @@ namespace SiloPlayer.Tests;
 public sealed class SubtitleReviewRegressionTests
 {
     [Fact]
+    public void ManualAiActivationReceiptDoesNotRetireAppliedSaveOrOrdinaryGrantLifetime()
+    {
+        var owner = Read("PlayerService.SubtitleOperationOwner.cs");
+        Assert.Contains("_manualSubtitleChoiceVersion = Volatile.Read(ref player._manualSubtitleChoiceVersion);", owner);
+        Assert.Contains("internal bool IsCurrent => Stable && ReferenceEquals", owner);
+        var ordinary = owner[owner.IndexOf("internal bool CanUseSession", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("HasCurrentSubtitleChoice", ordinary);
+        var service = Read("PlayerService.cs");
+        var admission = Between(service, "private async Task<bool> TrySetSubtitleTrackAndPersistForOwnerAsync(", "private bool MatchesSubtitlePreference(");
+        Assert.Contains("if (currentOwner == null) Interlocked.Increment(ref _manualSubtitleChoiceVersion);", admission);
+        Assert.Contains("bool CanActivate() => CurrentChoice() && currentOwner?.HasCurrentSubtitleChoice != false;", admission);
+        Assert.Contains("PrefetchSubtitleSidecarForOwnerAsync(track, CanActivate)", admission);
+        var save = Between(service, "private async Task SaveExecutedSubtitlePreferenceAsync(", "private void RestorePlaybackStateAfterSubtitleChange(");
+        Assert.DoesNotContain("HasCurrentSubtitleChoice", save);
+        Assert.Contains("if (!operationOwner.IsCurrent) return;", save);
+        Assert.Contains("!IsLoading && _liveSubtitleOperationOwner?.HasCurrentSubtitleChoice != false", service);
+    }
+
+    [Fact]
     public void AiContinuityRebasesOnlyWithinTheCapturedFileAndAuthority()
     {
         var owner = Read("PlayerService.SubtitleOperationOwner.cs");
@@ -63,9 +82,49 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("_liveSubtitleFileId == _playbackManager?.CurrentSession?.MediaFileId", clear);
         Assert.Contains("_liveSubtitleFileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", clear);
         Assert.Contains("if (_liveSubtitleSid > 0 && sameLoad)", clear);
-        Assert.Contains("if (restorePreviousSubtitle && sameLoad)", clear);
+        Assert.Contains("var restoreLiveSelection = restorePreviousSubtitle && sameLoad && _liveSubtitleSid > 0 &&", clear);
+        Assert.Contains("(int)Math.Round(_mpv.GetPropertyDouble(\"sid\")) == _liveSubtitleSid;", clear);
+        Assert.Contains("if (restoreLiveSelection)", clear);
+        Assert.Contains("if (_executedSubtitleFileId == _liveSubtitleFileId)", clear);
+        Assert.Contains("var track = _executedSubtitleTrack;", clear);
+        Assert.Contains("_loadedExternalSubtitleSids.TryGetValue(track.Index", clear);
+        Assert.Contains("ResolveNativeEmbeddedSid(track)", clear);
         Assert.Contains("if (_resumeAfterLiveSubtitleBuffer && sameLoad && _mpv.IsPaused)", clear);
         Assert.Contains("_resumeAfterLiveSubtitleBuffer = false;", clear);
+    }
+
+    [Fact]
+    public void RestorationRevalidatesPickerOwnershipBeforeCommittingUnderTheStateLock()
+    {
+        var restore = Between(Read("PlayerService.cs"), "private bool RestoreExecutedSubtitleSelection(",
+            "private void ShowSubtitleSelectionUnavailable(");
+        var snapshotLock = restore.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var captureOwner = restore.IndexOf("var preferenceOwner = _pendingSubtitlePreferenceOwner;", StringComparison.Ordinal);
+        var reapply = restore.IndexOf("!SelectSubtitleTrackForOwner(retained, restoreOwner)", StringComparison.Ordinal);
+        var commitLock = restore.IndexOf("lock (_subtitleTrackStateLock)", reapply, StringComparison.Ordinal);
+        var ownerCheck = restore.IndexOf("if (!restoreOwner()) return false;", commitLock, StringComparison.Ordinal);
+        var clearOwner = restore.IndexOf("_pendingSubtitlePreferenceOwner = null;", StringComparison.Ordinal);
+        Assert.True(snapshotLock >= 0 && captureOwner > snapshotLock && reapply > captureOwner &&
+            commitLock > reapply && ownerCheck > commitLock && clearOwner > ownerCheck);
+        Assert.Contains("ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner)", restore);
+        Assert.Contains("ReferenceEquals(previous, _executedSubtitleTrack)", restore);
+        Assert.Contains("loadGeneration == Volatile.Read(ref _loadedMediaInitGeneration)", restore);
+    }
+
+    [Fact]
+    public void FinalAiSelectionRetiresTheMatchingJobAndItsRestoreState()
+    {
+        var service = Read("PlayerService.cs");
+        var refresh = Between(service, "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "private void WriteLiveSubtitleFileLocked(");
+        var executed = refresh.IndexOf("_executedSubtitleTrack?.Id != preferred.Id", StringComparison.Ordinal);
+        var matchingJob = refresh.IndexOf("if (liveJobId > 0 && _liveSubtitleJobId == liveJobId)", executed, StringComparison.Ordinal);
+        var retire = refresh.IndexOf("ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: false);", matchingJob, StringComparison.Ordinal);
+        Assert.True(executed >= 0 && matchingJob > executed && retire > matchingJob);
+        var clear = Between(service, "private void ClearLiveSubtitleTranslationLocked(", "private void DeleteLiveSubtitleFileLocked(");
+        foreach (var reset in new[] { "_liveSubtitleJobId = 0;", "_liveSubtitleOperationOwner = null;", "_liveSubtitleFileId = 0;",
+            "_liveSubtitleFileLoadGeneration = 0;", "_preLiveSubtitleSid = 0;", "_liveSubtitleResumeCts = null;" })
+            Assert.Contains(reset, clear);
     }
 
     [Fact]

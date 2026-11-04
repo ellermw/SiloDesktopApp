@@ -1340,7 +1340,8 @@ public sealed class PlayerServiceSourceTests
         // is in flight; ownership follows that row, not its original ordinal.
         AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != track.Index");
         var persistSelect = persist.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
-        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarForOwnerAsync(track, CurrentChoice);", persistSelect, StringComparison.Ordinal);
+        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarForOwnerAsync(track, CanActivate);", persistSelect, StringComparison.Ordinal);
+        Assert.Contains("bool CanActivate() => CurrentChoice() && currentOwner?.HasCurrentSubtitleChoice != false;", persist);
         Assert.Contains("=> await PrefetchSubtitleSidecarForOwnerAsync(track, null);", source);
         // Restoration uses the state from just before the sub-add, not from before the download.
         Assert.InRange(persist.IndexOf("wasPaused = CaptureUserPausedState();", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
@@ -1362,7 +1363,7 @@ public sealed class PlayerServiceSourceTests
     private static void AssertPrefetchedThenCurrentBeforeSelection(string method, string currentCheck)
     {
         var select = method.IndexOf("SelectSubtitleTrackForOwner(track,", StringComparison.Ordinal);
-        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarForOwnerAsync(track, CurrentChoice);", select, StringComparison.Ordinal);
+        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarForOwnerAsync(track, CanActivate);", select, StringComparison.Ordinal);
         var captured = method.LastIndexOf("var sidecarGeneration = CurrentSubtitleSidecarGeneration();", prefetch, StringComparison.Ordinal);
         var current = method.IndexOf(currentCheck, prefetch, StringComparison.Ordinal);
         var loadCurrent = method.IndexOf("CurrentSubtitleSidecarGeneration() != sidecarGeneration", prefetch, StringComparison.Ordinal);
