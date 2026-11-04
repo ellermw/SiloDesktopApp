@@ -21,7 +21,8 @@ internal static class PlaybackQualityMenuNativeFixture
     internal static async Task RunAsync(Window window, string mode = "normal")
     {
         mode = Environment.GetEnvironmentVariable("SILO_NATIVE_QUALITY_CASE") ?? mode;
-        using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(window));
+        using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(
+            WinRT.Interop.WindowNative.GetWindowHandle(window), "quality-" + mode);
         window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
         using var media = new PlaybackAudioMenuNativeFixture.MediaServer();
         using var wire = new Wire(media.Origin);
