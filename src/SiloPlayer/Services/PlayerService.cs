@@ -5273,13 +5273,13 @@ public partial class PlayerService : IDisposable
         var inheritedTransportOperation = _switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive;
         var selectionIntent = manager.CaptureLocalSubtitleIntent();
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
-        void RefuseTentativeSubtitleSelection()
+        void RefuseTentativeSubtitleSelection(bool preserveTransportForRecovery)
         {
             // No load has started on this rejection path. Any current watchdog
             // belongs to another operation, even if it began while we awaited
             // the manager's replan gate. Preserve inherited recovery/replan state
             // as well, unless that operation has already cleared its flags.
-            var preserveTransportState = !loadStarted &&
+            var preserveTransportState = preserveTransportForRecovery || !loadStarted &&
                 (Volatile.Read(ref _fileLoadTimeoutCts) != null || inheritedTransportOperation &&
                     (_switchingContent || IsLoading || _prematureEofRecoveryActive || _qualitySwitchActive));
             if (!preserveTransportState)
@@ -5317,6 +5317,29 @@ public partial class PlayerService : IDisposable
             _restorePausedAfterLoad = null;
             RestorePlaybackStateAfterSubtitleChange(restorePaused, CurrentMediaPosition, allowSeek: false);
         }
+        SubtitleTransportResult RefuseOrRecoverSubtitleSelection(SubtitleTransportResult refusal)
+        {
+            // A prior retry may have adopted a plan without loading it, or
+            // preparation may already have stopped the outgoing stream's proxies.
+            // Only an unchanged, unprepared transport is safe to resume.
+            var recoverTransport = transportPreparationAttempted || !ReferenceEquals(manager.CurrentSession, session);
+            if (!loadStarted)
+                RefuseTentativeSubtitleSelection(preserveTransportForRecovery: recoverTransport);
+            if (!recoverTransport) return refusal;
+            _prematureEofRecoveryActive = true;
+            _switchingContent = true;
+            IsLoading = true;
+            ShowNotice(
+                "Reconnecting playback",
+                "The subtitle transport switch was interrupted. Restoring playback from your current position…",
+                "warning");
+            // A concurrent recovery may own the gate. Queue this viewer
+            // change with its lifetime and pause intent instead of dropping it.
+            _ = RunStreamRecoveryAsync(CurrentMediaPosition, "subtitle-switch-failed", manager, PauseIntent(), ct);
+            // Recovery now owns the transport; callers must not restore
+            // the outgoing stream's position or pause state.
+            return SubtitleTransportResult.ReloadScheduled;
+        }
         try
         {
             if (!CurrentOwner() || manager?.CurrentSession != session || _mpv == null ||
@@ -5346,11 +5369,10 @@ public partial class PlayerService : IDisposable
                 if (replacement == null)
                 {
                     // A newer pick may have arrived while the manager's gate
-                    // was queued. Give it an executor, but never send a stale
-                    // combined index or escalate an unmatched row to recovery.
+                    // was queued. Give it an executor without sending a stale
+                    // combined index. Recover if an earlier retry changed transport.
                     if (manager.CaptureLocalSubtitleIntent() != selectionIntent) continue;
-                    RefuseTentativeSubtitleSelection();
-                    return SubtitleTransportResult.Superseded;
+                    return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);
                 }
                 replanned = replacement;
                 if (!CurrentOwner() || manager.CurrentSession != replanned) return SubtitleTransportResult.Superseded;
@@ -5409,26 +5431,7 @@ public partial class PlayerService : IDisposable
             LogToFile("player_subtitle_error.txt", ex.ToString());
             if (transportMutationAttempted && !_closing && ReferenceEquals(_playbackManager, manager))
             {
-                if (!transportPreparationAttempted)
-                {
-                    // A rejected/stale selection is not a transport failure,
-                    // even if an earlier iteration adopted a replacement plan.
-                    RefuseTentativeSubtitleSelection();
-                    return SubtitleTransportResult.Failed;
-                }
-                _prematureEofRecoveryActive = true;
-                _switchingContent = true;
-                IsLoading = true;
-                ShowNotice(
-                    "Reconnecting playback",
-                    "The subtitle transport switch was interrupted. Restoring playback from your current position…",
-                    "warning");
-                // A concurrent recovery may own the gate. Queue this viewer
-                // change with its lifetime and pause intent instead of dropping it.
-                _ = RunStreamRecoveryAsync(CurrentMediaPosition, "subtitle-switch-failed", manager, PauseIntent(), ct);
-                // Recovery now owns the transport; callers must not restore
-                // the outgoing stream's position or pause state.
-                return SubtitleTransportResult.ReloadScheduled;
+                return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Failed);
             }
             else
             {

@@ -700,6 +700,94 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             wire.DeclineTrackChanges = false;
             Program.Log("PASS: declined manual/Auto bitmap, Off and text changes settle after exactly one replan without saving unexecuted choices or changing viewer pause.");
 
+            // Adoption is not execution: if A is accepted after the viewer
+            // picks B, a rejected/unmatched retry must recover before A can be
+            // picked again and persisted as though its pixels were loaded.
+            foreach (var missingLatest in new[] { false, true })
+            foreach (var paused in new[] { false, true })
+            {
+                var baselineEnglish = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == English);
+                if (manager.CurrentSession.IsSubtitleBurnedIn)
+                    await Loaded(() => service.SetSubtitleTrackAndPersistAsync(English + 1, baselineEnglish.Language, baselineEnglish));
+                else await service.SetSubtitleTrackAndPersistAsync(English + 1, baselineEnglish.Language, baselineEnglish);
+                await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading);
+                service.SetPaused(paused);
+                await Until(() => mpv.IsPaused == paused && service.IsPaused == paused);
+                var retainedSession = manager.CurrentSession;
+                var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                var generation = Get(service, "_fileLoadGeneration");
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                var starts = wire.Starts.Count;
+                var bitmap = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == Dvd);
+                var latest = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == Spanish);
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var mediaEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var mediaRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.BeforeTrackChange = async ct =>
+                {
+                    entered.TrySetResult();
+                    await release.Task.WaitAsync(ct);
+                    if (!missingLatest)
+                        wire.BeforeTrackChange = _ => { wire.FailNextTrackChange = true; return Task.CompletedTask; };
+                };
+                var recoveryGate = (SemaphoreSlim)Get(service, "_streamRecoveryGate")!;
+                await recoveryGate.WaitAsync();
+                var recoveryHeld = true;
+                Task? pick = null;
+                try
+                {
+                    pick = service.SetSubtitleTrackAndPersistAsync(Dvd + 1, bitmap.Language, bitmap);
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    await service.SetSubtitleTrackAndPersistAsync(Spanish + 1, latest.Language, latest);
+                    wire.OmitSpanish = missingLatest;
+                    release.TrySetResult();
+                    await pick.WaitAsync(TimeSpan.FromSeconds(6));
+                    Require(!ReferenceEquals(manager.CurrentSession, retainedSession) && manager.CurrentSession!.IsSubtitleBurnedIn &&
+                        manager.CaptureLocalSubtitleIntent() == retainedIntent && service.ActiveSubtitleServerIndex == English &&
+                        Get(service, "_pendingSubtitlePreferenceOwner") == null && wire.PreferenceWrites == writes &&
+                        service.IsLoading && service.IsSwitchingContent && mpv.IsPaused &&
+                        (bool)Get(service, "_prematureEofRecoveryActive")! && Equals(Get(service, "_fileLoadGeneration"), generation),
+                        "A failed retry after burn-in adoption resumed an unloaded plan instead of rolling back and queuing recovery.");
+
+                    // The missing row only affects the abandoned first plan;
+                    // the recovery response supplies the complete inventory again.
+                    wire.OmitSpanish = false;
+                    bitmap = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == Dvd);
+                    await service.SetSubtitleTrackAndPersistAsync(Dvd + 1, bitmap.Language, bitmap);
+                    Require(wire.PreferenceWrites == writes && (int?)Get(service, "_pendingSubtitlePreferenceIndex") == Dvd &&
+                        service.IsLoading && service.IsSwitchingContent && Equals(Get(service, "_fileLoadGeneration"), generation),
+                        "Re-picking the adopted bitmap persisted a burn-in grant before any matching transport load.");
+                    media.BeforeMediaResponse = () => { mediaEntered.TrySetResult(); return mediaRelease.Task; };
+                    await Loaded(async () =>
+                    {
+                        recoveryGate.Release(); recoveryHeld = false;
+                        await mediaEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        Require(service.IsLoading && !Equals(Get(service, "_fileLoadGeneration"), generation) && wire.PreferenceWrites == writes,
+                            "Recovery saved the re-picked bitmap before the replacement FILE_LOADED.");
+                        mediaRelease.TrySetResult();
+                    });
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading &&
+                        service.ActiveSubtitleServerIndex == Dvd && wire.PreferenceWrites == writes + 1);
+                    Require(manager.CurrentSession!.IsSubtitleBurnedIn && manager.SubtitleSelectionForLoad == Dvd &&
+                        mpv.IsPaused == paused && service.IsPaused == paused && wire.LastSubtitlePreferenceIndex == Dvd &&
+                        wire.Replans.Count == replans + (missingLatest ? 2 : 3) && wire.Starts.Count == starts &&
+                        Get(service, "_pendingSubtitlePreferenceOwner") == null && Get(service, "_playbackTerminalState") == null &&
+                        !(bool)Get(service, "_prematureEofRecoveryActive")!,
+                        "Recovery did not load the re-picked bitmap exactly once with its executed preference and original viewer pause.");
+                }
+                finally
+                {
+                    release.TrySetResult(); mediaRelease.TrySetResult();
+                    if (recoveryHeld) recoveryGate.Release();
+                    if (pick != null) try { await pick.WaitAsync(TimeSpan.FromSeconds(6)); } catch (Exception) { }
+                    wire.BeforeTrackChange = null; media.BeforeMediaResponse = null;
+                    wire.OmitSpanish = wire.FailNextTrackChange = false;
+                }
+            }
+            Program.Log("PASS: accepted burn-in plans followed by rejected/null latest-intent retries roll back and recover; re-picks save only after a matching FILE_LOADED and preserve viewer pause.");
+
             // A newer pick made during the first burn-in replan still refers
             // to the outgoing inventory. Its retry must use the accepted row's
             // TrackId, not send that outgoing combined index to the manager.
@@ -930,6 +1018,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         public Func<CancellationToken, Task>? BeforeStart;
         public bool DeclineTrackChanges;
         public bool ReindexSpanish, ReindexDvd, ReuseSpanishIndex;
+        public bool OmitSpanish;
         public int PreferenceWrites;
         public int LastSubtitlePreferenceIndex = -2;
         public List<JsonElement> Starts = [], Replans = [];
@@ -1017,7 +1106,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                             new { track_id = $"sub:{_file}:0", combined_index = CombinedIndex(English), language = "eng", codec = "srt", source = "external", url = origin + "/eng.srt", label = "English", delivery = "sidecar" },
                             new { track_id = $"sub:{_file}:1", combined_index = CombinedIndex(Spanish), language = "spa", codec = "srt", source = "external", url = origin + "/spa.srt", label = "Spanish", delivery = "sidecar" },
                             new { track_id = $"sub:{_file}:2", combined_index = CombinedIndex(Dvd), language = "eng", codec = "dvd_subtitle", source = "embedded", label = "English (DVD)", delivery = "burn_in_only" },
-                        },
+                        }.Where((_, index) => !OmitSpanish || index != Spanish).ToArray(),
                     },
                 },
             }));
