@@ -1,6 +1,16 @@
-# Current development — synced collection direction Beta candidate
+# Current development — OSC feedback and input ownership (PR #86)
 
-This candidate starts from freshly fetched Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af` (source1.2.544-beta.1), with official server/WebUI reference `bf53b65450244751013a2965b39da4111d9a0f72`. Version stamps remain unchanged and pipeline-owned. Native new/saved synced editors now separate Sort, Direction and Max titles, retain stored reverse/unknown fields, use current alphabetical/date/numeric labels, and disable source-order or unsafe future-field direction changes. Field changes use normal defaults; existing API serialization and untouched legacy config behavior remain.
+Reviewed source head: `def1daef40c5cc30c63f843810fbd0e14e7d234b`; Beta base: `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f`.
+
+Source version: `1.2.552-beta.1`; numeric version: `1.2.551.1`.
+
+These are the app, updater, launcher and installer-default stamps in the reviewed head, not the base's `1.2.549-beta.1` / `1.2.548.1`. This QA correction leaves version stamps untouched. The PR polishes the active Lua/ASS HUD; the correction bounds idle controller focus, retires focus/menus on content replacement or disable, isolates compact pointer actions from buffering-prompt activation, and retains accepted Exit/Minimize presses through fade-out.
+
+The [OSC verification record](research/2026-11-03-osc-hud-states-verification.md) distinguishes historical local evidence from this source identity. No builds or tests were run for this correction; pipeline verification is required. The pipeline owns the final release version: if it stamps another identity, refresh the current identity records and repeat version/build-input and artifact checks after stamping. Historical test counts and hashes do not verify this head or the correction.
+
+## Historical synced collection direction Beta candidate
+
+The earlier synced-collection candidate started from Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af` (source `1.2.544-beta.1`), with official server/WebUI reference `bf53b65450244751013a2965b39da4111d9a0f72`. Its unchanged-stamp statement describes that earlier candidate only. Native new/saved synced editors now separate Sort, Direction and Max titles, retain stored reverse/unknown fields, use current alphabetical/date/numeric labels, and disable source-order or unsafe future-field direction changes. Field changes use normal defaults; existing API serialization and untouched legacy config behavior remain.
 
 Actual native RED against exact544 bytes reproduces the missing Direction control. Initial D Release/native and3,058 full tests pass, then strengthened real keyboard-focus checks reproduce order controls hidden by the floating actions. A scoped queued focus-centering handler fixes keyboard visibility without moving pointer focus. Final D Release/native uses DLL `666258849B4B66BE74CACF37AB796E3CC4AFA60B16A1F19140DA5F48985CFCFF`; four actual new/saved1280/460px configurations pass field/direction/default/source-order, unknown-field retention, save guards and keyboard/footer bounds. Screenshots were inspected and the Order section fits in both layouts. Final D: full re-verification passes3,058/3,058, zero failed/skipped (`collection-direction/d-year-full-green`). Independent Standards/Spec review and scoped Year correction reviews have zero remaining findings. Independent Spec review found Year was incorrectly classified numeric. Actual native d-year-red reproduces the wrong labels; the one-line date classification correction passes all four native configurations in d-year-native-green, with a separate runtime numeric-label check. Source hashes in `year-inputs.json` remain exact.
 

@@ -198,6 +198,7 @@ local state = {
     keyboard_menu_kind = nil,
     keyboard_menu_index = -1,
     controller_focus_name = nil,
+    controller_focus_deadline = 0,
 
     -- Skip markers (intro/credits)
     intro_start     = 0,
@@ -2542,12 +2543,13 @@ end
 local hide_osc  -- forward declaration
 
 -- Both idle and pointer-leave timers respect the same presentation owner.
--- Re-arm while held so releasing a menu/focus never strands visible chrome.
+-- Re-arm while held; transport focus owns only the normal input idle period.
 local function arm_osc_hide(delay)
     if state.hide_timer then state.hide_timer:kill() end
     state.hide_timer = mp.add_timeout(delay, function()
         local focus = state.controller_focus_name
         local focus_owned = focus and state.layout[focus] and hud_control_enabled(focus)
+            and mp.get_time() < state.controller_focus_deadline
             and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
         if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
             or state.compact_menu_visible or state.subtitle_menu_visible or state.audio_menu_visible
@@ -2563,6 +2565,9 @@ end
 show_osc = function()
     state.visible = true
     state.target_alpha = 1
+    if state.controller_focus_name then
+        state.controller_focus_deadline = mp.get_time() + config.hide_timeout
+    end
     arm_osc_hide(config.hide_timeout)
 end
 
@@ -2576,8 +2581,10 @@ local function dismiss_transport_menus_for_fade()
     state.keyboard_menu_kind = nil
     state.keyboard_menu_index = -1
     state.controller_focus_name = nil
+    state.controller_focus_deadline = 0
+    remove_chapter_thumbnail_menu_overlays()
 
-    for _, overlay in ipairs({
+    for _, overlay in pairs({
         state.subtitle_menu_overlay,
         state.quality_menu_overlay,
         state.audio_menu_overlay,
@@ -4841,18 +4848,9 @@ local function toggle_video_fit()
     mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
 end
 
-local function activate_controller_focus()
-    if state.playback_failure_visible then
-        return invoke_playback_failure_action(state.playback_failure_focus)
-    end
-    local buffering_action = (state.buffering_quality_actions or {})[state.buffering_quality_focus or 1]
-    if buffering_action and buffering_quality_action(buffering_action.action) then return true end
-    local name = state.controller_focus_name
-    if not name then
-        move_controller_focus("next")
-        return true
-    end
-
+-- Pointer callers already hit-tested floating prompts; dispatch their named
+-- control without applying keyboard/controller prompt precedence again.
+local function activate_transport_control(name)
     -- A stale focus or compact-menu row cannot re-enable an unavailable action.
     if not hud_control_enabled(name) then return true end
 
@@ -4899,6 +4897,19 @@ local function activate_controller_focus()
     show_osc()
     request_tick()
     return true
+end
+
+local function activate_controller_focus()
+    if state.playback_failure_visible then
+        return invoke_playback_failure_action(state.playback_failure_focus)
+    end
+    local buffering_action = (state.buffering_quality_actions or {})[state.buffering_quality_focus or 1]
+    if buffering_action and buffering_quality_action(buffering_action.action) then return true end
+    if not state.controller_focus_name then
+        move_controller_focus("next")
+        return true
+    end
+    return activate_transport_control(state.controller_focus_name)
 end
 
 local function handle_mouse_down()
@@ -5015,14 +5026,14 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
-                consume_video_click(); state.controller_focus_name = "overflow_" .. item.name; activate_controller_focus(); return
+                consume_video_click(); activate_transport_control("overflow_" .. item.name); return
             end
         end
         state.compact_menu_visible = false
         consume_video_click(); request_tick(); return
     end
     if hud_input_available() and state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
-        consume_video_click(); state.controller_focus_name = "btn_more"; activate_controller_focus(); return
+        consume_video_click(); activate_transport_control("btn_more"); return
     end
     if hud_input_available() and state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
         state.pressed_control = "btn_fill"
@@ -5231,6 +5242,8 @@ local function handle_mouse_down()
     -- Window actions retire the surface. Hold it until the same button's release.
     if state.pressed_control == "btn_minimize" or state.pressed_control == "btn_exit" then
         consume_video_click()
+        -- A press accepted during fade-out owns a visible surface until release.
+        show_osc()
         return
     end
 
@@ -5461,6 +5474,8 @@ local function observe_properties()
         state.pressed_control = nil
         state.osc_disabled = (val == "false")
         if state.osc_disabled then
+            dismiss_transport_menus_for_fade()
+            state.restore_subtitle_focus_after_dialog = false
             if state.osc_overlay then
                 set_osc_overlay("", state.osc_overlay.res_x, state.osc_overlay.res_y)
             end
@@ -6406,7 +6421,7 @@ local function init()
 
     -- Show OSC briefly on file load
     mp.register_event("file-loaded", function()
-        state.pressed_control = nil
+        dismiss_transport_menus_for_fade()
         state.idle = false
         -- Reset drag state from previous session (mpv instance is reused)
         state.dragging_seek = false

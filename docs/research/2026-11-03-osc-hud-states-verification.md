@@ -6,14 +6,21 @@ This is the first focused PR of the owner's approved staged native-menu work. It
 
 - Shared hover, held press and focus feedback for top chrome, transport and utility controls; hit rectangles remain stable.
 - Exit/Minimize own their complete down/up/video-click sequence, emitting one original action without a pause intent.
-- Held feedback retires on release, leave, disable, content replacement and menu takeover.
-- Both ordinary and pointer-leave auto-hide timers respect focus, held controls and open menus, rearming while owned.
+- Held feedback retires on release, leave, disable, content replacement and menu takeover. Accepted Exit/Minimize presses reverse a pending fade and retain the surface until release.
+- Both ordinary and pointer-leave auto-hide timers respect recent focus, held controls and open menus. Transport focus expires after the normal input idle timeout; file load and disable retire focus and keyboard menus immediately.
+- Compact pointer clicks dispatch the hit-tested control without invoking the buffering prompt's keyboard/controller action.
 - Audio with no alternative and empty Chapters remain disabled across appearance, navigation and desktop/compact activation. Compact Audio/Chapters anchor to the visible More control.
 - Invisible/covered Fit and More controls cannot activate underneath a menu or hidden HUD. Existing active indicators, quality pending text and authority/track-intent routes are retained.
 
 ## Verification and provenance
 
-Base Beta: `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f`. No application version stamps changed; source remains `1.2.549-beta.1` / numeric `1.2.548.1`. The pipeline owns the next version and combined release checks.
+Base Beta: `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f` (`1.2.549-beta.1` / numeric `1.2.548.1`). Reviewed PR #86 head: `def1daef40c5cc30c63f843810fbd0e14e7d234b`.
+
+Source version: `1.2.552-beta.1`; numeric version: `1.2.551.1`.
+
+The reviewed head changes the app, updater, launcher and installer-default stamps relative to that base. This QA correction does not change those stamps. The historical receipts below predate this head and cannot establish verification of its stamped build inputs or these corrections. No builds or tests were run for this correction; the pipeline must verify it. Final pipeline stamping has not been confirmed; a subsequent stamp requires updated identity records and fresh verification, not reuse of the old receipt.
+
+## Historical local verification (not the current head)
 
 Actual production Lua runs inside bundled pinned libmpv. Focused tests compare emitted ASS, dispatched intent sequences, menu/focus ownership, disabled actions and both timer callbacks. They do not substitute source-string assertions for those behaviors.
 
@@ -21,10 +28,16 @@ The initial regression run had a fixture-clock error and is not product red evid
 
 The native preserved baseline compiles the same fixture but fails actual Exit hover/press pixels with `0/0`. Its screenshot confirms the real OSC was present. Native green verification must use the fresh current-source publish, compare actual rendered button pixels over bright/dark synthetic media and retain pause/resume intent. Physical mouse/keyboard/controller/display behavior and full visual parity are outside this offscreen/scripted evidence.
 
-Final verification passes: **3,496 unit tests**, including **104 actual OSC runtime cases**, zero failed/skipped; successful fresh self-contained Release publish; explicit native `osc-hud-states` group with eight gesture configurations and32 real rendered captures (Exit/Minimize ×960/1920 ×dark/bright ×normal/hover/pressed/released). Actual hover/press pixel differences are1489–3147 pixels per button; released states return to hover. Exactly one intended top action is observed, genuine pause is retained and video resumes afterward. Existing compiler/analyzer warnings remain.
+Historical final verification passed: **3,496 unit tests**, including **104 actual OSC runtime cases**, zero failed/skipped; successful fresh self-contained Release publish; explicit native `osc-hud-states` group with eight gesture configurations and32 real rendered captures (Exit/Minimize ×960/1920 ×dark/bright ×normal/hover/pressed/released). Actual hover/press pixel differences are1489–3147 pixels per button; released states return to hover. Exactly one intended top action is observed, genuine pause is retained and video resumes afterward. Existing compiler/analyzer warnings remain.
 
 Independent Standards and Spec source reviews of tree `f568dcfd7d4fdc5a66b5401ab5e58f17470636d1` report zero remaining actionable findings. Final diagnostic app SHA256 `31966C3F77DD4EA874F46D3D3A5CBB1076FA685A423A44DFD61A1ED660365A09`; shipped OSC SHA256 `3B6AAE08C9EBF130CADCFB2FC8EBFF27BDCBDBEF48204F6368DD2F6B2F54AB3E`. All1035 tracked product/build input hashes remain unchanged through verification; native fixtures operate against the actual fresh payload. The earlier client-final output predates the last pointer-leave correction and is superseded diagnostic evidence, not the accepted candidate.
 
 Final receipt groups: `green-leave-owner`, `full-final-owner`, `client-final-owner`, `native-current`; preserved native red is `native-red-baseline`. Unit tests and publishes preceded the implementation commit and their receipts name the unchanged Beta HEAD plus separately recorded working-source hashes. They do not establish pipeline integration or a published release.
 
 Local evidence: `D:/SiloPlayer/.codex-tmp/osc-menus-nov03/hud-states`; isolated worktree/source and approved design are under that root. Every .NET run verifies engine SHA256 `04E4D27DC385DC18DDD93FBE69C75E635B864F3C6EC53A9122DF54C2F7842F4A` and holds `SiloOct18Build`. Only generated local media/fixture data is executed; no setup, installed-player control or real account access occurred.
+
+## Required pipeline re-verification
+
+- After final stamping, check the semantic/numeric mapping and agreement across the app, updater, launcher, installer defaults and both current source-identity records. `CurrentOscReceiptMatchesAllSourceVersionStamps` guards this source/document agreement automatically; `installer/build.ps1` retains its build-stamp preflight. If the pipeline chooses another version, update the identity records and rerun these checks rather than attributing older evidence to new inputs.
+- Record the exact final commit, tracked product/build-input hashes, bundled engine hash and fresh artifact hashes with the test/publish receipt; recheck inputs after verification. Verify published binary, installer and manifest identities against that receipt before release.
+- Run the OSC runtime regressions for controller-only pause/resume and idle expiry, file/disable focus/menu retirement, compact pointer clicks with both buffering pills, and Exit/Minimize presses during fade-out. Run the native file-replacement focus/auto-hide case and retain the existing gesture/pixel and pause/resume checks. These new cases are pending pipeline execution.
