@@ -15,7 +15,10 @@ internal static class SubtitleIdentityNativeFixture
     internal static async Task RunAsync(StackPanel parent, bool unresolvedOnly = false, bool regionalOnly = false)
     {
         var presentation = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE");
-        var presentationOnly = presentation is "presentation-flyout" or "presentation-osc" or "presentation-ai-menu" or "presentation-ai-dialog" or "presentation-ai-profile" or "presentation-ai-access";
+        var aiCallback = presentation is "presentation-ai-post" or "presentation-ai-post-current" or "presentation-ai-post-access" or
+            "presentation-ai-job" or "presentation-ai-job-current" or "presentation-ai-job-access" or "presentation-ai-refresh" or "presentation-ai-refresh-access" or
+            "presentation-ai-prefetch" or "presentation-ai-prefetch-access" or "presentation-ai-cues" or "presentation-ai-cues-access";
+        var presentationOnly = aiCallback || presentation is "presentation-flyout" or "presentation-osc" or "presentation-ai-menu" or "presentation-ai-dialog" or "presentation-ai-profile" or "presentation-ai-access";
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
         if (presentation is "preplay-legacy" or "preplay-legacy-retired")
         {
@@ -63,7 +66,7 @@ internal static class SubtitleIdentityNativeFixture
         {
             if (presentationOnly)
             {
-                if (presentation is "presentation-ai-menu" or "presentation-ai-dialog" or "presentation-ai-profile" or "presentation-ai-access")
+                if (aiCallback || presentation is "presentation-ai-menu" or "presentation-ai-dialog" or "presentation-ai-profile" or "presentation-ai-access")
                     await VerifyAiPresentationAsync(parent, service, session, mpv, wire, presentation);
                 else await VerifyPresentationAsync(parent, service, session, mpv, wire, presentation!);
                 return;
@@ -720,16 +723,21 @@ internal static class SubtitleIdentityNativeFixture
             "Subtitle presentation changed the applied selection, pause, preference or transport.");
     }
 
-    private sealed class PresentationServices(IServiceProvider fallback, PlayerService service) : IServiceProvider
+    private sealed class PresentationServices(IServiceProvider fallback, PlayerService service, ToastService? toast = null) : IServiceProvider
     {
-        public object? GetService(Type type) => type == typeof(PlayerService) ? service : fallback.GetService(type);
+        public object? GetService(Type type) => type == typeof(PlayerService) ? service :
+            type == typeof(ToastService) && toast != null ? toast : fallback.GetService(type);
     }
 
     private static async Task VerifyAiPresentationAsync(StackPanel parent, PlayerService service,
         PlaybackStartResponse session, MpvPlayer mpv, Wire wire, string scenario)
     {
         var track = session.SubtitleUrls.Single(row => row.Index == 2);
-        track.Url = ""; track.Label = "Native text without delivery URL";
+        var callback = scenario.StartsWith("presentation-ai-post", StringComparison.Ordinal) ||
+            scenario.StartsWith("presentation-ai-job", StringComparison.Ordinal) || scenario.StartsWith("presentation-ai-refresh", StringComparison.Ordinal) ||
+            scenario.StartsWith("presentation-ai-prefetch", StringComparison.Ordinal) || scenario.StartsWith("presentation-ai-cues", StringComparison.Ordinal);
+        if (!callback) track.Url = "";
+        track.Label = "Native text source";
         session.SubtitleUrls = [track];
         wire.AiTranslateEnabled = true;
         var beforeSid = mpv.GetPropertyDouble("sid");
@@ -747,6 +755,11 @@ internal static class SubtitleIdentityNativeFixture
             parent.Children.Add(overlay);
             await mounted.Task.WaitAsync(TimeSpan.FromSeconds(4));
             await (Task)Call(overlay, "RefreshSubtitleAiCapabilityAsync")!;
+            if (callback)
+            {
+                await VerifyAiCallbackAsync(parent, overlay, service, session, mpv, wire, scenario);
+                return;
+            }
             if (scenario == "presentation-ai-menu")
             {
                 Call(overlay, "PopulateSubtitleFlyout");
@@ -823,6 +836,146 @@ internal static class SubtitleIdentityNativeFixture
                 if (ancestor is ContentDialog dialog) found.Add(dialog);
         }
         return found;
+    }
+
+    private static async Task VerifyAiCallbackAsync(StackPanel parent, PlayerOverlay overlay, PlayerService service,
+        PlaybackStartResponse session, MpvPlayer mpv, Wire wire, string scenario)
+    {
+        var current = scenario.EndsWith("-current", StringComparison.Ordinal) || scenario.EndsWith("-access", StringComparison.Ordinal);
+        var access = scenario.EndsWith("-access", StringComparison.Ordinal);
+        var authority = service.ActiveAuthority;
+        void Change()
+        {
+            if (access) Require(authority.ApiClient.TryInvalidateAccessContext(authority.ApiClient.CaptureContext(), out _), "AI callback access control did not invalidate.");
+            else if (!current) authority.ApiClient.SetProfile("replacement");
+        }
+        var beforeSid = mpv.GetPropertyDouble("sid");
+        var beforeInventory = session.SubtitleUrls;
+        if (scenario.StartsWith("presentation-ai-cues", StringComparison.Ordinal))
+        {
+            var path = Path.Combine(Program.ResultDirectory, "owned-live-cues.vtt");
+            const string empty = "WEBVTT\n\n";
+            await File.WriteAllTextAsync(path, empty);
+            Set(service, "_liveSubtitleJobId", 77L); Set(service, "_liveSubtitleFileId", 42); Set(service, "_liveSubtitlePath", path);
+            var owner = typeof(PlayerService).GetMethod("CaptureSubtitleOperationOwner", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(service, [session]);
+            typeof(PlayerService).GetField("_liveSubtitleOperationOwner", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(service, owner);
+            try
+            {
+                Change();
+                using var payload = JsonDocument.Parse("""{"job_id":77,"cues":[{"start":0,"end":5,"text":"owned cue"}]}""");
+                Call(service, "ApplySubtitleTranslationCues", payload.RootElement);
+                Require(current ? (await File.ReadAllTextAsync(path)).Contains("owned cue", StringComparison.Ordinal) && mpv.GetPropertyDouble("sid") > 0
+                    : await File.ReadAllTextAsync(path) == empty && mpv.GetPropertyDouble("sid") == beforeSid && (int)Get(service, "_liveSubtitleSid")! == 0,
+                    "Retired live AI cues changed native subtitles/owned bytes, or access-only invalidation lost current cues.");
+                Require(mpv.IsPaused && wire.PreferenceWrites == 0, "Live AI cue ownership changed genuine pause or a saved preference.");
+            }
+            finally
+            {
+                lock (Get(service, "_liveSubtitleLock")!) Call(service, "ClearLiveSubtitleTranslationLocked", false);
+            }
+            Program.Log($"PASS: {scenario} gates actual native live-cue writes and SID attachment using only an isolated fixture file.");
+            return;
+        }
+        if (scenario.StartsWith("presentation-ai-post", StringComparison.Ordinal))
+        {
+            var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var previous = (IServiceProvider)field.GetValue(null)!;
+            var toast = new ToastService(); var container = new ToastContainer();
+            parent.Children.Add(container); toast.Register(container, parent.DispatcherQueue);
+            field.SetValue(null, new PresentationServices(previous, service, toast));
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.BeforeAiStart = () => { entered.TrySetResult(); return release.Task; };
+            Task? showing = null;
+            try
+            {
+                showing = overlay.ShowSubtitleAiDialogAsync(parent.XamlRoot);
+                var until = DateTime.UtcNow.AddSeconds(4);
+                while (DateTime.UtcNow < until && !AiDialogs(parent.XamlRoot).OfType<SubtitleAiDialog>().Any(dialog => dialog.IsLoaded)) await Task.Delay(20);
+                var dialog = AiDialogs(parent.XamlRoot).OfType<SubtitleAiDialog>().Single(dialog => dialog.IsLoaded);
+                var target = (ComboBox)dialog.FindName("TargetLanguageComboBox");
+                target.SelectedItem = target.Items.OfType<ComboBoxItem>().Single(item => item.Tag?.ToString() == "fr");
+                var submit = (Button)dialog.FindName("SubmitButton");
+                ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(submit)
+                    .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Change(); release.TrySetResult();
+                await showing.WaitAsync(TimeSpan.FromSeconds(4)); showing = null;
+                var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                parent.DispatcherQueue.TryEnqueue(() => drained.TrySetResult()); await drained.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                var stack = (StackPanel)container.FindName("ToastStack");
+                Require(stack.Children.Count == (current ? 1 : 0) && wire.AiStarts == 1 && wire.AiJobReads == 0 &&
+                    wire.AiStartRequest?.GetProperty("source_index").GetInt32() == 2 &&
+                    wire.AiStartRequest?.GetProperty("media_file_id").GetString() == "42" &&
+                    (long)Get(service, "_liveSubtitleJobId")! == 0,
+                    "Held AI POST published a retired owner's toast/live job/monitor, or lost a current/access-only job.");
+            }
+            finally
+            {
+                release.TrySetResult(); wire.BeforeAiStart = null;
+                foreach (var dialog in AiDialogs(parent.XamlRoot)) dialog.Hide();
+                if (showing != null) await showing.WaitAsync(TimeSpan.FromSeconds(4));
+                toast.Unregister(); parent.Children.Remove(container); field.SetValue(null, previous);
+            }
+        }
+        else
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var refresh = scenario.StartsWith("presentation-ai-refresh", StringComparison.Ordinal);
+            var prefetch = scenario.StartsWith("presentation-ai-prefetch", StringComparison.Ordinal);
+            var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
+            using var sidecar = prefetch ? new SubtitleServer(File.ReadAllBytes(Path.Combine(assets, "english.srt"))) : null;
+            if (prefetch)
+            {
+                authority.ApiClient.SetBaseUrl(sidecar!.Origin); wire.InventoryHost = new Uri(sidecar.Origin).Host;
+                sidecar.BeforeSubtitleResponse = () => { entered.TrySetResult(); return release.Task; };
+                wire.AiResultSubtitleId = 91;
+            }
+            else if (refresh) wire.BeforeAiInventory = () => { entered.TrySetResult(); return release.Task; };
+            else wire.BeforeAiJob = () => { entered.TrySetResult(); return release.Task; };
+            wire.DownloadedInventory = new() { Subtitles = [new() { Id = 91, Language = "fr", Format = "srt" }] };
+            var monitor = typeof(PlayerOverlay).GetMethod("MonitorSubtitleAiJobAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var capturedOwner = typeof(PlayerService).GetMethod("CaptureSubtitleOperationOwner", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(service, [session]);
+            var pending = (Task)monitor.Invoke(overlay, monitor.GetParameters().Length == 3
+                ? [authority.PlaybackApi, 77L, 42] : [authority.PlaybackApi, 77L, 42, capturedOwner])!;
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(4)); Change(); release.TrySetResult();
+                await pending.WaitAsync(TimeSpan.FromSeconds(4));
+                var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                parent.DispatcherQueue.TryEnqueue(() => drained.TrySetResult()); await drained.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                // The queued refresh starts its real wire request before returning.
+                // When that response was held, await its separately captured task.
+                if (prefetch)
+                {
+                    var until = DateTime.UtcNow.AddSeconds(4);
+                    while (DateTime.UtcNow < until && Get(service, "_pendingSubtitlePreferenceOwner") != null) await Task.Delay(20);
+                    Require(Get(service, "_pendingSubtitlePreferenceOwner") == null, "Owned AI sidecar selection did not release its admission.");
+                    var cache = (Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!;
+                    if (!current)
+                        Require(cache.Count == 0 && mpv.GetPropertyDouble("sid") == beforeSid && service.ActiveSubtitleServerIndex == -1 && wire.PreferenceWrites == 0,
+                            "Retired AI sidecar prefetch cached/attached foreign bytes or retained its unexecuted highlight/preference.");
+                    else Require(cache.ContainsKey(3) && mpv.GetPropertyDouble("sid") > 0 && service.ActiveSubtitleServerIndex == 3 && wire.PreferenceWrites == 1,
+                        "Access-only invalidation lost the current AI sidecar execution or its once-only preference.");
+                }
+                else if (refresh)
+                {
+                    var until = DateTime.UtcNow.AddSeconds(4);
+                    while (DateTime.UtcNow < until && ReferenceEquals(beforeInventory, session.SubtitleUrls) && current) await Task.Delay(20);
+                    await Task.Delay(100);
+                    Require(ReferenceEquals(beforeInventory, session.SubtitleUrls) == !current,
+                        "Held AI inventory response published under a retired owner, or lost current/access-only refresh.");
+                }
+                else Require(wire.AiInventoryReads == (current ? 1 : 0), "Held AI job response queued an inventory read for a retired owner, or lost a current/access-only refresh.");
+            }
+            finally { release.TrySetResult(); wire.BeforeAiJob = null; wire.BeforeAiInventory = null; }
+        }
+        var executedCurrentSidecar = scenario == "presentation-ai-prefetch-access";
+        Require((executedCurrentSidecar || mpv.GetPropertyDouble("sid") == beforeSid) && mpv.IsPaused &&
+            wire.PreferenceWrites == (executedCurrentSidecar ? 1 : 0) && wire.Replans == 0,
+            "AI callback control changed the applied subtitle, genuine pause or saved preference.");
+        Program.Log($"PASS: {scenario} preserves exact AI callback ownership across real held wire/dispatch boundaries.");
     }
     private static IEnumerable<Microsoft.UI.Xaml.DependencyObject> AiDescendants(Microsoft.UI.Xaml.DependencyObject root)
     {
@@ -1148,6 +1301,7 @@ internal static class SubtitleIdentityNativeFixture
         public volatile bool Fail;
         public byte[]? MediaBytes;
         public int Requests;
+        public Func<Task>? BeforeSubtitleResponse;
         public SubtitleServer(byte[] bytes)
         {
             var reserve = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0); reserve.Start();
@@ -1177,6 +1331,7 @@ internal static class SubtitleIdentityNativeFixture
                         request.Response.Close();
                         continue;
                     }
+                    if (BeforeSubtitleResponse is {} beforeSubtitle) await beforeSubtitle();
                     request.Response.ContentType = "application/x-subrip"; request.Response.ContentLength64 = bytes.Length;
                     await request.Response.OutputStream.WriteAsync(bytes); request.Response.Close();
                 }
@@ -1190,6 +1345,10 @@ internal static class SubtitleIdentityNativeFixture
         public bool AiTranslateEnabled;
         public int AiStarts;
         public Func<Task>? BeforeAiStatus;
+        public Func<Task>? BeforeAiStart, BeforeAiJob, BeforeAiInventory;
+        public int AiJobReads, AiInventoryReads;
+        public long? AiResultSubtitleId;
+        public JsonElement? AiStartRequest;
         public string? InitialPlaybackUrl;
         public string? InventoryHost;
         public SubtitleListResponse? DownloadedInventory;
@@ -1205,7 +1364,22 @@ internal static class SubtitleIdentityNativeFixture
                 if (BeforeAiStatus is {} before) await before();
                 return Json(JsonSerializer.Serialize(new { enabled = AiTranslateEnabled, transcribe_enabled = false }));
             }
-            if (path == "/api/v2/subtitles/ai") AiStarts++;
+            if (path == "/api/v2/subtitles/ai/translate")
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                AiStartRequest = body.RootElement.Clone();
+                AiStarts++; if (BeforeAiStart is {} before) await before();
+                return Json("""{"job":{"id":77,"status":"running"}}""");
+            }
+            if (path == "/api/v2/subtitles/ai/jobs/77")
+            {
+                AiJobReads++; if (BeforeAiJob is {} before) await before();
+                return Json(JsonSerializer.Serialize(new { job = new { id = 77, status = "completed", result_subtitle_id = AiResultSubtitleId } }));
+            }
+            if (path == "/api/v2/subtitles/42")
+            {
+                AiInventoryReads++; if (BeforeAiInventory is {} before) await before();
+            }
             if (path == "/api/v2/subtitles/42" && DownloadedInventory != null)
                 return Json(JsonSerializer.Serialize(DownloadedInventory,
                     new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }));

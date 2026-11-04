@@ -24,7 +24,9 @@ internal static class BurnedInSubtitleSwitchNativeFixture
     {
         using var media = new MediaServer(Path.Combine(Program.ResultDirectory, "burned-in-subtitle.wav"));
         using var wire = new Wire(media.Origin); using var http = new HttpClient(wire);
-        var api = new SiloApiClient(http); api.SetBaseUrl("https://burn-in.invalid"); api.SetProfile("fixture");
+        var ownedAi = Environment.GetEnvironmentVariable("SILO_NATIVE_BURN_FAILURE") is "ai-unburn-owned" or "ai-unburn-retired" or "ai-unburn-session";
+        wire.AiDownload = ownedAi;
+        var api = new SiloApiClient(http); api.SetBaseUrl(ownedAi ? media.Origin : "https://burn-in.invalid"); api.SetProfile("fixture");
         using var auth = new AuthService(api, new AuthApi(api));
         var playback = new PlaybackApi(api); var catalog = new CatalogApi(api);
         using var service = new PlayerService(playback, catalog, auth, api,
@@ -41,6 +43,82 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         try
         {
             var lifetimeCase = Environment.GetEnvironmentVariable("SILO_NATIVE_BURN_FAILURE");
+            if (ownedAi)
+            {
+                await Loaded(async () =>
+                {
+                    var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", manager.CurrentSession!, Version(), manager.StreamUrl!, 0d, CancellationToken.None)!;
+                    await prepare;
+                    Call(service, "ApplyPreparedTransport", prepare.GetType().GetProperty("Result")!.GetValue(prepare)!);
+                    Set(service, "_pendingInitialServerSubtitleIndex", Dvd);
+                    Call(service, "BeginMpvLoad", prepare.GetType().GetProperty("Result")!.GetValue(prepare)!, true);
+                });
+                await Until(() => Get(service, "_loadedMediaInitCts") == null && !service.IsLoading && service.ActiveSubtitleServerIndex == Dvd);
+                var previous = manager.CurrentSession;
+                var generation = Get(service, "_fileLoadGeneration");
+                var writes = wire.PreferenceWrites;
+                var replans = wire.Replans.Count;
+                Task RefreshOwned()
+                {
+                    var factory = typeof(PlayerService).GetMethod("CaptureSubtitleOperationOwner", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (factory == null) return service.RefreshSubtitlesAfterAiAsync(42, 91);
+                    var owner = factory.Invoke(service, [manager.CurrentSession!]);
+                    return (Task)typeof(PlayerService).GetMethod("RefreshSubtitlesAfterAiForOwnerAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
+                        .Invoke(service, [42, 91L, owner])!;
+                }
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                if (lifetimeCase == "ai-unburn-retired") wire.BeforeTrackChange = ct => { entered.TrySetResult(); return release.Task.WaitAsync(ct); };
+                try
+                {
+                    if (lifetimeCase == "ai-unburn-session")
+                    {
+                        var gate = (SemaphoreSlim)Get(manager, "_replanGuard")!;
+                        await gate.WaitAsync();
+                        Task? refresh = null;
+                        var foreign = new PlaybackStartResponse { ProtocolVersion = 3, MediaFileId = 42, SessionId = "foreign",
+                            SubtitleMode = "burn_in", SelectedSubtitleTrackId = previous!.SelectedSubtitleTrackId,
+                            SelectedSubtitleTrackIndex = previous.SelectedSubtitleTrackIndex, SubtitleUrls = previous.SubtitleUrls };
+                        try
+                        {
+                            refresh = RefreshOwned();
+                            await Until(() => service.IsLoading && Get(service, "_pendingSubtitlePreferenceOwner") != null);
+                            Require(!refresh.IsCompleted && wire.Replans.Count == replans, "Owned AI session control did not queue at the real manager gate.");
+                            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, foreign);
+                        }
+                        finally { gate.Release(); }
+                        if (refresh != null) await refresh.WaitAsync(TimeSpan.FromSeconds(4));
+                        Require(ReferenceEquals(foreign, manager.CurrentSession) && Equals(generation, Get(service, "_fileLoadGeneration")) &&
+                            mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == writes && wire.Replans.Count == replans,
+                            "Queued AI selection borrowed a foreign session to issue/reload/persist its unburn plan.");
+                    }
+                    else if (lifetimeCase == "ai-unburn-retired")
+                    {
+                        var refresh = RefreshOwned();
+                        await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        api.SetProfile("replacement"); release.TrySetResult();
+                        await refresh.WaitAsync(TimeSpan.FromSeconds(4));
+                        Require(ReferenceEquals(previous, manager.CurrentSession) && manager.CurrentSession!.IsSubtitleBurnedIn &&
+                            Equals(generation, Get(service, "_fileLoadGeneration")) && mpv.GetPropertyDouble("sid") <= 0 &&
+                            wire.PreferenceWrites == writes && wire.Replans.Count == replans + 1,
+                            "Retired AI unburn response adopted a foreign plan, started a load or persisted an unexecuted pick.");
+                    }
+                    else
+                    {
+                        await Loaded(RefreshOwned);
+                        await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
+                            service.ActiveSubtitleServerIndex == 3 && Get(service, "_pendingSubtitlePreferenceOwner") == null);
+                        Require(!manager.CurrentSession!.IsSubtitleBurnedIn && !ReferenceEquals(previous, manager.CurrentSession) &&
+                            NativeSidMatches(service, mpv, 3) && mpv.IsPaused && service.IsPaused && wire.PreferenceWrites == writes + 1 &&
+                            wire.LastSubtitlePreferenceIndex == 3 && wire.Replans.Count == replans + 1 &&
+                            !(bool)Get(service, "_prematureEofRecoveryActive")!,
+                            "Owned AI preferred text rejected its own accepted unburn grant or lost native execution/pause/preference.");
+                    }
+                    Program.Log($"PASS: {lifetimeCase} transfers only its own accepted AI unburn plan and preserves native/pause/preference ownership.");
+                }
+                finally { release.TrySetResult(); wire.BeforeTrackChange = null; }
+                return;
+            }
             if (lifetimeCase is "queued-cancel" or "queued-owner")
             {
                 var gate = (SemaphoreSlim)Get(service, "_streamRecoveryGate")!;
@@ -1085,6 +1163,8 @@ internal static class BurnedInSubtitleSwitchNativeFixture
     /// <summary>Synthetic v3 server: track_change and quality_change replans keep the requested subtitle.</summary>
     private sealed class Wire(string origin) : HttpMessageHandler
     {
+        public bool AiDownload;
+        private string SubtitleId(int index) => AiDownload && index == 3 ? "stored-91" : $"sub:{_file}:{index}";
         private int _subtitle = -1, _file = 42;
         public int AutomaticSubtitle = -1;
         public bool FailNextTrackChange;
@@ -1105,8 +1185,10 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 (track == Spanish && ReindexSpanish || track == Dvd && ReindexDvd) ? track + 10 : track;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            if (request.RequestUri?.Host != "burn-in.invalid") throw new InvalidOperationException("Burn-in fixture attempted external networking.");
+            if (request.RequestUri?.Host != "burn-in.invalid" && !(AiDownload && request.RequestUri?.Host == new Uri(origin).Host))
+                throw new InvalidOperationException("Burn-in fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
+            if (AiDownload && path == "/api/v2/subtitles/42") return Json("""{"subtitles":[{"id":91,"language":"fra","format":"srt"}]}""");
             if (path.Contains("-prefs/", StringComparison.Ordinal))
             {
                 PreferenceWrites++;
@@ -1179,17 +1261,19 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 {
                     plan_id = $"plan-{Starts.Count}-{Replans.Count}", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = origin + "/media.wav" }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = $"sub:{_file}:{_subtitle}", index = CombinedIndex(_subtitle) } },
+                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = SubtitleId(_subtitle), index = CombinedIndex(_subtitle) } },
                     subtitle = new
                     {
                         mode = burned ? "burn_in" : _subtitle < 0 ? "off" : "render",
-                        track_id = _subtitle < 0 ? null : $"sub:{_file}:{_subtitle}",
+                        track_id = _subtitle < 0 ? null : SubtitleId(_subtitle),
                         inventory = new object[]
                         {
                             new { track_id = $"sub:{_file}:0", combined_index = CombinedIndex(English), language = "eng", codec = "srt", source = "external", url = origin + "/eng.srt", label = "English", delivery = "sidecar" },
                             new { track_id = $"sub:{_file}:1", combined_index = CombinedIndex(Spanish), language = "spa", codec = "srt", source = "external", url = origin + "/spa.srt", label = "Spanish", delivery = "sidecar" },
                             new { track_id = $"sub:{_file}:2", combined_index = CombinedIndex(Dvd), language = "eng", codec = "dvd_subtitle", source = "embedded", label = "English (DVD)", delivery = "burn_in_only" },
-                        }.Where((_, index) => !OmitSpanish || index != Spanish).ToArray(),
+                        }.Concat(AiDownload ? new object[] { new { track_id = "stored-91", sync_key = "stored-91", combined_index = 3,
+                            language = "fra", codec = "srt", source = "downloaded", url = origin + "/ai.srt", label = "AI French", delivery = "sidecar" } } : [])
+                            .Where((_, index) => !OmitSpanish || index != Spanish).ToArray(),
                     },
                 },
             }));

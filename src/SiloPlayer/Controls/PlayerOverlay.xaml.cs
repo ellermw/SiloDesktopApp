@@ -1506,10 +1506,9 @@ public sealed partial class PlayerOverlay : UserControl
         if (session == null) return;
         var authority = _playerService.ActiveAuthority;
         var api = authority.PlaybackApi;
-        var identity = authority.ApiClient.CaptureIdentityContext();
-        bool Current() => ReferenceEquals(authority, _playerService.ActiveAuthority) &&
-            authority.ApiClient.IsCurrentIdentityContext(identity) &&
-            ReferenceEquals(session, _playerService.Manager?.CurrentSession);
+        var operationOwner = _playerService.CaptureSubtitleOperationOwner(session);
+        if (operationOwner == null) return;
+        bool Current() => operationOwner.IsCurrent;
         SubtitleAiStatus capability;
         try { capability = await api.GetSubtitleAiStatusAsync(); }
         catch (Exception ex) { if (Current()) await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot); return; }
@@ -1578,7 +1577,10 @@ public sealed partial class PlayerOverlay : UserControl
                         request.TargetLanguage = "";
                 }
 
-                var started = await api.StartSubtitleAiAsync(request);
+                SubtitleAiStartResponse started;
+                try { started = await api.StartSubtitleAiAsync(request); }
+                catch when (!Current()) { return; }
+                if (!Current()) return;
                 var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
                     ? request.SourceLanguage
                     : request.TargetLanguage;
@@ -1589,17 +1591,18 @@ public sealed partial class PlayerOverlay : UserControl
                 }
                 else
                 {
-                    _playerService.PrepareLiveSubtitleTranslation(
+                    _playerService.PrepareLiveSubtitleTranslationForOwner(
                         started.Job.Id,
                         session.MediaFileId,
                         liveLanguage,
-                        $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
+                        $"{PlayerService.LanguageCodeToName(liveLanguage)} AI", operationOwner);
                 }
-                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId);
+                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, operationOwner);
             },
             async () =>
             {
-                try { return await api.GetSubtitleAiQuotaAsync(); }
+                if (!Current()) return null;
+                try { var refreshed = await api.GetSubtitleAiQuotaAsync(); return Current() ? refreshed : null; }
                 catch { return null; }
             })
         {
@@ -1608,13 +1611,14 @@ public sealed partial class PlayerOverlay : UserControl
         await dialog.ShowAsync();
     }
 
-    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId)
+    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, PlayerService.SubtitleOperationOwner operationOwner)
     {
+        bool currentOwner() => operationOwner.IsCurrent;
         if (jobId <= 0) return;
         for (var attempt = 0; attempt < 3600; attempt++)
         {
             var activeSession = _playerService.Manager?.CurrentSession;
-            if (activeSession == null ||
+            if (!currentOwner() || activeSession == null ||
                 activeSession.MediaFileId != mediaFileId ||
                 _playerService.State == PlayerState.Idle)
             {
@@ -1622,18 +1626,25 @@ public sealed partial class PlayerOverlay : UserControl
             }
 
             await Task.Delay(TimeSpan.FromSeconds(2));
+            if (!currentOwner()) return;
             SubtitleAiJob job;
             try { job = await api.GetSubtitleAiJobAsync(jobId); }
-            catch { continue; }
+            catch { if (!currentOwner()) return; continue; }
+            if (!currentOwner()) return;
             if (job.Status is "failed" or "cancelled")
             {
                 DispatcherQueue.TryEnqueue(() =>
-                    _playerService.FailLiveSubtitleTranslation(jobId, job.ErrorMessage));
+                {
+                    if (currentOwner()) _playerService.FailLiveSubtitleTranslation(jobId, job.ErrorMessage);
+                });
                 return;
             }
             if (job.Status != "completed") continue;
-            DispatcherQueue.TryEnqueue(() => _ = _playerService.RefreshSubtitlesAfterAiAsync(
-                mediaFileId, job.ResultSubtitleId));
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (currentOwner()) _ = _playerService.RefreshSubtitlesAfterAiForOwnerAsync(
+                    mediaFileId, job.ResultSubtitleId, operationOwner);
+            });
             return;
         }
     }

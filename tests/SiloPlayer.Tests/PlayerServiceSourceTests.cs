@@ -239,9 +239,11 @@ public sealed class PlayerServiceSourceTests
         Assert.True(refreshStart >= 0 && refreshEnd > refreshStart);
         Assert.DoesNotContain("SwitchVersionAsync", source[refreshStart..refreshEnd]);
         Assert.Contains(
-            "await SelectSubtitleByServerIndexAsync(preferred.Index).ConfigureAwait(false);",
+            "await TrySetSubtitleTrackAndPersistForOwnerAsync(",
             source[refreshStart..refreshEnd],
             StringComparison.Ordinal);
+        Assert.Contains("preferred.Index + 1, preferred.Language, preferred, currentOwner)", source[refreshStart..refreshEnd]);
+        Assert.Contains("=> await TrySetSubtitleTrackAndPersistForOwnerAsync(mpvTrackIndex, language, track, null);", source);
         Assert.DoesNotContain(
             "RestorePlaybackStateAfterSubtitleChange(wasPaused, position",
             source[refreshStart..refreshEnd],

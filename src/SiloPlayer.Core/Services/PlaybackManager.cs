@@ -413,10 +413,22 @@ public partial class PlaybackManager : IDisposable
     public async Task<PlaybackStartResponse?> ReplanCurrentSubtitleAsync(
         double positionSeconds,
         CancellationToken ct = default)
+        => await ReplanCurrentSubtitleForOwnerCoreAsync(positionSeconds, ct, null, null).ConfigureAwait(false);
+
+    public Task<PlaybackStartResponse?> ReplanCurrentSubtitleForOwnerAsync(double positionSeconds,
+        Func<PlaybackStartResponse, bool> canUseSession,
+        Func<PlaybackStartResponse, PlaybackStartResponse, bool> tryAdoptSession, CancellationToken ct = default)
+        => ReplanCurrentSubtitleForOwnerCoreAsync(positionSeconds, ct, canUseSession, tryAdoptSession);
+
+    private async Task<PlaybackStartResponse?> ReplanCurrentSubtitleForOwnerCoreAsync(double positionSeconds,
+        CancellationToken ct, Func<PlaybackStartResponse, bool>? canUseSession,
+        Func<PlaybackStartResponse, PlaybackStartResponse, bool>? tryAdoptSession)
     {
         await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            var ownerSession = CurrentSession;
+            if (canUseSession != null && (ownerSession == null || !canUseSession(ownerSession))) return null;
             lock (_trackIntentGate)
             {
                 // An unmatched row is a superseded pick, not an explicit Off
@@ -428,8 +440,10 @@ public partial class PlaybackManager : IDisposable
                 ++_subtitleRevision;
             }
             EnsureBufferingReplanOwner();
-            return await ReplanCoreAsync("track_change", positionSeconds, _qualityPreferenceV3,
-                selectedTracks => { }, failure: null, ct).ConfigureAwait(false);
+            return await ReplanCoreForOwnerAsync("track_change", positionSeconds, _qualityPreferenceV3,
+                selectedTracks => { }, failure: null, ct,
+                canUseSession == null ? null : () => ownerSession != null && canUseSession(ownerSession),
+                tryAdoptSession == null ? null : response => ownerSession != null && tryAdoptSession(ownerSession, response)).ConfigureAwait(false);
         }
         finally
         {
@@ -582,7 +596,15 @@ public partial class PlaybackManager : IDisposable
         Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
         PlaybackFailureV3? failure,
         CancellationToken ct)
+        => await ReplanCoreForOwnerAsync(operation, positionSeconds, qualityPreference, mutateSelectedTracks,
+            failure, ct, null, null).ConfigureAwait(false);
+
+    private async Task<PlaybackStartResponse> ReplanCoreForOwnerAsync(string operation, double positionSeconds,
+        string qualityPreference, Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
+        PlaybackFailureV3? failure, CancellationToken ct, Func<bool>? currentOwner,
+        Func<PlaybackStartResponse, bool>? tryAdopt)
     {
+        if (currentOwner?.Invoke() == false) throw new OperationCanceledException("Subtitle owner retired.", ct);
         var plan = _currentPlanV3
             ?? throw new InvalidOperationException("The active playback session does not have a protocol-v3 plan.");
         var sessionId = _sessionId
@@ -636,20 +658,47 @@ public partial class PlaybackManager : IDisposable
 
         ConfigureConnectionReplan(request);
         var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
-        if (recoveryAttempt != null)
-            _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
-        else
-            _recoveryAttemptHistory.Reset();
-        var response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
-        _currentPlanV3 = decision.PlaybackPlan;
-        _planAttemptIdV3 = Guid.NewGuid().ToString();
-        _qualityPreferenceV3 = qualityPreference;
-        _sessionId = response.SessionId;
-        CurrentSession = response;
-        AcknowledgeGrantedSubtitleIntent(subtitleRevision);
-        AcknowledgeAudioIntent(audioRevision);
-        _lastReportedPosition = Math.Max(0, response.Position);
-        ApplyStreamUrl(response);
+        void CommitHistory()
+        {
+            if (recoveryAttempt != null) _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
+            else _recoveryAttemptHistory.Reset();
+        }
+        void Publish(PlaybackStartResponse accepted)
+        {
+            _currentPlanV3 = decision.PlaybackPlan;
+            _planAttemptIdV3 = Guid.NewGuid().ToString();
+            _qualityPreferenceV3 = qualityPreference;
+            _sessionId = accepted.SessionId;
+            CurrentSession = accepted;
+            AcknowledgeGrantedSubtitleIntent(subtitleRevision);
+            AcknowledgeAudioIntent(audioRevision);
+            _lastReportedPosition = Math.Max(0, accepted.Position);
+            ApplyStreamUrl(accepted);
+        }
+        PlaybackStartResponse response;
+        if (currentOwner == null)
+        {
+            // Preserve the original unowned publication/history ordering.
+            CommitHistory();
+            response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
+            Publish(response);
+        }
+        else lock (_trackIntentGate)
+        {
+            if (!currentOwner()) throw new OperationCanceledException("Subtitle owner retired.", ct);
+            response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
+            var previousSession = CurrentSession;
+            CurrentSession = response;
+            if (tryAdopt?.Invoke(response) == false)
+            {
+                // CurrentSession readers share this gate. Roll back the private
+                // handoff before publishing any other plan/URL/intent metadata.
+                CurrentSession = previousSession;
+                throw new OperationCanceledException("Subtitle owner retired before publication.", ct);
+            }
+            CommitHistory();
+            Publish(response);
+        }
         _ = RecordRouteEventAsync(response, "plan_selected");
         LogToStateTrace(
             $"Replan v3: operation={operation}, requested_quality={qualityPreference}, active_quality={response.ActiveQuality}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
