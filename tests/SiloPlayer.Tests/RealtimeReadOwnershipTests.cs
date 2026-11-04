@@ -549,6 +549,49 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
+    [InlineData("movie", true)]
+    [InlineData("episode", true)]
+    [InlineData("movie", false)]
+    [InlineData("episode", false)]
+    public async Task OnlyPlaybackOwningSweepsSupersedeAnInFlightPostPlaybackRead(string type, bool viewerOnly)
+    {
+        using var f = new Fixture(); f.Seed();
+        var mounted = f.Vm.Item!;
+        mounted.ContentId = EpisodeA; mounted.Type = f.Wire.DetailType = type;
+        f.Vm.IsSeries = false;
+        f.Vm.Seasons.Clear(); f.Vm.Episodes.Clear();
+        f.Wire.Count = 2; f.Wire.Played = true;
+        f.Wire.DetailPosition = 999; f.Wire.Target = EpisodeB;
+        f.Wire.HoldDetails = true;
+        var postPlayback = f.Vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
+        var localRead = await f.Wire.NextAsync();
+
+        // The later snapshot owns viewer fields in either case, but owns
+        // playback only when the batch explicitly includes that scope.
+        f.Wire.Count = 3; f.Wire.Played = false;
+        f.Wire.DetailPosition = 111; f.Wire.Target = EpisodeA; f.Wire.Favorite = true;
+        f.Wire.HoldDetails = false;
+        await f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA) with
+        {
+            CatchUp = !viewerOnly,
+            ViewerStateContentIds = new HashSet<string>([EpisodeA]),
+            PlaybackStateContentIds = new HashSet<string>(viewerOnly ? [] : [EpisodeA])
+        }).WaitAsync(TimeSpan.FromSeconds(5));
+        localRead.Release();
+        await postPlayback.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, f.Vm.Item);
+        Assert.Equal(viewerOnly, f.Vm.IsWatched);
+        Assert.Equal(viewerOnly, mounted.UserData!.Played);
+        Assert.Equal(viewerOnly ? 2 : 3, mounted.UserData.WatchedCount);
+        Assert.Equal(viewerOnly ? 999 : 111, mounted.UserData.PositionSeconds);
+        Assert.Equal(viewerOnly ? EpisodeB : EpisodeA, mounted.PlayContentId);
+        Assert.True(f.Vm.IsFavorite);
+        Assert.True(mounted.UserState!.IsFavorite);
+        Assert.Equal(2, f.Wire.DetailReads);
+    }
+
+    [Theory]
     [InlineData("series", false)]
     [InlineData("series", true)]
     [InlineData("season", false)]
@@ -707,6 +750,106 @@ public sealed class RealtimeReadOwnershipTests
         Assert.True(f.Vm.IsWatched);
         Assert.Null(f.Vm.ErrorMessage);
         Assert.True(f.Wire.DetailReads >= 2);
+        Assert.All(f.Wire.CatalogUris, uri => Assert.Equal(scoped ? "?library_id=9" : "", uri.Query));
+    }
+
+    [Theory]
+    [InlineData("series", false, false)]
+    [InlineData("series", false, true)]
+    [InlineData("series", true, false)]
+    [InlineData("series", true, true)]
+    [InlineData("season", false, false)]
+    [InlineData("season", false, true)]
+    [InlineData("season", true, false)]
+    [InlineData("season", true, true)]
+    public async Task FinalSaveAtTheInitialCommitIsRetainedOnEitherSideOfItemAssignment(
+        string type, bool scoped, bool beforeAssignment)
+    {
+        using var f = new Fixture();
+        var id = type == "series" ? Series : "series:review-S01";
+        f.Wire.DetailType = type;
+        f.Wire.DetailSeriesId = type == "season" ? Series : null;
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delivered = false;
+        void Deliver(string? property)
+        {
+            if (delivered || property != nameof(f.Vm.Item)) return;
+            delivered = true;
+            if (beforeAssignment) Assert.Null(f.Vm.Item);
+            else Assert.NotNull(f.Vm.Item);
+            // Model the closing thread at the commit boundary without a
+            // global cache recipient masking a lost VM-local barrier.
+            f.Vm.Receive(new PlaybackProgressUpdated(EpisodeA, 999, 1000, true)
+                { SeriesId = Series, Persisted = save.Task });
+        }
+        if (beforeAssignment) f.Vm.PropertyChanging += (_, e) => Deliver(e.PropertyName);
+        else f.Vm.PropertyChanged += (_, e) => Deliver(e.PropertyName);
+
+        await f.Vm.LoadInLibraryAsync(id, scoped ? 9 : null).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(delivered);
+        Assert.False(save.Task.IsCompleted);
+        Assert.Equal(1, f.Wire.DetailReads);
+        Assert.Equal(0, f.Vm.Item!.UserData!.WatchedCount);
+        if (type == "series")
+            f.Vm.Seasons.Add(new() { ContentId = "series:review-S01", SeasonNumber = 1, EpisodeCount = 8, UserData = new() });
+        var mounted = f.Vm.Item!;
+        var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(f.Vm.Item) && mounted.UserData!.WatchedCount == 2)
+                applied.TrySetResult();
+        };
+        f.Wire.Count = 2; f.Wire.Played = true; f.Wire.Target = EpisodeB;
+        save.SetResult();
+        await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, f.Vm.Item);
+        Assert.True(f.Vm.IsWatched);
+        Assert.Equal(2, mounted.UserData!.WatchedCount);
+        Assert.Equal(EpisodeB, mounted.PlayContentId);
+        if (type == "series") Assert.Equal(2, Assert.Single(f.Vm.Seasons).UserData!.WatchedCount);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+        Assert.All(f.Wire.CatalogUris, uri => Assert.Equal(scoped ? "?library_id=9" : "", uri.Query));
+    }
+
+    [Theory]
+    [InlineData("series", false)]
+    [InlineData("series", true)]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    public async Task FinalSaveAfterInitialLoadRefreshesTheMountedAggregateWithoutAnIdleCallback(string type, bool scoped)
+    {
+        using var f = new Fixture();
+        var id = type == "series" ? Series : "series:review-S01";
+        f.Wire.DetailType = type;
+        f.Wire.DetailSeriesId = type == "season" ? Series : null;
+        await f.Vm.LoadInLibraryAsync(id, scoped ? 9 : null);
+        if (type == "series")
+            f.Vm.Seasons.Add(new() { ContentId = "series:review-S01", SeasonNumber = 1, EpisodeCount = 8, UserData = new() });
+        var mounted = f.Vm.Item!;
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(f.Vm.Item) && mounted.UserData!.WatchedCount == 2)
+                applied.TrySetResult();
+        };
+        f.Vm.Receive(new PlaybackProgressUpdated(EpisodeA, 999, 1000, true)
+            { SeriesId = Series, Persisted = save.Task });
+        // Give the bounded invalidation time to reach its save barrier.
+        await Task.Delay(250);
+        Assert.Equal(1, f.Wire.DetailReads);
+        Assert.Equal(0, mounted.UserData!.WatchedCount);
+        f.Wire.Count = 2; f.Wire.Played = true; f.Wire.Target = EpisodeB;
+        save.SetResult();
+        await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, f.Vm.Item);
+        Assert.True(f.Vm.IsWatched);
+        Assert.Equal(2, mounted.UserData.WatchedCount);
+        Assert.Equal(EpisodeB, mounted.PlayContentId);
+        if (type == "series") Assert.Equal(2, Assert.Single(f.Vm.Seasons).UserData!.WatchedCount);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
         Assert.All(f.Wire.CatalogUris, uri => Assert.Equal(scoped ? "?library_id=9" : "", uri.Query));
     }
 
