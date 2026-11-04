@@ -6,6 +6,38 @@ using SiloPlayer.ViewModels;
 namespace SiloPlayer.Tests;
 public sealed class BoxSetOwnershipTests
 {
+    [Theory]
+    [InlineData("access", 503, false)]
+    [InlineData("access", 503, true)]
+    [InlineData("transport", 503, false)]
+    [InlineData("profile", 503, false)]
+    [InlineData("aba", 503, false)]
+    [InlineData("library", 503, false)]
+    [InlineData("item", 503, false)]
+    [InlineData("access", 403, false)]
+    [InlineData("access", 200, false)]
+    public async Task MembershipRefreshRetainsOnlySameIdentityRowUntilAuthoritativeResult(string change, int status, bool capability)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var movie = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie); await movie.RefreshBoxSetAsync(); var row = movie.BoxSet; Assert.NotNull(row);
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "transport") Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _));
+        if (change is "profile" or "aba") client.SetProfile("other");
+        if (change == "aba") client.SetProfile("alpha");
+        if (change == "library") typeof(ItemDetailViewModel).GetProperty(nameof(movie.LibraryId))!.SetValue(movie, 2);
+        if (change == "item") movie.Item = new MediaItemDetail { ContentId = "other", Type = "movie" };
+        if (capability) wire.CapabilityStatus = (HttpStatusCode)status;
+        else { wire.DetailStatus = (HttpStatusCode)status; wire.NoMembership = status == 200; }
+        try
+        {
+            await movie.RefreshBoxSetAsync();
+            if (change is "access" or "transport" && status == 503) Assert.Same(row, movie.BoxSet);
+            else Assert.Null(movie.BoxSet);
+        }
+        finally { movie.CancelPendingLoads(); }
+    }
+
     [Theory] [InlineData(false)] [InlineData(true)]
     public async Task FailedBackgroundReadMustRevalidateBeforeNewPlayback(bool recovers)
     {

@@ -10,9 +10,9 @@ public partial class ItemDetailViewModel
     private long _boxSetLifetime;
     private string? _boxSetContentId;
     private int? _boxSetLibrary;
-    private SiloPlayer.Core.Api.ApiRequestContext _boxSetOwner;
+    private SiloPlayer.Core.Api.ApiIdentityContext _boxSetOwner;
     private bool CanPreserveBoxSet(string contentId) => !_boxSetRetired && _boxSetContentId == contentId
-        && _boxSetLibrary == LibraryId && _catalogApi.IsCurrentContext(_boxSetOwner);
+        && _boxSetLibrary == LibraryId && _catalogApi.IsCurrentIdentityContext(_boxSetOwner);
     private bool IsBoxSetMember(string contentId) => Item is { Type: "movie" } movie
         && (movie.ContentId == contentId || _boxSetMembership?.Items.Any(x => x.ContentId == contentId) == true);
     public BoxSetDetail? BoxSet { get => _boxSet; private set => SetProperty(ref _boxSet, value); }
@@ -37,11 +37,13 @@ public partial class ItemDetailViewModel
         if (_boxSetRetired || Item is not { Type: "movie" } item || LibraryId is <= 0)
         { _boxSetMembership = null; BoxSet = null; return; }
         if (!CanPreserveBoxSet(item.ContentId)) { _boxSetMembership = null; BoxSet = null; }
-        var library = LibraryId; var context = _catalogApi.CaptureContext(); var language = _catalogApi.MetadataLanguageGeneration;
-        _boxSetContentId = item.ContentId; _boxSetLibrary = library; _boxSetOwner = context;
+        var library = LibraryId; var identity = _catalogApi.CaptureIdentityContext();
+        var context = _catalogApi.CaptureContext(); var language = _catalogApi.MetadataLanguageGeneration;
+        _boxSetContentId = item.ContentId; _boxSetLibrary = library; _boxSetOwner = identity;
         var pending = _boxSetCts = new(); var ct = pending.Token;
         bool Current() => ReferenceEquals(_boxSetCts, pending) && !ct.IsCancellationRequested && ReferenceEquals(Item, item)
-            && LibraryId == library && _catalogApi.IsCurrentContext(context) && _catalogApi.MetadataLanguageGeneration == language;
+            && LibraryId == library && _catalogApi.IsCurrentIdentityContext(identity)
+            && _catalogApi.IsCurrentContext(context) && _catalogApi.MetadataLanguageGeneration == language;
         try
         {
             var eligibleLibraries = await _catalogApi.GetBoxSetLibraryIdsAsync(ct, throwOnCapabilityFailure: true);
