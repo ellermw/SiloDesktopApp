@@ -1006,9 +1006,12 @@ public sealed partial class ItemDetailPage : Page
                 var changes = _pendingDetailChanges;
                 _pendingDetailChanges = 0;
                 if (!Current()) return;
-                if ((changes & 4) != 0 && item is { Type: "series" } && navigation != null)
+                // Empty series rows may still own a loading/error presentation.
+                // Let the series layout preserve or retry it, rather than hiding it.
+                if (((changes & 4) != 0 || (changes & 2) != 0 && ViewModel.Episodes.Count == 0)
+                    && item is { Type: "series" } && navigation != null)
                     _ = UpdateSeriesLayoutAsync(item.ContentId, navigation.Token);
-                if ((changes & 2) != 0 && ViewModel.Episodes.Count == 0)
+                if ((changes & 2) != 0 && ViewModel.Episodes.Count == 0 && item is { Type: "season" })
                 {
                     BuildEpisodeRows();
                     // A parent remap retires the season's canonical rows. An

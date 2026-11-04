@@ -460,6 +460,12 @@ internal static class RealtimeSeriesStateNativeFixture
         Visibility Visible(string name) => ((UIElement)page.FindName(name)).Visibility;
         Task Refresh() => vm.RefreshMediaStateAsync(new(client.CaptureContext(),
             new HashSet<string>(["never-loaded"]), new HashSet<string>(["series"])));
+        async Task DrainPaintAsync()
+        {
+            var painted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Check(page.DispatcherQueue.TryEnqueue(() => painted.TrySetResult()), "Could not queue the detail paint barrier.");
+            await painted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
         async Task MultiSeason()
         {
             wire.SeasonCount = 2;
@@ -471,9 +477,39 @@ internal static class RealtimeSeriesStateNativeFixture
         }
         try
         {
-            wire.SeasonCount = 1;
+            await UntilAsync(() => page.IsLoaded);
+            ((UIElement)page.FindName("ContentScroll")).Visibility = Visibility.Visible;
+            wire.SeasonCount = 1; wire.FailEpisodes = true;
             await (Task)typeof(ItemDetailPage).GetMethod("UpdateSeriesLayoutAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(page, ["series", navigation.Token, true])!;
+            Check(vm.Episodes.Count == 0 && Visible("EpisodesLoadError") == Visibility.Visible,
+                "The single-season fixture did not enter its empty-row load failure.");
+            await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(), new HashSet<string>(), CatchUp: true));
+            await DrainPaintAsync();
+            await UntilAsync(() => Visible("EpisodesLoadError") == Visibility.Visible
+                && (int)typeof(ItemDetailPage).GetField("_seasonEpisodesLoads", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)! == 0);
+            Check(Visible("EpisodesSection") == Visibility.Visible && Visible("EpisodesLoadError") == Visibility.Visible
+                && Descendants<Button>((DependencyObject)page.FindName("EpisodesLoadError")).Any(button => button.Content as string == "Try again"),
+                "Catch-up hid the single-season episode error and its retry button.");
+
+            wire.FailEpisodes = false; wire.HeldCompanion = "episodes";
+            wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            // An Episodes-only repaint must use the same recovery path even
+            // without a season-membership change or a reconnect repaint.
+            handler(vm, new PropertyChangedEventArgs(nameof(vm.Episodes)));
+            await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await DrainPaintAsync();
+            Check(Visible("EpisodesSection") == Visibility.Visible && Visible("EpisodesLoadingSkeleton") == Visibility.Visible,
+                "An Episodes-only repaint did not retry the failed single-season load.");
+            await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(), new HashSet<string>(), CatchUp: true));
+            await DrainPaintAsync();
+            Check(Visible("EpisodesSection") == Visibility.Visible && Visible("EpisodesLoadingSkeleton") == Visibility.Visible,
+                "Catch-up hid the in-flight single-season episode skeleton.");
+            wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult();
+            await UntilAsync(() => vm.Episodes.Count > 0 && Visible("EpisodesPanel") == Visibility.Visible);
+            Check(Visible("EpisodesLoadError") == Visibility.Collapsed,
+                "A recovered single-season load left its error visible.");
             var mounted = vm.Item;
             Check(Visible("EpisodesSection") == Visibility.Visible && Visible("SeasonsSection") == Visibility.Collapsed,
                 "Initial single-season navigation did not show the episode grid.");
@@ -511,7 +547,8 @@ internal static class RealtimeSeriesStateNativeFixture
         }
         finally
         {
-            wire.SeasonCount = 1; wire.EmptyEpisodes = false; wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult();
+            wire.SeasonCount = 1; wire.EmptyEpisodes = false; wire.FailEpisodes = false;
+            wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult();
             navigation.Cancel(); vm.PropertyChanged -= handler; vm.CancelPendingLoads();
             WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
         }
