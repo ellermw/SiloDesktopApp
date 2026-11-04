@@ -1098,7 +1098,8 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrEmpty(contentId))
         {
             _currentContentId = contentId;
-            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId);
+            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
+                _playerService?.PendingProgressSave ?? Task.CompletedTask);
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
                 return;
             if (ViewModel.Item == null)
@@ -1887,6 +1888,7 @@ public sealed partial class ItemDetailPage : Page
             SiblingEpisodesSection,
             CastSection,
             CrewSection,
+            BoxSetSection,
             SimilarSection,
             SubtitlesSection,
             StudiosText,
@@ -1915,7 +1917,7 @@ public sealed partial class ItemDetailPage : Page
             "movie" =>
             [
                 MediaLocationsSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, SimilarSection,
+                CastSection, CrewSection, BoxSetSection, SimilarSection,
             ],
             "series" =>
             [

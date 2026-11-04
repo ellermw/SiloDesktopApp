@@ -12,7 +12,13 @@ public sealed class BoxSetCard : Button
     private TextBlock? _title, _subtitle;
     public BoxSetSummary? Summary { get; private set; }
     public event Action<BoxSetSummary>? Invoked;
-    public BoxSetCard() { Width = 170; Padding = new Thickness(0); Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); Click += (_, _) => { if (Summary is {} set) Invoked?.Invoke(set); }; }
+    public BoxSetCard()
+    {
+        Width = 170; Padding = new Thickness(0); Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        Click += (_, _) => { if (Summary is {} set) Invoked?.Invoke(set); };
+        // A nested aggregate owns its activation, not PosterCard's bubbling tap.
+        Tapped += (_, args) => args.Handled = true;
+    }
     /// <summary>Fit the shared aggregate presentation inside a virtual catalog slot.</summary>
     public void SetCatalogLayout(double width, double posterHeight, double height)
     {

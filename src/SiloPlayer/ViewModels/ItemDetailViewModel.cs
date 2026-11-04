@@ -24,10 +24,18 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _watchedStateGeneration;
     public long WatchedStateRevision => Volatile.Read(ref _watchedStateGeneration);
     public int? LibraryId { get; private set; }
-    public Task LoadInLibraryAsync(string contentId, int? libraryId)
+    public async Task LoadInLibraryAsync(string contentId, int? libraryId, Task? pendingProgressSave = null)
     {
+        // A new page can miss the close message while the final write is still pending.
+        var refreshAfterSave = pendingProgressSave is { IsCompleted: false };
+        var owner = _catalogApi.CaptureIdentityContext();
         LibraryId = libraryId;
-        return LoadAsync(contentId);
+        var loading = LoadAsync(contentId);
+        var lifetime = _boxSetLifetime;
+        await loading;
+        if (refreshAfterSave && !_boxSetRetired && _boxSetLifetime == lifetime
+            && Item?.ContentId == contentId && LibraryId == libraryId && _catalogApi.IsCurrentIdentityContext(owner))
+            _ = RefreshBoxSetAfterProgressSaveAsync(pendingProgressSave!);
     }
     private Task<MediaItemDetail> ReadDetailAsync(string contentId, CancellationToken ct) => LibraryId.HasValue
         ? _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct) : _detailPrefetchCache.GetAsync(contentId, ct);
@@ -225,7 +233,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
-        if (Item is { Type: "movie" } movie && (movie.ContentId == message.ContentId || _boxSetMembership?.Items.Any(x => x.ContentId == message.ContentId) == true)) _ = RefreshBoxSetAfterPlaybackAsync(message);
+        if (Item is { Type: "movie" } movie && (movie.ContentId == message.ContentId || _boxSetMembership?.Items.Any(x => x.ContentId == message.ContentId) == true)) _ = RefreshBoxSetAfterProgressSaveAsync(message.Persisted);
         _detailPrefetchCache.Invalidate(message.ContentId);
         var episodeSpoilersChanged = false;
         foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))

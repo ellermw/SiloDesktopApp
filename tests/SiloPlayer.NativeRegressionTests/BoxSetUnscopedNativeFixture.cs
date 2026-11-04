@@ -24,7 +24,7 @@ internal static class BoxSetUnscopedNativeFixture
     {
         var original = SiloPlayer.App.Services;
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
-        using var wire = new Wire(); using var http = new HttpClient(wire);
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://boxset-unscoped.invalid"); client.SetProfile("alpha");
         var catalog = new CatalogApi(client);
         var cache = new ItemDetailPrefetchCache((id, ct) => catalog.GetItemDetailAsync(id, ct),
@@ -40,8 +40,19 @@ internal static class BoxSetUnscopedNativeFixture
             parent.Children.Add(card);
             Check(MediaNavigationContext.LibraryId(card) == null, "ordinary Home/global-search card has no selected library");
             Check((bool)typeof(PosterCard).GetMethod("ActivateCard", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(card, null)!, "ordinary card activation");
-            await Wait(() => frame.Content is ItemDetailPage { IsLoaded: true, ViewModel.Item.ContentId: "film" });
+            await Wait(() => frame.Content is ItemDetailPage { IsLoaded: true, ViewModel.Item.ContentId: "film" } arriving
+                && ((TextBlock)arriving.FindName("TitleText")).Text == "Unscoped film");
             var page = (ItemDetailPage)frame.Content;
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            page.UpdateLayout();
+            var sections = (StackPanel)page.FindName("DetailContentPanel");
+            var beforeMembership = sections.Children.ToArray();
+            var order = new[] { "MediaLocationsSection", "ExtrasSection", "TrailersSection", "CastSection", "CrewSection", "BoxSetSection", "SimilarSection" }
+                .Select(name => sections.Children.IndexOf((UIElement)page.FindName(name))).ToArray();
+            Check(page.ViewModel.BoxSet == null && order.All(x => x >= 0) && order.SequenceEqual(order.OrderBy(x => x)), "initial LoadAsync/UpdateUI owns the complete movie section order before membership arrives");
+            var sectionUnloads = 0;
+            foreach (var mounted in sections.Children.OfType<FrameworkElement>()) mounted.Unloaded += (_, _) => sectionUnloads++;
+            wire.Hold = false; wire.Release.TrySetResult();
             await Wait(() => page.ViewModel.BoxSet != null);
             Check(page.ViewModel.LibraryId == null && wire.MovieQuery == "" && wire.MembershipQuery == "", "unscoped route preserves absent library in both requests");
             var section = (FrameworkElement)page.FindName("BoxSetSection");
@@ -49,6 +60,16 @@ internal static class BoxSetUnscopedNativeFixture
             await Wait(() => section.Visibility == Visibility.Visible && row.Children.Count == 2);
             page.UpdateLayout();
             Check(section.Visibility == Visibility.Visible && Descendants(row).OfType<PosterCard>().Count() == 2, "actual unscoped detail renders optional membership row");
+            await Task.Delay(50);
+            Check(sections.Children.SequenceEqual(beforeMembership) && sectionUnloads == 0, "late membership after first paint neither reorders nor unloads movie sections");
+            var updateUI = typeof(ItemDetailPage).GetMethod("UpdateUI", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            updateUI.Invoke(page, null); page.UpdateLayout(); await Task.Delay(50);
+            Check(sections.Children.SequenceEqual(beforeMembership), "UpdateUI preserves the same section order with visible membership");
+            var successfulMembership = page.ViewModel.BoxSet;
+            wire.MembershipStatus = HttpStatusCode.ServiceUnavailable; await page.ViewModel.RefreshBoxSetAsync();
+            Check(ReferenceEquals(page.ViewModel.BoxSet, successfulMembership) && section.Visibility == Visibility.Visible
+                && sections.Children.SequenceEqual(beforeMembership), "failed optional refresh keeps the mounted row in its UpdateUI position");
+            wire.MembershipStatus = HttpStatusCode.OK;
             Check(Descendants(row).OfType<PosterCard>().All(x => MediaNavigationContext.LibraryId(x) == 12), "discovered row adopts returned eligible library for member actions");
             await Capture(section, "unscoped-row-wide.png");
             Type? target = null; object? args = null;
@@ -66,12 +87,15 @@ internal static class BoxSetUnscopedNativeFixture
             catalog.InvalidateLibraryCache();
             await Wait(() => page.ViewModel.BoxSet == null && section.Visibility == Visibility.Collapsed);
             Check(section.Visibility == Visibility.Collapsed && row.Children.Count == 0, "disabled response library cannot borrow the other enabled library flag");
+            updateUI.Invoke(page, null);
+            Check(sections.Children.SequenceEqual(beforeMembership), "member and non-member UpdateUI use identical movie section order");
             wire.Enabled = true; await page.ViewModel.RefreshBoxSetAsync(); await Wait(() => section.Visibility == Visibility.Visible);
             wire.ReturnedLibrary = "99"; await page.ViewModel.RefreshBoxSetAsync();
             await Wait(() => section.Visibility == Visibility.Collapsed);
             Check(page.ViewModel.BoxSet == null && section.Visibility == Visibility.Collapsed, "unknown returned library cannot appear in unscoped row");
             wire.ReturnedLibrary = "12"; await page.ViewModel.RefreshBoxSetAsync();
-            wire.Hold = true; var pending = page.ViewModel.RefreshBoxSetAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = page.ViewModel.RefreshBoxSetAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
             client.SetProfile("beta"); wire.Release.TrySetResult(); await pending;
             // Retiring the route must clear the previous visible row as well as the held result.
             navigation.NavigationRequestHandler = null; frame.Navigate(typeof(ItemDetailPage));
@@ -116,6 +140,7 @@ internal static class BoxSetUnscopedNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal bool Enabled = true, Hold;
+        internal HttpStatusCode MembershipStatus = HttpStatusCode.OK;
         internal string ReturnedLibrary = "12";
         internal string? MovieQuery, MembershipQuery;
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -134,7 +159,7 @@ internal static class BoxSetUnscopedNativeFixture
             else if (path.EndsWith("/items/film"))
             { MovieQuery = request.RequestUri.Query; body = new { content_id = "film", type = "movie", title = "Unscoped film", user_state = new { } }; }
             else body = new { items = Array.Empty<object>() };
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };
+            return new HttpResponseMessage(path.EndsWith("/box-set") ? MembershipStatus : HttpStatusCode.OK) { Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };
         }
     }
 }

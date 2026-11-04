@@ -48,6 +48,10 @@ public sealed partial class MainWindow
                 case SettingsPage:
                     // Keep the control and its just-saved preference mounted.
                     break;
+                case BoxSetPage:
+                    // Already refreshes on LocalizedReads.Invalidated. Re-navigation
+                    // would retire the visit and cancel accepted playback still preparing in Idle.
+                    break;
                 case Page:
                     _navigationService.RefreshCurrentEntry();
                     break;

@@ -10,17 +10,20 @@ public partial class ItemDetailViewModel
     private long _boxSetLifetime;
     private string? _boxSetContentId;
     private int? _boxSetLibrary;
-    private SiloPlayer.Core.Api.ApiRequestContext _boxSetOwner;
+    private SiloPlayer.Core.Api.ApiIdentityContext _boxSetOwner;
+    private long _boxSetLanguage;
     private bool CanPreserveBoxSet(string contentId) => !_boxSetRetired && _boxSetContentId == contentId
-        && _boxSetLibrary == LibraryId && _catalogApi.IsCurrentContext(_boxSetOwner);
+        && _boxSetLibrary == LibraryId && _catalogApi.IsCurrentIdentityContext(_boxSetOwner)
+        && _boxSetLanguage == _catalogApi.MetadataLanguageGeneration;
     private bool IsBoxSetMember(string contentId) => Item is { Type: "movie" } movie
         && (movie.ContentId == contentId || _boxSetMembership?.Items.Any(x => x.ContentId == contentId) == true);
     public BoxSetDetail? BoxSet { get => _boxSet; private set => SetProperty(ref _boxSet, value); }
-    private async Task RefreshBoxSetAfterPlaybackAsync(SiloPlayer.Messaging.PlaybackProgressUpdated message)
+    private async Task RefreshBoxSetAfterProgressSaveAsync(Task pendingProgressSave)
     {
-        var item = Item; var library = LibraryId; var lifetime = _boxSetLifetime; var owner = _catalogApi.CaptureContext();
-        try { await message.Persisted; } catch { return; }
-        if (Item?.ContentId == item?.ContentId && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime && _catalogApi.IsCurrentContext(owner)) await RefreshBoxSetAsync();
+        // Access revisions retire reads, not this visit's required post-save refresh.
+        var item = Item; var library = LibraryId; var lifetime = _boxSetLifetime; var owner = _catalogApi.CaptureIdentityContext();
+        try { await pendingProgressSave; } catch { return; }
+        if (Item?.ContentId == item?.ContentId && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime && _catalogApi.IsCurrentIdentityContext(owner)) await RefreshBoxSetAsync();
     }
     private void RetireBoxSet()
     {
@@ -38,7 +41,8 @@ public partial class ItemDetailViewModel
         { _boxSetMembership = null; BoxSet = null; return; }
         if (!CanPreserveBoxSet(item.ContentId)) { _boxSetMembership = null; BoxSet = null; }
         var library = LibraryId; var context = _catalogApi.CaptureContext(); var language = _catalogApi.MetadataLanguageGeneration;
-        _boxSetContentId = item.ContentId; _boxSetLibrary = library; _boxSetOwner = context;
+        _boxSetContentId = item.ContentId; _boxSetLibrary = library;
+        _boxSetOwner = _catalogApi.CaptureIdentityContext(); _boxSetLanguage = language;
         var pending = _boxSetCts = new(); var ct = pending.Token;
         bool Current() => ReferenceEquals(_boxSetCts, pending) && !ct.IsCancellationRequested && ReferenceEquals(Item, item)
             && LibraryId == library && _catalogApi.IsCurrentContext(context) && _catalogApi.MetadataLanguageGeneration == language;
