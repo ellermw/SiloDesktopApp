@@ -150,6 +150,33 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void SidecarAddsNeverFallBackToRemoteUrlsOrHoldTheAddGateWhileDownloading()
+    {
+        var service = Read("PlayerService.cs");
+        var add = Between(service, "private bool SelectSubtitleSidecar(", "private long CurrentSubtitleSidecarGeneration()");
+        Assert.Contains("if (!_prefetchedSubtitleFiles.TryGetValue(track.Index, out var local)) return false;", add);
+        Assert.Contains("source = local;", add);
+        Assert.Contains("mpv.AddSubtitle(source, label, track.Language, select: false)", add);
+        Assert.DoesNotContain("FullUrl", add);
+        var prefetch = Between(service, "private async Task PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
+        Assert.DoesNotContain("lock (_subtitleAddGate)", prefetch);
+        Assert.DoesNotContain("mpv.AddSubtitle", prefetch);
+        Assert.Contains("SubtitleSidecarFile.DownloadExtension(", prefetch);
+        Assert.Contains("buffer.Length + read > SubtitleSidecarFile.MaxBytes", prefetch);
+        Assert.Contains("loadedMediaGeneration != Volatile.Read(ref _loadedMediaInitGeneration)", prefetch);
+        Assert.Contains("currentOwner?.Invoke() == false || generation != _subtitleSidecarGeneration", prefetch);
+    }
+
+    [Fact]
+    public void OscInventoryPublishesStableCaptionIdentityAlongsideTheCombinedIndex()
+    {
+        var publish = Between(Read("PlayerService.cs"), "private void SendSubtitleListToOsc()", "private void SendAudioTrackListToOsc()");
+        Assert.Contains("[\"track_id\"] = t.TrackId", publish);
+        Assert.Contains("[\"sync_key\"] = t.SyncKey", publish);
+        Assert.Contains("session.MediaFileId.ToString(", publish);
+    }
+
+    [Fact]
     public void OscSubtitleSelectionIsDispatchedBeforeRunningSelectionWork()
     {
         var selection = Between(Read("PlayerService.cs"), "case \"silo-subtitle-select\":", "case \"silo-subtitle-cycle\":");

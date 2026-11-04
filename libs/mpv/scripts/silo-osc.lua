@@ -5326,6 +5326,44 @@ end
 -- Property Observers
 --------------------------------------------------------------------------------
 
+local function remember_subtitle(index)
+    state.last_subtitle = index
+    state.last_subtitle_track = nil
+    for _, track in ipairs(state.subtitle_tracks) do
+        if track.index == index then state.last_subtitle_track = track; break end
+    end
+end
+
+local function same_subtitle_identity(previous, track)
+    if type(previous.track_id) == "string" and previous.track_id ~= "" then
+        return previous.track_id == track.track_id
+    end
+    if type(track.track_id) == "string" and track.track_id ~= "" then return false end
+    if type(previous.sync_key) == "string" and previous.sync_key ~= "" then
+        return previous.sync_key == track.sync_key
+    end
+    if type(track.sync_key) == "string" and track.sync_key ~= "" then return false end
+    -- Older inventories have no stable ID. Retain only an unchanged legacy
+    -- row, never an ordinal now owned by different metadata.
+    return previous.index == track.index and previous.language == track.language
+        and previous.source == track.source and previous.codec == track.codec
+        and previous.label == track.label and previous.forced == track.forced
+        and previous.hearing_impaired == track.hearing_impaired
+end
+
+local function remembered_subtitle(tracks)
+    local previous = state.last_subtitle_track
+    if not previous then return nil end
+    local match = nil
+    for _, track in ipairs(tracks) do
+        if same_subtitle_identity(previous, track) then
+            if match then return nil end -- Ambiguous identity is not a route.
+            match = track
+        end
+    end
+    return match and not match.unplayable and match or nil
+end
+
 local function observe_properties()
     mp.observe_property("time-pos", "number", function(_, val)
         state.raw_time_pos = val or 0
@@ -5754,6 +5792,7 @@ local function observe_properties()
                 -- Combined indices and the caption shortcut's remembered row
                 -- belong to one file, even when the new list reuses an index.
                 state.last_subtitle = -1
+                state.last_subtitle_track = nil
                 state.active_subtitle = -1
                 state.subtitle_menu_visible = false
                 state.subtitle_menu_items = {}
@@ -5762,6 +5801,14 @@ local function observe_properties()
                     state.keyboard_menu_index = 0
                 end
             end
+            -- The same file can reassign combined indices. Rebind the saved
+            -- caption by identity before replacing the inventory it came from.
+            local remembered = remembered_subtitle(data)
+            if state.active_subtitle >= 0 then
+                state.active_subtitle = remembered and remembered.index or -1
+            end
+            state.last_subtitle = remembered and remembered.index or -1
+            state.last_subtitle_track = remembered
             state.subtitle_menu_file_id = file_id
             state.subtitle_tracks = data
             state.subtitle_menu_offset = 1
@@ -5782,7 +5829,7 @@ local function observe_properties()
     mp.register_script_message("osc-set-active-subtitle", function(idx)
         state.active_subtitle = tonumber(idx) or -1
         if state.active_subtitle >= 0 then
-            state.last_subtitle = state.active_subtitle
+            remember_subtitle(state.active_subtitle)
         end
     end)
 
@@ -6120,22 +6167,20 @@ local function setup_key_bindings()
     local function toggle_captions()
         if state.playback_failure_visible then return end
         if state.active_subtitle >= 0 then
-            state.last_subtitle = state.active_subtitle
+            remember_subtitle(state.active_subtitle)
             state.active_subtitle = -1
             mp.commandv("script-message", "silo-subtitle-select", "-1")
         else
-            local target = state.last_subtitle
-            local available = false
-            for _, track in ipairs(state.subtitle_tracks) do
-                if track.index == target and not track.unplayable then available = true; break end
-            end
-            if not available then
+            local remembered = remembered_subtitle(state.subtitle_tracks)
+            local target = remembered and remembered.index or -1
+            if target < 0 then
                 target = -1
                 for _, track in ipairs(state.subtitle_tracks) do
                     if not track.unplayable then target = track.index or -1; break end
                 end
             end
             if target >= 0 then
+                remember_subtitle(target)
                 state.active_subtitle = target
                 mp.commandv("script-message", "silo-subtitle-select", tostring(target))
             end

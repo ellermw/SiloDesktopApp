@@ -4,6 +4,67 @@ namespace SiloPlayer.Tests;
 
 public sealed class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData("track_id")]
+    [InlineData("sync_key")]
+    public void CaptionShortcutRebindsRememberedIdentityAfterSameFileReindex(string identityField)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":8,"{{identityField}}":"english","language":"en"},{"index":3,"{{identityField}}":"spanish","language":"es"}]', '42')
+            handlers['osc-set-active-subtitle']('3')
+            keys['silo-captions-toggle']()
+            handlers['osc-set-subtitles']('[{"index":8,"{{identityField}}":"english","language":"en"},{"index":3,"{{identityField}}":"japanese","language":"ja"},{"index":13,"{{identityField}}":"spanish","language":"es"}]', '42')
+            assert(state.last_subtitle == 13, 'Remembered identity did not follow its new combined index')
+            keys['silo-captions-toggle']()
+            keys['silo-captions-toggle']()
+            handlers['osc-set-subtitles']('[{"index":8,"{{identityField}}":"english","language":"en"},{"index":13,"{{identityField}}":"japanese","language":"ja"}]', '42')
+            assert(state.last_subtitle == -1, 'Removed identity survived index reuse')
+            keys['silo-captions-toggle']()
+            mp.set_property('user-data/caption-reindex', table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/caption-reindex", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("-1,13,-1,8", output);
+    }
+
+    [Theory]
+    [InlineData("[{\"index\":13,\"track_id\":\"spanish\",\"unplayable\":true}]")]
+    [InlineData("[{\"index\":13,\"track_id\":\"spanish\"},{\"index\":14,\"track_id\":\"spanish\"}]")]
+    [InlineData("[{\"index\":3,\"language\":\"ja\"}]")]
+    public void CaptionShortcutRetiresUnavailableAmbiguousOrReplacedLegacyRows(string replacement)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            handlers['osc-set-subtitles']('[{"index":3,"track_id":"spanish","language":"es"}]', '42')
+            handlers['osc-set-active-subtitle']('3')
+            handlers['osc-set-active-subtitle']('-1')
+            handlers['osc-set-subtitles']('{{replacement}}', '42')
+            local retired = state.last_subtitle == -1 and state.last_subtitle_track == nil
+            -- Identityless inventories must also reject metadata at a reused ordinal.
+            handlers['osc-set-subtitles']('[{"index":3,"language":"es"}]', '42')
+            handlers['osc-set-active-subtitle']('3')
+            handlers['osc-set-active-subtitle']('-1')
+            handlers['osc-set-subtitles']('[{"index":3,"language":"ja"}]', '42')
+            mp.set_property('user-data/caption-retired', tostring(retired and state.last_subtitle == -1))
+            """, rawAss: true, resultProperty: "user-data/caption-retired", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true", output);
+    }
+
     [Fact]
     public void CaptionShortcutRemembersARowOnlyWithinItsMediaFile()
     {

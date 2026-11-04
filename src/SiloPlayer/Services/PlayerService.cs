@@ -5296,7 +5296,7 @@ public partial class PlayerService : IDisposable
     private long _manualSubtitleChoiceVersion;
     private readonly object _subtitleAddGate = new();
     private readonly Dictionary<int, int> _loadedExternalSubtitleSids = [];
-    // Remote text sidecars downloaded for this file, keyed by server track
+    // Remote sidecars downloaded for this file, keyed by server track
     // index. The files are deleted with the subtitle-sync files.
     private readonly Dictionary<int, string> _prefetchedSubtitleFiles = [];
     private long _subtitleSidecarGeneration;
@@ -6047,8 +6047,8 @@ public partial class PlayerService : IDisposable
         var mpv = _mpv;
         if (mpv == null || track.Unplayable) return false;
 
-        // Serialize adds, not viewer choices. A remote sub-add can block for
-        // the download; Off and native selections must still own sid meanwhile.
+        // Only local files enter this gate. Network downloads happen in the
+        // async prefetch path, never while UI/realtime callers wait for an add.
         lock (_subtitleAddGate)
         {
             string source;
@@ -6065,10 +6065,10 @@ public partial class PlayerService : IDisposable
                     _loadedExternalSubtitleSids.Remove(track.Index);
                 }
 
-                var pair = _playbackManager?.GetSubtitleUrls()
-                    .FirstOrDefault(candidate => candidate.Track.Index == track.Index);
-                if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl)) return false;
-                source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;
+                // A failed, oversized or unsupported download must not fall
+                // through to a synchronous HTTP sub-add on the dispatcher.
+                if (!_prefetchedSubtitleFiles.TryGetValue(track.Index, out var local)) return false;
+                source = local;
             }
             var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
             var fileLoadGeneration = Volatile.Read(ref _fileLoadGeneration);
@@ -6105,9 +6105,9 @@ public partial class PlayerService : IDisposable
 
     /// <summary>
     /// A synchronous libmpv sub-add of an HTTP URL blocks its caller for the
-    /// whole download (the UI thread for player-overlay selections). Download a
-    /// remote text sidecar off that thread first; SelectSubtitleSidecar then adds
-    /// the local file. Any failure keeps the previous URL path.
+    /// whole download. Download every remote sidecar asynchronously first,
+    /// including PGS and formats that require native probing. Selection adds
+    /// only the bounded local file; a failed download retains the previous SID.
     /// </summary>
     private long CurrentSubtitleSidecarGeneration() => Interlocked.Read(ref _subtitleSidecarGeneration);
 
@@ -6132,7 +6132,7 @@ public partial class PlayerService : IDisposable
             if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
             var pair = _playbackManager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
             if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var parsed) ||
-                parsed.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, parsed, track.Codec) == null)
+                parsed.Scheme is not ("http" or "https"))
                 return;
             url = parsed;
             generation = _subtitleSidecarGeneration;
@@ -6146,8 +6146,7 @@ public partial class PlayerService : IDisposable
             using var response = await SubtitleSyncDownloadClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
             if (currentOwner?.Invoke() == false) return;
             if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes) return;
-            var extension = SubtitleSidecarFile.Extension(response.Content.Headers.ContentType?.MediaType, url, track.Codec);
-            if (extension == null) return;
+            var extension = SubtitleSidecarFile.DownloadExtension(response.Content.Headers.ContentType?.MediaType, url, track.Codec);
             // Chunked or mislabeled bodies are capped while reading, not after buffering.
             using var buffer = new MemoryStream();
             await using (var body = await response.Content.ReadAsStreamAsync(bounded.Token))
@@ -6362,6 +6361,8 @@ public partial class PlayerService : IDisposable
             return new Dictionary<string, object?>
             {
                 ["index"] = t.Index,
+                ["track_id"] = t.TrackId,
+                ["sync_key"] = t.SyncKey,
                 ["language"] = t.Language ?? "",
                 ["label"] = t.Label ?? "",
                 ["source"] = t.Source ?? "embedded",
