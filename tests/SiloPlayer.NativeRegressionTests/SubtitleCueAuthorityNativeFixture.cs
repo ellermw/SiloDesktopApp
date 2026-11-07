@@ -13,7 +13,7 @@ internal static class SubtitleCueAuthorityNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_IDENTITY_CASE") ?? "";
-        var modes = new[] { "integrated", "worker", "redirect", "declared", "stream", "worker-redirect", "worker-redirect-declared", "worker-redirect-stream" };
+        var modes = new[] { "integrated", "worker", "redirect", "declared", "stream", "worker-redirect", "worker-redirect-declared", "worker-redirect-stream", "switch-during-reload", "failed-reload-reselect" };
         if (mode.Length > 0 && !modes.Contains(mode)) throw new InvalidOperationException("Unknown cue authority scope.");
         foreach (var scenario in mode.Length == 0 ? modes : [mode]) await CheckAsync(scenario);
     }
@@ -22,6 +22,8 @@ internal static class SubtitleCueAuthorityNativeFixture
     {
         var assets = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "..", "fixtures", "subtitle-identity"));
         var bytes = await File.ReadAllBytesAsync(Path.Combine(assets, "english.srt"));
+        var reselect = scenario is "switch-during-reload" or "failed-reload-reselect";
+        if (reselect) bytes = System.Text.Encoding.UTF8.GetBytes("1\n00:00:02,000 --> 00:00:04,000\nCorrected timing\n\n");
         var declared = scenario.EndsWith("declared", StringComparison.Ordinal);
         var streamed = scenario.EndsWith("stream", StringComparison.Ordinal);
         var workerRedirect = scenario.StartsWith("worker-redirect", StringComparison.Ordinal);
@@ -78,6 +80,12 @@ internal static class SubtitleCueAuthorityNativeFixture
         Task? reload = null;
         try
         {
+            if (reselect)
+            {
+                await CheckStaleReselectionAsync(service, manager, mpv, integrated, track, entry, lifetime.Token,
+                    assets, bytes, previousSid, scenario == "failed-reload-reselect");
+                return;
+            }
             reload = (Task)Call(service, "ReloadCorrectedSubtitleAsync", entry, lifetime.Token, false)!;
             if (declared || streamed)
             {
@@ -118,6 +126,71 @@ internal static class SubtitleCueAuthorityNativeFixture
         }
     }
 
+    private static async Task CheckStaleReselectionAsync(PlayerService service, PlaybackManager manager, MpvPlayer mpv,
+        CueServer server, SubtitleTrackInfo track, object entry, CancellationToken ct, string assets, byte[] corrected, int previousSid, bool fail)
+    {
+        var sids = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+        var files = (Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!;
+        var other = new SubtitleTrackInfo { Index = 1, Source = "external", Codec = "srt", Language = "ja",
+            Url = server.Origin + "/other.srt" };
+        manager.CurrentSession!.SubtitleUrls.Add(other);
+        Require(mpv.AddSubtitle(Path.Combine(assets, "japanese.srt"), "Other cue", "ja"), "Could not cache the other track.");
+        var otherSid = mpv.GetSubtitleTrackIds(externalOnly: true).Max();
+        sids[other.Index] = otherSid;
+        mpv.SetSubtitleTrack(previousSid);
+        // These are the timing-change path's invalidation and corrected read.
+        // The old active SID must remain visible, but no longer be reusable.
+        Call(service, "InvalidateSubtitleTimingCache", track.SyncKey);
+        Require(mpv.GetPropertyDouble("sid") == previousSid, "Timing invalidation removed the applied captions before replacement.");
+        server.Mode = fail ? "reject" : "held";
+        var reload = (Task)Call(service, "ReloadCorrectedSubtitleAsync", entry, ct, false)!;
+        try
+        {
+            if (fail)
+            {
+                await reload.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(entry.GetType().GetField("Error")!.GetValue(entry) != null && mpv.GetPropertyDouble("sid") == previousSid,
+                    "A failed corrected read did not retain the applied captions and expose its error.");
+            }
+            else
+            {
+                await server.GateReached.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(!reload.IsCompleted, "The corrected read was not held before the newer choice.");
+            }
+            Require((bool)Call(service, "SelectSubtitleSidecar", other)!, "Could not switch to the cached other track.");
+            Set(service, "_activeSubtitleServerIndex", other.Index);
+            server.Release.TrySetResult();
+            await reload.WaitAsync(TimeSpan.FromSeconds(5));
+            Require(mpv.GetPropertyDouble("sid") == otherSid && !files.ContainsKey(track.Index),
+                "An old corrected read replaced the newer choice or registered discarded bytes.");
+            // A direct cached selection must refuse the stale SID too, even
+            // before the asynchronous selection preflight downloads new cues.
+            Require(!(bool)Call(service, "SelectSubtitleSidecar", track)! && mpv.GetPropertyDouble("sid") == otherSid,
+                "Selecting the old track silently reused its stale-timing SID.");
+            server.Mode = "normal";
+            var reads = server.Headers.Count;
+            await ((Task)Call(service, "PrefetchSubtitleSidecarAsync", track)!).WaitAsync(TimeSpan.FromSeconds(5));
+            Require(server.Headers.Count == reads + 1 && files.TryGetValue(track.Index, out var path) &&
+                File.ReadAllBytes(path).SequenceEqual(corrected) && mpv.GetPropertyDouble("sid") == otherSid,
+                "Reselecting a timing-invalidated track did not fetch fresh corrected cues before switching.");
+            Require((bool)Call(service, "SelectSubtitleSidecar", track)!, "Fresh corrected cues could not be selected.");
+            Set(service, "_activeSubtitleServerIndex", track.Index);
+            var newSid = sids[track.Index];
+            Require(newSid != previousSid && mpv.GetPropertyDouble("sid") == newSid && mpv.IsPaused &&
+                !mpv.GetSubtitleTrackIds(externalOnly: true).Contains(previousSid),
+                "Fresh selection reused the stale SID, retained it in mpv, or changed pause.");
+            await ((Task)Call(service, "PrefetchSubtitleSidecarAsync", track)!).WaitAsync(TimeSpan.FromSeconds(5));
+            Require((bool)Call(service, "SelectSubtitleSidecar", track)! && sids[track.Index] == newSid && server.Headers.Count == reads + 1,
+                "The successful replacement remained stale instead of being reusable.");
+            Program.Log($"PASS: {(fail ? "failed" : "switched-away")} corrected read retains applied captions and reselects only fresh cues.");
+        }
+        finally
+        {
+            server.Release.TrySetResult();
+            await reload.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private static object? Call(object target, string name, params object?[] args) => target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(target, args);
     private static object? Get(object target, string name) => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target);
@@ -153,6 +226,8 @@ internal static class SubtitleCueAuthorityNativeFixture
                     try
                     {
                         var response = context.Response;
+                        if (Mode == "held") { GateReached.TrySetResult(); await Release.Task; }
+                        if (Mode == "reject") { response.StatusCode = 503; response.Close(); continue; }
                         if (Mode == "redirect") { response.StatusCode = 302; response.RedirectLocation = Redirect; response.Close(); continue; }
                         response.ContentType = "application/x-subrip";
                         if (Mode == "declared")

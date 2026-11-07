@@ -262,8 +262,9 @@ public partial class PlayerService
     }
 
     // Called under the sync gate, before a changed timing can be carried into
-    // another load. Keep the active SID until its replacement is ready, but
-    // retire inactive SIDs so selecting them must fetch the corrected cues.
+    // another load. Keep the active SID visible until its replacement is
+    // ready, but mark it stale so switching back cannot reuse its old timing.
+    // Retire inactive SIDs immediately.
     private void InvalidateSubtitleTimingCache(string key)
     {
         lock (_subtitleTrackStateLock)
@@ -280,6 +281,7 @@ public partial class PlayerService
                     _subtitleSyncFiles.Remove(path);
                     try { File.Delete(path); } catch { }
                 }
+                if (_loadedExternalSubtitleSids.ContainsKey(index)) _staleExternalSubtitleIndices.Add(index);
                 if (index != _activeSubtitleServerIndex && _loadedExternalSubtitleSids.Remove(index, out var sid) &&
                     _mpv != null && (int)Math.Round(_mpv.GetPropertyDouble("sid")) != sid)
                     _mpv.RemoveSubtitle(sid);
@@ -456,6 +458,7 @@ public partial class PlayerService
                 _loadedExternalSubtitleSids[index] = newSid;
                 if (oldSid > 0) _mpv.RemoveSubtitle(oldSid);
                 InvalidateSubtitleTimingCache(state.Key);
+                _staleExternalSubtitleIndices.Remove(index);
                 _prefetchedSubtitleFiles[index] = path;
                 _subtitleSyncFiles.Add(path); path = null;
                 entry.LastAppliedTiming = timing;

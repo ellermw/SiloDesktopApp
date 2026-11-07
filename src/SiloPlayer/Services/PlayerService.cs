@@ -4984,6 +4984,9 @@ public partial class PlayerService : IDisposable
 
     private readonly object _subtitleTrackStateLock = new();
     private readonly Dictionary<int, int> _loadedExternalSubtitleSids = [];
+    // A timing change may leave the applied SID visible until fresh cues are
+    // ready, but that retained SID must never satisfy another selection.
+    private readonly HashSet<int> _staleExternalSubtitleIndices = [];
     // Remote text sidecars downloaded for this file, keyed by server track
     // index. The files are deleted with the subtitle-sync files.
     private readonly Dictionary<int, string> _prefetchedSubtitleFiles = [];
@@ -4998,6 +5001,7 @@ public partial class PlayerService : IDisposable
         lock (_subtitleTrackStateLock)
         {
             _loadedExternalSubtitleSids.Clear();
+            _staleExternalSubtitleIndices.Clear();
             var preparedSubtitle = TakePreparedSubtitleReload();
             if (Volatile.Read(ref _loadedMediaInitCts) != null && _playbackManager?.CurrentSession is { } loadedSession)
             {
@@ -5402,10 +5406,17 @@ public partial class PlayerService : IDisposable
             {
                 if (_mpv.GetSubtitleTrackIds(externalOnly: true).Contains(loadedSid))
                 {
-                    _mpv.SetSubtitleTrack(loadedSid);
-                    return (int)Math.Round(_mpv.GetPropertyDouble("sid")) == loadedSid;
+                    if (!_staleExternalSubtitleIndices.Contains(track.Index))
+                    {
+                        _mpv.SetSubtitleTrack(loadedSid);
+                        return (int)Math.Round(_mpv.GetPropertyDouble("sid")) == loadedSid;
+                    }
                 }
-                _loadedExternalSubtitleSids.Remove(track.Index);
+                else
+                {
+                    _loadedExternalSubtitleSids.Remove(track.Index);
+                    loadedSid = 0;
+                }
             }
 
             var pair = _playbackManager?.GetSubtitleUrls()
@@ -5431,6 +5442,8 @@ public partial class PlayerService : IDisposable
                 return false;
             }
             _loadedExternalSubtitleSids[track.Index] = sid;
+            _staleExternalSubtitleIndices.Remove(track.Index);
+            if (loadedSid > 0) _mpv.RemoveSubtitle(loadedSid);
             return true;
         }
     }
@@ -5483,7 +5496,8 @@ public partial class PlayerService : IDisposable
         Uri url;
         lock (_subtitleTrackStateLock)
         {
-            if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
+            if ((_loadedExternalSubtitleSids.ContainsKey(track.Index) && !_staleExternalSubtitleIndices.Contains(track.Index)) ||
+                _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
             var pair = manager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
             if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var parsed) ||
                 parsed.Scheme is not ("http" or "https"))
@@ -5535,6 +5549,7 @@ public partial class PlayerService : IDisposable
                     if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
                     if (sid <= 0 || !mpv.GetSubtitleTrackIds(externalOnly: true).Contains(sid)) return SubtitlePrefetchOutcome.Error;
                     _loadedExternalSubtitleSids[track.Index] = sid;
+                    _staleExternalSubtitleIndices.Remove(track.Index);
                 }
                 return SubtitlePrefetchOutcome.Ready;
             }
