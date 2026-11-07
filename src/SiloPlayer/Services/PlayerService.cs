@@ -672,6 +672,7 @@ public partial class PlayerService : IDisposable
         _offeredRoomQuality = next.Label;
         _offeredFromQuality = ActiveQualityTier;
         _mpv?.SendScriptMessage("osc-room-quality-offer", next.Label);
+        NativePartyStateChanged?.Invoke();
         ShowWatchPartyNotice("Playback has stalled repeatedly. Lower quality is available in the Watch Party panel.");
     }
 
@@ -680,6 +681,7 @@ public partial class PlayerService : IDisposable
         var target = _offeredRoomQuality;
         _offeredRoomQuality = null;
         _mpv?.SendScriptMessage("osc-room-quality-offer", "");
+        NativePartyStateChanged?.Invoke();
         if (!IsWatchTogetherPlayback || target == null || _offeredFromQuality != ActiveQualityTier) return;
         await SelectQualityAsync(target);
     }
@@ -1618,10 +1620,12 @@ public partial class PlayerService : IDisposable
 
         if (room == null || string.Equals(room.Phase, "ended", StringComparison.OrdinalIgnoreCase))
         {
+            _mpv.SendScriptMessage("osc-native-party-scope", "");
             _mpv.SendScriptMessage("osc-set-watch-party", "null");
             return;
         }
 
+        _mpv.SendScriptMessage("osc-native-party-scope", _nativeMenuOwner is { } nativeOwner && nativeOwner.IsCurrent() ? nativeOwner.Token : "");
         var payload = new
         {
             visible = true,
@@ -4362,7 +4366,7 @@ public partial class PlayerService : IDisposable
         _videoWindow?.Show();
         _mpv?.SendScriptMessage("osc-set-post-roll", "false");
         _mpv?.SendScriptMessage("osc-set-visibility", "true");
-        PublishNativeAudioScope();
+        PublishNativeMenuScopes();
         InvokeSubscribersSafely(PostRollReturnRequested, nameof(PostRollReturnRequested));
     }
 
@@ -5287,8 +5291,6 @@ public partial class PlayerService : IDisposable
         var ct = switchCts.Token;
         var previousSwitch = Interlocked.Exchange(ref _soloVersionSwitchCts, switchCts);
         try { previousSwitch?.Cancel(); } catch (ObjectDisposedException) { }
-        var survivingSession = manager.CurrentSession;
-        var reconcileSubtitles = false;
         try
         {
             bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && _playbackTerminalState == null && !IsWatchTogetherPlayback &&
@@ -5304,6 +5306,8 @@ public partial class PlayerService : IDisposable
             var currentPos = CurrentMediaPosition;
             var previousSession = manager.CurrentSession;
             var replacementAccepted = false;
+            var survivingSession = manager.CurrentSession;
+            var reconcileSubtitles = false;
             RetireNativeMenus();
             var busyOwner = BeginPlaybackBusy(loading: false, claimState: () =>
             {
@@ -5521,7 +5525,6 @@ public partial class PlayerService : IDisposable
                     SendAudioTrackListToOsc();
                     reconcileSubtitles = true;
                 });
-
             }
             finally
             {
@@ -7144,6 +7147,7 @@ public partial class PlayerService : IDisposable
         {
             case "silo-native-audio-open":
             case "silo-native-quality-open":
+            case "silo-native-party-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;
@@ -7320,7 +7324,7 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    // Keep the existing three-parameter entry point for native regression callers.
+    // Preserve the existing entry point; scoped selections use the guarded core.
     private Task SwitchQualityTierAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
         PlaybackStartResponse? bufferingExpectedSession = null)
         => SwitchQualityTierCoreAsync(tierId, bufferingReplan, bufferingExpectedSession);
@@ -7403,7 +7407,6 @@ public partial class PlayerService : IDisposable
                 },
                 acceptBusy: owner => busyOwner = owner);
             if (!CurrentSwitch()) return;
-
             // Show the quality actually accepted by the server, including
             // any fallback; a requested tier is not proof of delivery.
             _activeQualityTier = session.ActiveQuality;

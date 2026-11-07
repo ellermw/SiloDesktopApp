@@ -530,7 +530,7 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        var methodStart = source.IndexOf("private async Task SwitchQualityTierCoreAsync", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task SwitchQualityTierCoreAsync(string tierId,", StringComparison.Ordinal);
         Assert.True(methodStart >= 0);
         var methodEnd = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync", methodStart, StringComparison.Ordinal);
         Assert.True(methodEnd > methodStart);
@@ -1151,7 +1151,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("presenter.SetBorderAndTitleBar(false, false);", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(hostHwnd);", host, StringComparison.Ordinal);
         Assert.Contains("public static async Task<bool> ShowAsync(", host, StringComparison.Ordinal);
-        Assert.Contains("restorePlayerInput = GetForegroundWindow() == hostHwnd;", host, StringComparison.Ordinal);
+        Assert.Contains("restorePlayerInput = GetForegroundWindow() == hostHwnd", host, StringComparison.Ordinal);
         Assert.Contains("_videoWindow?.EnterFullscreen(activate: activatePlaybackSurface);", source, StringComparison.Ordinal);
         Assert.Contains("if (restorePlayerInput)", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(videoHwnd);", host, StringComparison.Ordinal);

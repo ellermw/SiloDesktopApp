@@ -29,20 +29,12 @@ using Windows.Storage.Streams;
 /// generated local video and a synthetic API. No installed application, account,
 /// system input injection, foreground changes or production setup are used.
 /// </summary>
-internal static class PlaybackAudioMenuNativeFixture
+internal static class PlaybackCommonMenuNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
     internal static async Task RunAsync(Window owner)
     {
-        // Retain both the common-menu probes and beta's expanded Audio
-        // lifecycle matrix without weakening either fixture.
-        if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") is not
-            ("geometry" or "resize" or "shift-tab" or "access-refresh"))
-        {
-            await PlaybackAudioReplanNativeFixture.RunAsync(owner);
-            return;
-        }
         using var foreground = new ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(owner));
         if (owner.AppWindow.Presenter is OverlappedPresenter presenter) presenter.SetBorderAndTitleBar(false, false);
         owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
@@ -732,7 +724,8 @@ internal static class PlaybackAudioMenuNativeFixture
         FileId = 42, Duration = 60, AudioTracks = Enumerable.Range(0, 72).Select(i => new AudioTrackInfo
         {
             Title = i == 71 ? "A deliberately long multilingual audio label — 日本語 — " + new string('x', 180) : i == 1 ? "" : i == 2 ? "Duplicate title" : $"Audio source {i}",
-            Language = i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Bitrate = 640, Default = i == 0,
+            Language = i == 1 ? "" : i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
+            Bitrate = i == 0 ? 640 : null, SampleRate = i == 0 ? 48000 : null,
         }).ToList(),
     };
 
@@ -937,6 +930,8 @@ internal static class PlaybackAudioMenuNativeFixture
             menu.Activated += Activated; menu.Closed += Closed;
         }
 
+        internal void RegisterWindow(IntPtr hwnd, string role) => _roles[hwnd.ToInt64()] = role;
+
         internal void Complete()
         {
             Observe("after-fixture-cleanup");
@@ -1073,12 +1068,19 @@ internal static class PlaybackAudioMenuNativeFixture
 /// playback and predecessor/successor ownership. The common-menu fixture above
 /// retains its geometry, keyboard and access-refresh probes for Quality too.
 /// </summary>
-internal static class PlaybackAudioReplanNativeFixture
+internal static partial class PlaybackAudioMenuNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
     internal static async Task RunAsync(Window owner)
     {
+        // Retain the common-menu probes alongside beta's Audio lifecycle matrix.
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") is
+            "geometry" or "resize" or "shift-tab" or "access-refresh")
+        {
+            await PlaybackCommonMenuNativeFixture.RunAsync(owner);
+            return;
+        }
         using var foreground = new ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(owner));
         if (owner.AppWindow.Presenter is OverlappedPresenter presenter) presenter.SetBorderAndTitleBar(false, false);
         owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
@@ -1153,6 +1155,7 @@ internal static class PlaybackAudioReplanNativeFixture
                     mp.commandv('script-message','silo-audio-fixture-state',request,require('mp.utils').format_json({
                         x=r.cx or 0,y=r.cy or 0,w=r.w or 0,h=r.h or 0,
                         width=state.osd_width,height=state.osd_height,scope=state.native_audio_scope or '',
+                        qualityScope=state.native_quality_scope or '',
                         sequence=pending.sequence or 0,legacy=state.audio_menu_visible or false,
                         legacyAvailable=state.native_audio_legacy or false,directAudio=state.layout.btn_audio ~= nil,
                         notice=state.notice_visible or false,noticeTitle=state.notice_title or '',
@@ -1222,6 +1225,63 @@ internal static class PlaybackAudioReplanNativeFixture
             var current = (ListViewItem)list.Items[37];
             Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
+            var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (menuProbe == "shift-tab")
+            {
+                PlaybackMenuKeyboardNativeFixture.Verify(menu);
+                Require(mpv.IsPaused, "Keyboard-only navigation changed genuine pause.");
+                Call(menu, "Input", "cancel");
+                return;
+            }
+            if (menuProbe == "geometry")
+            {
+                var originals = ((System.Collections.IEnumerable)Get(menu, "_choices")!).Cast<object>().ToArray();
+                var choiceType = originals[0].GetType();
+                var one = Array.CreateInstance(choiceType, 1);
+                one.SetValue(Activator.CreateInstance(choiceType, ["pending", "Loading choices…", "", Array.Empty<string>(), false, false, "Loading", false, true]), 0);
+                Require(GetWindowRect(hwnd, out var initial), "Menu bounds missing.");
+                Call(menu, "UpdateChoices", one);
+                await Until(() => GetWindowRect(hwnd, out var small) && small.Bottom - small.Top < initial.Bottom - initial.Top - 80,
+                    "Native menu did not shrink after its live inventory became one placeholder.");
+                Require(((FrameworkElement)((ListViewItem)list.Items[0]).Content).Opacity < .8 &&
+                    Descendants<TextBlock>((DependencyObject)((ListViewItem)list.Items[0]).Content).Any(text => text.Text == "Loading"),
+                    "Disabled native choice lost its muted appearance or visible explanation.");
+                var restored = Array.CreateInstance(choiceType, originals.Length);
+                for (var i = 0; i < originals.Length; i++) restored.SetValue(originals[i], i);
+                Call(menu, "UpdateChoices", restored);
+                await Until(() => GetWindowRect(hwnd, out var grown) && grown.Bottom - grown.Top >= initial.Bottom - initial.Top,
+                    "Native menu did not grow after its live inventory expanded.");
+                Require(GetWindowRect(video.Hwnd, out var surface) && GetWindowRect(hwnd, out var bounds) && bounds.Left >= surface.Left && bounds.Right <= surface.Right && bounds.Top >= surface.Top && bounds.Bottom <= surface.Bottom,
+                    "Live inventory growth escaped the playback owner.");
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native common menu re-evaluates one/many choice geometry within its owner.");
+                return;
+            }
+            if (menuProbe == "resize")
+            {
+                Call(menu, "Input", "end");
+                await Until(() => SelectedRowFits(list), "Initial keyboard row did not enter view.");
+                await Task.Delay(100);
+                var viewport = Descendants<ScrollViewer>(list).OrderByDescending(view => view.ScrollableHeight).First();
+                // Model the stale native offset observed during footer reflow;
+                // selection stays last and no wheel intent has been received.
+                list.ScrollIntoView(list.Items[0], ScrollIntoViewAlignment.Leading); list.UpdateLayout();
+                await Until(() => viewport.VerticalOffset < 1, "Resize probe could not establish its stale offset.");
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 460, 300)); video.SynchronizePosition();
+                await Task.Delay(100);
+                await Until(() => SelectedRowFits(list), "Native selected row escaped the resized list viewport.");
+                // Actual handler + native viewport; no system input injection.
+                Call(menu, "OnListPointerWheel", list, null);
+                list.ScrollIntoView(list.Items[0], ScrollIntoViewAlignment.Leading); list.UpdateLayout();
+                await Until(() => viewport.VerticalOffset < 1, "Wheel probe did not reach its native view.");
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 500, 340)); video.SynchronizePosition();
+                await Task.Delay(150);
+                Require(viewport.VerticalOffset < 1, "Resize reset deliberate wheel view.");
+                Call(menu, "Input", "end"); await Until(() => SelectedRowFits(list), "Keyboard navigation did not resume selected-row visibility.");
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native common menu repairs keyboard viewport alignment after resize and preserves modeled wheel intent.");
+                return;
+            }
             foreach (var size in new[] { (900, 540), (460, 700), (1920, 1080) })
             {
                 owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, size.Item1, size.Item2));
@@ -1253,11 +1313,11 @@ internal static class PlaybackAudioReplanNativeFixture
             // path on the interactive desktop; physical PiP remains unasserted.
             try
             {
-                Call(service, "RetireNativeAudioMenu");
+                Call(service, "RetireNativeMenus");
                 Property(service, "State", PlayerState.PictureInPicture);
                 owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 480, 270));
                 video.SynchronizePosition();
-                Call(service, "PublishNativeAudioScope");
+                Call(service, "PublishNativeMenuScopes");
                 await WaitForOscWidth(480);
                 menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
                 Require(service.State == PlayerState.PictureInPicture &&
@@ -1284,18 +1344,26 @@ internal static class PlaybackAudioReplanNativeFixture
             // this explicitly authorized fallback may bypass the native host.
             var activeSession = manager.CurrentSession!;
             var activeTransport = Get(service, "_activeTransportPlan");
+            var alternateVersion = new FileVersion { FileId = 43, Resolution = "720p" };
             try
             {
+                service.Versions.Add(alternateVersion);
+                Call(service, "SendQualityInfoToOsc");
+                Require(!string.IsNullOrEmpty((await Query()).GetProperty("qualityScope").GetString()),
+                    "Multi-version playback with a session did not advertise native Quality.");
                 Property(manager, "CurrentSession", null!);
                 Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", media.Origin + mediaPath));
                 Call(service, "SendAudioTrackListToOsc");
-                Require((await Query()).GetProperty("legacyAvailable").GetBoolean(),
+                var sessionless = await Query();
+                Require(sessionless.GetProperty("qualityScope").GetString() == "",
+                    "Sessionless multi-version direct playback advertised a Quality menu that requires a session.");
+                Require(sessionless.GetProperty("legacyAvailable").GetBoolean(),
                     "Sessionless direct playback did not publish its legacy Audio fallback.");
                 await TriggerOsc();
                 Require((await Query()).GetProperty("legacy").GetBoolean() && Menu(service) == null
                     && Gate(service).CurrentCount == 1, "Sessionless direct Audio did not open the existing local menu.");
                 mpv.SendKeypress("ESC");
-                Call(service, "RetireNativeAudioMenu");
+                Call(service, "RetireNativeMenus");
                 var retiredFallback = await Query();
                 Require(!retiredFallback.GetProperty("legacyAvailable").GetBoolean()
                     && !retiredFallback.GetProperty("legacy").GetBoolean(),
@@ -1305,11 +1373,13 @@ internal static class PlaybackAudioReplanNativeFixture
             {
                 Property(manager, "CurrentSession", activeSession);
                 Set(service, "_activeTransportPlan", activeTransport);
+                service.Versions.Remove(alternateVersion);
                 Call(service, "SendAudioTrackListToOsc");
+                Call(service, "SendQualityInfoToOsc");
             }
 
             Set(service, "_postRollActive", true);
-            Call(service, "RetireNativeAudioMenu");
+            Call(service, "RetireNativeMenus");
             mpv.SendScriptMessage("osc-set-post-roll", "true");
             Call(service, "ReturnFromPostRollPreview");
             Require(!string.IsNullOrEmpty((await Query()).GetProperty("scope").GetString()),
@@ -1333,8 +1403,8 @@ internal static class PlaybackAudioReplanNativeFixture
             Require(ReferenceEquals(Menu(service), menu), "Stale cancel closed a newer menu.");
             Call(menu, "Input", "cancel");
             // The synthetic newer request deliberately bypassed Lua's local
-            // counter. Unchanged publication retains the shared native owner,
-            // so explicitly retire this synthetic owner before a fresh UI open.
+            // counter. Retire that synthetic owner explicitly; unchanged
+            // metadata publication correctly retains a live menu owner.
             Call(service, "RetireNativeMenus");
             Call(service, "SendAudioTrackListToOsc");
 
@@ -1684,7 +1754,7 @@ internal static class PlaybackAudioReplanNativeFixture
                 Require(wire.AudioPicks.Single() == 71, "Actual native keyboard selection did not retain the source index.");
                 // This is the real presentation retirement helper invoked by
                 // mode/layout transitions. Avoid moving any fixture fullscreen.
-                Call(service, "RetireNativeAudioMenu");
+                Call(service, "RetireNativeMenus");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
@@ -1925,6 +1995,12 @@ internal static class PlaybackAudioReplanNativeFixture
     }
 
     private static object? Menu(PlayerService service) => typeof(PlayerService).GetField("_nativeMenu", Private)?.GetValue(service);
+    private static bool SelectedRowFits(ListView list)
+    {
+        if (list.SelectedItem is not FrameworkElement row || row.ActualHeight <= 0 || list.ActualHeight <= 0) return false;
+        var bounds = row.TransformToVisual(list).TransformBounds(new Windows.Foundation.Rect(0, 0, row.ActualWidth, row.ActualHeight));
+        return bounds.Top >= -1 && bounds.Bottom <= list.ActualHeight + 1;
+    }
     private static SemaphoreSlim Gate(PlayerService service) => (SemaphoreSlim)Get(service, "_playbackDialogGate")!;
     private static IntPtr MenuHwnd(object menu)
     {
@@ -1962,7 +2038,7 @@ internal static class PlaybackAudioReplanNativeFixture
             foreach (var descendant in Descendants<T>(child)) yield return descendant;
         }
     }
-    private static async Task Capture(object menu, string name)
+    internal static async Task Capture(object menu, string name)
     {
         var root = (Grid)Get(menu, "_root")!;
         await Until(() => root.ActualWidth > 0 && root.ActualHeight > 0, "Native Audio layout has no size.");
@@ -2074,7 +2150,7 @@ internal static class PlaybackAudioReplanNativeFixture
         private static HttpResponseMessage Json(string text) => new(HttpStatusCode.OK) { Content = new StringContent(text, Encoding.UTF8, "application/json") };
     }
 
-    private sealed class MediaServer : IDisposable
+    internal sealed class MediaServer : IDisposable
     {
         private readonly HttpListener _listener = new();
         internal string Origin { get; }
@@ -2096,6 +2172,13 @@ internal static class PlaybackAudioReplanNativeFixture
                 {
                     HttpListenerContext context;
                     try { context = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
+                    if (context.Request.Url?.AbsolutePath == "/fixture-subtitle.vtt")
+                    {
+                        var subtitle = Encoding.UTF8.GetBytes("WEBVTT\n\n00:00.000 --> 01:00.000\nSynthetic subtitle\n");
+                        context.Response.ContentType = "text/vtt"; context.Response.ContentLength64 = subtitle.Length;
+                        try { await context.Response.OutputStream.WriteAsync(subtitle); context.Response.Close(); } catch (HttpListenerException) { }
+                        continue;
+                    }
                     var from = 0; var through = bytes.Length - 1;
                     context.Response.ContentType = "application/octet-stream";
                     context.Response.Headers["Accept-Ranges"] = "bytes";
@@ -2133,7 +2216,7 @@ internal static class PlaybackAudioReplanNativeFixture
     /// switching between unrelated applications is not a fixture activation.
     /// No external window title, content or control is inspected.
     /// </summary>
-    private sealed class ForegroundOwnershipProbe : IDisposable
+    internal sealed class ForegroundOwnershipProbe : IDisposable
     {
         private readonly uint _processId = (uint)Environment.ProcessId;
         private readonly ConcurrentQueue<ForegroundEvent> _ownedEvents = new();
@@ -2145,9 +2228,11 @@ internal static class PlaybackAudioReplanNativeFixture
         private readonly WinEventCallback _callback;
         private GCHandle _callbackRoot;
         private IntPtr _hook;
+        private readonly string? _evidenceName;
 
-        internal ForegroundOwnershipProbe(IntPtr main)
+        internal ForegroundOwnershipProbe(IntPtr main, string? evidenceName = null)
         {
+            _evidenceName = evidenceName;
             _roles[main.ToInt64()] = "fixture-main";
             _callback = (_, _, hwnd, _, _, thread, eventTime) =>
             {
@@ -2199,6 +2284,8 @@ internal static class PlaybackAudioReplanNativeFixture
             menu.Activated += Activated; menu.Closed += Closed;
         }
 
+        internal void RegisterWindow(IntPtr hwnd, string role) => _roles[hwnd.ToInt64()] = role;
+
         internal void Complete()
         {
             Observe("after-fixture-cleanup");
@@ -2210,7 +2297,7 @@ internal static class PlaybackAudioReplanNativeFixture
                 observation.EventThread, observation.EventTime, observation.CallbackTick,
                 observation.PhaseAtDelivery, observation.ForegroundAtDelivery, observation.ForegroundProcessAtDelivery,
             }).ToArray();
-            var caseName = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            var caseName = _evidenceName ?? Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (string.IsNullOrEmpty(caseName)) caseName = "normal";
             File.WriteAllText(Path.Combine(Program.ResultDirectory, caseName + "-foreground.json"), JsonSerializer.Serialize(new
             {

@@ -738,8 +738,8 @@ public partial class PlaybackManager : IDisposable
         PlaybackStartResponse response;
         if (currentOwner == null)
         {
-            // Validate delivery before publishing any accepted plan/session fields.
-            // On failure the caller still owns its original session and busy claim.
+            // Validate delivery before publishing any accepted plan/session fields
+            // or history. A failed decision leaves the original owner intact.
             response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
             var streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
             CommitHistory();

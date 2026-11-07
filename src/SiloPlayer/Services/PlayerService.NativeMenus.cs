@@ -19,10 +19,6 @@ public partial class PlayerService
     private PlaybackChoiceMenu? _nativeMenu;
     private PlaybackMenuRequest? _nativeMenuRequest;
 
-    // Keep Audio-only callers on the shared Audio/Quality ownership lifecycle.
-    private void PublishNativeAudioScope() => PublishNativeMenuScopes();
-    private void RetireNativeAudioMenu() => RetireNativeMenus();
-
     private void PublishNativeMenuScopes()
     {
         var authority = _activeAuthority;
@@ -48,7 +44,8 @@ public partial class PlayerService
         var publication = Interlocked.Increment(ref _nativeMenuPublication);
         bool Current() => !_closing && !_postRollActive && !_switchingContent && !IsLoading && _playbackTerminalState == null &&
             roomPlayback == IsWatchTogetherPlayback && versions.SequenceEqual(Versions) &&
-            (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0) &&
+            (legacyAudio ? ReferenceEquals(transport, _activeTransportPlan) :
+                (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0)) &&
             (version?.Chapters?.SequenceEqual(chapters) ?? chapters.Length == 0) &&
             (session?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
             State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
@@ -57,8 +54,7 @@ public partial class PlayerService
             ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
-            ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero &&
-            (!legacyAudio || ReferenceEquals(transport, _activeTransportPlan));
+            ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
         if (mpv == null || video == null || (!legacyAudio && session == null) ||
             _closing || _postRollActive || _switchingContent || IsLoading || _playbackTerminalState != null)
         { RetireNativeMenus(); return; }
@@ -67,16 +63,15 @@ public partial class PlayerService
         void Publish()
         {
             if (publication != Volatile.Read(ref _nativeMenuPublication) || !owner.IsCurrent()) return;
-            if (!legacyAudio && _nativeMenuOwner is { } retained && retained.IsCurrent()) owner = retained;
+            if (_nativeMenuOwner is { } retained && retained.IsCurrent()) owner = retained;
             else
             {
                 _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
-                _nativeMenuOwner = legacyAudio ? null : owner;
-                _nativeMenuGate.ResetOwner(legacyAudio ? "" : owner.Token);
+                _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             }
-            mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : audio.Length > 1 ? owner.Token : "");
-            mpv.SendScriptMessage("osc-native-quality-scope", !legacyAudio &&
-                ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : version?.AudioTracks?.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-quality-scope", session != null && ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -90,11 +85,14 @@ public partial class PlayerService
         void Retire()
         {
             if (!ReferenceEquals(owner, _nativeMenuOwner)) return;
+            _nativePartyEndDialog?.Hide();
             _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
             _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
-            // Even without an owner, advertise capability and revoke legacy Audio.
+            // Empty scopes advertise host capability without allowing legacy
+            // fallback while the playback surface is unavailable.
             mpv?.SendScriptMessage("osc-native-audio-scope", "");
             mpv?.SendScriptMessage("osc-native-quality-scope", "");
+            mpv?.SendScriptMessage("osc-native-party-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -133,6 +131,7 @@ public partial class PlayerService
             {
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
+                "party" => CreateNativePartyMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }

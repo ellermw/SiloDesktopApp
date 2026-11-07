@@ -382,12 +382,10 @@ public sealed partial class MpvOscRuntimeTests
             s.visible, s.current_alpha, s.target_alpha = true, 1, 1
             s.audio_tracks = { {index=0,title='English'}, {index=1,title='Japanese'} }
             native_handlers['osc-native-audio-scope']('11111111111111111111111111111111')
-            if '{{unavailable}}' == 'loading' then native_handlers['osc-set-loading']('true')
-            elseif '{{unavailable}}' == 'retired-loading' then
-                -- BeginOwnedMpvLoad revokes scope before publishing loading.
+            if '{{unavailable}}' == 'retired' or '{{unavailable}}' == 'retired-loading' then
                 native_handlers['osc-native-audio-scope']('')
-                native_handlers['osc-set-loading']('true')
-            elseif '{{unavailable}}' == 'retired' then native_handlers['osc-native-audio-scope']('')
+                if '{{unavailable}}' == 'retired-loading' then native_handlers['osc-set-loading']('true') end
+            elseif '{{unavailable}}' == 'loading' then native_handlers['osc-set-loading']('true')
             elseif '{{unavailable}}' == 'hidden' then native_handlers['osc-set-visibility']('false')
             else native_handlers['osc-set-post-roll']('true') end
             osc_test_layout(); s.controller_focus_name = 'btn_audio'; osc_test_activate()
