@@ -2934,6 +2934,7 @@ local function render_subtitle_menu()
 
         -- Language name and WebUI-style codec/source badges.
         local display = lang_name(track.language or "")
+        if track.unplayable then display = display .. " (Unavailable)" end
         local text_y = cy + track_item_h / 2
         local detail = track.label or ""
         local detail_lower = detail:lower()
@@ -2968,7 +2969,7 @@ local function render_subtitle_menu()
 
         table.insert(state.subtitle_menu_items, {
             x = menu_x, y = cy, w = menu_w, h = track_item_h,
-            action = "select", index = track.index
+            action = "select", index = track.index, disabled = track.unplayable == true
         })
         cy = cy + track_item_h
     end
@@ -4578,6 +4579,7 @@ local function activate_keyboard_menu_item()
     local items = keyboard_menu_items(kind, raw_items)
     local item = items[state.keyboard_menu_index]
     if not item then return true end
+    if item.disabled then return true end
     if kind == "subtitles" then
         if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then
             if not item.disabled then
@@ -4587,7 +4589,7 @@ local function activate_keyboard_menu_item()
             return true
         elseif item.action == "off" then
             mp.commandv("script-message", "silo-subtitle-select", "-1")
-        elseif item.action == "select" then
+        elseif item.action == "select" and not item.disabled then
             mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
         elseif item.action == "search" then
             state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
@@ -5022,6 +5024,7 @@ local function handle_mouse_down()
         consume_video_click()
         for _, item in ipairs(state.subtitle_menu_items) do
             if point_in_rect(mx, my, item) then
+                if item.disabled then return end
                 if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then
                     if not item.disabled then
                         local intent = item.action == "sync" and "silo-subtitle-sync" or item.action == "reset_timing" and "silo-subtitle-reset-timing" or "silo-subtitle-sync-reload"
@@ -5030,7 +5033,7 @@ local function handle_mouse_down()
                     return
                 elseif item.action == "off" then
                     mp.commandv("script-message", "silo-subtitle-select", "-1")
-                elseif item.action == "select" then
+                elseif item.action == "select" and not item.disabled then
                     mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
                 elseif item.action == "search" then
                     state.restore_subtitle_focus_after_dialog = state.controller_focus_name == "btn_cc"
@@ -5203,7 +5206,9 @@ local function handle_mouse_down_right()
 
     -- Right-click on CC button: cycle subtitle backward
     if L.btn_cc and point_in_rect(mx, my, L.btn_cc) then
-        mp.commandv("cycle", "sub", "down")
+        -- The host maps only already-loaded, available rows to actual SIDs.
+        -- Cycling is local, not a persisted menu selection or a sidecar fetch.
+        mp.commandv("script-message", "silo-subtitle-cycle")
         return
     end
 end
@@ -5320,6 +5325,44 @@ end
 --------------------------------------------------------------------------------
 -- Property Observers
 --------------------------------------------------------------------------------
+
+local function remember_subtitle(index)
+    state.last_subtitle = index
+    state.last_subtitle_track = nil
+    for _, track in ipairs(state.subtitle_tracks) do
+        if track.index == index then state.last_subtitle_track = track; break end
+    end
+end
+
+local function same_subtitle_identity(previous, track)
+    if type(previous.track_id) == "string" and previous.track_id ~= "" then
+        return previous.track_id == track.track_id
+    end
+    if type(track.track_id) == "string" and track.track_id ~= "" then return false end
+    if type(previous.sync_key) == "string" and previous.sync_key ~= "" then
+        return previous.sync_key == track.sync_key
+    end
+    if type(track.sync_key) == "string" and track.sync_key ~= "" then return false end
+    -- Older inventories have no stable ID. Retain only an unchanged legacy
+    -- row, never an ordinal now owned by different metadata.
+    return previous.index == track.index and previous.language == track.language
+        and previous.source == track.source and previous.codec == track.codec
+        and previous.label == track.label and previous.forced == track.forced
+        and previous.hearing_impaired == track.hearing_impaired
+end
+
+local function remembered_subtitle(tracks)
+    local previous = state.last_subtitle_track
+    if not previous then return nil end
+    local match = nil
+    for _, track in ipairs(tracks) do
+        if same_subtitle_identity(previous, track) then
+            if match then return nil end -- Ambiguous identity is not a route.
+            match = track
+        end
+    end
+    return match and not match.unplayable and match or nil
+end
 
 local function observe_properties()
     mp.observe_property("time-pos", "number", function(_, val)
@@ -5741,18 +5784,52 @@ local function observe_properties()
         state.stream_target_video_kbps = tonumber(target_video_kbps) or 0
     end)
 
-    mp.register_script_message("osc-set-subtitles", function(json_str)
+    mp.register_script_message("osc-set-subtitles", function(json_str, media_file_id)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
+            local file_id = tonumber(media_file_id) or (data[1] and tonumber(data[1].media_file_id))
+            if file_id ~= state.subtitle_menu_file_id then
+                -- Combined indices and the caption shortcut's remembered row
+                -- belong to one file, even when the new list reuses an index.
+                state.last_subtitle = -1
+                state.last_subtitle_track = nil
+                state.active_subtitle = -1
+                state.subtitle_menu_visible = false
+                state.subtitle_menu_items = {}
+                if state.keyboard_menu_kind == "subtitles" then
+                    state.keyboard_menu_kind = nil
+                    state.keyboard_menu_index = 0
+                end
+            end
+            -- The same file can reassign combined indices. Rebind the saved
+            -- caption by identity before replacing the inventory it came from.
+            local remembered = remembered_subtitle(data)
+            if state.active_subtitle >= 0 then
+                state.active_subtitle = remembered and remembered.index or -1
+            end
+            state.last_subtitle = remembered and remembered.index or -1
+            state.last_subtitle_track = remembered
+            state.subtitle_menu_file_id = file_id
             state.subtitle_tracks = data
             state.subtitle_menu_offset = 1
+            -- Menus have their own overlay and hit targets; the base OSC tick
+            -- cannot retire old rows or repaint a same-file inventory refresh.
+            render_subtitle_menu()
+            if state.subtitle_menu_visible and state.keyboard_menu_kind == "subtitles" then
+                local count = #keyboard_menu_items("subtitles", state.subtitle_menu_items)
+                local index = clamp(state.keyboard_menu_index, 1, math.max(1, count))
+                if index ~= state.keyboard_menu_index then
+                    state.keyboard_menu_index = index
+                    render_subtitle_menu()
+                end
+            end
         end
     end)
 
     mp.register_script_message("osc-set-active-subtitle", function(idx)
         state.active_subtitle = tonumber(idx) or -1
         if state.active_subtitle >= 0 then
-            state.last_subtitle = state.active_subtitle
+            remember_subtitle(state.active_subtitle)
         end
     end)
 
@@ -5986,9 +6063,9 @@ local function setup_key_bindings()
         if not state.playback_failure_visible then toggle_stats() end
     end)
 
-    -- Subtitle delay nudge (matches mpv defaults but bound explicitly because
-    -- input-default-bindings=no in the host). Z slows subs (shows them later
-    -- relative to audio); X speeds them up. Each press shifts by 100 ms; the
+    -- Subtitle delay nudge routes through host-owned timing preferences rather
+    -- than mpv's default action. Z slows subs (shows them later relative to
+    -- audio); X speeds them up. Each press shifts by 100 ms; the
     -- OSD shows the current absolute delay so the user can dial it in.
     local function nudge_sub_delay(delta)
         if state.playback_failure_visible then return end
@@ -6090,15 +6167,20 @@ local function setup_key_bindings()
     local function toggle_captions()
         if state.playback_failure_visible then return end
         if state.active_subtitle >= 0 then
-            state.last_subtitle = state.active_subtitle
+            remember_subtitle(state.active_subtitle)
             state.active_subtitle = -1
             mp.commandv("script-message", "silo-subtitle-select", "-1")
         else
-            local target = state.last_subtitle
-            if target < 0 and #state.subtitle_tracks > 0 then
-                target = state.subtitle_tracks[1].index or -1
+            local remembered = remembered_subtitle(state.subtitle_tracks)
+            local target = remembered and remembered.index or -1
+            if target < 0 then
+                target = -1
+                for _, track in ipairs(state.subtitle_tracks) do
+                    if not track.unplayable then target = track.index or -1; break end
+                end
             end
             if target >= 0 then
+                remember_subtitle(target)
                 state.active_subtitle = target
                 mp.commandv("script-message", "silo-subtitle-select", tostring(target))
             end
@@ -6106,6 +6188,17 @@ local function setup_key_bindings()
     end
     mp.add_forced_key_binding("c", "silo-captions-toggle", toggle_captions)
     mp.add_forced_key_binding("C", "silo-captions-toggle-shift", toggle_captions)
+
+    -- Never let mpv's builtin j/J cycle an unverified or unavailable SID.
+    -- Keep both directions local, using the same host-owned routes as CC.
+    mp.add_forced_key_binding("j", "silo-subtitle-cycle-forward", function()
+        if state.playback_failure_visible then return end
+        mp.commandv("script-message", "silo-subtitle-cycle", "forward")
+    end)
+    mp.add_forced_key_binding("J", "silo-subtitle-cycle-backward", function()
+        if state.playback_failure_visible then return end
+        mp.commandv("script-message", "silo-subtitle-cycle")
+    end)
 
     mp.add_forced_key_binding("f", "silo-fs-override", function()
         if state.playback_failure_visible then return end
