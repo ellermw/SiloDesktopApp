@@ -369,6 +369,47 @@ public sealed partial class MpvOscRuntimeTests
     [Theory]
     [InlineData(1920, 1080)]
     [InlineData(480, 270)]
+    public void NativeAudioExplicitLegacyScopePreservesLocalSelectionUntilRevoked(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause, s.playback_loading = false, false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = {{index=0,title='English'}, {index=5,title='Japanese'}}
+            local selected
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-audio-select' then selected = args[3] end
+                return command(...)
+            end
+            local scope = native_handlers['osc-native-audio-scope']
+            scope('11111111111111111111111111111111')
+            scope('legacy')
+            osc_test_layout()
+            local focus = s.layout.btn_audio and 'btn_audio' or 'overflow_btn_audio'
+            s.controller_focus_name = focus; osc_test_activate()
+            assert(s.audio_menu_visible and #native_requests == 0, 'Host fallback did not open legacy Audio')
+            native_keys['silo-menu-end']()
+            native_keys['silo-menu-activate']()
+            assert(not s.audio_menu_visible and selected == '5'
+                and #native_intents == 1 and native_intents[1] == 'silo-audio-select',
+                'Legacy Audio did not preserve the source-index selection')
+            scope('')
+            s.controller_focus_name = focus; osc_test_activate()
+            assert(not s.audio_menu_visible and #native_requests == 0, 'Revocation retained the legacy fallback')
+            scope('22222222222222222222222222222222')
+            s.controller_focus_name = focus; osc_test_activate()
+            assert(not s.audio_menu_visible and #native_requests == 1, 'A new native scope did not replace fallback')
+            mp.set_property('user-data/native-audio-result', 'passed')
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("passed", output);
+    }
+
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(480, 270)]
     public void NativeAudioInitialEmptyScopeAdvertisesCapabilityWithoutLegacyFallback(int width, int height)
     {
         var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """

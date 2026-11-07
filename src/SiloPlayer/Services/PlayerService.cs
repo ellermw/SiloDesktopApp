@@ -5493,6 +5493,11 @@ public partial class PlayerService : IDisposable
         PublishNativeAudioScope();
         if (_mpv == null)
             return;
+        // ActiveVersion depends on CurrentSession. A sessionless direct
+        // stream still uses the last published source inventory locally.
+        if (_playbackManager is { CurrentSession: null } &&
+            _activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive)
+            return;
 
         var tracks = ActiveVersion?.AudioTracks ?? [];
         var payload = tracks.Select((track, index) => new

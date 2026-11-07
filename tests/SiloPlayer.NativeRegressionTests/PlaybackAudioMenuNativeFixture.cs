@@ -110,6 +110,7 @@ internal static class PlaybackAudioMenuNativeFixture
                         x=r.cx or 0,y=r.cy or 0,w=r.w or 0,h=r.h or 0,
                         width=state.osd_width,height=state.osd_height,scope=state.native_audio_scope or '',
                         sequence=pending.sequence or 0,legacy=state.audio_menu_visible or false,
+                        legacyAvailable=state.native_audio_legacy or false,directAudio=state.layout.btn_audio ~= nil,
                         notice=state.notice_visible or false,noticeTitle=state.notice_title or '',
                         closeConsume=fixture_close_consume,
                         compactX=(compactAudio.x or 0)+(compactAudio.w or 0)/2,
@@ -202,6 +203,66 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(Gate(service).CurrentCount == 1, "Audio close did not release exactly its dialog lease.");
             Require(Get(video, "SurfaceChanged") == null && Get(video, "_menuDismissal") == null,
                 "Audio close retained its native owner subscription or dismissal hook.");
+
+            // Exercise the PiP service state and compact OSC on an offscreen
+            // 480x270 surface. Do not invoke the monitor-positioning/topmost
+            // path on the interactive desktop; physical PiP remains unasserted.
+            try
+            {
+                Call(service, "RetireNativeAudioMenu");
+                Property(service, "State", PlayerState.PictureInPicture);
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 480, 270));
+                video.SynchronizePosition();
+                Call(service, "PublishNativeAudioScope");
+                await WaitForOscWidth(480);
+                menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
+                Require(service.State == PlayerState.PictureInPicture &&
+                    !(await Query()).GetProperty("legacy").GetBoolean(), "PiP did not use native Audio.");
+                Require(GetWindowRect(video.Hwnd, out var pipVideo) && GetWindowRect(hwnd, out var pipMenu)
+                    && pipMenu.Left >= pipVideo.Left && pipMenu.Right <= pipVideo.Right
+                    && pipMenu.Top >= pipVideo.Top && pipMenu.Bottom <= pipVideo.Bottom,
+                    "Native Audio escaped the compact PiP surface.");
+                Call(menu, "Input", "end");
+                Require(((ListView)Get(menu, "_list")!).SelectedIndex == 71, "PiP Audio could not reach the last source track.");
+                Call(menu, "Input", "cancel");
+                Require(Menu(service) == null && Gate(service).CurrentCount == 1 && mpv.IsPaused && service.IsPaused,
+                    "PiP Audio dismissal stranded its lease or changed paused intent.");
+            }
+            finally
+            {
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
+                service.SetState(PlayerState.Expanded);
+            }
+
+            await WaitForOscWidth(1280);
+
+            // A sessionless direct stream retains the last Lua inventory. Only
+            // this explicitly authorized fallback may bypass the native host.
+            var activeSession = manager.CurrentSession!;
+            var activeTransport = Get(service, "_activeTransportPlan");
+            try
+            {
+                Property(manager, "CurrentSession", null!);
+                Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", media.Origin + mediaPath));
+                Call(service, "SendAudioTrackListToOsc");
+                Require((await Query()).GetProperty("legacyAvailable").GetBoolean(),
+                    "Sessionless direct playback did not publish its legacy Audio fallback.");
+                await TriggerOsc();
+                Require((await Query()).GetProperty("legacy").GetBoolean() && Menu(service) == null
+                    && Gate(service).CurrentCount == 1, "Sessionless direct Audio did not open the existing local menu.");
+                mpv.SendKeypress("ESC");
+                Call(service, "RetireNativeAudioMenu");
+                var retiredFallback = await Query();
+                Require(!retiredFallback.GetProperty("legacyAvailable").GetBoolean()
+                    && !retiredFallback.GetProperty("legacy").GetBoolean(),
+                    "Retirement retained the local Audio fallback or its dismissed menu.");
+            }
+            finally
+            {
+                Property(manager, "CurrentSession", activeSession);
+                Set(service, "_activeTransportPlan", activeTransport);
+                Call(service, "SendAudioTrackListToOsc");
+            }
 
             Set(service, "_postRollActive", true);
             Call(service, "RetireNativeAudioMenu");
@@ -751,6 +812,15 @@ internal static class PlaybackAudioMenuNativeFixture
             try { mpv.SendScriptMessage("osc-audio-fixture-query", id); return await receiver.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
             finally { queries.TryRemove(id, out _); }
         }
+        async Task WaitForOscWidth(int width)
+        {
+            var wait = Stopwatch.StartNew();
+            while ((await Query()).GetProperty("width").GetDouble() != width)
+            {
+                Require(wait.Elapsed < TimeSpan.FromSeconds(8), "OSC resize did not settle.");
+                await Task.Delay(20);
+            }
+        }
         async Task TriggerOsc()
         {
             foreground.Observe("osc-trigger-before");
@@ -764,9 +834,9 @@ internal static class PlaybackAudioMenuNativeFixture
         }
         async Task<object> OpenFromOsc()
         {
-            if (compactClickCase)
+            var opener = await Query();
+            if (compactClickCase || !opener.GetProperty("directAudio").GetBoolean())
             {
-                var opener = await Query();
                 NativeClick(opener.GetProperty("x").GetDouble(), opener.GetProperty("y").GetDouble());
                 await Task.Delay(600); // Isolate Audio from More's existing gesture timer.
                 var compact = await Query();

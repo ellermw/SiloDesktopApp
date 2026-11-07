@@ -28,6 +28,11 @@ public partial class PlayerService
         var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
+        var transport = _activeTransportPlan;
+        // A completed server session can leave a playable direct stream and
+        // its last OSC inventory. Keep that existing local Audio path usable.
+        var legacyAudio = manager != null && session == null &&
+            transport?.TransportKind == PlaybackTransportKind.DirectProgressive;
         var version = ActiveVersion;
         var tracks = version?.AudioTracks?.ToArray() ?? [];
         var mpv = _mpv;
@@ -39,7 +44,7 @@ public partial class PlayerService
         var epoch = Volatile.Read(ref _nativeAudioEpoch);
         var publication = Interlocked.Increment(ref _nativeAudioPublication);
         bool Current() => !_closing && !_postRollActive && !_switchingContent && !IsLoading &&
-            State is PlayerState.Expanded or PlayerState.Fullscreen &&
+            State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture &&
             epoch == Volatile.Read(ref _nativeAudioEpoch) &&
             playGeneration == Volatile.Read(ref _playRequestGeneration) &&
             fileGeneration == Volatile.Read(ref _fileLoadGeneration) &&
@@ -48,8 +53,10 @@ public partial class PlayerService
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) &&
-            video?.Hwnd != IntPtr.Zero && version?.AudioTracks is { } current && current.SequenceEqual(tracks);
-        if (mpv == null || video == null || session == null || tracks.Length <= 1)
+            video?.Hwnd != IntPtr.Zero &&
+            (legacyAudio ? ReferenceEquals(transport, _activeTransportPlan) :
+                version?.AudioTracks is { } current && current.SequenceEqual(tracks));
+        if (mpv == null || video == null || (!legacyAudio && (session == null || tracks.Length <= 1)))
         {
             RetireNativeAudioMenu();
             return;
@@ -60,9 +67,9 @@ public partial class PlayerService
         {
             if (publication != Volatile.Read(ref _nativeAudioPublication) || !owner.IsCurrent()) return;
             _nativeAudioMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
-            _nativeAudioOwner = owner;
-            _nativeAudioGate.ResetOwner(owner.Token);
-            owner.Mpv.SendScriptMessage("osc-native-audio-scope", owner.Token);
+            _nativeAudioOwner = legacyAudio ? null : owner;
+            _nativeAudioGate.ResetOwner(legacyAudio ? "" : owner.Token);
+            owner.Mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : owner.Token);
         }
         if (dispatcher?.HasThreadAccess == true) Publish();
         else dispatcher?.TryEnqueue(Publish);

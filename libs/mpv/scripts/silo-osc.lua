@@ -158,6 +158,7 @@ local state = {
     audio_tracks = {},
     active_audio = -1,
     native_audio_capable = false,
+    native_audio_legacy = false,
     native_audio_scope = nil,
     native_menu_sequence = 0,
     native_menu_request = nil,
@@ -4683,7 +4684,7 @@ local function set_keyboard_transport_menu(kind, visible)
 end
 
 local function open_native_audio_menu(keyboard)
-    if not state.native_audio_capable then return false end
+    if not state.native_audio_capable or state.native_audio_legacy then return false end
     if not state.native_audio_scope or state.native_menu_request or #state.audio_tracks <= 1 or state.osc_disabled
         or state.playback_loading or state.post_roll_active
         or state.native_menu_sequence >= 9007199254740991 then return true end
@@ -6212,9 +6213,10 @@ end
 
 local function setup_script_messages()
     mp.register_script_message("osc-native-audio-scope", function(token)
-        -- Capability persists through scope revocation, including before the
-        -- first inventory is ready. Only older hosts use the legacy menu.
+        -- Empty scopes revoke access during loading/retirement. Only an
+        -- explicit host fallback (or an older host) enables the legacy menu.
         state.native_audio_capable = true
+        state.native_audio_legacy = token == "legacy"
         local scope = token and #token == 32 and token:match("^%x+$") and token or nil
         if scope ~= state.native_audio_scope then
             state.native_menu_request = nil
