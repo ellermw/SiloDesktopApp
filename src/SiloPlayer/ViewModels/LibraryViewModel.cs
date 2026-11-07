@@ -33,6 +33,7 @@ public partial class LibraryViewModel : ObservableObject
         public bool Retired { get; set; }
     }
     private readonly HashSet<CatalogRangeRead> _activeCatalogReads = [];
+    private CatalogRangeRead? _windowRead;
     private string? _catalogGroup;
     private string? _catalogLibraryScope;
     private Task<bool>? _groupingTask;
@@ -598,6 +599,22 @@ public partial class LibraryViewModel : ObservableObject
             return GroupedRefreshResult.Completed;
         }
         catch (OperationCanceledException) when (pending.IsCancellationRequested) { return GroupedRefreshResult.Failed; }
+        catch (ApiException ex) when (preserveOrder && ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor"
+            && !string.IsNullOrWhiteSpace(_snapshot) && !pending.IsCancellationRequested
+            && version == _queryVersion && key == LetterQueryKey())
+        {
+            if (IsLetterJumpInProgress || jump != _letterJumpVersion) return GroupedRefreshResult.Deferred;
+            // The signed scope is no longer usable, even for a state-only
+            // change. Retire all old rows/reads and retry once as a structural
+            // refresh, which starts without a cursor and cannot recover again.
+            StartNewCatalogQuery(preserveExtent: true, preserveLetters: true);
+            _hasExactTotal = false;
+            _catalogGroup = group;
+            _groupingTask = Task.FromResult(true);
+            Items.Reset(TotalCount);
+            IsLoading = false;
+            return await RefreshGroupedCatalogForChangeAsync(startIndex, itemCount, ct, stateOnly: false);
+        }
         catch (Exception ex)
         {
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex, "grouped_catalog_refresh");
@@ -617,6 +634,13 @@ public partial class LibraryViewModel : ObservableObject
         var end = (long)start + count;
         foreach (var read in _activeCatalogReads)
             if (read.Start < end && start < read.End) read.Retired = true;
+        if (_windowRead?.Retired == true)
+        {
+            // A retired task cannot satisfy even the unrefreshed part of its
+            // range. Release it so the next viewport request starts fresh.
+            CancelWindowLoad();
+            IsLoading = false;
+        }
         foreach (var boundary in _completedBoundaries.Where(pair => pair.Value.Start < end
             && start < (long)pair.Value.Start + CatalogWindowPageSize).Select(pair => pair.Key).ToArray())
             _completedBoundaries.Remove(boundary);
@@ -767,7 +791,7 @@ public partial class LibraryViewModel : ObservableObject
         var ct = linkedCts.Token;
         var windowVersion = ++_windowLoadVersion;
         var queryVersion = _queryVersion;
-        var read = BeginCatalogRangeRead(startIndex,
+        var read = _windowRead = BeginCatalogRangeRead(startIndex,
             ((long)itemCount + CatalogWindowPageSize - 1) / CatalogWindowPageSize * CatalogWindowPageSize);
 
         IsLoading = true;
@@ -831,6 +855,7 @@ public partial class LibraryViewModel : ObservableObject
         finally
         {
             _activeCatalogReads.Remove(read);
+            if (ReferenceEquals(_windowRead, read)) _windowRead = null;
             if (ReferenceEquals(_windowLoadCts, linkedCts))
             {
                 _windowLoadCts = null;
@@ -933,6 +958,7 @@ public partial class LibraryViewModel : ObservableObject
     private void CancelWindowLoad()
     {
         _pendingWindowTask = null;
+        _windowRead = null;
         var cts = _windowLoadCts;
         if (cts == null)
             return;

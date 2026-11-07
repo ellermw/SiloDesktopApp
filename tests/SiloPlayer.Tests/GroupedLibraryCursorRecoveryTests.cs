@@ -36,6 +36,68 @@ public sealed class GroupedLibraryCursorRecoveryTests
         model.CancelCatalogLoads();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StateRefreshRecoversRetiredSignedScopeAndRefreshesGroupedCounts(bool largePost)
+    {
+        using var wire = new SignedCatalog(); var model = wire.Create();
+        // A large guided rule uses POST without making state affect ordering.
+        if (largePost) model.SelectedActor = new string('x', 34000);
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var reads = wire.Catalog.Count;
+        wire.PolicyEpoch++; wire.GroupedTotal = 900; wire.PlayedCount = 3;
+        try
+        {
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed,
+                await model.RefreshGroupedCatalogStateAsync(623, 60));
+            await model.EnsureLetterIndexAsync();
+            Assert.Equal(1, wire.InvalidCursors);
+            var recovery = wire.Catalog.Skip(reads).ToArray();
+            Assert.True(recovery[0].Rejected);
+            Assert.Contains(recovery, request => !request.Values.ContainsKey("cursor"));
+            Assert.Contains(recovery, request => request.Values.GetValueOrDefault("skip_total") != "true");
+            Assert.Equal(900, model.DisplayTotalCount); Assert.Equal(900, model.LetterIndex!.Total);
+            Assert.Equal(3, model.GetWindowItem(623)!.BoxSet!.PlayedCount);
+            Assert.Null(model.GetWindowItem(0));
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed,
+                await model.RefreshGroupedCatalogStateAsync(623, 60));
+            await model.EnsureRangeLoadedAsync(842, 859);
+            Assert.NotNull(model.GetWindowItem(842)!.BoxSet);
+            Assert.Equal(1, wire.InvalidCursors); Assert.Null(model.ErrorMessage);
+            Assert.All(wire.Catalog, request =>
+            {
+                Assert.Equal("box_set", request.Values.GetValueOrDefault("group"));
+                Assert.Equal(largePost ? "POST" : "GET", request.Method);
+            });
+            Assert.All(wire.Letters, body => Assert.Equal("box_set", body.GetProperty("group").GetString()));
+        }
+        finally { model.CancelCatalogLoads(); }
+    }
+
+    [Fact]
+    public async Task StateRefreshRecoveryIsBoundedAndLeavesNoDeadCursorAfterFailure()
+    {
+        using var wire = new SignedCatalog(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var reads = wire.Catalog.Count; var indexes = wire.Letters.Count;
+        wire.PolicyEpoch++; wire.RejectFresh = true;
+        try
+        {
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Failed,
+                await model.RefreshGroupedCatalogStateAsync(623, 60));
+            Assert.Equal(2, wire.Catalog.Count - reads); Assert.Equal(indexes, wire.Letters.Count);
+            Assert.Null(model.GetWindowItem(0)); Assert.Null(model.ErrorMessage);
+            wire.RejectFresh = false;
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed,
+                await model.RefreshGroupedCatalogStateAsync(623, 60));
+            Assert.NotNull(model.GetWindowItem(623)!.BoxSet);
+            Assert.Equal(1, wire.InvalidCursors);
+            Assert.All(wire.Catalog, request => Assert.Equal("box_set", request.Values.GetValueOrDefault("group")));
+        }
+        finally { model.CancelCatalogLoads(); }
+    }
+
     [Fact]
     public async Task RecoveryRemainsOneAttemptWhenFreshGroupedScopeIsRejected()
     {
@@ -88,7 +150,8 @@ public sealed class GroupedLibraryCursorRecoveryTests
         private static readonly byte[] Key = Encoding.UTF8.GetBytes("synthetic-grouped-recovery-key");
         public readonly SiloApiClient Client;
         public readonly CatalogApi Api;
-        public int PolicyEpoch, InvalidCursors;
+        public int PolicyEpoch, InvalidCursors, PlayedCount;
+        public int GroupedTotal = 1000;
         public bool RejectFresh, HoldCapability;
         public readonly TaskCompletionSource CapabilityStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseCapability = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly List<Read> Catalog = [];
@@ -119,7 +182,7 @@ public sealed class GroupedLibraryCursorRecoveryTests
             if (path.EndsWith("letters"))
             {
                 var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement.Clone(); Letters.Add(body);
-                var total = body.TryGetProperty("group", out var group) && group.GetString() == "box_set" ? 1000 : 1800;
+                var total = body.TryGetProperty("group", out var group) && group.GetString() == "box_set" ? GroupedTotal : 1800;
                 return Reply(new { total, letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = total - 742, position = 742 } }, runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position = 742 } } });
             }
             Dictionary<string, string> values;
@@ -143,9 +206,9 @@ public sealed class GroupedLibraryCursorRecoveryTests
             }
             Catalog.Add(new(values, request.Method.Method, false));
             if (RejectFresh && !values.ContainsKey("cursor")) return Invalid();
-            var grouped = values.GetValueOrDefault("group") == "box_set"; var countTotal = grouped ? 1000 : 1800;
+            var grouped = values.GetValueOrDefault("group") == "box_set"; var countTotal = grouped ? GroupedTotal : 1800;
             var count = Math.Min(int.Parse(values["limit"]), countTotal - offset);
-            return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = grouped ? "box_set:1:" + index : "movie-" + index, title = "Title " + index, type = grouped ? "box_set" : "movie", box_set = grouped ? new { id = index.ToString(), library_id = "1", movie_count = 3 } : null }), total = countTotal, total_exact = values.GetValueOrDefault("skip_total") != "true", window_cursor = "0." + Sign(scope, "0"), page = new { has_more = offset + count < countTotal, next_cursor = (offset + count) + "." + Sign(scope, (offset + count).ToString()) } });
+            return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = grouped ? "box_set:1:" + index : "movie-" + index, title = "Title " + index, type = grouped ? "box_set" : "movie", box_set = grouped ? new { id = index.ToString(), library_id = "1", movie_count = 3, played_count = PlayedCount } : null }), total = countTotal, total_exact = values.GetValueOrDefault("skip_total") != "true", window_cursor = "0." + Sign(scope, "0"), page = new { has_more = offset + count < countTotal, next_cursor = (offset + count) + "." + Sign(scope, (offset + count).ToString()) } });
         }
         private static string Sign(string scope, string position) => Convert.ToHexString(HMACSHA256.HashData(Key, Encoding.UTF8.GetBytes(scope + "\0" + position)));
         private static HttpResponseMessage Invalid() => Reply(new { type = "https://fixture.invalid/docs/api/v2/problems/invalid_cursor", status = 400, detail = "Synthetic retired cursor." }, HttpStatusCode.BadRequest);

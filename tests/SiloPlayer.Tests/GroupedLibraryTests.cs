@@ -328,6 +328,42 @@ public sealed class GroupedLibraryTests
         model.CancelCatalogLoads();
     }
 
+    [Fact]
+    public async Task GroupedRefreshReloadsUncoveredSlotsFromRetiredPendingWindow()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.LoadWindowAsync(200, 100, force: true);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = false;
+        wire.AfterCatalogSnapshot = async (start, includeTotal, _) =>
+        {
+            if (held || start != 120 || includeTotal) return;
+            held = true; started.TrySetResult();
+            await release.Task; // An old response may arrive even after cancellation.
+        };
+        // Cached slots 200..299 trim this read to 120..199, but its wire
+        // page still overlaps the replacement at 200..219.
+        var oldRead = model.EnsureRangeLoadedAsync(120, 199);
+        var published = false;
+        model.WindowLoaded += () => published |= model.GetWindowItem(120) is not null;
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            wire.PlayedCount = 3;
+            Assert.Equal(LibraryViewModel.GroupedRefreshResult.Completed,
+                await model.RefreshGroupedCatalogStateAsync(200, 20));
+            Assert.Null(model.GetWindowItem(120));
+            await model.EnsureRangeLoadedAsync(120, 199).WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.True(published);
+            Assert.Equal(2, wire.CatalogRanges.Count(request => request.Start == 120 && !request.IncludeTotal));
+            Assert.All(Enumerable.Range(120, 180), index =>
+                Assert.Equal(3, model.GetWindowItem(index)!.BoxSet!.PlayedCount));
+        }
+        finally { release.TrySetResult(); await oldRead; model.CancelCatalogLoads(); }
+    }
+
     [Theory]
     [InlineData("insert")]
     [InlineData("remove")]
