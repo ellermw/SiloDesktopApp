@@ -1322,15 +1322,22 @@ public sealed class PlayerServiceSourceTests
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
         var start = source.IndexOf("public async Task SwitchVersionAsync", StringComparison.Ordinal);
+        Assert.True(start >= 0);
         var end = source.IndexOf("public async Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
-        Assert.True(start >= 0 && end > start);
+        Assert.True(end > start);
         var method = source[start..end];
         Assert.Contains("var previousSession = manager.CurrentSession;", method);
+        Assert.Contains("var survivingSession = manager.CurrentSession;", method);
         var retired = method.IndexOf("manager.CurrentSession == null || manager.SessionRetirementPending", StringComparison.Ordinal);
+        Assert.True(retired >= 0);
         var terminal = method.IndexOf("EnterPlaybackTerminalState(ex, currentPos, \"version-switch-failed\", wasPaused, previousSession)", retired, StringComparison.Ordinal);
-        var accepted = method.IndexOf("else if (replacementAccepted", terminal, StringComparison.Ordinal);
-        var notice = method.IndexOf("ShowNotice(title, detail, \"error\")", accepted, StringComparison.Ordinal);
-        Assert.True(retired >= 0 && terminal > retired && accepted > terminal && notice > accepted);
+        Assert.True(terminal > retired);
+        var accepted = method.IndexOf("else if ((replacementAccepted || !ReferenceEquals(manager.CurrentSession, survivingSession)) &&", terminal, StringComparison.Ordinal);
+        Assert.True(accepted > terminal);
+        var recovery = method.IndexOf("RecoverInterruptedStreamAsync(currentPos, \"version-switch-failed\")", accepted, StringComparison.Ordinal);
+        Assert.True(recovery > accepted);
+        var notice = method.IndexOf("ShowNotice(title, detail, \"error\")", recovery, StringComparison.Ordinal);
+        Assert.True(notice > recovery);
     }
 
     [Fact]
