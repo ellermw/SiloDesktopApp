@@ -11,6 +11,7 @@ public partial class PlayerService
     {
         public SubtitleSyncState State = new();
         public long Revision;
+        public bool TimingObserved;
         public bool Busy, Forbidden, Unsupported, PollStopped, Reading, ReadAgain, WatchOnRead;
         public string? Error, WatchedJobId, AnnouncedJobId;
         public DateTimeOffset Started, LastReload;
@@ -231,9 +232,11 @@ public partial class PlayerService
         var existed = _subtitleSyncEntries.TryGetValue(state.Key, out var entry);
         entry ??= new();
         if (state.Sync != null && !SubtitleSyncPolicy.AcceptJob(entry.State.Sync, state.Sync)) return;
-        var changed = existed && entry.State.Timing != state.Timing;
+        // Per-key reads create placeholders before inventory arrives. Their
+        // default timing is not an observation of the already applied cues.
+        var changed = entry.TimingObserved && entry.State.Timing != state.Timing;
         if (!existed || entry.State.Sync?.Id != state.Sync?.Id) { entry.Started = DateTimeOffset.UtcNow; entry.PollStopped = false; }
-        entry.State = state; entry.Revision++;
+        entry.State = state; entry.TimingObserved = true; entry.Revision++;
         _subtitleSyncEntries[state.Key] = entry;
         if (changed) InvalidateSubtitleTimingCache(state.Key);
         var job = state.Sync;
@@ -259,7 +262,8 @@ public partial class PlayerService
     }
 
     // Called under the sync gate, before a changed timing can be carried into
-    // another load. Keep the applied SID until its replacement is ready.
+    // another load. Keep the active SID until its replacement is ready, but
+    // retire inactive SIDs so selecting them must fetch the corrected cues.
     private void InvalidateSubtitleTimingCache(string key)
     {
         lock (_subtitleTrackStateLock)
@@ -270,11 +274,16 @@ public partial class PlayerService
                 (prepared.SyncKey == key || indices.Contains(prepared.Index)))
                 _preparedSubtitleReload = null;
             foreach (var index in indices)
+            {
                 if (_prefetchedSubtitleFiles.Remove(index, out var path))
                 {
                     _subtitleSyncFiles.Remove(path);
                     try { File.Delete(path); } catch { }
                 }
+                if (index != _activeSubtitleServerIndex && _loadedExternalSubtitleSids.Remove(index, out var sid) &&
+                    _mpv != null && (int)Math.Round(_mpv.GetPropertyDouble("sid")) != sid)
+                    _mpv.RemoveSubtitle(sid);
+            }
             // A pre-change read must not register old bytes after invalidation.
             _subtitleSidecarGeneration++;
         }

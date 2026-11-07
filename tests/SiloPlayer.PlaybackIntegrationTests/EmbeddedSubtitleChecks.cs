@@ -2,6 +2,7 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -121,6 +122,23 @@ internal static class EmbeddedSubtitleChecks
 
     private static async Task RunReloadCoverageAsync(string results, string media)
     {
+        var probe = Path.Combine(results, "subtitle-sync-notice-probe.lua");
+        await File.WriteAllTextAsync(probe, """
+            local mp = require 'mp'
+            local notices, barrier = 0, 0
+            mp.register_script_message('osc-subtitle-sync-notice', function(payload)
+                if payload ~= '{}' then
+                    notices = notices + 1
+                    mp.set_property_number('user-data/subtitle-sync-notices', notices)
+                end
+            end)
+            mp.register_script_message('subtitle-sync-fixture-barrier', function()
+                barrier = barrier + 1
+                mp.set_property_number('user-data/subtitle-sync-barrier', barrier)
+            end)
+            mp.set_property_number('user-data/subtitle-sync-notices', 0)
+            mp.set_property_number('user-data/subtitle-sync-probe-ready', 1)
+            """);
         foreach (var trackId in new string?[] { "downloaded-track-9", null })
         {
             var reads = 0;
@@ -144,7 +162,8 @@ internal static class EmbeddedSubtitleChecks
             });
             await origin.StartAsync();
             var address = origin.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
-            using var http = new HttpClient(new RejectNetwork());
+            var syncWire = new ReloadSyncWire();
+            using var http = new HttpClient(syncWire);
             var api = new SiloApiClient(http); api.SetBaseUrl(address);
             using var auth = new AuthService(api, new(api));
             using var service = CreateService(api, auth, results);
@@ -153,11 +172,23 @@ internal static class EmbeddedSubtitleChecks
                 Source = "downloaded", Codec = "webvtt", Language = "en", Label = "Downloaded captions", Url = "/captions.vtt" };
             var session = new PlaybackStartResponse { SessionId = "reload-fixture", MediaFileId = 42, PlayMethod = "remux", SubtitleUrls = [track] };
             typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+            // SessionId has its own backing field; setting only CurrentSession
+            // leaves SyncCurrent false and makes every timing observation a no-op.
+            Set(manager, "_sessionId", session.SessionId);
             manager.RecordLocalSubtitleSelection(track.Index);
             Set(service, "_playbackManager", manager);
             Set(service, "_activeTransportPlan", new PlaybackTransportPlan(PlaybackSemanticMethod.Remux, PlaybackTransportKind.RemuxProgressive, false));
             using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null");
             Set(service, "_mpv", mpv);
+            Call(mpv, "Command", (object)new[] { "load-script", probe });
+            await Until(() => mpv.GetPropertyDouble("user-data/subtitle-sync-probe-ready") == 1);
+            async Task<double> NoticeCountAsync()
+            {
+                var before = mpv.GetPropertyDouble("user-data/subtitle-sync-barrier");
+                mpv.SendScriptMessage("subtitle-sync-fixture-barrier");
+                await Until(() => mpv.GetPropertyDouble("user-data/subtitle-sync-barrier") > before);
+                return mpv.GetPropertyDouble("user-data/subtitle-sync-notices");
+            }
 
             // Own a stable sync lifecycle without starting background inventory
             // requests. Observations below still use the actual sync apply path.
@@ -167,10 +198,9 @@ internal static class EmbeddedSubtitleChecks
             Set(service, "_subtitleSyncFile", session.MediaFileId);
             Set(service, "_subtitleSyncOwner", Field(service, "_activeAuthority")!);
             Set(service, "_subtitleSyncAuthority", api.CaptureContext());
-            var entryType = typeof(PlayerService).GetNestedType("SyncEntry", BindingFlags.NonPublic)!;
-            var entry = Activator.CreateInstance(entryType, nonPublic: true)!;
-            entryType.GetField("State")!.SetValue(entry, new SubtitleSyncState { Key = track.SyncKey, MediaFileId = 42 });
-            ((System.Collections.IDictionary)Field(service, "_subtitleSyncEntries")!).Add(track.SyncKey, entry);
+            Call(service, "ApplySubtitleSyncState", new SubtitleSyncState { Key = track.SyncKey, MediaFileId = 42 }, syncOwner.Token);
+            if (((System.Collections.IDictionary)Field(service, "_subtitleSyncEntries")!).Count != 1)
+                throw new InvalidOperationException("The fixture did not establish a current sync owner.");
 
             await LoadNativeFileAsync(mpv, media);
             if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)))
@@ -182,18 +212,45 @@ internal static class EmbeddedSubtitleChecks
                 lock (cacheGate) return cache.TryGetValue(track.Index, out var path) ? path : null;
             }
 
-            async Task CheckBusyReloadAsync(string expected)
+            async Task CheckBusyReloadAsync(string expected, bool newSession = false)
             {
                 var path = CachedPath() ?? throw new InvalidOperationException("Applied subtitle has no local bytes.");
                 var before = Volatile.Read(ref reads);
+                var notices = await NoticeCountAsync();
                 Volatile.Write(ref busy, true);
                 // This is the applied-byte handoff used by same-file audio,
                 // quality and recovery loads, followed by a real mpv file load.
                 Call(service, "PrepareAppliedSubtitleFileForReload");
                 if (Field(service, "_preparedSubtitleReload") == null)
                     throw new InvalidOperationException("Stable downloaded identity did not prepare its applied bytes.");
+                if (newSession)
+                {
+                    session = new PlaybackStartResponse { SessionId = session.SessionId + "-replacement", MediaFileId = session.MediaFileId,
+                        PlayMethod = session.PlayMethod, SubtitleUrls = session.SubtitleUrls };
+                    typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+                    Set(manager, "_sessionId", session.SessionId);
+                }
                 await LoadNativeFileAsync(mpv, media);
                 Call(service, "LoadSubtitles");
+                if (newSession)
+                {
+                    syncOwner = (CancellationTokenSource)Field(service, "_subtitleSyncCts")!;
+                    // LoadSubtitles starts inventory with an empty revision
+                    // snapshot. OSC then starts a per-key placeholder read.
+                    await syncWire.InventoryEntered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+                    Call(service, "SendSubtitleListToOsc");
+                    await Until(() =>
+                    {
+                        lock (Field(service, "_subtitleSyncGate")!)
+                        {
+                            var entry = ((System.Collections.IDictionary)Field(service, "_subtitleSyncEntries")!)[track.SyncKey];
+                            return entry != null && !(bool)entry.GetType().GetField("Reading")!.GetValue(entry)! &&
+                                ((SubtitleSyncState)entry.GetType().GetField("State")!.GetValue(entry)!).Timing.OffsetMs == 2000;
+                        }
+                    });
+                    syncWire.InventoryRelease.TrySetResult();
+                    await Until(() => Field(service, "_subtitleSyncCapability") != null);
+                }
                 if (CachedPath() != path || !File.Exists(path) || Field(service, "_preparedSubtitleReload") != null)
                     throw new InvalidOperationException("Reload did not consume its local subtitle carry exactly once.");
                 if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)))
@@ -203,6 +260,8 @@ internal static class EmbeddedSubtitleChecks
                     throw new InvalidOperationException("Same-file reload re-read the busy URL or turned captions off.");
                 mpv.Seek(13);
                 await Until(() => ((string?)Call(mpv, "ReadUpscalingProperty", "sub-text"))?.Contains(expected) == true);
+                if (await NoticeCountAsync() != notices)
+                    throw new InvalidOperationException("Reloading already corrected cues sent a false timing notice.");
                 Volatile.Write(ref busy, false);
             }
 
@@ -224,11 +283,50 @@ internal static class EmbeddedSubtitleChecks
                     lock (cacheGate) return cache.TryGetValue(track.Index, out var corrected) && corrected != oldPath &&
                         File.Exists(corrected) && File.ReadAllText(corrected).Contains(text);
                 });
-                await CheckBusyReloadAsync(text);
+                await CheckBusyReloadAsync(text, newSession: offset != 0);
             }
+            // A timing change while A is inactive must retire A's native SID,
+            // without disturbing B. Returning to A must fetch corrected bytes.
+            var stalePath = CachedPath() ?? throw new InvalidOperationException("Applied subtitle has no local bytes.");
+            var staleSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+            Call(service, "PrepareAppliedSubtitleFileForReload");
+            if (Field(service, "_preparedSubtitleReload") == null)
+                throw new InvalidOperationException("Inactive timing fixture did not prepare A's carry.");
+            var other = new SubtitleTrackInfo { Index = 1, Source = "external", Codec = "webvtt", Language = "fr",
+                Label = "Other captions", Url = "/other.vtt" };
+            session.SubtitleUrls.Add(other);
+            if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", other.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)))
+                throw new InvalidOperationException("The other sidecar could not be selected.");
+            var retainedSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+            var beforeRead = Volatile.Read(ref reads);
+            Volatile.Write(ref marker, "INACTIVE_CORRECTION");
+            Call(service, "ApplySubtitleSyncState", new SubtitleSyncState { Key = track.SyncKey, MediaFileId = 42,
+                Source = "downloaded", Format = "vtt", Timing = new SubtitleTiming { OffsetMs = 3000 } }, syncOwner.Token);
+            if (Field(service, "_preparedSubtitleReload") != null || CachedPath() != null || File.Exists(stalePath) ||
+                ((System.Collections.IDictionary)Field(service, "_loadedExternalSubtitleSids")!).Contains(track.Index) ||
+                mpv.GetSubtitleTrackIds(externalOnly: true).Contains(staleSid) ||
+                (int)Math.Round(mpv.GetPropertyDouble("sid")) != retainedSid || service.ActiveSubtitleServerIndex != other.Index ||
+                Volatile.Read(ref reads) != beforeRead)
+                throw new InvalidOperationException("Inactive timing change retained stale cues or disturbed the active sidecar.");
+            if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)) ||
+                Volatile.Read(ref reads) != beforeRead + 1)
+                throw new InvalidOperationException("Reselecting the inactive sidecar did not fetch corrected cues exactly once.");
+            await CheckBusyReloadAsync("INACTIVE_CORRECTION");
+
+            // Refresh/download appends TrackId-less rows without a replan. A
+            // same-session native reload must still execute a granted Off.
+            session.SelectedSubtitleTrackId = null;
+            Call(manager, "ResetLocalTrackIntent");
+            if (manager.SubtitleSelectionForLoad != -1)
+                throw new InvalidOperationException("A downloaded row overrode the plan's Off selection.");
+            await LoadNativeFileAsync(mpv, media);
+            Call(service, "LoadSubtitles");
+            if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", manager.SubtitleSelectionForLoad, false)!).WaitAsync(TimeSpan.FromSeconds(8)) ||
+                service.ActiveSubtitleServerIndex != -1 || mpv.GetPropertyDouble("sid") > 0)
+                throw new InvalidOperationException("Same-session reload enabled native captions despite a granted Off.");
             await origin.StopAsync();
         }
-        Console.WriteLine("PASS published playback: downloaded identities with and without TrackId retain actual captions without a busy re-read; sync and timing reset invalidate pending carries and reload corrected local cues.");
+        Console.WriteLine("PASS published playback: downloaded identities survive busy and new-session reloads without false timing notices; timing changes retire inactive SIDs and stale carries; granted Off stays off.");
     }
 
     private static async Task LoadNativeFileAsync(MpvPlayer mpv, string media)
@@ -260,6 +358,29 @@ internal static class EmbeddedSubtitleChecks
     {
         public object? GetService(Type serviceType) => serviceType.FullName == "SiloPlayer.ViewModels.SettingsViewModel"
             ? RuntimeHelpers.GetUninitializedObject(serviceType) : null;
+    }
+    private sealed class ReloadSyncWire : HttpMessageHandler
+    {
+        public readonly TaskCompletionSource InventoryEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource InventoryRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var state = new SubtitleSyncState { Key = "stored-9", MediaFileId = 42, Source = "downloaded", Format = "vtt",
+                Timing = new SubtitleTiming { OffsetMs = 2000 } };
+            object body;
+            switch (request.RequestUri!.AbsolutePath)
+            {
+                case "/api/v2/subtitles/sync/status": body = new SubtitleSyncCapability { State = "available", External = true }; break;
+                case "/api/v2/subtitles/42/sync":
+                    InventoryEntered.TrySetResult();
+                    await InventoryRelease.Task.WaitAsync(ct);
+                    body = new SubtitleSyncInventory { Subtitles = [state] }; break;
+                case "/api/v2/subtitles/42/sync/stored-9": body = new SubtitleSyncResponse { Subtitle = state }; break;
+                default: throw new InvalidOperationException("Unexpected sync fixture request: " + request.RequestUri.AbsolutePath);
+            }
+            return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }), Encoding.UTF8, "application/json") };
+        }
     }
     private sealed class RejectNetwork : HttpMessageHandler
     {

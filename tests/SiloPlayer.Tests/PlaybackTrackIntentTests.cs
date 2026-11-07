@@ -34,6 +34,23 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(subtitle ?? -1, scope.Manager.SubtitleSelectionForLoad);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task GrantedOffDoesNotSelectADownloadedRowWithoutTrackIdentity(string? trackId)
+    {
+        using var scope = new Fixture(); scope.Wire.StartWithSubtitlesOff = true;
+        var session = await scope.Manager.StartSessionAsync(42);
+        session.SubtitleUrls.Add(new() { Index = 9, Id = 9, TrackId = trackId, SyncKey = "stored-9",
+            Source = "downloaded", Language = "en", Codec = "webvtt", Url = "/captions.vtt" });
+        Assert.Null(session.SelectedSubtitleTrackId);
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+
+        await scope.Manager.StartReplacementSessionAsync(42, 14);
+        Assert.False(scope.Wire.Starts[1].TryGetProperty("subtitle_track_index", out _));
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
     [Fact]
     public async Task ManualVersionPrefersExactRegionalAudioBeforeSameLanguageTitleSimilarity()
     {
@@ -251,6 +268,7 @@ public sealed class PlaybackTrackIntentTests
         public bool BlockNext;
         public bool FailNextReplan;
         public bool SubtitleVariants;
+        public bool StartWithSubtitlesOff;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _file = 42, _selected = 0;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -264,7 +282,7 @@ public sealed class PlaybackTrackIntentTests
             if (path.EndsWith("/start"))
             {
                 Starts.Add(body); _file = int.Parse(body.GetProperty("file_id").GetString()!);
-                _selected = body.TryGetProperty("subtitle_track_index", out var startSub) ? startSub.GetInt32() : Starts.Count == 1 ? 0 : -1;
+                _selected = body.TryGetProperty("subtitle_track_index", out var startSub) ? startSub.GetInt32() : Starts.Count == 1 && !StartWithSubtitlesOff ? 0 : -1;
             }
             else
             {

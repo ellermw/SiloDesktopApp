@@ -69,8 +69,10 @@ public partial class PlaybackManager
             {
                 if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
                     return MatchCurrentSubtitle()?.Index ?? -1;
+                // A plan selecting Off has no identity; downloaded rows may
+                // also lack TrackId and must not match that absence.
                 return CurrentSession?.SubtitleUrls.FirstOrDefault(t =>
-                    !t.Unplayable && t.TrackId == CurrentSession.SelectedSubtitleTrackId)?.Index ?? -1;
+                    !t.Unplayable && !string.IsNullOrEmpty(t.TrackId) && t.TrackId == CurrentSession.SelectedSubtitleTrackId)?.Index ?? -1;
             }
         }
     }
@@ -150,7 +152,8 @@ public partial class PlaybackManager
             // A granted automatic selection also survives a transport/session replacement.
             if (!_hasViewerSubtitle)
             {
-                _viewerSubtitle = CurrentSession?.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.TrackId == CurrentSession.SelectedSubtitleTrackId);
+                _viewerSubtitle = CurrentSession?.SubtitleUrls.FirstOrDefault(t =>
+                    !t.Unplayable && !string.IsNullOrEmpty(t.TrackId) && t.TrackId == CurrentSession.SelectedSubtitleTrackId);
                 _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
                 _hasViewerSubtitle = true;
             }
