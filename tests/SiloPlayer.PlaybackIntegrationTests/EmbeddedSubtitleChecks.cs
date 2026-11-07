@@ -212,12 +212,12 @@ internal static class EmbeddedSubtitleChecks
                 lock (cacheGate) return cache.TryGetValue(track.Index, out var path) ? path : null;
             }
 
-            async Task CheckBusyReloadAsync(string expected, bool newSession = false)
+            async Task CheckReloadAsync(string expected, bool newSession = false)
             {
                 var path = CachedPath() ?? throw new InvalidOperationException("Applied subtitle has no local bytes.");
                 var before = Volatile.Read(ref reads);
                 var notices = await NoticeCountAsync();
-                Volatile.Write(ref busy, true);
+                Volatile.Write(ref busy, !newSession);
                 // This is the applied-byte handoff used by same-file audio,
                 // quality and recovery loads, followed by a real mpv file load.
                 Call(service, "PrepareAppliedSubtitleFileForReload");
@@ -229,14 +229,22 @@ internal static class EmbeddedSubtitleChecks
                         PlayMethod = session.PlayMethod, SubtitleUrls = session.SubtitleUrls };
                     typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
                     Set(manager, "_sessionId", session.SessionId);
+                    // Timing may have changed outside the old session. Fresh
+                    // bytes must win even when the subtitle identity matches.
+                    expected = "REPLACEMENT_" + expected;
+                    Volatile.Write(ref marker, expected);
                 }
                 await LoadNativeFileAsync(mpv, media);
                 Call(service, "LoadSubtitles");
                 if (newSession)
                 {
+                    if (CachedPath() != null || File.Exists(path) || Field(service, "_preparedSubtitleReload") != null)
+                        throw new InvalidOperationException("A replacement session retained unvalidated subtitle bytes.");
+                    // A refused cross-session carry does not start sync in
+                    // LoadSubtitles. Follow production: OSC starts inventory,
+                    // then a second publication starts a per-key placeholder.
+                    Call(service, "SendSubtitleListToOsc");
                     syncOwner = (CancellationTokenSource)Field(service, "_subtitleSyncCts")!;
-                    // LoadSubtitles starts inventory with an empty revision
-                    // snapshot. OSC then starts a per-key placeholder read.
                     await syncWire.InventoryEntered.Task.WaitAsync(TimeSpan.FromSeconds(8));
                     Call(service, "SendSubtitleListToOsc");
                     await Until(() =>
@@ -251,13 +259,15 @@ internal static class EmbeddedSubtitleChecks
                     syncWire.InventoryRelease.TrySetResult();
                     await Until(() => Field(service, "_subtitleSyncCapability") != null);
                 }
-                if (CachedPath() != path || !File.Exists(path) || Field(service, "_preparedSubtitleReload") != null)
+                if (!newSession && (CachedPath() != path || !File.Exists(path) || Field(service, "_preparedSubtitleReload") != null))
                     throw new InvalidOperationException("Reload did not consume its local subtitle carry exactly once.");
                 if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)))
-                    throw new InvalidOperationException("Busy reload lost the already applied downloaded subtitle.");
-                if (Volatile.Read(ref reads) != before || service.ActiveSubtitleServerIndex != track.Index ||
+                    throw new InvalidOperationException("Reload could not apply the downloaded subtitle.");
+                if (newSession && (CachedPath() is not { } refreshed || refreshed == path || !File.Exists(refreshed)))
+                    throw new InvalidOperationException("A replacement session did not cache fresh subtitle bytes.");
+                if (Volatile.Read(ref reads) != before + (newSession ? 1 : 0) || service.ActiveSubtitleServerIndex != track.Index ||
                     !mpv.GetSubtitleTrackIds(externalOnly: true).Contains((int)Math.Round(mpv.GetPropertyDouble("sid"))))
-                    throw new InvalidOperationException("Same-file reload re-read the busy URL or turned captions off.");
+                    throw new InvalidOperationException("Reload used the wrong subtitle read count or turned captions off.");
                 mpv.Seek(13);
                 await Until(() => ((string?)Call(mpv, "ReadUpscalingProperty", "sub-text"))?.Contains(expected) == true);
                 if (await NoticeCountAsync() != notices)
@@ -265,7 +275,7 @@ internal static class EmbeddedSubtitleChecks
                 Volatile.Write(ref busy, false);
             }
 
-            await CheckBusyReloadAsync("ORIGINAL");
+            await CheckReloadAsync("ORIGINAL");
             foreach (var (text, offset) in new[] { ("CORRECTED", 2000), ("RESET", 0) })
             {
                 var oldPath = CachedPath() ?? throw new InvalidOperationException("Applied subtitle has no local bytes.");
@@ -283,7 +293,8 @@ internal static class EmbeddedSubtitleChecks
                     lock (cacheGate) return cache.TryGetValue(track.Index, out var corrected) && corrected != oldPath &&
                         File.Exists(corrected) && File.ReadAllText(corrected).Contains(text);
                 });
-                await CheckBusyReloadAsync(text, newSession: offset != 0);
+                await CheckReloadAsync(text);
+                if (offset != 0) await CheckReloadAsync(text, newSession: true);
             }
             // A timing change while A is inactive must retire A's native SID,
             // without disturbing B. Returning to A must fetch corrected bytes.
@@ -311,7 +322,7 @@ internal static class EmbeddedSubtitleChecks
             if (!await ((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!).WaitAsync(TimeSpan.FromSeconds(8)) ||
                 Volatile.Read(ref reads) != beforeRead + 1)
                 throw new InvalidOperationException("Reselecting the inactive sidecar did not fetch corrected cues exactly once.");
-            await CheckBusyReloadAsync("INACTIVE_CORRECTION");
+            await CheckReloadAsync("INACTIVE_CORRECTION");
 
             // Refresh/download appends TrackId-less rows without a replan. A
             // same-session native reload must still execute a granted Off.
@@ -326,7 +337,7 @@ internal static class EmbeddedSubtitleChecks
                 throw new InvalidOperationException("Same-session reload enabled native captions despite a granted Off.");
             await origin.StopAsync();
         }
-        Console.WriteLine("PASS published playback: downloaded identities survive busy and new-session reloads without false timing notices; timing changes retire inactive SIDs and stale carries; granted Off stays off.");
+        Console.WriteLine("PASS published playback: downloaded identities survive same-session busy reloads; replacement sessions fetch fresh cues without false timing notices; timing changes retire inactive SIDs and stale carries; granted Off stays off.");
     }
 
     private static async Task LoadNativeFileAsync(MpvPlayer mpv, string media)
