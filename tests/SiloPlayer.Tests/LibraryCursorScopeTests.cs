@@ -176,18 +176,67 @@ public sealed class LibraryCursorScopeTests
         Assert.Null(model.LetterJumpError);
     }
 
-    [Fact]
-    public async Task MissingRevalidatedLetterTargetNeverRestoresRetiredSignedCards()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task MissingRevalidatedLetterTargetNeverRestoresRetiredSignedCards(bool profileChanged, bool missingEntry)
     {
         using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
         await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
-        Assert.NotNull(model.GetWindowItem(0));
-        wire.ScopeVersion++; wire.LetterPosition = 900; wire.CatalogTotal = 800;
+        var retired = model.GetWindowItem(0);
+        Assert.NotNull(retired);
+        if (profileChanged) wire.Client.SetProfile("other-synthetic-profile");
+        wire.ScopeVersion++; wire.LetterPosition = 900; wire.CatalogTotal = 800; wire.MissingLetter = missingEntry;
         var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
         await model.JumpToLetterCommand.ExecuteAsync("M");
-        Assert.Empty(jumps); Assert.NotNull(model.LetterJumpError); Assert.Null(model.ErrorMessage);
-        Assert.Null(model.GetWindowItem(0)); Assert.Null(model.GetWindowItem(600));
-        Assert.Null(model.GetWindowItem(900));
+        Assert.Empty(jumps); Assert.Equal("Couldn't load M titles.", model.LetterJumpError); Assert.Null(model.ErrorMessage);
+        var fresh = model.GetWindowItem(0);
+        Assert.Equal("item-0-scope1", fresh!.ContentId);
+        Assert.NotSame(retired, fresh);
+        Assert.Null(model.GetWindowItem(600)); Assert.Null(model.GetWindowItem(900));
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        Assert.Equal(profileChanged ? 0 : 1, wire.InvalidCursors);
+
+        // The letter stays missing: Retry must keep fresh cards and the scoped
+        // error, while automatic viewport reads can load other current rows.
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        Assert.Same(fresh, model.GetWindowItem(0));
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        await model.EnsureRangeLoadedAsync(300, 359);
+        Assert.Equal("item-300-scope1", model.GetWindowItem(300)!.ContentId);
+        Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+        Assert.Null(model.ErrorMessage); Assert.Null(model.PendingLetter);
+        Assert.Empty(jumps);
+    }
+
+    [Fact]
+    public async Task MissingLetterRetryBootstrapsFreshCardsAfterResetViewportReadFails()
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        wire.Client.SetProfile("other-synthetic-profile");
+        wire.ScopeVersion++; wire.MissingLetter = true; wire.RejectFresh = true;
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+
+        Assert.Null(model.GetWindowItem(0));
+        Assert.True(model.IsLetterJumpViewportBlocked);
+        Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+        Assert.Null(model.ErrorMessage);
+        wire.RejectFresh = false;
+
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+
+        Assert.Equal("item-0-scope1", model.GetWindowItem(0)!.ContentId);
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+        Assert.Null(model.ErrorMessage); Assert.Null(model.PendingLetter);
+        Assert.Empty(jumps);
+        await model.EnsureRangeLoadedAsync(300, 359);
+        Assert.Equal("item-300-scope1", model.GetWindowItem(300)!.ContentId);
     }
 
     [Fact]
@@ -254,7 +303,7 @@ public sealed class LibraryCursorScopeTests
         public int ScopeVersion;
         public bool RejectFresh;
         public int Reads;
-        public bool LetterSupport;
+        public bool LetterSupport, MissingLetter;
         public int LetterPosition = 600, IndexRequests;
         public int CatalogTotal = 1000;
         public TaskCompletionSource? InvalidGate;
@@ -273,8 +322,10 @@ public sealed class LibraryCursorScopeTests
                 var position = LetterPosition;
                 if (IndexGate is { } gate) { IndexStarted.TrySetResult(); await gate.Task; }
                 return await Reply(new { total = 1000,
-                    letters = new[] { new { letter = "A", count = position, position = 0 }, new { letter = "M", count = 1000 - position, position } },
-                    runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position } } });
+                    letters = new[] { new { letter = "A", count = MissingLetter ? 1000 : position, position = 0 }, new { letter = "M", count = 1000 - position, position } }
+                        .Where(entry => !MissingLetter || entry.letter != "M"),
+                    runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position } }
+                        .Where(entry => !MissingLetter || entry.letter != "M") });
             }
             Dictionary<string, string> values;
             if (request.Method == HttpMethod.Post)

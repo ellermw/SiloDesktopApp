@@ -156,6 +156,19 @@ public partial class LibraryViewModel
         PendingLetter = letter;
         _activeLetterJumpVersion = jump;
         bool IsCurrent() => jump == _letterJumpVersion && key == LetterQueryKey();
+        async Task<bool> EnsureFreshViewportAsync()
+        {
+            if (!IsCurrent()) return false;
+            if (!_letterJumpRetiredScope || WindowStartIndex >= 0) return true;
+            // A missing optional target must not strand a reset catalog. Read
+            // fresh cards under this owner, never restore the retired scope.
+            var initialLoad = new LetterWindowLoad(IsCurrent);
+            await LoadWindowForOwnerAsync(0, PageSize, force: true, initialLoad);
+            if (!IsCurrent() || initialLoad.Failed || initialLoad.CursorRejected || !initialLoad.Received)
+                return false;
+            _letterJumpRetiredScope = false;
+            return true;
+        }
         try
         {
             for (var attempt = 0; attempt < 2; attempt++)
@@ -165,19 +178,10 @@ public partial class LibraryViewModel
                 if (!IsCurrent()) return;
                 if (index is null)
                 {
-                    if (_letterJumpRetiredScope && WindowStartIndex < 0)
+                    if (!await EnsureFreshViewportAsync())
                     {
-                        // A reset catalog still needs fresh cards, including on
-                        // Retry after a failed load or signed-scope retirement.
-                        var initialLoad = new LetterWindowLoad(IsCurrent);
-                        await LoadWindowForOwnerAsync(0, PageSize, force: true, initialLoad);
-                        if (!IsCurrent()) return;
-                        if (initialLoad.Failed || initialLoad.CursorRejected || !initialLoad.Received)
-                        {
-                            SetLetterJumpFailure(letter);
-                            return;
-                        }
-                        _letterJumpRetiredScope = false;
+                        if (IsCurrent()) SetLetterJumpFailure(letter);
+                        return;
                     }
                     // A cached null means unsupported, not a failed refresh.
                     // Only failed refreshes of an offered choice retain Retry.
@@ -188,6 +192,8 @@ public partial class LibraryViewModel
                 if (entry is null || entry.Position >= TotalCount)
                 {
                     _letterIndexKey = null;
+                    await EnsureFreshViewportAsync();
+                    if (!IsCurrent()) return;
                     SetLetterJumpFailure(letter);
                     return;
                 }
@@ -231,6 +237,11 @@ public partial class LibraryViewModel
                     foreach (var window in previous.Windows) _recentWindows.AddLast(window);
                     HasMore = previous.HasMore;
                     if (!load.Failed || attempt != 0) _letterIndexKey = null;
+                    if (!load.Failed)
+                    {
+                        await EnsureFreshViewportAsync();
+                        if (!IsCurrent()) return;
+                    }
                     SetLetterJumpFailure(letter);
                     WindowLoaded?.Invoke();
                     return;
