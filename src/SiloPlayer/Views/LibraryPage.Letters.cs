@@ -157,7 +157,10 @@ public sealed partial class LibraryPage
             ViewModel.TotalCount, layout.Columns, layout.RowHeight, GetLibraryViewportHeight());
         var atBottom = Math.Abs(_libraryVerticalOffset - maxOffset) < 2;
         if (!atBottom) _chosenLibraryEndLetter = null;
-        var topRowEnd = Math.Min(ViewModel.TotalCount - 1, (_currentFirstRow + 1) * layout.Columns - 1);
+        // Native scrolling rounds fractional row boundaries to rendered pixels.
+        // Ignore a subpixel sliver of the preceding row when naming the top letter.
+        var letterRow = VirtualGridScrollGate.GetFirstVisibleRow(_libraryVerticalOffset + .5, layout.RowHeight);
+        var topRowEnd = Math.Min(ViewModel.TotalCount - 1, (letterRow + 1) * layout.Columns - 1);
         var activeLetter = ViewModel.PendingLetter ?? (atBottom && _chosenLibraryEndLetter is not null
             ? _chosenLibraryEndLetter : ViewModel.LetterIndex!.LetterAtIndex(topRowEnd));
         if (!force && activeLetter == _activeLibraryLetter) return;

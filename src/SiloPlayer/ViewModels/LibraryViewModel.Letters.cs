@@ -55,28 +55,31 @@ public partial class LibraryViewModel
     private string LetterQueryKey() => JsonSerializer.Serialize(new
     {
         _queryVersion, context = _catalogApi.CaptureContext(), language = _catalogApi.FilterCacheGeneration,
-        library = Library?.Id, SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
+        library = Library?.Id, grouping = LibraryGroupingScope(Library), group = _catalogGroup, SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
         SelectedGenre, SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution,
         SelectedAudioLanguage, SelectedYearMin, SelectedYearMax,
         rules = BuildExtraRules(), groups = BuildAdvancedGroups(), AdvancedRulesMatch,
     });
 
-    public Task EnsureLetterIndexAsync()
+    public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync(preserveExisting: false);
+
+    private async Task EnsureLetterIndexCoreAsync(bool preserveExisting, bool force = false)
     {
+        if (Library is not null && !await EnsureGroupingAsync()) return;
         if (Library is null || SelectedSort != "title")
         {
             ResetLetterIndex();
-            return Task.CompletedTask;
+            return;
         }
         var key = LetterQueryKey();
-        if (_letterIndexKey == key) return _letterIndexTask ?? Task.CompletedTask;
-        LetterIndex = null;
+        if (!force && _letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
+        if (!preserveExisting) LetterIndex = null;
         _letterIndexKey = key;
         IsLetterIndexLoading = true;
-        return _letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token);
+        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting));
     }
 
-    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -96,8 +99,8 @@ public partial class LibraryViewModel
                 yearMin: UseAdvancedRules ? null : SelectedYearMin,
                 yearMax: UseAdvancedRules ? null : SelectedYearMax, type: type,
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
-                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct);
-            if (ct.IsCancellationRequested || key != LetterQueryKey()) return;
+                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct, group: _catalogGroup);
+            if (ct.IsCancellationRequested || key != LetterQueryKey() || loadVersion != _letterIndexLoadVersion) return;
             LetterIndex = index;
             if (index is not null)
             {
@@ -109,7 +112,7 @@ public partial class LibraryViewModel
         }
         catch (OperationCanceledException)
         {
-            if (_letterIndexKey == key) _letterIndexKey = null;
+            if (_letterIndexKey == key && loadVersion == _letterIndexLoadVersion) _letterIndexKey = null;
         }
         catch (Exception ex)
         {
@@ -117,11 +120,11 @@ public partial class LibraryViewModel
                 $"catalog_letters library={libraryId} order={order} type={type ?? "all"} group_count={groups?.Count ?? 0} query_fingerprint={queryFingerprint}");
             // Keep browsing usable. Only explicit query/return/jump requests
             // retry this optional aid; publishing card windows must not retry it.
-            if (_letterIndexKey == key)
+            if (_letterIndexKey == key && loadVersion == _letterIndexLoadVersion)
             {
                 _letterIndexKey = null;
                 _letterIndexTask = null;
-                LetterIndex = null;
+                if (!preserveExisting) LetterIndex = null;
             }
         }
         finally
@@ -171,7 +174,22 @@ public partial class LibraryViewModel
         }
         try
         {
-            for (var attempt = 0; attempt < 2; attempt++)
+            async Task<bool> EnsureJumpGroupingAsync()
+            {
+                if (!IsCurrent()) return false;
+                using var owner = JsonDocument.Parse(key);
+                if (!await EnsureGroupingAsync() || jump != _letterJumpVersion) return false;
+                var resolvedKey = LetterQueryKey();
+                using var resolved = JsonDocument.Parse(resolvedKey);
+                // Grouping is resolved before both the initial index and a
+                // signed-scope retry. Only that decision may update this owner.
+                if (owner.RootElement.EnumerateObject().Any(property => property.Name != "group" &&
+                    property.Value.GetRawText() != resolved.RootElement.GetProperty(property.Name).GetRawText()))
+                    return false;
+                key = _letterFeedbackKey = resolvedKey;
+                return true;
+            }
+            for (var attempt = 0; attempt < 2 && await EnsureJumpGroupingAsync(); attempt++)
             {
                 await EnsureLetterIndexAsync();
                 var index = LetterIndex;

@@ -88,6 +88,63 @@ public sealed class MediaItemCollectionReconcilerTests
         Assert.Same(mounted, current[0]);
     }
 
+    [Theory]
+    [InlineData("Id")]
+    [InlineData("LibraryId")]
+    [InlineData("Title")]
+    [InlineData("Overview")]
+    [InlineData("MovieCount")]
+    [InlineData("PlayedCount")]
+    [InlineData("FirstYear")]
+    [InlineData("LastYear")]
+    [InlineData("PosterUrl")]
+    [InlineData("PosterThumbhash")]
+    [InlineData("BackdropUrl")]
+    [InlineData("BackdropThumbhash")]
+    [InlineData("removed")]
+    public void BoxSetSummaryChangesReplaceTheAggregateCard(string field)
+    {
+        var mounted = Aggregate(); var incoming = Aggregate();
+        var current = new ObservableCollection<MediaItem>([mounted]);
+        if (field == "removed") incoming.BoxSet = null;
+        else
+        {
+            var property = typeof(SiloPlayer.Core.Models.Catalog.BoxSetSummary).GetProperty(field)!;
+            property.SetValue(incoming.BoxSet, property.PropertyType == typeof(int) ? (object)9 : "changed");
+        }
+        var notifications = new List<System.Collections.Specialized.NotifyCollectionChangedAction>();
+        current.CollectionChanged += (_, args) => notifications.Add(args.Action);
+
+        Assert.True(MediaItemCollectionReconciler.Apply(current, [incoming]));
+        Assert.Same(incoming, current[0]);
+        Assert.Equal([System.Collections.Specialized.NotifyCollectionChangedAction.Replace], notifications);
+    }
+
+    [Fact]
+    public void EquivalentBoxSetSummariesKeepTheMountedAggregate()
+    {
+        var mounted = Aggregate(); var current = new ObservableCollection<MediaItem>([mounted]);
+        Assert.False(MediaItemCollectionReconciler.Apply(current, [Aggregate()]));
+        Assert.Same(mounted, current[0]);
+        var incoming = Aggregate(); incoming.BoxSet = null;
+        var withoutSummary = Aggregate(); withoutSummary.BoxSet = null;
+        Assert.True(MediaItemCollectionReconciler.Apply(current, [withoutSummary]));
+        Assert.False(MediaItemCollectionReconciler.Apply(current, [incoming]));
+        Assert.True(MediaItemCollectionReconciler.Apply(current, [Aggregate()]));
+    }
+
+    private static MediaItem Aggregate() => new()
+    {
+        ContentId = "box_set:7", Type = "box_set", Title = "Collection",
+        BoxSet = new()
+        {
+            Id = "7", LibraryId = "12", Title = "Collection", Overview = "Overview",
+            MovieCount = 3, PlayedCount = 1, FirstYear = 2001, LastYear = 2011,
+            PosterUrl = "https://fixture.invalid/poster.jpg", PosterThumbhash = "poster",
+            BackdropUrl = "https://fixture.invalid/backdrop.jpg", BackdropThumbhash = "backdrop",
+        },
+    };
+
     private static MediaItem Item(string id, string title) => new()
     {
         ContentId = id,

@@ -44,7 +44,11 @@ public sealed partial class QueryRulesEditor
             {
                 var join = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
                 var combine = new ComboBox { MinWidth = 0, MinHeight = 0, Height = 36, FontSize = 14 };
-                combine.Items.Add(new Option("and", "all")); combine.Items.Add(new Option("or", "any")); combine.SelectedItem = combine.Items.Cast<Option>().First(o => o.Value == Query.Match);
+                combine.Items.Add(new Option("and", "all")); combine.Items.Add(new Option("or", "any"));
+                var savedMatch = combine.Items.Cast<Option>().FirstOrDefault(o => o.Value == Query.Match);
+                // Keep unknown saved matches visible without coercing the query on load.
+                if (savedMatch == null) combine.Items.Add(savedMatch = new Option($"Saved match ({Query.Match})", Query.Match));
+                combine.SelectedItem = savedMatch;
                 AutomationProperties.SetName(combine, "How the groups combine"); combine.SelectionChanged += (_, _) => { Query.Match = Selected(combine); Changed?.Invoke(); };
                 join.Children.Add(combine); join.Children.Add(new TextBlock { Text = "titles that match", FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
                 var match = Choice(["all", "any"], group.Match, $"How group {index + 1}'s rules combine"); match.Height = 36; match.FontSize = 14;
@@ -85,10 +89,15 @@ public sealed partial class QueryRulesEditor
         {
             updating = true;
             var field = Query.Sort?.Field ?? "added_at";
-            var alphabetical = field is "title" or "author" or "narrator" or "series";
+            var alphabetical = field is "title" or "author" or "narrator" or "series" or "content_rating";
             var date = field is "added_at" or "release_date" or "last_air_date" or "latest_episode_added" or "year" or "date_viewed";
-            direction.ItemsSource = new[] { new Option(alphabetical ? "Z–A" : date ? "Newest first" : "Highest first", "desc"), new Option(alphabetical ? "A–Z" : date ? "Oldest first" : "Lowest first", "asc") };
-            direction.SelectedItem = direction.Items.Cast<Option>().First(o => o.Value == (Query.Sort?.Order ?? "desc")); updating = false;
+            var order = Query.Sort?.Order ?? "desc";
+            var options = new List<Option> { new(alphabetical ? "A–Z" : date ? "Oldest first" : "Lowest first", "asc"), new(alphabetical ? "Z–A" : date ? "Newest first" : "Highest first", "desc") };
+            // Keep legacy/future orders visible without rewriting an untouched
+            // saved query; asc/desc remain available for an explicit edit.
+            if (order is not ("asc" or "desc")) options.Add(new($"Saved order ({order})", order));
+            direction.ItemsSource = options;
+            direction.SelectedItem = options.FirstOrDefault(o => o.Value == order); updating = false;
         }
         Directions();
         sort.SelectionChanged += (_, _) => { if (_refreshingChoices) return; var field = Selected(sort); Query.Sort = new() { Field = field, Order = field is "title" or "author" or "narrator" or "series" or "content_rating" ? "asc" : "desc" }; Directions(); SortChanged?.Invoke(); Changed?.Invoke(); };
