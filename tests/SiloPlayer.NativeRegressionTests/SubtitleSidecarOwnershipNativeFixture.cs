@@ -328,7 +328,19 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var wave = Path.Combine(Program.ResultDirectory, scenario + ".wav"); WriteWave(wave);
         subtitles.ReplacementMedia = await File.ReadAllBytesAsync(wave); subtitles.Release.TrySetResult();
         Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", wave));
-        mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0);
+        // A readable duration does not mean the event pump consumed FILE_LOADED.
+        // Drain the setup load before wiring the service, or its late callback
+        // can unpause/complete the held replacement as if that load were ready.
+        var initialLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void InitialLoaded() => initialLoaded.TrySetResult();
+        mpv.FileLoaded += InitialLoaded;
+        try
+        {
+            mpv.LoadFile(wave);
+            await initialLoaded.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            await Until(() => mpv.GetPropertyDouble("duration") > 0);
+        }
+        finally { mpv.FileLoaded -= InitialLoaded; }
         var expectedPaused = scenario.EndsWith("-paused", StringComparison.Ordinal);
         service.SetPaused(expectedPaused); await Until(() => mpv.IsPaused == expectedPaused);
         Call(service, "SendSubtitleListToOsc"); Call(service, "WireMpvEvents");
