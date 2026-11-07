@@ -2742,12 +2742,14 @@ local function handle_mouse_move()
     local mx, my = get_mouse_pos()
     if mx == nil or my == nil or mx < 0 or my < 0 then return end
 
+    local moved = mx ~= state.mouse_x or my ~= state.mouse_y
     state.mouse_x = mx
     state.mouse_y = my
-    state.controller_focus_name = nil
-
-    -- Show OSC on any mouse movement
-    show_osc()
+    -- Window changes can repeat the same position without pointer input.
+    if moved then
+        state.controller_focus_name = nil
+        show_osc()
+    end
 
     -- Check if mouse is over the bar area
     compute_layout()
@@ -6238,16 +6240,19 @@ local function setup_script_messages()
         local mx = tonumber(x)
         local my = tonumber(y)
         if not mx or not my then return end
+        local moved = mx ~= state.mouse_x or my ~= state.mouse_y
         state.mouse_x = mx
         state.mouse_y = my
-        state.controller_focus_name = nil
         -- WM_MOUSEMOVE is the desktop host's authoritative enter signal.
         -- A hidden/post-roll popup may never receive a separate mpv
         -- mouse_enter binding when it is expanded again.
         state.mouse_in_window = true
 
-        -- Show OSC on any mouse movement
-        show_osc()
+        -- Only real movement transfers input ownership from the controller.
+        if moved then
+            state.controller_focus_name = nil
+            show_osc()
+        end
 
         -- Check if mouse is over the bar area
         compute_layout()

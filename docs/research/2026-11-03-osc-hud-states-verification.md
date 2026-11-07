@@ -14,11 +14,11 @@ This is the first focused PR of the owner's approved staged native-menu work. It
 
 ## Verification and provenance
 
-Base Beta: `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f` (`1.2.549-beta.1` / numeric `1.2.548.1`). Reviewed PR #86 head: `def1daef40c5cc30c63f843810fbd0e14e7d234b`.
+Base Beta: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`. Reviewed PR #86 head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`.
 
-Source version: `1.2.552-beta.1`; numeric version: `1.2.551.1`.
+Source version: `1.2.634-beta.1`; numeric version: `1.2.633.1`.
 
-The reviewed head changes the app, updater, launcher and installer-default stamps relative to that base. This QA correction does not change those stamps. The historical receipts below predate this head and cannot establish verification of its stamped build inputs or these corrections. No builds or tests were run for this correction; the pipeline must verify it. Final pipeline stamping has not been confirmed; a subsequent stamp requires updated identity records and fresh verification, not reuse of the old receipt.
+The app, updater, launcher and installer-default stamps above changed relative to the original OSC base `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f` (`1.2.549-beta.1` / numeric `1.2.548.1`); the current PR diff against the Beta base above does not change stamps. This QA correction updates the identity records, not the stamps. The historical receipts below cover neither this head nor these stamps and cannot establish verification of its stamped build inputs or these corrections. No builds or tests were run for this correction; the pipeline must verify it. Final pipeline stamping has not been confirmed; a subsequent stamp requires updated identity records and fresh verification, not reuse of the old receipt.
 
 ## Historical local verification (not the current head)
 
@@ -40,4 +40,4 @@ Local evidence: `D:/SiloPlayer/.codex-tmp/osc-menus-nov03/hud-states`; isolated 
 
 - After final stamping, check the semantic/numeric mapping and agreement across the app, updater, launcher, installer defaults and both current source-identity records. `CurrentOscReceiptMatchesAllSourceVersionStamps` guards this source/document agreement automatically; `installer/build.ps1` retains its build-stamp preflight. If the pipeline chooses another version, update the identity records and rerun these checks rather than attributing older evidence to new inputs.
 - Record the exact final commit, tracked product/build-input hashes, bundled engine hash and fresh artifact hashes with the test/publish receipt; recheck inputs after verification. Verify published binary, installer and manifest identities against that receipt before release.
-- Run the OSC runtime regressions for controller-only pause/resume and idle expiry, file/disable focus/menu retirement, compact pointer clicks with both buffering pills, and Exit/Minimize presses during fade-out. Run the native file-replacement focus/auto-hide case and retain the existing gesture/pixel and pause/resume checks. These new cases are pending pipeline execution.
+- Run the OSC runtime regressions for controller-only pause/resume and idle expiry, zero-delta mouse messages after controller focus/fullscreen activation/subtitle-dialog closure (both host/mpv delivery orders), file/disable focus/menu retirement, compact pointer clicks with both buffering pills, and Exit/Minimize presses during fade-out. Run the native file-replacement focus/auto-hide case and retain the existing gesture/pixel and pause/resume checks. These new cases are pending pipeline execution.

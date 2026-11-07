@@ -12,11 +12,11 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 # Current development — OSC feedback and input ownership (PR #86)
 
-Reviewed source head: `def1daef40c5cc30c63f843810fbd0e14e7d234b`; Beta base: `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f`.
+Reviewed source head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`; Beta base: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`.
 
-Source version: `1.2.552-beta.1`; numeric version: `1.2.551.1`.
+Source version: `1.2.634-beta.1`; numeric version: `1.2.633.1`.
 
-These are the app, updater, launcher and installer-default stamps in the reviewed head, not the base's `1.2.549-beta.1` / `1.2.548.1`. This QA correction leaves version stamps untouched. The PR polishes the active Lua/ASS HUD; the correction bounds idle controller focus, retires focus/menus on content replacement or disable, isolates compact pointer actions from buffering-prompt activation, and retains accepted Exit/Minimize presses through fade-out.
+These are the app, updater, launcher and installer-default stamps in the reviewed head. They changed relative to the original OSC base `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f` (`1.2.549-beta.1` / `1.2.548.1`); the current PR diff against the Beta base above does not change stamps. This QA correction updates the identity records, not the stamps. The PR polishes the active Lua/ASS HUD; the correction bounds idle controller focus, preserves it on zero-delta mouse messages, retires focus/menus on content replacement or disable, isolates compact pointer actions from buffering-prompt activation, and retains accepted Exit/Minimize presses through fade-out.
 
 The [OSC verification record](research/2026-11-03-osc-hud-states-verification.md) distinguishes historical local evidence from this source identity. No builds or tests were run for this correction; pipeline verification is required. The pipeline owns the final release version: if it stamps another identity, refresh the current identity records and repeat version/build-input and artifact checks after stamping. Historical test counts and hashes do not verify this head or the correction.
 

@@ -383,6 +383,86 @@ public sealed partial class MpvOscRuntimeTests
     }
 
     [Theory]
+    [InlineData("focus", false)]
+    [InlineData("focus", true)]
+    [InlineData("fullscreen", false)]
+    [InlineData("fullscreen", true)]
+    [InlineData("subtitle-dialog", false)]
+    [InlineData("subtitle-dialog", true)]
+    public void HudZeroDeltaMouseMessagesPreserveControllerOwnership(string scenario, bool mpvFirst)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local function move(x, y)
+                pointer = {x=x, y=y}
+                if {{mpvFirst.ToString().ToLowerInvariant()}} then
+                    assert(mouse_move)()
+                    handlers['osc-mouse-move'](tostring(x), tostring(y))
+                else
+                    handlers['osc-mouse-move'](tostring(x), tostring(y))
+                    assert(mouse_move)()
+                end
+            end
+            move(400, 200)
+            handlers['osc-controller-nav']('right')
+            handlers['osc-controller-nav']('right')
+            assert(s.controller_focus_name == 'btn_skip_fwd')
+            if '{{scenario}}' == 'fullscreen' then
+                for i = 1, 30 do
+                    if s.controller_focus_name == 'btn_fullscreen' then break end
+                    handlers['osc-controller-nav']('right')
+                end
+                assert(s.controller_focus_name == 'btn_fullscreen')
+                handlers['osc-controller-activate']()
+                assert(table.concat(intents, ',') == 'silo-fullscreen-toggle')
+                handlers['osc-fullscreen-state']('true')
+                dims = {w=2560, h=1440}
+                osc_test_layout()
+            elseif '{{scenario}}' == 'subtitle-dialog' then
+                s.restore_subtitle_focus_after_dialog = true
+                handlers['osc-subtitle-dialog-closed']()
+                assert(s.controller_focus_name == 'btn_cc')
+            end
+            local focus, deadline, timer = s.controller_focus_name, s.controller_focus_deadline, s.hide_timer
+            osc_test_render_hud()
+            local focused = s.osc_overlay.data
+            -- Window changes may repeat WM_MOUSEMOVE, including the delayed fullscreen resize.
+            for _, time in ipairs({10.01, 10.2}) do
+                hud_time = time
+                move(400, 200)
+                assert(s.controller_focus_name == focus, 'Zero-delta message retired focus')
+                assert(s.controller_focus_deadline == deadline and s.hide_timer == timer,
+                    'Zero-delta message refreshed the input idle timeout')
+            end
+            osc_test_render_hud()
+            assert(s.osc_overlay.data == focused, 'Zero-delta message changed focus feedback')
+            handlers['osc-controller-nav']('right')
+            assert(s.controller_focus_name ~= focus and s.controller_focus_name ~= 'btn_play',
+                'Navigation must continue from the retained focus, not restart at Play')
+            move(401, 200)
+            assert(s.controller_focus_name == nil, 'Real movement must still retire focus')
+            mp.set_property('user-data/hud-result', 'preserved')
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe + """
+
+            local bind = mp.add_key_binding
+            mp.add_key_binding = function(key, name, callback, ...)
+                if name == 'silo-osc-mouse-move' then mouse_move = callback end
+                return bind(key, name, callback, ...)
+            end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' and pointer then return pointer end
+                if name == 'osd-dimensions' and dims then return dims end
+                return native(name, fallback)
+            end
+            """, windowWidth: 1920, windowHeight: 1080);
+        Assert.Equal("preserved", output);
+    }
+
+    [Theory]
     [InlineData("btn_exit")]
     [InlineData("btn_minimize")]
     public void HudTopChromeDefersItsOnlyIntentUntilMatchingRelease(string button)
