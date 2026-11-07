@@ -5495,20 +5495,22 @@ public partial class PlayerService : IDisposable
         var selectionVideo = _videoWindow;
         var selectionPlayGeneration = Volatile.Read(ref _playRequestGeneration);
         var selectionFileGeneration = Volatile.Read(ref _playbackFileGeneration);
+        // Validate the menu inventory only before submission. An accepted
+        // audio replan may legitimately adopt a different file/version.
         bool CurrentSelection() => acceptSelection == null ||
-            (authority.ApiClient.IsCurrentIdentityContext(selectionContext) && selectionContent == ContentId &&
-            ReferenceEquals(selectionVersion, ActiveVersion) &&
+            (ReferenceEquals(selectionVersion, ActiveVersion) &&
             (selectionTracks == null || ActiveVersion?.AudioTracks is { } tracks && tracks.SequenceEqual(selectionTracks)) &&
-            ReferenceEquals(selectionMpv, _mpv) && ReferenceEquals(selectionVideo, _videoWindow) &&
-            selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
-            selectionFileGeneration == Volatile.Read(ref _playbackFileGeneration));
+            ReferenceEquals(selectionVideo, _videoWindow));
         var audioPreference = CaptureAudioPreference(trackIndex);
         using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(_playbackCts?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
         var ct = switchCts.Token;
         bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && _playbackTerminalState == null &&
-            ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager) && CurrentSelection();
+            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(selectionContext) &&
+            ReferenceEquals(manager, _playbackManager) && ReferenceEquals(selectionMpv, _mpv) && selectionContent == ContentId &&
+            selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
+            selectionFileGeneration == Volatile.Read(ref _playbackFileGeneration);
         await CancelAndDrainTransportRestartsAsync(ct);
-        if (!CurrentSwitch() || (acceptSelection != null && !acceptSelection())) return;
+        if (!CurrentSwitch() || !CurrentSelection() || (acceptSelection != null && !acceptSelection())) return;
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
         if (manager.CurrentSession is { } survivingSession)

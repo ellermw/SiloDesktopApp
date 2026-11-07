@@ -52,7 +52,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
             new SettingsService(Path.Combine(Program.ResultDirectory, "native-audio-settings")), new SettingsApi(api));
         using var manager = new PlaybackManager(playback, catalog, auth, api);
         var version = Version();
-        manager.UseWatchDetail(new() { ContentId = "synthetic-video", Type = "movie", Versions = [version] });
+        var versions = new List<FileVersion> { version };
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "alternate-file")
+            versions.Add(new() { FileId = 43, Duration = 60, AudioTracks = version.AudioTracks!.AsEnumerable().Reverse().ToList() });
+        manager.UseWatchDetail(new() { ContentId = "synthetic-video", Type = "movie", Versions = versions });
         await manager.StartSessionAsync(42, audioTrackIndex: 37);
         using var video = new MpvVideoWindow();
         using var mpv = new MpvPlayer();
@@ -109,6 +112,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     mp.commandv('script-message','silo-audio-fixture-state',request,require('mp.utils').format_json({
                         x=r.cx or 0,y=r.cy or 0,w=r.w or 0,h=r.h or 0,
                         width=state.osd_width,height=state.osd_height,scope=state.native_audio_scope or '',
+                        path=mp.get_property('path', ''),
                         sequence=pending.sequence or 0,legacy=state.audio_menu_visible or false,
                         notice=state.notice_visible or false,noticeTitle=state.notice_title or '',
                         failure=state.playback_failure_visible or false,failureMessage=state.playback_failure_message or '',
@@ -134,6 +138,39 @@ internal static partial class PlaybackAudioMenuNativeFixture
             var menu = await OpenFromOsc();
             var hwnd = MenuHwnd(menu);
             var list = (ListView)Get(menu, "_list")!;
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "alternate-file")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial Audio media publication did not settle.");
+                var originalScope = (await Query()).GetProperty("scope").GetString();
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                wire.AlternateAudioFile = true;
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Native Audio abandoned an accepted replan to another file without loading it.");
+                var state = await Query();
+                var publication = Stopwatch.StartNew();
+                while ((string.IsNullOrEmpty(state.GetProperty("scope").GetString()) ||
+                    state.GetProperty("scope").GetString() == originalScope) && publication.Elapsed < TimeSpan.FromSeconds(8))
+                {
+                    await Task.Delay(20);
+                    state = await Query();
+                }
+                Require(wire.AudioPicks.Single() == 71 && manager.CurrentSession?.MediaFileId == 43 &&
+                    manager.CurrentSession.AudioTrackIndex == 0 && service.ActiveMediaFileId == 43 &&
+                    state.GetProperty("path").GetString() == media.Origin + "/replacement-video.y4m",
+                    "Cross-file Audio did not load the accepted replacement URL and remapped source index.");
+                Require(!string.IsNullOrEmpty(state.GetProperty("scope").GetString()) &&
+                    state.GetProperty("scope").GetString() != originalScope && mpv.IsPaused && service.IsPaused &&
+                    Menu(service) == null && Gate(service).CurrentCount == 1,
+                    "Cross-file Audio failed to republish its scope or preserve genuine pause and lease cleanup.");
+                menu = await OpenFromOsc();
+                Require(((ListView)Get(menu, "_list")!).SelectedIndex == 0,
+                    "Republished native Audio scope did not open against the replacement inventory.");
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native Audio source71 replan adopts file43/index0, loads its replacement URL, republishes a usable scope and preserves genuine pause and dialog cleanup.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "access-refresh")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial Audio media publication did not settle.");
@@ -902,6 +939,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         internal readonly TaskCompletionSource ReleaseSubtitleSync = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _subtitleTiming = 250;
         internal readonly ConcurrentQueue<int> AudioPicks = new();
+        internal bool AlternateAudioFile;
         internal bool HoldFailedReplan;
         internal bool HoldSuccessfulReplan;
         internal bool HoldSuccessorReplan;
@@ -975,14 +1013,17 @@ internal static partial class PlaybackAudioMenuNativeFixture
                             { Content = new StringContent("{\"error\":\"Synthetic late audio replan failure\"}", Encoding.UTF8, "application/json") };
                 }
             }
+            var fileId = AlternateAudioFile && path.EndsWith("/replan") ? 43 : 42;
+            var audioIndex = fileId == 43 ? 71 - _audio : _audio;
+            var streamPath = fileId == 43 ? "/replacement-video.y4m" : mediaPath;
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "native-audio-fixture",
                 playback_plan = new
                 {
-                    plan_id = $"audio-plan-{AudioPicks.Count}", plan_attempt_key = "synthetic", session_id = "native-audio-fixture", effective_media_file_id = 42,
-                    delivery = "original_http", stream = new { url = origin + mediaPath }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = $"file:42:audio:{_audio}", index = _audio }, subtitle = (object?)null },
+                    plan_id = $"audio-plan-{AudioPicks.Count}", plan_attempt_key = "synthetic", session_id = "native-audio-fixture", effective_media_file_id = fileId,
+                    delivery = "original_http", stream = new { url = origin + streamPath }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
+                    selected_tracks = new { audio = new { id = $"file:{fileId}:audio:{audioIndex}", index = audioIndex }, subtitle = (object?)null },
                     subtitle = new { mode = "off", inventory = Array.Empty<object>() },
                 },
             }));
