@@ -43,7 +43,7 @@ public partial class PlayerService
         var playbackFile = Volatile.Read(ref _playbackFileGeneration);
         var epoch = Volatile.Read(ref _nativeMenuEpoch);
         var publication = Interlocked.Increment(ref _nativeMenuPublication);
-        bool Current() => !_closing && !_postRollActive && !_switchingContent && !IsLoading && _playbackTerminalState == null &&
+        bool Current() => !_closing && !_postRollActive && _playbackTerminalState == null &&
             roomPlayback == IsWatchTogetherPlayback && versions.SequenceEqual(Versions) &&
             (legacyAudio ? ReferenceEquals(transport, _activeTransportPlan) :
                 (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0)) &&
@@ -73,6 +73,7 @@ public partial class PlayerService
             mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : version?.AudioTracks?.Count > 1 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-quality-scope", session != null && ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-stats-scope", owner.Token);
             mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
             // Sessionless direct playback keeps its inventory only in Lua.
             // Keep compact Audio and Chapters on that same legacy path.
@@ -98,6 +99,7 @@ public partial class PlayerService
             mpv?.SendScriptMessage("osc-native-audio-scope", "");
             mpv?.SendScriptMessage("osc-native-quality-scope", "");
             mpv?.SendScriptMessage("osc-native-party-scope", "");
+            mpv?.SendScriptMessage("osc-native-stats-scope", "");
             mpv?.SendScriptMessage("osc-native-chapters-scope", "");
             mpv?.SendScriptMessage("osc-native-more-scope", "");
         }
@@ -112,8 +114,19 @@ public partial class PlayerService
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
         // A late request or temporary busy state must not retire a current owner.
-        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
+        var busyAction = request.Kind != "stats" && (IsLoading || _switchingContent);
+        if (owner == null || owner.Token != request.OwnerToken)
         { Ack(); return; }
+        if (!owner.IsCurrent())
+        {
+            Ack();
+            // A matching stale capability must not leave Lua swallowing every
+            // later opener (for example after an accepted plan fails to load).
+            RetireNativeMenus();
+            PublishNativeMenuScopes();
+            return;
+        }
+        if (busyAction) { Ack(); return; }
         if (!_nativeMenuGate.TryOpen(request))
         {
             if (_nativeMenuRequest is not { } active || active.Sequence != request.Sequence) Ack();
@@ -140,6 +153,7 @@ public partial class PlayerService
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
                 "party" => CreateNativePartyMenu(owner, request, Finish),
+                "stats" => CreateNativeStatsMenu(owner, request, Finish),
                 "chapters" => CreateNativeChaptersMenu(owner, request, Finish),
                 "more" => CreateNativeMoreMenu(owner, request, Finish),
                 _ => null,
@@ -161,14 +175,15 @@ public partial class PlayerService
     {
         var tracks = ActiveVersion?.AudioTracks?.ToArray() ?? [];
         if (tracks.Length <= 1) return null;
+        // An accepted selection must survive the busy state it claims itself.
         bool InventoryCurrent() => owner.IsCurrent() && ActiveVersion?.AudioTracks is { } current && current.SequenceEqual(tracks);
         var current = _playbackManager?.CurrentSession?.AudioTrackIndex ?? -1;
         return new PlaybackAudioMenu(owner.Video, request.Anchor,
             tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current)).ToArray(),
-            () => InventoryCurrent() && _nativeMenuGate.IsCurrent(request),
+            () => InventoryCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request),
             index =>
             {
-                if (InventoryCurrent() && index >= 0 && index < tracks.Length && index != current)
+                if (InventoryCurrent() && !IsLoading && !_switchingContent && index >= 0 && index < tracks.Length && index != current)
                     _ = SelectNativeAudioAsync(owner, index, InventoryCurrent);
             }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
     }
@@ -201,7 +216,7 @@ public partial class PlayerService
         {
             !string.Equals(language, title, StringComparison.OrdinalIgnoreCase) ? language : "",
             AudioMenuText(track.Layout, "", ""),
-            track.Bitrate is > 0 ? $"{track.Bitrate.Value:0.#} kbps" : "",
+            AudioTrackDisplayText.FormatBitrate(track.Bitrate),
             track.SampleRate is > 0 ? $"{track.SampleRate.Value / 1000d:0.#} kHz" : "",
             track.BitDepth is > 0 ? $"{track.BitDepth}-bit" : "",
         }.Where(text => text.Length > 0));

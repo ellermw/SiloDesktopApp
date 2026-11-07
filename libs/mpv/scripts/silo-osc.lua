@@ -2302,7 +2302,9 @@ local function stats_text_lines(value, capacity)
 end
 
 local function render_stats()
-    if not state.stats_visible then
+    local native_request = state.native_menu_request
+    local native_stats = native_request and native_request.kind == "stats"
+    if not state.stats_visible and not native_stats then
         state.stats_panel_rect = nil
         state.stats_scroll_max = 0
         if state.stats_overlay then
@@ -2472,6 +2474,20 @@ local function render_stats()
         end
     end
     table.insert(sections, s4)
+
+    if native_stats then
+        -- Reuse the existing diagnostic collector. Only its explicit displayed
+        -- fields cross the scoped native boundary; no URL/header/property dump.
+        state.stats_visible = false
+        state.stats_panel_rect = nil
+        if state.stats_overlay then
+            state.stats_overlay.data = ""
+            state.stats_overlay:update()
+        end
+        mp.commandv("script-message", "silo-native-stats-data", native_request.owner,
+            tostring(native_request.sequence), require("mp.utils").format_json(sections))
+        return
+    end
 
     local content_width = math.max(1, box_w - padding * 2)
     local glyph_width = fs * 0.62 -- Consolas fixed-pitch cell, with a small safety margin
@@ -2727,7 +2743,7 @@ local function tick()
     render_osc()
 
     -- Refresh stats overlay ~1/sec (live bitrate, dropped frames, etc.)
-    if state.stats_visible then
+    if state.stats_visible or (state.native_menu_request and state.native_menu_request.kind == "stats") then
         state.stats_last_refresh = state.stats_last_refresh or 0
         if now - state.stats_last_refresh >= 1.0 then
             state.stats_last_refresh = now
@@ -4534,13 +4550,6 @@ render_pause_indicator = function()
     state.pause_indicator_overlay:update()
 end
 
--- Toggle stats (defined here so handle_mouse_down can reference it)
-local function toggle_stats()
-    state.stats_visible = not state.stats_visible
-    if state.stats_visible then state.stats_scroll_offset = 0 end
-    render_stats()
-end
-
 local function close_transport_menus(except)
     state.pressed_control = nil
     if except ~= "audio" and state.audio_menu_visible then
@@ -4813,8 +4822,30 @@ local function open_native_menu(kind, keyboard)
     mp.commandv("script-message", "silo-native-" .. kind .. "-open", request.owner, tostring(request.sequence),
         tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
         tostring(state.osd_width), tostring(state.osd_height))
+    if kind == "stats" then
+        state.stats_last_refresh = mp.get_time()
+        render_stats()
+    end
     request_tick()
     return true
+end
+
+local function toggle_stats(keyboard)
+    if state.native_menu_request then
+        if state.native_menu_request.kind == "stats" then native_menu_input("cancel") end
+        return
+    end
+    if state.stats_visible then
+        state.stats_visible = false
+        render_stats()
+        return
+    end
+    -- Diagnostics stay available during states that suppress action menus.
+    -- Retain their existing read-only overlay until native presentation is eligible.
+    if not state.playback_loading and not state.post_roll_active and open_native_menu("stats", keyboard) then return end
+    state.stats_visible = not state.stats_visible
+    if state.stats_visible then state.stats_scroll_offset = 0 end
+    render_stats()
 end
 
 local function toggle_transport_menu_from_button(mx, my)
@@ -5394,7 +5425,7 @@ local function handle_mouse_down()
 
     -- Check stats toggle
     if L.btn_stats and point_in_rect(mx, my, L.btn_stats) then
-        toggle_stats()
+        toggle_stats(false)
         return
     end
 
@@ -6316,10 +6347,10 @@ local function setup_key_bindings()
 
     -- Stats toggle
     mp.add_key_binding("i", "silo-osc-toggle-stats", function()
-        if not state.playback_failure_visible and not state.native_menu_request then toggle_stats() end
+        if not state.playback_failure_visible then toggle_stats(true) end
     end)
     mp.add_key_binding("I", "silo-osc-toggle-stats-shift", function()
-        if not state.playback_failure_visible and not state.native_menu_request then toggle_stats() end
+        if not state.playback_failure_visible then toggle_stats(true) end
     end)
 
     -- Subtitle delay nudge routes through host-owned timing preferences rather
@@ -6679,8 +6710,7 @@ local function setup_script_messages()
 
     -- Host can toggle stats
     mp.register_script_message("osc-toggle-stats", function()
-        if state.native_menu_request then return end
-        toggle_stats()
+        toggle_stats(true)
     end)
 
     -- Host can query if mouse is over OSC (to decide whether to pass clicks to video)

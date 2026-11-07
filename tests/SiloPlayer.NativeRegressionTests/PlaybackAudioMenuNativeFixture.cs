@@ -1225,6 +1225,15 @@ internal static partial class PlaybackAudioMenuNativeFixture
             var current = (ListViewItem)list.Items[37];
             Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "bitrate")
+            {
+                var name = AutomationProperties.GetName(current);
+                Require(name.Contains("640 kbps", StringComparison.Ordinal) && name.Contains("48 kHz", StringComparison.Ordinal),
+                    "Native Audio changed the supplied 640 kbps unit or lost the independent 48000 Hz conversion: " + name);
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native Audio preserves supplied 640 kbps while converting 48000 Hz to 48 kHz.");
+                return;
+            }
             var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (menuProbe == "shift-tab")
             {
@@ -1464,7 +1473,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(wire.AudioPicks.Count == 0, "A stale file menu selected a track.");
             Host("silo-native-audio-open", ownerState.GetProperty("scope").GetString()!, "999", "1000", "620", "40", "40", "1280", "720");
             await Task.Delay(60); Require(Menu(service) == null, "Old file scope reopened a native menu.");
-            Call(service, "SendAudioTrackListToOsc");
+            var healedScope = (await Query()).GetProperty("scope").GetString();
+            Require(!string.IsNullOrEmpty(healedScope) && healedScope != ownerState.GetProperty("scope").GetString(),
+                "Rejecting a matching stale owner left Lua with a dead capability instead of republishing.");
             menu = await OpenFromOsc();
             foreground.Observe("profile-retirement-before");
             api.SetProfile("replacement"); Call(menu, "Input", "activate");
@@ -1819,6 +1830,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
             await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
             var latePreferenceCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "late-preference";
             wire.HoldPreference = latePreferenceCase;
+            wire.HoldSuccessfulReplan = true;
+            var acceptedLoad = (long)Get(service, "_playbackFileGeneration")!;
             menu = await OpenFromOsc(); list = (ListView)Get(menu, "_list")!;
             Call(menu, "Input", "end");
             var last = (ListViewItem)list.Items[71];
@@ -1845,10 +1858,16 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 }
                 foreground.Observe("uia-isolation-ended");
             }
+            await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            api.InvalidateAccessContext();
+            wire.ReleaseReplan.TrySetResult();
             await Until(() => wire.AudioPicks.Count == 1, "Native Audio Invoke did not reach the existing replan caller.");
             foreground.Observe("accepted-replan-observed");
             Require(wire.AudioPicks.Single() == 71, "Native Audio reinterpreted a source index as an mpv track ID.");
-            await Until(() => !service.IsLoading && !mpv.IsPaused && !service.IsPaused, "Accepted Audio replan did not preserve playing intent.");
+            await Until(() => (long)Get(service, "_playbackFileGeneration")! == acceptedLoad + 1 &&
+                !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !mpv.IsPaused && !service.IsPaused,
+                "Access invalidation stranded the accepted Audio plan or changed playing intent.");
+            Require(manager.CurrentSession?.AudioTrackIndex == 71, "Access invalidation lost the accepted Audio selection.");
             if (latePreferenceCase)
             {
                 await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -2035,7 +2054,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         {
             Title = i == 71 ? "A deliberately long multilingual audio label — 日本語 — " + new string('x', 180) : i == 1 ? "" : i == 2 ? "Duplicate title" : $"Audio source {i}",
             Language = i == 1 ? "" : i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
-            Bitrate = i == 0 ? 640 : null, SampleRate = i == 0 ? 48000 : null,
+            Bitrate = i is 0 or 37 ? 640 : null, SampleRate = i is 0 or 37 ? 48000 : null,
         }).ToList(),
     };
     private sealed class Wire(string origin, string mediaPath) : HttpMessageHandler

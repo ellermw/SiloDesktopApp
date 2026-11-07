@@ -3042,7 +3042,7 @@ public partial class PlayerService : IDisposable
         _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
             prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
             prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
-        var loadBusyOwner = BeginPlaybackBusy();
+        var loadBusyOwner = BeginMpvLoadBusy();
         acceptBusy?.Invoke(loadBusyOwner);
         SetConnectionMediaActive(true);
         if (loadingOwner != null)
@@ -5077,6 +5077,7 @@ public partial class PlayerService : IDisposable
 
         _mpvFileLoadedHandler = () =>
         {
+            var loadBusyRevision = Volatile.Read(ref _mpvLoadBusyRevision);
             var wasPrematureEofRecovery = _prematureEofRecoveryActive;
             var restorePaused = IsWatchTogetherPlayback ? _roomPlaybackPaused : _restorePausedAfterLoad == true;
             // v3 original_http is byte-for-byte source media: the server's
@@ -5103,7 +5104,6 @@ public partial class PlayerService : IDisposable
             ReconcilePlaybackSurfaceStateAfterLoad();
             CancelPendingFileLoadTimeout();
             Interlocked.Exchange(ref _consecutiveFileLoadTimeouts, 0);
-            _qualitySwitchActive = false;
             _playingNextShown = false;
             _postRollActive = false;
             _postRollVideoEnded = false;
@@ -5152,8 +5152,7 @@ public partial class PlayerService : IDisposable
 
             // Publish readiness only after pause and position settle: the UI
             // room timer must not release play ahead of this load callback.
-            SetSwitchingContent(false); // Safe to receive PlaybackEnded now
-            IsLoading = false;
+            CompleteMpvLoadBusy(loadBusyRevision);
             SynchronizeConnectionMediaActivity(restorePaused);
             StartPlaybackStallWatchdog();
             InvokeSubscribersSafely(ContentLoaded, nameof(ContentLoaded));
@@ -7186,12 +7185,17 @@ public partial class PlayerService : IDisposable
         switch (args[0])
         {
             case "silo-native-audio-open":
+            case "silo-native-stats-open":
             case "silo-native-quality-open":
             case "silo-native-party-open":
             case "silo-native-chapters-open":
             case "silo-native-more-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
+                break;
+            case "silo-native-stats-data":
+                if (args.Length == 4)
+                    dispatch.TryEnqueue(() => HandleNativeStatsData(args[1], args[2], args[3]));
                 break;
             case "silo-native-menu-input":
                 if (args.Length == 4)

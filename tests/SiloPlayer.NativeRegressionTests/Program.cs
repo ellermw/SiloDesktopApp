@@ -70,7 +70,9 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
 {
     private readonly SiloPlayer.SiloPlayer_XamlTypeInfo.XamlMetaDataProvider _provider = new();
     private Window? _window;
-    private static readonly string[] NativeQualityBaseCases = ["normal", "retired", "release", "successor-failure", "successor-success"];
+    private static readonly string[] NativeQualityBaseCases = ["normal", "retired", "release", "successor-failure", "successor-success",
+        "busy-quality-invalidation", "busy-quality-file-loaded", "busy-audio-invalidation", "busy-audio-file-loaded",
+        "busy-version-file-loaded", "busy-legacy-invalidation", "busy-legacy-file-loaded"];
     private static readonly string[] NativeQualityReviewCases = ["legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality",
         "quality-access-refresh", "version-access-refresh", "quality-noop-invalidation", "version-noop-invalidation",
         "quality-off-server-error", "quality-off-timeout", "quality-off-invalid-url", "subtitle-dialog-unavailable"];
@@ -429,6 +431,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 if (string.IsNullOrEmpty(reviewCase))
                     await OscHudStatesNativeFixture.RunAsync(_window);
                 await OscHudStatesNativeFixture.RunAsync(_window, reviewCase ?? "all");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-stats-menu")
+            {
+                await PlaybackStatsMenuNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
