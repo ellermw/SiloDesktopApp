@@ -347,7 +347,16 @@ public partial class LibraryViewModel : ObservableObject
 
     public async Task EnsureRangeLoadedAsync(int startIndex, int endIndex)
     {
-        if (Library == null || TotalCount <= 0 || startIndex > endIndex) return;
+        if (Library == null || startIndex > endIndex) return;
+        if (TotalCount <= 0)
+        {
+            // Retiring a jump after a context reset can leave no extent yet.
+            // Bootstrap ordinary browsing, but never re-read a known empty result
+            // or bypass the scoped Retry that still owns a failed reset load.
+            if (!_hasExactTotal && _catalogEndTotal is null && !IsLetterJumpViewportBlocked)
+                await LoadWindowAsync(0, PageSize);
+            return;
+        }
 
         startIndex = Math.Clamp(startIndex, 0, TotalCount - 1);
         endIndex = Math.Clamp(endIndex, startIndex, TotalCount - 1);
@@ -666,13 +675,16 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    public async Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
+    public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
+        => LoadWindowForOwnerAsync(startIndex, itemCount, force, null);
+
+    private async Task LoadWindowForOwnerAsync(int startIndex, int itemCount, bool force, LetterWindowLoad? letterLoad)
     {
-        if (Library is null || !await EnsureGroupingAsync()) return;
-        await LoadPreparedWindowAsync(startIndex, itemCount, force);
+        if (Library is null || !await EnsureGroupingAsync() || letterLoad is { IsCurrent: false }) return;
+        await LoadPreparedWindowAsync(startIndex, itemCount, force, letterLoad);
     }
 
-    private Task LoadPreparedWindowAsync(int startIndex, int itemCount, bool force = false)
+    private Task LoadPreparedWindowAsync(int startIndex, int itemCount, bool force = false, LetterWindowLoad? letterLoad = null)
     {
         if (Library == null || itemCount <= 0) return Task.CompletedTask;
         var context = _catalogApi.CaptureContext();
@@ -753,7 +765,7 @@ public partial class LibraryViewModel : ObservableObject
         }
         _pendingWindowStart = startIndex;
         _pendingWindowEnd = startIndex + itemCount - 1;
-        return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force);
+        return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force, letterLoad: letterLoad);
     }
 
     private async Task CompleteOverlappingRangeAsync(Task pending, int startIndex, int itemCount,
@@ -765,7 +777,8 @@ public partial class LibraryViewModel : ObservableObject
         await LoadWindowAsync(startIndex, itemCount);
     }
 
-    private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force, bool allowCursorRecovery = true)
+    private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force, bool allowCursorRecovery = true,
+        LetterWindowLoad? letterLoad = null)
     {
         if (Library == null || itemCount <= 0)
             return;
@@ -802,7 +815,8 @@ public partial class LibraryViewModel : ObservableObject
             const bool includeTotal = false;
             await FetchWindowAsync(startIndex, itemCount, includeTotal, response =>
             {
-                if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion || read.Retired)
+                if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion ||
+                    read.Retired || letterLoad is { IsCurrent: false })
                     return;
                 // A count may have landed while this speculative window was
                 // in flight. Even total_exact on a skip-total window cannot
@@ -812,6 +826,7 @@ public partial class LibraryViewModel : ObservableObject
 
                 ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
                 RememberWindow(startIndex, response, includeTotal);
+                if (letterLoad is not null) letterLoad.Received = true;
                 WindowLoaded?.Invoke();
                 EnsureExactCountRequested();
             }, _snapshot, ct, read: read);
@@ -822,6 +837,13 @@ public partial class LibraryViewModel : ObservableObject
             && !string.IsNullOrWhiteSpace(_snapshot) && queryVersion == _queryVersion && windowVersion == _windowLoadVersion
             && _catalogContext == _catalogApi.CaptureContext())
         {
+            if (letterLoad is not null)
+            {
+                // Generic viewport recovery cannot retain a semantic letter:
+                // a policy change may have moved it to a different position.
+                if (letterLoad.IsCurrent) letterLoad.CursorRejected = true;
+                return;
+            }
             // The server can retire a signed scope after a visibility-policy or
             // signing change even when our local query/profile is unchanged.
             // Discard its cards and cursors together, then retry this viewport
@@ -850,7 +872,10 @@ public partial class LibraryViewModel : ObservableObject
         catch (Exception ex)
         {
             if (queryVersion == _queryVersion && windowVersion == _windowLoadVersion)
-                ErrorMessage = $"Failed to load catalog: {ex.Message}";
+            {
+                if (letterLoad is { IsCurrent: true }) letterLoad.Failed = true;
+                else if (letterLoad is null) ErrorMessage = $"Failed to load catalog: {ex.Message}";
+            }
         }
         finally
         {
