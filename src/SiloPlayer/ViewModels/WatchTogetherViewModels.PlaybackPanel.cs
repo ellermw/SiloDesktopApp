@@ -14,14 +14,19 @@ public partial class WatchTogetherRoomViewModel
     public Task InvokePlaybackPanelMutationAsync(string action, Func<bool> ownsRoom)
         => RunPlaybackPanelMutationAsync(action, ownsRoom);
 
-    private async Task RunPlaybackPanelMutationAsync(string action, Func<bool>? ownsRoom = null)
+    private async Task RunPlaybackPanelMutationAsync(string action, Func<bool>? ownsRoom = null,
+        bool allowPendingInitialization = false)
     {
         var snapshot = Room;
         var roomId = RoomId;
+        // The room-page Close command can end a join before its first snapshot
+        // arrives. Native panel actions still require a confirmed host snapshot.
+        var endingInitialization = allowPendingInitialization && action == "end" && snapshot == null
+            && _initializationAuthority is { } authority && _apiClient.IsCurrentContext(authority);
         if (action is not ("stop" or "toggle-policy" or "end") || _disposed || IsBusy || ClosedReason != null
-            || snapshot?.SelfCanManageRoom != true || string.IsNullOrWhiteSpace(roomId)
-            || snapshot.RoomId != roomId || ownsRoom?.Invoke() == false) return;
-        if (action == "stop" && (snapshot.Phase != "playing" || ConnectionState != "connected")) return;
+            || string.IsNullOrWhiteSpace(roomId) || ownsRoom?.Invoke() == false
+            || (!endingInitialization && (snapshot?.SelfCanManageRoom != true || snapshot.RoomId != roomId))) return;
+        if (action == "stop" && (snapshot?.Phase != "playing" || ConnectionState != "connected")) return;
         var context = _apiClient.CaptureContext();
         var roomToken = RoomToken;
         // End retires unfinished room initialization, preserving the existing
@@ -31,12 +36,12 @@ public partial class WatchTogetherRoomViewModel
         var mutation = ++_playbackPanelMutation;
         bool Current() => !_disposed && generation == _initializationGeneration
             && _apiClient.IsCurrentContext(context) && RoomId == roomId && RoomToken == roomToken
-            && Room?.RoomId == roomId && ownsRoom?.Invoke() != false;
+            && (endingInitialization ? Room == null : Room?.RoomId == roomId) && ownsRoom?.Invoke() != false;
         IsBusy = true; ErrorMessage = null; PendingPlaybackPanelAction = action;
         try
         {
-            if (!Current() || Room?.SelfCanManageRoom != true || Room.Generation != snapshot.Generation
-                || (action == "stop" && (Room.Phase != "playing" || ConnectionState != "connected"))) return;
+            if (!Current() || (!endingInitialization && (Room?.SelfCanManageRoom != true || Room.Generation != snapshot!.Generation))
+                || (action == "stop" && (Room?.Phase != "playing" || ConnectionState != "connected"))) return;
             WatchTogetherRoomResponse response;
             switch (action)
             {
@@ -44,7 +49,7 @@ public partial class WatchTogetherRoomViewModel
                     response = await _playbackApi.StopWatchTogetherRoomPlaybackAsync(context, roomId);
                     break;
                 case "toggle-policy":
-                    var next = snapshot.GuestControlPolicy == "guest_play_pause" ? "host_only" : "guest_play_pause";
+                    var next = snapshot!.GuestControlPolicy == "guest_play_pause" ? "host_only" : "guest_play_pause";
                     response = await _playbackApi.UpdateWatchTogetherRoomPolicyAsync(context, roomId, next);
                     break;
                 default:
