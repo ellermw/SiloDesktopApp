@@ -201,6 +201,7 @@ internal static partial class ArtworkMotionNativeFixture
         private readonly bool _scopedStages = typeof(PosterCard).Assembly.GetType("SiloPlayer.Helpers.ArtworkDecodeGate") != null;
         internal bool HoldNext = true;
         internal int CanvasCompletions, BitmapCompletions;
+        internal Action? CanvasLoaded;
         public override void Post(SendOrPostCallback callback, object? state)
         {
             var target = state is Delegate action ? action.Target : state;
@@ -214,6 +215,7 @@ internal static partial class ArtworkMotionNativeFixture
             var canvasLoaded = step is int load && (_scopedStages ? name.Contains("LoadEpisodeBitmapAsync") && load == 1 : name.Contains("BlurEpisodeStillAsync") && load == 0);
             var transformed = step is int render && (_scopedStages ? name.Contains("RenderEpisodeBlurAsync") && render == 1 : name.Contains("BlurEpisodeStillAsync") && render == 1);
             var bitmapLoaded = step is int bitmap && (_scopedStages ? name.Contains("EpisodeSpoilerArtwork+<SetSourceAsync>") && bitmap == 1 : name.Contains("EpisodeSpoilerArtwork+<LoadAsync>") && bitmap == 2);
+            if (canvasLoaded) CanvasLoaded?.Invoke();
             if (transformed) Interlocked.Increment(ref CanvasCompletions);
             if (bitmapLoaded) Interlocked.Increment(ref BitmapCompletions);
             if (HoldNext && (holdStage == 0 ? canvasLoaded : transformed))
@@ -233,6 +235,7 @@ internal static partial class ArtworkMotionNativeFixture
     }
     private static async Task BlurStageCasesAsync(StackPanel parent, SiloApiClient client, EpisodeSpoilerPreferences spoilers)
     {
+        await BlurPipelineCasesAsync(parent, spoilers);
         foreach (var kind in new[] { "poster", "landscape" })
         foreach (var stage in new[] { 0, 1 })
         foreach (var outcome in new[] { "motion", "rebind", "profile", "unload" })

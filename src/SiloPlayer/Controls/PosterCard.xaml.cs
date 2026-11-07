@@ -873,21 +873,31 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             var currentHidden = HideEpisodeArtwork(item);
             var gate = new ArtworkDecodeGate(this,
                 () => IsLoaded && !_artworkSuspended && ReferenceEquals(item, MediaItem) && DecodedArtworkCache.IsCurrent(key), s_bitmapCreateLock);
-            Microsoft.UI.Xaml.Media.Imaging.BitmapImage bitmapImage;
-            if (currentHidden)
-                bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, true, ct, gate);
-            else
+            var stages = gate.ForPipelineStages();
+            while (true)
             {
-                using var work = await gate.EnterAsync(ct);
-                bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, false, ct);
+                Microsoft.UI.Xaml.Media.Imaging.BitmapImage? bitmapImage = null;
+                try
+                {
+                    // Preserve the one-pipeline bound, including progressive presentation.
+                    // Stage checks unwind on motion; only the next attempt waits, after
+                    // disposing native resources and releasing this outer decoder lease.
+                    using var pipeline = await gate.EnterAsync(ct);
+                    bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, currentHidden, ct, stages);
+                    using var presentation = await stages.EnterAsync(ct);
+                    _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, currentHidden);
+                    _spoilerArtworkHidden = currentHidden;
+                    PosterImage.Source = bitmapImage;
+                    DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
+                    PosterImage.Opacity = 1;
+                    return;
+                }
+                catch (ArtworkDecodeGate.MotionDeferredException)
+                {
+                    // Restart from disk after settling, never retain a partial decode.
+                }
+                finally { bitmapImage = null; }
             }
-            await ArtworkViewport.WaitAsync(this, ct);
-            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
-            _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, currentHidden);
-            _spoilerArtworkHidden = currentHidden;
-            PosterImage.Source = bitmapImage;
-            DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-            PosterImage.Opacity = 1;
         }
         catch (OperationCanceledException) { }
         catch { if (!ct.IsCancellationRequested && ReferenceEquals(item, MediaItem)) await ArtworkFallback.ShowThumbhashAsync(); }
