@@ -30,7 +30,8 @@ public sealed class SubtitleIdentityTests
         var recovery = refusal.IndexOf("_ = RunStreamRecoveryAsync(", StringComparison.Ordinal);
         Assert.True(rollbackCall >= 0 && retained > rollbackCall && recovery > retained);
         Assert.Contains("if (!loadStarted)", refusal[..rollbackCall]);
-        Assert.Contains("_switchingContent = true;", refusal[retained..recovery]);
+        // Busy state now goes through the revision-tracking setter, not a direct field write.
+        Assert.Contains("SetSwitchingContent(true);", refusal[retained..recovery]);
         Assert.Contains("IsLoading = true;", refusal[retained..recovery]);
         Assert.Contains("return SubtitleTransportResult.ReloadScheduled;", refusal[recovery..]);
         Assert.DoesNotContain("BeginMpvLoad(", refusal);
@@ -42,7 +43,7 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("RestoreExecutedSubtitleSelection(reapply: false);", rollback);
         Assert.Contains("manager.CaptureLocalSubtitleIntent() == selectionIntent", rollback);
         Assert.Contains("_prematureEofRecoveryActive = false;", rollback);
-        Assert.Contains("_switchingContent = false;", rollback);
+        Assert.Contains("SetSwitchingContent(false);", rollback);
         Assert.Contains("IsLoading = false;", rollback);
         Assert.Contains("HideLoadingOverlay(loadingOwner)", rollback);
         var ownerStart = method.IndexOf("bool HasOtherTransportOwner() =>", StringComparison.Ordinal);
@@ -67,7 +68,7 @@ public sealed class SubtitleIdentityTests
         Assert.DoesNotContain("var inheritedPendingLoad =", method);
         Assert.DoesNotContain("_restorePausedAfterLoad.HasValue", rollback);
         var ownLoadingState = rollback.IndexOf("if (!preserveTransportState)", StringComparison.Ordinal);
-        var clearLoading = rollback.IndexOf("_switchingContent = false;", StringComparison.Ordinal);
+        var clearLoading = rollback.IndexOf("SetSwitchingContent(false);", StringComparison.Ordinal);
         Assert.True(ownLoadingState >= 0 && clearLoading > ownLoadingState);
         var inheritedLoad = rollback.IndexOf("if (preserveTransportState) return;", StringComparison.Ordinal);
         Assert.True(inheritedLoad > clearLoading);

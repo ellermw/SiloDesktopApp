@@ -12,7 +12,13 @@ This is the first focused PR of the owner's approved staged native-menu work. It
 - Audio with no alternative and empty Chapters remain disabled across appearance, navigation and desktop/compact activation. Compact Audio/Chapters anchor to the visible More control.
 - Invisible/covered Fit and More controls cannot activate underneath a menu or hidden HUD. Existing active indicators, quality pending text and authority/track-intent routes are retained.
 
-## Verification and provenance
+## Current source identity — native Quality menu (PR #89)
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
+
+## Historical PR #86 verification and provenance
 
 Base Beta: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`. Reviewed PR #86 head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`.
 
