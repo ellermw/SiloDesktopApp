@@ -1317,9 +1317,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(Get(video, "SurfaceChanged") == null && Get(video, "_menuDismissal") == null,
                 "Audio close retained its native owner subscription or dismissal hook.");
 
-            // Exercise the PiP service state and compact OSC on an offscreen
-            // 480x270 surface. Do not invoke the monitor-positioning/topmost
-            // path on the interactive desktop; physical PiP remains unasserted.
+            // Exercise PiP state/compact OSC offscreen, not physical topmost PiP.
             try
             {
                 Call(service, "RetireNativeMenus");
@@ -1346,11 +1344,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
                 service.SetState(PlayerState.Expanded);
             }
-
             await WaitForOscWidth(1280);
 
-            // A sessionless direct stream retains the last Lua inventory. Only
-            // this explicitly authorized fallback may bypass the native host.
+            // Only the explicitly authorized sessionless direct fallback may
+            // bypass the native host and retain the last Lua inventory.
             var activeSession = manager.CurrentSession!;
             var activeTransport = Get(service, "_activeTransportPlan");
             var alternateVersion = new FileVersion { FileId = 43, Resolution = "720p" };
@@ -1386,7 +1383,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Call(service, "SendAudioTrackListToOsc");
                 Call(service, "SendQualityInfoToOsc");
             }
-
             Set(service, "_postRollActive", true);
             Call(service, "RetireNativeMenus");
             mpv.SendScriptMessage("osc-set-post-roll", "true");
@@ -1394,8 +1390,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(!string.IsNullOrEmpty((await Query()).GetProperty("scope").GetString()),
                 "Returning from post-roll preview did not republish native Audio availability.");
 
-            // A second request replaces the first. Its late close/selection cannot
-            // clear the new request or choose a track.
             menu = await OpenFromOsc(); var old = menu;
             var first = await Query();
             var token = first.GetProperty("scope").GetString()!;
@@ -1411,14 +1405,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
             await Task.Delay(60);
             Require(ReferenceEquals(Menu(service), menu), "Stale cancel closed a newer menu.");
             Call(menu, "Input", "cancel");
-            // The synthetic newer request deliberately bypassed Lua's local
-            // counter. Retire that synthetic owner explicitly; unchanged
-            // metadata publication correctly retains a live menu owner.
+            // The synthetic request bypassed Lua's counter; retire it explicitly.
             Call(service, "RetireNativeMenus");
             Call(service, "SendAudioTrackListToOsc");
 
-            // Native activation dismissal is consumed before a video down/up can
-            // become osc-video-click. These messages target only our owned HWND.
             menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
             foreground.Observe("left-activation-dismiss-before");
             var activation = SendMessageW(video.Hwnd, 0x0021, video.Hwnd, new IntPtr((0x0201 << 16) | 1));
@@ -1438,7 +1428,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 "Actual outside pointer dismissal did not acknowledge its gesture.");
             Require(mpv.IsPaused && service.IsPaused && wire.AudioPicks.Count == 0 && fullscreen == 0, "Dismissal/double-click changed paused playback, fullscreen or selected audio.");
             foreground.Observe("left-activation-dismiss-after");
-
             menu = await OpenFromOsc();
             foreground.Observe("right-activation-dismiss-before");
             activation = SendMessageW(video.Hwnd, 0x0021, video.Hwnd, new IntPtr((0x0204 << 16) | 1));
@@ -1447,15 +1436,11 @@ internal static partial class PlaybackAudioMenuNativeFixture
             await Until(() => Menu(service) == null, "Right activation dismissal left the native menu open.");
             Require(mpv.IsPaused && service.IsPaused, "Right dismissal changed paused playback.");
             foreground.Observe("right-activation-dismiss-after");
-
             menu = await OpenFromOsc();
             SendMessageW(video.Hwnd, 0x0201, new IntPtr(1), new IntPtr((100 << 16) | 100));
             SendMessageW(video.Hwnd, 0x0202, IntPtr.Zero, new IntPtr((100 << 16) | 100));
             await Until(() => Menu(service) == null, "Already-active video dismissal did not close the menu.");
             Require(mpv.IsPaused && service.IsPaused, "Already-active video dismissal leaked pause.");
-
-            // Unrelated playback dialogs keep their own lease; native Audio may
-            // not release, steal, or display over them.
             await Gate(service).WaitAsync();
             try
             {
@@ -1463,7 +1448,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Require(Menu(service) == null && Gate(service).CurrentCount == 0, "Audio stole or released an unrelated dialog gate.");
             }
             finally { Gate(service).Release(); }
-
             menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
             foreground.Observe("native-window-close-before");
             ((Window)Get(menu, "_window")!).Close();
@@ -1471,7 +1455,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             await Until(() => Menu(service) == null && !IsWindow(hwnd), "Native Window.Close stranded Audio ownership.");
             Call(menu, "Input", "cancel");
             Require(Gate(service).CurrentCount == 1, "Late close released the native Audio lease twice.");
-
             var originalTracks = version.AudioTracks!;
             version.AudioTracks = [originalTracks[0]];
             Call(service, "SendAudioTrackListToOsc");
@@ -1481,8 +1464,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             version.AudioTracks = originalTracks;
             Call(service, "SendAudioTrackListToOsc");
 
-            // Synthetic replacement of the actual file identity rejects an old
-            // selection/request; it is not a physical load or timeout cancel.
             menu = await OpenFromOsc();
             var retired = menu; var ownerState = await Query();
             foreground.Observe("synthetic-file-retirement-before");
@@ -1504,7 +1485,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Call(service, "SendAudioTrackListToOsc");
 
             var regressionCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
-            if (regressionCase is "access-refresh-replan" or "accepted-version")
+            if (regressionCase is "access-refresh-replan" or "accepted-version" or "access-refresh" or "noop-invalidation")
             {
                 var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
                 var initialError = service.ErrorMessage;
@@ -1517,13 +1498,22 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     wire.HoldPreference = true;
                     wire.FailHeldPreference = false;
                 }
-                else api.InvalidateAccessContext(); // Open with the existing scope.
+                else api.InvalidateAccessContext();
                 menu = await OpenFromOsc();
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                if (regressionCase == "access-refresh-replan") api.InvalidateAccessContext();
+                if (regressionCase is "access-refresh-replan" or "access-refresh") api.InvalidateAccessContext();
+                Task? invalidation = null;
+                if (regressionCase == "noop-invalidation")
+                {
+                    var revision = (long)Get(service, "_playbackBusyRevision")!;
+                    invalidation = (Task)Call(service, "HandlePlanInvalidationAsync", new PlaybackPlanInvalidation("retired-plan", "synthetic-invalidation"))!;
+                    Require((long)Get(service, "_playbackBusyRevision")! == revision,
+                        "A no-op invalidation retired accepted Audio busy ownership.");
+                }
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad,
                     "The accepted Audio replan did not begin its owned load.");
                 await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
@@ -1534,7 +1524,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 {
                     Require(service.ActiveVersion?.FileId == 43, "Audio did not adopt the server's effective version.");
                     await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                    await Task.Delay(100); // Let FILE_LOADED's independent publication settle.
+                    await Task.Delay(100);
                     var publication = (long)Get(service, "_nativeMenuPublication")!;
                     wire.ReleasePreference.TrySetResult();
                     await Until(() => (long)Get(service, "_nativeMenuPublication")! > publication,
@@ -1545,14 +1535,11 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 menu = await OpenFromOsc();
                 Call(menu, "Input", "cancel");
                 Require(Gate(service).CurrentCount == 1, "Accepted Audio stranded its native menu lease.");
-                Program.Log($"PASS: {regressionCase}: native Audio opens, loads the accepted plan and republishes across access refresh/effective-version adoption.");
+                Program.Log($"PASS: {regressionCase}: native Audio loads and republishes across access refresh, no-op invalidation and effective-version adoption.");
                 return;
             }
-
             if (regressionCase is "quality-second-step-failure" or "quality-second-step-cancellation")
             {
-                // Model an active server subtitle that the viewer turned Off
-                // locally. Quality must first grant Off via track_change.
                 var plan = (PlaybackPlanV3)Get(manager, "_currentPlanV3")!;
                 plan.SelectedTracks.Subtitle = new() { Id = "file:42:subtitle:0", Index = 0 };
                 manager.RecordLocalSubtitleSelection(null);
@@ -1603,7 +1590,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 finally { if (cancel) Set(service, "_playbackCts", null); }
                 return;
             }
-
             if (regressionCase is "audio-plan-invalidation" or "quality-plan-invalidation")
             {
                 var outgoingPlan = manager.CurrentSession!.PlanId;
@@ -1636,7 +1622,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Program.Log($"PASS: {regressionCase}: a queued outgoing-plan invalidation is a no-op and preserves the switch's accepted load.");
                 return;
             }
-
             if (directFailureCase)
             {
                 var originalOpen = Get(mpv, "_directOpen");
@@ -1652,9 +1637,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 AppDomain.CurrentDomain.FirstChanceException += observeFailure;
                 try
                 {
-                    // Keep the registered delegate rooted while deliberately
-                    // exercising libmpv's duplicate-protocol registration error
-                    // inside the real accepted Audio selection's BeginMpvLoad.
                     Set(mpv, "_directOpen", null);
                     menu = await OpenFromOsc();
                     Call(menu, "Input", "end"); Call(menu, "Input", "activate");
@@ -1669,7 +1651,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                         "An Audio selection's own native load failure did not publish its current error and retry notice.");
                     Require(Menu(service) == null && Gate(service).CurrentCount == 1,
                         "Owned load failure stranded native menu presentation or its lease.");
-                    Program.Log("PASS: actual native Audio source71 selection handles its own BeginMpvLoad exception from controlled duplicate silo-direct registration, clears loading/busy and shows a current error/notice; original and attempted callbacks remain rooted through native disposal. This does not identify a production failure cause.");
+                    Program.Log("PASS: actual native Audio handles its own controlled duplicate silo-direct registration load failure, clears busy flags and shows a current notice; callbacks remain rooted. No production failure cause asserted.");
                 }
                 finally
                 {
@@ -1679,7 +1661,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 }
                 return;
             }
-
             var overlapCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (overlapCase is "earlier-file-loaded" or "earlier-file-loaded-failure")
             {
@@ -1691,9 +1672,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 menu = await OpenFromOsc();
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                // Deliver the production FILE_LOADED callback while the server
-                // still holds Audio's replan. This is a predecessor releasing
-                // flags, not a seek/recovery claiming the transport.
                 ((Action)Get(service, "_mpvFileLoadedHandler")!)();
                 Call(service, "StopPlaybackStallWatchdog");
                 Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
@@ -1719,7 +1697,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Program.Log($"PASS: {overlapCase}: an earlier FILE_LOADED does not retire the current Audio replan or silence its failure.");
                 return;
             }
-
             if (overlapCase == "quality-audio-successor")
             {
                 wire.HoldFailedReplan = true;
@@ -1752,7 +1729,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Program.Log("PASS: buffering quality retires an open Audio menu and cannot release a newer Audio operation's busy ownership.");
                 return;
             }
-
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "retired-presentation")
             {
                 service.SetPaused(false);
@@ -1763,8 +1739,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 Require(wire.AudioPicks.Single() == 71, "Actual native keyboard selection did not retain the source index.");
-                // This is the real presentation retirement helper invoked by
-                // mode/layout transitions. Avoid moving any fixture fullscreen.
                 Call(service, "RetireNativeMenus");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1777,10 +1751,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     "Accepted Audio selection did not finish its load after presentation retirement.");
                 Require(Menu(service) == null && Gate(service).CurrentCount == 1,
                     "Presentation retirement stranded a native menu or lease.");
-                Program.Log("PASS: actual native keyboard Audio selection continues its accepted source71 replan across the real presentation retirement helper, clears loading/busy and retains playing intent. No physical mode transition asserted.");
+                Program.Log("PASS: accepted native Audio source71 replan completes across presentation retirement with playing intent and clean ownership. No physical mode transition asserted.");
                 return;
             }
-
             var retirementCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (retirementCase is "retired-replan" or "retired-success" or "retired-cancellation"
                 or "successor-seek" or "successor-recovery" or "live-successor-seek" or "live-successor-recovery"
@@ -1820,17 +1793,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 }
                 if (retirementCase == "retired-cancellation") cancellation.Cancel();
                 else if (successor != null && !retirementCase!.StartsWith("live-", StringComparison.Ordinal))
-                {
-                    // Retire only Audio's inventory while keeping the queued
-                    // real seek/recovery's API session authorized. A profile
-                    // switch correctly cancels both operations in PlaybackApi.
                     version.AudioTracks = version.AudioTracks!.Take(2).ToList();
-                }
                 else if (successor == null) api.SetProfile("retired-during-replan");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                // Observe the actual asynchronous error publication, including a
-                // Lua round trip, after the held reply has been delivered.
                 await Task.Delay(500);
                 var after = await Query();
                 if (successor == null)
@@ -1860,9 +1826,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 if (retirementCase == "retired-cancellation") Set(service, "_playbackCts", null);
                 return;
             }
-
-            // Actual UIA Invoke uses the immutable source index through the real
-            // replan caller, with native audio IDs deliberately irrelevant.
             service.SetPaused(false);
             await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
             var latePreferenceCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "late-preference";
@@ -1886,10 +1849,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 var peer = FrameworkElementAutomationPeer.CreatePeerForElement(last) ?? new ListViewItemAutomationPeer(last);
                 if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke)
                     throw new InvalidOperationException("Actual Audio row has no UIA Invoke pattern.");
-                // WinUI's UIA Invoke explicitly asks to activate its window
-                // before raising ItemClick. Isolate that framework request on
-                // the interactive development desktop; this does not certify
-                // normal UIA focus/activation or change product behavior.
+                // Isolate only WinUI's explicit activation of our own HWND.
                 using (var veto = new OwnMenuActivationVeto(MenuHwnd(menu)))
                 {
                     foreground.Observe("uia-invoke-before");
@@ -1911,7 +1871,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             if (latePreferenceCase)
             {
                 await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                await Task.Delay(100); // FILE_LOADED initialization has its own publication.
+                await Task.Delay(100);
                 var publication = (long)Get(service, "_nativeMenuPublication")!;
                 wire.ReleasePreference.TrySetResult();
                 await Until(() => (long)Get(service, "_nativeMenuPublication")! > publication,
@@ -1945,15 +1905,11 @@ internal static partial class PlaybackAudioMenuNativeFixture
             if (Menu(service) is { } menu) Call(menu, "Input", "cancel");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");
             Set(service, "_videoWindow", null); Set(service, "_mpv", null); Set(service, "_playbackManager", null);
-            video.Dispose();
-            mpv.Dispose();
+            video.Dispose(); mpv.Dispose();
             foreach (var callback in retainedDirectCallbacks) GC.KeepAlive(callback);
-            // Out-of-context WinEvents run on this UI thread. Pump queued events
-            // after native cleanup before checking only our process's ownership.
             await Task.Delay(40);
             foreground.Complete();
         }
-
         async Task<JsonElement> Query()
         {
             var id = Guid.NewGuid().ToString("N"); var receiver = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1987,22 +1943,39 @@ internal static partial class PlaybackAudioMenuNativeFixture
             if (compactClickCase || !opener.GetProperty("directAudio").GetBoolean())
             {
                 NativeClick(opener.GetProperty("x").GetDouble(), opener.GetProperty("y").GetDouble());
-                await Task.Delay(600); // Isolate Audio from More's existing gesture timer.
-                var compact = await Query();
-                Require(compact.GetProperty("compactX").GetDouble() > 0, "Compact Audio row was unavailable.");
-                NativeClick(compact.GetProperty("compactX").GetDouble(), compact.GetProperty("compactY").GetDouble());
+                await Task.Delay(600);
+                if (Menu(service) is { } parent && RequestKind() == "more")
+                {
+                    foreground.WatchMenu((Window)Get(parent, "_window")!, MenuHwnd(parent));
+                    var rows = (ListView)Get(parent, "_list")!;
+                    Require(rows.Items.OfType<ListViewItem>().Any(row => row.Tag is "audio" && row.IsEnabled),
+                        "Native More did not expose its enabled Audio action.");
+                    Call(parent, "Select", "audio", true);
+                    await Until(() => !ReferenceEquals(Menu(service), parent) && RequestKind() == "audio",
+                        "Native More did not hand off its pointer-selected Audio action.");
+                }
+                else
+                {
+                    var compact = await Query();
+                    Require(compact.GetProperty("compactX").GetDouble() > 0, "Compact Audio row was unavailable.");
+                    NativeClick(compact.GetProperty("compactX").GetDouble(), compact.GetProperty("compactY").GetDouble());
+                }
             }
             else await TriggerOsc();
-            await Until(() => Menu(service) is { } shown && ((ListView)Get(shown, "_list")!).XamlRoot != null,
+            await Until(() => RequestKind() == "audio" && Menu(service) is { } shown &&
+                Get(shown, "_list") is ListView { XamlRoot: not null, Items.Count: 72 },
                 "Actual OSC Audio gesture produced no native Audio menu.");
             foreground.WatchMenu((Window)Get(Menu(service)!, "_window")!, MenuHwnd(Menu(service)!));
             foreground.Observe("menu-opened", MenuHwnd(Menu(service)!), "audio-menu");
             return Menu(service)!;
         }
+        string? RequestKind()
+        {
+            var request = Get(service, "_nativeMenuRequest");
+            return request?.GetType().GetProperty("Kind", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(request) as string;
+        }
         void NativeClick(double x, double y)
         {
-            // Deliver the actual OSC pointer protocol without Windows
-            // capture/focus changes on an offscreen interactive desktop.
             var px = x.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var py = y.ToString(System.Globalization.CultureInfo.InvariantCulture);
             mpv.SendScriptMessage("osc-mouse-move", px, py);
@@ -2075,7 +2048,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             (uint)target.PixelWidth, (uint)target.PixelHeight, 96, 96, data);
         await encoder.FlushAsync();
     }
-
     private static FileVersion Version() => new()
     {
         FileId = 42, Duration = 60, AudioTracks = Enumerable.Range(0, 72).Select(i => new AudioTrackInfo
@@ -2085,7 +2057,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Bitrate = i is 0 or 37 ? 640 : null, SampleRate = i is 0 or 37 ? 48000 : null,
         }).ToList(),
     };
-
     private sealed class Wire(string origin, string mediaPath) : HttpMessageHandler
     {
         internal readonly ConcurrentQueue<int> AudioPicks = new();
@@ -2144,8 +2115,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 else if (HoldFailedReplan || HoldSuccessfulReplan)
                 {
                     ReplanStarted.TrySetResult();
-                    // Deliberately return a reply after context retirement,
-                    // modelling an HTTP failure already in flight.
+                    // Return a reply even after retirement, modelling in-flight HTTP.
                     await ReleaseReplan.Task;
                     ReplanReplied.TrySetResult();
                     if (HoldFailedReplan)
@@ -2168,7 +2138,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
         }
         private static HttpResponseMessage Json(string text) => new(HttpStatusCode.OK) { Content = new StringContent(text, Encoding.UTF8, "application/json") };
     }
-
     internal sealed class MediaServer : IDisposable
     {
         private readonly HttpListener _listener = new();
@@ -2216,9 +2185,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                         {
                             context.Response.StatusCode = 416;
                             context.Response.Headers["Content-Range"] = $"bytes */{bytes.Length}";
-                            context.Response.ContentLength64 = 0;
-                            context.Response.Close();
-                            continue;
+                            context.Response.ContentLength64 = 0; context.Response.Close(); continue;
                         }
                     }
                     context.Response.ContentLength64 = through - from + 1;
@@ -2230,11 +2197,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         public void Dispose() => _listener.Close();
     }
 
-    /// <summary>
-    /// Observe only foreground events generated by this fixture process. A user
-    /// switching between unrelated applications is not a fixture activation.
-    /// No external window title, content or control is inspected.
-    /// </summary>
+    /// <summary>Own-process foreground events only; no external window titles/content or control.</summary>
     internal sealed class ForegroundOwnershipProbe : IDisposable
     {
         private readonly uint _processId = (uint)Environment.ProcessId;
@@ -2248,15 +2211,12 @@ internal static partial class PlaybackAudioMenuNativeFixture
         private GCHandle _callbackRoot;
         private IntPtr _hook;
         private readonly string? _evidenceName;
-
         internal ForegroundOwnershipProbe(IntPtr main, string? evidenceName = null)
         {
             _evidenceName = evidenceName;
             _roles[main.ToInt64()] = "fixture-main";
             _callback = (_, _, hwnd, _, _, thread, eventTime) =>
             {
-                // The hook filters the originating PID. Delivery is queued:
-                // the owned HWND may already be closed or reused by now.
                 try
                 {
                     if (hwnd == IntPtr.Zero) return;
@@ -2268,8 +2228,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 catch { _callbackFailed = true; }
             };
             _callbackRoot = GCHandle.Alloc(_callback);
-            // EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT; nonzero process
-            // filter avoids observing other processes' foreground event streams.
             _hook = SetWinEventHook(3, 3, IntPtr.Zero, _callback, _processId, 0, 0);
             if (_hook == IntPtr.Zero)
             {
@@ -2278,7 +2236,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             }
             Observe("before-fixture");
         }
-
         internal void Observe(string stage, IntPtr hwnd = default, string? role = null)
         {
             _phase = stage;
@@ -2287,7 +2244,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             GetWindowThreadProcessId(current, out var process);
             _samples.Add(new(stage, current.ToInt64(), process, process == _processId, Environment.TickCount64));
         }
-
         internal void WatchMenu(Window menu, IntPtr hwnd)
         {
             if (!_watchedMenus.Add(menu)) return;
@@ -2297,14 +2253,11 @@ internal static partial class PlaybackAudioMenuNativeFixture
             void Closed(object sender, WindowEventArgs args)
             {
                 Observe("menu-closed", hwnd, "audio-menu");
-                menu.Activated -= Activated; menu.Closed -= Closed;
-                _watchedMenus.Remove(menu);
+                menu.Activated -= Activated; menu.Closed -= Closed; _watchedMenus.Remove(menu);
             }
             menu.Activated += Activated; menu.Closed += Closed;
         }
-
         internal void RegisterWindow(IntPtr hwnd, string role) => _roles[hwnd.ToInt64()] = role;
-
         internal void Complete()
         {
             Observe("after-fixture-cleanup");
@@ -2321,8 +2274,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             File.WriteAllText(Path.Combine(Program.ResultDirectory, caseName + "-foreground.json"), JsonSerializer.Serialize(new
             {
                 fixtureProcessId = _processId, first, last, samples = _samples,
-                ownedForegroundEvents = ownedEvents,
-                callbackFailed = _callbackFailed,
+                ownedForegroundEvents = ownedEvents, callbackFailed = _callbackFailed,
                 skipUia = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_SKIP_UIA") == "1",
                 externalForegroundChanged = first.Hwnd != last.Hwnd && !first.BelongsToFixture && !last.BelongsToFixture,
                 scope = "Own-process foreground WinEvents and explicit HWND/PID snapshots only; no external titles/content or foreground control.",
@@ -2331,14 +2283,12 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(!_callbackFailed && ownedEvents.Length == 0 && !_samples.Any(sample => sample.BelongsToFixture),
                 "Offscreen native Audio verification activated a fixture-owned foreground window.");
         }
-
         public void Dispose()
         {
             if (_hook == IntPtr.Zero) return;
             UnhookWinEvent(_hook); _hook = IntPtr.Zero;
             _callbackRoot.Free(); GC.KeepAlive(_callback);
         }
-
         private sealed record ForegroundSample(string Stage, long Hwnd, uint ProcessId, bool BelongsToFixture, long Tick);
         private sealed record ForegroundEvent(long Hwnd, uint EventThread, uint EventTime, long CallbackTick,
             string PhaseAtDelivery, long ForegroundAtDelivery, uint ForegroundProcessAtDelivery);
@@ -2348,11 +2298,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         private static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventCallback callback, uint process, uint thread, uint flags);
         [DllImport("user32.dll")] private static extern bool UnhookWinEvent(IntPtr hook);
     }
-
-    /// <summary>
-    /// Test isolation for the framework's explicit UIA Invoke activation.
-    /// Applies only to this exact menu HWND, current fixture PID and UI thread.
-    /// </summary>
+    /// <summary>UIA activation isolation applies only to this exact menu HWND, PID and UI thread.</summary>
     private sealed class OwnMenuActivationVeto : IDisposable
     {
         private readonly IntPtr _menu;
@@ -2363,9 +2309,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         private GCHandle _callbackRoot;
         private IntPtr _hook;
         private bool _callbackFailed;
-
         internal int BlockedCount => _attempts.Count;
-
         internal OwnMenuActivationVeto(IntPtr menu)
         {
             _menu = menu;
@@ -2373,7 +2317,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(process == _process && targetThread == _thread, "UIA isolation target is not on the fixture's own UI thread.");
             _callback = (code, window, data) =>
             {
-                if (code == 5 && window == _menu) // HCBT_ACTIVATE
+                if (code == 5 && window == _menu)
                 {
                     GetWindowThreadProcessId(window, out var targetProcess);
                     if (targetProcess == _process)
@@ -2386,20 +2330,19 @@ internal static partial class PlaybackAudioMenuNativeFixture
                                 fixtureThread = _thread, foreground = foreground.ToInt64(), foregroundProcess });
                         }
                         catch { _callbackFailed = true; }
-                        return new IntPtr(1); // Veto only this owned activation.
+                        return new IntPtr(1);
                     }
                 }
                 return CallNextHookEx(_hook, code, window, data);
             };
             _callbackRoot = GCHandle.Alloc(_callback);
-            _hook = SetWindowsHookExW(5, _callback, IntPtr.Zero, _thread); // WH_CBT, own thread only
+            _hook = SetWindowsHookExW(5, _callback, IntPtr.Zero, _thread);
             if (_hook == IntPtr.Zero)
             {
                 _callbackRoot.Free();
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot isolate owned UIA activation.");
             }
         }
-
         public void Dispose()
         {
             if (_hook == IntPtr.Zero) return;
@@ -2415,7 +2358,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
             }, new JsonSerializerOptions { WriteIndented = true }));
             Require(!_callbackFailed, "Owned UIA isolation callback failed.");
         }
-
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         private delegate IntPtr CbtCallback(int code, IntPtr window, IntPtr data);
         [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
@@ -2424,7 +2366,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
         [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr window, IntPtr data);
         [DllImport("user32.dll", SetLastError = true)] private static extern bool UnhookWindowsHookEx(IntPtr hook);
     }
-
     [StructLayout(LayoutKind.Sequential)] private struct Rect { internal int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);

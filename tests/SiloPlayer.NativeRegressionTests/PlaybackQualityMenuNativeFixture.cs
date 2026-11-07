@@ -372,6 +372,45 @@ internal static class PlaybackQualityMenuNativeFixture
                 Program.Log($"PASS: actual native {mode} preserves the accepted session/stream/file, releases busy state and retains genuine pause.");
                 return;
             }
+            if (mode is "quality-access-refresh" or "version-access-refresh" or "quality-noop-invalidation" or "version-noop-invalidation")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var versionSwitch = mode.StartsWith("version-", StringComparison.Ordinal);
+                var initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                var originalPlan = manager.CurrentSession!.PlanId;
+                wire.HoldReplacementStart = versionSwitch;
+                wire.HoldSuccessfulReplan = !versionSwitch;
+                var heldMenu = await Open();
+                if (versionSwitch) { Call(heldMenu, "Input", "home"); Call(heldMenu, "Input", "down"); }
+                else Call(heldMenu, "Input", "end");
+                Call(heldMenu, "Input", "activate");
+                await (versionSwitch ? wire.ReplacementStarted.Task : wire.ReplanStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                Task? invalidation = null;
+                if (mode.EndsWith("access-refresh", StringComparison.Ordinal)) api.InvalidateAccessContext();
+                else
+                {
+                    var revision = (long)Get(service, "_playbackBusyRevision")!;
+                    // Quality holds the manager's replan guard: its old plan's
+                    // invalidation becomes a no-op after adoption. A version
+                    // start does not hold that guard, so use a retired plan ID.
+                    invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
+                        new PlaybackPlanInvalidation(versionSwitch ? "already-retired-plan" : originalPlan!, "synthetic"))!;
+                    Require((long)Get(service, "_playbackBusyRevision")! == revision,
+                        "A pending/no-op invalidation stole the accepted switch's busy claim.");
+                    if (!versionSwitch) Require(!invalidation.IsCompleted, "Invalidation did not wait behind the held quality replan.");
+                }
+                wire.ReleaseReplacement.TrySetResult(); wire.ReleaseReplan.TrySetResult();
+                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialFile &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                    "Access refresh/no-op invalidation abandoned an accepted switch or stranded its busy state.");
+                Require(versionSwitch ? manager.CurrentSession?.MediaFileId == 71 : service.SelectedQualityMenuId == "720p",
+                    "The switch did not retain its accepted version/quality.");
+                Require(mpv.IsPaused && service.IsPaused && Menu(service) == null && Gate(service).CurrentCount == 1,
+                    "The accepted switch changed genuine pause or leaked its native menu lease.");
+                Program.Log($"PASS: actual held native {mode} loads its accepted plan and completes its busy lifecycle without changing pause.");
+                return;
+            }
             if (mode == "version-room-race")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -578,7 +617,20 @@ internal static class PlaybackQualityMenuNativeFixture
                 await queued.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 Require(executed == 1 && service.IsLoading, "Old queued UI cleanup ran after a successor loading assignment.");
                 Property(service, "IsLoading", false); Call(service, "SetSwitchingContent", false);
-                Program.Log("PASS: actual busy release receipt executes current queued cleanup and rejects a successor reusing the same playback identities.");
+                var idleRevision = (long)Get(service, "_playbackBusyRevision")!;
+                await ((Task)Call(service, "HandlePlanInvalidationAsync",
+                    new PlaybackPlanInvalidation("already-retired-plan", "synthetic"))!).WaitAsync(TimeSpan.FromSeconds(5));
+                Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")! &&
+                    (long)Get(service, "_playbackBusyRevision")! == idleRevision,
+                    "An idle no-op invalidation changed busy ownership or failed to release its pending guard.");
+                var temporaryGuard = Call(service, "BeginTemporarySwitchingContent")!;
+                var successorClaim = Call(service, "BeginPlaybackBusy", true, (Action?)null)!;
+                Call(service, "RestoreTemporarySwitchingContent", temporaryGuard);
+                Require(service.IsLoading && (bool)Get(service, "_switchingContent")! &&
+                    (bool)Call(service, "OwnsPlaybackBusy", successorClaim)!,
+                    "Restoring a temporary guard cleared a successor's busy claim.");
+                Call(service, "ReleasePlaybackBusy", successorClaim, (Action?)null);
+                Program.Log("PASS: busy release receipts reject successor cleanup; no-op invalidation releases its pending guard without retiring claims or clearing successors.");
                 return;
 
                 async Task QueuedRelease(Action action)

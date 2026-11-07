@@ -7148,6 +7148,8 @@ public partial class PlayerService : IDisposable
             case "silo-native-stats-open":
             case "silo-native-quality-open":
             case "silo-native-party-open":
+            case "silo-native-chapters-open":
+            case "silo-native-more-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;

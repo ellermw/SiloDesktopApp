@@ -29,7 +29,8 @@ public sealed class ReleaseVersionTests
         Assert.Equal(numeric, InnoStamp(installer, "MyAppFourPartVersion"));
         var identity = $"Source version: `{semantic}`; numeric version: `{numeric}`.";
         foreach (var path in new[] { "docs/current-development.md", "docs/research/2026-11-03-osc-hud-states-verification.md" })
-            Assert.Contains(identity, File.ReadAllText(Path.Combine(root, path)));
+            Assert.Equal(identity, File.ReadLines(Path.Combine(root, path))
+                .First(line => line.StartsWith("Source version: ", StringComparison.Ordinal)));
     }
 
     [Theory]

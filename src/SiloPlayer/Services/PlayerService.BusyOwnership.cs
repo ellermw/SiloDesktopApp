@@ -32,6 +32,30 @@ public partial class PlayerService
         }
     }
 
+    private readonly record struct TemporarySwitchingGuard(long Revision, bool WasSwitching);
+
+    private TemporarySwitchingGuard BeginTemporarySwitchingContent()
+    {
+        lock (_playbackBusyLock)
+        {
+            var guard = new TemporarySwitchingGuard(_playbackBusyRevision, _switchingContent);
+            // Waiting for an invalidation check is not a new playback operation:
+            // it may be a no-op behind an in-flight switch's accepted replan.
+            _switchingContent = true;
+            return guard;
+        }
+    }
+
+    private void RestoreTemporarySwitchingContent(TemporarySwitchingGuard guard)
+    {
+        lock (_playbackBusyLock)
+        {
+            // Restore only the borrowed flag, never a successor operation/load.
+            if (guard.Revision == _playbackBusyRevision)
+                _switchingContent = guard.WasSwitching;
+        }
+    }
+
     private sealed record PlaybackBusyOwner(long Revision, PlaybackAuthorityScope Authority,
         PlaybackManager? Manager, PlaybackStartResponse? Session, MpvPlayer? Mpv,
         MpvVideoWindow? Video, CancellationTokenSource? LoadingToken, long PlayGeneration, long FileGeneration,
