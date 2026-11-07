@@ -41,8 +41,10 @@ public partial class PlayerService
             || ActiveMediaFileId == null || string.IsNullOrWhiteSpace(_apiClient.DeviceId)) return;
         var authority = _activeAuthority;
         var manager = _playbackManager;
-        var context = authority.SettingsApi.CaptureContext();
-        if (string.IsNullOrWhiteSpace(context.ProfileId)) return;
+        // Access refreshes retire reads, not the accepted profile/device owner
+        // of this viewer intent; each settings request captures fresh access.
+        var identity = authority.SettingsApi.CaptureSettingsIdentityContext();
+        if (string.IsNullOrWhiteSpace(identity.Identity.ProfileId)) return;
         var contentId = ContentId;
         var generation = Volatile.Read(ref _playRequestGeneration);
         // Source-version replacements keep the same viewer intent and pending
@@ -50,7 +52,7 @@ public partial class PlayerService
         VideoPlaybackRateSession? session = null;
         bool Current() => !_closing && ReferenceEquals(_videoPlaybackRate, session)
             && ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager)
-            && authority.SettingsApi.IsCurrentContext(context) && ContentId == contentId
+            && authority.SettingsApi.IsCurrentSettingsIdentityContext(identity) && ContentId == contentId
             && generation == Volatile.Read(ref _playRequestGeneration);
         bool Editable() => !IsAudiobook && !HasRemoteAuthority && !IsWatchTogetherPlayback
             && State != PlayerState.Idle && !_switchingContent && !IsLoading;

@@ -81,6 +81,12 @@ public partial class SiloApiClient
         lock (_authStateGate) return new(new(_authenticationGeneration, _identityGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
     }
 
+    /// <summary>Current request authority for an accepted settings identity, or null once that identity retires.</summary>
+    public SettingsRequestContext? CaptureSettingsContext(SettingsIdentityContext owner)
+    {
+        lock (_authStateGate) return CaptureSettingsIdentityContext() == owner ? CaptureSettingsContext() : null;
+    }
+
     public ApiIdentityContext CaptureIdentityContext()
     {
         lock (_authStateGate) return new(_authenticationGeneration, _identityGeneration, _baseUrl, _profileId);

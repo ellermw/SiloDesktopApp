@@ -235,6 +235,24 @@ public class VideoPlaybackRatePreferencesTests
         await f.Session.SetAsync(1.35); Assert.Null(f.Session.Error); Assert.Equal(1.35, f.Session.DesiredRate);
     }
 
+    [Fact]
+    public async Task AccessRefreshKeepsTheOwnerAndPersistsHeldAndQueuedSaves()
+    {
+        using var f = new Fixture(); f.Handler.HoldRead = true; f.Handler.HoldFirstWrite = true;
+        var loading = f.Session.LoadAsync(); await f.Handler.ReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var first = f.Session.SetAsync(1.5); await f.Handler.WriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        f.Client.InvalidateAccessContext();
+        Assert.True(f.Session.CanChange); Assert.True(f.Session.IsSavePending);
+        Assert.Equal(1.5, f.Session.DesiredRate);
+        var second = f.Session.SetAsync(2);
+        f.Handler.ReadRelease.TrySetResult(); f.Handler.WriteRelease.TrySetResult();
+        await Task.WhenAll(loading, first, second).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(1.5, f.Handler.Writes.First().Rate); Assert.Equal(2, f.Handler.Writes.Last().Rate);
+        Assert.True(f.Session.CanChange); Assert.False(f.Session.IsSavePending); Assert.Null(f.Session.Error);
+        Assert.Equal(2, f.Session.DesiredRate);
+        f.Client.InvalidateAccessContext(); f.Session.Restore(); Assert.Equal(2, f.Applied.Last());
+    }
+
     private sealed class Fixture : IDisposable
     {
         public Handler Handler { get; } = new();

@@ -5074,7 +5074,11 @@ local function activate_controller_focus()
     -- A focused Party opener expresses that intent. It must never run a
     -- buffering/failure action merely because that unrelated surface appeared.
     if state.controller_focus_name == 'btn_party' then return open_native_menu('party', true) end
-    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then return open_native_menu('quality', true) end
+    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then
+        -- The failure scrim owns playback; consume the settings intent without retrying.
+        if state.playback_failure_visible then return true end
+        return open_native_menu('quality', true)
+    end
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
     end
