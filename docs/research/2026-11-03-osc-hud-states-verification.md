@@ -1,5 +1,15 @@
 # Active OSC feedback and input ownership
 
+## Current source identity — PR #91
+
+Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+These are the existing app, updater, launcher and installer-default stamps; this correction does not change them. The PR #86 scope and verification below are historical and do not verify this head or correction. No builds or tests were run for this correction; pipeline verification is required.
+
+## Historical PR #86 scope
+
 This is the first focused PR of the owner's approved staged native-menu work. It changes the active Lua/ASS HUD, not the dormant XAML overlay. Native audio/subtitle/quality menus remain later deliveries. Renderer policy, startup/playback loading icons and Dashboard are unchanged.
 
 ## Behavior
@@ -12,7 +22,7 @@ This is the first focused PR of the owner's approved staged native-menu work. It
 - Audio with no alternative and empty Chapters remain disabled across appearance, navigation and desktop/compact activation. Compact Audio/Chapters anchor to the visible More control.
 - Invisible/covered Fit and More controls cannot activate underneath a menu or hidden HUD. Existing active indicators, quality pending text and authority/track-intent routes are retained.
 
-## Verification and provenance
+## Historical PR #86 verification and provenance
 
 Base Beta: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`. Reviewed PR #86 head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`.
 

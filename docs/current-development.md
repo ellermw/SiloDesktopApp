@@ -1,3 +1,11 @@
+# Current source identity — native Chapters and compact More (PR #91)
+
+Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+These are the existing app, updater, launcher and installer-default stamps in the supplied head; this correction does not change them. The earlier development and verification records below are historical and do not verify this head or correction. No builds or tests were run for this correction; pipeline verification is required.
+
 ## November 3 — safe retained Library activation (local Beta candidate)
 
 This task deliberately starts from Beta `f6442fd8de1b2b015d2d45a15681e20ba30de025`; source version remains **1.2.544-beta.1** and the pipeline owns stamps/delivery. Official Silo main for this pass is `bb1ee4352b1bec38b4a6441ba81e61a92da81d54` (parent's direct fetch, verified with pinned `git show`). No installer, installed-player restart, push, release or production action occurred.
@@ -22,7 +30,7 @@ Synthetic verification through the pinned-engine/mutex parent runner: focused **
 
 Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-polish-nov02/letters-task-report.md`, `letters/review-r1-bindings.json` and historical `letters/final-bindings.json`. The first full run's24 unrelated updater Win32 path failures remain preserved; parent corrected its deep D: TEMP path and demonstrated unchanged updater/protocol inputs passing68/68 before the passing full rerun. Existing compiler/analyzer warnings remain. No complete visual parity, hardware input or all-native-suite claim; the inherited Home-row completion baseline is outside4a. Parent owns independent Standards/Spec reviews and Beta delivery. No version stamps, installed player, real account, updater product code, installer or production state changed.
 
-# Current development — OSC feedback and input ownership (PR #86)
+# Historical development — OSC feedback and input ownership (PR #86)
 
 Reviewed source head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`; Beta base: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`.
 

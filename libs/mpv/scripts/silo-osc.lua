@@ -5132,14 +5132,20 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
-                consume_video_click(); activate_transport_control("overflow_" .. item.name, false); return
+                activate_transport_control("overflow_" .. item.name, false)
+                -- Native handoff owns this gesture through its release; do not
+                -- also suppress a fresh click with the legacy timeout.
+                if not state.native_menu_request then consume_video_click() end
+                return
             end
         end
         state.compact_menu_visible = false
         consume_video_click(); request_tick(); return
     end
     if hud_input_available() and state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
-        consume_video_click(); activate_transport_control("btn_more", false); return
+        activate_transport_control("btn_more", false)
+        if not state.native_menu_request then consume_video_click() end
+        return
     end
     if hud_input_available() and state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
         state.pressed_control = "btn_fill"
