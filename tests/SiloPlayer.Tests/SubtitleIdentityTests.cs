@@ -461,13 +461,21 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
-    public void LoadedSubtitleSelectionPrecedesOptionalSettingsReads()
+    public void LoadedSubtitleSelectionAndOptionalSettingsDoNotWaitOnEachOther()
     {
         var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
         var start = source.IndexOf("private async Task InitializeLoadedMediaAsync(", StringComparison.Ordinal);
-        var selection = source.IndexOf("await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false)", start, StringComparison.Ordinal);
-        var settings = source.IndexOf("await SendAutoSkipSettingsToOscAsync(ct)", start, StringComparison.Ordinal);
-        Assert.True(selection > start && settings > selection);
+        var end = source.IndexOf("private bool IsLoadedMediaInitializationCurrent(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var worker = source[start..end];
+        var settings = worker.IndexOf("var settingsTask = SendAutoSkipSettingsToOscAsync(ct);", StringComparison.Ordinal);
+        var selection = worker.IndexOf("await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false)", StringComparison.Ordinal);
+        var observeSettings = worker.IndexOf("await settingsTask;", StringComparison.Ordinal);
+        Assert.True(settings >= 0 && selection > settings && observeSettings > selection,
+            "Start settings without awaiting them so neither a settings read nor a sidecar download blocks the other.");
+        Assert.DoesNotContain("await SendAutoSkipSettingsToOscAsync(ct)", worker);
+        Assert.Contains("finally", worker[selection..observeSettings]);
+        Assert.Contains("if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;", worker[..settings]);
     }
 
     [Fact]
@@ -479,10 +487,13 @@ public sealed class SubtitleIdentityTests
         var worker = source[start..end];
         Assert.DoesNotContain("!ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic)) return;", worker);
         var refinement = worker.IndexOf("applyInitialSubtitleSelection = ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic);", StringComparison.Ordinal);
+        Assert.True(refinement >= 0, "Automatic refinement must check its owner under the subtitle state lock.");
         var guardedSelection = worker.IndexOf("if (applyInitialSubtitleSelection)", refinement + 1, StringComparison.Ordinal);
-        var settings = worker.IndexOf("await SendAutoSkipSettingsToOscAsync(ct);", guardedSelection, StringComparison.Ordinal);
-        var ai = worker.IndexOf("await SendSubtitleAiAvailabilityToOscAsync(ct);", settings, StringComparison.Ordinal);
-        Assert.True(refinement >= 0 && guardedSelection > refinement && settings > guardedSelection && ai > settings);
+        var settingsStart = worker.IndexOf("var settingsTask = SendAutoSkipSettingsToOscAsync(ct);", StringComparison.Ordinal);
+        var settings = worker.IndexOf("await settingsTask;", StringComparison.Ordinal);
+        var ai = worker.IndexOf("await SendSubtitleAiAvailabilityToOscAsync(ct);", StringComparison.Ordinal);
+        Assert.True(settingsStart >= 0 && settingsStart < refinement && guardedSelection > refinement && settings > guardedSelection && ai > settings);
+        Assert.Contains("finally", worker[guardedSelection..settings]);
         Assert.Contains("if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;", worker[..refinement]);
         Assert.Contains("lock (_subtitleTrackStateLock)", worker[..refinement]);
     }

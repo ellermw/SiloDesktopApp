@@ -474,6 +474,15 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 subtitles.Release.TrySetResult();
                 await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
                 if (!selectOff) await (Task)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!;
+                if (afterFileLoaded)
+                {
+                    // Establish the prior choice through the real picker as well
+                    // as its pending slot: the manager retains identity, not just
+                    // the private ordinal used by older versions of this fixture.
+                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!;
+                    Require(manager.SubtitleSelectionForLoad == 1 && service.ActiveSubtitleServerIndex == 1,
+                        "Fixture did not establish the retained Spanish choice before reloading.");
+                }
                 // An earlier burn-in/source choice must not outrank the
                 // viewer's newer track/Off request during this load.
                 Set(service, "_pendingInitialServerSubtitleIndex", 1);
@@ -498,9 +507,20 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 await loaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
                 await wire.SettingsEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 var initialMap = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                // Settings and subtitle execution now run concurrently. Entering
+                // the held settings request does not mean the local selection
+                // has finished; wait for actual execution while settings stay held.
+                await Until(() =>
+                {
+                    lock (Get(service, "_subtitleTrackStateLock")!)
+                        return !wire.SettingsRelease.Task.IsCompleted && !service.IsLoading &&
+                            Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                            service.ActiveSubtitleServerIndex == 1 && initialMap.TryGetValue(1, out var sid) &&
+                            mpv.GetPropertyDouble("sid") == sid;
+                });
                 Require(!service.IsLoading && Get(service, "_pendingInitialServerSubtitleIndex") == null &&
                     service.ActiveSubtitleServerIndex == 1 && initialMap.TryGetValue(1, out var initialSid) && mpv.GetPropertyDouble("sid") == initialSid,
-                    "Subtitles must execute before optional settings reads; fixture missed that loaded/settings-await interval.");
+                    "Subtitles must execute while optional settings reads remain held; fixture missed that loaded/settings-await interval.");
                 await Task.Delay(100); seen.Clear();
             }
             if (retiredBitmap)
