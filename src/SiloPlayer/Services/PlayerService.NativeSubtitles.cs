@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Player;
 using SiloPlayer.Services.PlaybackMenus;
 
 namespace SiloPlayer.Services;
@@ -64,10 +65,12 @@ public partial class PlayerService
 
     private sealed record NativeSubtitleIdentity(int Index, int File, string? Track, string? Sync,
         string Language, string? Codec, string Label, string? Source, string? Delivery,
-        bool Forced, bool HearingImpaired, bool Unplayable, bool? NativeSelectable, string Url);
+        bool Forced, bool HearingImpaired, bool Unplayable, bool? NativeSelectable, string Url,
+        int? StreamIndex, string? ContainerTrackId, string? NativeTitle);
     private static NativeSubtitleIdentity CaptureNativeSubtitleIdentity(SubtitleTrackInfo track)
         => new(track.Index, track.MediaFileId, track.TrackId, track.SyncKey, track.Language,
-            track.Codec, track.Label, track.Source, track.Delivery, track.Forced, track.HearingImpaired, track.Unplayable, track.NativeSelectable, track.Url);
+            track.Codec, track.Label, track.Source, track.Delivery, track.Forced, track.HearingImpaired, track.Unplayable, track.NativeSelectable, track.Url,
+            track.StreamIndex, track.ContainerTrackId, track.NativeTitle);
 
     private PlaybackChoiceMenu CreateNativeSubtitleMenu(NativeMenuOwner owner, PlaybackMenuRequest request,
         Action<PlaybackMenuCloseReason> finish)
@@ -78,6 +81,27 @@ public partial class PlayerService
         bool InventoryCurrent() => owner.IsCurrent() && ReferenceEquals(session, _playbackManager?.CurrentSession) &&
             session.SubtitleUrls.Select(CaptureNativeSubtitleIdentity).SequenceEqual(identities);
         bool Current() => InventoryCurrent() && _nativeMenuGate.IsCurrent(request);
+        // Route availability belongs to this menu's captured inventory/file owner,
+        // not its footer timer. Read native tracks and sidecar URLs only once.
+        var sidecarIndices = _playbackManager.GetSubtitleUrls()
+            .Where(pair => Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
+            .Select(pair => pair.Track.Index).ToHashSet();
+        var useNative = CanUseNativeEmbeddedSubtitleTrack() && tracks.Any(track =>
+            !track.Unplayable && string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<NativeSubtitleTrack> nativeTracks = useNative ? owner.Mpv.GetEmbeddedSubtitleTracks() : [];
+        var ffmpegIndices = useNative && owner.Mpv.HasFfmpegTrackIndices();
+        var containerIds = useNative && owner.Mpv.HasContainerTrackIds();
+        var availableTracks = tracks.Where(track => !track.Unplayable &&
+            (IsUnsupportedBitmapSubtitle(track) || sidecarIndices.Contains(track.Index) ||
+                useNative && string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) &&
+                ResolveNativeEmbeddedSidFromInventory(track, nativeTracks, ffmpegIndices, containerIds) > 0))
+            .ToHashSet();
+        (int Current, int? Pending, int? Preference) SelectionState()
+        {
+            var pending = _nativeSubtitlePending is { } draft && draft.Owner.IsCurrent() ? draft.Index : (int?)null;
+            return (ExecutedSubtitleIndex, pending, _pendingSubtitlePreferenceIndex);
+        }
+        var choiceState = SelectionState();
         var footer = new StackPanel { Spacing = 6, Margin = new Thickness(12, 6, 12, 10) };
         var delayStatus = new TextBlock { FontSize = 11, Opacity = .7 };
         var delay = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
@@ -149,13 +173,12 @@ public partial class PlayerService
                     key != null && (_subtitleSyncInventoryError || entry?.Error != null));
             }
         }
-        IReadOnlyList<PlaybackMenuChoice> Choices()
+        IReadOnlyList<PlaybackMenuChoice> Choices((int Current, int? Pending, int? Preference) state)
         {
-            var pending = _nativeSubtitlePending is { } draft && draft.Owner.IsCurrent() ? draft : null;
-            var current = ExecutedSubtitleIndex;
+            var current = state.Current;
             var choices = new List<PlaybackMenuChoice>
             {
-                new("-1", "Off", "", [], current < 0, IsPending: pending?.Index < 0 || _pendingSubtitlePreferenceIndex == -1),
+                new("-1", "Off", "", [], current < 0, IsPending: state.Pending < 0 || state.Preference == -1),
             };
             foreach (var track in tracks.OrderBy(track => track.Source switch { "external" => 1, "downloaded" => 2, _ => 0 }))
             {
@@ -166,10 +189,11 @@ public partial class PlayerService
                 var badges = new[] { track.Codec?.ToUpperInvariant() ?? "", track.Source switch
                     { "ai_generated" or "generated" => "AI Generated", "downloaded" => "Downloaded", "external" => "External", _ => "Embedded" },
                     track.Forced ? "Forced" : "", track.HearingImpaired ? "SDH" : "" }.Where(text => text.Length > 0).ToArray();
+                var available = availableTracks.Contains(track);
                 choices.Add(new(track.Index.ToString(CultureInfo.InvariantCulture), title, detail, badges,
-                    track.Index == current, IsEnabled: !track.Unplayable && HasSubtitleSelectionRoute(track),
-                    DisabledReason: track.Unplayable || !HasSubtitleSelectionRoute(track) ? "Subtitle unavailable" : "",
-                    IsPending: track.Index == pending?.Index || track.Index == _pendingSubtitlePreferenceIndex));
+                    track.Index == current, IsEnabled: available,
+                    DisabledReason: available ? "" : "Subtitle unavailable",
+                    IsPending: track.Index == state.Pending || track.Index == state.Preference));
             }
             return choices;
         }
@@ -189,7 +213,12 @@ public partial class PlayerService
             resetTiming.Visibility = timing.Reset ? Visibility.Visible : Visibility.Collapsed; resetTiming.IsEnabled = !timing.Busy;
             reload.Visibility = timing.Reload ? Visibility.Visible : Visibility.Collapsed;
             ai.Visibility = NativeSubtitleAiAvailable ? Visibility.Visible : Visibility.Collapsed;
-            menu?.UpdateChoices(Choices());
+            var nextState = SelectionState();
+            if (nextState != choiceState)
+            {
+                choiceState = nextState;
+                menu?.UpdateChoices(Choices(choiceState));
+            }
         }
         var action = (Action<string>)Action; _nativeSubtitleAction = action;
         void Closed(PlaybackMenuCloseReason reason)
@@ -198,7 +227,7 @@ public partial class PlayerService
             if (ReferenceEquals(_nativeSubtitleAction, action)) _nativeSubtitleAction = null;
             finish(reason);
         }
-        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, "Subtitles", Choices(), Current,
+        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, "Subtitles", Choices(choiceState), Current,
             id => { if (InventoryCurrent() && int.TryParse(id, out var index)) _ = SelectNativeSubtitleAsync(owner, index); },
             Closed, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer);
         refresh = Refresh; timer.Tick += (_, _) => Refresh(); Refresh(); timer.Start();
@@ -213,7 +242,13 @@ public partial class PlayerService
         if (!owner.IsCurrent()) return;
         var pending = new NativeSubtitlePending(owner, index);
         _nativeSubtitlePending = pending;
-        try { await SelectSubtitleByServerIndexAsync(index); }
+        // Bitmap and fallback URL sub-adds can download synchronously in mpv.
+        // Publish pending state on the dispatcher, but keep selection I/O off it.
+        try
+        {
+            await Task.Run(() => owner.IsCurrent() && ReferenceEquals(_nativeSubtitlePending, pending)
+                ? SelectSubtitleByServerIndexAsync(index) : Task.FromResult(false));
+        }
         catch (Exception) { if (owner.IsCurrent()) ShowNotice("Subtitle unavailable", "Please try selecting the subtitle again.", "error"); }
         finally { if (ReferenceEquals(_nativeSubtitlePending, pending)) _nativeSubtitlePending = null; }
     }

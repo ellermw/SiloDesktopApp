@@ -6481,12 +6481,19 @@ public partial class PlayerService : IDisposable
     private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track)
     {
         if (_mpv == null || track.Unplayable || !CanUseNativeEmbeddedSubtitleTrack()) return 0;
+        return ResolveNativeEmbeddedSidFromInventory(track, _mpv.GetEmbeddedSubtitleTracks(),
+            _mpv.HasFfmpegTrackIndices(), _mpv.HasContainerTrackIds());
+    }
+
+    private int ResolveNativeEmbeddedSidFromInventory(SubtitleTrackInfo track,
+        IReadOnlyList<NativeSubtitleTrack> nativeTracks, bool ffmpegIndices, bool containerIds)
+    {
         // Pre-v3 rows carry their raw label directly; adapted v3 display labels
         // may instead be synthesized from the language and are not identity.
         var title = track.NativeTitle ?? (_playbackManager?.CurrentSession?.ProtocolVersion < 3 ? track.Label : null);
         return NativeSubtitleSelection.Resolve(new(0, track.StreamIndex, track.ContainerTrackId,
             track.Codec, track.Language, title, track.Forced, track.HearingImpaired),
-            _mpv.GetEmbeddedSubtitleTracks(), _mpv.HasFfmpegTrackIndices(), _mpv.HasContainerTrackIds());
+            nativeTracks, ffmpegIndices, containerIds);
     }
 
     private void SendTitleToOsc()
