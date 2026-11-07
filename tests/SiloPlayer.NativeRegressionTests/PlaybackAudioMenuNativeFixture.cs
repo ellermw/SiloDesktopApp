@@ -434,23 +434,35 @@ internal static class PlaybackAudioMenuNativeFixture
                 return;
             }
 
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "retired-presentation")
+            var acceptedSwitchCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (acceptedSwitchCase is "retired-presentation" or "access-refresh" or "noop-invalidation")
             {
                 service.SetPaused(false);
                 await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
                 var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var originalPlan = manager.CurrentSession!.PlanId;
                 wire.HoldSuccessfulReplan = true;
                 menu = await OpenFromOsc();
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 Require(wire.AudioPicks.Single() == 71, "Actual native keyboard selection did not retain the source index.");
-                // This is the real presentation retirement helper invoked by
-                // mode/layout transitions. Avoid moving any fixture fullscreen.
-                Call(service, "RetireNativeMenus");
+                Task? invalidation = null;
+                if (acceptedSwitchCase == "access-refresh") api.InvalidateAccessContext();
+                else if (acceptedSwitchCase == "noop-invalidation")
+                {
+                    var revision = (long)Get(service, "_playbackBusyRevision")!;
+                    invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
+                        new PlaybackPlanInvalidation(originalPlan!, "synthetic"))!;
+                    Require(!invalidation.IsCompleted && (long)Get(service, "_playbackBusyRevision")! == revision,
+                        "A waiting invalidation stole Audio's busy claim instead of borrowing its switching guard.");
+                }
+                // Use the real retirement helper, without a physical mode change.
+                else Call(service, "RetireNativeMenus");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
-                    "Retiring native Audio presentation stranded an already accepted selection in loading/busy state.");
+                    "Presentation retirement/access refresh/no-op invalidation stranded accepted Audio in loading/busy state.");
                 await Until(() => !mpv.IsPaused && !service.IsPaused,
                     "Accepted Audio selection did not restore playing intent after presentation retirement.");
                 Require((long)Get(service, "_playbackFileGeneration")! > initialLoad
@@ -458,7 +470,7 @@ internal static class PlaybackAudioMenuNativeFixture
                     "Accepted Audio selection did not finish its load after presentation retirement.");
                 Require(Menu(service) == null && Gate(service).CurrentCount == 1,
                     "Presentation retirement stranded a native menu or lease.");
-                Program.Log("PASS: actual native keyboard Audio selection continues its accepted source71 replan across the real presentation retirement helper, clears loading/busy and retains playing intent. No physical mode transition asserted.");
+                Program.Log($"PASS: actual native keyboard Audio {acceptedSwitchCase} continues its accepted source71 replan, clears loading/busy and retains playing intent. No physical mode transition asserted.");
                 return;
             }
 

@@ -19,15 +19,39 @@ public partial class PlayerService
         catch (ObjectDisposedException) { }
     }
 
-    // Every assignment, including true -> true, retires an earlier claim.
-    // Switching-only writers include pre-dispatch quality/version, EOF and
-    // plan invalidation; they can take ownership before any new file is loaded.
+    // Operation assignments, including true -> true, retire an earlier claim.
+    // Switching-only writers include pre-dispatch quality/version and EOF;
+    // they can take ownership before any new file is loaded.
     private void SetSwitchingContent(bool value)
     {
         lock (_playbackBusyLock)
         {
             ++_playbackBusyRevision;
             _switchingContent = value;
+        }
+    }
+
+    private readonly record struct TemporarySwitchingGuard(long Revision, bool WasSwitching);
+
+    private TemporarySwitchingGuard BeginTemporarySwitchingContent()
+    {
+        lock (_playbackBusyLock)
+        {
+            var guard = new TemporarySwitchingGuard(_playbackBusyRevision, _switchingContent);
+            // Waiting for an invalidation check is not a new playback operation:
+            // it may be a no-op behind an in-flight switch's accepted replan.
+            _switchingContent = true;
+            return guard;
+        }
+    }
+
+    private void RestoreTemporarySwitchingContent(TemporarySwitchingGuard guard)
+    {
+        lock (_playbackBusyLock)
+        {
+            // Restore only the borrowed flag, never a successor operation/load.
+            if (guard.Revision == _playbackBusyRevision)
+                _switchingContent = guard.WasSwitching;
         }
     }
 
@@ -93,10 +117,10 @@ public partial class PlayerService
     {
         if (_playbackTerminalState != null) return;
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        var context = authority.ApiClient.CaptureIdentityContext();
         var claim = BeginPlaybackBusy(loading: false, claimState: () => _qualitySwitchActive = quality);
         bool ContextCurrent() => _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) &&
-            authority.ApiClient.IsCurrentContext(context);
+            authority.ApiClient.IsCurrentIdentityContext(context);
         bool Current() => ContextCurrent() && OwnsPlaybackBusy(claim);
         async Task InvokeSelectionAsync()
         {

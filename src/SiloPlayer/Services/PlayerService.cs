@@ -5271,7 +5271,7 @@ public partial class PlayerService : IDisposable
         if (_mpv == null || _playbackManager == null) return;
         var roomGeneration = Volatile.Read(ref _roomPlaybackGeneration);
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var mpv = _mpv;
         var content = ContentId;
@@ -5287,7 +5287,7 @@ public partial class PlayerService : IDisposable
         {
             bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && _playbackTerminalState == null && !IsWatchTogetherPlayback &&
                 roomGeneration == Volatile.Read(ref _roomPlaybackGeneration) &&
-                ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+                ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
                 ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) && content == ContentId &&
                 playGeneration == Volatile.Read(ref _playRequestGeneration) &&
                 fileGeneration == Volatile.Read(ref _playbackFileGeneration);
@@ -5419,8 +5419,9 @@ public partial class PlayerService : IDisposable
         var manager = _playbackManager;
         if (_mpv == null || manager == null) return;
         // The menu hands off a selection, not permission to complete it after
-        // a newer profile/file/load replaces the initiating playback.
-        var selectionContext = authority.ApiClient.CaptureContext();
+        // a newer profile/file/load replaces the initiating playback. Access-only
+        // refreshes retire reads, not an accepted playback operation.
+        var selectionContext = authority.ApiClient.CaptureIdentityContext();
         var selectionVersion = ActiveVersion;
         var selectionTracks = selectionVersion?.AudioTracks?.ToArray();
         var selectionContent = ContentId;
@@ -5429,7 +5430,7 @@ public partial class PlayerService : IDisposable
         var selectionPlayGeneration = Volatile.Read(ref _playRequestGeneration);
         var selectionFileGeneration = Volatile.Read(ref _playbackFileGeneration);
         bool CurrentSelection() => acceptSelection == null ||
-            (authority.ApiClient.IsCurrentContext(selectionContext) && selectionContent == ContentId &&
+            (authority.ApiClient.IsCurrentIdentityContext(selectionContext) && selectionContent == ContentId &&
             ReferenceEquals(selectionVersion, ActiveVersion) &&
             (selectionTracks == null || ActiveVersion?.AudioTracks is { } tracks && tracks.SequenceEqual(selectionTracks)) &&
             ReferenceEquals(selectionMpv, _mpv) && ReferenceEquals(selectionVideo, _videoWindow) &&
@@ -7294,7 +7295,7 @@ public partial class PlayerService : IDisposable
         var authority = _activeAuthority;
         var manager = _playbackManager;
         if (_mpv == null || manager == null) return;
-        var selectionContext = authority.ApiClient.CaptureContext();
+        var selectionContext = authority.ApiClient.CaptureIdentityContext();
         var selectionMpv = _mpv;
         var selectionContent = ContentId;
         var selectionPlayGeneration = Volatile.Read(ref _playRequestGeneration);
@@ -7303,7 +7304,7 @@ public partial class PlayerService : IDisposable
         using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(loadingOwner?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
         var ct = switchCts.Token;
         bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
-            _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(selectionContext) &&
+            _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(selectionContext) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(selectionMpv, _mpv) && selectionContent == ContentId &&
             selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
             selectionFileGeneration == Volatile.Read(ref _playbackFileGeneration);
@@ -8827,7 +8828,6 @@ public partial class PlayerService : IDisposable
         }
         catch (Exception ex)
         {
-            SetSwitchingContent(false);
             LogToFile(
                 "player_recovery_error.txt",
                 $"Unhandled plan invalidation recovery failure: {ex}");
@@ -8850,7 +8850,7 @@ public partial class PlayerService : IDisposable
         var currentPosition = CurrentMediaPosition;
         var wasPaused = CaptureUserPausedState();
         var ct = _playbackCts?.Token ?? CancellationToken.None;
-        SetSwitchingContent(true);
+        var switchingGuard = BeginTemporarySwitchingContent();
         try
         {
             var replacement = await manager.ReplanInvalidatedPlanAsync(
@@ -8860,7 +8860,7 @@ public partial class PlayerService : IDisposable
                 ct).ConfigureAwait(false);
             if (replacement == null)
             {
-                SetSwitchingContent(false);
+                RestoreTemporarySwitchingContent(switchingGuard);
                 await ReconcileDeferredSubtitleSelectionAsync(manager, currentSession);
                 return new CommandResult();
             }
@@ -8880,7 +8880,6 @@ public partial class PlayerService : IDisposable
                 !ReferenceEquals(_playbackManager, manager) ||
                 !ReferenceEquals(manager.CurrentSession, replacement))
             {
-                SetSwitchingContent(false);
                 return new CommandResult { Status = "rejected", Error = "playback_session_changed" };
             }
 
@@ -8897,7 +8896,6 @@ public partial class PlayerService : IDisposable
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            SetSwitchingContent(false);
             return new CommandResult { Status = "rejected", Error = "playback_canceled" };
         }
         catch (Exception ex)
@@ -8912,6 +8910,7 @@ public partial class PlayerService : IDisposable
                     : "plan_invalidation_failed",
             };
         }
+        finally { RestoreTemporarySwitchingContent(switchingGuard); }
     }
 
     private void ShowNotice(string title, string message, string tone)
