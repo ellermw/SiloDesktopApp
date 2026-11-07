@@ -2745,8 +2745,10 @@ local function handle_mouse_move()
     local moved = mx ~= state.mouse_x or my ~= state.mouse_y
     state.mouse_x = mx
     state.mouse_y = my
-    -- Window changes can repeat the same position without pointer input.
-    if moved then
+    -- Embedded input ownership belongs to the host's screen-space movement
+    -- flag, not this duplicate client-space binding (in either delivery order).
+    -- Keep native mouse ownership for standalone/headless mpv callers.
+    if moved and mp.get_property_number("options/wid", 0) <= 0 then
         state.controller_focus_name = nil
         show_osc()
     end
@@ -6236,11 +6238,14 @@ end
 local function setup_script_messages()
     -- Host app can send mouse coordinates explicitly
     -- This is the primary mouse tracking method when embedded with wid=
-    mp.register_script_message("osc-mouse-move", function(x, y)
+    mp.register_script_message("osc-mouse-move", function(x, y, screen_moved)
         local mx = tonumber(x)
         local my = tonumber(y)
         if not mx or not my then return end
         local moved = mx ~= state.mouse_x or my ~= state.mouse_y
+        -- The desktop host compares screen points, which remain stable when
+        -- fullscreen changes the popup's origin. Retain two-argument callers.
+        if screen_moved ~= nil then moved = screen_moved == "true" end
         state.mouse_x = mx
         state.mouse_y = my
         -- WM_MOUSEMOVE is the desktop host's authoritative enter signal.

@@ -81,6 +81,9 @@ public sealed class MpvVideoWindow : IDisposable
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X, Y; }
 
@@ -145,6 +148,29 @@ public sealed class MpvVideoWindow : IDisposable
     // Set when TrackMouseEvent is armed; cleared when WM_MOUSELEAVE fires.
     // Ensures we only re-arm after each leave — avoids piling up tracking requests.
     private bool _mouseTracking;
+    private POINT? _lastMouseScreenPosition;
+
+    private void ResetMouseScreenPosition()
+    {
+        _lastMouseScreenPosition = GetCursorPos(out var point) ? point : null;
+    }
+
+    private void ForwardMouseMove(int x, int y)
+    {
+        // Client coordinates change when the popup moves under a stationary
+        // cursor. Only a screen-space delta may take ownership from a controller.
+        var moved = false;
+        if (GetCursorPos(out var point))
+        {
+            moved = _lastMouseScreenPosition is not { } previous ||
+                point.X != previous.X || point.Y != previous.Y;
+            _lastMouseScreenPosition = point;
+        }
+        _mpv?.SendMousePos(x, y);
+        _mpv?.SendScriptMessage("osc-mouse-move",
+            SiloPlayer.Player.MpvPlayer.FormatCoordinate(x),
+            SiloPlayer.Player.MpvPlayer.FormatCoordinate(y), moved ? "true" : "false");
+    }
 
     // Cursor visibility — driven by the Lua OSC. When the controls fade out,
     // Lua sends `silo-cursor-hidden`; PlayerService routes that to
@@ -551,6 +577,9 @@ public sealed class MpvVideoWindow : IDisposable
         // Skip WINDOWPOSCHANGING negotiation and send mpv only the committed
         // rectangle through WINDOWPOSCHANGED.
         flags |= SWP_NOSENDCHANGING;
+        // The pointer may have been outside the old popup, so its last mouse
+        // message is not a baseline for the synthetic move after this resize.
+        ResetMouseScreenPosition();
         SetWindowPos(
             _hwnd,
             insertAfter,
@@ -585,8 +614,7 @@ public sealed class MpvVideoWindow : IDisposable
         if (msg == WM_MOUSEMOVE)
         {
             int x = loWord(lParam), y = hiWord(lParam);
-            _mpv?.SendMousePos(x, y);
-            _mpv?.SendScriptMessage("osc-mouse-move", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
+            ForwardMouseMove(x, y);
 
             // Arm TrackMouseEvent so we get a single WM_MOUSELEAVE when the cursor
             // leaves this window. Without this, the OSC can stay visible forever
@@ -630,8 +658,7 @@ public sealed class MpvVideoWindow : IDisposable
             _lbuttonDownTicks = Environment.TickCount64;
             _lbuttonDownX = x;
             _lbuttonDownY = y;
-            _mpv?.SendMousePos(x, y);
-            _mpv?.SendScriptMessage("osc-mouse-move", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
+            ForwardMouseMove(x, y);
             _mpv?.SendScriptMessage("osc-mouse-down", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
             _mpv?.SendKeydown("MBTN_LEFT");
         }

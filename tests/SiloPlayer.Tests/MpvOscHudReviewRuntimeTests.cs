@@ -463,6 +463,97 @@ public sealed partial class MpvOscRuntimeTests
     }
 
     [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public void HudFullscreenClientOriginChangesPreserveControllerOwnership(
+        bool exiting, bool outsideWindowedPopup, bool mpvFirst)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local exiting = {{exiting.ToString().ToLowerInvariant()}}
+            local outside = {{outsideWindowedPopup.ToString().ToLowerInvariant()}}
+            local screen_x, screen_y = outside and 80 or 500, 300
+            local previous_x, previous_y = screen_x, screen_y
+            local function move(origin_x, origin_y)
+                pointer = {x=screen_x-origin_x, y=screen_y-origin_y}
+                -- Match the host protocol: client position for hit testing,
+                -- screen-space delta for ownership, plus the duplicate mpv binding.
+                local moved = screen_x ~= previous_x or screen_y ~= previous_y
+                previous_x, previous_y = screen_x, screen_y
+                if {{mpvFirst.ToString().ToLowerInvariant()}} then
+                    assert(mouse_move)()
+                    handlers['osc-mouse-move'](tostring(pointer.x), tostring(pointer.y), tostring(moved))
+                else
+                    handlers['osc-mouse-move'](tostring(pointer.x), tostring(pointer.y), tostring(moved))
+                    assert(mouse_move)()
+                end
+            end
+            handlers['osc-fullscreen-state'](tostring(exiting))
+            if not outside then move(exiting and 0 or 100, exiting and 0 or 80) end
+            for i = 1, 30 do
+                if s.controller_focus_name == 'btn_fullscreen' then break end
+                handlers['osc-controller-nav']('right')
+            end
+            assert(s.controller_focus_name == 'btn_fullscreen')
+            handlers['osc-controller-activate']()
+            assert(table.concat(intents, ',') == 'silo-fullscreen-toggle')
+            local focus, deadline, timer = s.controller_focus_name, s.controller_focus_deadline, s.hide_timer
+            local old_x, old_y = s.mouse_x, s.mouse_y
+            -- ApplyWindowRect samples GetCursorPos before moving the popup,
+            -- even if the pointer was outside and no client move was received.
+            previous_x, previous_y = screen_x, screen_y
+            handlers['osc-fullscreen-state'](tostring(not exiting))
+            dims = exiting and {w=1920,h=1080} or {w=2560,h=1440}
+            osc_test_layout()
+            for _, time in ipairs({10.01, 10.2}) do
+                hud_time = time
+                move(exiting and 100 or 0, exiting and 80 or 0)
+                assert(s.controller_focus_name == focus, 'Window-origin delta retired controller focus')
+                assert(s.controller_focus_deadline == deadline and s.hide_timer == timer,
+                    'Synthetic movement refreshed the input idle timeout')
+            end
+            assert(s.mouse_x ~= old_x or s.mouse_y ~= old_y, 'Regression requires changed client coordinates')
+            assert(s.mouse_x == screen_x - (exiting and 100 or 0)
+                and s.mouse_y == screen_y - (exiting and 80 or 0), 'Hit testing must use the new client position')
+            handlers['osc-controller-nav']('right')
+            assert(s.controller_focus_name ~= focus and s.controller_focus_name ~= 'btn_play',
+                'Navigation restarted instead of continuing from Fullscreen')
+            screen_x = screen_x + 1
+            move(exiting and 100 or 0, exiting and 80 or 0)
+            assert(s.controller_focus_name == nil, 'Real screen-space movement must retire focus')
+            mp.set_property('user-data/hud-result', 'preserved')
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe + """
+
+            local bind = mp.add_key_binding
+            mp.add_key_binding = function(key, name, callback, ...)
+                if name == 'silo-osc-mouse-move' then mouse_move = callback end
+                return bind(key, name, callback, ...)
+            end
+            local number = mp.get_property_number
+            mp.get_property_number = function(name, fallback)
+                if name == 'options/wid' then return 42 end -- Native embedded host.
+                return number(name, fallback)
+            end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' and pointer then return pointer end
+                if name == 'osd-dimensions' and dims then return dims end
+                return native(name, fallback)
+            end
+            """, windowWidth: exiting ? 2560 : 1920, windowHeight: exiting ? 1440 : 1080);
+        Assert.Equal("preserved", output);
+    }
+
+    [Theory]
     [InlineData("btn_exit")]
     [InlineData("btn_minimize")]
     public void HudTopChromeDefersItsOnlyIntentUntilMatchingRelease(string button)
