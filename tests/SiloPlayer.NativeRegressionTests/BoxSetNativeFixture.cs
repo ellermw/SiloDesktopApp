@@ -98,13 +98,26 @@ internal static partial class BoxSetNativeFixture
         var unrelatedReads = wire.Reads;
         page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedMarked, "unrelated"));
         await Task.Delay(50); Check(wire.Reads == unrelatedReads, "unrelated watched messages do not refresh the page");
-        await Task.Run(catalog.InvalidateLibraryCache);
+        var releaseAccessStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken accessStartToken = default;
+        var accessStart = page.ViewModel.PlayAsync(async (_, _, _, ct) => { accessStartToken = ct; await releaseAccessStart.Task.WaitAsync(ct); });
+        var accessDetail = page.ViewModel.Detail;
+        var accessBlanked = false;
+        System.ComponentModel.PropertyChangedEventHandler observeAccess = (_, args) => { if (args.PropertyName == nameof(page.ViewModel.Detail) && page.ViewModel.Detail == null) accessBlanked = true; };
+        page.ViewModel.PropertyChanged += observeAccess;
+        await Task.Run(() => { api.InvalidateAccessContext(); catalog.InvalidateLibraryCache(); });
         for (var i = 0; i < 100 && (wire.Reads == unrelatedReads || page.ViewModel.IsLoading); i++) await Task.Delay(10);
         Check(wire.Reads > unrelatedReads && page.ViewModel.Detail != null, "off-thread library invalidation refreshes on the UI dispatcher");
+        Check(accessDetail != null && !accessBlanked && accessStartToken.CanBeCanceled && !accessStartToken.IsCancellationRequested
+            && Descendants(page).OfType<PosterCard>().SequenceEqual(members), "same-viewer access invalidation preserves accepted playback and mounted detail");
+        releaseAccessStart.TrySetResult(); await accessStart;
+        page.ViewModel.PropertyChanged -= observeAccess;
         await Capture(page, "boxset-wide.png");
         page.Width = 540; page.Height = 600; page.UpdateLayout(); await Task.Delay(100);
         Check(Descendants(page).OfType<TextBlock>().Where(x => x.Text == wire.Title).All(x => x.ActualWidth <= 540), "compact wrapped hero");
         await Capture(page, "boxset-compact.png");
+        await CheckMemberScrollAsync(page, 960, 480);
+        await CheckMemberScrollAsync(page, 540, 600);
         wire.Played = 3; await page.ViewModel.RefreshAsync(); await Task.Delay(80);
         Check(((TextBlock)Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay").Content).Text == "Play First", "all-played action wording");
         sent = ""; await page.ViewModel.PlayAsync((id, library, owner, ct) => { sent = id; return Task.CompletedTask; }); Check(sent == "first", "all-played first movie");
@@ -112,6 +125,12 @@ internal static partial class BoxSetNativeFixture
         wire.Status = HttpStatusCode.ServiceUnavailable; await page.ViewModel.RefreshAsync();
         Check(ReferenceEquals(page.ViewModel.Detail, lastSuccessfulDetail) && Descendants(page).OfType<PosterCard>().SequenceEqual(members), "background failure preserves loaded content and cards");
         Check(Descendants(page).OfType<Button>().Any(x => (x.Content as string) == "Try again" && x.Visibility == Visibility.Visible), "transient retry control");
+        wire.Status = HttpStatusCode.Forbidden; await page.ViewModel.RefreshAsync(); page.UpdateLayout();
+        Check(page.ViewModel.Failure == DetailFailureKind.AccessDenied && page.ViewModel.Detail == null
+            && Descendants(page).OfType<TextBlock>().Any(x => x.Text == "Box set unavailable")
+            && Descendants(page).OfType<TextBlock>().Any(x => x.Text == DetailFailurePolicy.Message(DetailFailureKind.AccessDenied))
+            && !Descendants(page).OfType<Button>().Any(x => (x.Content as string) == "Try again")
+            && Descendants(page).OfType<Button>().Contains(back), "403 is terminal unavailable with profile guidance and back, not retry");
         wire.Status = HttpStatusCode.NotFound; await page.ViewModel.RefreshAsync();
         Check(Descendants(page).OfType<TextBlock>().Any(x => x.Text == "Box set unavailable") && !Descendants(page).OfType<Button>().Any(x => (x.Content as string) == "Try again"), "unavailable distinct from retry");
         Check(Descendants(page).OfType<Button>().Contains(back), "unavailable state retains the back control");
@@ -140,9 +159,57 @@ internal static partial class BoxSetNativeFixture
         wire.CapabilityStatus = HttpStatusCode.OK; await faultPage.ViewModel.RefreshAsync(); Check(faultPage.ViewModel.Detail != null, "capability fault recovers on retry");
         parent.Children.Remove(faultPage);
 
+        // A route can lose its read context before Loaded installs invalidation handlers.
+        var delayedPage = new BoxSetPage(catalog, api) { Width = 540, Height = 600 };
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var initialRead = delayedPage.ViewModel.LoadAsync("7", "12");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        api.InvalidateAccessContext(); catalog.InvalidateLibraryCache();
+        wire.Hold = false; wire.Release.TrySetResult(); await initialRead;
+        Check(!delayedPage.ViewModel.IsLoading && delayedPage.ViewModel.Failure == DetailFailureKind.Transient
+            && delayedPage.Body.Children.OfType<Button>().Any(x => (x.Content as string) == "Try again"), "abandoned initial read exposes retry instead of an endless skeleton");
+        parent.Children.Add(delayedPage);
+        for (var i = 0; i < 100 && (!delayedPage.IsLoaded || delayedPage.ViewModel.IsLoading || delayedPage.ViewModel.Detail == null); i++) await Task.Delay(10);
+        Check(delayedPage.IsLoaded && delayedPage.ViewModel.Detail != null && delayedPage.ViewModel.IsCurrent, "Loaded recovers an invalidation missed before subscription");
+        parent.Children.Remove(delayedPage); await Task.Delay(30);
+
+        // A close can also arrive after activation but before membership is known.
+        var firstLoadPage = new BoxSetPage(catalog, api) { Width = 540, Height = 600 };
+        parent.Children.Add(firstLoadPage);
+        for (var i = 0; i < 100 && !firstLoadPage.IsLoaded; i++) await Task.Delay(10);
+        Check(firstLoadPage.IsLoaded, "first-load playback fixture is active");
+        wire.Empty = false; wire.Played = 1; wire.Hold = true;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var heldFirstLoad = firstLoadPage.ViewModel.LoadAsync("7", "12");
+        var firstLoadSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Check(firstLoadPage.ViewModel.Detail == null, "membership is unknown when the close message arrives");
+            firstLoadPage.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("second", 100, 100, true) { Persisted = firstLoadSave.Task });
+            var receivedFirstLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            firstLoadPage.DispatcherQueue.TryEnqueue(() => receivedFirstLoad.TrySetResult()); await receivedFirstLoad.Task;
+            wire.Hold = false; wire.Release.TrySetResult(); await heldFirstLoad;
+            var firstLoadReads = wire.Reads; wire.Played = 3; firstLoadSave.TrySetResult();
+            for (var i = 0; i < 100 && (wire.Reads == firstLoadReads || firstLoadPage.ViewModel.Detail?.PlayedCount != 3); i++) await Task.Delay(10);
+            Check(wire.Reads > firstLoadReads && firstLoadPage.ViewModel.Detail?.PlayedCount == 3,
+                "a close received before known membership still refreshes after its final write");
+        }
+        finally
+        {
+            wire.Hold = false; wire.Release.TrySetResult(); firstLoadSave.TrySetResult();
+            await heldFirstLoad; parent.Children.Remove(firstLoadPage);
+        }
+
         // Actual movie-detail row uses the real controls and returned-library tags.
         var detail = new ItemDetailPage { Width = 960, Height = 700 }; parent.Children.Add(detail); await Task.Delay(80);
         detail.ViewModel.Item = new MediaItemDetail { ContentId = "second", Type = "movie", Title = "Current film" };
+        var updateUI = typeof(ItemDetailPage).GetMethod("UpdateUI", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        updateUI.Invoke(detail, null); detail.UpdateLayout(); await Task.Delay(50);
+        var sections = (StackPanel)detail.FindName("DetailContentPanel");
+        var nonMemberSections = sections.Children.ToArray();
+        var sectionUnloads = 0;
+        foreach (var section in sections.Children.OfType<FrameworkElement>()) section.Unloaded += (_, _) => sectionUnloads++;
         var set = new BoxSetDetail { Id = "7", LibraryId = "12", Title = wire.Title, MovieCount = 3, Items = [new() { ContentId = "first", Type = "movie", Title = "First" }, new() { ContentId = "second", Type = "movie", Title = "Second" }, new() { ContentId = "third", Type = "movie", Title = "Third" }] };
         if (invalidMemberChecks)
         {
@@ -159,14 +226,14 @@ internal static partial class BoxSetNativeFixture
         var marker = Descendants(row).OfType<TextBlock>().Single(x => x.Text == "This film"); var marked = (Grid)((Border)marker.Parent).Parent;
         Check(marked.Children.OfType<PosterCard>().Single().MediaItem!.ContentId == "second" && marker.ActualWidth <= marked.ActualWidth, "current-film marker within correct card");
         Check(Descendants(row).OfType<PosterCard>().All(x => MediaNavigationContext.LibraryId(x) == 12), "movie row uses returned set library");
-        var sections = (StackPanel)detail.FindName("DetailContentPanel");
-        var expectedOrder = new[] { "MediaLocationsSection", "ExtrasSection", "TrailersSection", "CastSection", "BoxSetSection", "SimilarSection" };
-        var actualOrder = sections.Children.OfType<FrameworkElement>().Where(section => expectedOrder.Contains(section.Name)).Select(section => section.Name);
-        Check(actualOrder.SequenceEqual(expectedOrder), "official movie section order");
+        var order = new[] { "MediaLocationsSection", "ExtrasSection", "TrailersSection", "CastSection", "CrewSection", "BoxSetSection", "SimilarSection" }.Select(name => sections.Children.IndexOf((UIElement)detail.FindName(name))).ToArray();
+        Check(order.All(x => x >= 0) && order.SequenceEqual(order.OrderBy(x => x)), "movie section order keeps media locations first and membership before similar");
+        Check(sections.Children.SequenceEqual(nonMemberSections) && sectionUnloads == 0, "first row arrival preserves non-member order and mounted major sections after UpdateUI");
         var rowCards = Descendants(row).OfType<PosterCard>().ToArray();
+        updateUI.Invoke(detail, null); detail.UpdateLayout(); await Task.Delay(50);
+        Check(sections.Children.SequenceEqual(nonMemberSections) && Descendants(row).OfType<PosterCard>().SequenceEqual(rowCards), "later UpdateUI keeps the member row in the same movie section order");
         Check(rowCards[1].Focus(FocusState.Keyboard), "movie row card receives keyboard focus");
-        var sectionUnloads = 0;
-        foreach (var section in sections.Children.OfType<FrameworkElement>()) section.Unloaded += (_, _) => sectionUnloads++;
+        sectionUnloads = 0;
         var updatedSet = System.Text.Json.JsonSerializer.Deserialize<BoxSetDetail>(System.Text.Json.JsonSerializer.Serialize(set))!;
         updatedSet.PlayedCount = 2;
         typeof(ItemDetailViewModel).GetProperty("BoxSet")!.SetValue(detail.ViewModel, updatedSet);
@@ -181,6 +248,13 @@ internal static partial class BoxSetNativeFixture
         detail.Width = 540; detail.UpdateLayout(); await Task.Delay(100);
         Check(((FrameworkElement)detail.FindName("BoxSetSection")).ActualWidth <= 540 && ((TextBlock)detail.FindName("BoxSetTitle")).ActualWidth + viewAll.ActualWidth <= 540, "compact row heading and View all bounds");
         await Capture((FrameworkElement)detail.FindName("BoxSetSection"), "movie-boxset-row-compact.png");
+        var mountedOrder = sections.Children.ToArray();
+        typeof(ItemDetailViewModel).GetProperty("BoxSet")!.SetValue(detail.ViewModel, null);
+        typeof(ItemDetailPage).GetMethod("BuildBoxSetRow", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detail, null);
+        await Task.Delay(50);
+        Check(sections.Children.SequenceEqual(mountedOrder) && ((FrameworkElement)detail.FindName("BoxSetSection")).Visibility == Visibility.Collapsed
+            && sections.Children.SequenceEqual(nonMemberSections),
+            "clearing membership leaves the original movie layout intact");
         var card = new PosterCard { MediaItem = new MediaItem { Type = "box_set", ContentId = "box_set:7", BoxSet = set } }; parent.Children.Add(card); await Task.Delay(80);
         Check(card.Content is BoxSetCard, "shared aggregate renderer dispatch");
         routeType = null; routeArgs = null;
@@ -195,11 +269,20 @@ internal static partial class BoxSetNativeFixture
         Check(card.Visibility == Visibility.Visible && card.Content is BoxSetCard, "recycled suppressed aggregate restores a valid card");
         // Exercise Frame activation and the production parameterless destination, beyond route interception.
         var destinationFrame = navigation.Frame!; destinationFrame.Width = 540; destinationFrame.Height = 600;
-        parent.Children.Add(destinationFrame); navigation.NavigationRequestHandler = null; wire.Empty = false; wire.Played = 1;
+        navigation.NavigationRequestHandler = null; wire.Empty = false; wire.Played = 1;
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Program.Log("TRACE: before actual Frame box-set activation.");
         Check(navigation.Navigate<BoxSetPage>(new BoxSetNavigationArgs("7", "12")), "actual Frame box-set navigation");
-        for (var i = 0; i < 100 && (destinationFrame.Content is not BoxSetPage arriving || !arriving.IsLoaded || arriving.ViewModel.Detail == null); i++) await Task.Delay(10);
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var initial = (BoxSetPage)destinationFrame.Content;
+        Check(!initial.IsLoaded && initial.ViewModel.IsLoading, "initial scoped read is held before Loaded");
+        var initialReads = wire.Reads;
+        wire.Hold = false; api.LocalizedReads.NotifySettingChanged("catalog.metadata_language"); wire.Release.TrySetResult();
+        parent.Children.Add(destinationFrame);
+        for (var i = 0; i < 100 && (destinationFrame.Content is not BoxSetPage arriving || !arriving.IsLoaded || arriving.ViewModel.Detail == null || arriving.ViewModel.IsLoading); i++) await Task.Delay(10);
         Check(destinationFrame.Content is BoxSetPage opened && opened.ViewModel.Detail is { Id: "7", LibraryId: "12" }, "activated dedicated destination loads scoped data");
+        Check(wire.Reads > initialReads && !initial.ViewModel.IsLoading && initial.ViewModel.IsCurrent,
+            "language change during initial pre-Loaded read starts a current successor and clears loading");
         Program.Log("TRACE: actual Frame box-set activation succeeded.");
         var activated = (BoxSetPage)destinationFrame.Content;
         Check(activated.IsLoaded && activated.ViewModel.IsCurrent, "activated destination is loaded and owns the playback notification");
@@ -214,6 +297,26 @@ internal static partial class BoxSetNativeFixture
         var duringReadCount = wire.Reads; wire.Played = 3; await Task.Run(() => duringReadPersisted.TrySetResult());
         for (var i = 0; i < 100 && (wire.Reads == duringReadCount || activated.ViewModel.Detail?.PlayedCount != 3); i++) await Task.Delay(10);
         Check(wire.Reads > duringReadCount && activated.ViewModel.Detail?.PlayedCount == 3, "message during held read must requery after final playback write");
+
+        wire.Played = 1; await activated.ViewModel.RefreshAsync();
+        var accessPersisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        activated.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("second", 100, 100, true) { Persisted = accessPersisted.Task });
+        // Drain the queued Receive callback so it captures its owner before access changes.
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        activated.DispatcherQueue.TryEnqueue(() => received.TrySetResult()); await received.Task;
+        var beforeAccessRead = wire.Reads;
+        await Task.Run(() => { api.InvalidateAccessContext(); catalog.InvalidateLibraryCache(); });
+        for (var i = 0; i < 100 && (wire.Reads == beforeAccessRead || activated.ViewModel.IsLoading); i++) await Task.Delay(10);
+        Check(wire.Reads > beforeAccessRead && activated.ViewModel.Detail?.PlayedCount == 1
+            && activated.ViewModel.Detail.PlayTarget?.ContentId == "second" && !accessPersisted.Task.IsCompleted,
+            "access-triggered read sees pre-save counts while persistence is pending");
+        var beforeAccessSave = wire.Reads; wire.Played = 3; accessPersisted.TrySetResult();
+        for (var i = 0; i < 100 && (wire.Reads == beforeAccessSave || activated.ViewModel.Detail?.PlayedCount != 3 || activated.ViewModel.IsLoading); i++) await Task.Delay(10);
+        Check(wire.Reads > beforeAccessSave && activated.ViewModel.Detail?.PlayedCount == 3
+            && activated.ViewModel.Detail.PlayTarget?.ContentId == "first"
+            && ((TextBlock)Descendants(activated).OfType<Button>().Single(x => x.Name == "BoxSetPlay").Content).Text == "Play First"
+            && Descendants(activated).OfType<TextBlock>().Any(x => x.Text.Contains("3 / 3 watched")),
+            "post-save refresh survives same-viewer access invalidation and updates counts and PlayTarget");
         destinationFrame.Content = null; parent.Children.Remove(destinationFrame);
         card.MediaItem = new MediaItem { Type = "movie", ContentId = "ordinary", Title = "Ordinary film" }; await Task.Delay(80);
         Check(card.Content is not BoxSetCard && card.IsTabStop, "recycled aggregate restores ordinary card/focus");
@@ -223,6 +326,24 @@ internal static partial class BoxSetNativeFixture
         }
         finally { parent.Children.Clear(); await Task.Delay(100); servicesField.SetValue(null, originalServices); }
         await EpisodeQuickPlayNativeFixture.VerifyBoxSetAccessRefreshAsync();
+    }
+    private static async Task CheckMemberScrollAsync(BoxSetPage page, double width, double height)
+    {
+        page.Width = width; page.Height = height; page.UpdateLayout(); await Task.Delay(100);
+        var scroll = ((Grid)page.Content).Children.OfType<ScrollViewer>().Single();
+        Check(scroll.ViewportHeight > 0 && scroll.ViewportHeight < height && scroll.ScrollableHeight > 0,
+            $"multi-film detail has a constrained vertical viewport at {width}x{height}");
+        Check(scroll.VerticalScrollBarVisibility == ScrollBarVisibility.Auto && scroll.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled,
+            "dedicated detail enables vertical scrolling only");
+        scroll.ChangeView(null, scroll.ScrollableHeight, null, disableAnimation: true);
+        for (var i = 0; i < 100 && Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) > 1; i++) await Task.Delay(10);
+        page.UpdateLayout();
+        var last = Descendants(page).OfType<PosterCard>().Last();
+        var bounds = last.TransformToVisual(scroll).TransformBounds(new Windows.Foundation.Rect(0, 0, last.ActualWidth, last.ActualHeight));
+        Check(scroll.VerticalOffset > 0 && bounds.Top >= -1 && bounds.Bottom <= scroll.ViewportHeight + 1 && last.ActualHeight > 0,
+            $"last movie can be scrolled fully into view at {width}x{height}");
+        Check(last.Focus(FocusState.Keyboard), "last scrolled movie accepts keyboard focus");
+        scroll.ChangeView(null, 0, null, disableAnimation: true); await Task.Delay(50);
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {

@@ -9,13 +9,12 @@ namespace SiloPlayer.Services;
 /// <summary>Preserves room transport ownership for a movie intent before entering standalone playback.</summary>
 public static class MoviePlaybackEntry
 {
-    public static async Task PlayAsync(MediaItem movie, int libraryId, ApiRequestContext owner, CancellationToken ct,
-        Func<bool> isCurrentOwner, Func<string, int, ApiRequestContext, CancellationToken, Task> playStandalone)
+    public static async Task PlayAsync(MediaItem movie, int libraryId, ApiIdentityContext owner, CancellationToken ct,
+        Func<bool> isCurrentOwner, Func<string, int, ApiIdentityContext, CancellationToken, Task> playStandalone)
     {
         var client = App.Services.GetRequiredService<SiloApiClient>();
-        var identity = client.CaptureIdentityContext();
-        bool Current() => !ct.IsCancellationRequested && isCurrentOwner() && client.IsCurrentIdentityContext(identity)
-            && identity.AuthenticationGeneration == owner.AuthenticationGeneration && identity.BaseUrl == owner.BaseUrl && identity.ProfileId == owner.ProfileId;
+        // Access revisions retire reads, not an already accepted movie intent.
+        bool Current() => !ct.IsCancellationRequested && isCurrentOwner() && client.IsCurrentIdentityContext(owner);
         if (!Current() || !BoxSetDetail.IsMovieMember(movie))
             throw new InvalidOperationException("This movie is no longer available for playback. Reopen the box set and try again.");
         var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
@@ -46,13 +45,13 @@ public static class MoviePlaybackEntry
             if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
             {
                 var response = await playback.StageWatchTogetherRoomItemAsync(roomId, movie.ContentId, libraryId: libraryId, ct: ct,
-                    expectedIdentityContext: identity);
+                    expectedIdentityContext: owner);
                 RequireCurrentRoom();
                 room.Room = response.Room;
             }
             else
-                await playback.CreateWatchTogetherSuggestionAsync(roomId, roomToken, movie.ContentId, "movie", movie.Title,
-                    posterUrl: movie.PosterUrl, ct: ct, expectedIdentityContext: identity);
+                await playback.SubmitWatchTogetherSuggestionAsync(roomId, roomToken, movie.ContentId, "movie", movie.Title,
+                    posterUrl: movie.PosterUrl, ct: ct, expectedIdentityContext: owner);
             RequireCurrentRoom();
             App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
             { RoomId = roomId, RoomAccessToken = roomToken });

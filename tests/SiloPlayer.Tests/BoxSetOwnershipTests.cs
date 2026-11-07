@@ -351,7 +351,7 @@ public sealed class BoxSetOwnershipTests
         if (change == "access") client.InvalidateAccessContext();
         if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
         wire.Release.TrySetResult(); await read.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.False(vm.IsLoading); Assert.Null(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
+        Assert.False(vm.IsLoading); Assert.Null(vm.Detail); Assert.Equal(DetailFailureKind.Transient, vm.Failure); vm.Cancel();
     }
 
     [Fact] public async Task RetiredOlderReadDoesNotReleaseTheNewerRequestLoading()
@@ -424,6 +424,7 @@ public sealed class BoxSetOwnershipTests
         using var wire = new Wire { DetailStatus = HttpStatusCode.ServiceUnavailable }; using var http = new HttpClient(wire);
         var vm = new BoxSetViewModel(new CatalogApi(Client(http))); await vm.LoadAsync("7", "12"); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
         wire.DetailStatus = HttpStatusCode.NotFound; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.NotFound, vm.Failure);
+        wire.DetailStatus = HttpStatusCode.Forbidden; await vm.RefreshAsync(); Assert.Equal(DetailFailureKind.AccessDenied, vm.Failure); Assert.Null(vm.Detail); Assert.False(vm.IsLoading);
         wire.DetailStatus = HttpStatusCode.OK; await vm.RefreshAsync(); Assert.NotNull(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
     }
     [Fact] public async Task CapabilityFaultIsRetryableOnDedicatedDestination()
@@ -616,7 +617,7 @@ public sealed class BoxSetOwnershipTests
     private sealed class Wire : HttpMessageHandler
     {
         internal bool? Supported = true;
-        internal bool Hold, AllPlayed, Enabled = true, OtherEnabled = true; internal int DetailReads;
+        internal bool Hold, HoldCapability, AllPlayed, Enabled = true, OtherEnabled = true; internal int DetailReads;
         internal string ReturnedId = "7", ReturnedLibrary = "12";
         internal string MembershipContentId = "film", MembershipType = "movie";
         internal HttpStatusCode DetailStatus = HttpStatusCode.OK, CapabilityStatus = HttpStatusCode.OK;
@@ -629,6 +630,7 @@ public sealed class BoxSetOwnershipTests
             var json = Supported.HasValue ? "{\"box_sets\":" + Supported.Value.ToString().ToLowerInvariant() + "}" : "{}"; var status = HttpStatusCode.OK;
             if (path.EndsWith("/capabilities"))
             {
+                if (HoldCapability) { Started.TrySetResult(); await Release.Task; }
                 if (TimeoutCapability) throw new TaskCanceledException("Synthetic capability timeout without caller cancellation.");
                 status = CapabilityStatus;
             }
@@ -657,5 +659,163 @@ public sealed class BoxSetOwnershipTests
             }
             return new(status) { Content = new StringContent(json) };
         }
+    }
+    [Fact] public async Task MembershipPostSaveRefreshSurvivesSameViewerAccessInvalidationDuringRead()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var movie = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie); await movie.RefreshBoxSetAsync();
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        movie.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("film", 100, 100, true) { Persisted = persisted.Task });
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshing = movie.RefreshBoxSetAsync();
+        try
+        {
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var readOwner = client.CaptureContext(); var identity = client.CaptureIdentityContext();
+            client.InvalidateAccessContext();
+            Assert.False(client.IsCurrentContext(readOwner)); Assert.True(client.IsCurrentIdentityContext(identity));
+            wire.Hold = false; wire.Release.TrySetResult(); await refreshing;
+            await movie.RefreshBoxSetAsync();
+            Assert.Equal(1, movie.BoxSet!.PlayedCount); Assert.Equal("film", movie.BoxSet.PlayTarget?.ContentId);
+            var reads = wire.DetailReads; wire.AllPlayed = true; persisted.TrySetResult();
+            for (var i = 0; i < 100 && (wire.DetailReads == reads || movie.BoxSet?.PlayedCount != 2); i++) await Task.Delay(10);
+            Assert.True(wire.DetailReads > reads, "A retired pre-save read must not retire the visit's post-save refresh.");
+            Assert.Equal(2, movie.BoxSet!.PlayedCount); Assert.Equal("first", movie.BoxSet.PlayTarget?.ContentId);
+        }
+        finally { movie.CancelPendingLoads(); wire.Release.TrySetResult(); persisted.TrySetResult(); await refreshing; }
+    }
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public async Task FirstActivationRefreshesAfterAnOutstandingSaveWithoutReceivingItsMessage(bool dedicated)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var set = new BoxSetViewModel(api);
+        var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((id, _) =>
+            Task.FromResult(new MediaItemDetail { ContentId = id, Type = "movie", UserState = new() })));
+        try
+        {
+            if (dedicated) await set.LoadAsync("7", "12", persisted.Task);
+            else await movie.LoadInLibraryAsync("film", null, persisted.Task);
+            for (var i = 0; i < 100 && (dedicated ? set.Detail : movie.BoxSet) == null; i++) await Task.Delay(10);
+            Assert.Equal(1, (dedicated ? set.Detail : movie.BoxSet)!.PlayedCount);
+            var reads = wire.DetailReads;
+            wire.AllPlayed = true; persisted.TrySetResult();
+            for (var i = 0; i < 100 && (wire.DetailReads == reads || (dedicated ? set.Detail : movie.BoxSet)?.PlayedCount != 2); i++) await Task.Delay(10);
+            var refreshed = dedicated ? set.Detail : movie.BoxSet;
+            Assert.True(wire.DetailReads > reads);
+            Assert.Equal(2, refreshed!.PlayedCount); Assert.Equal("first", refreshed.PlayTarget?.ContentId);
+        }
+        finally { movie.CancelPendingLoads(); set.Cancel(); persisted.TrySetResult(); }
+    }
+    [Theory]
+    [InlineData(false, "departure")] [InlineData(true, "departure")]
+    [InlineData(false, "profile")] [InlineData(true, "profile")]
+    [InlineData(false, "route")] [InlineData(true, "route")]
+    public async Task FirstActivationPostSaveRefreshCannotReviveARetiredVisit(bool dedicated, string change)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http); var api = new CatalogApi(client);
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var set = new BoxSetViewModel(api);
+        var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((id, _) =>
+            Task.FromResult(new MediaItemDetail { ContentId = id, Type = "movie", UserState = new() })));
+        try
+        {
+            if (dedicated) await set.LoadAsync("7", "12", persisted.Task);
+            else await movie.LoadInLibraryAsync("film", null, persisted.Task);
+            for (var i = 0; i < 100 && (dedicated ? set.Detail : movie.BoxSet) == null; i++) await Task.Delay(10);
+            Assert.NotNull(dedicated ? set.Detail : movie.BoxSet);
+            if (change == "departure") { set.Cancel(); movie.CancelPendingLoads(); }
+            if (change == "profile") client.SetProfile("other");
+            if (change == "route")
+            {
+                if (dedicated) await set.LoadAsync("8", "12");
+                else movie.Item = new MediaItemDetail { ContentId = "other", Type = "movie" };
+            }
+            var reads = wire.DetailReads; wire.AllPlayed = true; persisted.TrySetResult(); await Task.Delay(50);
+            Assert.Equal(reads, wire.DetailReads);
+        }
+        finally { movie.CancelPendingLoads(); set.Cancel(); persisted.TrySetResult(); }
+    }
+    [Theory] [InlineData(200)] [InlineData(503)]
+    public async Task MembershipAccessRevisionPreservesVisibleRowAndPostSaveMembership(int status)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var movie = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        SetMovie(movie); await movie.RefreshBoxSetAsync(); var visible = movie.BoxSet;
+        var blanked = false;
+        movie.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(movie.BoxSet) && movie.BoxSet == null) blanked = true; };
+        wire.Hold = true; wire.DetailStatus = (HttpStatusCode)status;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.InvalidateAccessContext();
+        var refreshing = movie.RefreshBoxSetAsync();
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); Assert.Same(visible, movie.BoxSet); Assert.False(blanked);
+            movie.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("film", 100, 100, true) { Persisted = persisted.Task });
+            wire.Hold = false; wire.Release.TrySetResult(); await refreshing;
+            Assert.False(blanked);
+            if (status == 503) Assert.Same(visible, movie.BoxSet);
+            var reads = wire.DetailReads; wire.DetailStatus = HttpStatusCode.OK; wire.AllPlayed = true; persisted.TrySetResult();
+            for (var i = 0; i < 100 && (wire.DetailReads == reads || movie.BoxSet?.PlayedCount != 2); i++) await Task.Delay(10);
+            Assert.True(wire.DetailReads > reads); Assert.Equal(2, movie.BoxSet!.PlayedCount);
+        }
+        finally { movie.CancelPendingLoads(); wire.Release.TrySetResult(); persisted.TrySetResult(); await refreshing; }
+    }
+    [Theory]
+    [InlineData("profile", false)] [InlineData("access", false)] [InlineData("language", false)]
+    [InlineData("profile", true)] [InlineData("access", true)] [InlineData("language", true)]
+    public async Task AbandonedDedicatedReadEndsLoadingAndAllowsRetry(string change, bool capability)
+    {
+        using var wire = new Wire { Hold = !capability, HoldCapability = capability };
+        using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client));
+        var pending = vm.LoadAsync("7", "12");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Hold = wire.HoldCapability = false; wire.Release.TrySetResult(); await pending;
+        Assert.Null(vm.Detail); Assert.False(vm.IsLoading); Assert.False(vm.IsCurrent);
+        Assert.Equal(DetailFailureKind.Transient, vm.Failure);
+        await vm.RefreshAsync();
+        Assert.NotNull(vm.Detail); Assert.False(vm.IsLoading); Assert.True(vm.IsCurrent);
+        Assert.Equal(DetailFailureKind.None, vm.Failure); vm.Cancel();
+    }
+    [Theory] [InlineData("profile")] [InlineData("access")] [InlineData("language")]
+    public async Task AbandonedBackgroundReadIsTerminalWithoutAdoptingStaleDetail(string change)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); await vm.LoadAsync("7", "12"); var visible = vm.Detail;
+        wire.Hold = true;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = vm.RefreshAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (change == "profile") client.SetProfile("other");
+        if (change == "access") client.InvalidateAccessContext();
+        if (change == "language") client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.Release.TrySetResult(); await pending;
+        Assert.False(vm.IsLoading); Assert.Equal(DetailFailureKind.Transient, vm.Failure);
+        if (change == "profile") Assert.Null(vm.Detail); else Assert.Same(visible, vm.Detail);
+        vm.Cancel();
+    }
+    [Fact] public async Task AbandonedReadCannotFinishItsSuccessorsLoadingState()
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire); var client = Client(http);
+        var vm = new BoxSetViewModel(new CatalogApi(client)); var first = vm.LoadAsync("7", "12");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); var releaseFirst = wire.Release;
+        wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.InvalidateAccessContext(); var second = vm.RefreshAsync();
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); releaseFirst.TrySetResult(); await first;
+        Assert.True(vm.IsLoading); Assert.Equal(DetailFailureKind.None, vm.Failure); Assert.Null(vm.Detail);
+        wire.Release.TrySetResult(); await second;
+        Assert.False(vm.IsLoading); Assert.Equal(DetailFailureKind.None, vm.Failure); Assert.NotNull(vm.Detail); vm.Cancel();
+    }
+    [Fact] public async Task AbandonedReadCannotPublishFailureAfterDeparture()
+    {
+        using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire);
+        var vm = new BoxSetViewModel(new CatalogApi(Client(http))); var pending = vm.LoadAsync("7", "12");
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); vm.Cancel(); wire.Release.TrySetResult(); await pending;
+        Assert.False(vm.IsLoading); Assert.Null(vm.Detail); Assert.Equal(DetailFailureKind.None, vm.Failure);
     }
 }

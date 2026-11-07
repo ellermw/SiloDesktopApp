@@ -90,12 +90,25 @@ public partial class PlaybackApi
     public Task<WatchTogetherSuggestionsResponse> CreateWatchTogetherSuggestionAsync(string roomId, string roomToken,
         string contentId, string contentType, string title, string? subtitle = null, string? posterUrl = null, string? note = null, CancellationToken ct = default,
         ApiIdentityContext? expectedIdentityContext = null)
-        => MutateSuggestionsAsync(HttpMethod.Post, roomId, roomToken, "", new Dictionary<string, object?>
+        => MutateSuggestionsAsync(HttpMethod.Post, roomId, roomToken, "",
+            SuggestionBody(contentId, contentType, title, subtitle, posterUrl, note), ct, expectedIdentityContext);
+
+    // Movie entry only needs the accepted write before navigating. A separate
+    // suggestions read must not turn that acceptance into a retryable failure.
+    public Task SubmitWatchTogetherSuggestionAsync(string roomId, string roomToken,
+        string contentId, string contentType, string title, ApiIdentityContext expectedIdentityContext,
+        string? subtitle = null, string? posterUrl = null, string? note = null, CancellationToken ct = default)
+        => WriteSuggestionsAsync(HttpMethod.Post, roomId, roomToken, "",
+            SuggestionBody(contentId, contentType, title, subtitle, posterUrl, note), ct, expectedIdentityContext);
+
+    private static Dictionary<string, object?> SuggestionBody(string contentId, string contentType, string title,
+        string? subtitle, string? posterUrl, string? note)
+        => new()
         {
             ["suggestion_id"] = Guid.NewGuid().ToString(), ["content_id"] = contentId,
             ["content_type"] = contentType, ["title"] = title, ["subtitle"] = subtitle ?? "",
             ["poster_url"] = posterUrl ?? "", ["note"] = note ?? "",
-        }, ct, expectedIdentityContext);
+        };
 
     public Task<WatchTogetherSuggestionsResponse> DeleteWatchTogetherSuggestionAsync(string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
         => MutateSuggestionsAsync(HttpMethod.Delete, roomId, roomToken, "/" + Uri.EscapeDataString(suggestionId), null, ct);
@@ -109,13 +122,21 @@ public partial class PlaybackApi
     private async Task<WatchTogetherSuggestionsResponse> MutateSuggestionsAsync(HttpMethod method, string roomId, string roomToken, string suffix, object? body, CancellationToken ct,
         ApiIdentityContext? expectedIdentityContext = null)
     {
-        var authority = client.CaptureContext();
-        if (expectedIdentityContext is { } identity)
-            await client.SendIdentityBoundNoContentAsync(identity, method, RoomPath(roomId) + "/suggestions" + suffix, body, ct, RoomProof(roomToken)).ConfigureAwait(false);
-        else
-            await client.SendNoContentRequestAsync(method, RoomPath(roomId) + "/suggestions" + suffix, body, RoomProof(roomToken), ct).ConfigureAwait(false);
-        EnsureRoomAuthority(authority, expectedIdentityContext);
+        await WriteSuggestionsAsync(method, roomId, roomToken, suffix, body, ct, expectedIdentityContext).ConfigureAwait(false);
         return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct, expectedIdentityContext).ConfigureAwait(false);
+    }
+
+    private async Task WriteSuggestionsAsync(HttpMethod method, string roomId, string roomToken, string suffix, object? body, CancellationToken ct,
+        ApiIdentityContext? expectedIdentityContext)
+    {
+        var authority = client.CaptureContext();
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
+        var path = RoomPath(roomId) + "/suggestions" + suffix;
+        if (expectedIdentityContext is { } owner)
+            await client.SendIdentityBoundNoContentAsync(owner, method, path, body, ct, RoomProof(roomToken)).ConfigureAwait(false);
+        else
+            await client.SendNoContentRequestAsync(method, path, body, RoomProof(roomToken), ct).ConfigureAwait(false);
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
     }
 
     public Task<WatchTogetherRoomResponse> PromoteWatchTogetherSuggestionAsync(string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
@@ -139,10 +160,11 @@ public partial class PlaybackApi
         IReadOnlyDictionary<string, string>? headers, CancellationToken ct, ApiIdentityContext? expectedIdentityContext = null)
     {
         var authority = client.CaptureContext();
-        var response = expectedIdentityContext is { } identity
-            ? await client.SendIdentityBoundRequestAsync<WatchTogetherRoomResponse>(identity, method, path, body, ct, headers).ConfigureAwait(false)
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
+        var response = expectedIdentityContext is { } owner
+            ? await client.SendIdentityBoundRequestAsync<WatchTogetherRoomResponse>(owner, method, path, body, ct, headers).ConfigureAwait(false)
             : await client.SendRequestAsync<WatchTogetherRoomResponse>(method, path, body, headers, ct).ConfigureAwait(false);
-        EnsureRoomAuthority(authority, expectedIdentityContext);
+        EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
         return response;
     }
 
@@ -150,7 +172,13 @@ public partial class PlaybackApi
     {
         // Only accepted playback actions opt in; ordinary room reads still retire
         // on access revisions. The server authorizes every identity-bound action.
-        if (identity is { } owner) EnsureAuthority(owner);
-        else EnsureAuthority(readOwner);
+        EnsureRoomIntentOwner(readOwner, identity, CancellationToken.None);
+    }
+
+    private void EnsureRoomIntentOwner(ApiRequestContext authority, ApiIdentityContext? identity, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (identity is not { } owner) EnsureAuthority(authority);
+        else if (!client.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Room intent identity changed.", ct);
     }
 }

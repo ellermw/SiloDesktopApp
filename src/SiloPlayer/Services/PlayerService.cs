@@ -2276,7 +2276,7 @@ public partial class PlayerService : IDisposable
                     WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(
                         retiringContentId, finalPosition, retiringDuration,
                         retiringDuration > 0 && finalPosition >= retiringDuration * 0.9)
-                    { Persisted = retiringSessionTask });
+                    { Persisted = retiringSessionTask, SeriesId = retiringManager.WatchDetail?.SeriesId });
                 }
                 catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
             }
@@ -6474,7 +6474,7 @@ public partial class PlayerService : IDisposable
                 WeakReferenceMessenger.Default.Send(
                     new PlaybackProgressUpdated(
                         closedContentId, closedPosition, closedDuration, completed)
-                    { Persisted = closedFinalSave });
+                    { Persisted = closedFinalSave, SeriesId = closingManager?.WatchDetail?.SeriesId });
             }
             catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
         }

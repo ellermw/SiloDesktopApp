@@ -36,7 +36,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         _catalog = catalog; _client = client; ViewModel = new(catalog);
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition());
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var back = new Button { Name = "BoxSetBack", Content = new FontIcon { Glyph = "\uE72B" }, Width = 40, Height = 40, Margin = new Thickness(24, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(back, "Go back");
         ToolTipService.SetToolTip(back, "Go back");
@@ -46,10 +46,19 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             if (navigation.CanGoBack) navigation.GoBack(); else navigation.Navigate<HomePage>();
         };
         root.Children.Add(back);
-        var scroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var scroll = new ScrollViewer { Content = Body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 1); root.Children.Add(scroll); Content = root;
         ViewModel.PropertyChanged += (_, _) => Render();
-        Loaded += (_, _) => { _active = true; _visit++; WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this); WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this); _catalog.LibraryCacheInvalidated += Refresh; _client.LocalizedReads.Invalidated += LanguageChanged; };
+        Loaded += (_, _) =>
+        {
+            _active = true; _visit++;
+            WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+            WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
+            _catalog.LibraryCacheInvalidated += Refresh;
+            _client.LocalizedReads.Invalidated += LanguageChanged;
+            // Navigation starts the initial read before Loaded subscribes to invalidations.
+            if (!ViewModel.IsCurrent) Refresh();
+        };
         Unloaded += (_, _) => { _active = false; _visit++; _knownMembership = null; WeakReferenceMessenger.Default.UnregisterAll(this); _catalog.LibraryCacheInvalidated -= Refresh; _client.LocalizedReads.Invalidated -= LanguageChanged; ViewModel.Cancel(); };
     }
     private void Refresh()
@@ -71,19 +80,26 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     }
     public void Receive(PlaybackProgressUpdated message) => DispatcherQueue.TryEnqueue(async () =>
     {
+        // A pre-save access refresh can read old progress; this visit still
+        // needs its post-write refresh even when that read context was retired.
         var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureIdentityContext();
-        if (!_active || (detail != null ? !detail.Items.Any(x => x.ContentId == message.ContentId) : !ViewModel.IsLoading)) return;
+        // Until the first read completes we cannot rule out membership. Keep
+        // the final-save refresh rather than dropping a close during loading.
+        if (!_active || (detail != null && !detail.Items.Any(x => x.ContentId == message.ContentId))) return;
         try { await message.Persisted; } catch { return; }
         DispatcherQueue.TryEnqueue(() =>
         {
-            // Initial membership may arrive before the final playback write.
-            // Recheck it after persistence; an access-cache refresh does not
-            // retire this same-viewer invalidation, but a different visit does.
             if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner) &&
-                (_knownMembership != null ? _knownMembership.Items.Any(x => x.ContentId == message.ContentId) : ViewModel.IsLoading)) Refresh();
+                (_knownMembership == null || _knownMembership.Items.Any(x => x.ContentId == message.ContentId))) Refresh();
         });
     });
-    protected override async void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); _knownMembership = null; _visit++; if (e.Parameter is BoxSetNavigationArgs route) await ViewModel.LoadAsync(route.Id, route.LibraryId); }
+    protected override async void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e); _knownMembership = null; _visit++;
+        if (e.Parameter is BoxSetNavigationArgs route)
+            await ViewModel.LoadAsync(route.Id, route.LibraryId,
+                App.Services.GetRequiredService<PlayerService>().PendingProgressSave);
+    }
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; _visit++; _knownMembership = null; ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async Task PlayPrimaryAsync()
     {
@@ -94,10 +110,10 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             // unplayed member. Use that refreshed movie, not the old hero target.
             var movie = ViewModel.Detail?.Items.FirstOrDefault(item => item.ContentId == id);
             if (movie is null) throw new InvalidOperationException("This movie is no longer available. Refresh the box set and try again.");
-            return MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
+            return MoviePlaybackEntry.PlayAsync(movie, library, identity, ct,
                 () => _active && visit == _visit && _client.IsCurrentIdentityContext(identity),
                 (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>()
-                    .PlayPrimaryAsync(target, scope, context, identity, cancellation));
+                    .PlayPrimaryAsync(target, scope, owner, context, cancellation));
         });
     }
     public void Render()

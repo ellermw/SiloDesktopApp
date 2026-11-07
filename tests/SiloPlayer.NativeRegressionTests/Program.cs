@@ -149,6 +149,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await LibraryCursorNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-overview")
+            {
+                await EpisodeOverviewNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "boxset-search" or "boxset-search-quick" or "boxset-search-selection")
+            {
+                await BoxSetSearchNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-admission")
             {
                 await EpisodeQuickPlayNativeFixture.VerifyMenuAdmissionAsync(parent);
@@ -184,10 +194,22 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await BoxSetRoomNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-shell")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetShellRefreshAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-pointer")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxsets")
             {
                 await BoxSetNativeFixture.RunAsync(parent);
                 await BoxSetUnscopedNativeFixture.RunAsync(parent);
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetShellRefreshAsync();
+                await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
@@ -472,6 +494,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-home-rows")
             {
                 await October20HomeRowsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "realtime-series-state")
+            {
+                await RealtimeSeriesStateNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-watched")

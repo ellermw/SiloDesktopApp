@@ -89,7 +89,7 @@ public partial class SiloApiClient
     }
 
     private HttpRequestMessage CreateIdentityBoundRequest(ApiIdentityContext context, HttpMethod method, string path, object? body,
-        IReadOnlyDictionary<string, string>? headers)
+        IReadOnlyDictionary<string, string>? headers = null)
     {
         lock (_authStateGate)
         {

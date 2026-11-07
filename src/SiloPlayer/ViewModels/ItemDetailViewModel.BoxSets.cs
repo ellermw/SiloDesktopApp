@@ -12,8 +12,10 @@ public partial class ItemDetailViewModel
     private string? _boxSetContentId;
     private int? _boxSetLibrary;
     private SiloPlayer.Core.Api.ApiIdentityContext _boxSetOwner;
+    private long _boxSetLanguage;
     private bool CanPreserveBoxSet(string contentId) => !_boxSetRetired && _boxSetContentId == contentId
-        && _boxSetLibrary == LibraryId && _catalogApi.IsCurrentIdentityContext(_boxSetOwner);
+        && _boxSetLibrary == LibraryId && _catalogApi.IsCurrentIdentityContext(_boxSetOwner)
+        && _boxSetLanguage == _catalogApi.MetadataLanguageGeneration;
     private bool IsBoxSetMember(string contentId) => Item is { Type: "movie" } movie
         && (movie.ContentId == contentId || _boxSetMembership?.Items.Any(x => x.ContentId == contentId) == true);
     private bool IsBoxSetMemberOrReading(string contentId) => IsBoxSetMember(contentId)
@@ -26,6 +28,13 @@ public partial class ItemDetailViewModel
         try { await message.Persisted; } catch { return; }
         if (Item?.ContentId == item?.ContentId && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime
             && _catalogApi.IsCurrentIdentityContext(owner) && IsBoxSetMemberOrReading(message.ContentId)) await RefreshBoxSetAsync();
+    }
+    private async Task RefreshBoxSetAfterProgressSaveAsync(Task pendingProgressSave)
+    {
+        // Access revisions retire reads, not this visit's required post-save refresh.
+        var item = Item; var library = LibraryId; var lifetime = _boxSetLifetime; var owner = _catalogApi.CaptureIdentityContext();
+        try { await pendingProgressSave; } catch { return; }
+        if (Item?.ContentId == item?.ContentId && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime && _catalogApi.IsCurrentIdentityContext(owner)) await RefreshBoxSetAsync();
     }
     private void RetireBoxSet()
     {
@@ -45,7 +54,7 @@ public partial class ItemDetailViewModel
         if (!CanPreserveBoxSet(item.ContentId)) { _boxSetMembership = null; BoxSet = null; }
         var library = LibraryId; var identity = _catalogApi.CaptureIdentityContext();
         var context = _catalogApi.CaptureContext(); var language = _catalogApi.MetadataLanguageGeneration;
-        _boxSetContentId = item.ContentId; _boxSetLibrary = library; _boxSetOwner = identity;
+        _boxSetContentId = item.ContentId; _boxSetLibrary = library; _boxSetOwner = identity; _boxSetLanguage = language;
         var pending = _boxSetCts = new(); var ct = pending.Token;
         _boxSetReadInFlight = pending;
         bool Current() => ReferenceEquals(_boxSetCts, pending) && !ct.IsCancellationRequested && ReferenceEquals(Item, item)

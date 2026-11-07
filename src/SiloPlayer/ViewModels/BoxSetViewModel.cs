@@ -21,7 +21,8 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     public BoxSetDetail? Detail { get => _detail; private set => SetProperty(ref _detail, value); }
     public bool IsLoading { get => _loading; private set => SetProperty(ref _loading, value); }
     public DetailFailureKind Failure { get => _failure; private set => SetProperty(ref _failure, value); }
-    public bool IsCurrent => _pending is { IsCancellationRequested: false } && catalog.IsCurrentContext(_owner) && catalog.MetadataLanguageGeneration == _language;
+    public bool IsCurrent => _pending is { IsCancellationRequested: false } && catalog.IsCurrentIdentityContext(_identity)
+        && catalog.IsCurrentContext(_owner) && catalog.MetadataLanguageGeneration == _language;
     public bool CanPlay => _playLifetime is { IsCancellationRequested: false } && catalog.IsCurrentIdentityContext(_identity)
         && catalog.MetadataLanguageGeneration == _language;
     public void Cancel()
@@ -33,10 +34,25 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
     public Task RefreshAsync() => RefreshReadAsync();
     private Task<ValidatedRead?> RefreshReadAsync() => _id is {} id && _library is {} library
         ? ReadAsync(id, library) : Task.FromResult<ValidatedRead?>(null);
-    public Task LoadAsync(string id, string library)
+    public async Task LoadAsync(string id, string library, Task? pendingProgressSave = null)
     {
+        // First activation may not have received the playback close message.
+        var refreshAfterSave = pendingProgressSave is { IsCompleted: false };
+        var owner = catalog.CaptureIdentityContext();
         Cancel();
-        return ReadAsync(id, library);
+        var loading = ReadAsync(id, library);
+        var lifetime = _playLifetime;
+        await loading;
+        if (refreshAfterSave && ReferenceEquals(_playLifetime, lifetime) && catalog.IsCurrentIdentityContext(owner))
+            _ = RefreshAfterProgressSaveAsync(pendingProgressSave!);
+    }
+    private async Task RefreshAfterProgressSaveAsync(Task pendingProgressSave)
+    {
+        var lifetime = _playLifetime; var owner = _identity;
+        var id = _id; var library = _library;
+        try { await pendingProgressSave; } catch { return; }
+        if (lifetime is { IsCancellationRequested: false } && ReferenceEquals(_playLifetime, lifetime)
+            && _id == id && _library == library && catalog.IsCurrentIdentityContext(owner)) await RefreshAsync();
     }
     private async Task<ValidatedRead?> ReadAsync(string id, string library)
     {
@@ -53,8 +69,9 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
         _id = id; _library = library;
         var pending = _pending = new(); var ct = pending.Token;
         _language = catalog.MetadataLanguageGeneration;
-        var owner = _owner; var language = _language;
-        bool Current() => ReferenceEquals(_pending, pending) && !ct.IsCancellationRequested && catalog.IsCurrentContext(owner) && catalog.MetadataLanguageGeneration == language;
+        var owner = _owner; var identity = _identity; var language = _language;
+        bool Current() => ReferenceEquals(_pending, pending) && !ct.IsCancellationRequested && catalog.IsCurrentIdentityContext(identity)
+            && catalog.IsCurrentContext(owner) && catalog.MetadataLanguageGeneration == language;
         IsLoading = true; Failure = DetailFailureKind.None;
         try
         {
@@ -85,9 +102,20 @@ public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
                 Failure = failure;
             }
         }
-        // A retired read still owns its loading flag until a successor takes
-        // the request slot. Context retirement must not strand that flag.
-        finally { if (ReferenceEquals(_pending, pending)) IsLoading = false; }
+        finally
+        {
+            // Read ownership, not context validity, determines who may end
+            // loading. An abandoned context must still expose a retry.
+            if (ReferenceEquals(_pending, pending))
+            {
+                if (!Current())
+                {
+                    if (!catalog.IsCurrentIdentityContext(identity)) Detail = null;
+                    Failure = DetailFailureKind.Transient;
+                }
+                IsLoading = false;
+            }
+        }
         return null;
     }
     private bool IsValidatedReadCurrent(ValidatedRead? read) => read != null && !IsLoading

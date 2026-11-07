@@ -5,6 +5,28 @@ namespace SiloPlayer.Tests;
 
 public sealed class ImageServiceTests
 {
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, true)]
+    [InlineData(HttpStatusCode.Gone, true)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, false)]
+    [InlineData(HttpStatusCode.Unauthorized, false)]
+    public async Task NullArtworkDistinguishesDefinitiveAbsenceFromInterruptedReads(HttpStatusCode status, bool unavailable)
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            using var service = new ImageService(cacheDir);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+                Task.FromResult(new HttpResponseMessage(status))));
+            const string url = "https://cdn.example.test/backdrop.jpg?token=first";
+            Assert.Null(await service.GetImageAsync("series", "backdrop", url, http));
+            Assert.Equal(unavailable, service.IsKnownUnavailable("series", "backdrop", url));
+            Assert.False(service.IsKnownUnavailable("series", "poster", url));
+            Assert.False(service.IsKnownUnavailable("series", "backdrop", url + "-new-signature"));
+        }
+        finally { DeleteTempCacheDir(cacheDir); }
+    }
+
     [Fact]
     public async Task GetImageDiskPathAsync_DoesNotReuseACompletedDownloadAfterItsFileIsRemoved()
     {
@@ -329,6 +351,7 @@ public sealed class ImageServiceTests
             var path = await service.GetImageDiskPathAsync("movie-1", "poster", "https://cdn.example.test/poster.jpg", http);
 
             Assert.Null(path);
+            Assert.False(service.IsKnownUnavailable("movie-1", "poster", "https://cdn.example.test/poster.jpg"));
             Assert.Empty(Directory.EnumerateFiles(cacheDir));
         }
         finally
@@ -386,6 +409,7 @@ public sealed class ImageServiceTests
             var path = await service.GetImageDiskPathAsync("movie-1", "poster", "https://cdn.example.test/poster.jpg", http);
 
             Assert.Null(path);
+            Assert.False(service.IsKnownUnavailable("movie-1", "poster", "https://cdn.example.test/poster.jpg"));
             Assert.Empty(Directory.EnumerateFiles(cacheDir));
         }
         finally
@@ -455,6 +479,7 @@ public sealed class ImageServiceTests
             var bytes = await service.GetImageAsync("movie-1", "poster", "https://cdn.example.test/trailer.mkv", http);
 
             Assert.Null(bytes);
+            Assert.False(service.IsKnownUnavailable("movie-1", "poster", "https://cdn.example.test/trailer.mkv"));
             Assert.Empty(Directory.EnumerateFiles(cacheDir));
         }
         finally

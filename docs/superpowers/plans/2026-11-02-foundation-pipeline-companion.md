@@ -27,7 +27,9 @@ Product `64bd63e00231fa93e5d23ea33d282f3be01679a5`, fixtures `620cd53660b80b4200
 
 The subsequent scoped Spec review found that the pre-click guard did not cross the authority/request gates or preparation awaits. Continue from clean `6398d021`; preserve the BB82 candidate and all previous evidence.
 
-- [ ] Reproduce actual held-authority popup → profile-change playback on BB82, and capture baseline ordinary menu accepted-unload, active-room and queue-behind-scoped controls.
-- [ ] Add a focused ordinary restart interface carrying captured identity through admission/preparation, independent of quick-play supersession and no-active-room policy.
-- [ ] Verify authority/request/watch/settings/capability retirement, same-viewer access refresh and ordinary controls; full units, fresh Release, actual menu/foundation/room and existing quick-play lifecycle regressions.
-- [ ] Freeze source/app/evidence, commit locally and return for scoped re-review.
+- [x] Reproduce actual held-authority popup → profile-change playback on BB82, and capture baseline ordinary menu accepted-unload, active-room and queue-behind-scoped controls.
+- [x] Add a focused ordinary restart interface carrying captured identity through admission/preparation, independent of quick-play supersession and no-active-room policy.
+- [x] Verify authority/request/watch/settings/capability retirement, same-viewer access refresh and ordinary controls; full units, fresh Release, actual menu/foundation/room and existing quick-play lifecycle regressions.
+- [x] Freeze source/app/evidence, commit locally and return for scoped re-review.
+
+Product/build `37cc69ef46c60bdd5fd166e4c50575a81e1db97f`, final fixture `abc34b8b8cbaa353b332213404a00e6af0f28031`: **466 focused**, **3,124 full**, fresh Release and **seven native routes** pass on DLL `53DC2DBE6AEE834064F782F4B9D2455731243EF4E9D8558297903FEFA1E4922B`. Ordinary accepted-unload, active-room, queue-behind-scoped and actual CloseAsync controls pass on both BB82 and final source. The full existing quick-play suite also passes on both apps, including all 17 review regressions. Its initial run exposed five inherited fixture lookups treating public SetState as non-public; the fixture-only correction uses direct calls with assertions unchanged. Original/final fixture hashes and all failed/intermediate runs remain preserved. No republish followed that fixture correction; all product inputs remain frozen.
