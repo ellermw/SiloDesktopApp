@@ -29,6 +29,7 @@ public static class MediaItemActionExecutor
     public static async Task ResetProgressAsync(MediaItem item, Func<Task> persistAsync)
     {
         ArgumentNullException.ThrowIfNull(item);
+        if (item.Type == "box_set") throw new InvalidOperationException("Box sets do not support title mutations.");
         ArgumentNullException.ThrowIfNull(persistAsync);
         await persistAsync();
         item.PositionSeconds = 0;
@@ -44,6 +45,7 @@ public static class MediaItemActionExecutor
         Func<bool, Task> persistAsync)
     {
         ArgumentNullException.ThrowIfNull(item);
+        if (item.Type == "box_set") throw new InvalidOperationException("Box sets do not support title mutations.");
         ArgumentNullException.ThrowIfNull(persistAsync);
 
         var nextValue = !previousValue;

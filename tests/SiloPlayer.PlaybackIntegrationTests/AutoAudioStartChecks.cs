@@ -21,6 +21,36 @@ internal static class AutoAudioStartChecks
         foreach (var scenario in new[] { "auto", "explicit", "explicit-first", "remembered", "lower-source" })
             await CheckAsync(results, origin.Url, scenario);
         Console.WriteLine("PASS published PlayerService: real initial Auto omits default audio intent; explicit and remembered selections survive; lower-source accepted ordinal reaches native aid without preference writes.");
+        foreach (var scenario in new[] { "terminal-limit", "transport-limit" })
+            await CheckRefusedNextItemAsync(results, origin.Url, scenario);
+        Console.WriteLine("PASS published PlayerService: a second next-item account-limit refusal reaches the outer startup error handler and releases manager/loading state.");
+    }
+
+    private static async Task CheckRefusedNextItemAsync(string results, string sample, string scenario)
+    {
+        using var wire = new Wire(scenario, sample);
+        using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://auto-audio.fixture.invalid");
+        using var auth = new AuthService(api, new AuthApi(api), credentialStore: null); auth.SelectProfile("fixture-profile");
+        using var service = new PlayerService(new PlaybackApi(api), new CatalogApi(api), auth, api,
+            new SettingsService(Path.Combine(results, scenario)), new SettingsApi(api));
+        var outgoing = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), auth, api);
+        await outgoing.StartSessionAsync(42, forceStartPosition: true);
+        Field(service, "_playbackManager", outgoing);
+        var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        Field(service, "_mpv", mpv);
+        typeof(PlayerService).GetProperty("State")!.SetValue(service, PlayerState.Expanded);
+        var detail = await service.GetOrFetchWatchDetailAsync("fixture-movie", fileId: 42);
+        var play = (Task)Call(service, "PlayCoreAsync", "fixture-movie", true, (int?)42,
+            null, (int?)-1, null, null, detail, null, null, CancellationToken.None, null, null)!;
+        await play.WaitAsync(TimeSpan.FromSeconds(8));
+        if (wire.Starts.Count != 3 || wire.Stops != 1 ||
+            wire.Starts[1].GetProperty("playback_attempt_id").GetString() == wire.Starts[2].GetProperty("playback_attempt_id").GetString())
+            throw new InvalidOperationException("Next-item account-limit retry did not wait for retirement and retry exactly once with a fresh attempt.");
+        if (service.IsLoading || (bool)GetField(service, "_switchingContent")! ||
+            service.State != PlayerState.Idle || GetField(service, "_playbackManager") != null || GetField(service, "_playbackCts") != null ||
+            service.ErrorMessage != "Stop another account session, then try again.")
+            throw new InvalidOperationException("A second next-item refusal escaped startup cleanup/account-limit guidance.");
     }
 
     private static async Task CheckAsync(string results, string sample, string scenario)
@@ -78,6 +108,7 @@ internal static class AutoAudioStartChecks
     {
         internal List<JsonElement> Starts = [];
         internal int PreferenceWrites;
+        internal int Stops;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "auto-audio.fixture.invalid") throw new InvalidOperationException("Auto audio fixture attempted external networking.");
@@ -94,6 +125,20 @@ internal static class AutoAudioStartChecks
             if (path == "/api/v2/playback/start")
             {
                 using var doc = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); Starts.Add(doc.RootElement.Clone());
+                if (Starts.Count > 1 && scenario is "terminal-limit" or "transport-limit")
+                {
+                    if (scenario == "transport-limit")
+                    {
+                        var response = Json(new { code = "too_many_streams", detail = "Stop another account session, then try again." });
+                        response.StatusCode = HttpStatusCode.TooManyRequests;
+                        return response;
+                    }
+                    return Json(new
+                    {
+                        protocol_version = 3, outcome = "terminal",
+                        terminal = new { reason = "stream_limit_reached", message = "Stop another account session, then try again.", retryable = true },
+                    });
+                }
                 var file = scenario == "lower-source" ? 43 : 42; var index = scenario is "lower-source" or "explicit-first" ? 0 : 1;
                 return Json(new
                 {
@@ -108,6 +153,11 @@ internal static class AutoAudioStartChecks
                         available_qualities = new[] { new { label = "original", preserves_source = true } }, degradation_warnings = Array.Empty<object>(),
                     },
                 });
+            }
+            if (request.Method == HttpMethod.Delete && path == "/api/v2/playback/fixture-session")
+            {
+                Interlocked.Increment(ref Stops);
+                return Json(new { outcome = "stopped" });
             }
             return Json(new { outcome = "applied" });
         }

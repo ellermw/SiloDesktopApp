@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 
 namespace SiloPlayer.Core.Services;
@@ -122,6 +123,7 @@ public static class MediaItemCollectionReconciler
             && SameOverlay(left.OverlaySummary, right.OverlaySummary)
             && SameSortMetrics(left.SortMetrics, right.SortMetrics)
             && SameUserState(left.UserState, right.UserState)
+            && SameBoxSet(left.BoxSet, right.BoxSet)
             && left.SeriesId == right.SeriesId
             && left.SeriesTitle == right.SeriesTitle
             && left.SeasonNumber == right.SeasonNumber
@@ -142,6 +144,22 @@ public static class MediaItemCollectionReconciler
             && JsonSerializer.Serialize(left.Audiobook) == JsonSerializer.Serialize(right.Audiobook)
             && JsonSerializer.Serialize(left.Ebook) == JsonSerializer.Serialize(right.Ebook);
     }
+
+    private static bool SameBoxSet(BoxSetSummary? left, BoxSetSummary? right) =>
+        ReferenceEquals(left, right)
+        || (left is not null && right is not null
+            && left.Id == right.Id
+            && left.LibraryId == right.LibraryId
+            && left.Title == right.Title
+            && left.Overview == right.Overview
+            && left.MovieCount == right.MovieCount
+            && left.PlayedCount == right.PlayedCount
+            && left.FirstYear == right.FirstYear
+            && left.LastYear == right.LastYear
+            && left.PosterUrl == right.PosterUrl
+            && left.PosterThumbhash == right.PosterThumbhash
+            && left.BackdropUrl == right.BackdropUrl
+            && left.BackdropThumbhash == right.BackdropThumbhash);
 
     private static bool SameArtwork(string? left, string? right) =>
         StripQueryAndFragment(left ?? "") == StripQueryAndFragment(right ?? "");

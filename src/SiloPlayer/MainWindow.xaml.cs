@@ -40,6 +40,8 @@ public sealed partial class MainWindow : Window
     private readonly RequestsApi _requestsApi;
     private readonly NotificationsApi _notificationsApi;
     private readonly EventChannelClient _eventChannel;
+    private readonly RealtimeMediaStateRefresh _realtimeMediaStateRefresh;
+    private bool _windowClosed;
     private readonly PlayerService _playerService;
     private readonly ThemeService _themeService;
     private readonly UICustomizationService _uiCustomizationService;
@@ -117,6 +119,8 @@ public sealed partial class MainWindow : Window
         _requestsApi = App.Services.GetRequiredService<RequestsApi>();
         _notificationsApi = App.Services.GetRequiredService<NotificationsApi>();
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+        _realtimeMediaStateRefresh = new RealtimeMediaStateRefresh(_apiClient,
+            callback => DispatcherQueue.TryEnqueue(() => callback()));
         _themeService = App.Services.GetRequiredService<ThemeService>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         _uiCustomizationService.Changed += OnUICustomizationChanged;
@@ -445,6 +449,9 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        _realtimeMediaStateRefresh.Dispose();
+        _windowClosed = true;
+        if (ContentFrame.Content is ItemDetailPage detail) detail.ViewModel.CancelPendingLoads();
         Interlocked.Exchange(ref _loadingOverlayOwner, null);
         if (!_updateSessionEnding)
             try { App.Services.GetService<IAppUpdateInstaller>()?.ConfirmNormalClose(); }
@@ -1428,6 +1435,8 @@ public sealed partial class MainWindow : Window
 
     private bool _navInitialized;
     private bool _pendingAccessRefresh;
+    private bool _pendingDetailCatchUp;
+    private bool _pendingDetailCatchUpRequiresRemount;
     private string? _hydratedShellKey;
     private bool _playerPrewarmed;
 
@@ -1458,13 +1467,25 @@ public sealed partial class MainWindow : Window
 
     private void OnReadCatchUpRequested(ApiRequestContext context)
     {
+        _realtimeMediaStateRefresh.CatchUp(context);
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            if (_windowClosed || !_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();
             App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
+            // Keep healthy details mounted, but do not drop shell hydration
+            // (including when foreground playback defers it).
+            if (ContentFrame.Content is ItemDetailPage detail)
+            {
+                _pendingDetailCatchUp = true;
+                // Remember the decision while playback defers shell hydration:
+                // a pre-reconnect companion response may finish in the meantime.
+                _pendingDetailCatchUpRequiresRemount |= !detail.CanPreserveOnReconnect;
+                ApplyPendingAccessRefresh();
+                return;
+            }
             if (ContentFrame.Content is HomePage home && NavView.IsPaneVisible &&
                 _playerService.State is not (PlayerState.Expanded or PlayerState.Fullscreen))
             {
@@ -1514,17 +1535,26 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPendingAccessRefresh()
     {
-        if (!_pendingAccessRefresh || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
+        if ((!_pendingAccessRefresh && !_pendingDetailCatchUp) || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
             _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
+        // Access changes still remount the route. Reconnect alone preserves a
+        // healthy detail; a failed initial load needs the normal navigation retry.
+        var preserveDetail = !_pendingAccessRefresh && !_pendingDetailCatchUpRequiresRemount
+            && ContentFrame.Content is ItemDetailPage detail
+            && detail.CanPreserveOnReconnect;
         _pendingAccessRefresh = false;
+        _pendingDetailCatchUp = false;
+        _pendingDetailCatchUpRequiresRemount = false;
         if (!string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal))
         {
             // A new request authority needs the complete hydration once. Show
             // owns it; do not immediately cancel and start a second load.
             ShowMainNavigation();
-            TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
+            if (!preserveDetail && ContentFrame.Content is not BoxSetPage)
+                TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
             return;
         }
+        if (!preserveDetail) ShowMainNavigation();
         CancelShellHydration();
         _shellHydrationCts = new CancellationTokenSource();
         var shellKey = GetAuthenticatedShellKey();
@@ -1536,7 +1566,10 @@ public sealed partial class MainWindow : Window
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
         // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
-        TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
+        // Box sets consume LibraryCacheInvalidated in place. Re-navigation would
+        // retire the visit (and accepted playback still preparing in Idle/Minimized).
+        if (!preserveDetail && ContentFrame.Content is not BoxSetPage)
+            TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
     }
 
     public void ShowMainNavigation()
@@ -1680,6 +1713,7 @@ public sealed partial class MainWindow : Window
 
     private void ReleaseNotificationSubscription()
     {
+        _realtimeMediaStateRefresh.Reset();
         _notificationSubscription?.Dispose();
         _notificationSubscription = null;
         _notificationSubscriptionShellKey = null;
@@ -1730,6 +1764,7 @@ public sealed partial class MainWindow : Window
     {
         if (_notificationSubscription != null && CanExposeAuthenticatedNavigation)
         {
+            _realtimeMediaStateRefresh.ReceiveRealtime(channel, eventName, data);
             _apiClient.LocalizedReads.NotifyRealtime(channel, eventName, data, _authService.SelectedProfileId);
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
             NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
@@ -2143,6 +2178,7 @@ public sealed partial class MainWindow : Window
     private void OnNavigated_SynchronizeShellChrome(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         _sidebarPresentation.Navigate(e.SourcePageType == typeof(ItemDetailPage)
+            || e.SourcePageType == typeof(BoxSetPage)
             || e.SourcePageType == typeof(PersonDetailPage)
             || e.SourcePageType == typeof(RequestDetailPage));
         _lastShellPageType = e.SourcePageType;
@@ -2428,7 +2464,9 @@ public sealed partial class MainWindow : Window
         RetireSidebarNavigation();
         BuildPluginApps([]);
         _hydratedShellKey = null;
+        _pendingDetailCatchUp = false;
         CancelShellHydration();
+        _pendingDetailCatchUpRequiresRemount = false;
         ReleaseNotificationSubscription();
         _brandingLoadGate.Cancel();
     }
