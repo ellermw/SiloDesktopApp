@@ -48,6 +48,53 @@ public class VideoPlaybackRatePreferencesTests
         Assert.Empty(f.Handler.Writes);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoreDoesNotApplyDefaultBeforeOptionalReadSucceeds(bool failRead)
+    {
+        using var f = new Fixture(); f.Handler.HoldRead = true; f.Handler.FailRead = failRead;
+        f.Session.Restore(); Assert.Empty(f.Applied);
+        var loading = f.Session.LoadAsync(); await f.Handler.ReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        f.Session.Restore(); Assert.Empty(f.Applied);
+        f.Editable = false;
+        f.Handler.ReadRelease.TrySetResult(); await loading;
+        Assert.Empty(f.Applied);
+        f.Editable = true; f.Session.Restore();
+        if (failRead)
+        {
+            Assert.Empty(f.Applied); Assert.Contains("retry", f.Session.Error!);
+            await f.Session.SetAsync(1.5); f.Applied.Clear(); f.Session.Restore();
+            Assert.Equal(new[] { 1.5 }, f.Applied);
+        }
+        else Assert.Equal(new[] { 1.35 }, f.Applied);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoreKeepsAcceptedManualDesireWhileReadAndSaveAreHeld(bool failRead)
+    {
+        using var f = new Fixture();
+        f.Handler.HoldRead = true; f.Handler.FailRead = failRead; f.Handler.HoldFirstWrite = true;
+        var loading = f.Session.LoadAsync(); await f.Handler.ReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var saving = f.Session.SetAsync(1.5); await f.Handler.WriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        try
+        {
+            f.Editable = false; f.Session.Restore();
+            Assert.Equal(new[] { 1.5 }, f.Applied);
+            f.Editable = true; f.Session.Restore();
+            Assert.Equal(new[] { 1.5, 1.5 }, f.Applied);
+            Assert.True(f.Session.IsSavePending);
+            f.Handler.ReadRelease.TrySetResult(); await loading;
+            Assert.Equal(1.5, f.Session.DesiredRate); Assert.Null(f.Session.Error);
+            Assert.Equal(new[] { 1.5, 1.5 }, f.Applied);
+        }
+        finally { f.Handler.ReadRelease.TrySetResult(); f.Handler.WriteRelease.TrySetResult(); await saving; }
+        Assert.False(f.Session.IsSavePending);
+        Assert.Equal(1.5, Assert.Single(f.Handler.Writes).Rate);
+    }
+
     [Fact]
     public async Task ManualSelectionAppliesImmediatelyAndBeatsHeldRead()
     {

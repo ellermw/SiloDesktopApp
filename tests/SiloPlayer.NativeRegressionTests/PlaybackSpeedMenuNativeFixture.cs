@@ -144,6 +144,45 @@ internal static class PlaybackSpeedMenuNativeFixture
             player.SetPaused(false); await Until(() => !mpv.IsPaused, "Playing Speed precondition failed.");
             Select("rate:1.25"); await Until(() => !player.VideoPlaybackRatePending, "Playing Speed save did not settle.");
             Require(!mpv.IsPaused && player.NativePlaybackRate == 1.25, "Native Speed forced a playing viewer to pause.");
+            // A source-version replacement keeps the playback owner, even when
+            // its accepted preference write is still pending. A new optional
+            // read would be slow (and, on the second switch, fail).
+            versions.Add(new() { FileId = 43, Resolution = "720p", CodecVideo = "hevc", Duration = 60 });
+            foreach (var failRead in new[] { false, true })
+            {
+                wire.ReadRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.FailReads = failRead; wire.HoldVersionWrite = true;
+                wire.VersionWriteEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.VersionWriteRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var speedSession = Get(player, "_videoPlaybackRate"); var readsBeforeSwitch = wire.SpeedReads;
+                var saving = player.SetVideoPlaybackRateAsync(1.5);
+                await wire.VersionWriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                try
+                {
+                    var target = versions[failRead ? 0 : 1];
+                    var previousFileGeneration = (long)Get(player, "_playbackFileGeneration")!;
+                    await player.SwitchVersionAsync(target).WaitAsync(TimeSpan.FromSeconds(8));
+                    await Until(() => manager.CurrentSession?.MediaFileId == target.FileId && !player.IsLoading &&
+                        (long)Get(player, "_playbackFileGeneration")! > previousFileGeneration,
+                        "Version replacement did not finish its real native load while the speed save was held.");
+                    Require(ReferenceEquals(speedSession, Get(player, "_videoPlaybackRate")) && player.CanChangeVideoPlaybackRate &&
+                        player.DesiredVideoPlaybackRate == 1.5 && player.NativePlaybackRate == 1.5 && player.VideoPlaybackRatePending,
+                        "Version FILE_LOADED reset accepted speed or retired its pending preference intent.");
+                    Require(wire.SpeedReads == readsBeforeSwitch && !mpv.IsPaused,
+                        "Same-owner version replacement reread speed settings or paused the viewer.");
+                }
+                finally
+                {
+                    wire.HoldVersionWrite = false; wire.VersionWriteRelease.TrySetResult(); await saving;
+                    wire.ReadRelease.TrySetResult();
+                }
+                await Until(() => Get(player, "_loadedMediaInitCts") == null, "Version media publication did not settle.");
+                Require(player.DesiredVideoPlaybackRate == 1.5 && player.NativePlaybackRate == 1.5 &&
+                    !player.VideoPlaybackRatePending && player.VideoPlaybackRateError == null && wire.SpeedReads == readsBeforeSwitch,
+                    "Version replacement lost accepted speed after its save settled or started a redundant settings read.");
+            }
+            wire.FailReads = false;
+            await ReopenSpeed();
             var oldFileMenu = menu; var writesBeforeLoad = wire.Writes.Count;
             var reloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void Reloaded() => reloaded.TrySetResult(); mpv.FileLoaded += Reloaded;
@@ -158,7 +197,7 @@ internal static class PlaybackSpeedMenuNativeFixture
             client.SetProfile("replacement"); var retired = menu;
             Call(retired, "Input", "activate"); await Until(() => Menu(player) == null, "Retired profile kept Speed presentation alive.");
             Require(Gate(player).CurrentCount == 1 && wire.Writes.Count == writesBeforeLoad, "Speed profile retirement leaked its lease or wrote stale preferences.");
-            Program.Log("PASS: actual empty-ladder OSC settings→native Speed; custom value/presets, pending/latest failure/retry, no seek/pause, room drift/disabled/departure and profile retirement.");
+            Program.Log("PASS: actual empty-ladder OSC settings→native Speed; custom value/presets, pending/latest failure/retry, no seek/pause, room drift/disabled/departure, source-version loads with a held save and slow/failing read, and profile retirement.");
 
             ListViewItem Row(string id) => list.Items.Cast<ListViewItem>().Single(row => (string)row.Tag == id);
             void Select(string id) { list.SelectedItem = Row(id); Call(menu, "Input", "activate"); }
@@ -173,7 +212,7 @@ internal static class PlaybackSpeedMenuNativeFixture
         }
         finally
         {
-            wire.ReadRelease.TrySetResult(); wire.WriteRelease.TrySetResult();
+            wire.ReadRelease.TrySetResult(); wire.WriteRelease.TrySetResult(); wire.VersionWriteRelease.TrySetResult();
             if (Menu(player) is { } current) Call(current, "Input", "cancel");
             Call(player, "StopPlaybackStallWatchdog"); Call(player, "DisconnectWebSocket"); mpv.ScriptMessageReceived -= Message;
             Set(player, "_videoWindow", null); Set(player, "_mpv", null); Set(player, "_playbackManager", null);
@@ -206,9 +245,12 @@ internal static class PlaybackSpeedMenuNativeFixture
     private sealed class Wire(string origin) : HttpMessageHandler
     {
         internal readonly ConcurrentQueue<double> Writes = new();
-        internal bool HoldFirstWrite, FailFirstWrite, FailWrites;
-        internal readonly TaskCompletionSource ReadEntered = new(TaskCreationOptions.RunContinuationsAsynchronously), ReadRelease = new(TaskCreationOptions.RunContinuationsAsynchronously),
+        internal bool HoldFirstWrite, FailFirstWrite, FailWrites, HoldVersionWrite, FailReads;
+        internal int SpeedReads;
+        internal readonly TaskCompletionSource ReadEntered = new(TaskCreationOptions.RunContinuationsAsynchronously),
             WriteEntered = new(TaskCreationOptions.RunContinuationsAsynchronously), WriteRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReadRelease = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            VersionWriteEntered = new(TaskCreationOptions.RunContinuationsAsynchronously), VersionWriteRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Require(request.RequestUri?.Host == "native-speed.fixture.invalid", "Speed fixture attempted external API networking.");
@@ -218,20 +260,26 @@ internal static class PlaybackSpeedMenuNativeFixture
                 if (request.Method == HttpMethod.Get)
                 {
                     if (!request.RequestUri.Query.Contains("player.playback_speed")) return Json("{\"items\":[]}");
-                    ReadEntered.TrySetResult(); await ReadRelease.Task; return Json("{\"items\":[{\"key\":\"player.playback_speed\",\"value\":1.35}]}");
+                    Interlocked.Increment(ref SpeedReads); ReadEntered.TrySetResult(); await ReadRelease.Task;
+                    return Json("{\"items\":[{\"key\":\"player.playback_speed\",\"value\":1.35}]}",
+                        FailReads ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
                 }
                 Require(request.Method == HttpMethod.Put && path.EndsWith("player.playback_speed") && request.RequestUri.Query.Contains("scope=profile_device")
                     && request.RequestUri.Query.Contains("device_id=speed-desktop") && request.RequestUri.Query.Contains("profile_id=synthetic"), "Speed wrote the wrong settings scope/device/profile.");
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); Writes.Enqueue(body.RootElement.GetProperty("value").GetDouble());
                 var first = Writes.Count == 1;
                 if (first && HoldFirstWrite) { WriteEntered.TrySetResult(); await WriteRelease.Task; }
+                if (HoldVersionWrite) { VersionWriteEntered.TrySetResult(); await VersionWriteRelease.Task; }
                 return Json("{}", FailWrites || first && FailFirstWrite ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
             }
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1","plan_active_quality_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start")) return Json("{\"outcome\":\"applied\"}");
-            return Json(JsonSerializer.Serialize(new { protocol_version = 3, outcome = "playable", session_id = "speed-session",
+            using var start = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            var fileId = start.RootElement.GetProperty("file_id").GetInt32();
+            var sessionId = "speed-session-" + fileId;
+            return Json(JsonSerializer.Serialize(new { protocol_version = 3, outcome = "playable", session_id = sessionId,
                 server_features = new[] { "plan_active_quality_v1" }, playback_plan = new {
-                    protocol_version = 3, plan_id = "speed-plan", plan_attempt_key = "synthetic", session_id = "speed-session", effective_media_file_id = 42,
+                    protocol_version = 3, plan_id = "speed-plan-" + fileId, plan_attempt_key = "synthetic", session_id = sessionId, effective_media_file_id = fileId,
                     delivery = "original_http", stream = new { url = origin + "/video.y4m" }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
                     selected_tracks = new { }, subtitle = new { mode = "off", inventory = Array.Empty<object>() }, active_quality = "original", available_qualities = Array.Empty<object>() } }));
         }

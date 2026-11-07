@@ -132,9 +132,13 @@ internal static class VideoPlaybackRateNativeFixture
             Require(service.NativePlaybackRate == 1.35 && mpv.IsPaused && wire.Writes.Count == writes,
                 "Room departure after a pending read lost the saved desired rate or resumed playback.");
             accepted.MediaFileId = 43;
-            Require(!service.CanChangeVideoPlaybackRate, "Replacement file retained old speed command authority.");
+            Call(service, "EnsureVideoPlaybackRateSession"); Call(service, "RestoreVideoPlaybackRate");
+            Require(service.CanChangeVideoPlaybackRate && service.DesiredVideoPlaybackRate == 1.35 && service.NativePlaybackRate == 1.35,
+                "Same-content source replacement lost the accepted viewer speed.");
+            Call(service, "CancelPendingPlayRequest");
+            Require(!service.CanChangeVideoPlaybackRate, "Replacement playback request retained old speed command authority.");
             writes = wire.Writes.Count; await service.SetVideoPlaybackRateAsync(2);
-            Require(wire.Writes.Count == writes, "Old file speed request dispatched for replacement media.");
+            Require(wire.Writes.Count == writes, "Old playback speed request dispatched for replacement media.");
             Call(service, "ResetVideoPlaybackRateSession");
             Property(service, "IsAudiobook", true); Call(service, "EnsureVideoPlaybackRateSession");
             Require(!service.CanChangeVideoPlaybackRate && wire.Writes.Count == writes, "Audiobook entered normal-video preference path.");
@@ -143,7 +147,7 @@ internal static class VideoPlaybackRateNativeFixture
             var reads = wire.Reads; Call(service, "EnsureVideoPlaybackRateSession"); await service.SetVideoPlaybackRateAsync(2);
             Require(!service.CanChangeVideoPlaybackRate && wire.Reads == reads && wire.Writes.Count == writes,
                 "Temporary remote authority entered desktop preference path.");
-            Program.Log("PASS: video-speed actual PlayerService/SettingsApi/libmpv: optional read, manual/latest/read, playing/paused, no seek, room/drift/departure, restore, failure/retry, file/audiobook/temporary-owner guards.");
+            Program.Log("PASS: video-speed actual PlayerService/SettingsApi/libmpv: optional read, manual/latest/read, playing/paused, no seek, room/drift/departure, restore, failure/retry, source-version continuity and playback-request/audiobook/temporary-owner guards.");
         }
         finally
         {

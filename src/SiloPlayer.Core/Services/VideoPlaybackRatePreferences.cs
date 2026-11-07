@@ -66,7 +66,7 @@ public sealed class VideoPlaybackRateSession
     private readonly Action _changed;
     private readonly object _gate = new();
     private long _intent;
-    private bool _retired, _pending;
+    private bool _retired, _pending, _hasDesiredRate;
     private double _desired = 1;
     private string? _error;
 
@@ -91,7 +91,7 @@ public sealed class VideoPlaybackRateSession
             lock (_gate)
             {
                 if (!Current || intent != _intent) return;
-                _desired = rate; _error = null;
+                _desired = rate; _hasDesiredRate = true; _error = null;
                 if (_canEdit()) _apply(rate);
                 _changed();
             }
@@ -115,7 +115,7 @@ public sealed class VideoPlaybackRateSession
         {
             if (!Current || !_canEdit()) return Task.CompletedTask;
             intent = ++_intent;
-            _desired = rate; _pending = true; _error = null;
+            _desired = rate; _hasDesiredRate = true; _pending = true; _error = null;
             _apply(rate); _changed();
         }
         return SaveAsync(rate, intent);
@@ -140,7 +140,9 @@ public sealed class VideoPlaybackRateSession
     /// <summary>Reapply desire after a same-session replan or room departure without a settings write.</summary>
     public void Restore()
     {
-        lock (_gate) { if (Current && _canEdit()) _apply(_desired); }
+        // Until a read or manual choice establishes desire, the default is
+        // only a display fallback, not an accepted rate to restore.
+        lock (_gate) { if (Current && _hasDesiredRate && _canEdit()) _apply(_desired); }
     }
 
     public void Retire() { lock (_gate) _retired = true; }
