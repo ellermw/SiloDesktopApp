@@ -98,7 +98,7 @@ public partial class PlayerService
                 // Optional track IDs encode Off as either an omitted key or JSON null.
                 if (command["trackId"] == null)
                 {
-                    if (deferSubtitleSelection) StartSiloCastSubtitleSelection(-1, ct);
+                    if (deferSubtitleSelection) StartSiloCastSubtitleSelection(-1);
                     else if (!await SelectSubtitleByServerIndexAsync(-1))
                         throw new ArgumentException("Subtitles could not be turned off.");
                     break;
@@ -108,7 +108,7 @@ public partial class PlayerService
                 var subtitleTrack = _playbackManager?.CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index + 1 == sid);
                 if (sid < 1 || subtitleTrack == null || subtitleTrack.Unplayable || !HasSubtitleSelectionRoute(subtitleTrack))
                     throw new ArgumentException("This subtitle track is unavailable.");
-                if (deferSubtitleSelection) StartSiloCastSubtitleSelection(sid - 1, ct);
+                if (deferSubtitleSelection) StartSiloCastSubtitleSelection(sid - 1);
                 else if (!await SelectSubtitleByServerIndexAsync(sid - 1))
                     throw new ArgumentException("This subtitle track is unavailable.");
                 break;
@@ -154,25 +154,26 @@ public partial class PlayerService
         }
     }
 
-    private void StartSiloCastSubtitleSelection(int index, CancellationToken ct)
+    private void StartSiloCastSubtitleSelection(int index)
     {
         // Reserve the manual owner on the dispatcher, without keeping the
         // receiver's serialized control lane occupied by the download.
+        // Once accepted, the desktop owns the pick: a controller disconnect
+        // must not cancel it. New choices and playback/authority retirement do.
         var pending = SelectSubtitleByServerIndexAsync(index);
         var owner = Volatile.Read(ref _subtitleSelectionOperation);
-        _ = ObserveSiloCastSubtitleSelectionAsync(pending, owner, ct);
+        _ = ObserveSiloCastSubtitleSelectionAsync(pending, owner);
     }
 
     private async Task ObserveSiloCastSubtitleSelectionAsync(Task<bool> pending,
-        SubtitleSelectionOperation? owner, CancellationToken ct)
+        SubtitleSelectionOperation? owner)
     {
-        using var cancellation = ct.Register(() => owner?.Cancel());
         try { await pending; } // Selection publishes applied state and read failures.
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             LogToFile("silocast.txt", $"subtitle_selection_failed | {ex.GetType().Name}");
-            if (!ct.IsCancellationRequested && owner != null && IsCurrentSubtitleChoice(owner))
+            if (owner != null && IsCurrentSubtitleChoice(owner))
                 ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);
         }
     }

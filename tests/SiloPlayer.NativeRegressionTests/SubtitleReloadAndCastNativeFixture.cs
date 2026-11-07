@@ -30,15 +30,39 @@ internal static partial class SubtitleIdentityNativeFixture
             }
             finally { Set(service, "_loadedMediaInitCts", null); }
         }
-        foreach (var manual in new[] { true, false })
+        foreach (var selection in new[] { "manual", "automatic", "cast-disconnected" })
         {
-            var track = new SubtitleTrackInfo { Index = manual ? 600 : 610, TrackId = "carry-" + manual,
-                SyncKey = "stable-" + manual, Source = "external", Language = "en", Codec = "srt",
-                Url = server.Origin + "/carry-" + manual + ".srt" };
+            var track = new SubtitleTrackInfo { Index = selection == "manual" ? 600 : selection == "automatic" ? 610 : 615,
+                TrackId = "carry-" + selection, SyncKey = "stable-" + selection, Source = "external", Language = "en", Codec = "srt",
+                Url = server.Origin + "/carry-" + selection + ".srt" };
             original.SubtitleUrls.Add(track);
             try
             {
-                if (manual) await service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track);
+                if (selection == "cast-disconnected")
+                {
+                    var prior = original.SubtitleUrls.Single(t => t.Index == 2);
+                    await service.SetSubtitleTrackAndPersistAsync(prior.Index + 1, prior.Language, prior);
+                    var priorSid = mpv.GetPropertyDouble("sid");
+                    var priorWrites = wire.PreferenceWrites;
+                    using var lifetime = new CancellationTokenSource();
+                    var held = server.HoldNext();
+                    try
+                    {
+                        await service.ApplySiloCastControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = track.Index + 1 },
+                            lifetime.Token, deferSubtitleSelection: true).WaitAsync(TimeSpan.FromSeconds(2));
+                        await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        Require(service.ActiveSubtitleServerIndex == prior.Index && mpv.GetPropertyDouble("sid") == priorSid &&
+                            wire.PreferenceWrites == priorWrites && !held.Release.Task.IsCompleted,
+                            "A held cast read changed the applied captions or saved an unapplied preference.");
+                        // A phone closing or timing out ends only its control
+                        // connection, not the pick already owned by the desktop.
+                        lifetime.Cancel();
+                        held.Release.TrySetResult();
+                        await WaitNativeAsync(() => service.ActiveSubtitleServerIndex == track.Index && wire.PreferenceWrites == priorWrites + 1);
+                    }
+                    finally { held.Release.TrySetResult(); }
+                }
+                else if (selection == "manual") await service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track);
                 else
                 {
                     Call(service, "BeginSubtitleSelection");
@@ -99,7 +123,7 @@ internal static partial class SubtitleIdentityNativeFixture
                 original.SubtitleUrls.Remove(track);
             }
         }
-        Program.Log("PASS: manual and automatic applied bytes cross same-session reindexed reloads once without a busy re-read; changed files/sessions refuse the carry, and replacement sessions fetch fresh cues without duplicate preferences.");
+        Program.Log("PASS: manual, automatic and controller-disconnected cast picks cross same-session reindexed reloads once without a busy re-read; changed files/sessions refuse the carry, and replacement sessions fetch fresh cues without duplicate preferences.");
     }
 
     private static async Task CheckRetiredAddBeforeFileLoadAsync(MpvPlayer mpv, SubtitleServer server, string assets)
