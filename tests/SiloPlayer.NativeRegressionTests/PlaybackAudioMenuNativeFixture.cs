@@ -109,6 +109,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     mp.commandv('script-message','silo-audio-fixture-state',request,require('mp.utils').format_json({
                         x=r.cx or 0,y=r.cy or 0,w=r.w or 0,h=r.h or 0,
                         width=state.osd_width,height=state.osd_height,scope=state.native_audio_scope or '',
+                        qualityScope=state.native_quality_scope or '',
                         sequence=pending.sequence or 0,legacy=state.audio_menu_visible or false,
                         legacyAvailable=state.native_audio_legacy or false,directAudio=state.layout.btn_audio ~= nil,
                         notice=state.notice_visible or false,noticeTitle=state.notice_title or '',
@@ -297,12 +298,20 @@ internal static partial class PlaybackAudioMenuNativeFixture
             // this explicitly authorized fallback may bypass the native host.
             var activeSession = manager.CurrentSession!;
             var activeTransport = Get(service, "_activeTransportPlan");
+            var alternateVersion = new FileVersion { FileId = 43, Resolution = "720p" };
             try
             {
+                service.Versions.Add(alternateVersion);
+                Call(service, "SendQualityInfoToOsc");
+                Require(!string.IsNullOrEmpty((await Query()).GetProperty("qualityScope").GetString()),
+                    "Multi-version playback with a session did not advertise native Quality.");
                 Property(manager, "CurrentSession", null!);
                 Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", media.Origin + mediaPath));
                 Call(service, "SendAudioTrackListToOsc");
-                Require((await Query()).GetProperty("legacyAvailable").GetBoolean(),
+                var sessionless = await Query();
+                Require(sessionless.GetProperty("qualityScope").GetString() == "",
+                    "Sessionless multi-version direct playback advertised a Quality menu that requires a session.");
+                Require(sessionless.GetProperty("legacyAvailable").GetBoolean(),
                     "Sessionless direct playback did not publish its legacy Audio fallback.");
                 await TriggerOsc();
                 Require((await Query()).GetProperty("legacy").GetBoolean() && Menu(service) == null
@@ -318,7 +327,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
             {
                 Property(manager, "CurrentSession", activeSession);
                 Set(service, "_activeTransportPlan", activeTransport);
+                service.Versions.Remove(alternateVersion);
                 Call(service, "SendAudioTrackListToOsc");
+                Call(service, "SendQualityInfoToOsc");
             }
 
             Set(service, "_postRollActive", true);

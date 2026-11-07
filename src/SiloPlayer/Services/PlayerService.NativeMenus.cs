@@ -68,7 +68,7 @@ public partial class PlayerService
                 _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             }
             mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : version?.AudioTracks?.Count > 1 ? owner.Token : "");
-            mpv.SendScriptMessage("osc-native-quality-scope", (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-quality-scope", session != null && ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
