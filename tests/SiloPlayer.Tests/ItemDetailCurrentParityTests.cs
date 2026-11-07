@@ -37,6 +37,22 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("SiblingEpisodesSection.Visibility = Visibility.Collapsed;", code);
     }
 
+    [Fact]
+    public void BackgroundRefreshRetryIsInlineAndSeparateFromTheLoadErrorOverlay()
+    {
+        var document = XDocument.Parse(Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml"));
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var inline = document.Descendants().Single(element => (string?)element.Attribute(x + "Name") == "RemoteStateRefreshError");
+        Assert.Contains("ViewModel.RemoteStateErrorMessage", (string?)inline.Attribute("Visibility") ?? "");
+        Assert.Contains(inline.Ancestors(), element => (string?)element.Attribute(x + "Name") == "HeroInfoPanel");
+        var retry = inline.Descendants().Single(element => element.Name.LocalName == "Button");
+        Assert.Equal("{x:Bind ViewModel.RetryRemoteStateCommand}", (string?)retry.Attribute("Command"));
+        Assert.Null(retry.Attribute("Click")); // Never navigate through RetryDetail_Click.
+        var overlay = document.Descendants().Single(element => (string?)element.Attribute(x + "Name") == "DetailErrorPanel");
+        Assert.Contains("ViewModel.ErrorMessage,", (string?)overlay.Attribute("Visibility") ?? "");
+        Assert.DoesNotContain(inline, overlay.Descendants());
+    }
+
     private static readonly JsonSerializerOptions ApiJson = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -383,7 +399,7 @@ public sealed class ItemDetailCurrentParityTests
     [Fact]
     public void DetailPageCarriesCurrentOnViewTranslationContract()
     {
-        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.Overview.cs");
         var api = Read("src", "SiloPlayer.Core", "Api", "CatalogApi.cs");
         var model = Read("src", "SiloPlayer.Core", "Models", "Catalog", "MediaItemDetail.cs");
 
@@ -459,7 +475,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("navigationToken", page);
         Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
         Assert.Contains("PlayButtonText.Text = \"Play First Episode\"", page);
-        Assert.Contains("_playableContentId = firstEpisode?.ContentId", page);
+        // Explicit server targets (including null) take precedence. Only
+        // canonical rows from this season may supply the legacy first episode.
+        Assert.Contains("_playableContentId = item.HasAuthoritativePlayTarget ? item.PlayContentId", page);
+        Assert.Contains("ViewModel.EpisodesSeasonContentId == item.ContentId ? ViewModel.Episodes.FirstOrDefault()?.ContentId : null", page);
         Assert.Contains("No playable episodes found for this season.", page);
         Assert.DoesNotContain("NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true", page);
         Assert.Contains("BuildSeasonBreadcrumb(item, seasonLabel)", page);
@@ -479,6 +498,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("singleSeason.ContentId", page);
         Assert.Contains("singleSeason.SeasonNumber", page);
         Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
+        Assert.Contains("ViewModel.EpisodesSeasonContentId = seasonContentId;", page);
         Assert.Contains("SeasonNumber == 0", page);
         Assert.Contains("EpisodesHeader.Text = ViewModel.SelectedSeasonNumber == 0", page);
         Assert.DoesNotContain("ViewModel.Seasons.Count <= 1", page);
@@ -498,7 +518,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("catch (OperationCanceledException)", viewModel);
         Assert.Contains("var contentId = Item?.ContentId;", viewModel);
         Assert.Contains("if (Item?.ContentId != contentId) return;", viewModel);
-        Assert.Contains("Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating)", viewModel);
+        Assert.Contains("MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, context)", viewModel);
+        Assert.Contains("if (!Current()) _suppressedViewerFeedback = message;", viewModel);
+        Assert.Contains("WeakReferenceMessenger.Default.Send(message)", viewModel);
         Assert.Contains("seriesId, context: context)", viewModel);
         Assert.Contains("bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)", viewModel);
         Assert.Contains("if (Current())\n                IsWatched = wasWatched;", viewModel.Replace("\r\n", "\n"));
@@ -645,6 +667,28 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
+    public void EpisodeStillPaintRechecksSpoilerPolicyAfterAsynchronousImageWork()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var start = page.IndexOf("private async Task LoadEpisodeStillAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var still = page[start..];
+        var policy = still.IndexOf("bool HideStill() => EpisodeSpoilerPolicy.HideImage(", StringComparison.Ordinal);
+        var snapshot = still.IndexOf("var hideStill = HideStill();", StringComparison.Ordinal);
+        var blur = still.IndexOf("await ArtworkEffects.BlurEpisodeStillAsync(", StringComparison.Ordinal);
+        var decode = still.IndexOf("await bitmapImage.SetSourceAsync(", StringComparison.Ordinal);
+        var guard = still.IndexOf("if (!Current() || hideStill != HideStill()) return;", StringComparison.Ordinal);
+        var paint = still.IndexOf("stillBorder.Child = image;", StringComparison.Ordinal);
+
+        Assert.True(policy >= 0 && snapshot > policy && blur > snapshot && decode > blur && guard > decode && paint > guard);
+        Assert.Contains("_episodeSpoilerPreferences?.HideImages == true", still[policy..snapshot]);
+        Assert.Contains("episode.UserData?.Played", still[policy..snapshot]);
+        Assert.Contains("episode.UserData?.IsInProgress", still[policy..snapshot]);
+        Assert.Contains("episode.UserData?.PositionSeconds", still[policy..snapshot]);
+        Assert.DoesNotContain("await ", still[guard..paint]);
+    }
+
+    [Fact]
     public void EpisodeRepaintPreservesWatchControlsAndMatchesMetadataSemantics()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
@@ -670,6 +714,26 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("userData.WatchedCount > 0 || userData.InProgressCount > 0", page);
         Assert.Contains("$\"{userData!.WatchedCount} of {count}\"", page);
         Assert.Contains("FormatSeasonProgressText(season)", page);
+    }
+
+    [Fact]
+    public void PlaybackSelectionsAreScopedToTheResolvedContentAtThePlayerBoundary()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var start = page.IndexOf("private void NavigateToPlayer(", StringComparison.Ordinal);
+        var end = page.IndexOf("private void SetNextEpisodeHintIfApplicable(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var playback = page[start..end];
+
+        // E1's loaded /watch must own its file and tracks even after a mounted
+        // series/season resolves E2. Preserve catalog-only selections for leaves.
+        Assert.Contains("var selectionsMatchContent = string.Equals(", playback);
+        Assert.Contains("_watchDetail?.ContentId ?? ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal)", playback);
+        Assert.Contains("fileId: selectionsMatchContent ? fileId : null", playback);
+        Assert.Contains("audioTrackIndex: selectionsMatchContent ? _selectedAudioTrackIndex : null", playback);
+        Assert.Contains("subtitleSelection: selectionsMatchContent ? _selectedSubtitleIndex : null", playback);
+        Assert.Contains("subtitleTrackSignature: selectionsMatchContent ? _selectedSubtitleSignature : null", playback);
+        Assert.Contains("sourceVersionPinned: selectionsMatchContent && IsSelectedVersionPinned", playback);
     }
 
     [Fact]
@@ -711,12 +775,28 @@ public sealed class ItemDetailCurrentParityTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var loadStart = page.IndexOf("await ViewModel.LoadSeasonsCommand.ExecuteAsync(null);", StringComparison.Ordinal);
-        var cardPaint = page.IndexOf("BuildSeasonCards();", loadStart, StringComparison.Ordinal);
-        var targetAction = page.IndexOf("ApplyAuthoritativeSeriesAction();", loadStart, StringComparison.Ordinal);
+        var cardPaint = page.IndexOf("await UpdateSeriesLayoutAsync(contentId, navigationToken, reloadEpisodes: true);", loadStart, StringComparison.Ordinal);
+        var targetAction = page.IndexOf("await ApplySeriesActionAsync();", loadStart, StringComparison.Ordinal);
 
         Assert.True(loadStart >= 0);
         Assert.True(cardPaint > loadStart);
         Assert.True(targetAction > cardPaint);
+        var layoutStart = page.IndexOf("private Task UpdateSeriesLayoutAsync(", StringComparison.Ordinal);
+        var layoutEnd = page.IndexOf("private async Task<bool> ShowSingleSeasonEpisodesAsync(", layoutStart, StringComparison.Ordinal);
+        Assert.True(layoutStart >= 0 && layoutEnd > layoutStart);
+        Assert.Contains("if (!ViewModel.SeasonsLoadFailed) BuildSeasonCards();", page[layoutStart..layoutEnd]);
+
+        // The wrapper also supports omitted legacy targets, but an explicit
+        // detail target must still be applied before any companion read/await.
+        var actionStart = page.IndexOf("private async Task ApplySeriesActionAsync()", StringComparison.Ordinal);
+        var actionEnd = page.IndexOf("private bool ApplyAuthoritativeSeriesAction()", actionStart, StringComparison.Ordinal);
+        Assert.True(actionStart >= 0 && actionEnd > actionStart);
+        var action = page[actionStart..actionEnd];
+        var authoritative = action.IndexOf("ApplyAuthoritativeSeriesAction()", StringComparison.Ordinal);
+        var companion = action.IndexOf("await LoadSeriesPrimaryEpisodesAsync(", StringComparison.Ordinal);
+        Assert.True(authoritative >= 0 && companion > authoritative);
+        Assert.Contains("if (item?.Type != \"series\" || ApplyAuthoritativeSeriesAction()) return;", action);
+        Assert.DoesNotContain("await ", action[..authoritative]);
         Assert.DoesNotContain("FindSeriesContinueWatchingEpisodeAsync", page);
         Assert.Contains("SeasonsLoadingSkeleton.Visibility = Visibility.Visible", page);
         Assert.Contains("SeasonsLoadError.Visibility", page);

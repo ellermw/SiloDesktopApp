@@ -2,6 +2,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Home;
 
 namespace SiloPlayer.ViewModels;
 
@@ -11,39 +12,74 @@ public partial class LibraryViewModel
     private CatalogLettersResponse? _letterIndex;
     [ObservableProperty]
     private bool _isLetterIndexLoading;
+    [ObservableProperty]
+    private string? _pendingLetter;
+    private string? _letterJumpError;
+    public string? LetterJumpError
+    {
+        get
+        {
+            // Profile/language generations can change without a page reset.
+            // Observing feedback must not expose Retry for its retired owner.
+            if (_letterJumpError is not null) RetireStaleLetterFeedback();
+            return _letterJumpError;
+        }
+        private set => SetProperty(ref _letterJumpError, value);
+    }
+    private string? _failedLetter;
+    private string? _letterFeedbackKey;
+    private bool _letterJumpRetiredScope;
+    private sealed record LetterWindowSnapshot(int Start, IReadOnlyList<MediaItem> Items,
+        (int Start, CatalogResponse Response, bool IncludesTotal)[] Windows, bool HasMore);
+    private LetterWindowSnapshot? _letterRestoreWindow;
+    public bool IsLetterJumpViewportBlocked => _letterJumpRetiredScope && WindowStartIndex < 0 && LetterJumpError is not null;
     private string? _letterIndexKey;
     private Task? _letterIndexTask;
     private long _letterIndexLoadVersion;
     private long _letterJumpVersion;
     private long _activeLetterJumpVersion;
     public bool IsLetterJumpInProgress => _activeLetterJumpVersion != 0;
+    public long LetterJumpVersion => _letterJumpVersion;
+    public bool IsCurrentLetterJump(long version) => version == _letterJumpVersion &&
+        _letterFeedbackKey == LetterQueryKey();
     public event Action<int>? LetterJumpRequested;
+
+    // Carries an explicit seek's authority into each incremental publication.
+    // Transport cancellation alone cannot retire a late or partially read page.
+    private sealed class LetterWindowLoad(Func<bool> isCurrent)
+    {
+        internal bool IsCurrent => isCurrent();
+        internal bool Received, Failed, CursorRejected;
+    }
 
     private string LetterQueryKey() => JsonSerializer.Serialize(new
     {
         _queryVersion, context = _catalogApi.CaptureContext(), language = _catalogApi.FilterCacheGeneration,
-        library = Library?.Id, SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
+        library = Library?.Id, grouping = LibraryGroupingScope(Library), group = _catalogGroup, SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
         SelectedGenre, SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution,
         SelectedAudioLanguage, SelectedYearMin, SelectedYearMax,
         rules = BuildExtraRules(), groups = BuildAdvancedGroups(), AdvancedRulesMatch,
     });
 
-    public Task EnsureLetterIndexAsync()
+    public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync(preserveExisting: false);
+
+    private async Task EnsureLetterIndexCoreAsync(bool preserveExisting, bool force = false)
     {
+        if (Library is not null && !await EnsureGroupingAsync()) return;
         if (Library is null || SelectedSort != "title")
         {
             ResetLetterIndex();
-            return Task.CompletedTask;
+            return;
         }
         var key = LetterQueryKey();
-        if (_letterIndexKey == key) return _letterIndexTask ?? Task.CompletedTask;
-        LetterIndex = null;
+        if (!force && _letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
+        if (!preserveExisting) LetterIndex = null;
         _letterIndexKey = key;
         IsLetterIndexLoading = true;
-        return _letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token);
+        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting));
     }
 
-    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -63,8 +99,8 @@ public partial class LibraryViewModel
                 yearMin: UseAdvancedRules ? null : SelectedYearMin,
                 yearMax: UseAdvancedRules ? null : SelectedYearMax, type: type,
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
-                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct);
-            if (ct.IsCancellationRequested || key != LetterQueryKey()) return;
+                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct, group: _catalogGroup);
+            if (ct.IsCancellationRequested || key != LetterQueryKey() || loadVersion != _letterIndexLoadVersion) return;
             LetterIndex = index;
             if (index is not null)
             {
@@ -76,7 +112,7 @@ public partial class LibraryViewModel
         }
         catch (OperationCanceledException)
         {
-            if (_letterIndexKey == key) _letterIndexKey = null;
+            if (_letterIndexKey == key && loadVersion == _letterIndexLoadVersion) _letterIndexKey = null;
         }
         catch (Exception ex)
         {
@@ -84,11 +120,11 @@ public partial class LibraryViewModel
                 $"catalog_letters library={libraryId} order={order} type={type ?? "all"} group_count={groups?.Count ?? 0} query_fingerprint={queryFingerprint}");
             // Keep browsing usable. Only explicit query/return/jump requests
             // retry this optional aid; publishing card windows must not retry it.
-            if (_letterIndexKey == key)
+            if (_letterIndexKey == key && loadVersion == _letterIndexLoadVersion)
             {
                 _letterIndexKey = null;
                 _letterIndexTask = null;
-                LetterIndex = null;
+                if (!preserveExisting) LetterIndex = null;
             }
         }
         finally
@@ -100,49 +136,191 @@ public partial class LibraryViewModel
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task JumpToLetterAsync(string letter)
     {
-        var jump = ++_letterJumpVersion;
-        if (string.IsNullOrEmpty(letter) || SelectedSort != "title") return;
-        await EnsureLetterIndexAsync();
-        var index = LetterIndex;
-        if (jump != _letterJumpVersion || index is null || _letterIndexKey != LetterQueryKey()) return;
-        var entry = index.Letters.FirstOrDefault(x => x.Letter == letter.ToUpperInvariant());
-        if (entry is null || entry.Position >= TotalCount) return;
-        var key = _letterIndexKey;
-        var previousStart = WindowStartIndex;
-        var previousItems = _windowItems;
-        var previousWindows = _recentWindows.ToArray();
-        var previousHasMore = HasMore;
+        if (string.IsNullOrEmpty(letter) || SelectedSort != "title")
+        {
+            RetireLetterJump();
+            return;
+        }
+        // Reset an unobserved API-context change before capturing this jump's
+        // owner; the window loader must not retire the seek it is about to read.
+        var contextChanged = _catalogContext is not null && _catalogContext != _catalogApi.CaptureContext();
+        if (contextChanged) StartNewCatalogQuery();
+        var currentKey = LetterQueryKey();
+        var knownIndex = (LetterIndex is not null && _letterIndexKey == currentKey) ||
+            (_failedLetter is not null && _letterFeedbackKey == currentKey);
+        var retiredScope = _letterJumpRetiredScope && _letterFeedbackKey == currentKey;
+        var restoreWindow = IsLetterJumpInProgress && _letterFeedbackKey == currentKey ? _letterRestoreWindow : null;
+        RetireLetterJump();
+        _letterJumpRetiredScope = contextChanged || retiredScope;
+        _letterRestoreWindow = restoreWindow;
+        var jump = _letterJumpVersion;
+        letter = letter.ToUpperInvariant();
+        var key = _letterFeedbackKey = LetterQueryKey();
+        PendingLetter = letter;
         _activeLetterJumpVersion = jump;
+        bool IsCurrent() => jump == _letterJumpVersion && key == LetterQueryKey();
+        async Task<bool> EnsureFreshViewportAsync()
+        {
+            if (!IsCurrent()) return false;
+            if (!_letterJumpRetiredScope || WindowStartIndex >= 0) return true;
+            // A missing optional target must not strand a reset catalog. Read
+            // fresh cards under this owner, never restore the retired scope.
+            var initialLoad = new LetterWindowLoad(IsCurrent);
+            await LoadWindowForOwnerAsync(0, PageSize, force: true, initialLoad);
+            if (!IsCurrent() || initialLoad.Failed || initialLoad.CursorRejected || !initialLoad.Received)
+                return false;
+            _letterJumpRetiredScope = false;
+            return true;
+        }
         try
         {
-            await LoadWindowAsync(entry.Position, PageSize, force: true);
-            if (jump != _letterJumpVersion || key != LetterQueryKey() || !ReferenceEquals(index, LetterIndex)) return;
-            if (GetWindowItem(entry.Position) is null)
+            async Task<bool> EnsureJumpGroupingAsync()
             {
-                // Index and page reads are not a snapshot. A missing target must
-                // not strand the unchanged viewport on an empty/distant window.
-                _windowItems = previousItems;
-                WindowStartIndex = previousStart;
-                _recentWindows.Clear();
-                foreach (var window in previousWindows) _recentWindows.AddLast(window);
-                HasMore = previousHasMore;
-                WindowLoaded?.Invoke();
+                if (!IsCurrent()) return false;
+                using var owner = JsonDocument.Parse(key);
+                if (!await EnsureGroupingAsync() || jump != _letterJumpVersion) return false;
+                var resolvedKey = LetterQueryKey();
+                using var resolved = JsonDocument.Parse(resolvedKey);
+                // Grouping is resolved before both the initial index and a
+                // signed-scope retry. Only that decision may update this owner.
+                if (owner.RootElement.EnumerateObject().Any(property => property.Name != "group" &&
+                    property.Value.GetRawText() != resolved.RootElement.GetProperty(property.Name).GetRawText()))
+                    return false;
+                key = _letterFeedbackKey = resolvedKey;
+                return true;
+            }
+            for (var attempt = 0; attempt < 2 && await EnsureJumpGroupingAsync(); attempt++)
+            {
+                await EnsureLetterIndexAsync();
+                var index = LetterIndex;
+                if (!IsCurrent()) return;
+                if (index is null)
+                {
+                    if (!await EnsureFreshViewportAsync())
+                    {
+                        if (IsCurrent()) SetLetterJumpFailure(letter);
+                        return;
+                    }
+                    // A cached null means unsupported, not a failed refresh.
+                    // Only failed refreshes of an offered choice retain Retry.
+                    if (knownIndex && _letterIndexKey != key) SetLetterJumpFailure(letter);
+                    return;
+                }
+                var entry = index.Letters.FirstOrDefault(x => x.Letter == letter);
+                if (entry is null || entry.Position >= TotalCount)
+                {
+                    _letterIndexKey = null;
+                    await EnsureFreshViewportAsync();
+                    if (!IsCurrent()) return;
+                    SetLetterJumpFailure(letter);
+                    return;
+                }
+                // Superseding clicks share the last restorable viewport, not a
+                // cache already cleared by the preceding forced target read.
+                var previous = _letterRestoreWindow ??= new LetterWindowSnapshot(
+                    WindowStartIndex, _windowItems, _recentWindows.ToArray(), HasMore);
+                _activeLetterJumpVersion = jump;
+                var loadVersion = jump;
+                var loadKey = key;
+                var load = new LetterWindowLoad(() => loadVersion == _letterJumpVersion && loadKey == LetterQueryKey());
+                await LoadWindowForOwnerAsync(entry.Position, PageSize, force: true, load);
+                if (!IsCurrent() || !ReferenceEquals(index, LetterIndex)) return;
+                if (load.CursorRejected)
+                {
+                    // The signed scope was retired. Its cards, cursors AND index
+                    // are no longer authoritative; only the current semantic choice
+                    // may transfer into a fresh query and exact index read.
+                    var extent = TotalCount;
+                    StartNewCatalogQuery();
+                    _letterJumpRetiredScope = true;
+                    _estimatedTotalItems = extent;
+                    TotalCount = extent;
+                    Items.Reset(extent);
+                    jump = _letterJumpVersion;
+                    key = _letterFeedbackKey = LetterQueryKey();
+                    PendingLetter = letter;
+                    _activeLetterJumpVersion = jump;
+                    IsLoading = false;
+                    knownIndex = true;
+                    if (attempt != 0) { SetLetterJumpFailure(letter); return; }
+                    continue;
+                }
+                if (load.Failed || !load.Received || GetWindowItem(entry.Position) is null)
+                {
+                    // Only this operation may restore its still-visible viewport.
+                    // Manual scrolling retires it before another range can publish.
+                    _windowItems = previous.Items;
+                    WindowStartIndex = previous.Start;
+                    _recentWindows.Clear();
+                    foreach (var window in previous.Windows) _recentWindows.AddLast(window);
+                    HasMore = previous.HasMore;
+                    if (!load.Failed || attempt != 0) _letterIndexKey = null;
+                    if (!load.Failed)
+                    {
+                        await EnsureFreshViewportAsync();
+                        if (!IsCurrent()) return;
+                    }
+                    SetLetterJumpFailure(letter);
+                    WindowLoaded?.Invoke();
+                    return;
+                }
+                _letterJumpRetiredScope = false;
+                if (entry.Position < TotalCount)
+                    LetterJumpRequested?.Invoke(entry.Position);
                 return;
             }
-            if (entry.Position < TotalCount)
-                LetterJumpRequested?.Invoke(entry.Position);
         }
         finally
         {
             // An older completion must not release a newer jump's viewport hold.
             if (_activeLetterJumpVersion == jump) _activeLetterJumpVersion = 0;
+            if (_letterJumpVersion == jump)
+            {
+                _letterRestoreWindow = null;
+                PendingLetter = null;
+            }
         }
+    }
+
+    private void SetLetterJumpFailure(string letter)
+    {
+        _failedLetter = letter;
+        LetterJumpError = $"Couldn't load {letter} titles.";
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private Task RetryLetterJumpAsync()
+    {
+        RetireStaleLetterFeedback();
+        return _failedLetter is { } letter ? JumpToLetterAsync(letter) : Task.CompletedTask;
+    }
+
+    private void RetireStaleLetterFeedback()
+    {
+        if (_letterFeedbackKey is not null && _letterFeedbackKey != LetterQueryKey())
+            RetireLetterJump();
+    }
+
+    public void RetireLetterJump()
+    {
+        _letterJumpVersion++;
+        if (IsLetterJumpInProgress)
+        {
+            CancelWindowLoad();
+            IsLoading = false;
+        }
+        _activeLetterJumpVersion = 0;
+        _letterFeedbackKey = null;
+        _letterRestoreWindow = null;
+        PendingLetter = null;
+        LetterJumpError = null;
+        _failedLetter = null;
+        _letterJumpRetiredScope = false;
     }
 
     private void ResetLetterIndex()
     {
-        _letterJumpVersion++;
-        _activeLetterJumpVersion = 0;
+        RetireLetterJump();
         _letterIndexKey = null;
         _letterIndexTask = null;
         _letterIndexLoadVersion++;

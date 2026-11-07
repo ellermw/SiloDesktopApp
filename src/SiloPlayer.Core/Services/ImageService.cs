@@ -20,6 +20,7 @@ public class ImageService : IDisposable
     private readonly SemaphoreSlim _downloadLock = new(16);
     private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _inflightDownloads = new();
     private readonly ConcurrentDictionary<string, long> _negativeCache = new();
+    private readonly HashSet<string> _missingImages = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> _negativeEvictionOrder = new();
     private readonly object _negativeCacheSync = new();
     private static readonly TimeSpan DiskTrimInterval = TimeSpan.FromSeconds(30);
@@ -86,15 +87,29 @@ public class ImageService : IDisposable
     }
 
     /// <summary>
+    /// Distinguishes a definitive missing image from a transient null download
+    /// result, including a rejected proxy document. Uses exact-URL cache identity.
+    /// </summary>
+    public bool IsKnownUnavailable(string contentId, string imageType, string url)
+    {
+        if (NativeApiRetirement.IsRetiredResource(url)) return true;
+        var key = BuildNegativeCacheKey(BuildCacheKey(contentId, imageType, url), url);
+        lock (_negativeCacheSync)
+            return IsNegativeCacheHit(key) && _missingImages.Contains(key);
+    }
+
+    /// <summary>
     /// Ensures the image for the given cache key exists on disk (downloading
     /// if necessary) and returns the local path. Lets callers point
     /// <c>BitmapImage.UriSource</c> at a file:// URI, which is significantly
     /// faster than <c>SetSourceAsync</c> on a <c>MemoryStream</c> because
     /// WinUI's native decoder does the work off the UI thread without the
     /// COM interop overhead of <c>AsRandomAccessStream</c>.
-    /// Returns null when download fails.
+    /// Returns null when download fails. With <paramref name="waitForSharedDownload"/>,
+    /// cancellation prevents starting a download but does not abandon an existing
+    /// shared download's completion, allowing warmup callers to retain their throttle slot.
     /// </summary>
-    public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
+    public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default, bool waitForSharedDownload = false)
     {
         if (NativeApiRetirement.IsRetiredResource(url)) return Task.FromResult<string?>(null);
         var cacheKey = BuildCacheKey(contentId, imageType, url);
@@ -115,9 +130,9 @@ public class ImageService : IDisposable
             if (IsNegativeCacheHit(negativeCacheKey))
                 return null;
 
-            return await GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http)
-                .WaitAsync(ct)
-                .ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            var download = GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http);
+            return await (waitForSharedDownload ? download : download.WaitAsync(ct)).ConfigureAwait(false);
         }, ct);
     }
 
@@ -188,7 +203,7 @@ public class ImageService : IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone)
-                    SetNegativeCache(negativeCacheKey);
+                    SetNegativeCache(negativeCacheKey, missing: true);
                 return null;
             }
 
@@ -353,7 +368,7 @@ public class ImageService : IDisposable
         return $"{cacheKey}\u001F{exactUrlHash}";
     }
 
-    private void SetNegativeCache(string negativeCacheKey)
+    private void SetNegativeCache(string negativeCacheKey, bool missing = false)
     {
         if (_maxNegativeCacheEntries <= 0)
             return;
@@ -366,6 +381,8 @@ public class ImageService : IDisposable
                 _negativeEvictionOrder.Enqueue(negativeCacheKey);
             else
                 _negativeCache[negativeCacheKey] = expiresAtTicks;
+            if (missing) _missingImages.Add(negativeCacheKey);
+            else _missingImages.Remove(negativeCacheKey);
 
             PruneNegativeCache(nowTicks);
         }
@@ -380,12 +397,14 @@ public class ImageService : IDisposable
 
             _negativeEvictionOrder.TryDequeue(out _);
             _negativeCache.TryRemove(candidate, out _);
+            _missingImages.Remove(candidate);
         }
 
         while (_negativeCache.Count > _maxNegativeCacheEntries &&
                _negativeEvictionOrder.TryDequeue(out var oldest))
         {
             _negativeCache.TryRemove(oldest, out _);
+            _missingImages.Remove(oldest);
         }
     }
 
@@ -400,6 +419,7 @@ public class ImageService : IDisposable
                 return true;
 
             _negativeCache.TryRemove(negativeCacheKey, out _);
+            _missingImages.Remove(negativeCacheKey);
             return false;
         }
     }
@@ -407,7 +427,10 @@ public class ImageService : IDisposable
     private void RemoveNegativeCache(string negativeCacheKey)
     {
         lock (_negativeCacheSync)
+        {
             _negativeCache.TryRemove(negativeCacheKey, out _);
+            _missingImages.Remove(negativeCacheKey);
+        }
     }
 
     internal static string NormalizeImageUrlForCache(string url)
@@ -550,6 +573,7 @@ public class ImageService : IDisposable
         lock (_negativeCacheSync)
         {
             _negativeCache.Clear();
+            _missingImages.Clear();
             while (_negativeEvictionOrder.TryDequeue(out _)) { }
         }
     }

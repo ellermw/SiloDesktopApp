@@ -138,6 +138,9 @@ public sealed partial class LibraryPage : Page,
     private int _currentFirstRow;
     private double _libraryVerticalOffset;
     private double? _pendingLibraryOffset;
+    private sealed record LibraryOffsetRequest(double Offset, long Visit, Func<bool>? Owner);
+    private LibraryOffsetRequest? _pendingLibraryScroll;
+    private long _libraryVisit;
     private readonly Dictionary<int, LibraryGridCard> _visibleLibraryCards = [];
     private readonly List<LibraryGridCard> _libraryCardSlots = [];
     private readonly Queue<int> _pendingCardBinds = [];
@@ -146,8 +149,9 @@ public sealed partial class LibraryPage : Page,
     private int _lastRenderedEndIndex = -1;
     private bool _renderQueued;
     private bool _forceQueuedRender;
+    private readonly ArtworkMotionPolicy _artworkMotion;
     private DispatcherTimer? _cardBindTimer;
-    private bool _isNavigated;
+    private volatile bool _isNavigated;
     private bool _viewModelEventsAttached;
     private bool _messengerRegistered;
     private int? _activeLibraryId;
@@ -165,6 +169,16 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        _artworkMotion = ArtworkViewport.For(LibraryScroller);
+        // Observe input even when the ScrollViewer or its scrollbar handles it.
+        // ViewChanged also reports inertia and extent clamps, not just new intent.
+        LibraryScroller.AddHandler(UIElement.PointerWheelChangedEvent,
+            new PointerEventHandler(LibraryScroller_PointerWheelChanged), true);
+        LibraryScroller.AddHandler(UIElement.PointerPressedEvent,
+            new PointerEventHandler(LibraryScroller_PointerPressed), true);
+        LibraryScroller.AddHandler(UIElement.KeyDownEvent,
+            new KeyEventHandler(LibraryScroller_KeyDown), true);
+        LibraryScroller.DirectManipulationStarted += LibraryScroller_DirectManipulationStarted;
         InitializeLibraryLetters();
         CatalogToolbarChoices.Apply(BrowseTypeComboBox, SortComboBox, OrderComboBox);
         var savedWidth = App.Services.GetRequiredService<SettingsService>().Load().LibraryPosterWidth;
@@ -295,7 +309,10 @@ public sealed partial class LibraryPage : Page,
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _libraryVisit++;
         _isNavigated = true;
+        _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
+        AttachGroupedLibraryEvents();
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
@@ -311,18 +328,39 @@ public sealed partial class LibraryPage : Page,
             requestedGenre = navigationArgs.InitialGenre;
         }
 
+        // Back-stack parameters are snapshots. Revalidate current flags before
+        // trusting a cached grouped window, and refresh counts once on return.
+        var returningLibrary = library is not null && _activeLibraryId == library.Id;
+        if (returningLibrary)
+        {
+            if (_pageStateContext != _stateSettings.CaptureContext())
+            {
+                // Never keep another read authority's cards mounted during policy revalidation.
+                _libraryCatalogLoaded = false;
+                ViewModel.CancelCatalogLoads();
+                ClearVirtualCards();
+            }
+            // Resume retained current binds before even the library-flags read;
+            // slow policy revalidation must not block cached artwork on return.
+            ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
+            UpdateLibraryArtworkActivity();
+            var visit = _groupedLibraryVisit;
+            _libraryFlagsDirty = true;
+            await RefreshLibraryFlagsAsync();
+            if (!_isNavigated || visit != _groupedLibraryVisit) return;
+            library = ViewModel.Library;
+            _groupedCatalogDirty = IsBoxSetLibrary;
+            // Catalog subscriptions were detached while away. Without proof
+            // that changes were state-only, retire adjacent offsets on return.
+            if (_groupedCatalogDirty) _groupedStructureRequested++;
+        }
+
         LibraryUnavailableState.Visibility = library == null
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (library == null)
         {
-            HeaderGrid.Visibility = Visibility.Collapsed;
-            FilterBar.Visibility = Visibility.Collapsed;
-            ActiveFiltersBar.Visibility = Visibility.Collapsed;
-            LibraryContentArea.Visibility = Visibility.Collapsed;
-            RecommendedPanel.Visibility = Visibility.Collapsed;
-            CollectionsPanel.Visibility = Visibility.Collapsed;
-            AudiobookGroupsPanel.Visibility = Visibility.Collapsed;
+            ShowLibraryUnavailable();
             return;
         }
 
@@ -331,12 +369,14 @@ public sealed partial class LibraryPage : Page,
             var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && _pageStateContext == _stateSettings.CaptureContext();
             if (!sameLibrary)
             {
+                _groupedCatalogDirty = false;
+                if (!returningLibrary) _libraryFlagsDirty = false;
                 ResetRecommendedContent();
                 ViewModel.CancelCatalogLoads();
                 ClearVirtualCards();
                 _currentFirstRow = 0;
                 _libraryVerticalOffset = 0;
-                _pendingLibraryOffset = 0;
+                QueueLibraryOffset(0);
                 _lastRequestedStartIndex = -1;
                 _lastRequestedEndIndex = -1;
                 _recommendedLoaded = false;
@@ -344,7 +384,14 @@ public sealed partial class LibraryPage : Page,
                 _libraryCatalogLoaded = false;
             }
 
+            // Departure suspension ends on return, not after server-backed state
+            // restoration. Retained current binds must also resume if that work
+            // exits early because only the access/request context changed.
+            ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
+            UpdateLibraryArtworkActivity();
+
             _activeLibraryId = library.Id;
+            HeaderGrid.Visibility = Visibility.Visible;
             LibraryTitle.Text = library.Name;
             LibraryEyebrowName.Text = library.Name.ToUpperInvariant();
             RecommendedTab.Content = library.Type is "audiobook" or "audiobooks" ? "Home" : "Recommended";
@@ -374,6 +421,7 @@ public sealed partial class LibraryPage : Page,
                 state.Genres = [requestedGenre];
             }
 
+            var retainedQueryScope = ViewModel.CatalogQueryScopeKey();
             _suppressFilterEvents = true;
             UpdateSortOptions(library.Type, state.Sort, state.MediaType);
             ConfigureBrowseTypeSelector(library.Type, state.MediaType);
@@ -456,6 +504,16 @@ public sealed partial class LibraryPage : Page,
             if (ViewModel.AdvancedGroups.Count == 0) ViewModel.AdvancedGroups.Add(new());
             ViewModel.UseAdvancedRules = state.QueryGroups.Any(group => group.Rules.Count > 0);
             ViewModel.AdvancedRulesMatch = state.Match;
+            if (retainedQueryScope != ViewModel.CatalogQueryScopeKey())
+            {
+                // Saved state can change on another client while this page is
+                // cached. No cursor or card may cross the restored query scope.
+                _libraryCatalogLoaded = false;
+                CancelGroupedCatalogRefresh();
+                ViewModel.CancelCatalogLoads();
+                ViewModel.Items.Clear();
+                ClearVirtualCards();
+            }
             if (ViewModel.UseAdvancedRules) { BuildAdvancedRulesPanel(); GuidedFiltersScroll.Visibility = Visibility.Collapsed; AdvancedFiltersScroll.Visibility = Visibility.Visible; }
             _suppressFilterEvents = false;
             UpdateAudiobookAxisButtons();
@@ -494,14 +552,24 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        if (_pendingLibraryScroll is { } pendingScroll) ClearPendingLibraryOffset(pendingScroll);
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        _libraryScrollIsIntermediate = false;
+        // Retire read-ahead before Reset releases any deferred warmup continuations.
+        _libraryReadAheadCts?.Cancel();
+        _libraryReadAheadCts?.Dispose();
+        _libraryReadAheadCts = null;
+        ArtworkViewport.SetActive(RecommendedPanel, false);
+        foreach (var card in _libraryCardSlots) card.SuspendArtwork();
+        _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
+        DetachGroupedLibraryEvents();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         DetachRecommendedRealtimeEvents();
         CancelRecommendedRefresh();
         _visibleRangeDebounceTimer?.Stop();
-        _libraryReadAheadCts?.Cancel();
-        _libraryReadAheadCts?.Dispose();
-        _libraryReadAheadCts = null;
         _posterSizeTimer?.Stop();
         _cardBindTimer?.Stop();
         _audiobookGroupSearchTimer?.Stop();
@@ -586,7 +654,7 @@ public sealed partial class LibraryPage : Page,
     {
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+            DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(); });
             return;
         }
 
@@ -603,7 +671,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+        DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(structural: false); });
     }
 
     private void QueueRecommendedRefresh()
@@ -663,7 +731,14 @@ public sealed partial class LibraryPage : Page,
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated) return;
+            if (!_isNavigated || (message.Context is {} owner && !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(owner))) return;
+            if (message.Kind is MediaSurfaceChangeKind.ItemMetadataRefreshed or MediaSurfaceChangeKind.CollectionChanged)
+                QueueGroupedCatalogRefresh();
+            else if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared
+                or MediaSurfaceChangeKind.FavoriteAdded or MediaSurfaceChangeKind.FavoriteRemoved
+                or MediaSurfaceChangeKind.WatchlistAdded or MediaSurfaceChangeKind.WatchlistRemoved
+                or MediaSurfaceChangeKind.RatingChanged or MediaSurfaceChangeKind.PlaybackProgress)
+                QueueGroupedCatalogRefresh(structural: false);
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item => message.Kind switch
             {
                 MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
@@ -681,6 +756,7 @@ public sealed partial class LibraryPage : Page,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        _ = RefreshGroupedAfterPlaybackAsync(message);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_isNavigated) return;
@@ -939,6 +1015,7 @@ public sealed partial class LibraryPage : Page,
 
     private void ShowTab(string tag)
     {
+        if (tag != "Library" || _currentAudiobookAxis != "books") CancelGroupedCatalogRefresh();
         // Update tab button styles
         var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
         foreach (var tab in tabs)
@@ -961,8 +1038,10 @@ public sealed partial class LibraryPage : Page,
 
         FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         LibraryContentArea.Visibility = tag == "Library" && _currentAudiobookAxis == "books" ? Visibility.Visible : Visibility.Collapsed;
+        UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = tag == "Library" && _currentAudiobookAxis != "books" ? Visibility.Visible : Visibility.Collapsed;
         RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
+        ArtworkViewport.SetActive(RecommendedPanel, _isNavigated && tag == "Recommended");
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
 
         _currentTab = tag;
@@ -1512,9 +1591,79 @@ public sealed partial class LibraryPage : Page,
         SaveViewState(_currentTab);
     }
 
+    private void UpdateLibraryArtworkActivity()
+    {
+        if (!_isNavigated || LibraryContentArea.Visibility != Visibility.Visible)
+        {
+            _libraryReadAheadCts?.Cancel();
+            _libraryReadAheadCts?.Dispose();
+            _libraryReadAheadCts = null;
+        }
+        foreach (var card in _libraryCardSlots)
+        {
+            if (_isNavigated && LibraryContentArea.Visibility == Visibility.Visible) card.ResumeArtwork();
+            else card.SuspendArtwork();
+        }
+    }
+
+    private void RetireLetterJumpForManualScroll()
+    {
+        if (!_isNavigated) return;
+        ViewModel.RetireLetterJump();
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        _chosenLibraryEndLetter = null;
+        // The seek may have cancelled the read for this very same row range.
+        _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+        if (_pendingLibraryScroll is { Owner: not null } pending)
+            ClearPendingLibraryOffset(pending);
+        ScheduleVisibleRangeLoad(force: true);
+    }
+
+    private void LibraryScroller_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var properties = e.GetCurrentPoint(LibraryScroller).Properties;
+        if (!properties.IsHorizontalMouseWheel && properties.MouseWheelDelta != 0)
+            RetireLetterJumpForManualScroll();
+    }
+
+    private void LibraryScroller_DirectManipulationStarted(object? sender, object e)
+        => RetireLetterJumpForManualScroll();
+
+    private void LibraryScroller_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        for (var source = e.OriginalSource as DependencyObject; source is not null && source != LibraryScroller;
+            source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source))
+        {
+            if (source is ScrollBar)
+            {
+                RetireLetterJumpForManualScroll();
+                break;
+            }
+        }
+    }
+
+    private void LibraryScroller_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down or
+            Windows.System.VirtualKey.PageUp or Windows.System.VirtualKey.PageDown or
+            Windows.System.VirtualKey.Home or Windows.System.VirtualKey.End or Windows.System.VirtualKey.Space)
+            RetireLetterJumpForManualScroll();
+    }
+
     private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
+        if (!_isNavigated) return;
+        _libraryScrollIsIntermediate = e.IsIntermediate;
+        if (!e.IsIntermediate && _pendingLibraryLetterCommit is { } commit)
+        {
+            _pendingLibraryLetterCommit = null;
+            DispatcherQueue.TryEnqueue(() => commit());
+        }
+        if (_pendingLibraryOffset.HasValue) return;
+        // Only new input retires a choice. Coasting from an earlier manipulation
+        // and native extent clamps still update the viewport, but keep its owner.
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
     }
 
@@ -1535,7 +1684,7 @@ public sealed partial class LibraryPage : Page,
         ScheduleVisibleRangeLoad(force: true);
     }
 
-    private void SetLibraryVerticalOffset(double offset, bool force = false)
+    private void SetLibraryVerticalOffset(double offset, bool force = false, Func<bool>? owner = null)
     {
         var layout = GetGridLayout();
         var maximum = VirtualGridScrollGate.GetMaxVerticalOffset(
@@ -1545,13 +1694,29 @@ public sealed partial class LibraryPage : Page,
         if (!force && clamped == _libraryVerticalOffset)
             return;
 
-        _pendingLibraryOffset = clamped;
+        QueueLibraryOffset(clamped, owner);
         UpdateLibraryScrollPosition(clamped, force);
         ApplyPendingLibraryOffset();
     }
 
+    private void QueueLibraryOffset(double offset, Func<bool>? owner = null)
+    {
+        _pendingLibraryOffset = offset;
+        _pendingLibraryScroll = new(offset, _libraryVisit, owner);
+    }
+
+    private void ClearPendingLibraryOffset(LibraryOffsetRequest request)
+    {
+        if (!ReferenceEquals(_pendingLibraryScroll, request)) return;
+        _pendingLibraryOffset = null;
+        _pendingLibraryScroll = null;
+        if (request.Owner is not null) _chosenLibraryEndLetter = null;
+        UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+    }
+
     private void UpdateLibraryScrollPosition(double offset, bool force = false)
     {
+        _artworkMotion.Observe(0, offset);
         var layout = GetGridLayout();
         _libraryVerticalOffset = offset;
         _currentFirstRow = VirtualGridScrollGate.GetFirstVisibleRow(offset, layout.RowHeight);
@@ -1568,14 +1733,24 @@ public sealed partial class LibraryPage : Page,
 
     private void ApplyPendingLibraryOffset()
     {
-        if (_pendingLibraryOffset is not double offset || LibraryScroller.ViewportHeight <= 0) return;
+        if (_pendingLibraryOffset is not double offset || _pendingLibraryScroll is not { } request ||
+            LibraryScroller.ViewportHeight <= 0) return;
         // Wait for the new extent to be arranged (initial load or density change).
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated || _pendingLibraryOffset != offset) return;
+            if (!ReferenceEquals(request, _pendingLibraryScroll)) return;
+            if (!_isNavigated || request.Visit != _libraryVisit || request.Owner?.Invoke() == false)
+            {
+                ClearPendingLibraryOffset(request);
+                return;
+            }
             _pendingLibraryOffset = null;
-            LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true);
-            UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+            _pendingLibraryScroll = null;
+            // ChangeView may settle asynchronously even with animation disabled.
+            // The requested offset is already published; ViewChanged supplies the
+            // accepted position. Reading the old position here loses a final-letter jump.
+            if (!LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true))
+                UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
         });
     }
 
@@ -1677,7 +1852,8 @@ public sealed partial class LibraryPage : Page,
         foreach (var (index, card) in assignments)
         {
             _visibleLibraryCards[index] = card;
-            if (card.Tag is not int previousIndex || previousIndex != index)
+            var sameIndex = card.Tag is int previousIndex && previousIndex == index;
+            if (!sameIndex)
                 card.BindPlaceholder();
             card.Tag = index;
             PositionVirtualCardSlot(card, index, layout);
@@ -1707,7 +1883,7 @@ public sealed partial class LibraryPage : Page,
         var created = 0;
         while (_libraryCardSlots.Count < requiredCount && created < 4)
         {
-            var card = new LibraryGridCard();
+            var card = new LibraryGridCard { ArtworkMotion = _artworkMotion };
             HideVirtualCardSlot(card);
             _libraryCardSlots.Add(card);
             VirtualGridCanvas.Children.Add(card);
@@ -1751,11 +1927,13 @@ public sealed partial class LibraryPage : Page,
             return;
 
         _currentAudiobookAxis = axis;
+        if (axis != "books") CancelGroupedCatalogRefresh();
         SaveViewState(_currentTab);
         UpdateAudiobookAxisButtons();
         var showBooks = axis == "books";
         UpdateLibraryLetters();
         LibraryContentArea.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = showBooks ? Visibility.Collapsed : Visibility.Visible;
         SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
         OrderComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
@@ -2093,6 +2271,7 @@ public sealed partial class LibraryPage : Page,
         OpenFiltersButton.Visibility = Visibility.Visible;
         ResultCountText.Visibility = Visibility.Collapsed;
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        UpdateLibraryArtworkActivity();
         await FillViewportAsync();
         UpdateActiveFilterBadges();
         SaveViewState(_currentTab);
@@ -2235,14 +2414,34 @@ public sealed partial class LibraryPage : Page,
 
     private async Task EnsureVisibleRangeLoadedAsync(bool force = false)
     {
-        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
+        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible)
             return;
 
-        if (ViewModel.IsLetterJumpInProgress)
+        // A failed scope-reset load holds an empty, retired viewport.
+        // Ordinary letter errors keep Retry without blocking newly exposed rows.
+        if (ViewModel.IsLetterJumpViewportBlocked)
+        {
+            // A new choice or manual input schedules the held range again.
+            _forceVisibleRangeLoad |= force;
+            return;
+        }
+
+        if (ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0)
         {
             // Recompute the latest viewport after the jump scrolls (or restores
             // its old cards), without letting this debounce cancel the seek.
             ScheduleVisibleRangeLoad(force);
+            return;
+        }
+
+        if (ViewModel.TotalCount <= 0)
+        {
+            // Manual input or a tab return may retire a jump before its reset
+            // catalog has any extent. Load initial cards, then fill the actual
+            // visible range under the latest navigation/letter authority.
+            await ViewModel.EnsureRangeLoadedAsync(0, 0);
+            if (ViewModel.TotalCount > 0)
+                ScheduleVisibleRangeLoad(force: true);
             return;
         }
 
@@ -2265,12 +2464,13 @@ public sealed partial class LibraryPage : Page,
         var token = readAhead.Token;
         _lastRequestedStartIndex = range.StartIndex;
         _lastRequestedEndIndex = range.EndIndex;
+        var context = _stateSettings.CaptureContext();
         await ViewModel.EnsureRangeLoadedAsync(range.StartIndex, range.EndIndex);
-        if (token.IsCancellationRequested || !_isNavigated) return;
-        _ = WarmLibraryNeighborhoodAsync(range.StartIndex, range.EndIndex, forward, token);
+        if (token.IsCancellationRequested || !_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
+        _ = WarmLibraryNeighborhoodAsync(range.StartIndex, range.EndIndex, forward, context, token);
     }
 
-    private async Task WarmLibraryNeighborhoodAsync(int start, int end, bool forward, CancellationToken ct)
+    private async Task WarmLibraryNeighborhoodAsync(int start, int end, bool forward, SiloPlayer.Core.Api.ApiRequestContext context, CancellationToken ct)
     {
         try
         {
@@ -2279,6 +2479,7 @@ public sealed partial class LibraryPage : Page,
             await Task.Delay(150, ct);
             var items = await ViewModel.PrefetchAroundAsync(start, end, forward, ct);
             ct.ThrowIfCancellationRequested();
+            if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
             var images = App.Services.GetRequiredService<ImageService>();
             var http = App.Services.GetRequiredService<HttpClient>();
             await Parallel.ForEachAsync(items,
@@ -2288,15 +2489,24 @@ public sealed partial class LibraryPage : Page,
                     var poster = !string.IsNullOrWhiteSpace(item.PosterUrl);
                     var url = poster ? item.PosterUrl : item.BackdropUrl;
                     if (string.IsNullOrWhiteSpace(url)) return;
-                    await s_artworkWarmupThrottle.RunAsync(async _ =>
+                    while (true)
                     {
+                        await _artworkMotion.WaitAsync(token);
                         token.ThrowIfCancellationRequested();
-                        // Shared downloads outlive a caller's cancellation.
-                        // Keep this slot until completion so rapid reversals
-                        // cannot accumulate unbounded background downloads.
-                        await images.GetImageDiskPathAsync(item.ContentId,
-                            poster ? "poster" : "backdrop", url, http, CancellationToken.None);
-                    }, token);
+                        if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
+                        var started = await s_artworkWarmupThrottle.RunAsync(async workToken =>
+                        {
+                            workToken.ThrowIfCancellationRequested();
+                            if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return true;
+                            if (_artworkMotion.IsDeferred) return false;
+                            // Cancel work that has not started, but keep this slot
+                            // until an already-started shared download completes.
+                            await images.GetImageDiskPathAsync(item.ContentId,
+                                poster ? "poster" : "backdrop", url, http, workToken, waitForSharedDownload: true);
+                            return true;
+                        }, token);
+                        if (started) break;
+                    }
                 });
         }
         catch (OperationCanceledException) { }
@@ -2384,7 +2594,7 @@ public sealed partial class LibraryPage : Page,
         _posterWidthOverride = width;
         var layout = GetGridLayout();
         _libraryVerticalOffset = (anchor / layout.Columns + fraction) * layout.RowHeight;
-        _pendingLibraryOffset = _libraryVerticalOffset;
+        QueueLibraryOffset(_libraryVerticalOffset);
         UpdateVirtualGridMetrics();
         QueueRenderVirtualGrid(force: true);
         ScheduleVisibleRangeLoad(force: true);
@@ -2449,6 +2659,7 @@ public sealed partial class LibraryPage : Page,
 
     private void ScrollToTop_Click(object sender, RoutedEventArgs e)
     {
+        RetireLetterJumpForManualScroll();
         SetLibraryVerticalOffset(0, force: true);
         ScrollToTopButton.Visibility = Visibility.Collapsed;
         _ = EnsureVisibleRangeLoadedAsync(force: true);
@@ -2582,7 +2793,7 @@ public sealed partial class LibraryPage : Page,
 
         if (tag == _currentTab)
         {
-            if (tag == "Library" && !_libraryCatalogLoaded)
+            if (tag == "Library")
             {
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
@@ -2617,12 +2828,16 @@ public sealed partial class LibraryPage : Page,
     private async Task EnsureLibraryCatalogLoadedAsync()
     {
         using var timing = LibraryPerformanceTrace.Measure("library-open");
+        // Revalidate pending policy changes, even while this visit's catalog is cached.
+        if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();
+        if (!_isNavigated || ViewModel.Library is null) return;
         if (_libraryCatalogLoaded)
         {
             // Leaving for an item detail may have canceled optional filters
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
             _ = ViewModel.EnsureLetterIndexAsync();
+            if (_groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
             return;
         }
 
@@ -2633,7 +2848,8 @@ public sealed partial class LibraryPage : Page,
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
             try { await overlayWarmup; } catch { }
-            _libraryCatalogLoaded = _isNavigated && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
+            _libraryCatalogLoaded = _isNavigated && ViewModel.Library is not null && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
+            if (_libraryCatalogLoaded && _groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
         }
         finally
         {
@@ -3452,6 +3668,8 @@ public sealed partial class LibraryPage : Page,
             pinButton.Click += async (_, args) =>
             {
                 if (App.MainWindowInstance is not MainWindow window) return;
+                var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+                var context = apiClient.CaptureContext();
                 pinButton.IsEnabled = false;
                 try
                 {
@@ -3460,6 +3678,17 @@ public sealed partial class LibraryPage : Page,
                     pinIcon.Glyph = nowPinned ? "\uE841" : "\uE840";
                     pinButton.Opacity = nowPinned ? 1 : 0;
                     ToolTipService.SetToolTip(pinButton, nowPinned ? "Unpin from sidebar" : "Pin to sidebar");
+                }
+                catch (OperationCanceledException)
+                {
+                    // A retired shell did not commit this control's result.
+                    // Retain its previous presentation until normal refresh.
+                }
+                catch (Exception ex)
+                {
+                    if (IsLoaded && pinButton.IsLoaded && apiClient.IsCurrentContext(context))
+                        App.Services.GetRequiredService<ToastService>().Error(ex,
+                            ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
                 }
                 finally { pinButton.IsEnabled = true; }
             };

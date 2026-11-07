@@ -30,6 +30,8 @@ public partial class CatalogApi(SiloApiClient client)
     }
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
 
     public void InvalidateFilterCache()
     {
@@ -105,7 +107,8 @@ public partial class CatalogApi(SiloApiClient client)
         string? collectionId = null,
         CancellationToken ct = default,
         int? queryLimit = null,
-        string? nextCursor = null)
+        string? nextCursor = null,
+        string? group = null)
     {
         var query = $"/api/v2/catalog?limit={Math.Clamp(limit, 1, 200)}";
         if (string.IsNullOrWhiteSpace(nextCursor)) query += $"&seek={Math.Max(0, offset)}";
@@ -121,6 +124,7 @@ public partial class CatalogApi(SiloApiClient client)
         if (yearMax != null) query += $"&year_max={Uri.EscapeDataString(yearMax)}";
         if (q != null) query += $"&q={Uri.EscapeDataString(q)}";
         if (type != null) query += $"&type={Uri.EscapeDataString(type)}";
+        if (group == "box_set") query += "&group=box_set";
         if (!includeTotal) query += "&skip_total=true";
         if (queryLimit is > 0) query += $"&query_limit={queryLimit.Value}";
         var cursor = string.IsNullOrWhiteSpace(nextCursor) ? snapshot : nextCursor;
@@ -142,7 +146,7 @@ public partial class CatalogApi(SiloApiClient client)
             if (json.Length > 32768)
                 return GetLargeCatalogQueryAsync(groups, queryGroups != null ? queryGroupsMatch : "all", libraryId,
                     sort, order, genre, contentRating, yearMin, yearMax, q, type, limit, offset, includeTotal,
-                    snapshot, source, scope, sectionId, collectionId, queryLimit, ct, nextCursor);
+                    snapshot, source, scope, sectionId, collectionId, queryLimit, ct, nextCursor, group);
             query += "&groups=" + Uri.EscapeDataString(json);
         }
         return client.GetAsync<CatalogResponse>(query, ct);

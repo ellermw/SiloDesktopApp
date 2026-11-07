@@ -452,6 +452,7 @@ public partial class SettingsApi(SiloApiClient client)
 
     // ===== Profile Sections =====
     public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
     public Task<ServerIdentity> GetServerIdentityAsync(CancellationToken ct = default)
         => client.GetAsync<ServerIdentity>("/api/v2/system/identity", ct);
