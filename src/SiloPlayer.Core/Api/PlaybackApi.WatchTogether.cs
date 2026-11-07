@@ -52,7 +52,7 @@ public partial class PlaybackApi
 
     public async Task<WatchTogetherRoomResponse> StopWatchTogetherRoomPlaybackAsync(ApiRequestContext context, string roomId, CancellationToken ct = default)
     {
-        var response = await client.SendRequestWithoutRefreshAsync<WatchTogetherRoomResponse>(context,
+        var response = await client.SendRequestAsync<WatchTogetherRoomResponse>(context,
             HttpMethod.Post, RoomPath(roomId) + "/playback/stop", null, ct).ConfigureAwait(false);
         EnsureAuthority(context);
         return response;
@@ -61,14 +61,14 @@ public partial class PlaybackApi
     public async Task<WatchTogetherRoomResponse> UpdateWatchTogetherRoomPolicyAsync(ApiRequestContext context,
         string roomId, string guestControlPolicy, CancellationToken ct = default)
     {
-        var response = await client.SendRequestWithoutRefreshAsync<WatchTogetherRoomResponse>(context,
+        var response = await client.SendRequestAsync<WatchTogetherRoomResponse>(context,
             HttpMethod.Patch, RoomPath(roomId) + "/policy", new { guest_control_policy = guestControlPolicy }, ct).ConfigureAwait(false);
         EnsureAuthority(context);
         return response;
     }
 
     public Task CloseWatchTogetherRoomAsync(ApiRequestContext context, string roomId, CancellationToken ct = default)
-        => client.SendNoContentRequestWithoutRefreshAsync(context, HttpMethod.Delete, RoomPath(roomId), null, ct);
+        => client.SendNoContentRequestAsync(context, HttpMethod.Delete, RoomPath(roomId), null, ct);
     public Task<WatchTogetherRoomResponse> UpdateWatchTogetherSelectionModeAsync(string roomId, string selectionMode, CancellationToken ct = default)
         => RoomRequestAsync(HttpMethod.Patch, RoomPath(roomId) + "/selection-mode", new { selection_mode = selectionMode }, null, ct);
     public Task<WatchTogetherPickerResponse> GetWatchTogetherPickerAsync(string roomId, string roomToken, CancellationToken ct = default)
