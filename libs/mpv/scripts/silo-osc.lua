@@ -158,6 +158,8 @@ local state = {
     -- Audio track menu
     audio_tracks = {},
     active_audio = -1,
+    native_audio_capable = false,
+    native_audio_legacy = false,
     native_audio_scope = nil,
     native_menu_sequence = 0,
     native_menu_request = nil,
@@ -1523,7 +1525,7 @@ local function hud_control_enabled(name)
 end
 
 local function hud_input_available()
-    return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible
+    return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible or state.native_menu_request
         or state.subtitle_menu_visible or state.audio_menu_visible or state.quality_menu_visible
         or state.chapter_menu_visible or state.compact_menu_visible or state.native_menu_request
         or state.dragging_seek or state.dragging_volume)
@@ -2585,7 +2587,7 @@ local function arm_osc_hide(delay)
         local focus_owned = focus and state.layout[focus] and hud_control_enabled(focus)
             and mp.get_time() < state.controller_focus_deadline
             and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
-        if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
+        if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned or state.native_menu_request
             or (state.compact_menu_visible and state.layout.btn_more)
             or state.subtitle_menu_visible or state.audio_menu_visible
             or state.quality_menu_visible or state.chapter_menu_visible or state.native_menu_request
@@ -4753,7 +4755,10 @@ end
 
 local function open_native_menu(kind, keyboard)
     local scope = state['native_' .. kind .. '_scope']
-    if not scope then return false end
+    if kind == "audio" then
+        if not state.native_audio_capable or state.native_audio_legacy then return false end
+        if not scope then return true end
+    elseif not scope then return false end
     if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1) or state.osc_disabled
         or state.playback_loading or state.post_roll_active
         or state.native_menu_sequence >= 9007199254740991 then return true end
@@ -6391,11 +6396,11 @@ local function setup_key_bindings()
     -- Never let mpv's builtin j/J cycle an unverified or unavailable SID.
     -- Keep both directions local, using the same host-owned routes as CC.
     mp.add_forced_key_binding("j", "silo-subtitle-cycle-forward", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-subtitle-cycle", "forward")
     end)
     mp.add_forced_key_binding("J", "silo-subtitle-cycle-backward", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-subtitle-cycle")
     end)
 
@@ -6425,6 +6430,12 @@ local function setup_script_messages()
     for _, menu_kind in ipairs({'audio','quality','chapters','speed','stats','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
+            if kind == 'audio' then
+                -- Only an explicit host fallback (or an older host) enables
+                -- local Audio; an empty scope revokes it during retirement.
+                state.native_audio_capable = true
+                state.native_audio_legacy = token == 'legacy'
+            end
             local scope = token and #token == 32 and token:match('^%x+$') and token or nil
             local key = 'native_' .. kind .. '_scope'
             if scope ~= state[key] then

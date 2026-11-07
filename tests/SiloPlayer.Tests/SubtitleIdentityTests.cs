@@ -30,7 +30,6 @@ public sealed class SubtitleIdentityTests
         var recovery = refusal.IndexOf("_ = RunStreamRecoveryAsync(", StringComparison.Ordinal);
         Assert.True(rollbackCall >= 0 && retained > rollbackCall && recovery > retained);
         Assert.Contains("if (!loadStarted)", refusal[..rollbackCall]);
-        // Busy state now goes through the revision-tracking setter, not a direct field write.
         Assert.Contains("SetSwitchingContent(true);", refusal[retained..recovery]);
         Assert.Contains("IsLoading = true;", refusal[retained..recovery]);
         Assert.Contains("return SubtitleTransportResult.ReloadScheduled;", refusal[recovery..]);

@@ -1,3 +1,11 @@
+## PR #87 — current source identity (QA correction)
+
+Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
+
 ## November 3 — safe retained Library activation (local Beta candidate)
 
 This task deliberately starts from Beta `f6442fd8de1b2b015d2d45a15681e20ba30de025`; source version remains **1.2.544-beta.1** and the pipeline owns stamps/delivery. Official Silo main for this pass is `bb1ee4352b1bec38b4a6441ba81e61a92da81d54` (parent's direct fetch, verified with pinned `git show`). No installer, installed-player restart, push, release or production action occurred.

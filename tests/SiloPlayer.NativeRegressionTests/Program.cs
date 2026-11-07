@@ -228,6 +228,10 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            var mergedAudioCases = NativeAudioCases.Concat(new[] {
+                "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor",
+                "access-refresh-replan", "accepted-version", "quality-second-step-failure", "quality-second-step-cancellation",
+                "audio-plan-invalidation", "quality-plan-invalidation" }).ToArray();
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-menu-geometry" or "native-menu-resize")
             {
                 var previous = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
@@ -246,7 +250,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 var originalAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
                 try
                 {
-                    foreach (var audioCase in NativeAudioCases.Concat(new[] { "geometry", "resize" }))
+                    foreach (var audioCase in mergedAudioCases.Concat(new[] { "geometry", "resize" }))
                     {
                         Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", audioCase);
                         await PlaybackAudioMenuNativeFixture.RunAsync(_window);
@@ -300,7 +304,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 var selectedAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
                 var audioCases = string.IsNullOrEmpty(selectedAudioCase)
-                    ? NativeAudioCases
+                    ? mergedAudioCases
                     : new[] { selectedAudioCase };
                 try
                 {
@@ -311,6 +315,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                     }
                 }
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", selectedAudioCase); }
+
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")
