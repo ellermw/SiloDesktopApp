@@ -222,6 +222,28 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-audio-menu")
+            {
+                var selectedAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+                var audioCases = string.IsNullOrEmpty(selectedAudioCase)
+                    ? new[] { "", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
+                        "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
+                        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure",
+                        "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor",
+                        "access-refresh-replan", "accepted-version", "quality-second-step-failure", "quality-second-step-cancellation",
+                        "audio-plan-invalidation", "quality-plan-invalidation" }
+                    : new[] { selectedAudioCase };
+                try
+                {
+                    foreach (var audioCase in audioCases)
+                    {
+                        Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", audioCase);
+                        await PlaybackAudioMenuNativeFixture.RunAsync(_window);
+                    }
+                }
+                finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", selectedAudioCase); }
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")
             {
                 var reviewCase = Environment.GetEnvironmentVariable("SILO_HUD_REVIEW_CASE");

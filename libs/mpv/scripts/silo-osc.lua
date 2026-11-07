@@ -158,6 +158,12 @@ local state = {
     -- Audio track menu
     audio_tracks = {},
     active_audio = -1,
+    native_audio_capable = false,
+    native_audio_legacy = false,
+    native_audio_scope = nil,
+    native_menu_sequence = 0,
+    native_menu_request = nil,
+    native_menu_pointer_block = nil,
     audio_menu_visible = false,
     audio_menu_overlay = nil,
     audio_menu_items = {},
@@ -413,6 +419,14 @@ local function quality_choices_available()
     local versions = state.watch_party and {} or (state.quality_info.versions or {})
     return #versions > 1 or #visible_quality_tiers() > 1
 end
+local function native_menu_input(action)
+    local request = state.native_menu_request
+    if not request then return false end
+    mp.commandv("script-message", "silo-native-menu-input", request.owner,
+        tostring(request.sequence), action)
+    return true
+end
+
 local function consume_video_click()
     state.ignore_video_click_until = mp.get_time() + 0.5
 end
@@ -1509,7 +1523,7 @@ local function hud_control_enabled(name)
 end
 
 local function hud_input_available()
-    return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible
+    return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible or state.native_menu_request
         or state.subtitle_menu_visible or state.audio_menu_visible or state.quality_menu_visible
         or state.chapter_menu_visible or state.compact_menu_visible
         or state.dragging_seek or state.dragging_volume)
@@ -1941,7 +1955,7 @@ local function render_osc()
 
     local baudio = L.btn_audio
     if baudio then
-        draw_utility_state("btn_audio", baudio, state.audio_menu_visible)
+        draw_utility_state("btn_audio", baudio, state.audio_menu_visible or state.native_menu_request ~= nil)
         draw_audio_lines_icon(ass, baudio.cx, baudio.cy, math.floor(20 * sc),
             config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma)
     end
@@ -1997,6 +2011,7 @@ local function render_osc()
     -- elements, so provide the same visible focus affordance the WebUI gets
     -- from browser focus rings.
     if state.controller_focus_name
+        and not state.native_menu_request
         and not state.subtitle_menu_visible
         and not state.quality_menu_visible
         and not state.audio_menu_visible
@@ -2158,6 +2173,7 @@ local function render_osc()
             {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
             {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
             {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}
+        if #state.audio_tracks <= 1 then table.remove(entries, 1) end
         local row_h = math.floor(40 * sc)
         local width = math.min(W - 24 * sc, math.floor(280 * sc))
         -- Compact touch surfaces use a generous sheet above the transport row.
@@ -2563,7 +2579,7 @@ local function arm_osc_hide(delay)
         local focus_owned = focus and state.layout[focus] and hud_control_enabled(focus)
             and mp.get_time() < state.controller_focus_deadline
             and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
-        if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
+        if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned or state.native_menu_request
             or (state.compact_menu_visible and state.layout.btn_more)
             or state.subtitle_menu_visible or state.audio_menu_visible
             or state.quality_menu_visible or state.chapter_menu_visible
@@ -2611,6 +2627,7 @@ local function dismiss_transport_menus_for_fade()
 end
 
 hide_osc = function()
+    if state.native_menu_request then return end
     if state.dragging_seek or state.dragging_volume then return end
     if state.pause then return end  -- Stay visible when paused
     -- A transport menu is part of the OSC lifecycle, not an independent
@@ -2739,6 +2756,7 @@ local function get_mouse_pos()
 end
 
 local function handle_mouse_move()
+    if state.native_menu_request then return end
     local mx, my = get_mouse_pos()
     if mx == nil or my == nil or mx < 0 or my < 0 then return end
 
@@ -3673,8 +3691,9 @@ local function render_audio_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(56 * sc)
     local menu_w = math.min(math.floor(360 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_audio or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_audio.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3683,7 +3702,6 @@ local function render_audio_menu()
     state.audio_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_audio or state.layout.btn_more
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -3816,8 +3834,9 @@ local function render_chapter_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(64 * sc)
     local menu_w = math.min(math.floor(300 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_chapters or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_chapters.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3826,7 +3845,6 @@ local function render_chapter_menu()
     state.chapter_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_chapters or state.layout.btn_more
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -4696,6 +4714,7 @@ local function activate_keyboard_menu_item()
 end
 
 local function close_keyboard_surface()
+    if native_menu_input("cancel") then return true end
     if state.playback_failure_visible then
         invoke_playback_failure_action("exit")
         return true
@@ -4726,11 +4745,47 @@ local function set_keyboard_transport_menu(kind, visible)
     state.keyboard_menu_index = -1
 end
 
+local function open_native_audio_menu(keyboard)
+    if not state.native_audio_capable or state.native_audio_legacy then return false end
+    if not state.native_audio_scope or state.native_menu_request or #state.audio_tracks <= 1 or state.osc_disabled
+        or state.playback_loading or state.post_roll_active
+        or state.native_menu_sequence >= 9007199254740991 then return true end
+    compute_layout()
+    local anchor = state.layout.btn_audio or state.layout.btn_more
+    if not anchor then return true end
+    close_transport_menus(nil)
+    state.compact_menu_visible = false
+    state.dragging_seek = false
+    state.dragging_volume = false
+    state.native_menu_sequence = state.native_menu_sequence + 1
+    local request = {
+        owner = state.native_audio_scope,
+        sequence = state.native_menu_sequence,
+        focus_name = keyboard and (state.layout.btn_audio and "btn_audio" or "btn_more") or nil,
+    }
+    -- The native surface now owns input. Do not leave the old pointer/focus
+    -- looking active under it; fresh video mouse messages resume after close.
+    state.mouse_x, state.mouse_y = -1, -1
+    state.mouse_in_window, state.mouse_in_bar = false, false
+    state.controller_focus_name = nil
+    state.pressed_control = nil
+    state.native_menu_request = request
+    -- Retain the opening gesture through its release, even if Escape closes
+    -- the host first. Only a fresh pointer-down starts a new video gesture.
+    if not keyboard then state.native_menu_pointer_block = request end
+    mp.commandv("script-message", "silo-native-audio-open", request.owner, tostring(request.sequence),
+        tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
+        tostring(state.osd_width), tostring(state.osd_height))
+    request_tick()
+    return true
+end
+
 local function toggle_transport_menu_from_button(mx, my)
     compute_layout()
     local L = state.layout
 
     if L.btn_audio and point_in_rect(mx, my, L.btn_audio) and #state.audio_tracks > 1 then
+        if open_native_audio_menu() then return true end
         local opening = not state.audio_menu_visible
         close_transport_menus("audio")
         state.audio_menu_visible = opening
@@ -4803,6 +4858,7 @@ local function focusable_transport_controls()
 end
 
 local function move_controller_focus(direction)
+    if native_menu_input(direction) then return true end
     if state.playback_failure_visible then
         return move_playback_failure_focus()
     end
@@ -4842,6 +4898,8 @@ end
 local function open_transport_menu_from_controller(kind)
     close_transport_menus(kind)
     if kind == "audio" then
+        if #state.audio_tracks <= 1 then return end
+        if open_native_audio_menu(true) then return end
         state.audio_menu_visible = not state.audio_menu_visible
         set_keyboard_transport_menu(kind, state.audio_menu_visible)
         render_audio_menu()
@@ -4919,6 +4977,7 @@ local function activate_transport_control(name)
 end
 
 local function activate_controller_focus()
+    if native_menu_input("activate") then return true end
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
     end
@@ -4932,6 +4991,7 @@ local function activate_controller_focus()
 end
 
 local function handle_mouse_down()
+    if state.native_menu_request then return end
     state.pressed_control = nil
     state.controller_focus_name = nil
     local mx = state.mouse_x
@@ -5046,6 +5106,7 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
+                if item.name == "btn_audio" and open_native_audio_menu(false) then return end
                 consume_video_click(); activate_transport_control("overflow_" .. item.name); return
             end
         end
@@ -5285,6 +5346,7 @@ local function handle_mouse_down()
 end
 
 local function handle_mouse_down_right()
+    if state.native_menu_request then return end
     if state.playback_failure_visible then return end
     if state.osc_disabled then return end
     local mx = state.mouse_x
@@ -5305,6 +5367,7 @@ local function handle_mouse_down_right()
 end
 
 local function handle_mouse_up()
+    if state.native_menu_request then return end
     local held = state.pressed_control
     state.pressed_control = nil
     request_tick()
@@ -5349,11 +5412,13 @@ local function handle_mouse_leave()
 end
 
 local function handle_mouse_enter()
+    if state.native_menu_request then return end
     state.mouse_in_window = true
 end
 
 -- Scroll wheel for volume
 local function handle_wheel_up()
+    if state.native_menu_request then return end
     if state.playback_failure_visible then return end
     if state.stats_visible and state.stats_panel_rect and
         point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect) then
@@ -5385,6 +5450,7 @@ local function handle_wheel_up()
 end
 
 local function handle_wheel_down()
+    if state.native_menu_request then return end
     if state.playback_failure_visible then return end
     if state.stats_visible and state.stats_panel_rect and
         point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect) then
@@ -5417,6 +5483,7 @@ end
 
 -- Double-click for fullscreen
 local function handle_mbtn_left_dbl()
+    if state.native_menu_request then return end
     if state.playback_failure_visible then return end
     mp.commandv("script-message", "silo-fullscreen-toggle")
 end
@@ -6122,6 +6189,12 @@ end
 --------------------------------------------------------------------------------
 
 local function setup_key_bindings()
+    local function minimize_window()
+        if state.playback_failure_visible or state.native_menu_request then return end
+        mp.commandv("script-message", "silo-minimize")
+    end
+    mp.add_forced_key_binding("n", "silo-window-minimize", minimize_window)
+    mp.add_forced_key_binding("N", "silo-window-minimize-shift", minimize_window)
     -- Mouse movement
     mp.add_key_binding("mouse_move", "silo-osc-mouse-move", handle_mouse_move)
 
@@ -6163,10 +6236,10 @@ local function setup_key_bindings()
 
     -- Stats toggle
     mp.add_key_binding("i", "silo-osc-toggle-stats", function()
-        if not state.playback_failure_visible then toggle_stats() end
+        if not state.playback_failure_visible and not state.native_menu_request then toggle_stats() end
     end)
     mp.add_key_binding("I", "silo-osc-toggle-stats-shift", function()
-        if not state.playback_failure_visible then toggle_stats() end
+        if not state.playback_failure_visible and not state.native_menu_request then toggle_stats() end
     end)
 
     -- Subtitle delay nudge routes through host-owned timing preferences rather
@@ -6174,7 +6247,7 @@ local function setup_key_bindings()
     -- audio); X speeds them up. Each press shifts by 100 ms; the
     -- OSD shows the current absolute delay so the user can dial it in.
     local function nudge_sub_delay(delta)
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         if not state.subtitle_preferences_loaded then return end
         set_subtitle_offset_ms(((mp.get_property_number("sub-delay") or 0) + delta) * 1000)
         local d = mp.get_property_number("sub-delay") or 0
@@ -6186,26 +6259,31 @@ local function setup_key_bindings()
     -- Override F key — prevent mpv's default "cycle fullscreen" from firing
     -- Arrow keys: Left/Right = seek ±10s, Up/Down = volume ±5% (matching web player)
     mp.add_forced_key_binding("LEFT", "silo-seek-back", function()
+        if native_menu_input("left") then return end
         if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
         seek_relative_and_resume(-state.video_skip_back)
     end)
     mp.add_forced_key_binding("RIGHT", "silo-seek-fwd", function()
+        if native_menu_input("right") then return end
         if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
         seek_relative_and_resume(state.video_skip_forward)
     end)
     mp.add_forced_key_binding("UP", "silo-vol-up", function()
+        if native_menu_input("up") then return end
         if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("previous") then return end
         mp.commandv("add", "volume", "5")
     end)
     mp.add_forced_key_binding("DOWN", "silo-vol-down", function()
+        if native_menu_input("down") then return end
         if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("next") then return end
         mp.commandv("add", "volume", "-5")
     end)
     mp.add_forced_key_binding("HOME", "silo-menu-home", function()
+        if native_menu_input("home") then return end
         if state.playback_failure_visible then
             state.playback_failure_focus = state.playback_failure_can_retry and "retry" or "exit"
             render_playback_failure()
@@ -6218,6 +6296,7 @@ local function setup_key_bindings()
         end
     end)
     mp.add_forced_key_binding("END", "silo-menu-end", function()
+        if native_menu_input("end") then return end
         if state.playback_failure_visible then
             state.playback_failure_focus = "exit"
             render_playback_failure()
@@ -6230,6 +6309,7 @@ local function setup_key_bindings()
         end
     end)
     mp.add_forced_key_binding("ENTER", "silo-menu-activate", function()
+        if native_menu_input("activate") then return end
         if state.playback_failure_visible then
             invoke_playback_failure_action(state.playback_failure_focus)
             return
@@ -6239,10 +6319,12 @@ local function setup_key_bindings()
         end
     end)
     mp.add_forced_key_binding("TAB", "silo-control-focus-next", function()
+        if native_menu_input("down") then return end
         if move_playback_failure_focus() then return end
         move_controller_focus("right")
     end)
     mp.add_forced_key_binding("ESC", "silo-menu-escape", function()
+        if native_menu_input("cancel") then return end
         if state.playback_failure_visible then
             invoke_playback_failure_action("exit")
             return
@@ -6254,16 +6336,16 @@ local function setup_key_bindings()
     end)
     -- M = mute toggle
     mp.add_forced_key_binding("m", "silo-mute-toggle", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("cycle", "mute")
     end)
     mp.add_forced_key_binding("M", "silo-mute-toggle-shift", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("cycle", "mute")
     end)
 
     local function toggle_play_pause()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-pause-toggle")
     end
     mp.add_forced_key_binding("SPACE", "silo-play-pause-space", toggle_play_pause)
@@ -6271,7 +6353,7 @@ local function setup_key_bindings()
     mp.add_forced_key_binding("K", "silo-play-pause-k-shift", toggle_play_pause)
 
     local function toggle_captions()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         if state.active_subtitle >= 0 then
             remember_subtitle(state.active_subtitle)
             state.active_subtitle = -1
@@ -6298,28 +6380,28 @@ local function setup_key_bindings()
     -- Never let mpv's builtin j/J cycle an unverified or unavailable SID.
     -- Keep both directions local, using the same host-owned routes as CC.
     mp.add_forced_key_binding("j", "silo-subtitle-cycle-forward", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-subtitle-cycle", "forward")
     end)
     mp.add_forced_key_binding("J", "silo-subtitle-cycle-backward", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-subtitle-cycle")
     end)
 
     mp.add_forced_key_binding("f", "silo-fs-override", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end)
     mp.add_forced_key_binding("F", "silo-fs-override-shift", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end)
     mp.add_forced_key_binding("p", "silo-pip-override", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-pip-toggle")
     end)
     mp.add_forced_key_binding("P", "silo-pip-override-shift", function()
-        if state.playback_failure_visible then return end
+        if state.playback_failure_visible or state.native_menu_request then return end
         mp.commandv("script-message", "silo-pip-toggle")
     end)
 end
@@ -6329,9 +6411,34 @@ end
 --------------------------------------------------------------------------------
 
 local function setup_script_messages()
+    mp.register_script_message("osc-native-audio-scope", function(token)
+        -- Empty scopes revoke access during loading/retirement. Only an
+        -- explicit host fallback (or an older host) enables the legacy menu.
+        state.native_audio_capable = true
+        state.native_audio_legacy = token == "legacy"
+        local scope = token and #token == 32 and token:match("^%x+$") and token or nil
+        if scope ~= state.native_audio_scope then
+            state.native_menu_request = nil
+            state.native_menu_sequence = 0
+            state.native_audio_scope = scope
+            request_tick()
+        end
+    end)
+    mp.register_script_message("osc-native-menu-closed", function(token, sequence, consume)
+        local request = state.native_menu_request
+        if not request or request.owner ~= token or request.sequence ~= tonumber(sequence) then return end
+        state.native_menu_request = nil
+        if consume == "true" then state.native_menu_pointer_block = request end
+        if not state.osc_disabled then
+            state.controller_focus_name = request.focus_name
+            show_osc()
+        end
+        request_tick()
+    end)
     -- Host app can send mouse coordinates explicitly
     -- This is the primary mouse tracking method when embedded with wid=
     mp.register_script_message("osc-mouse-move", function(x, y, screen_moved)
+        if state.native_menu_request then return end
         local mx = tonumber(x)
         local my = tonumber(y)
         if not mx or not my then return end
@@ -6381,18 +6488,22 @@ local function setup_script_messages()
 
     -- Host app can send mouse button events
     mp.register_script_message("osc-mouse-down", function(x, y)
+        if state.native_menu_request then return end
+        state.native_menu_pointer_block = nil
         state.mouse_x = tonumber(x) or state.mouse_x
         state.mouse_y = tonumber(y) or state.mouse_y
         handle_mouse_down()
     end)
 
     mp.register_script_message("osc-mouse-down-right", function(x, y)
+        if state.native_menu_request then return end
         state.mouse_x = tonumber(x) or state.mouse_x
         state.mouse_y = tonumber(y) or state.mouse_y
         handle_mouse_down_right()
     end)
 
     mp.register_script_message("osc-mouse-up", function(x, y)
+        if state.native_menu_request then return end
         if x and y then
             state.mouse_x = tonumber(x) or state.mouse_x
             state.mouse_y = tonumber(y) or state.mouse_y
@@ -6434,6 +6545,7 @@ local function setup_script_messages()
 
     -- Host can toggle stats
     mp.register_script_message("osc-toggle-stats", function()
+        if state.native_menu_request then return end
         toggle_stats()
     end)
 
@@ -6454,6 +6566,8 @@ local function setup_script_messages()
     -- any OSC chrome (bar, menu overlay, stats panel), we toggle pause so
     -- clicking the video body works like every other media player.
     mp.register_script_message("osc-video-click", function(x, y)
+        if state.native_menu_request then return end
+        if state.native_menu_pointer_block then return end
         if state.playback_failure_visible then return end
         if mp.get_time() <= (state.ignore_video_click_until or 0) then
             return
