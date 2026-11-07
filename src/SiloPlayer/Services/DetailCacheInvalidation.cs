@@ -21,8 +21,9 @@ public static class DetailCacheInvalidation
         // A watched or progress change on an episode also changes its season
         // and series next-up state, so drop every entry; the cache is small.
         messenger.Register<ItemDetailPrefetchCache, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
+        messenger.Register<ItemDetailPrefetchCache, MediaStateInvalidated>(cache, static (owner, _) => owner.Clear());
         messenger.Register<ItemDetailPrefetchCache, PlaybackProgressUpdated>(cache,
-            static (owner, message) => ClearNowAndAfter(message.Persisted, owner.Clear));
+            static (owner, message) => owner.TrackProgressSave(message.Persisted, message.ContentId, message.SeriesId));
     }
 
     /// <summary>
@@ -36,6 +37,22 @@ public static class DetailCacheInvalidation
     {
         messenger ??= WeakReferenceMessenger.Default;
         var revision = new UserStateRevision();
+        messenger.Register<UserStateRevision, MediaStateInvalidated>(revision, static (owner, message) =>
+        {
+            // The coalesced delivery refreshes mounted details; its raw events
+            // already retired /watch reads and must not consume another retry.
+            if (message.RefreshDetails) return;
+            if (message.CatchUp)
+            {
+                owner.Advance();
+                return;
+            }
+            // An explicit empty playback scope is a viewer-only mutation, not
+            // an unknown-scope playback change. Legacy messages omit the split.
+            var playbackIds = message.PlaybackStateContentIds ?? message.ContentIds;
+            if (playbackIds.Count > 0)
+                owner.Advance(WatchScope(playbackIds, message.SeriesIds));
+        });
         messenger.Register<UserStateRevision, MediaSurfaceChanged>(revision,
             static (owner, message) => owner.Advance(ScopeOf(message)));
         messenger.Register<UserStateRevision, PlaybackProgressUpdated>(revision,
@@ -43,12 +60,23 @@ public static class DetailCacheInvalidation
         return revision;
     }
 
-    // A season id ("series:show-S01") without its series id cannot be matched
-    // to episodes; treat it as affecting everything rather than nothing.
+    // Local messages carry their content and optional series directly,
+    // without the viewer/playback split used by remote invalidations.
     private static string?[] ScopeOf(MediaSurfaceChanged message)
-        => message.ContentId.StartsWith("series:", StringComparison.Ordinal) && string.IsNullOrEmpty(message.SeriesId)
-            ? []
-            : [message.ContentId, message.SeriesId];
+        => WatchScope([message.ContentId], string.IsNullOrEmpty(message.SeriesId) ? [] : [message.SeriesId]);
+
+    // A named series relates aggregate detail state, not every episode's
+    // playback position. Only an actual series/season container mutation
+    // invalidates its descendant /watch snapshots. Season IDs use series:.
+    // Without a known parent, keep the container's own scope rather than
+    // retiring unrelated leaves; detail-cache invalidation remains global.
+    private static string?[] WatchScope(IEnumerable<string> contentIds, IEnumerable<string> seriesIds)
+    {
+        var items = contentIds.ToArray();
+        var series = seriesIds.Where(id => !string.IsNullOrEmpty(id)).ToArray();
+        var containerChanged = items.Any(id => id.StartsWith("series:", StringComparison.Ordinal));
+        return (containerChanged ? items.Concat(series) : items).Cast<string?>().ToArray();
+    }
 
     // A player-close message arrives before its final write finishes. Clear
     // now, and again once the server has the position, so a read started in

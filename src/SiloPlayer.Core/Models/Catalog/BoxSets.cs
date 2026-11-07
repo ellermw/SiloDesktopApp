@@ -3,7 +3,9 @@ using SiloPlayer.Core.Models.Home;
 namespace SiloPlayer.Core.Models.Catalog;
 public class BoxSetSummary
 {
+    [JsonConverter(typeof(SiloPlayer.Core.Json.StringOrNumberJsonConverter))]
     public string Id { get; set; } = "";
+    [JsonConverter(typeof(SiloPlayer.Core.Json.StringOrNumberJsonConverter))]
     public string LibraryId { get; set; } = "";
     public string Title { get; set; } = "";
     public string Overview { get; set; } = "";

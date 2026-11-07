@@ -7,6 +7,7 @@ using SiloPlayer.Core.Services.Updates;
 
 namespace SiloPlayer.Tests;
 
+[Collection("Synthetic Silo process lifetime")]
 public sealed class UpdateTransactionLifecycleTests : IDisposable
 {
     private const string OldVersion = "1.2.464.0", NewVersion = "1.2.465.0";

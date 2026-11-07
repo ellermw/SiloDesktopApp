@@ -85,6 +85,35 @@ public sealed class WatchTogetherCurrentParityTests
         Assert.Contains("++_navigationGeneration;", navigatedFrom[..navigatedFrom.IndexOf("PlaybackStartRequested -= OnCoordinatorStartRequested", StringComparison.Ordinal)]);
     }
 
+    [Fact]
+    public void StartPartySnapshotsSeasonsAndRejectsStaleEpisodeReads()
+    {
+        var page = File.ReadAllText(SourcePath("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+        var setup = page[page.IndexOf("private async Task ShowStartPartyAsync()", StringComparison.Ordinal)
+            ..page.IndexOf("private void BuildMoreFlyout()", StringComparison.Ordinal)];
+        var firstAwait = setup.IndexOf("await ", StringComparison.Ordinal);
+        var captured = setup[..firstAwait];
+
+        Assert.Contains("var seasons = ViewModel.Seasons.ToArray();", captured);
+        Assert.Contains("var libraryId = ViewModel.LibraryId;", captured);
+        Assert.Contains("var navigation = _navigationCts;", captured);
+        Assert.Contains("client.IsCurrentContext(authority)", captured);
+        Assert.Contains("ReferenceEquals(_navigationCts, navigation)", captured);
+        Assert.Contains("ReferenceEquals(ViewModel.Item, item)", captured);
+        Assert.Contains("ViewModel.LibraryId == libraryId", captured);
+        Assert.Contains("IsCurrentDetail(item.ContentId)", captured);
+        Assert.Contains("foreach (var season in seasons)", setup);
+        Assert.DoesNotContain("foreach (var season in ViewModel.Seasons)", setup);
+        Assert.Contains("GetEpisodesAsync(item.ContentId, season.SeasonNumber, libraryId)", setup);
+
+        var episodeRead = setup.IndexOf("var episodes = await ", StringComparison.Ordinal);
+        var staleCheck = setup.IndexOf("if (!Current()) return;", episodeRead, StringComparison.Ordinal);
+        var populate = setup.IndexOf("targetChoice.Items.Add(", episodeRead, StringComparison.Ordinal);
+        Assert.True(episodeRead >= 0 && episodeRead < staleCheck && staleCheck < populate);
+        Assert.Contains("await api.GetWatchTogetherCapabilitiesAsync();\n            if (!Current()) return;", setup.Replace("\r\n", "\n"));
+        Assert.Contains("await ResolvePlayableContentIdForPlaybackAsync();\n            if (!Current()) return;", setup.Replace("\r\n", "\n"));
+    }
+
     private static string SourcePath(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
