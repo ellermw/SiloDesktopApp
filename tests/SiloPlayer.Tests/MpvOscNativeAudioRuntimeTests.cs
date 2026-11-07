@@ -2,6 +2,70 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData("chapters", "pointer")]
+    [InlineData("chapters", "controller")]
+    [InlineData("audio", "pointer")]
+    [InlineData("audio", "controller")]
+    public void CompactLegacyMenusAnchorToMoreWithAnEmptyNativeScope(string kind, string route)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local s = osc_test_state
+            s.osc_disabled, s.pause, s.playback_loading, s.post_roll_active = false, false, false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = { {index=0,title='English'}, {index=1,title='Japanese'} }
+            s.chapters = { {index=0,title='Opening',start_seconds=0,end_seconds=60} }
+            native_handlers['osc-native-audio-scope']('')
+            osc_test_layout()
+            assert(s.layout.btn_audio == nil and s.layout.btn_chapters == nil and s.layout.btn_more)
+            s.controller_focus_name = 'btn_more'; osc_test_activate(); osc_test_tick()
+            local name = '{{kind}}' == 'audio' and 'btn_audio' or 'btn_chapters'
+            local row
+            for _, item in ipairs(s.compact_menu_items) do if item.name == name then row = item end end
+            assert(row, 'compact legacy row missing')
+            if '{{route}}' == 'pointer' then
+                native_handlers['osc-mouse-down'](tostring(row.x + row.w / 2), tostring(row.y + row.h / 2))
+            else
+                s.controller_focus_name = 'overflow_' .. name; osc_test_activate()
+            end
+            osc_test_tick()
+            local prefix = '{{kind}}' == 'audio' and 'audio' or 'chapter'
+            local overlay = assert(s[prefix .. '_menu_overlay'])
+            mp.set_property('user-data/compact-legacy-result', tostring(s[prefix .. '_menu_visible']) .. ':'
+                .. tostring(#s[prefix .. '_menu_items']) .. ':' .. tostring(#overlay.data > 0) .. ':' .. tostring(#native_requests))
+            """, rawAss: true, resultProperty: "user-data/compact-legacy-result", beforeScript: NativeAudioProbe,
+            windowWidth: 480, windowHeight: 480);
+        Assert.Equal(kind == "audio" ? "true:2:true:0" : "true:1:true:0", output);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void CompactSingleTrackAudioWithAnEmptyScopeAndEmptyChaptersStayUnavailable(int count)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local s = osc_test_state
+            s.osc_disabled, s.pause, s.playback_loading, s.post_roll_active = false, false, false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks, s.chapters = {}, {}
+            for index=1,{{count}} do s.audio_tracks[index] = {index=index-1,title='Only track'} end
+            native_handlers['osc-native-audio-scope']('')
+            osc_test_layout()
+            s.controller_focus_name = 'btn_more'; osc_test_activate(); osc_test_tick()
+            for _, item in ipairs(s.compact_menu_items) do
+                assert(item.name ~= 'btn_audio' and item.name ~= 'btn_chapters', 'unavailable compact row is still offered')
+            end
+            -- A queued controller activation from the old inventory is inert too.
+            s.controller_focus_name = 'overflow_btn_audio'; osc_test_activate()
+            s.controller_focus_name = 'overflow_btn_chapters'; osc_test_activate()
+            s.controller_focus_name = 'btn_stats'; osc_test_activate(); osc_test_tick()
+            mp.set_property('user-data/compact-legacy-result', tostring(s.audio_menu_visible) .. ':'
+                .. tostring(s.chapter_menu_visible) .. ':' .. tostring(#native_requests) .. ':' .. tostring(s.stats_visible))
+            """, rawAss: true, resultProperty: "user-data/compact-legacy-result", beforeScript: NativeAudioProbe,
+            windowWidth: 480, windowHeight: 480);
+        Assert.Equal("false:false:0:true", output);
+    }
+
     [Fact]
     public void NativeAudioCompactPointerCloseAllowsImmediateFreshVideoClick()
     {

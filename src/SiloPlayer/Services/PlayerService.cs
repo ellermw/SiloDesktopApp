@@ -6221,11 +6221,18 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("state_trace.txt", "Protocol-v3 quality switch canceled");
         }
-        catch (OperationCanceledException) when (bufferingReplan != null && !ReferenceEquals(bufferingExpectedSession, manager.CurrentSession))
+        catch (OperationCanceledException) when (bufferingReplan != null &&
+            !ReferenceEquals(bufferingExpectedSession, manager.CurrentSession) &&
+            !OwnsPlaybackBusy(busyOwner with { Session = manager.CurrentSession }))
         { LogToFile("state_trace.txt", "Buffering quality action superseded by another plan."); }
         catch (Exception ex)
         {
             if (!CurrentSwitch()) return;
+            // A pending subtitle Off can adopt a track_change plan before the
+            // quality_change fails. Follow that plan, but release/recover only
+            // if this operation still owns the busy revision and playback.
+            var intermediatePlanAccepted = !ReferenceEquals(busyOwner.Session, manager.CurrentSession);
+            busyOwner = busyOwner with { Session = manager.CurrentSession };
             var released = ReleasePlaybackBusy(busyOwner, () =>
             {
                 _qualitySwitchActive = false;
@@ -6233,9 +6240,22 @@ public partial class PlayerService : IDisposable
                 LogToFile("player_quality_switch_error.txt", ex.ToString());
                 var (title, detail) = DescribePlaybackError(ex);
                 ErrorMessage = detail;
-                ShowNotice(title, detail, "error");
-                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
-                SendQualityInfoToOsc();
+                if (intermediatePlanAccepted)
+                {
+                    _prematureEofRecoveryActive = true;
+                    SetSwitchingContent(true);
+                    IsLoading = true;
+                    ShowNotice("Reconnecting playback",
+                        "The quality switch was interrupted. Restoring playback from your current position…", "warning");
+                    _ = RunStreamRecoveryAsync(currentPos, "quality-switch-failed", manager, wasPaused,
+                        loadingOwner?.Token ?? CancellationToken.None);
+                }
+                else
+                {
+                    ShowNotice(title, detail, "error");
+                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+                    SendQualityInfoToOsc();
+                }
             });
             if (released != null && loadingOwner != null)
                 App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
@@ -6245,6 +6265,10 @@ public partial class PlayerService : IDisposable
         {
             if (!CurrentSwitch())
             {
+                // Cancellation/identity retirement can also follow the first
+                // adoption. The revision check still protects any successor.
+                if (ReferenceEquals(manager, _playbackManager))
+                    busyOwner = busyOwner with { Session = manager.CurrentSession };
                 var released = ReleasePlaybackBusy(busyOwner, () => _qualitySwitchActive = false);
                 if (released != null && loadingOwner != null)
                     App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
@@ -6255,7 +6279,6 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleSearchDialogAsync()
     {
-        RetireNativeMenus();
         var session = _playbackManager?.CurrentSession;
         var mainWindow = App.MainWindowInstance;
         if (session == null || mainWindow?.Content?.XamlRoot == null)
@@ -6274,8 +6297,12 @@ public partial class PlayerService : IDisposable
             downloadedSubtitleId = subtitleId;
         };
 
+        RetireNativeMenus();
         if (!await _playbackDialogGate.WaitAsync(0))
+        {
+            PublishNativeMenuScopes();
             return;
+        }
         var restorePlayerInput = false;
         try
         {
@@ -6309,15 +6336,18 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAppearanceDialogAsync()
     {
-        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow?.Content?.XamlRoot == null)
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
         var dialog = new SiloPlayer.Controls.SubtitleAppearanceDialog(_activeAuthority);
+        RetireNativeMenus();
         if (!await _playbackDialogGate.WaitAsync(0))
+        {
+            PublishNativeMenuScopes();
             return;
+        }
         var restorePlayerInput = false;
         try
         {
@@ -6367,14 +6397,17 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAiDialogAsync()
     {
-        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow == null)
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
+        RetireNativeMenus();
         if (!await _playbackDialogGate.WaitAsync(0))
+        {
+            PublishNativeMenuScopes();
             return;
+        }
         var restorePlayerInput = false;
         try
         {

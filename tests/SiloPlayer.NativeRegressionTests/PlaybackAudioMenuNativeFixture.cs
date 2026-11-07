@@ -177,6 +177,9 @@ internal static class PlaybackAudioMenuNativeFixture
             var current = (ListViewItem)list.Items[37];
             Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
+            Require(AutomationProperties.GetName(current).Contains("640 kbps", StringComparison.Ordinal)
+                && Descendants<TextBlock>((DependencyObject)current.Content).Any(text => text.Text.Contains("640 kbps", StringComparison.Ordinal)),
+                "Native Audio metadata must display and announce source bitrate in kbps without dividing it by 1000.");
             var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (menuProbe == "shift-tab")
             {
@@ -721,7 +724,7 @@ internal static class PlaybackAudioMenuNativeFixture
         FileId = 42, Duration = 60, AudioTracks = Enumerable.Range(0, 72).Select(i => new AudioTrackInfo
         {
             Title = i == 71 ? "A deliberately long multilingual audio label — 日本語 — " + new string('x', 180) : i == 1 ? "" : i == 2 ? "Duplicate title" : $"Audio source {i}",
-            Language = i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
+            Language = i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Bitrate = 640, Default = i == 0,
         }).ToList(),
     };
 

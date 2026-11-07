@@ -2125,10 +2125,15 @@ local function render_osc()
 
     state.compact_menu_items = {}
     if state.compact_menu_visible and L.btn_more then
-        local entries = {{name="btn_audio", label="Audio tracks"}, {name="btn_chapters", label="Chapters"},
+        local entries = {}
+        if #state.audio_tracks > 1 then table.insert(entries, {name="btn_audio", label="Audio tracks"}) end
+        if #state.chapters > 0 then table.insert(entries, {name="btn_chapters", label="Chapters"}) end
+        for _, entry in ipairs({
             {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
             {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
-            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}
+            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}) do
+            table.insert(entries, entry)
+        end
         local row_h = math.floor(40 * sc)
         local width = math.min(W - 24 * sc, math.floor(280 * sc))
         -- Compact touch surfaces use a generous sheet above the transport row.
@@ -3632,8 +3637,9 @@ local function render_audio_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(56 * sc)
     local menu_w = math.min(math.floor(360 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_audio or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_audio.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3642,7 +3648,6 @@ local function render_audio_menu()
     state.audio_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_audio
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -3775,8 +3780,9 @@ local function render_chapter_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(64 * sc)
     local menu_w = math.min(math.floor(300 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_chapters or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_chapters.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3785,7 +3791,6 @@ local function render_chapter_menu()
     state.chapter_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_chapters
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -4836,6 +4841,8 @@ local function move_controller_focus(direction)
 end
 
 local function open_transport_menu_from_controller(kind)
+    if (kind == "audio" and #state.audio_tracks <= 1)
+        or (kind == "chapters" and #state.chapters == 0) then return end
     close_transport_menus(kind)
     if kind == "audio" then
         if open_native_menu("audio", true) then return end
