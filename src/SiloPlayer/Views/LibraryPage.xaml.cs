@@ -3452,6 +3452,8 @@ public sealed partial class LibraryPage : Page,
             pinButton.Click += async (_, args) =>
             {
                 if (App.MainWindowInstance is not MainWindow window) return;
+                var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+                var context = apiClient.CaptureContext();
                 pinButton.IsEnabled = false;
                 try
                 {
@@ -3460,6 +3462,17 @@ public sealed partial class LibraryPage : Page,
                     pinIcon.Glyph = nowPinned ? "\uE841" : "\uE840";
                     pinButton.Opacity = nowPinned ? 1 : 0;
                     ToolTipService.SetToolTip(pinButton, nowPinned ? "Unpin from sidebar" : "Pin to sidebar");
+                }
+                catch (OperationCanceledException)
+                {
+                    // A retired shell did not commit this control's result.
+                    // Retain its previous presentation until normal refresh.
+                }
+                catch (Exception ex)
+                {
+                    if (IsLoaded && pinButton.IsLoaded && apiClient.IsCurrentContext(context))
+                        App.Services.GetRequiredService<ToastService>().Error(ex,
+                            ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
                 }
                 finally { pinButton.IsEnabled = true; }
             };
