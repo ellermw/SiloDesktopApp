@@ -119,9 +119,18 @@ public sealed class FullInstallerInvocationTests
                     $good=@{FileMajorPart=$v.Major;FileMinorPart=$v.Minor;FileBuildPart=$v.Build;FilePrivatePart=$v.Revision;
                         ProductMajorPart=$v.Major;ProductMinorPart=$v.Minor;ProductBuildPart=$v.Build;ProductPrivatePart=$v.Revision;ProductVersion=$release[2]}
                     Confirm-UpdateInstallerIdentity $release[0] $release[1] ([pscustomobject]$good)
-                    foreach($fault in @('FileBuildPart','ProductPrivatePart','ProductVersion')){
+                    # Inno Setup pads version text with spaces to its fixed resource width (50 for ProductVersion).
+                    $padded=$good.Clone();$padded.ProductVersion=$release[2].PadRight(50)
+                    Confirm-UpdateInstallerIdentity $release[0] $release[1] ([pscustomobject]$padded)
+                    foreach($fault in @('FileBuildPart','ProductPrivatePart','ProductVersion','PaddedProductVersion','ProductVersionSuffix','ProductVersionTab')){
                         $bad=$good.Clone()
-                        if($fault -eq 'ProductVersion'){$bad[$fault]='1.2.999'}else{$bad[$fault]++}
+                        switch($fault){
+                            'ProductVersion'{$bad.ProductVersion='1.2.999'}
+                            'PaddedProductVersion'{$bad.ProductVersion='1.2.999'.PadRight(50)}
+                            'ProductVersionSuffix'{$bad.ProductVersion=$release[2]+' x'}
+                            'ProductVersionTab'{$bad.ProductVersion=$release[2]+"`t"}
+                            default{$bad[$fault]++}
+                        }
                         $failed=$false
                         try{Confirm-UpdateInstallerIdentity $release[0] $release[1] ([pscustomobject]$bad)}catch{$failed=$true}
                         if(!$failed){throw ('Disagreeing PE identity accepted: '+$fault)}
@@ -131,7 +140,7 @@ public sealed class FullInstallerInvocationTests
                 @{rejected=$rejected}|ConvertTo-Json -Compress
                 """, 0);
             using var result = JsonDocument.Parse(output);
-            Assert.Equal(9, result.RootElement.GetProperty("rejected").GetInt32());
+            Assert.Equal(18, result.RootElement.GetProperty("rejected").GetInt32());
         }
         finally { Directory.Delete(sandbox, true); }
     }
