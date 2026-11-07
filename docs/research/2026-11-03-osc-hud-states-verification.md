@@ -4,7 +4,7 @@
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta PR #90 input `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+Source version: `1.2.709-beta.1`; numeric version: `1.2.708.1`.
 
 The app, update host, launcher and installer defaults already carry these stamps; this merge changes none. Native Chapters and compact More are combined with Beta's owned native Audio, Quality and Watch Party controls. These input identities are not a build, test or release receipt for the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify this merge.
 
@@ -22,13 +22,15 @@ This is the first focused PR of the owner's approved staged native-menu work. It
 - Audio with no alternative and empty Chapters remain disabled across appearance, navigation and desktop/compact activation. Compact Audio/Chapters anchor to the visible More control.
 - Invisible/covered Fit and More controls cannot activate underneath a menu or hidden HUD. Existing active indicators, quality pending text and authority/track-intent routes are retained.
 
-## Historical integrated source identity (PR #87)
+## Historical source identities — native Audio (PR #87) and Quality (PR #89)
 
-Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
+Integrated Audio source head (PR #87): `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+Reviewed Quality source head (PR #89): `5f38c219a0b5f53b32446e0d936631ef6fa99642`.
 
-These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. The PR #86 identities and receipts below remain historical and do not verify this integrated head. No builds or tests were run for this correction; pipeline re-verification is required.
+Source version: `1.2.709-beta.1`; numeric version: `1.2.708.1`.
+
+These values record the existing app, updater, launcher and installer-default stamps without changing them. Neither source identity is a verification receipt for the combined merge. No builds or tests were run for this correction or merge; pipeline re-verification must record the final integrated head. The PR #86 identities, reviews and receipts below remain historical and do not verify either head or the combined merge.
 
 ## Historical PR #86 source identity, verification and provenance
 

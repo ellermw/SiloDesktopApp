@@ -10,7 +10,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+Source version: `1.2.709-beta.1`; numeric version: `1.2.708.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -18,7 +18,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+Source version: `1.2.709-beta.1`; numeric version: `1.2.708.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -45,6 +45,12 @@ Review round1 corrects signed-cursor letter recovery and the second deferred nat
 Synthetic verification through the pinned-engine/mutex parent runner: focused **115/115**, full **3,466/3,466**, fresh Release publish, actual signed letter recovery and both-dispatch-boundary checks, expanded letter-feedback and original letter controls at1280×1000 /960×550, and existing cursor controls at1920×1080 /3440×1440 /3840×2160. All selected native groups log the completion sentinel. Final app DLL SHA256: `D9B9F81F01E99F2803C762D21E83311E3227525DCE569FB988C594A0971FC4AA`. The original E0C999 candidate and its evidence remain historical. Pending/error screenshots remain readable; the synthetic audiobook item-type mismatch and invalid-cursor problem-URI correction are fixture-only records.
 
 Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-polish-nov02/letters-task-report.md`, `letters/review-r1-bindings.json` and historical `letters/final-bindings.json`. The first full run's24 unrelated updater Win32 path failures remain preserved; parent corrected its deep D: TEMP path and demonstrated unchanged updater/protocol inputs passing68/68 before the passing full rerun. Existing compiler/analyzer warnings remain. No complete visual parity, hardware input or all-native-suite claim; the inherited Home-row completion baseline is outside4a. Parent owns independent Standards/Spec reviews and Beta delivery. No version stamps, installed player, real account, updater product code, installer or production state changed.
+
+## Current source identity — native Quality menu (PR #89)
+
+Source version: `1.2.709-beta.1`; numeric version: `1.2.708.1`.
+
+Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
 # Historical development — OSC feedback and input ownership (PR #86)
 
