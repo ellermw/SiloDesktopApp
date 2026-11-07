@@ -3119,71 +3119,79 @@ public partial class PlayerService : IDisposable
             _mpv?.SendScriptMessage("osc-set-auto-skip", "false", "false", "false");
             SendMarkersToOsc();
 
-            // Resolve against this file's inventory before any unrelated
-            // settings round trip can delay (or prevent) subtitle selection.
-            LoadSubtitles();
-            var applyInitialSubtitleSelection = true;
-            var subtitleManager = _playbackManager;
-            if (_pendingAutomaticSubtitleSelection is { } automatic && subtitleManager?.CurrentSession is { } session)
+            // Settings and subtitle execution must not wait on each other:
+            // either the profile read or a complete sidecar download can be slow.
+            if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+            var settingsTask = SendAutoSkipSettingsToOscAsync(ct);
+            try
             {
-                // Only the loaded file can attest native identity. Re-resolve the
-                // automatic choice over executable routes, retaining candidate priority.
-                if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-                lock (_subtitleTrackStateLock)
-                lock (subtitleManager.SubtitleInventorySyncRoot)
+                LoadSubtitles();
+                var applyInitialSubtitleSelection = true;
+                var subtitleManager = _playbackManager;
+                if (_pendingAutomaticSubtitleSelection is { } automatic && subtitleManager?.CurrentSession is { } session)
                 {
-                    applyInitialSubtitleSelection = ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic);
-                    if (applyInitialSubtitleSelection)
+                    // Only the loaded file can attest native identity. Re-resolve the
+                    // automatic choice over executable routes, retaining candidate priority.
+                    if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+                    lock (_subtitleTrackStateLock)
+                    lock (subtitleManager.SubtitleInventorySyncRoot)
                     {
-                        var routes = CaptureSubtitleSelectionRoutes(session.SubtitleUrls);
-                        var automaticIndex = SubtitleAutoSelect.Resolve(automatic with
+                        applyInitialSubtitleSelection = ReferenceEquals(_pendingAutomaticSubtitleSelection, automatic);
+                        if (applyInitialSubtitleSelection)
                         {
-                            Tracks = SubtitleAutoSelect.BuildCandidates(session.SubtitleUrls.Where(t => HasSubtitleSelectionRoute(t, routes))),
-                        });
-                        _pendingAutomaticSubtitleSelection = null;
-                        _pendingInitialServerSubtitleIndex = automaticIndex ?? -1;
-                        if (session.ProtocolVersion >= 3)
-                            subtitleManager.RecordLocalSubtitleSelection(automaticIndex, isAutomatic: true);
+                            var routes = CaptureSubtitleSelectionRoutes(session.SubtitleUrls);
+                            var automaticIndex = SubtitleAutoSelect.Resolve(automatic with
+                            {
+                                Tracks = SubtitleAutoSelect.BuildCandidates(session.SubtitleUrls.Where(t => HasSubtitleSelectionRoute(t, routes))),
+                            });
+                            _pendingAutomaticSubtitleSelection = null;
+                            _pendingInitialServerSubtitleIndex = automaticIndex ?? -1;
+                            if (session.ProtocolVersion >= 3)
+                                subtitleManager.RecordLocalSubtitleSelection(automaticIndex, isAutomatic: true);
+                        }
                     }
                 }
-            }
-            var requestedSubtitleExecutedLocally = false;
-            if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-            if (TryApplyLegacyInitialSubtitleChoice(generation, ownerCts)) applyInitialSubtitleSelection = false;
-            if (applyInitialSubtitleSelection)
-            {
-                var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
-                    (_playbackManager is { } loadManager &&
-                        (loadManager.CurrentSession?.ProtocolVersion >= 3 || loadManager.CaptureLocalSubtitleIntent().HasSelection)
-                        ? loadManager.SubtitleSelectionForLoad : (int?)null);
-                if (resolvedSubtitleIndex is int initialSubtitleIndex)
+                var requestedSubtitleExecutedLocally = false;
+                if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+                if (TryApplyLegacyInitialSubtitleChoice(generation, ownerCts)) applyInitialSubtitleSelection = false;
+                if (applyInitialSubtitleSelection)
                 {
-                    _pendingInitialServerSubtitleIndex = null;
-                    if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-                    var subtitleIntent = _playbackManager?.CaptureLocalSubtitleIntent();
-                    var selectionExecuted = await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
-                    // A rejected server refinement need not prevent local execution.
-                    // Off only satisfies the request when it was really Off, not
-                    // when an unmatched subtitle identity resolved to -1.
-                    requestedSubtitleExecutedLocally = selectionExecuted &&
-                        subtitleFailureSession is { IsSubtitleBurnedIn: false } &&
-                        _executedSubtitleFileId == subtitleFailureSession.MediaFileId &&
-                        (_executedSubtitleTrack?.Index ?? -1) == initialSubtitleIndex &&
-                        (initialSubtitleIndex >= 0 || subtitleIntent?.Track == null) &&
-                        _playbackManager?.IsRetainedSubtitleUnavailable != true;
+                    var resolvedSubtitleIndex = _pendingInitialServerSubtitleIndex ??
+                        (_playbackManager is { } loadManager &&
+                            (loadManager.CurrentSession?.ProtocolVersion >= 3 || loadManager.CaptureLocalSubtitleIntent().HasSelection)
+                            ? loadManager.SubtitleSelectionForLoad : (int?)null);
+                    if (resolvedSubtitleIndex is int initialSubtitleIndex)
+                    {
+                        _pendingInitialServerSubtitleIndex = null;
+                        if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+                        var subtitleIntent = _playbackManager?.CaptureLocalSubtitleIntent();
+                        var selectionExecuted = await SelectSubtitleByServerIndexAsync(initialSubtitleIndex, persist: false);
+                        // A rejected server refinement need not prevent local execution.
+                        // Off only satisfies the request when it was really Off, not
+                        // when an unmatched subtitle identity resolved to -1.
+                        requestedSubtitleExecutedLocally = selectionExecuted &&
+                            subtitleFailureSession is { IsSubtitleBurnedIn: false } &&
+                            _executedSubtitleFileId == subtitleFailureSession.MediaFileId &&
+                            (_executedSubtitleTrack?.Index ?? -1) == initialSubtitleIndex &&
+                            (initialSubtitleIndex >= 0 || subtitleIntent?.Track == null) &&
+                            _playbackManager?.IsRetainedSubtitleUnavailable != true;
+                    }
+                }
+
+                if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
+                if (subtitleFailureSession?.SubtitleReconciliationFailed == true &&
+                    ReferenceEquals(subtitleFailureSession, _playbackManager?.CurrentSession))
+                {
+                    subtitleFailureSession.SubtitleReconciliationFailed = false;
+                    if (!requestedSubtitleExecutedLocally) ShowSubtitleSelectionUnavailable();
                 }
             }
-
-            if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
-            if (subtitleFailureSession?.SubtitleReconciliationFailed == true &&
-                ReferenceEquals(subtitleFailureSession, _playbackManager?.CurrentSession))
+            finally
             {
-                subtitleFailureSession.SubtitleReconciliationFailed = false;
-                if (!requestedSubtitleExecutedLocally) ShowSubtitleSelectionUnavailable();
+                // Observe settings even if subtitle work fails or this load retires,
+                // before the outer finally disposes their shared owner CTS.
+                await settingsTask;
             }
-            // Effective playback settings are profile/device scoped and may
-            // change between sessions; they must not gate subtitle execution.
-            await SendAutoSkipSettingsToOscAsync(ct);
 
             if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;
             await SendSubtitleAiAvailabilityToOscAsync(ct);

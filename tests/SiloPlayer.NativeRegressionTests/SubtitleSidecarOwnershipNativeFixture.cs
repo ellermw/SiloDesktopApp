@@ -45,9 +45,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             Require(subtitles.SubtitleBytes.Length > SubtitleSidecarFile.MaxBytes,
                 "PGS regression must exceed the old text download limit.");
         }
-        using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
+        using var wire = new Wire(subtitles.Origin) { PublishProfileSettings = automatic }; using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
         using var auth = new AuthService(api, new AuthApi(api));
+        if (automatic) Property(auth, "SelectedProfileId", "fixture");
         using var manager = new PlaybackManager(new(api), new(api), auth, api);
         using var service = new PlayerService(new(api), new(api), auth, api,
             new SettingsService(Path.Combine(Program.ResultDirectory, scenario)), new SettingsApi(api));
@@ -64,10 +65,36 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         Property(service, "Versions", manager.WatchDetail!.Versions);
         Call(service, "SendSubtitleListToOsc");
         Task<bool>? selection = null;
+        var probeReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var settingsPublished = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var introModePublished = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void ObserveSettings(string[] args)
+        {
+            if (args.FirstOrDefault() == "silo-budget-settings-ready") probeReady.TrySetResult();
+            if (args.FirstOrDefault() == "silo-budget-auto-skip" && args.Length == 4 && args[1] == "true")
+                settingsPublished.TrySetResult(args[1..]);
+            if (args.FirstOrDefault() == "silo-budget-intro-mode" && args.Length == 2)
+                introModePublished.TrySetResult(args[1]);
+        }
+        mpv.ScriptMessageReceived += ObserveSettings;
         try
         {
             if (automatic)
             {
+                var script = Path.Combine(Program.ResultDirectory, scenario + "-settings.lua");
+                await File.WriteAllTextAsync(script, """
+                    local mp = require 'mp'
+                    mp.register_script_message('osc-set-auto-skip', function(intro, recap, credits)
+                        mp.commandv('script-message', 'silo-budget-auto-skip', intro, recap, credits)
+                    end)
+                    mp.register_script_message('osc-set-intro-mode', function(mode)
+                        mp.commandv('script-message', 'silo-budget-intro-mode', mode)
+                    end)
+                    mp.commandv('script-message', 'silo-budget-settings-ready')
+                    """);
+                typeof(MpvPlayer).GetMethod("Command", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .Invoke(mpv, [new[] { "load-script", script }]);
+                await probeReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 // Exercise the actual FILE_LOADED event and its initialization
                 // worker, with no manual pending owner to force feedback/saving.
                 manager.RecordLocalSubtitleSelection(0, isAutomatic: true);
@@ -85,6 +112,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 selection = await started.Task.WaitAsync(TimeSpan.FromSeconds(4));
             }
             await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (automatic)
+            {
+                var flags = await settingsPublished.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                var introMode = await introModePublished.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Require(flags.SequenceEqual(new[] { "true", "false", "true" }) && introMode == "always" &&
+                    !subtitles.Release.Task.IsCompleted && Get(service, "_loadedMediaInitCts") != null,
+                    "FILE_LOADED did not publish the profile's auto-skip and intro mode while the sidecar remained held.");
+            }
             if (!pgs)
             {
                 // No headers (and hence no first byte) before the old 8s limit.
@@ -120,6 +155,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (selection != null) try { await selection.WaitAsync(TimeSpan.FromSeconds(20)); } catch (Exception) { }
             Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+            mpv.ScriptMessageReceived -= ObserveSettings;
             Set(service, "_mpv", null); Set(service, "_playbackManager", null);
         }
     }
@@ -1055,6 +1091,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         public int PreferenceWrites;
         public ConcurrentQueue<int> RequestedPreferences = new();
         public SubtitleListResponse? DownloadedInventory;
+        public bool PublishProfileSettings;
         public bool HoldSettings;
         public bool SupportBurnInReplan;
         public bool StartsBurned;
@@ -1083,7 +1120,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (path.Contains("/settings/", StringComparison.Ordinal))
             {
                 if (HoldSettings) { SettingsEntered.TrySetResult(); await SettingsRelease.Task.WaitAsync(ct); }
+                if (PublishProfileSettings && request.RequestUri.Query.Contains("playback.intro_skip_mode", StringComparison.Ordinal))
+                    return Json("""{"items":[{"key":"playback.intro_skip_mode","value":"always","source":"profile"}]}""");
                 return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
+            }
+            if (PublishProfileSettings && path == "/api/v2/profiles")
+            {
+                await Task.Yield();
+                return Json("""{"items":[{"id":"fixture","name":"Fixture","auto_skip_intro":true,"auto_skip_recap":false,"auto_skip_credits":true}]}""");
             }
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (SupportBurnInReplan && path.EndsWith("/replan"))
