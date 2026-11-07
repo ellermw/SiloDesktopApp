@@ -1390,7 +1390,9 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("!previousIds.Contains", nativeFallback);
         Assert.Contains("if (ct.IsCancellationRequested || fileRequest != _asyncSubtitleFileRequest || !added)", nativeFallback);
         Assert.DoesNotContain("mpv_command(", nativeFallback);
-        Assert.Contains("if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;", prefetch);
+        // A timing-invalidated SID may remain applied while fresh cues load,
+        // but only a non-stale SID or prefetched bytes can satisfy readiness.
+        Assert.Contains("if ((_loadedExternalSubtitleSids.ContainsKey(track.Index) && !_staleExternalSubtitleIndices.Contains(track.Index)) ||\n                _prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;", prefetch.Replace("\r", ""));
         var sidecarStart = source.IndexOf("private bool SelectSubtitleSidecar(", StringComparison.Ordinal);
         Assert.True(sidecarStart >= 0 && sidecarStart < prefetchStart);
         var sidecar = source[sidecarStart..prefetchStart];
