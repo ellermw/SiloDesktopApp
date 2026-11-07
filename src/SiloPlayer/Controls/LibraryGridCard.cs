@@ -30,6 +30,9 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private readonly StackPanel _overlayTopRight;
     private readonly StackPanel _overlayBottomLeft;
     private readonly StackPanel _overlayBottomRight;
+    internal ArtworkMotionPolicy? ArtworkMotion { get; set; }
+    private bool _artworkSuspended;
+    private ArtworkBindingOwner? _artworkOwner;
     private CancellationTokenSource? _posterLoadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
     private int _posterLoadVersion;
@@ -228,14 +231,21 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         GotFocus += OnGotFocus;
         LostFocus += OnLostFocus;
         ContextRequested += OnContextRequested;
-        Loaded += (_, _) => { App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; };
-        Unloaded += (_, _) => App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed;
+        Loaded += (_, _) => { RestartArtwork(); App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; };
+        Unloaded += (_, _) =>
+        {
+            if (IsLoaded) return;
+            CancelPosterLoad(clearImage: false);
+            CancelPlaybackPrefetch();
+            App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed;
+        };
     }
 
     private void OverlayPreferences_Changed() => DispatcherQueue.TryEnqueue(() => { if (MediaItem is {} item) { UpdateQuickActionState(item); UpdateOverlays(item); } });
 
     public void Bind(MediaItem item, string? sortKey)
     {
+        _artworkOwner = ArtworkBindingOwner.Capture();
         if (item.Type == "box_set")
         {
             if (item.BoxSet is not {} set || string.IsNullOrWhiteSpace(set.Id) || string.IsNullOrWhiteSpace(set.LibraryId))
@@ -296,7 +306,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         UpdateQuickActionState(item);
 
         var imageUrl = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        if (!preservePoster && !string.IsNullOrWhiteSpace(imageUrl))
+        if (!_artworkSuspended && !preservePoster && !string.IsNullOrWhiteSpace(imageUrl))
         {
             _posterLoadCts = new CancellationTokenSource();
             var version = ++_posterLoadVersion;
@@ -421,30 +431,71 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         ClearOverlays();
     }
 
+    internal void SuspendArtwork()
+    {
+        _artworkSuspended = true;
+        CancelPosterLoad(clearImage: false);
+        CancelPlaybackPrefetch();
+    }
+
+    internal void ResumeArtwork()
+    {
+        _artworkSuspended = false;
+        RestartArtwork();
+    }
+
+    private void RestartArtwork()
+    {
+        if (_artworkOwner?.IsCurrent == false) { CancelPosterLoad(clearImage: true); return; }
+        if (_artworkSuspended || MediaItem is not { } item || _posterImage.Source != null || _posterLoadCts != null) return;
+        var url = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
+        if (string.IsNullOrWhiteSpace(url)) return;
+        _posterLoadCts = new CancellationTokenSource();
+        _ = LoadPosterAsync(item, url, ++_posterLoadVersion, _posterLoadCts.Token);
+    }
+
     private async Task LoadPosterAsync(MediaItem item, string imageUrl, int version, CancellationToken ct)
     {
+        if (_artworkOwner?.IsCurrent == false) return;
         try
         {
+            var imageService = App.Services.GetRequiredService<ImageService>();
+            var identity = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, false);
             await Task.Delay(25, ct);
+            await ArtworkViewport.WaitAsync(this, ct, ArtworkMotion);
             if (!IsCurrentPosterLoad(item, version, ct))
                 return;
 
-            var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
             var imageType = !string.IsNullOrWhiteSpace(item.PosterUrl) ? "poster" : "backdrop";
 
-            var diskPath = await s_imageLoadThrottle.RunAsync(
-                token => imageService.GetImageDiskPathAsync(item.ContentId, imageType, imageUrl, httpClient, token),
-                ct);
+            var motion = ArtworkMotion;
+            (bool Deferred, string? Path) result;
+            do
+            {
+                await ArtworkViewport.WaitAsync(this, ct, motion);
+                if (!IsCurrentPosterLoad(item, version, ct) || !DecodedArtworkCache.IsCurrent(identity)) return;
+                result = await s_imageLoadThrottle.RunAsync(async token =>
+                {
+                    // The throttle invokes queued work off the UI thread. Only
+                    // inspect the thread-safe policy here, never a XAML control.
+                    if (!DecodedArtworkCache.IsCurrent(identity)) return (false, (string?)null);
+                    if (motion?.IsDeferred == true) return (true, (string?)null);
+                    return (false, await imageService.GetImageDiskPathAsync(item.ContentId, imageType, imageUrl, httpClient, token));
+                }, ct);
+            } while (result.Deferred);
+            var diskPath = result.Path;
 
             if (!IsCurrentPosterLoad(item, version, ct))
                 return;
+            await ArtworkViewport.WaitAsync(this, ct, ArtworkMotion);
+            if (!DecodedArtworkCache.IsCurrent(identity)) return;
             if (string.IsNullOrWhiteSpace(diskPath)) { await _artworkFallback.ShowThumbhashAsync(); return; }
 
-            await s_bitmapCreateLock.WaitAsync(ct);
+            await ArtworkViewport.EnterDecodeAsync(this, s_bitmapCreateLock, ct, ArtworkMotion);
             try
             {
-                if (!IsCurrentPosterLoad(item, version, ct))
+                if (!IsCurrentPosterLoad(item, version, ct) || !DecodedArtworkCache.IsCurrent(identity))
                     return;
 
                 var bitmapImage = new BitmapImage
@@ -479,7 +530,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private bool IsCurrentPosterLoad(MediaItem item, int version, CancellationToken ct)
     {
-        return !ct.IsCancellationRequested &&
+        return !_artworkSuspended && !ct.IsCancellationRequested &&
             version == _posterLoadVersion &&
             MediaItem?.ContentId == item.ContentId;
     }

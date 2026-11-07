@@ -18,6 +18,7 @@ public sealed class CarouselRail : Grid
     private double _startX, _startOffset;
     public CarouselRail(ScrollViewer scroll, bool webUiEdges = false)
     {
+        SiloPlayer.Helpers.ArtworkViewport.For(scroll);
         _webUiEdges = webUiEdges;
         _scroll = scroll; scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
         scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
