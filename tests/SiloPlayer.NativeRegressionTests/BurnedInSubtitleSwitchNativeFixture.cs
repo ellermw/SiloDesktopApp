@@ -126,7 +126,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 await gate.WaitAsync();
                 try
                 {
-                    var queued = (Task)Call(service, "RunStreamRecoveryAsync", 0d, "subtitle-switch-failed", manager, false, lifetime.Token)!;
+                    var queued = (Task)Call(service, "RunStreamRecoveryAsync", 0d, "subtitle-switch-failed", manager, false, lifetime.Token, null)!;
                     if (lifetimeCase == "queued-cancel")
                     {
                         lifetime.Cancel();
@@ -488,7 +488,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 {
                     await Loaded(async () =>
                     {
-                        var recovery = (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 12d, "progress-reporting-failed")!;
+                        var recovery = (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 12d, "progress-reporting-failed", null)!;
                         await startReady.Task.WaitAsync(TimeSpan.FromSeconds(4));
                         var position = Get(service, "_prematureEofRecoveryPosition");
                         var generation = Get(service, "_fileLoadGeneration");
@@ -770,7 +770,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                     await SettledReplacement();
                     Require((int?)Get(service, "_requestedMediaFileId") == target.FileId,
                         "A rejected subtitle refinement left the requested version on the outgoing file.");
-                    await Loaded(() => (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 0d, "progress-reporting-failed")!);
+                    await Loaded(() => (Task)Call(service, "RecoverInterruptedStreamCoreAsync", 0d, "progress-reporting-failed", null)!);
                     await SettledReplacement();
                     Require(wire.Starts.Count == starts + 2 && wire.Replans.Count == replans + 2 &&
                         wire.Starts.Skip(starts).All(start => start.GetProperty("file_id").GetString() == target.FileId.ToString()) &&
