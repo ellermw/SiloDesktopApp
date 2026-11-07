@@ -51,12 +51,27 @@ internal static class ArtworkEffects
     }
 
     /// <summary>Episode spoiler blur, rendered from an untouched cached source.</summary>
-    public static async Task<byte[]> BlurEpisodeStillAsync(byte[] bytes, CancellationToken ct = default)
+    public static async Task<byte[]> BlurEpisodeStillAsync(byte[] bytes, CancellationToken ct = default, ArtworkDecodeGate? gate = null)
     {
+        using var bitmap = await LoadEpisodeBitmapAsync(bytes, ct, gate);
+        ct.ThrowIfCancellationRequested();
+        return await RenderEpisodeBlurAsync(bitmap, ct, gate);
+    }
+
+    private static async Task<CanvasBitmap> LoadEpisodeBitmapAsync(byte[] bytes, CancellationToken ct, ArtworkDecodeGate? gate)
+    {
+        using var work = gate == null ? null : await gate.EnterAsync(ct);
+        ct.ThrowIfCancellationRequested();
         using var input = new MemoryStream(bytes);
         var device = CanvasDevice.GetSharedDevice();
-        using var bitmap = await CanvasBitmap.LoadAsync(device, input.AsRandomAccessStream());
+        return await CanvasBitmap.LoadAsync(device, input.AsRandomAccessStream());
+    }
+
+    private static async Task<byte[]> RenderEpisodeBlurAsync(CanvasBitmap bitmap, CancellationToken ct, ArtworkDecodeGate? gate)
+    {
+        using var work = gate == null ? null : await gate.EnterAsync(ct);
         ct.ThrowIfCancellationRequested();
+        var device = bitmap.Device;
         var width = (float)Math.Min(640, bitmap.Size.Width);
         var height = (float)(width * bitmap.Size.Height / bitmap.Size.Width);
         using var scaled = new CanvasRenderTarget(device, width, height, 96);

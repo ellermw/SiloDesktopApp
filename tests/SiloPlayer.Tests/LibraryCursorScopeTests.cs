@@ -111,6 +111,187 @@ public sealed class LibraryCursorScopeTests
     private static LibraryViewModel Create(SignedCatalog wire, string type)
         => new(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = type } };
 
+    [Fact]
+    public async Task RejectedLetterCursorRevalidatesMovedPositionBeforeSemanticJump()
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.ScopeVersion++; wire.LetterPosition = 900;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        await model.EnsureLetterIndexAsync();
+        Assert.Equal(new[] { 900 }, jumps);
+        Assert.Equal("item-900-scope1", model.GetWindowItem(900)!.ContentId);
+        Assert.Null(model.GetWindowItem(0));
+        Assert.Equal(1, wire.InvalidCursors); Assert.Equal(2, wire.IndexRequests);
+        Assert.Null(model.ErrorMessage); Assert.Null(model.LetterJumpError);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LetterAfterUnobservedProfileChangeRevalidatesBeforeCapturingItsLoadOwner(bool fail)
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.Client.SetProfile("other-synthetic-profile");
+        wire.ScopeVersion++; wire.LetterPosition = 900; wire.RejectFresh = fail;
+
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+
+        Assert.Equal(2, wire.IndexRequests);
+        Assert.Equal(0, wire.InvalidCursors);
+        Assert.Equal(1000, model.TotalCount);
+        Assert.Null(model.GetWindowItem(0));
+        Assert.Null(model.ErrorMessage); Assert.Null(model.PendingLetter);
+        Assert.False(model.IsLetterJumpInProgress);
+        if (fail)
+        {
+            Assert.Empty(jumps);
+            Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+            Assert.True(model.IsLetterJumpViewportBlocked);
+            wire.RejectFresh = false;
+            await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        }
+        Assert.Equal(new[] { 900 }, jumps);
+        Assert.Equal("item-900-scope1", model.GetWindowItem(900)!.ContentId);
+        Assert.Null(model.LetterJumpError);
+    }
+
+    [Fact]
+    public async Task RejectedLetterRecoveryFailureStaysScopedAndRetryRevalidatesAgain()
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.ScopeVersion++; wire.LetterPosition = 900; wire.RejectFresh = true;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.Empty(jumps); Assert.Null(model.ErrorMessage);
+        Assert.NotNull(model.LetterJumpError); Assert.Null(model.GetWindowItem(0));
+        wire.RejectFresh = false; wire.ScopeVersion++; wire.LetterPosition = 720;
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { 720 }, jumps);
+        Assert.Equal("item-720-scope2", model.GetWindowItem(720)!.ContentId);
+        Assert.Null(model.LetterJumpError);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task MissingRevalidatedLetterTargetNeverRestoresRetiredSignedCards(bool profileChanged, bool missingEntry)
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var retired = model.GetWindowItem(0);
+        Assert.NotNull(retired);
+        if (profileChanged) wire.Client.SetProfile("other-synthetic-profile");
+        wire.ScopeVersion++; wire.LetterPosition = 900; wire.CatalogTotal = 800; wire.MissingLetter = missingEntry;
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.Empty(jumps); Assert.Equal("Couldn't load M titles.", model.LetterJumpError); Assert.Null(model.ErrorMessage);
+        var fresh = model.GetWindowItem(0);
+        Assert.Equal("item-0-scope1", fresh!.ContentId);
+        Assert.NotSame(retired, fresh);
+        Assert.Null(model.GetWindowItem(600)); Assert.Null(model.GetWindowItem(900));
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        Assert.Equal(profileChanged ? 0 : 1, wire.InvalidCursors);
+
+        // The letter stays missing: Retry must keep fresh cards and the scoped
+        // error, while automatic viewport reads can load other current rows.
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+        Assert.Same(fresh, model.GetWindowItem(0));
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        await model.EnsureRangeLoadedAsync(300, 359);
+        Assert.Equal("item-300-scope1", model.GetWindowItem(300)!.ContentId);
+        Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+        Assert.Null(model.ErrorMessage); Assert.Null(model.PendingLetter);
+        Assert.Empty(jumps);
+    }
+
+    [Fact]
+    public async Task MissingLetterRetryBootstrapsFreshCardsAfterResetViewportReadFails()
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        wire.Client.SetProfile("other-synthetic-profile");
+        wire.ScopeVersion++; wire.MissingLetter = true; wire.RejectFresh = true;
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+
+        Assert.Null(model.GetWindowItem(0));
+        Assert.True(model.IsLetterJumpViewportBlocked);
+        Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+        Assert.Null(model.ErrorMessage);
+        wire.RejectFresh = false;
+
+        await model.RetryLetterJumpCommand.ExecuteAsync(null);
+
+        Assert.Equal("item-0-scope1", model.GetWindowItem(0)!.ContentId);
+        Assert.False(model.IsLetterJumpViewportBlocked);
+        Assert.Equal("Couldn't load M titles.", model.LetterJumpError);
+        Assert.Null(model.ErrorMessage); Assert.Null(model.PendingLetter);
+        Assert.Empty(jumps);
+        await model.EnsureRangeLoadedAsync(300, 359);
+        Assert.Equal("item-300-scope1", model.GetWindowItem(300)!.ContentId);
+    }
+
+    [Fact]
+    public async Task LateOldScopeRejectionCannotResetANewerScopeWindow()
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.ScopeVersion++; wire.InvalidGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var older = model.JumpToLetterCommand.ExecuteAsync("M");
+        try
+        {
+            await wire.InvalidStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            wire.ScopeVersion++; wire.LetterPosition = 900;
+            await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+            await model.JumpToLetterCommand.ExecuteAsync("A");
+            var current = model.GetWindowItem(0);
+            Assert.Equal("item-0-scope2", current!.ContentId);
+            wire.InvalidGate.TrySetResult(); await older;
+            Assert.Same(current, model.GetWindowItem(0)); Assert.Equal(new[] { 0 }, jumps);
+            Assert.Null(model.LetterJumpError); Assert.Null(model.ErrorMessage);
+        }
+        finally { wire.InvalidGate.TrySetResult(); await older; }
+    }
+
+    [Theory]
+    [InlineData("newer")]
+    [InlineData("profile")]
+    [InlineData("language")]
+    [InlineData("filter")]
+    [InlineData("departure")]
+    public async Task RevalidatingLetterRecoveryCannotTransferRetiredIntent(string change)
+    {
+        using var wire = new SignedCatalog { LetterSupport = true }; var model = Create(wire, "movie");
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = new List<int>(); model.LetterJumpRequested += jumps.Add;
+        wire.ScopeVersion++; wire.LetterPosition = 900; wire.IndexGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = model.JumpToLetterCommand.ExecuteAsync("M");
+        Task? newer = null;
+        try
+        {
+            await wire.IndexStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("M", model.PendingLetter);
+            if (change == "newer") newer = model.JumpToLetterCommand.ExecuteAsync("A");
+            else if (change == "profile") wire.Client.SetProfile("other-synthetic-profile");
+            else if (change == "language") wire.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+            else if (change == "filter") model.SelectedGenre = "Comedy";
+            else model.SuspendCatalogLoads();
+        }
+        finally { wire.IndexGate.TrySetResult(); await pending; if (newer is not null) await newer; }
+        Assert.Equal(change == "newer" ? new[] { 0 } : [], jumps);
+        Assert.Null(model.GetWindowItem(900)); Assert.Null(model.ErrorMessage);
+        Assert.Null(model.LetterJumpError); Assert.Null(model.PendingLetter);
+    }
+
     // Mirrors the official scope rule in catalog_items.go: limit is signed;
     // seek/cursor and include_total/skip_total are not. Cursors are opaque HMACs.
     private sealed class SignedCatalog : HttpMessageHandler
@@ -122,10 +303,30 @@ public sealed class LibraryCursorScopeTests
         public int ScopeVersion;
         public bool RejectFresh;
         public int Reads;
+        public bool LetterSupport, MissingLetter;
+        public int LetterPosition = 600, IndexRequests;
+        public int CatalogTotal = 1000;
+        public TaskCompletionSource? InvalidGate;
+        public TaskCompletionSource InvalidStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource? IndexGate;
+        public TaskCompletionSource IndexStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SignedCatalog() { Client = new SiloApiClient(new HttpClient(this)); Client.SetBaseUrl("https://catalog-scope.invalid"); }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Reads++;
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/search/capabilities")) return await Reply(new { letter_index = LetterSupport });
+            if (path.EndsWith("/catalog/letters"))
+            {
+                IndexRequests++;
+                var position = LetterPosition;
+                if (IndexGate is { } gate) { IndexStarted.TrySetResult(); await gate.Task; }
+                return await Reply(new { total = 1000,
+                    letters = new[] { new { letter = "A", count = MissingLetter ? 1000 : position, position = 0 }, new { letter = "M", count = 1000 - position, position } }
+                        .Where(entry => !MissingLetter || entry.letter != "M"),
+                    runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position } }
+                        .Where(entry => !MissingLetter || entry.letter != "M") });
+            }
             Dictionary<string, string> values;
             if (request.Method == HttpMethod.Post)
             {
@@ -146,6 +347,7 @@ public sealed class LibraryCursorScopeTests
                 if (parts.Length != 2 || parts[1] != Sign(scope, parts[0]))
                 {
                     InvalidCursors++;
+                    if (InvalidGate is { } gate) { InvalidStarted.TrySetResult(); await gate.Task; }
                     return await Reply(new { type = "https://fixture.invalid/docs/api/v2/problems/invalid_cursor", status = 400,
                         detail = "The cursor is malformed, tampered with, or belongs to a different query." }, HttpStatusCode.BadRequest);
                 }
@@ -154,11 +356,11 @@ public sealed class LibraryCursorScopeTests
             else if (RejectFresh)
                 return await Reply(new { type = "https://fixture.invalid/docs/api/v2/problems/invalid_cursor", status = 400,
                     detail = "Fresh cursor request rejected." }, HttpStatusCode.BadRequest);
-            var count = Math.Min(int.Parse(values["limit"]), 1000 - offset);
+            var count = Math.Max(0, Math.Min(int.Parse(values["limit"]), CatalogTotal - offset));
             if (PartialFirst && offset == 0) { PartialFirst = false; count = 50; }
-            return await Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Title " + index, type = "movie" }),
-                total = 1000, total_exact = !values.ContainsKey("skip_total"), window_cursor = "0." + Sign(scope, "0"),
-                page = new { has_more = offset + count < 1000, next_cursor = (offset + count) + "." + Sign(scope, (offset + count).ToString()) } });
+            return await Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index + (LetterSupport ? "-scope" + ScopeVersion : ""), title = "Title " + index, type = "movie" }),
+                total = CatalogTotal, total_exact = !values.ContainsKey("skip_total"), window_cursor = "0." + Sign(scope, "0"),
+                page = new { has_more = offset + count < CatalogTotal, next_cursor = (offset + count) + "." + Sign(scope, (offset + count).ToString()) } });
         }
         private static string Sign(string scope, string position) => Convert.ToHexString(HMACSHA256.HashData(Key, Encoding.UTF8.GetBytes(scope + "\0" + position)));
         private static Task<HttpResponseMessage> Reply(object body, HttpStatusCode status = HttpStatusCode.OK)

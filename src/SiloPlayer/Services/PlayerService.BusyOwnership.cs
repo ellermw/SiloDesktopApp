@@ -20,14 +20,14 @@ public partial class PlayerService
         catch (ObjectDisposedException) { }
     }
 
-    // Every assignment, including true -> true, retires an earlier claim.
-    // Switching-only writers include pre-dispatch quality/version, EOF and
-    // plan invalidation; they can take ownership before any new file is loaded.
+    // Only a new busy claim, including true -> true, retires an earlier one.
+    // FILE_LOADED may release an older load's flags while a replan is awaiting
+    // the server; that release is not a successor taking transport ownership.
     private void SetSwitchingContent(bool value)
     {
         lock (_playbackBusyLock)
         {
-            ++_playbackBusyRevision;
+            if (value) ++_playbackBusyRevision;
             _switchingContent = value;
         }
     }
@@ -47,15 +47,6 @@ public partial class PlayerService
                 _mpv, _videoWindow, _playbackCts, Volatile.Read(ref _playRequestGeneration),
                 Volatile.Read(ref _playbackFileGeneration));
         }
-    }
-
-    // An invalidation can become a no-op after waiting for a selection's
-    // replan. Borrow its EOF guard rather than retiring that selection's claim.
-    private PlaybackBusyOwner? BeginPlanInvalidationBusy()
-    {
-        lock (_playbackBusyLock)
-            return _switchingContent || IsLoading || _qualitySwitchActive
-                ? null : BeginPlaybackBusy(loading: false);
     }
 
     private PlaybackBusyOwner BeginMpvLoadBusy()
@@ -86,7 +77,20 @@ public partial class PlayerService
     private bool OwnsPlaybackBusy(PlaybackBusyOwner owner)
     {
         lock (_playbackBusyLock)
-            return owner.Revision == _playbackBusyRevision && BusyPlaybackMatches(owner);
+            return owner.Revision == _playbackBusyRevision && _playbackTerminalState == null && BusyPlaybackMatches(owner);
+    }
+
+    private bool ResumePlaybackBusy(PlaybackBusyOwner owner)
+    {
+        lock (_playbackBusyLock)
+        {
+            if (!OwnsPlaybackBusy(owner)) return false;
+            // Reassert this claim after an earlier FILE_LOADED released flags.
+            // Do not create a new claim or adopt a successor's identities.
+            _switchingContent = true;
+            _isLoading = true;
+            return true;
+        }
     }
 
     private PlaybackBusyRelease? ReleasePlaybackBusy(PlaybackBusyOwner owner, Action? releaseState = null)
@@ -96,6 +100,7 @@ public partial class PlayerService
             // A profile change retires publication but can leave this same
             // operation's flags behind. A successor's flags are never ours.
             if (owner.Revision != _playbackBusyRevision || !BusyPlaybackMatches(owner)) return null;
+            ++_playbackBusyRevision;
             SetSwitchingContent(false);
             IsLoading = false;
             var releasedRevision = _playbackBusyRevision;
@@ -126,10 +131,10 @@ public partial class PlayerService
     {
         if (_playbackTerminalState != null) return;
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        var context = authority.ApiClient.CaptureIdentityContext();
         var claim = BeginPlaybackBusy(loading: false, claimState: () => _qualitySwitchActive = quality);
         bool ContextCurrent() => _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) &&
-            authority.ApiClient.IsCurrentContext(context);
+            authority.ApiClient.IsCurrentIdentityContext(context);
         bool Current() => ContextCurrent() && OwnsPlaybackBusy(claim);
         async Task InvokeSelectionAsync()
         {

@@ -621,7 +621,7 @@ public partial class SettingsViewModel : ObservableObject
                     if (!_settingsApi.IsCurrentContext(context)) return;
                     var supported = capability.ApiVersion == 1 && capability.Revision >= 9 && capability.SupportsBatchedEffective && capability.SupportsIdempotentWrites;
                     var keys = supported ? ContractPlaybackSettingKeys : ContractPlaybackSettingKeys.Except(SeekPreferences.Keys).ToArray();
-                    EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17;
+                    EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17 && capability.SupportsBatchedEffective;
                     if (EpisodeSpoilersSupported) keys = [.. keys, "catalog.hide_unwatched_episode_images", "catalog.hide_unwatched_episode_overviews"];
                     var response = await _settingsApi.GetContractEffectiveSettingsAsync(keys);
                     if (!_settingsApi.IsCurrentContext(context)) return;

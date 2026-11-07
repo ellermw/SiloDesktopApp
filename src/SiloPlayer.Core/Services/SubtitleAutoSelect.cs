@@ -225,7 +225,7 @@ public static class SubtitleAutoSelect
     public static List<SubtitleCandidate> BuildCandidates(IEnumerable<SubtitleTrackInfo>? tracks)
     {
         if (tracks == null) return [];
-        return tracks.Select(t => new SubtitleCandidate(
+        return tracks.Where(t => !t.Unplayable).Select(t => new SubtitleCandidate(
             OriginalIndex: t.Index,
             Language: t.Language,
             Source: t.Source,
