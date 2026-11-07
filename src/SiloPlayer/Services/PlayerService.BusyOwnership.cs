@@ -34,7 +34,8 @@ public partial class PlayerService
 
     private sealed record PlaybackBusyOwner(long Revision, PlaybackAuthorityScope Authority,
         PlaybackManager? Manager, PlaybackStartResponse? Session, MpvPlayer? Mpv,
-        MpvVideoWindow? Video, CancellationTokenSource? LoadingToken, long PlayGeneration, long FileGeneration);
+        MpvVideoWindow? Video, CancellationTokenSource? LoadingToken, long PlayGeneration, long FileGeneration,
+        bool MatchSession = true);
 
     private PlaybackBusyOwner BeginPlaybackBusy(bool loading = true, Action? claimState = null)
     {
@@ -111,7 +112,7 @@ public partial class PlayerService
 
     private bool BusyPlaybackMatches(PlaybackBusyOwner owner) => !_closing &&
         ReferenceEquals(owner.Authority, _activeAuthority) && ReferenceEquals(owner.Manager, _playbackManager) &&
-        ReferenceEquals(owner.Session, _playbackManager?.CurrentSession) && ReferenceEquals(owner.Mpv, _mpv) &&
+        (!owner.MatchSession || ReferenceEquals(owner.Session, _playbackManager?.CurrentSession)) && ReferenceEquals(owner.Mpv, _mpv) &&
         ReferenceEquals(owner.Video, _videoWindow) && ReferenceEquals(owner.LoadingToken, _playbackCts) &&
         owner.PlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
         owner.FileGeneration == Volatile.Read(ref _playbackFileGeneration);
@@ -132,7 +133,11 @@ public partial class PlayerService
         if (_playbackTerminalState != null) return;
         var authority = _activeAuthority;
         var context = authority.ApiClient.CaptureIdentityContext();
-        var claim = BeginPlaybackBusy(loading: false, claimState: () => _qualitySwitchActive = quality);
+        // An in-flight switch can adopt a session before this selection finishes
+        // draining. This early claim owns dispatch, not that session snapshot;
+        // the switch core takes a session-bound claim once the drain completes.
+        var claim = BeginPlaybackBusy(loading: false, claimState: () => _qualitySwitchActive = quality)
+            with { MatchSession = false };
         bool ContextCurrent() => _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) &&
             authority.ApiClient.IsCurrentIdentityContext(context);
         bool Current() => ContextCurrent() && OwnsPlaybackBusy(claim);

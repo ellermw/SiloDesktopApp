@@ -5368,9 +5368,9 @@ public partial class PlayerService : IDisposable
             catch (Exception ex)
             {
                 if (!CurrentSwitch()) return;
-                if (ReferenceEquals(manager, _playbackManager) && manager.CurrentSession == null)
-                    busyOwner = busyOwner with { Session = null };
-                var released = ReleasePlaybackBusy(busyOwner);
+                if (ReferenceEquals(manager, _playbackManager))
+                    busyOwner = busyOwner with { Session = manager.CurrentSession };
+                var released = ReleasePlaybackBusy(busyOwner, () => _subtitleVersionSwitchActive = false);
                 if (released == null) return;
                 RunIfBusyReleaseCurrent(released, () =>
                 {
@@ -5397,27 +5397,29 @@ public partial class PlayerService : IDisposable
                     }
                     else
                     {
-                        _subtitleVersionSwitchActive = false;
-                        reconcileSubtitles = true;
                         var (title, detail) = DescribePlaybackError(ex);
                         ShowNotice(title, detail, "error");
                         PublishNativeMenuScopes();
+                        reconcileSubtitles = true;
                     }
                 });
+
             }
             finally
             {
                 if (!CurrentSwitch())
                 {
-                    // A slot-limit retry can retire its own outgoing session
-                    // before a canceled replacement returns a new one.
-                    if (ReferenceEquals(manager, _playbackManager) && manager.CurrentSession == null)
-                        busyOwner = busyOwner with { Session = null };
+                    // Cancellation can follow adoption inside the replacement's
+                    // subtitle reconcile, or retirement during a slot-limit retry.
+                    // The busy revision still protects any successor's flags.
+                    if (ReferenceEquals(manager, _playbackManager))
+                        busyOwner = busyOwner with { Session = manager.CurrentSession };
                     ReleasePlaybackBusy(busyOwner, () => _subtitleVersionSwitchActive = false);
                 }
+                if (reconcileSubtitles && CurrentSwitch())
+                    await ReconcileDeferredSubtitleSelectionAsync(manager, survivingSession);
+
             }
-            if (reconcileSubtitles && CurrentSwitch())
-                await ReconcileDeferredSubtitleSelectionAsync(manager, survivingSession);
         }
         finally { Interlocked.CompareExchange(ref _soloVersionSwitchCts, null, switchCts); }
     }
@@ -5462,11 +5464,11 @@ public partial class PlayerService : IDisposable
         var currentPos = CurrentMediaPosition;
         if (manager.CurrentSession is { } survivingSession)
         {
+            var busyOwner = BeginPlaybackBusy();
             var reconcileSubtitles = false;
             var ownsAudioTransport = true;
             Interlocked.Increment(ref _audioSwitchOperations);
             RetireNativeMenus();
-            var busyOwner = BeginPlaybackBusy();
             try
             {
                 var session = await manager.ReplanAudioAsync(trackIndex, currentPos, ct).ConfigureAwait(false);
@@ -5764,15 +5766,17 @@ public partial class PlayerService : IDisposable
             _subtitleReplanPauseIntent = PauseIntent();
             lock (_playbackBusyLock)
             {
-                // This pick can queue behind a quality/audio replan. Preserve
-                // that operation's busy claim until our own load supersedes it;
-                // even reassigning true would retire it before it can load.
+                // A subtitle pick can queue behind a quality/audio/version replan.
+                // Reassigning its busy flags would retire that operation's revision
+                // before either plan is accepted, stranding its pending native load.
+                // Borrow the existing busy state until our own plan starts a load.
                 if (!HasOtherTransportOwner())
                 {
                     SetSwitchingContent(true);
                     IsLoading = true;
                 }
             }
+
             _mpv.Pause();
             if (loadingOwner != null)
                 App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
@@ -7155,6 +7159,7 @@ public partial class PlayerService : IDisposable
                 if (args.Length == 4)
                     dispatch.TryEnqueue(() => HandleNativeMenuInput(args[1], args[2], args[3]));
                 break;
+
             case "silo-buffering-lower":
                 dispatch.TryEnqueue(() => _ = LowerBufferingQualityAsync());
                 break;
@@ -7365,6 +7370,7 @@ public partial class PlayerService : IDisposable
         // The session has ended; there is nothing to switch.
         var survivingSession = manager.CurrentSession;
         if (survivingSession is null) return;
+        var reconcileSubtitles = false;
         RetireNativeMenus();
         var busyOwner = BeginPlaybackBusy(claimState: () => _qualitySwitchActive = true);
         if (loadingOwner != null)
@@ -7415,12 +7421,17 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("state_trace.txt", "Protocol-v3 quality switch canceled");
         }
-        catch (OperationCanceledException) when (bufferingReplan != null && !ReferenceEquals(bufferingExpectedSession, manager.CurrentSession))
+        catch (OperationCanceledException) when (bufferingReplan != null &&
+            !ReferenceEquals(bufferingExpectedSession, manager.CurrentSession) &&
+            !OwnsPlaybackBusy(busyOwner with { Session = manager.CurrentSession }))
         { LogToFile("state_trace.txt", "Buffering quality action superseded by another plan."); }
         catch (Exception ex)
         {
             if (!CurrentSwitch()) return;
-            // Subtitle-Off may adopt an intermediate session before quality fails.
+            // A pending subtitle Off can adopt a track_change plan before the
+            // quality_change fails. Follow that plan, but release/recover only
+            // if this operation still owns the busy revision and playback.
+            var intermediatePlanAccepted = !ReferenceEquals(busyOwner.Session, manager.CurrentSession);
             busyOwner = busyOwner with { Session = manager.CurrentSession };
             var released = ReleasePlaybackBusy(busyOwner, () =>
             {
@@ -7429,31 +7440,49 @@ public partial class PlayerService : IDisposable
                 LogToFile("player_quality_switch_error.txt", ex.ToString());
                 var (title, detail) = DescribePlaybackError(ex);
                 ErrorMessage = detail;
-                ShowNotice(title, detail, "error");
-                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
-                PublishNativeMenuScopes();
+                if (intermediatePlanAccepted)
+                {
+                    _prematureEofRecoveryActive = true;
+                    SetSwitchingContent(true);
+                    IsLoading = true;
+                    ShowNotice("Reconnecting playback",
+                        "The quality switch was interrupted. Restoring playback from your current position…", "warning");
+                    _ = RunStreamRecoveryAsync(currentPos, "quality-switch-failed", manager, wasPaused,
+                        loadingOwner?.Token ?? CancellationToken.None);
+                }
+                else
+                {
+                    ShowNotice(title, detail, "error");
+                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+                    SendQualityInfoToOsc();
+                    reconcileSubtitles = true;
+                }
             });
             if (released != null && loadingOwner != null)
                 App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
                     collapse => RunIfBusyReleaseCurrent(released, collapse));
-            if (released != null && CurrentSwitch())
+            if (reconcileSubtitles && CurrentSwitch())
                 await ReconcileDeferredSubtitleSelectionAsync(manager, survivingSession);
         }
         finally
         {
             if (!CurrentSwitch())
             {
-                var released = ReleasePlaybackBusy(busyOwner with { Session = manager.CurrentSession }, () => _qualitySwitchActive = false);
+                // Cancellation/identity retirement can also follow the first
+                // adoption. The revision check still protects any successor.
+                if (ReferenceEquals(manager, _playbackManager))
+                    busyOwner = busyOwner with { Session = manager.CurrentSession };
+                var released = ReleasePlaybackBusy(busyOwner, () => _qualitySwitchActive = false);
                 if (released != null && loadingOwner != null)
                     App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
                         collapse => RunIfBusyReleaseCurrent(released, collapse));
             }
+
         }
     }
 
     private async Task ShowSubtitleSearchDialogAsync()
     {
-        RetireNativeMenus();
         var session = _playbackManager?.CurrentSession;
         var mainWindow = App.MainWindowInstance;
         if (session == null || mainWindow?.Content?.XamlRoot == null)
@@ -7472,8 +7501,12 @@ public partial class PlayerService : IDisposable
             downloadedSubtitleId = subtitleId;
         };
 
+        RetireNativeMenus();
         if (!await _playbackDialogGate.WaitAsync(0))
+        {
+            PublishNativeMenuScopes();
             return;
+        }
         var restorePlayerInput = false;
         try
         {
@@ -7507,15 +7540,18 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAppearanceDialogAsync()
     {
-        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow?.Content?.XamlRoot == null)
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
         var dialog = new SiloPlayer.Controls.SubtitleAppearanceDialog(_activeAuthority);
+        RetireNativeMenus();
         if (!await _playbackDialogGate.WaitAsync(0))
+        {
+            PublishNativeMenuScopes();
             return;
+        }
         var restorePlayerInput = false;
         try
         {
@@ -7565,14 +7601,17 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAiDialogAsync()
     {
-        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow == null)
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
+        RetireNativeMenus();
         if (!await _playbackDialogGate.WaitAsync(0))
+        {
+            PublishNativeMenuScopes();
             return;
+        }
         var restorePlayerInput = false;
         try
         {
@@ -8908,6 +8947,7 @@ public partial class PlayerService : IDisposable
                 ct).ConfigureAwait(false);
             if (replacement == null)
             {
+
                 await ReconcileDeferredSubtitleSelectionAsync(manager, currentSession);
                 return new CommandResult();
             }

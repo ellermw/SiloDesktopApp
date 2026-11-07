@@ -28,7 +28,7 @@ public partial class PlayerService
         var session = manager?.CurrentSession;
         var transport = _activeTransportPlan;
         // A completed server session can leave a playable direct stream and
-        // its last OSC inventory. Keep that existing local Audio path usable.
+        // its last OSC inventory. Only this explicit fallback enables local Audio.
         var legacyAudio = manager != null && session == null &&
             transport?.TransportKind == PlaybackTransportKind.DirectProgressive;
         var version = ActiveVersion;
@@ -56,7 +56,9 @@ public partial class PlayerService
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
-        if (mpv == null || video == null || (session == null && !legacyAudio)) { RetireNativeMenus(); return; }
+        if (mpv == null || video == null || (!legacyAudio && session == null) ||
+            _closing || _postRollActive || _switchingContent || IsLoading || _playbackTerminalState != null)
+        { RetireNativeMenus(); return; }
         var owner = new NativeMenuOwner(Guid.NewGuid().ToString("N"), mpv, video, Current);
         var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
         void Publish()

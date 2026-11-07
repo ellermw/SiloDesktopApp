@@ -2190,11 +2190,15 @@ local function render_osc()
 
     state.compact_menu_items = {}
     if state.compact_menu_visible and L.btn_more then
-        local entries = {{name="btn_audio", label="Audio tracks"}, {name="btn_chapters", label="Chapters"},
+        local entries = {}
+        if #state.audio_tracks > 1 then table.insert(entries, {name="btn_audio", label="Audio tracks"}) end
+        if #state.chapters > 0 then table.insert(entries, {name="btn_chapters", label="Chapters"}) end
+        for _, entry in ipairs({
             {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
             {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
-            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}
-        if #state.audio_tracks <= 1 then table.remove(entries, 1) end
+            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}) do
+            table.insert(entries, entry)
+        end
         local row_h = math.floor(40 * sc)
         local width = math.min(W - 24 * sc, math.floor(280 * sc))
         -- Compact touch surfaces use a generous sheet above the transport row.
@@ -4956,6 +4960,8 @@ local function move_controller_focus(direction)
 end
 
 local function open_transport_menu_from_controller(kind)
+    if (kind == "audio" and #state.audio_tracks <= 1)
+        or (kind == "chapters" and #state.chapters == 0) then return end
     close_transport_menus(kind)
     if kind == "audio" then
         if #state.audio_tracks <= 1 then return end
