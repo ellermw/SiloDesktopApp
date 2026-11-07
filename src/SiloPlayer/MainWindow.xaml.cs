@@ -2737,12 +2737,18 @@ public sealed partial class MainWindow : Window
     }
 
     public void HideLoadingOverlay(object? owner = null)
+        => HideLoadingOverlay(owner, static collapse => collapse());
+
+    internal void HideLoadingOverlay(object? owner, Action<Action> runIfCurrent)
     {
         var currentOwner = owner ?? _legacyLoadingOverlayOwner;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
-            LoadingOverlay.Visibility = Visibility.Collapsed;
+            runIfCurrent(() =>
+            {
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
+                LoadingOverlay.Visibility = Visibility.Collapsed;
+            });
         });
     }
 

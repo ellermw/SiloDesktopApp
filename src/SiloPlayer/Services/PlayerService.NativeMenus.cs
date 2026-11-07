@@ -10,19 +10,16 @@ namespace SiloPlayer.Services;
 
 public partial class PlayerService
 {
-    private sealed record NativeAudioOwner(string Token, MpvPlayer Mpv, MpvVideoWindow Video,
-        AudioTrackInfo[] Tracks, Func<bool> IsCurrent);
-
-    // Identity invalidation is synchronous, even when media loading runs away
-    // from the UI dispatcher. Presentation and its semaphore lease are UI-owned.
-    private long _nativeAudioEpoch;
-    private long _nativeAudioPublication;
+    private sealed record NativeMenuOwner(string Token, MpvPlayer Mpv, MpvVideoWindow Video, Func<bool> IsCurrent);
+    private long _nativeMenuEpoch;
+    private long _nativeMenuPublication;
     private readonly DispatcherQueue? _nativeMenuDispatcher = DispatcherQueue.GetForCurrentThread();
-    private NativeAudioOwner? _nativeAudioOwner;
-    private readonly PlaybackMenuRequestGate _nativeAudioGate = new();
-    private PlaybackAudioMenu? _nativeAudioMenu;
+    private NativeMenuOwner? _nativeMenuOwner;
+    private readonly PlaybackMenuRequestGate _nativeMenuGate = new();
+    private PlaybackChoiceMenu? _nativeMenu;
+    private PlaybackMenuRequest? _nativeMenuRequest;
 
-    private void PublishNativeAudioScope()
+    private void PublishNativeMenuScopes()
     {
         var authority = _activeAuthority;
         var context = authority.ApiClient.CaptureIdentityContext();
@@ -34,155 +31,150 @@ public partial class PlayerService
         var legacyAudio = manager != null && session == null &&
             transport?.TransportKind == PlaybackTransportKind.DirectProgressive;
         var version = ActiveVersion;
-        var tracks = version?.AudioTracks?.ToArray() ?? [];
-        var mpv = _mpv;
-        var video = _videoWindow;
-        var content = ContentId;
-        var playGeneration = Volatile.Read(ref _playRequestGeneration);
-        var fileGeneration = Volatile.Read(ref _fileLoadGeneration);
-        var playbackFileGeneration = Volatile.Read(ref _playbackFileGeneration);
-        var epoch = Volatile.Read(ref _nativeAudioEpoch);
-        var publication = Interlocked.Increment(ref _nativeAudioPublication);
-        bool Current() => !_closing && !_postRollActive && !_switchingContent && !IsLoading &&
-            State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture &&
-            epoch == Volatile.Read(ref _nativeAudioEpoch) &&
-            playGeneration == Volatile.Read(ref _playRequestGeneration) &&
-            fileGeneration == Volatile.Read(ref _fileLoadGeneration) &&
-            playbackFileGeneration == Volatile.Read(ref _playbackFileGeneration) &&
+        var versions = Versions.ToArray();
+        var audio = version?.AudioTracks?.ToArray() ?? [];
+        var chapters = version?.Chapters?.ToArray() ?? [];
+        var qualities = session?.AvailableQualities?.ToArray() ?? [];
+        var roomPlayback = IsWatchTogetherPlayback;
+        var mpv = _mpv; var video = _videoWindow; var content = ContentId;
+        var play = Volatile.Read(ref _playRequestGeneration);
+        var file = Volatile.Read(ref _fileLoadGeneration);
+        var playbackFile = Volatile.Read(ref _playbackFileGeneration);
+        var epoch = Volatile.Read(ref _nativeMenuEpoch);
+        var publication = Interlocked.Increment(ref _nativeMenuPublication);
+        bool Current() => !_closing && !_postRollActive && !_switchingContent && !IsLoading && _playbackTerminalState == null &&
+            roomPlayback == IsWatchTogetherPlayback && versions.SequenceEqual(Versions) &&
+            (legacyAudio ? ReferenceEquals(transport, _activeTransportPlan) :
+                (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0)) &&
+            (version?.Chapters?.SequenceEqual(chapters) ?? chapters.Length == 0) &&
+            (session?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
+            State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
+            play == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration) &&
+            playbackFile == Volatile.Read(ref _playbackFileGeneration) &&
             ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
-            ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) &&
-            video?.Hwnd != IntPtr.Zero &&
-            (legacyAudio ? ReferenceEquals(transport, _activeTransportPlan) :
-                version?.AudioTracks is { } current && current.SequenceEqual(tracks));
-        if (mpv == null || video == null || (!legacyAudio && (session == null || tracks.Length <= 1)))
-        {
-            RetireNativeAudioMenu();
-            return;
-        }
-        var owner = new NativeAudioOwner(Guid.NewGuid().ToString("N"), mpv, video, tracks, Current);
+            ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
+        if (mpv == null || video == null || (session == null && !legacyAudio)) { RetireNativeMenus(); return; }
+        var owner = new NativeMenuOwner(Guid.NewGuid().ToString("N"), mpv, video, Current);
         var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
         void Publish()
         {
-            if (publication != Volatile.Read(ref _nativeAudioPublication) || !owner.IsCurrent()) return;
-            _nativeAudioMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
-            _nativeAudioOwner = legacyAudio ? null : owner;
-            _nativeAudioGate.ResetOwner(legacyAudio ? "" : owner.Token);
-            owner.Mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : owner.Token);
+            if (publication != Volatile.Read(ref _nativeMenuPublication) || !owner.IsCurrent()) return;
+            if (_nativeMenuOwner is { } retained && retained.IsCurrent()) owner = retained;
+            else
+            {
+                _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
+                _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
+            }
+            mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : version?.AudioTracks?.Count > 1 ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-quality-scope", session != null && ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
         }
-        if (dispatcher?.HasThreadAccess == true) Publish();
-        else dispatcher?.TryEnqueue(Publish);
+        if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
 
-    private void RetireNativeAudioMenu()
+    private void RetireNativeMenus()
     {
-        Interlocked.Increment(ref _nativeAudioEpoch);
-        Interlocked.Increment(ref _nativeAudioPublication);
-        var owner = _nativeAudioOwner;
+        Interlocked.Increment(ref _nativeMenuEpoch); Interlocked.Increment(ref _nativeMenuPublication);
+        var owner = _nativeMenuOwner;
         var mpv = owner?.Mpv ?? _mpv;
         var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
         void Retire()
         {
-            if (!ReferenceEquals(owner, _nativeAudioOwner)) return;
-            _nativeAudioMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
-            _nativeAudioOwner = null;
-            _nativeAudioGate.ResetOwner("");
-            // An empty scope still advertises host capability. Lua must not
-            // fall back to legacy Audio while this surface is unavailable.
+            if (!ReferenceEquals(owner, _nativeMenuOwner)) return;
+            _nativePartyEndDialog?.Hide();
+            _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
+            _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
+            // Empty scopes advertise host capability without allowing legacy
+            // fallback while the playback surface is unavailable.
             mpv?.SendScriptMessage("osc-native-audio-scope", "");
+            mpv?.SendScriptMessage("osc-native-quality-scope", "");
+            mpv?.SendScriptMessage("osc-native-party-scope", "");
         }
-        if (dispatcher?.HasThreadAccess == true) Retire();
-        else dispatcher?.TryEnqueue(Retire);
+        if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
 
-    private async Task HandleNativeAudioOpenAsync(PlaybackMenuRequest request)
+    private async Task HandleNativeMenuOpenAsync(PlaybackMenuRequest request)
     {
-        var owner = _nativeAudioOwner;
-        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
-        {
-            // The acknowledgement remains scoped; a late request cannot clear
-            // the newer owner's pending input guard.
-            _mpv?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
-                request.Sequence.ToString(CultureInfo.InvariantCulture), "false");
-            return;
-        }
-        if (!_nativeAudioGate.TryOpen(request))
-        {
-            // Replays of the active request already have a live presenter.
-            // A rejected, previously closed request still needs a scoped ack
-            // so its Lua pending guard can advance to a fresh sequence.
-            if (_nativeAudioRequest is not { } active || active.Sequence != request.Sequence)
-                owner.Mpv.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
-                    request.Sequence.ToString(CultureInfo.InvariantCulture), "false");
-            return;
-        }
-        _nativeAudioRequest = request;
-        _nativeAudioMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
-        var lease = false;
-        PlaybackAudioMenu? menu = null;
-        void Finish(PlaybackMenuCloseReason reason)
-        {
-            if (ReferenceEquals(_nativeAudioMenu, menu)) _nativeAudioMenu = null;
-            _nativeAudioGate.TryClose(request.OwnerToken, request.Sequence);
-            if (ReferenceEquals(_nativeAudioRequest, request)) _nativeAudioRequest = null;
-            if (lease) { lease = false; _playbackDialogGate.Release(); }
-            owner.Mpv.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
+        var owner = _nativeMenuOwner;
+        void Ack(PlaybackMenuCloseReason reason = PlaybackMenuCloseReason.OwnerRetired) =>
+            (owner?.Mpv ?? _mpv)?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
+        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
+        { Ack(); return; }
+        if (!_nativeMenuGate.TryOpen(request))
+        {
+            if (_nativeMenuRequest is not { } active || active.Sequence != request.Sequence) Ack();
+            return;
+        }
+        _nativeMenuRequest = request;
+        _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
+        var lease = false; PlaybackChoiceMenu? menu = null;
+        void Finish(PlaybackMenuCloseReason reason)
+        {
+            if (ReferenceEquals(_nativeMenu, menu)) _nativeMenu = null;
+            _nativeMenuGate.TryClose(request.OwnerToken, request.Sequence);
+            if (ReferenceEquals(_nativeMenuRequest, request)) _nativeMenuRequest = null;
+            if (lease) { lease = false; _playbackDialogGate.Release(); }
+            Ack(reason);
         }
         try
         {
             lease = await _playbackDialogGate.WaitAsync(0);
-            if (!lease || !owner.IsCurrent() || !_nativeAudioGate.IsCurrent(request))
+            if (!lease || !owner.IsCurrent() || !_nativeMenuGate.IsCurrent(request))
+            { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }
+            menu = request.Kind switch
             {
-                Finish(PlaybackMenuCloseReason.OwnerRetired);
-                return;
-            }
-            var currentTrack = _playbackManager?.CurrentSession?.AudioTrackIndex ?? -1;
-            var rows = owner.Tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, currentTrack)).ToArray();
-            menu = new PlaybackAudioMenu(owner.Video, request.Anchor, rows,
-                () => owner.IsCurrent() && _nativeAudioGate.IsCurrent(request),
-                index =>
-                {
-                    if (owner.IsCurrent() && index >= 0 && index < owner.Tracks.Length && index != currentTrack)
-                        _ = SelectNativeAudioAsync(owner, index);
-                }, Finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
-            _nativeAudioMenu = menu;
+                "audio" => CreateNativeAudioMenu(owner, request, Finish),
+                "quality" => CreateNativeQualityMenu(owner, request, Finish),
+                "party" => CreateNativePartyMenu(owner, request, Finish),
+                _ => null,
+            };
+            if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }
+            _nativeMenu = menu;
             await menu.ShowAsync();
             if (!owner.IsCurrent()) menu.Close(PlaybackMenuCloseReason.OwnerRetired);
         }
         catch (Exception)
         {
-            if (menu != null) menu.Close(PlaybackMenuCloseReason.OwnerRetired);
-            else Finish(PlaybackMenuCloseReason.OwnerRetired);
-            if (owner.IsCurrent()) ShowNotice("Audio menu unavailable", "Please try opening Audio again.", "error");
+            if (menu != null) menu.Close(PlaybackMenuCloseReason.OwnerRetired); else Finish(PlaybackMenuCloseReason.OwnerRetired);
+            if (owner.IsCurrent()) ShowNotice("Menu unavailable", "Please try opening the menu again.", "error");
         }
     }
 
-    private async Task SelectNativeAudioAsync(NativeAudioOwner owner, int sourceIndex)
+    private PlaybackChoiceMenu? CreateNativeAudioMenu(NativeMenuOwner owner, PlaybackMenuRequest request,
+        Action<PlaybackMenuCloseReason> finish)
     {
-        try
-        {
-            if (owner.IsCurrent()) await SwitchAudioTrackCoreAsync(sourceIndex, owner.IsCurrent);
-        }
-        catch (Exception)
-        {
-            if (owner.IsCurrent()) ShowNotice("Audio unavailable", "Please try selecting the track again.", "error");
-        }
+        var tracks = ActiveVersion?.AudioTracks?.ToArray() ?? [];
+        if (tracks.Length <= 1) return null;
+        bool InventoryCurrent() => owner.IsCurrent() && ActiveVersion?.AudioTracks is { } current && current.SequenceEqual(tracks);
+        var current = _playbackManager?.CurrentSession?.AudioTrackIndex ?? -1;
+        return new PlaybackAudioMenu(owner.Video, request.Anchor,
+            tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current)).ToArray(),
+            () => InventoryCurrent() && _nativeMenuGate.IsCurrent(request),
+            index =>
+            {
+                if (InventoryCurrent() && index >= 0 && index < tracks.Length && index != current)
+                    _ = SelectNativeAudioAsync(owner, index, InventoryCurrent);
+            }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
+    }
+
+    private async Task SelectNativeAudioAsync(NativeMenuOwner owner, int sourceIndex, Func<bool> current)
+    {
+        try { if (current()) await SwitchAudioTrackCoreAsync(sourceIndex, current); }
+        catch (Exception) { if (owner.IsCurrent()) ShowNotice("Audio unavailable", "Please try selecting the track again.", "error"); }
     }
 
     private void HandleNativeMenuInput(string token, string sequence, string action)
     {
-        var owner = _nativeAudioOwner;
+        var owner = _nativeMenuOwner;
         if (owner?.Token != token || !owner.IsCurrent() ||
             !long.TryParse(sequence, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return;
-        // The request gate verifies the exact sequence without changing ownership.
-        if (_nativeAudioRequest is { } request && request.Sequence == number && _nativeAudioGate.IsCurrent(request))
-            _nativeAudioMenu?.Input(action);
+        if (_nativeMenuRequest is { } request && request.Sequence == number && _nativeMenuGate.IsCurrent(request))
+            _nativeMenu?.Input(action);
     }
-
-    private PlaybackMenuRequest? _nativeAudioRequest;
 
     private static PlaybackAudioChoice DescribeAudioMenuChoice(AudioTrackInfo track, int index, int current)
     {

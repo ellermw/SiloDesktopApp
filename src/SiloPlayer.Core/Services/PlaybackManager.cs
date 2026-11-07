@@ -211,12 +211,38 @@ public partial class PlaybackManager : IDisposable
 
         await ConfigureConnectionStartAsync(request, preferences, ct, owner).ConfigureAwait(false);
         var decision = await _playbackApi.StartPlaybackV3Async(request, ct, owner).ConfigureAwait(false);
+        return await AcceptStartedDecisionAsync(request, decision, subtitleRevision, audioRevision, ct).ConfigureAwait(false);
+    }
+
+    private async Task<PlaybackStartResponse> AcceptStartedDecisionAsync(
+        PlaybackStartRequestV3 request,
+        PlaybackDecisionResponseV3 decision,
+        long subtitleRevision,
+        long audioRevision,
+        CancellationToken ct)
+    {
+        PlaybackStartResponse response;
+        string streamUrl;
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
+            streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
+            ct.ThrowIfCancellationRequested();
+        }
+        catch
+        {
+            // A successful start already allocated a server slot. Rejecting its
+            // decision must retire that allocation before the caller continues,
+            // without using its canceled token or touching the adopted session.
+            await RetireUnadoptedStartAsync(decision).ConfigureAwait(false);
+            throw;
+        }
         _connectionFeatures = request.ClientFeatures.ToArray();
-        var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
         _recoveryAttemptHistory.Reset();
         _currentPlanV3 = decision.PlaybackPlan;
-        _clientCapabilitiesV3 = capabilities;
-        _clientContextV3 = context;
+        _clientCapabilitiesV3 = request.ClientCapabilities;
+        _clientContextV3 = request.ClientPlaybackContext;
         _playbackAttemptIdV3 = request.PlaybackAttemptId;
         _planAttemptIdV3 = Guid.NewGuid().ToString();
         _qualityPreferenceV3 = request.QualityPreference;
@@ -231,10 +257,28 @@ public partial class PlaybackManager : IDisposable
 
         LogToStateTrace($"StartSession response: play_method={response.PlayMethod}, session={response.SessionId}, position={response.Position:F1}");
 
-        StreamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
+        StreamUrl = streamUrl;
         StartProgressReporting();
         _ = RecordRouteEventAsync(response, "plan_selected");
         return response;
+    }
+
+    private async Task RetireUnadoptedStartAsync(PlaybackDecisionResponseV3 decision)
+    {
+        // Match the API's registered identity. Never relabel a stop to the
+        // current account, or stop a session already owned by the manager.
+        var sessionId = decision?.PlaybackPlan?.SessionId ?? decision?.SessionId;
+        if (!string.Equals(decision?.Outcome, "playable", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(sessionId) || string.Equals(sessionId, _sessionId, StringComparison.Ordinal)) return;
+        try
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await _playbackApi.StopPlaybackAsync(sessionId, cleanup.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("progress_error.txt", $"Unadopted playback session cleanup failed: {ex.Message}");
+        }
     }
 
     private static string ResolveAppVersion()
@@ -679,7 +723,7 @@ public partial class PlaybackManager : IDisposable
             if (recoveryAttempt != null) _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
             else _recoveryAttemptHistory.Reset();
         }
-        void Publish(PlaybackStartResponse accepted)
+        void Publish(PlaybackStartResponse accepted, string streamUrl)
         {
             _currentPlanV3 = decision.PlaybackPlan;
             _planAttemptIdV3 = Guid.NewGuid().ToString();
@@ -689,20 +733,23 @@ public partial class PlaybackManager : IDisposable
             AcknowledgeGrantedSubtitleIntent(subtitleRevision);
             AcknowledgeAudioIntent(audioRevision);
             _lastReportedPosition = Math.Max(0, accepted.Position);
-            ApplyStreamUrl(accepted);
+            StreamUrl = streamUrl;
         }
         PlaybackStartResponse response;
         if (currentOwner == null)
         {
-            // Preserve the original unowned publication/history ordering.
-            CommitHistory();
+            // Validate delivery before publishing any accepted plan/session fields
+            // or history. A failed decision leaves the original owner intact.
             response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
-            Publish(response);
+            var streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
+            CommitHistory();
+            Publish(response, streamUrl);
         }
         else lock (_trackIntentGate)
         {
             if (!currentOwner()) throw new OperationCanceledException("Subtitle owner retired.", ct);
             response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
+            var streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
             var previousSession = CurrentSession;
             CurrentSession = response;
             if (tryAdopt?.Invoke(response) == false)
@@ -713,17 +760,12 @@ public partial class PlaybackManager : IDisposable
                 throw new OperationCanceledException("Subtitle owner retired before publication.", ct);
             }
             CommitHistory();
-            Publish(response);
+            Publish(response, streamUrl);
         }
         _ = RecordRouteEventAsync(response, "plan_selected");
         LogToStateTrace(
             $"Replan v3: operation={operation}, requested_quality={qualityPreference}, active_quality={response.ActiveQuality}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
         return response;
-    }
-
-    private void ApplyStreamUrl(PlaybackStartResponse response)
-    {
-        StreamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
     }
 
     /// <summary>

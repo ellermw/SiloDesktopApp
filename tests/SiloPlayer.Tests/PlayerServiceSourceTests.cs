@@ -6,7 +6,7 @@ public sealed class PlayerServiceSourceTests
     public void AudioAndQualityControlsCaptureTheirOwnerBeforeDrainingTransportWork()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        foreach (var signature in new[] { "private async Task SwitchAudioTrackCoreAsync(int trackIndex", "private async Task SwitchQualityTierAsync(string tierId," })
+        foreach (var signature in new[] { "private async Task SwitchAudioTrackCoreAsync(int trackIndex", "private async Task SwitchQualityTierCoreAsync(string tierId," })
         {
             var start = source.IndexOf(signature, StringComparison.Ordinal);
             Assert.True(start >= 0, $"Missing owner-scoped control: {signature}");
@@ -530,7 +530,7 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        var methodStart = source.IndexOf("private async Task SwitchQualityTierAsync", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("private async Task SwitchQualityTierCoreAsync(string tierId,", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0);
         Assert.True(methodEnd > methodStart);
@@ -1151,7 +1151,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("presenter.SetBorderAndTitleBar(false, false);", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(hostHwnd);", host, StringComparison.Ordinal);
         Assert.Contains("public static async Task<bool> ShowAsync(", host, StringComparison.Ordinal);
-        Assert.Contains("restorePlayerInput = GetForegroundWindow() == hostHwnd;", host, StringComparison.Ordinal);
+        Assert.Contains("restorePlayerInput = GetForegroundWindow() == hostHwnd", host, StringComparison.Ordinal);
         Assert.Contains("_videoWindow?.EnterFullscreen(activate: activatePlaybackSurface);", source, StringComparison.Ordinal);
         Assert.Contains("if (restorePlayerInput)", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(videoHwnd);", host, StringComparison.Ordinal);
@@ -1309,7 +1309,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("description = description with { CanRetry = false };", terminal);
 
         var failureStart = source.IndexOf("private void HandleMpvFailure", StringComparison.Ordinal);
-        var failureEnd = source.IndexOf("public async Task SwitchVersionAsync", failureStart, StringComparison.Ordinal);
+        var failureEnd = source.IndexOf("private async Task SwitchVersionCoreAsync", failureStart, StringComparison.Ordinal);
         Assert.Contains("_closing || State == PlayerState.Idle || _playbackTerminalState != null", source[failureStart..failureEnd]);
         var endStart = source.IndexOf("private void HandleMpvEndSignal", StringComparison.Ordinal);
         var endGuard = source.IndexOf("var pos = CurrentMediaPosition;", endStart, StringComparison.Ordinal);
@@ -1321,7 +1321,7 @@ public sealed class PlayerServiceSourceTests
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        var start = source.IndexOf("public async Task SwitchVersionAsync", StringComparison.Ordinal);
+        var start = source.IndexOf("private async Task SwitchVersionCoreAsync", StringComparison.Ordinal);
         Assert.True(start >= 0);
         var end = source.IndexOf("public Task SwitchAudioTrackAsync", start, StringComparison.Ordinal);
         Assert.True(end > start);

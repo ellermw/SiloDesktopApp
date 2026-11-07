@@ -100,6 +100,33 @@ public sealed partial class MpvOscRuntimeTests
     }
 
     [Fact]
+    public void UnrelatedNativeCapabilityRevocationRetainsAudioInputAndSequence()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            native_probe_time = 10
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = {{index=0,title='English'},{index=1,title='Japanese'}}
+            local quality = native_handlers['osc-native-quality-scope']
+            if not quality then mp.set_property('user-data/native-audio-result','unsupported'); return end
+            local token = '11111111111111111111111111111111'
+            quality(token); native_handlers['osc-native-audio-scope'](token)
+            osc_test_layout(); s.controller_focus_name='btn_audio'; osc_test_activate()
+            local first = assert(native_requests[1])
+            quality('')
+            local retained = s.native_menu_request ~= nil
+            native_handlers['osc-video-click']('100','100')
+            local blocked = #native_intents == 0
+            native_handlers['osc-native-menu-closed'](token,first[4],'true')
+            s.controller_focus_name='btn_audio'; osc_test_activate()
+            local next = native_requests[2]
+            mp.set_property('user-data/native-audio-result',tostring(retained)..':'..tostring(blocked)..':'..tostring(next and tonumber(next[4])>tonumber(first[4])))
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe);
+        Assert.Equal("true:true:true", output);
+    }
+
+    [Fact]
     public void NativeAudioPendingBlocksNativeWindowMinimizeShortcut()
     {
         var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
@@ -291,12 +318,10 @@ public sealed partial class MpvOscRuntimeTests
             s.visible, s.current_alpha, s.target_alpha = true, 1, 1
             s.audio_tracks = { {index=0,title='English'}, {index=1,title='Japanese'} }
             native_handlers['osc-native-audio-scope']('11111111111111111111111111111111')
-            if '{{unavailable}}' == 'loading' then native_handlers['osc-set-loading']('true')
-            elseif '{{unavailable}}' == 'retired-loading' then
-                -- BeginOwnedMpvLoad revokes scope before publishing loading.
+            if '{{unavailable}}' == 'retired' or '{{unavailable}}' == 'retired-loading' then
                 native_handlers['osc-native-audio-scope']('')
-                native_handlers['osc-set-loading']('true')
-            elseif '{{unavailable}}' == 'retired' then native_handlers['osc-native-audio-scope']('')
+                if '{{unavailable}}' == 'retired-loading' then native_handlers['osc-set-loading']('true') end
+            elseif '{{unavailable}}' == 'loading' then native_handlers['osc-set-loading']('true')
             elseif '{{unavailable}}' == 'hidden' then native_handlers['osc-set-visibility']('false')
             else native_handlers['osc-set-post-roll']('true') end
             osc_test_layout(); s.controller_focus_name = 'btn_audio'; osc_test_activate()

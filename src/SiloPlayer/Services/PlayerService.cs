@@ -551,12 +551,23 @@ public partial class PlayerService : IDisposable
 
     public void SetWatchTogetherPlayback(bool active)
     {
+        var changed = active != IsWatchTogetherPlayback;
         var joining = active && !IsWatchTogetherPlayback;
+        if (changed)
+        {
+            Interlocked.Increment(ref _roomPlaybackGeneration);
+            CancelPendingSoloVersionSwitch();
+        }
         IsWatchTogetherPlayback = active;
         if (joining) SetPaused(true);
         if (!active) _offeredRoomQuality = _offeredFromQuality = null;
         UpdateRoomInputBindings();
         UpdateRoomSeekDisplay();
+        if (changed)
+        {
+            RetireNativeMenus();
+            PublishNativeMenuScopes();
+        }
     }
 
     private void UpdateRoomInputBindings()
@@ -661,6 +672,7 @@ public partial class PlayerService : IDisposable
         _offeredRoomQuality = next.Label;
         _offeredFromQuality = ActiveQualityTier;
         _mpv?.SendScriptMessage("osc-room-quality-offer", next.Label);
+        NativePartyStateChanged?.Invoke();
         ShowWatchPartyNotice("Playback has stalled repeatedly. Lower quality is available in the Watch Party panel.");
     }
 
@@ -669,6 +681,7 @@ public partial class PlayerService : IDisposable
         var target = _offeredRoomQuality;
         _offeredRoomQuality = null;
         _mpv?.SendScriptMessage("osc-room-quality-offer", "");
+        NativePartyStateChanged?.Invoke();
         if (!IsWatchTogetherPlayback || target == null || _offeredFromQuality != ActiveQualityTier) return;
         await SelectQualityAsync(target);
     }
@@ -991,7 +1004,7 @@ public partial class PlayerService : IDisposable
 
     private void CancelPendingPlayRequest()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         Interlocked.Increment(ref _playRequestGeneration);
         var cts = Interlocked.Exchange(ref _playRequestCts, null);
         if (cts == null)
@@ -1607,10 +1620,12 @@ public partial class PlayerService : IDisposable
 
         if (room == null || string.Equals(room.Phase, "ended", StringComparison.OrdinalIgnoreCase))
         {
+            _mpv.SendScriptMessage("osc-native-party-scope", "");
             _mpv.SendScriptMessage("osc-set-watch-party", "null");
             return;
         }
 
+        _mpv.SendScriptMessage("osc-native-party-scope", _nativeMenuOwner is { } nativeOwner && nativeOwner.IsCurrent() ? nativeOwner.Token : "");
         var payload = new
         {
             visible = true,
@@ -1973,7 +1988,7 @@ public partial class PlayerService : IDisposable
 
     public void SetState(PlayerState newState)
     {
-        if (State != newState) RetireNativeAudioMenu();
+        if (State != newState) RetireNativeMenus();
         var threadId = Environment.CurrentManagedThreadId;
         LogToFile("state_trace.txt", $"SetState: {State} -> {newState} (thread={threadId})");
 
@@ -2005,7 +2020,7 @@ public partial class PlayerService : IDisposable
             }
             else if (IsAudiobook)
                 _videoWindow?.Hide();
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
             PublishFullscreenVisualState(newState == PlayerState.Fullscreen);
             PublishPictureInPictureVisualState(newState == PlayerState.PictureInPicture);
             if (newState == PlayerState.Idle)
@@ -2051,7 +2066,7 @@ public partial class PlayerService : IDisposable
         else
             _videoWindow?.Hide();
 
-        PublishNativeAudioScope();
+        PublishNativeMenuScopes();
         InvokeSubscribersSafely(StateChanged, newState, nameof(StateChanged));
     }
 
@@ -2364,7 +2379,7 @@ public partial class PlayerService : IDisposable
         try { previous?.Cancel(); }
         catch (ObjectDisposedException) { }
         previous?.Dispose();
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var generation = Interlocked.Increment(ref _playRequestGeneration);
         var gateEntered = false;
 
@@ -2961,7 +2976,7 @@ public partial class PlayerService : IDisposable
         // any preparation/native call can fail. A different load invalidates it.
         var fileOwner = Interlocked.Increment(ref _playbackFileGeneration);
         acceptLoad?.Invoke(fileOwner);
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         AdoptBufferingQualityPlan();
         StartPlaybackStallWatchdog();
         _idleRemuxResume.ResetPauseClock();
@@ -3661,6 +3676,7 @@ public partial class PlayerService : IDisposable
         bool wasPaused,
         PlaybackStartResponse? restartSession = null)
     {
+        RetireNativeMenus();
         var loadingOwner = _playbackCts;
         if (_idleRemuxResume.IsReopening) wasPaused = _idleRemuxResume.DesiredPaused;
         _idleRemuxResume.Reset();
@@ -4350,7 +4366,7 @@ public partial class PlayerService : IDisposable
         _videoWindow?.Show();
         _mpv?.SendScriptMessage("osc-set-post-roll", "false");
         _mpv?.SendScriptMessage("osc-set-visibility", "true");
-        PublishNativeAudioScope();
+        PublishNativeMenuScopes();
         InvokeSubscribersSafely(PostRollReturnRequested, nameof(PostRollReturnRequested));
     }
 
@@ -4686,7 +4702,7 @@ public partial class PlayerService : IDisposable
         try { UnwireMpvEvents(); } catch { }
         try { _mpv?.Dispose(); } catch { }
         _mpv = null;
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         try { _videoWindow?.Dispose(); } catch { }
         _videoWindow = null;
     }
@@ -4886,7 +4902,7 @@ public partial class PlayerService : IDisposable
 
             LogToFile("state_trace.txt", $"  -> Series post-roll requested at media end ({trigger})");
             _playingNextShown = true;
-            RetireNativeAudioMenu();
+            RetireNativeMenus();
             _postRollActive = true;
             _postRollVideoEnded = true;
             PrefetchQueuedEpisodeWatchDetail();
@@ -4959,7 +4975,7 @@ public partial class PlayerService : IDisposable
                 CurrentMediaDuration - mediaPosition <= 30)
             {
                 _playingNextShown = true;
-                RetireNativeAudioMenu();
+                RetireNativeMenus();
                 _postRollActive = true;
                 _postRollVideoEnded = false;
                 PrefetchQueuedEpisodeWatchDetail();
@@ -5250,108 +5266,161 @@ public partial class PlayerService : IDisposable
 
     // ── Content switching (version/audio) ────────────────────────────────
 
-    public async Task SwitchVersionAsync(FileVersion version)
+    public Task SwitchVersionAsync(FileVersion version) => SwitchVersionCoreAsync(version);
+
+    private async Task SwitchVersionCoreAsync(FileVersion version, Func<bool>? acceptSelection = null)
     {
+        if (_playbackTerminalState != null) return;
+        if (acceptSelection != null && !acceptSelection()) return;
         if (IsWatchTogetherPlayback)
         {
             ShowWatchPartyNotice("The room's shared version is locked. Choose a playback quality instead.");
             return;
         }
         if (_mpv == null || _playbackManager == null) return;
-        await CancelAndDrainTransportRestartsAsync();
-
+        var roomGeneration = Volatile.Read(ref _roomPlaybackGeneration);
+        var authority = _activeAuthority;
+        var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
-        var ct = _playbackCts?.Token ?? CancellationToken.None;
-        var wasPaused = CaptureUserPausedState();
-        var currentPos = CurrentMediaPosition;
-        var previousSession = manager.CurrentSession;
-        var replacementAccepted = false;
-        var survivingSession = manager.CurrentSession;
-        RetireNativeAudioMenu();
-        var busyOwner = BeginPlaybackBusy(loading: false);
-        _subtitleVersionSwitchActive = true;
-        CancelPendingLoadedMediaInitialization();
-        // Don't call _mpv.Stop() — let current stream keep playing while we set up the new one
-
+        var mpv = _mpv;
+        var content = ContentId;
+        var playGeneration = Volatile.Read(ref _playRequestGeneration);
+        var fileGeneration = Volatile.Read(ref _playbackFileGeneration);
+        using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _playbackCts?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
+        var ct = switchCts.Token;
+        var previousSwitch = Interlocked.Exchange(ref _soloVersionSwitchCts, switchCts);
+        try { previousSwitch?.Cancel(); } catch (ObjectDisposedException) { }
         try
         {
-            manager.SourceVersionPinned = true;
-            var session = await manager.StartReplacementSessionAsync(
-                version.FileId,
-                currentPos,
-                forceStartPosition: true,
-                previousFinalPosition: currentPos,
-                ct: ct);
-            replacementAccepted = true;
-            busyOwner = busyOwner with { Session = session };
-            if (!ResumePlaybackBusy(busyOwner)) return;
-            _requestedMediaFileId = version.FileId;
-            InvokeSubscribersSafely(SessionStarted, session.SessionId, nameof(SessionStarted));
-            var streamUrl = manager.StreamUrl;
-            if (string.IsNullOrWhiteSpace(streamUrl))
-                throw new InvalidOperationException("No stream URL for selected version.");
-
-            var prepared = await PreparePlaybackTransportAsync(
-                session,
-                version,
-                streamUrl,
-                currentPos,
-                ct);
-
-            ct.ThrowIfCancellationRequested();
-            if (!ResumePlaybackBusy(busyOwner) ||
-                !ReferenceEquals(manager.CurrentSession, session))
-                return;
-
-            PlayMethod = session.PlayMethod;
-            Resolution = version.Resolution;
-            ApplyPreparedTransport(prepared);
-            BeginOwnedMpvLoad(prepared, restorePaused: wasPaused,
-                acceptLoad: generation => busyOwner = busyOwner with { FileGeneration = generation },
-                acceptBusy: owner => busyOwner = owner);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            LogToFile("state_trace.txt", "Version switch canceled");
-            ReleasePlaybackBusy(busyOwner with { Session = manager.CurrentSession });
-        }
-        catch (Exception ex)
-        {
-            LogToFile("player_quality_switch_error.txt", ex.ToString());
-            // Session retirement can fail after clearing CurrentSession. Adopt
-            // that result only while this operation still owns the busy claim.
-            busyOwner = busyOwner with { Session = manager.CurrentSession };
-            if (!OwnsPlaybackBusy(busyOwner)) return;
-            ErrorMessage = $"Failed to switch quality: {ex.Message}";
-            if (!_closing && ReferenceEquals(_playbackManager, manager) &&
-                (manager.CurrentSession == null || manager.SessionRetirementPending))
+            bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing && _playbackTerminalState == null && !IsWatchTogetherPlayback &&
+                roomGeneration == Volatile.Read(ref _roomPlaybackGeneration) &&
+                ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
+                ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) && content == ContentId &&
+                playGeneration == Volatile.Read(ref _playRequestGeneration) &&
+                fileGeneration == Volatile.Read(ref _playbackFileGeneration);
+            await CancelAndDrainTransportRestartsAsync(ct);
+            if (!CurrentSwitch() || (acceptSelection != null && !acceptSelection()) ||
+                IsWatchTogetherPlayback || (acceptSelection != null && !Versions.Contains(version))) return;
+            var wasPaused = CaptureUserPausedState();
+            var currentPos = CurrentMediaPosition;
+            var previousSession = manager.CurrentSession;
+            var replacementAccepted = false;
+            var survivingSession = manager.CurrentSession;
+            var reconcileSubtitles = false;
+            RetireNativeMenus();
+            var busyOwner = BeginPlaybackBusy(loading: false, claimState: () =>
             {
-                // Retirement is the point of no return: the old transport may
-                // no longer run, even when the replacement was never accepted.
-                EnterPlaybackTerminalState(ex, currentPos, "version-switch-failed", wasPaused, previousSession);
+                _qualitySwitchActive = false;
+                _subtitleVersionSwitchActive = true;
+            });
+            CancelPendingLoadedMediaInitialization();
+            // Don't call _mpv.Stop() — let current stream keep playing while we set up the new one
+
+            try
+            {
+                manager.SourceVersionPinned = true;
+                var session = await manager.StartReplacementSessionAsync(
+                    version.FileId,
+                    currentPos,
+                    forceStartPosition: true,
+                    previousFinalPosition: currentPos,
+                    ct: ct);
+                busyOwner = busyOwner with { Session = session };
+                if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner)) return;
+                replacementAccepted = true;
+                _requestedMediaFileId = version.FileId;
+                InvokeSubscribersSafely(SessionStarted, session.SessionId, nameof(SessionStarted));
+                var streamUrl = manager.StreamUrl;
+                if (string.IsNullOrWhiteSpace(streamUrl))
+                    throw new InvalidOperationException("No stream URL for selected version.");
+
+                var prepared = await PreparePlaybackTransportAsync(
+                    session,
+                    version,
+                    streamUrl,
+                    currentPos,
+                    ct);
+
+                ct.ThrowIfCancellationRequested();
+                if (!CurrentSwitch() || !ResumePlaybackBusy(busyOwner) ||
+                    !ReferenceEquals(manager.CurrentSession, session))
+                    return;
+
+                PlayMethod = session.PlayMethod;
+                Resolution = version.Resolution;
+                ApplyPreparedTransport(prepared);
+                BeginOwnedMpvLoad(prepared, restorePaused: wasPaused,
+                    acceptLoad: generation =>
+                    {
+                        fileGeneration = generation;
+                        busyOwner = busyOwner with { FileGeneration = generation };
+                    },
+                    acceptBusy: owner => busyOwner = owner);
+                if (!CurrentSwitch()) return;
+                SendQualityInfoToOsc();
+                SendMediaInfoToOsc();
+                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
             }
-            else if ((replacementAccepted || !ReferenceEquals(manager.CurrentSession, survivingSession)) &&
-                !_closing && ReferenceEquals(_playbackManager, manager))
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                _prematureEofRecoveryActive = true;
-                SetSwitchingContent(true);
-                IsLoading = true;
-                ShowNotice(
-                    "Reconnecting playback",
-                    "The version switch was interrupted. Restoring playback from your current position…",
-                    "warning");
-                _ = RecoverInterruptedStreamAsync(currentPos, "version-switch-failed");
+                LogToFile("state_trace.txt", "Version switch canceled");
             }
-            else
+            catch (Exception ex)
             {
-                if (!ReleasePlaybackBusy(busyOwner)) return;
-                _subtitleVersionSwitchActive = false;
-                var (title, detail) = DescribePlaybackError(ex);
-                ShowNotice(title, detail, "error");
-                PublishNativeAudioScope();
+                if (!CurrentSwitch()) return;
+                if (ReferenceEquals(manager, _playbackManager) && manager.CurrentSession == null)
+                    busyOwner = busyOwner with { Session = null };
+                var released = ReleasePlaybackBusy(busyOwner);
+                if (released == null) return;
+                RunIfBusyReleaseCurrent(released, () =>
+                {
+                    if (!CurrentSwitch()) return;
+                    LogToFile("player_quality_switch_error.txt", ex.ToString());
+                    ErrorMessage = $"Failed to switch quality: {ex.Message}";
+                    if (manager.CurrentSession == null || manager.SessionRetirementPending)
+                    {
+                        // Retirement is the point of no return: the old transport may
+                        // no longer run, even when the replacement was never accepted.
+                        EnterPlaybackTerminalState(ex, currentPos, "version-switch-failed", wasPaused, previousSession);
+                    }
+                    else if ((replacementAccepted || !ReferenceEquals(manager.CurrentSession, survivingSession)) &&
+                        !_closing && ReferenceEquals(_playbackManager, manager))
+                    {
+                        _prematureEofRecoveryActive = true;
+                        SetSwitchingContent(true);
+                        IsLoading = true;
+                        ShowNotice(
+                            "Reconnecting playback",
+                            "The version switch was interrupted. Restoring playback from your current position…",
+                            "warning");
+                        _ = RecoverInterruptedStreamAsync(currentPos, "version-switch-failed");
+                    }
+                    else
+                    {
+                        _subtitleVersionSwitchActive = false;
+                        reconcileSubtitles = true;
+                        var (title, detail) = DescribePlaybackError(ex);
+                        ShowNotice(title, detail, "error");
+                        PublishNativeMenuScopes();
+                    }
+                });
+            }
+            finally
+            {
+                if (!CurrentSwitch())
+                {
+                    // A slot-limit retry can retire its own outgoing session
+                    // before a canceled replacement returns a new one.
+                    if (ReferenceEquals(manager, _playbackManager) && manager.CurrentSession == null)
+                        busyOwner = busyOwner with { Session = null };
+                    ReleasePlaybackBusy(busyOwner, () => _subtitleVersionSwitchActive = false);
+                }
+            }
+            if (reconcileSubtitles && CurrentSwitch())
                 await ReconcileDeferredSubtitleSelectionAsync(manager, survivingSession);
-            }
         }
+        finally { Interlocked.CompareExchange(ref _soloVersionSwitchCts, null, switchCts); }
     }
 
     public Task SwitchAudioTrackAsync(int trackIndex) => SwitchAudioTrackCoreAsync(trackIndex);
@@ -5397,7 +5466,7 @@ public partial class PlayerService : IDisposable
             var reconcileSubtitles = false;
             var ownsAudioTransport = true;
             Interlocked.Increment(ref _audioSwitchOperations);
-            RetireNativeAudioMenu();
+            RetireNativeMenus();
             var busyOwner = BeginPlaybackBusy();
             try
             {
@@ -5444,16 +5513,20 @@ public partial class PlayerService : IDisposable
             catch (Exception ex)
             {
                 if (!CurrentSwitch()) return;
-                LogToFile("player_audio_switch_error.txt", ex.ToString());
-                if (!ReleasePlaybackBusy(busyOwner)) return;
-                var (title, detail) = DescribePlaybackError(ex);
-                ErrorMessage = detail;
-                ShowNotice(title, detail, "error");
-                SendAudioTrackListToOsc();
-                reconcileSubtitles = true;
+                ReleasePlaybackBusy(busyOwner, () =>
+                {
+                    if (!CurrentSwitch()) return;
+                    LogToFile("player_audio_switch_error.txt", ex.ToString());
+                    var (title, detail) = DescribePlaybackError(ex);
+                    ErrorMessage = detail;
+                    ShowNotice(title, detail, "error");
+                    SendAudioTrackListToOsc();
+                    reconcileSubtitles = true;
+                });
             }
             finally
             {
+                if (!CurrentSwitch()) ReleasePlaybackBusy(busyOwner);
                 if (ownsAudioTransport) Interlocked.Decrement(ref _audioSwitchOperations);
                 if (!CurrentSwitch()) ReleasePlaybackBusy(busyOwner);
             }
@@ -5690,13 +5763,16 @@ public partial class PlayerService : IDisposable
             var position = CurrentMediaPosition;
             transportMutationAttempted = true;
             _subtitleReplanPauseIntent = PauseIntent();
-            // A pick queued behind another replan must not retire that
-            // operation's busy claim before it can submit its native load.
-            // An accepted subtitle replacement claims its own load below.
-            if (!HasOtherTransportOwner())
+            lock (_playbackBusyLock)
             {
-                SetSwitchingContent(true);
-                IsLoading = true;
+                // This pick can queue behind a quality/audio replan. Preserve
+                // that operation's busy claim until our own load supersedes it;
+                // even reassigning true would retire it before it can load.
+                if (!HasOtherTransportOwner())
+                {
+                    SetSwitchingContent(true);
+                    IsLoading = true;
+                }
             }
             _mpv.Pause();
             if (loadingOwner != null)
@@ -6663,7 +6739,7 @@ public partial class PlayerService : IDisposable
 
     private void SendAudioTrackListToOsc()
     {
-        PublishNativeAudioScope();
+        PublishNativeMenuScopes();
         if (_mpv == null)
             return;
         // ActiveVersion depends on CurrentSession. A sessionless direct
@@ -6983,6 +7059,7 @@ public partial class PlayerService : IDisposable
 
         var json = System.Text.Json.JsonSerializer.Serialize(info);
         _mpv.SendScriptMessage("osc-set-quality-info", json);
+        PublishNativeMenuScopes();
     }
 
     // ── Video window events ────────────────────────────────────────────
@@ -7065,8 +7142,10 @@ public partial class PlayerService : IDisposable
         switch (args[0])
         {
             case "silo-native-audio-open":
+            case "silo-native-quality-open":
+            case "silo-native-party-open":
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
-                    dispatch.TryEnqueue(() => _ = HandleNativeAudioOpenAsync(menuRequest));
+                    dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;
             case "silo-native-menu-input":
                 if (args.Length == 4)
@@ -7153,18 +7232,17 @@ public partial class PlayerService : IDisposable
                     var version = Versions.FirstOrDefault(v => v.FileId == vFileId);
                     if (version != null)
                     {
-                        SetSwitchingContent(true); // Set BEFORE dispatch — event thread may fire PlaybackEnded
-                        dispatch.TryEnqueue(() => _ = SwitchVersionAndNotifyAsync(version));
+                        DispatchLegacyPlaybackSwitch(dispatch, quality: false,
+                            current => SwitchVersionCoreAsync(version, current));
                     }
                 }
                 break;
             case "silo-quality-select":
                 if (args.Length > 1)
                 {
-                    SetSwitchingContent(true);
-                    _qualitySwitchActive = true;
-                    LogToFile("state_trace.txt", $"Quality select: tier={args[1]} flags set TRUE");
-                    dispatch.TryEnqueue(() => _ = SwitchQualityTierAsync(args[1]));
+                    var tier = args[1];
+                    DispatchLegacyPlaybackSwitch(dispatch, quality: true,
+                        current => SwitchQualityTierCoreAsync(tier, acceptSelection: current));
                 }
                 break;
             case "silo-seek-absolute":
@@ -7241,29 +7319,34 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    private async Task SwitchVersionAndNotifyAsync(FileVersion version)
-    {
-        await SwitchVersionAsync(version);
-        if (_requestedMediaFileId != version.FileId)
-            return;
-        SendQualityInfoToOsc();
-        SendMediaInfoToOsc();
-        _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
-    }
-
-    private async Task SwitchQualityTierAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
+    // Preserve the existing entry point; scoped selections use the guarded core.
+    private Task SwitchQualityTierAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
         PlaybackStartResponse? bufferingExpectedSession = null)
+        => SwitchQualityTierCoreAsync(tierId, bufferingReplan, bufferingExpectedSession);
+
+    private async Task SwitchQualityTierCoreAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
+        PlaybackStartResponse? bufferingExpectedSession = null, Func<bool>? acceptSelection = null)
     {
+        if (_playbackTerminalState != null) return;
+        if (acceptSelection != null && !acceptSelection()) return;
         var authority = _activeAuthority;
         var manager = _playbackManager;
         if (_mpv == null || manager == null) return;
+        var selectionContext = authority.ApiClient.CaptureContext();
+        var selectionMpv = _mpv;
+        var selectionContent = ContentId;
+        var selectionPlayGeneration = Volatile.Read(ref _playRequestGeneration);
+        var selectionFileGeneration = Volatile.Read(ref _playbackFileGeneration);
         var loadingOwner = _playbackCts;
         using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(loadingOwner?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
         var ct = switchCts.Token;
         bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
-            ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager);
+            _playbackTerminalState == null && ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(selectionContext) &&
+            ReferenceEquals(manager, _playbackManager) && ReferenceEquals(selectionMpv, _mpv) && selectionContent == ContentId &&
+            selectionPlayGeneration == Volatile.Read(ref _playRequestGeneration) &&
+            selectionFileGeneration == Volatile.Read(ref _playbackFileGeneration);
         await CancelAndDrainTransportRestartsAsync(ct);
-        if (!CurrentSwitch()) return;
+        if (!CurrentSwitch() || (acceptSelection != null && !acceptSelection())) return;
         if (bufferingExpectedSession != null && !ReferenceEquals(bufferingExpectedSession, manager.CurrentSession)) return;
         _offeredRoomQuality = _offeredFromQuality = null;
         _mpv?.SendScriptMessage("osc-room-quality-offer", "");
@@ -7278,9 +7361,8 @@ public partial class PlayerService : IDisposable
         // The session has ended; there is nothing to switch.
         var survivingSession = manager.CurrentSession;
         if (survivingSession is null) return;
-        RetireNativeAudioMenu();
-        var busyOwner = BeginPlaybackBusy();
-        _qualitySwitchActive = true;
+        RetireNativeMenus();
+        var busyOwner = BeginPlaybackBusy(claimState: () => _qualitySwitchActive = true);
         if (loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
         try
@@ -7312,8 +7394,13 @@ public partial class PlayerService : IDisposable
             PlayMethod = session.PlayMethod;
             ApplyPreparedTransport(prepared);
             BeginOwnedMpvLoad(prepared, restorePaused: wasPaused,
-                acceptLoad: generation => busyOwner = busyOwner with { FileGeneration = generation },
+                acceptLoad: generation =>
+                {
+                    selectionFileGeneration = generation;
+                    busyOwner = busyOwner with { FileGeneration = generation };
+                },
                 acceptBusy: owner => busyOwner = owner);
+            if (!CurrentSwitch()) return;
             // Show the quality actually accepted by the server, including
             // any fallback; a requested tier is not proof of delivery.
             _activeQualityTier = session.ActiveQuality;
@@ -7329,38 +7416,40 @@ public partial class PlayerService : IDisposable
         catch (Exception ex)
         {
             if (!CurrentSwitch()) return;
-            LogToFile("player_quality_switch_error.txt", ex.ToString());
-            // Subtitle-Off can adopt an intermediate session before the quality
-            // step fails. The revision still decides whether this claim is ours.
+            // Subtitle-Off may adopt an intermediate session before quality fails.
             busyOwner = busyOwner with { Session = manager.CurrentSession };
-            if (!ReleasePlaybackBusy(busyOwner, () =>
+            var released = ReleasePlaybackBusy(busyOwner, () =>
             {
                 _qualitySwitchActive = false;
-                if (loadingOwner != null)
-                    App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
-            })) return;
-            var (title, detail) = DescribePlaybackError(ex);
-            ErrorMessage = detail;
-            ShowNotice(title, detail, "error");
-            _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
-            PublishNativeAudioScope();
-            await ReconcileDeferredSubtitleSelectionAsync(manager, survivingSession);
+                if (!CurrentSwitch()) return;
+                LogToFile("player_quality_switch_error.txt", ex.ToString());
+                var (title, detail) = DescribePlaybackError(ex);
+                ErrorMessage = detail;
+                ShowNotice(title, detail, "error");
+                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+                PublishNativeMenuScopes();
+            });
+            if (released != null && loadingOwner != null)
+                App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
+                    collapse => RunIfBusyReleaseCurrent(released, collapse));
+            if (released != null && CurrentSwitch())
+                await ReconcileDeferredSubtitleSelectionAsync(manager, survivingSession);
         }
         finally
         {
-            if (ct.IsCancellationRequested)
-                ReleasePlaybackBusy(busyOwner with { Session = manager.CurrentSession }, () =>
-                {
-                    _qualitySwitchActive = false;
-                    if (loadingOwner != null)
-                        App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
-                });
+            if (!CurrentSwitch())
+            {
+                var released = ReleasePlaybackBusy(busyOwner with { Session = manager.CurrentSession }, () => _qualitySwitchActive = false);
+                if (released != null && loadingOwner != null)
+                    App.MainWindowInstance?.HideLoadingOverlay(loadingOwner,
+                        collapse => RunIfBusyReleaseCurrent(released, collapse));
+            }
         }
     }
 
     private async Task ShowSubtitleSearchDialogAsync()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var session = _playbackManager?.CurrentSession;
         var mainWindow = App.MainWindowInstance;
         if (session == null || mainWindow?.Content?.XamlRoot == null)
@@ -7398,7 +7487,7 @@ public partial class PlayerService : IDisposable
             _playbackDialogGate.Release();
             RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
             _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
         }
 
         if (!changed || _closing || !ReferenceEquals(session, _playbackManager?.CurrentSession))
@@ -7414,7 +7503,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAppearanceDialogAsync()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow?.Content?.XamlRoot == null)
             return;
@@ -7439,7 +7528,7 @@ public partial class PlayerService : IDisposable
             _playbackDialogGate.Release();
             RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
             _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
         }
     }
 
@@ -7472,7 +7561,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAiDialogAsync()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow == null)
             return;
@@ -7492,7 +7581,7 @@ public partial class PlayerService : IDisposable
             _playbackDialogGate.Release();
             RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
             _mpv?.SendScriptMessage("osc-subtitle-dialog-closed");
-            PublishNativeAudioScope();
+            PublishNativeMenuScopes();
         }
     }
 
@@ -7660,7 +7749,7 @@ public partial class PlayerService : IDisposable
             if (_closeCompletion is { Task.IsCompleted: false }) return _closeCompletion.Task;
             var completion = _closeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _closing = true;
-            RetireNativeAudioMenu();
+            RetireNativeMenus();
             _ = CompleteCloseAsync(completion);
             return completion.Task;
         }
@@ -7837,7 +7926,7 @@ public partial class PlayerService : IDisposable
 
     public void Dispose()
     {
-        RetireNativeAudioMenu();
+        RetireNativeMenus();
         _volumePersistenceDisposed = true;
         try { _volumeSaveTimer?.Stop(); } catch { /* Dispatcher may be shutting down. */ }
         EndBufferingQuality();
