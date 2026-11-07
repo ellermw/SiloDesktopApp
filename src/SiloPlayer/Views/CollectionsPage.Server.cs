@@ -5,8 +5,10 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Converters;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -121,7 +123,29 @@ public sealed partial class CollectionsPage
                 ToolTipService.SetToolTip(pin, pinned ? "Unpin from sidebar" : "Pin to sidebar");
                 AutomationProperties.SetName(pin, $"{(pinned ? "Unpin" : "Pin")} {collection.Title} {(pinned ? "from" : "to")} sidebar"); Visibility();
             }
-            UpdatePin(); pin.Click += async (_, _) => { pin.IsEnabled = false; try { pinned = await window.ToggleSidebarPinAsync(library.LibraryId, "collection", collection.Id, collection.Title); UpdatePin(); } finally { pin.IsEnabled = true; } };
+            UpdatePin();
+            pin.Click += async (_, _) =>
+            {
+                var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+                var context = apiClient.CaptureContext();
+                pin.IsEnabled = false;
+                try
+                {
+                    pinned = await window.ToggleSidebarPinAsync(library.LibraryId, "collection", collection.Id, collection.Title);
+                    UpdatePin();
+                }
+                catch (OperationCanceledException)
+                {
+                    // A retired action cannot change the retained card state.
+                }
+                catch (Exception ex)
+                {
+                    if (IsLoaded && pin.IsLoaded && apiClient.IsCurrentContext(context))
+                        App.Services.GetRequiredService<ToastService>().Error(ex,
+                            ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
+                }
+                finally { pin.IsEnabled = true; }
+            };
             layer.Children.Add(pin); card.PointerEntered += (_, _) => { over = true; Visibility(); }; card.PointerExited += (_, _) => { over = false; Visibility(); }; pin.GotFocus += (_, _) => Visibility(); pin.LostFocus += (_, _) => Visibility();
         }
         return card;

@@ -333,8 +333,8 @@ dotnet publish $HostProjectPath -c $Configuration -r $Runtime --self-contained `
     -o (Join-Path $PublishDir 'Updater')
 if ($LASTEXITCODE -ne 0) { throw 'The finite updater host could not be published.' }
 
-# Only the stable launcher/runtime is shared. Protocol1 updates leave these
-# bootstrap files immutable; a future bootstrap change needs a full installer.
+# Only the stable launcher/runtime is shared. Incremental updates leave these
+# bootstrap files immutable; the .NET 10 bootstrap migration needs a full installer.
 dotnet publish $LauncherProjectPath -c $Configuration -r $Runtime --self-contained `
     -p:PublishSingleFile=false -p:PublishTrimmed=false -p:PublishReadyToRun=false `
     -p:Version=$AppVersion -p:FileVersion=$FourPartVersion -p:AssemblyVersion=$FourPartVersion `
@@ -459,7 +459,8 @@ $null=New-Item -ItemType Directory -Path $BootstrapAssets -Force
 Copy-Item -LiteralPath $IconDest -Destination (Join-Path $BootstrapAssets 'app.ico')
 
 # Build the manifest/pack after signing and all content copies, from the exact
-# version-local bytes used by the full installer. Bootstrap is immutable in v1.
+# version-local bytes used by the full installer. The builder emits bootstrap
+# protocol 2 so .NET 8 / protocol 1 clients take the verified full-installer fallback.
 dotnet run --project "$RepoRoot\tools\SiloUpdatePack\SiloUpdatePack.csproj" -c $Configuration -- `
     --client $PublishDir --output $UpdateAssetDir --version $FourPartVersion --release-version $AppVersion
 if ($LASTEXITCODE -ne 0) { throw 'The incremental update assets could not be built.' }
@@ -542,7 +543,7 @@ if ($SetupExe) {
     $ManifestPath=Join-Path $UpdateAssetDir 'SiloUpdate-Windows-x64.manifest.json'
     $PackPath=Join-Path $UpdateAssetDir 'SiloUpdate-Windows-x64.pack'
     [pscustomobject]@{
-        version=$AppVersion;fileVersion=$FourPartVersion;bootstrapProtocol=1
+        version=$AppVersion;fileVersion=$FourPartVersion;bootstrapProtocol=$BuiltManifest.BootstrapProtocol
         publishRoot=$PublishRoot;clientDirectory=$PublishDir
         installerPath=$SetupExe.FullName;installerSha256=$VersionedHash;installerBytes=$SetupExe.Length
         manifestPath=$ManifestPath;manifestSha256=(Get-FileHash -LiteralPath $ManifestPath).Hash

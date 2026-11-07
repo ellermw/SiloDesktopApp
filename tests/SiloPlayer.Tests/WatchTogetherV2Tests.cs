@@ -48,6 +48,48 @@ public sealed class WatchTogetherV2Tests
     }
 
     [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task AcceptedMovieRoomActionRetainsIdentityAcrossAccessRevision(bool stage, bool refreshAccess)
+    {
+        using var handler = new RoomHandler { HoldMutation = true };
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test"); client.SetProfile("viewer");
+        var api = new PlaybackApi(client); var identity = client.CaptureIdentityContext();
+        Task action = stage
+            ? api.StageWatchTogetherRoomItemAsync("room", "movie", libraryId: 12, expectedIdentityContext: identity)
+            : api.CreateWatchTogetherSuggestionAsync("room", "proof", "movie", "movie", "Film", expectedIdentityContext: identity);
+        await handler.MutationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (refreshAccess) client.InvalidateAccessContext();
+        else client.SetProfile("other");
+        handler.ReleaseMutation.TrySetResult();
+        if (refreshAccess)
+        {
+            await action;
+            Assert.Single(handler.Requests.Where(request => request.Uri.AbsolutePath.EndsWith(stage ? "/staged-selection" : "/suggestions")
+                && request.Body.TryGetProperty("content_id", out _)));
+            if (!stage)
+            {
+                Assert.Equal(3, handler.Requests.Count); // one mutation, two suggestion pages
+                Assert.All(handler.Requests, request => Assert.Equal("proof", request.RoomProof));
+            }
+        }
+        else
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => action);
+            Assert.Single(handler.Requests); // a retired viewer cannot fetch suggestions
+        }
+        var dispatched = handler.Requests.Count;
+        client.SetProfile("replacement");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stage
+            ? api.StageWatchTogetherRoomItemAsync("room", "movie", expectedIdentityContext: identity)
+            : api.CreateWatchTogetherSuggestionAsync("room", "proof", "movie", "movie", "Film", expectedIdentityContext: identity));
+        Assert.Equal(dispatched, handler.Requests.Count);
+    }
+
+    [Theory]
     [InlineData(false, "access", true)] [InlineData(true, "access", true)]
     [InlineData(false, "profile", true)] [InlineData(true, "profile", true)]
     [InlineData(false, "access", false)] [InlineData(true, "access", false)]
@@ -121,6 +163,9 @@ public sealed class WatchTogetherV2Tests
     private sealed class RoomHandler : HttpMessageHandler
     {
         public List<(Uri Uri, string? RoomProof, JsonElement Body)> Requests { get; } = [];
+        public bool HoldMutation;
+        public TaskCompletionSource MutationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseMutation { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool HoldMutations, FailSuggestionReads;
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -129,6 +174,11 @@ public sealed class WatchTogetherV2Tests
             var json = request.Content == null ? "{}" : await request.Content.ReadAsStringAsync(ct);
             Requests.Add((uri, request.Headers.TryGetValues("X-Room-Token", out var proof) ? proof.Single() : null,
                 JsonDocument.Parse(json).RootElement.Clone()));
+            if (HoldMutation && request.Method != HttpMethod.Get)
+            {
+                MutationStarted.TrySetResult();
+                await ReleaseMutation.Task.WaitAsync(ct);
+            }
             if (HoldMutations && request.Method != HttpMethod.Get) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
             if (FailSuggestionReads && request.Method == HttpMethod.Get && uri.AbsolutePath.EndsWith("/suggestions"))
                 return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };

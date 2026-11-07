@@ -29,7 +29,7 @@ public partial class PlayerService
                     IsPending: VideoPlaybackRatePending));
             return rows;
         }
-        bool Current() => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request);
+        bool Current() => owner.IsCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request);
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(12, 4, 12, 12) };
         PlaybackChoiceMenu? menu = null;
         void Refresh()
@@ -84,7 +84,7 @@ public partial class PlayerService
             else if (option.Kind == PlaybackQualityMenuOptionKind.Quality && option.QualityId is { } quality)
             {
                 if (quality == SelectedQualityMenuId) return;
-                await SwitchQualityTierAsync(quality, acceptSelection: Accept);
+                await SwitchQualityTierCoreAsync(quality, acceptSelection: Accept);
             }
         }
         catch (Exception)

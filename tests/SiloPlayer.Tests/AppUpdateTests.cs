@@ -9,6 +9,27 @@ namespace SiloPlayer.Tests;
 
 public sealed class AppUpdateTests
 {
+    [Fact]
+    public void AppFactoryGuardsAndSharesItsInstallationRootLookup()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "App.xaml.cs"));
+        var helperStart = source.IndexOf("private static string? ReadInstallationRoot()", StringComparison.Ordinal);
+        var preferenceStart = source.IndexOf("private static bool PreferIncrementalUpdates(string? root)", StringComparison.Ordinal);
+        var factoryStart = source.IndexOf("private static IServiceProvider ConfigureServices()", StringComparison.Ordinal);
+        Assert.True(helperStart >= 0 && preferenceStart > helperStart && factoryStart > preferenceStart);
+        var helper = source[helperStart..preferenceStart];
+        Assert.Contains("try { return UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!); }", helper);
+        Assert.Contains("catch (Exception ex)", helper);
+        Assert.Contains("installation_root_invalid kind=", helper);
+        Assert.Contains("return null;", helper);
+        Assert.Contains("root != null && SideBySideInstallation.ReadState(root) is not null", source[preferenceStart..factoryStart]);
+        var factory = source[factoryStart..];
+        Assert.Contains("var installationRoot = ReadInstallationRoot();", factory);
+        Assert.Contains("PreferIncrementalUpdates=PreferIncrementalUpdates(installationRoot)", factory);
+        Assert.Contains("InstallationRoot=installationRoot", factory);
+        Assert.DoesNotContain("UpdateInstallation.FindRegisteredRoot", factory);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

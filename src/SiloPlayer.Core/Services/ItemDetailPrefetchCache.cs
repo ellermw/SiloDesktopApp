@@ -25,6 +25,119 @@ public sealed class ItemDetailPrefetchCache
     private long _clearedAt;
     private readonly Dictionary<string, long> _invalidatedAt = new(StringComparer.Ordinal);
     private const int MaxReadAttempts = 3;
+    private readonly Dictionary<string, (Task Pending, long Revision)> _progressSaves = new(StringComparer.Ordinal);
+    private long _progressSaveRevision;
+    private readonly Func<ApiIdentityContext>? _progressContext;
+    private ApiIdentityContext? _progressSaveContext;
+
+    public long ProgressSaveRevision
+    {
+        get { lock (_sync) { EnsureProgressContext(); return _progressSaveRevision; } }
+    }
+
+    private void EnsureProgressContext()
+    {
+        var context = _progressContext?.Invoke();
+        // Access-only read invalidation must not retire same-profile writes.
+        if (_progressSaveContext == context) return;
+        _progressSaveContext = context;
+        _progressSaves.Clear();
+        ++_progressSaveRevision;
+    }
+
+    // Keep final saves alive independently of detail-page recipients. Scoped
+    // loads also use this barrier even though they bypass the prefetch cache.
+    public void TrackProgressSave(Task persisted, string? contentId = null, string? seriesId = null,
+        Func<bool>? isCurrent = null)
+    {
+        lock (_sync)
+        {
+            if (isCurrent?.Invoke() == false) return;
+            EnsureProgressContext();
+            ++_progressSaveRevision;
+            Clear();
+            var settled = ClearAfterProgressSaveAsync(persisted, isCurrent);
+            // The empty key is reserved for writes whose entire scope is unknown.
+            foreach (var id in new[] { contentId, seriesId }.OfType<string>().Where(id => id.Length > 0)
+                .DefaultIfEmpty(string.Empty).Distinct(StringComparer.Ordinal))
+            {
+                var pending = _progressSaves.TryGetValue(id, out var previous) && !previous.Pending.IsCompleted
+                    ? Task.WhenAll(previous.Pending, settled) : settled;
+                _progressSaves[id] = (pending, _progressSaveRevision);
+            }
+        }
+    }
+
+    private static bool ProgressScopeMatches(string id, string? contentId, string? seriesId) =>
+        contentId == null || id.Length == 0 || id == contentId || id == seriesId;
+
+    private long ProgressSaveRevisionLocked(string? contentId, string? seriesId) =>
+        _progressSaves.Where(pair => ProgressScopeMatches(pair.Key, contentId, seriesId))
+            .Select(pair => pair.Value.Revision).DefaultIfEmpty(0).Max();
+
+    public long GetProgressSaveRevision(string contentId, string? seriesId = null)
+    {
+        lock (_sync)
+        {
+            EnsureProgressContext();
+            return ProgressSaveRevisionLocked(contentId, seriesId);
+        }
+    }
+
+    // Capture every scope before a read, since its series may only become
+    // known in the response. Pending saves are deliberately absent: even if
+    // they settle during the read, that snapshot still needs reconciliation.
+    public IReadOnlyDictionary<string, long> CaptureSettledProgressSaves()
+    {
+        lock (_sync)
+        {
+            EnsureProgressContext();
+            return _progressSaves.Where(pair => pair.Value.Pending.IsCompleted)
+                .ToDictionary(pair => pair.Key, pair => pair.Value.Revision, StringComparer.Ordinal);
+        }
+    }
+
+    public bool HasProgressSavesSince(
+        IReadOnlyDictionary<string, long> settled, string contentId, string? seriesId = null)
+    {
+        lock (_sync)
+        {
+            EnsureProgressContext();
+            return _progressSaves.Any(pair => ProgressScopeMatches(pair.Key, contentId, seriesId)
+                && (!settled.TryGetValue(pair.Key, out var revision) || revision != pair.Value.Revision));
+        }
+    }
+
+    public async Task WaitForProgressSettlementAsync(
+        CancellationToken cancellationToken, string? contentId = null, string? seriesId = null)
+    {
+        while (true)
+        {
+            Task pending;
+            long revision;
+            lock (_sync)
+            {
+                EnsureProgressContext();
+                revision = ProgressSaveRevisionLocked(contentId, seriesId);
+                pending = Task.WhenAll(_progressSaves.Where(pair => ProgressScopeMatches(pair.Key, contentId, seriesId))
+                    .Select(pair => pair.Value.Pending));
+            }
+            await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                EnsureProgressContext();
+                if (revision == ProgressSaveRevisionLocked(contentId, seriesId)) return;
+            }
+        }
+    }
+
+    private Task ClearAfterProgressSaveAsync(Task persisted, Func<bool>? isCurrent) => persisted.ContinueWith(save =>
+    {
+        // The write owner reports errors; readers wait for settlement only.
+        _ = save.Exception;
+        lock (_sync)
+            if (isCurrent?.Invoke() != false) Clear();
+    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     public ItemDetailPrefetchCache(CatalogApi catalogApi, AuthService authService)
         : this((contentId, cancellationToken) =>
@@ -36,6 +149,7 @@ public sealed class ItemDetailPrefetchCache
                 catalogApi.CaptureContext().RequestContextGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 catalogApi.LocalizedReadGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture)))
     {
+        _progressContext = catalogApi.CaptureIdentityContext;
     }
 
     public ItemDetailPrefetchCache(

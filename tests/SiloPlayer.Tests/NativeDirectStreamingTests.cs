@@ -267,7 +267,7 @@ public sealed class NativeDirectStreamingTests
                 names.AddIpAddress(IPAddress.Loopback);
                 request.CertificateExtensions.Add(names.Build());
                 using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
-                _certificate = new X509Certificate2(generated.Export(X509ContentType.Pfx));
+                _certificate = X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pfx), null);
             }
             using var writer = new BinaryWriter(new MemoryStream(_media));
             writer.Write(Encoding.ASCII.GetBytes("RIFF")); writer.Write(_media.Length - 8);

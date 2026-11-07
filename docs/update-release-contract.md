@@ -34,7 +34,9 @@ Beta catalog discovery inspects only the first two pages of 100 entries, with tw
 
 ## Manifest and skipped-version behavior
 
-Preserve Schema=1, BootstrapProtocol=1, BackwardCompatibleData=true and numeric four-part Version. The added semantic ReleaseVersion field is mandatory for beta manifests and must equal the tag without `v`; when present on stable manifests it must also agree. Old stable manifests without it remain valid. Protocol1's root bootstrap is immutable between full migrations; versioned client updates cannot silently replace it.
+Preserve Schema=1, BackwardCompatibleData=true and numeric four-part Version. .NET 10 packages use BootstrapProtocol=2: shipped .NET 8 clients support only protocol 1, so the verified compatibility envelope deliberately selects the existing full-installer fallback instead of leaving their root launcher/runtime on .NET 8. Automatic mode defers this migration; users must explicitly download and choose **Install full update** (or run setup manually if their launcher lacks the full-update gate). The .NET 10 launcher/helper still accepts protocol 1 inventories and journals for recovery during full installation. New protocol 2 installations can receive compatible incremental updates normally. Both protocols keep the root bootstrap immutable between full migrations; versioned client updates cannot silently replace it.
+
+The semantic ReleaseVersion field is mandatory for beta manifests and must equal the tag without `v`; when present on stable manifests it must also agree. Old stable manifests without it remain valid.
 
 The manifest is a complete inventory, not an ordered delta chain. Each installed file may be reused only after its content hash and size match the target object. Missing/changed objects are fetched from their verified target pack ranges, then checked compressed and expanded. Beta.2 can therefore go directly to beta.12 when the target protocol/data contract is compatible. No dependency on publishing or installing beta.3 through beta.11 may be introduced.
 

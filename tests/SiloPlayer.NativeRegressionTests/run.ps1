@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string] $AppDirectory,
-    [ValidateSet('video-speed', 'native-speed-menu', 'native-speed-all', 'native-quality-delivery', 'native-quality-review', 'native-quality-terminal-legacy', 'native-quality-all', 'native-quality-retired', 'native-quality-release', 'native-quality-successors', 'native-menu-geometry', 'native-menu-resize', 'native-quality-menu', 'native-audio-menu', 'request-interactions', 'conditional-dialogs', 'media-parity', 'account-parity', 'account-coverage', 'account-latest', 'browse-parity', 'browse-acceptance', 'request-detail-parity', 'shared-controls', 'personal-lists', 'upstream-shell', 'shared-appearance', 'settings-visual-regressions', 'library-cursor', 'library-letters', 'server-favicon')][string] $Only
+    [ValidateSet('video-speed', 'native-speed-menu', 'native-speed-all', 'native-more-menu', 'native-chapters-menu', 'native-quality-delivery', 'native-quality-review', 'native-quality-terminal-legacy', 'native-stats-menu', 'native-party-actions', 'native-party-menu', 'native-party-direct', 'native-party-end', 'native-party-stale', 'native-party-refreshed', 'native-quality-all', 'native-quality-retired', 'native-quality-release', 'native-quality-successors', 'native-menu-geometry', 'native-menu-resize', 'native-quality-menu', 'native-audio-menu', 'oct20-playback', 'request-interactions', 'conditional-dialogs', 'media-parity', 'account-parity', 'account-coverage', 'account-latest', 'browse-parity', 'browse-acceptance', 'request-detail-parity', 'shared-controls', 'personal-lists', 'upstream-shell', 'shared-appearance', 'settings-visual-regressions', 'library-cursor', 'library-letters', 'server-favicon', 'osc-hud-states')][string] $Only
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +34,7 @@ try {
     $env:SILO_NATIVE_TEST_THEME_PATH = Join-Path $repoRoot 'src\SiloPlayer\Themes\DarkTheme.xaml'
     $env:SILO_NATIVE_TEST_READER_FIXTURES = Join-Path $repoRoot 'tests\reader-fixtures'
     $env:SILO_NATIVE_TEST_ONLY = $Only
-    $executable = Join-Path $PSScriptRoot 'bin\Debug\net8.0-windows10.0.22621.0\win-x64\SiloPlayer.NativeRegressionTests.exe'
+    $executable = Join-Path $PSScriptRoot 'bin\Debug\net10.0-windows10.0.22621.0\win-x64\SiloPlayer.NativeRegressionTests.exe'
     $nativeProcess = Start-Process -FilePath $executable -WindowStyle Hidden -Wait -PassThru
     $testExitCode = $nativeProcess.ExitCode
     $resultsFile = Join-Path $resultPath 'results.txt'

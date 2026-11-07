@@ -123,10 +123,11 @@ public partial class HomeViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
-        var owner = _homeApi.CaptureContext();
+        var owner = message.Identity ?? _homeApi.CaptureIdentityContext();
+        if (!_homeApi.IsCurrentIdentityContext(owner)) return;
         _ = RunOnUiThreadAsync(() =>
         {
-            if (!_homeApi.IsCurrentContext(owner) || _loadedContext != owner) return;
+            if (!_homeApi.IsCurrentIdentityContext(owner) || _loadedIdentityContext != owner) return;
             // Apply the position/removal optimistically, then fetch the server's
             // authoritative rows so Next Up can advance to the following episode.
             foreach (var section in FeaturedSections.Concat(Sections).Concat(_rawSections.Values))
