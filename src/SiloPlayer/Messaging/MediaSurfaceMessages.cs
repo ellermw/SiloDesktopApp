@@ -94,6 +94,8 @@ public sealed class MediaSurfaceChanged
 /// </summary>
 public sealed class PlaybackProgressUpdated
 {
+    /// <summary>The playback's original account/profile owner; null preserves legacy local messages.</summary>
+    public SiloPlayer.Core.Api.ApiIdentityContext? Identity { get; init; }
     public string ContentId { get; }
     /// <summary>The episode's series, even when its season is not loaded by a mounted detail.</summary>
     public string? SeriesId { get; init; }

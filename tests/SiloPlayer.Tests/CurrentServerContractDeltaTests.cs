@@ -33,8 +33,16 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("MediaFileId", response);
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);
-        Assert.Contains("int? requestedIndex = track?.Index ?? postLoadSubtitleIndex", player);
-        Assert.Contains("manager.ReplanSubtitleAsync(requestedIndex, position, ct)", player);
+        Assert.Contains("int? requestedIndex = track?.Index;", player);
+        Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", player);
+        var manager = Read("src", "SiloPlayer.Core", "Services", "PlaybackManager.cs");
+        var start = manager.IndexOf("public async Task<PlaybackStartResponse?> ReplanCurrentSubtitleAsync(", StringComparison.Ordinal);
+        var end = manager.IndexOf("public Task<PlaybackStartResponse> ReplanSeekAsync(", start, StringComparison.Ordinal);
+        var replan = manager[start..end];
+        Assert.Contains("MatchCurrentSubtitle() == null", replan);
+        Assert.Contains("ReplanCoreForOwnerAsync(\"track_change\"", replan);
+        Assert.Contains("ReplanCurrentSubtitleForOwnerCoreAsync(positionSeconds, ct, null, null)", replan);
+        Assert.DoesNotContain("RecordLocalSubtitleSelection(", replan); // Preserve Auto/viewer provenance and retained identity.
         Assert.Contains("Pgs deliberately does not use this", player, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -42,9 +50,13 @@ public sealed class CurrentServerContractDeltaTests
     public void TextSubtitleSelectionClearsActiveBitmapBurnInFirst()
     {
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
-        Assert.Contains("postLoadSubtitleIndex: track.Index", player);
-        Assert.Contains("_pendingInitialServerSubtitleIndex = postLoadSubtitleIndex", player);
-        Assert.Contains("if (!transportReloadScheduled && !_switchingContent && !IsLoading &&", player);
+        Assert.Matches(@"if \(manager\?\.CurrentSession\?\.IsSubtitleBurnedIn == true\)\s*\{\s*var result = await SetBitmapSubtitleBurnInForOwnerAsync\(track, currentOwner\);", player);
+        Assert.Contains("=> await SetBitmapSubtitleBurnInForOwnerAsync(track, null);", player);
+        Assert.Contains("var resolvedIndex = manager.SubtitleSelectionForLoad;", player);
+        Assert.Contains("_pendingInitialServerSubtitleIndex = resolvedIndex;", player);
+        Assert.Contains("candidate.Index == resolvedIndex", player);
+        Assert.DoesNotContain("_pendingInitialServerSubtitleIndex = postLoadSubtitleIndex", player);
+        Assert.Contains("if (transportReloadScheduled || _switchingContent || IsLoading ||", player);
         Assert.Contains("SelectSubtitleByServerIndexAsync", player);
         // Burn-in is detected from the v3 plan's subtitle mode.
         Assert.Contains("manager?.CurrentSession?.IsSubtitleBurnedIn == true", player);

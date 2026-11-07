@@ -40,6 +40,13 @@ internal static class EpisodeOverviewNativeFixture
             page = new ItemDetailPage { Width = 960, Height = 700 };
             parent.Children.Add(page); await Task.Delay(100);
             Set(page, "_navigationCts", navigation); Set(page, "_currentContentId", "episode");
+            var overviewCase = Environment.GetEnvironmentVariable("SILO_NATIVE_OVERVIEW_CASE");
+            if (!string.IsNullOrEmpty(overviewCase) && overviewCase != "late-configuration")
+                throw new InvalidOperationException("Unknown overview fixture case.");
+            await VerifyLateConfigurationAsync(page, vm, wire);
+            if (overviewCase == "late-configuration") return;
+            wire.Reset(); wire.HoldSpoilers = true; wire.OwnOverview = "First-paint episode plot.";
+            Set(page, "_currentContentId", "episode");
             await vm.LoadInLibraryAsync("episode", 42);
             var firstSiblings = Field<List<Episode>>(page, "_siblingEpisodes");
             firstSiblings.Add(new Episode { ContentId = "first-sibling", Title = "Sibling", Overview = "First-paint sibling plot." });
@@ -47,7 +54,7 @@ internal static class EpisodeOverviewNativeFixture
             await wire.SpoilersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Call(page, "BuildSiblingEpisodeCards");
             ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
-            ((ScrollViewer)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
+            ((ScrollView)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
             page.UpdateLayout();
             var overview = (ExpandableDescription)page.FindName("OverviewText");
             var firstRail = (StackPanel)page.FindName("SiblingEpisodesPanel");
@@ -196,10 +203,13 @@ internal static class EpisodeOverviewNativeFixture
                 Call(page, "ApplyEpisodeSpoilers"); Call(page, "RefreshRetiredOverviewScope");
                 await Task.Delay(550);
                 Check(overview.Visibility == Visibility.Visible && button.Visibility == Visibility.Visible && !button.IsEnabled &&
-                    (string)button.Content == "Translating…" && overview.Opacity == 0.55 &&
+                    (string)button.Content == "Translating…" && Math.Abs(overview.Opacity - 0.55) < 1e-6 &&
                     !translation.IsCancellationRequested && ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts")) &&
                     Field<long>(page, "_overviewConfigurationRevision") == revision && wire.Posts.Count == 1,
-                    $"A {change} transition during a held automatic {stage} retains the original translation and restores its busy presentation");
+                    $"A {change} transition during a held automatic {stage} retains the original translation and restores its busy presentation: " +
+                    $"overview={overview.Visibility}, button={button.Visibility}, enabled={button.IsEnabled}, text={button.Content}, opacity={overview.Opacity}, " +
+                    $"canceled={translation.IsCancellationRequested}, sameOwner={ReferenceEquals(translation, Field<CancellationTokenSource?>(page, "_translationCts"))}, " +
+                    $"revision={Field<long>(page, "_overviewConfigurationRevision")}/{revision}, posts={wire.Posts.Count}");
 
                 wire.ReleasePost.TrySetResult(); wire.ReleasePoll.TrySetResult();
                 await configuration;
@@ -257,11 +267,13 @@ internal static class EpisodeOverviewNativeFixture
                     Overview = "An unwatched sibling plot", StillUrl = "https://episode-overview.fixture.invalid/still.png", StillIsEpisodeStill = true });
                 Call(page, "ApplyEpisodeSpoilers"); Call(page, "BuildSiblingEpisodeCards");
                 ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
-                ((ScrollViewer)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
+                ((ScrollView)page.FindName("SiblingEpisodesScrollViewer")).Visibility = Visibility.Visible;
                 var protectedRail = (StackPanel)page.FindName("SiblingEpisodesPanel");
                 Image? Still() => Descendants(protectedRail).OfType<Image>().FirstOrDefault(image => image.Source is BitmapImage { PixelWidth: > 0 });
                 await Until(() => Still() != null); page.UpdateLayout();
                 var protectedPixels = await Pixels(Still()!);
+                var protectedSize = (Still()!.ActualWidth, Still()!.ActualHeight, Still()!.Opacity);
+                var protectedPosition = Still()!.TransformToVisual(page).TransformPoint(new(0, 0));
                 wire.SpoilerFailure = "503"; wire.FailSpoilerEffective = true;
                 if (change == "access") client.InvalidateAccessContext(); else client.SetProfile("fixture");
                 Call(page, "RefreshRetiredOverviewScope");
@@ -272,10 +284,47 @@ internal static class EpisodeOverviewNativeFixture
                 // Also exercise a fresh card/still created after the replacement read has failed.
                 Call(page, "BuildSiblingEpisodeCards");
                 await Until(() => Still() != null); page.UpdateLayout();
-                var reloadedPixels = await Pixels(Still()!);
+                var rebuiltPixels = await Pixels(Still()!);
+                File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"spoiler-{change}-original.bgra"), protectedPixels);
+                File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"spoiler-{change}-rebuilt.bgra"), rebuiltPixels);
+                var changedChannels = protectedPixels.Zip(rebuiltPixels).Count(pair => pair.First != pair.Second);
+                var maximumDelta = protectedPixels.Zip(rebuiltPixels).Max(pair => Math.Abs(pair.First - pair.Second));
+                var rebuiltSize = (Still()!.ActualWidth, Still()!.ActualHeight, Still()!.Opacity);
+                var rebuiltPosition = Still()!.TransformToVisual(page).TransformPoint(new(0, 0));
                 Check(Descendants(protectedRail).OfType<EpisodeCardCaption>().Single().OverviewText.Visibility == Visibility.Collapsed &&
-                    protectedPixels.SequenceEqual(reloadedPixels),
-                    "Sibling captions remain hidden and freshly loaded still pixels retain the same spoiler blur after a failed reload");
+                    protectedSize == rebuiltSize && protectedPosition.X == rebuiltPosition.X && protectedPosition.Y == rebuiltPosition.Y &&
+                    protectedPixels.Length == rebuiltPixels.Length && maximumDelta <= 1,
+                    $"Sibling captions remain hidden and freshly loaded still pixels retain the same spoiler blur after a failed reload: change={change}, " +
+                    $"caption={Descendants(protectedRail).OfType<EpisodeCardCaption>().Single().OverviewText.Visibility}, " +
+                    $"originalBytes={protectedPixels.Length}, rebuiltBytes={rebuiltPixels.Length}, originalSize={protectedSize}, " +
+                    $"rebuiltSize=({Still()!.ActualWidth},{Still()!.ActualHeight},{Still()!.Opacity}), " +
+                    $"positions={protectedPosition}/{Still()!.TransformToVisual(page).TransformPoint(new(0, 0))}, changedChannels={changedChannels}, maximumDelta={maximumDelta}");
+                // Allow only one 8-bit rendering step. Prove that this bound
+                // still rejects the actual unprotected source in the same image.
+                var still = Still()!;
+                var protectedSource = (BitmapImage)still.Source;
+                var unprotected = new BitmapImage
+                {
+                    DecodePixelWidth = protectedSource.DecodePixelWidth,
+                    DecodePixelType = protectedSource.DecodePixelType,
+                    UriSource = new Uri(Path.Combine(Program.AppDirectory, "Assets", "silo-icon-1024.png"))
+                };
+                var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                RoutedEventHandler onOpened = (_, _) => opened.TrySetResult();
+                still.ImageOpened += onOpened;
+                try
+                {
+                    still.Source = unprotected;
+                    await opened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    page.UpdateLayout();
+                    await RenderedFrameAsync(page);
+                    var unprotectedPixels = await Pixels(still);
+                    File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"spoiler-{change}-unprotected.bgra"), unprotectedPixels);
+                    Check(unprotectedPixels.Length == protectedPixels.Length &&
+                        protectedPixels.Zip(unprotectedPixels).Any(pair => Math.Abs(pair.First - pair.Second) > 1),
+                        "The protected-still pixel bound did not reject the actual unblurred source.");
+                }
+                finally { still.ImageOpened -= onOpened; still.Source = protectedSource; page.UpdateLayout(); }
                 wire.SpoilerFailure = null; Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
                 await spoilers.EnsureLoadedAsync();
             }
@@ -323,7 +372,7 @@ internal static class EpisodeOverviewNativeFixture
                 await vm.LoadInLibraryAsync("episode", 42);
                 var configuration = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item!)!;
                 Call(page, "UpdateUI");
-                await Until(() => wire.Posts.Count == 1 && (state == "active" ? overview.Opacity == 0.55 :
+                await Until(() => wire.Posts.Count == 1 && (state == "active" ? Math.Abs(overview.Opacity - 0.55) < 1e-6 :
                     button.Visibility == Visibility.Visible && button.IsEnabled && Field<bool>(page, "_translateButtonMode")));
                 var translation = Field<CancellationTokenSource?>(page, "_translationCts");
                 var configurationRevision = Field<long>(page, "_overviewConfigurationRevision");
@@ -742,7 +791,7 @@ internal static class EpisodeOverviewNativeFixture
                 if (stage != "idle")
                 {
                     await (stage == "post" ? wire.PostEntered.Task : wire.PollEntered.Task).WaitAsync(TimeSpan.FromSeconds(5));
-                    Check(overview.Opacity == 0.55 && !button.IsEnabled && (string)button.Content == "Translating…",
+                    Check(Math.Abs(overview.Opacity - 0.55) < 1e-6 && !button.IsEnabled && (string)button.Content == "Translating…",
                         "Held translation must own the dimmed controls before scope retirement");
                 }
                 // The new scope still needs translation; a held old read may contain translated text.
@@ -775,11 +824,11 @@ internal static class EpisodeOverviewNativeFixture
             Call(page, "BuildSiblingEpisodeCards");
             ((FrameworkElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Visible;
             ((FrameworkElement)page.FindName("SiblingEpisodesLoadingSkeleton")).Visibility = Visibility.Collapsed;
-            var rail = (ScrollViewer)page.FindName("SiblingEpisodesScrollViewer");
+            var rail = (ScrollView)page.FindName("SiblingEpisodesScrollViewer");
             rail.Visibility = Visibility.Visible;
             page.UpdateLayout();
             await Until(() => rail.ScrollableWidth > 160);
-            rail.ChangeView(160, null, null, true);
+            rail.ScrollTo(160, 0, new ScrollingScrollOptions(ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
             await Until(() => rail.HorizontalOffset > 0);
             var offset = rail.HorizontalOffset;
             var cards = ((StackPanel)page.FindName("SiblingEpisodesPanel")).Children.ToArray();
@@ -836,6 +885,28 @@ internal static class EpisodeOverviewNativeFixture
             CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(vm);
         }
     }
+    private static async Task VerifyLateConfigurationAsync(ItemDetailPage page, ItemDetailViewModel vm, Wire wire)
+    {
+        wire.Reset(); wire.HoldStatus = true;
+        Set(page, "_currentContentId", "series");
+        vm.Item = new() { ContentId = "series", Type = "series", Overview = "Synthetic owned description.", PendingTranslationLanguage = "fr" };
+        var retired = (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item)!;
+        try
+        {
+            await wire.StatusEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            wire.HoldStatus = false; wire.OnView = "off";
+            await (Task)Call(page, "ConfigureOnViewTranslationAsync", vm.Item)!;
+            Check(!Field<bool>(page, "_overviewTranslationInterrupted"), "Successful current configuration already inherited an interruption.");
+            wire.StatusFailuresRemaining = 1;
+            wire.ReleaseStatus.TrySetResult(); await retired.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(!Field<bool>(page, "_overviewTranslationInterrupted") &&
+                Field<int>(page, "_overviewTranslationStatusReads") == 0 && vm.OverviewSource != null,
+                "A superseded same-item configuration failure retired the successful successor.");
+            Program.Log("PASS: actual obsolete overview status failure cannot mark the successful current configuration interrupted.");
+        }
+        finally { wire.ReleaseStatus.TrySetResult(); await retired.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
@@ -852,6 +923,20 @@ internal static class EpisodeOverviewNativeFixture
         var pixels = (await bitmap.GetPixelsAsync()).ToArray();
         Check(pixels.Length > 0 && pixels.Any(value => value != 0), "Spoiler still must actually render before comparing pixels");
         return pixels;
+    }
+    private static async Task RenderedFrameAsync(FrameworkElement element)
+    {
+        var rendered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<object>? frame = null;
+        frame = (_, _) =>
+        {
+            CompositionTarget.Rendering -= frame;
+            if (!element.DispatcherQueue.TryEnqueue(() => rendered.TrySetResult()))
+                rendered.TrySetException(new InvalidOperationException("The native image frame dispatcher was retired."));
+        };
+        CompositionTarget.Rendering += frame;
+        try { await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { CompositionTarget.Rendering -= frame; }
     }
     private static object? Call(object owner, string method, params object[] args) => owner.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(owner, args);
     private static void Set(object owner, string field, object? value) => owner.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(owner, value);

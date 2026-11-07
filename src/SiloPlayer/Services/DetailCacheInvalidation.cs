@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Messaging;
 
 namespace SiloPlayer.Services;
@@ -14,16 +15,21 @@ namespace SiloPlayer.Services;
 /// </summary>
 public static class DetailCacheInvalidation
 {
-    public static void Attach(ItemDetailPrefetchCache cache, IMessenger? messenger = null)
+    public static void Attach(ItemDetailPrefetchCache cache, IMessenger? messenger = null,
+        Func<ApiIdentityContext, bool>? isCurrentIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(cache);
         messenger ??= WeakReferenceMessenger.Default;
         // A watched or progress change on an episode also changes its season
         // and series next-up state, so drop every entry; the cache is small.
         messenger.Register<ItemDetailPrefetchCache, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
-        messenger.Register<ItemDetailPrefetchCache, MediaStateInvalidated>(cache, static (owner, _) => owner.Clear());
+        messenger.Register<ItemDetailPrefetchCache, MediaStateInvalidated>(cache, static (owner, message) =>
+        {
+            if (!message.RefreshDetails) owner.Clear();
+        });
         messenger.Register<ItemDetailPrefetchCache, PlaybackProgressUpdated>(cache,
-            static (owner, message) => owner.TrackProgressSave(message.Persisted, message.ContentId, message.SeriesId));
+            (owner, message) => owner.TrackProgressSave(message.Persisted, message.ContentId, message.SeriesId,
+                () => message.Identity is not { } identity || isCurrentIdentity?.Invoke(identity) == true));
     }
 
     /// <summary>
@@ -33,7 +39,8 @@ public static class DetailCacheInvalidation
     /// depends on the item itself or, for a season/series mutation, its series.
     /// The messenger holds the revision weakly: keep it referenced.
     /// </summary>
-    public static UserStateRevision AttachUserStateRevision(IMessenger? messenger = null)
+    public static UserStateRevision AttachUserStateRevision(IMessenger? messenger = null,
+        Func<ApiIdentityContext, bool>? isCurrentIdentity = null)
     {
         messenger ??= WeakReferenceMessenger.Default;
         var revision = new UserStateRevision();
@@ -56,7 +63,11 @@ public static class DetailCacheInvalidation
         messenger.Register<UserStateRevision, MediaSurfaceChanged>(revision,
             static (owner, message) => owner.Advance(ScopeOf(message)));
         messenger.Register<UserStateRevision, PlaybackProgressUpdated>(revision,
-            static (owner, message) => ClearNowAndAfter(message.Persisted, () => owner.Advance(message.ContentId)));
+            (owner, message) => ClearNowAndAfter(message.Persisted, () =>
+            {
+                if (message.Identity is not { } identity || isCurrentIdentity?.Invoke(identity) == true)
+                    owner.Advance(message.ContentId);
+            }));
         return revision;
     }
 
@@ -68,13 +79,14 @@ public static class DetailCacheInvalidation
     // A named series relates aggregate detail state, not every episode's
     // playback position. Only an actual series/season container mutation
     // invalidates its descendant /watch snapshots. Season IDs use series:.
-    // Without a known parent, keep the container's own scope rather than
-    // retiring unrelated leaves; detail-cache invalidation remains global.
+    // Without a known parent an episode cannot name its changed season in its
+    // /watch scope. Conservatively retire existing reads until a new snapshot.
     private static string?[] WatchScope(IEnumerable<string> contentIds, IEnumerable<string> seriesIds)
     {
         var items = contentIds.ToArray();
         var series = seriesIds.Where(id => !string.IsNullOrEmpty(id)).ToArray();
         var containerChanged = items.Any(id => id.StartsWith("series:", StringComparison.Ordinal));
+        if (containerChanged && series.Length == 0) return [];
         return (containerChanged ? items.Concat(series) : items).Cast<string?>().ToArray();
     }
 

@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\SiloPlayer.Core\SiloPlayer.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\..\libs\mpv\shaders\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

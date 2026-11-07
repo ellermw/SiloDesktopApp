@@ -105,9 +105,11 @@ public class ImageService : IDisposable
     /// faster than <c>SetSourceAsync</c> on a <c>MemoryStream</c> because
     /// WinUI's native decoder does the work off the UI thread without the
     /// COM interop overhead of <c>AsRandomAccessStream</c>.
-    /// Returns null when download fails.
+    /// Returns null when download fails. With <paramref name="waitForSharedDownload"/>,
+    /// cancellation prevents starting a download but does not abandon an existing
+    /// shared download's completion, allowing warmup callers to retain their throttle slot.
     /// </summary>
-    public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
+    public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default, bool waitForSharedDownload = false)
     {
         if (NativeApiRetirement.IsRetiredResource(url)) return Task.FromResult<string?>(null);
         var cacheKey = BuildCacheKey(contentId, imageType, url);
@@ -128,9 +130,9 @@ public class ImageService : IDisposable
             if (IsNegativeCacheHit(negativeCacheKey))
                 return null;
 
-            return await GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http)
-                .WaitAsync(ct)
-                .ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            var download = GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http);
+            return await (waitForSharedDownload ? download : download.WaitAsync(ct)).ConfigureAwait(false);
         }, ct);
     }
 

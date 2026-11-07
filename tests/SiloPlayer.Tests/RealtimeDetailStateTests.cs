@@ -1366,6 +1366,34 @@ public sealed class RealtimeDetailStateTests
         Assert.False(scope.Vm.IsLoading);
     }
 
+    [Theory]
+    [InlineData("context")]
+    [InlineData("profile")]
+    [InlineData("replacement")]
+    public async Task InterruptedMetadataReloadRetainsOnlyItsReconnectOwnedRetry(string departure)
+    {
+        using var scope = new Scope("series");
+        var fresh = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.OverrideDetail = () => fresh.Task;
+        var mounted = scope.Vm.Item!;
+        var reload = scope.Vm.ReloadAsync(mounted.ContentId);
+        await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (departure == "context") scope.Client.InvalidateAccessContext();
+        else if (departure == "profile") scope.Client.SetProfile("other-profile");
+        else scope.Vm.Item = new() { ContentId = mounted.ContentId, Type = "series" };
+        fresh.SetResult(scope.FreshDetail(mounted.ContentId, "series"));
+        await reload.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(departure == "context", scope.Vm.MetadataRefreshErrorMessage != null);
+        Assert.False(scope.Vm.IsMetadataRefreshing);
+        Assert.Null(scope.Vm.ErrorMessage);
+        if (departure != "context") return;
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail { ContentId = mounted.ContentId, Type = "series", Title = "Recovered metadata" });
+        await scope.Vm.ReloadAsync(mounted.ContentId);
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Equal("Recovered metadata", mounted.Title);
+        Assert.Null(scope.Vm.MetadataRefreshErrorMessage);
+    }
+
     [Fact]
     public async Task PendingMetadataReloadDoesNotHideMountedContentBehindTheInitialLoadSkeleton()
     {

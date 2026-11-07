@@ -230,19 +230,20 @@ public sealed class DetailCacheInvalidationTests
         Assert.False(freshness.IsCurrent(episode));
         Assert.True(freshness.IsCurrent(movie));
 
-        // Without a known series, only the container's own scope is retired.
+        // Without a known parent, an episode cannot name this changed season
+        // in its /watch scope, so earlier reads are conservatively retired.
         var refreshedEpisode = await freshness.ReadAsync("episode:show-s01e01",
             server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
         var stamp = revision.Current;
         messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show-S01"));
         Assert.False(revision.IsCurrent(stamp, "series:show-S01", null));
-        Assert.True(freshness.IsCurrent(refreshedEpisode));
-        Assert.True(freshness.IsCurrent(movie));
+        Assert.False(freshness.IsCurrent(refreshedEpisode));
+        Assert.False(freshness.IsCurrent(movie));
 
         // A series-root mutation still reaches its episodes without a parent id.
         messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show"));
         Assert.False(freshness.IsCurrent(refreshedEpisode));
-        Assert.True(freshness.IsCurrent(movie));
+        Assert.False(freshness.IsCurrent(movie));
         GC.KeepAlive(revision);
     }
 
@@ -251,7 +252,7 @@ public sealed class DetailCacheInvalidationTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task RemoteContainerWithoutSeriesScopeRetiresOnlyItsOwnWatchScope(bool coalesced, bool explicitPlaybackScope)
+    public async Task RemoteContainerWithoutKnownParentRetiresPotentialDescendantWatchReads(bool coalesced, bool explicitPlaybackScope)
     {
         var (freshness, messenger, revision) = CreateFreshness();
         var server = new FakeWatch { Position = 1200 };
@@ -268,8 +269,9 @@ public sealed class DetailCacheInvalidationTests
         var before = revision.Current;
         messenger.Send(invalidation);
         Assert.False(revision.IsCurrent(before, "series:show-S01", null));
-        Assert.True(freshness.IsCurrent(held));
-        Assert.True(freshness.IsCurrent(unrelated));
+        Assert.False(freshness.IsCurrent(held));
+        // Without a parent mapping the conservative scope is unknown.
+        Assert.False(freshness.IsCurrent(unrelated));
 
         if (coalesced)
         {
@@ -279,11 +281,13 @@ public sealed class DetailCacheInvalidationTests
             messenger.Send(invalidation with { RefreshDetails = true });
             Assert.Equal(stamp, revision.Current);
             Assert.True(freshness.IsCurrent(refreshed));
-            Assert.True(freshness.IsCurrent(held));
-            Assert.True(freshness.IsCurrent(unrelated));
+            Assert.False(freshness.IsCurrent(held));
+            Assert.False(freshness.IsCurrent(unrelated));
         }
 
         // Supplying the parent does retire descendants, but not other titles.
+        held = await freshness.ReadAsync("episode:show-s01e01", server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+        unrelated = await freshness.ReadAsync("movie:other", server.Read("movie:other"), CancellationToken.None);
         messenger.Send(invalidation with { SeriesIds = new HashSet<string>(["series:show"]) });
         Assert.False(freshness.IsCurrent(held));
         Assert.True(freshness.IsCurrent(unrelated));

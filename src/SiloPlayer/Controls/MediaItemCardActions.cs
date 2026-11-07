@@ -50,6 +50,7 @@ public static class MediaItemCardActions
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var toast = App.Services.GetRequiredService<ToastService>();
         var context = catalog.CaptureContext();
+        var identity = catalog.CaptureIdentityContext();
         try
         {
             await MediaItemActionExecutor.ResetProgressAsync(item, async () =>
@@ -59,7 +60,7 @@ public static class MediaItemCardActions
             });
             App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
             WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(item.ContentId, 0,
-                item.DurationSeconds ?? 0, item.UserState?.Played == true));
+                item.DurationSeconds ?? 0, item.UserState?.Played == true) { Identity = identity });
             WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, item.ContentId, item.SeriesId));
             toast.Success("Progress reset");
         }

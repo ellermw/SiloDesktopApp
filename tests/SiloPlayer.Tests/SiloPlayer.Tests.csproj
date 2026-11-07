@@ -24,6 +24,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
+    <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackQualityMenuModel.cs" Link="Production\PlaybackQualityMenuModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackStatsSnapshot.cs" Link="Production\PlaybackStatsSnapshot.cs" />
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Letters.cs" Link="Production\LibraryViewModel.Letters.cs" />
@@ -40,12 +42,14 @@
     <Compile Include="..\..\src\SiloPlayer\Services\DetailCacheInvalidation.cs" Link="Production\DetailCacheInvalidation.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\RealtimeMediaStateRefresh.cs" Link="Production\RealtimeMediaStateRefresh.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\WatchDetailFreshness.cs" Link="Production\WatchDetailFreshness.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackMenuRequest.cs" Link="Production\PlaybackMenuRequest.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\EpisodeRailNavigation.cs" Link="Production\EpisodeRailNavigation.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\ServerOriginDisplay.cs" Link="Production\ServerOriginDisplay.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\EbookPackageExtractor.cs" Link="Production\EbookPackageExtractor.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\CardOverlayService.cs" Link="Production\CardOverlayService.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\UICustomizationService.cs" Link="Production\UICustomizationService.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SearchViewModel.cs" Link="Production\SearchViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SmartCollectionWizardViewModel.cs" Link="Production\SmartCollectionWizardViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionEditorViewModel.cs" Link="Production\CollectionEditorViewModel.cs" />

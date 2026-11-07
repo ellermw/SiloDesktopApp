@@ -8,7 +8,6 @@ namespace SiloPlayer.Views;
 public sealed partial class ItemDetailPage
 {
     private long _overviewConfigurationRevision;
-    private bool _isTranslatingOverview;
     // Spoiler transitions may enable translation, but must not retire an active translation.
     private sealed record OverviewConfigurationOwner(MediaItemDetail Item, int? Library, ApiRequestContext Context,
         long Language, CancellationTokenSource? Navigation, bool Hidden);
@@ -126,6 +125,7 @@ public sealed partial class ItemDetailPage
             ReferenceEquals(item, ViewModel.Item) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library &&
             api.IsCurrentContext(context) && api.LocalizedReadGeneration == language;
         ++_overviewTranslationStatusReads;
+        var configurationCompleted = false;
         try
         {
             // Series fallback is not an episode spoiler and must not wait for optional settings.
@@ -143,8 +143,11 @@ public sealed partial class ItemDetailPage
             }
             _overviewConfiguredOwner = owner;
             _overviewPendingOwner = null;
+            configurationCompleted = true;
             if (source == null || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) || IsOverviewHidden(item)) return;
+            configurationCompleted = false;
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
+            configurationCompleted = true;
             if (!Current() || !ReferenceEquals(source, ViewModel.OverviewSource) || !status.Enabled || IsOverviewHidden(item)) return;
             if (status.OnView.Equals("button", StringComparison.OrdinalIgnoreCase))
             {
@@ -167,8 +170,9 @@ public sealed partial class ItemDetailPage
         finally
         {
             --_overviewTranslationStatusReads;
-            // A retired read still needs reconnect recovery after it settles.
-            if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+            if (revision == _overviewConfigurationRevision && ReferenceEquals(navigation, _navigationCts) && ReferenceEquals(ViewModel.Item, item)
+                && ViewModel.LibraryId == library && (!configurationCompleted || !api.IsCurrentContext(context)
+                    || api.LocalizedReadGeneration != language))
                 _overviewTranslationInterrupted = true;
         }
     }
@@ -223,7 +227,6 @@ public sealed partial class ItemDetailPage
             ReferenceEquals(source, ViewModel.OverviewSource) && api.IsCurrentContext(context) &&
             api.LocalizedReadGeneration == language;
         bool Current() => !ct.IsCancellationRequested && OwnerCurrent();
-        _isTranslatingOverview = true;
         TranslateOverviewButton.Visibility = Visibility.Visible;
         TranslateOverviewButton.IsEnabled = false;
         TranslateOverviewButton.Content = "Translating…";
@@ -267,6 +270,7 @@ public sealed partial class ItemDetailPage
             var restoreControls = ControlsCurrent();
             if (restoreControls)
             {
+                if (!api.IsCurrentContext(context) || api.LocalizedReadGeneration != language) _overviewTranslationInterrupted = true;
                 OverviewText.Opacity = 1;
                 TranslateOverviewButton.Visibility = _translateButtonMode && !IsOverviewHidden(item) &&
                     !string.IsNullOrWhiteSpace(ViewModel.OverviewSource?.PendingTranslationLanguage)
@@ -274,13 +278,7 @@ public sealed partial class ItemDetailPage
                 TranslateOverviewButton.IsEnabled = true;
                 TranslateOverviewButton.Content = "Translate description";
             }
-            if (ReferenceEquals(_translationCts, cts))
-            {
-                _translationCts = null;
-                _isTranslatingOverview = false;
-                if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
-                    _overviewTranslationInterrupted = true;
-            }
+            if (ReferenceEquals(_translationCts, cts)) _translationCts = null;
             if (restoreControls)
             {
                 RenderOverview();

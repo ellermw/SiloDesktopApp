@@ -27,8 +27,8 @@ public sealed class ItemDetailPrefetchCache
     private const int MaxReadAttempts = 3;
     private readonly Dictionary<string, (Task Pending, long Revision)> _progressSaves = new(StringComparer.Ordinal);
     private long _progressSaveRevision;
-    private readonly Func<ApiRequestContext>? _progressContext;
-    private ApiRequestContext? _progressSaveContext;
+    private readonly Func<ApiIdentityContext>? _progressContext;
+    private ApiIdentityContext? _progressSaveContext;
 
     public long ProgressSaveRevision
     {
@@ -39,8 +39,7 @@ public sealed class ItemDetailPrefetchCache
     {
         var context = _progressContext?.Invoke();
         // Access-only read invalidation must not retire same-profile writes.
-        if ((_progressSaveContext?.AuthenticationGeneration, _progressSaveContext?.BaseUrl, _progressSaveContext?.ProfileId)
-            == (context?.AuthenticationGeneration, context?.BaseUrl, context?.ProfileId)) return;
+        if (_progressSaveContext == context) return;
         _progressSaveContext = context;
         _progressSaves.Clear();
         ++_progressSaveRevision;
@@ -48,14 +47,16 @@ public sealed class ItemDetailPrefetchCache
 
     // Keep final saves alive independently of detail-page recipients. Scoped
     // loads also use this barrier even though they bypass the prefetch cache.
-    public void TrackProgressSave(Task persisted, string? contentId = null, string? seriesId = null)
+    public void TrackProgressSave(Task persisted, string? contentId = null, string? seriesId = null,
+        Func<bool>? isCurrent = null)
     {
         lock (_sync)
         {
+            if (isCurrent?.Invoke() == false) return;
             EnsureProgressContext();
             ++_progressSaveRevision;
             Clear();
-            var settled = ClearAfterProgressSaveAsync(persisted);
+            var settled = ClearAfterProgressSaveAsync(persisted, isCurrent);
             // The empty key is reserved for writes whose entire scope is unknown.
             foreach (var id in new[] { contentId, seriesId }.OfType<string>().Where(id => id.Length > 0)
                 .DefaultIfEmpty(string.Empty).Distinct(StringComparer.Ordinal))
@@ -130,12 +131,13 @@ public sealed class ItemDetailPrefetchCache
         }
     }
 
-    private Task ClearAfterProgressSaveAsync(Task persisted) => persisted.ContinueWith(static (save, state) =>
+    private Task ClearAfterProgressSaveAsync(Task persisted, Func<bool>? isCurrent) => persisted.ContinueWith(save =>
     {
         // The write owner reports errors; readers wait for settlement only.
         _ = save.Exception;
-        ((ItemDetailPrefetchCache)state!).Clear();
-    }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        lock (_sync)
+            if (isCurrent?.Invoke() != false) Clear();
+    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     public ItemDetailPrefetchCache(CatalogApi catalogApi, AuthService authService)
         : this((contentId, cancellationToken) =>
@@ -147,7 +149,7 @@ public sealed class ItemDetailPrefetchCache
                 catalogApi.CaptureContext().RequestContextGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 catalogApi.LocalizedReadGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture)))
     {
-        _progressContext = catalogApi.CaptureContext;
+        _progressContext = catalogApi.CaptureIdentityContext;
     }
 
     public ItemDetailPrefetchCache(

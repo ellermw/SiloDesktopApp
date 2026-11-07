@@ -61,7 +61,7 @@ public sealed class EpisodeOverviewTests
         Assert.False(scope.Vm.OverviewResolutionFailed);
         Assert.Same(episode, scope.Vm.Item);
         Assert.Equal(currentId, episode!.SeriesId);
-        Assert.Equal(scope.SeriesTitle ?? "Original series", episode.SeriesTitle);
+        Assert.Equal(scope.SeriesTitle, episode.SeriesTitle);
         Assert.DoesNotContain("/api/v2/catalog/items/series?library_id=42", scope.Paths.Skip(reads));
         if (currentId == null)
         {
@@ -120,6 +120,43 @@ public sealed class EpisodeOverviewTests
             Assert.Contains("/api/v2/catalog/items/series?library_id=42", scope.Paths.Skip(reads));
         }
         else Assert.Same(item, source);
+    }
+
+    [Theory]
+    [InlineData("access", "new-series", false)]
+    [InlineData("access", "new-series", true)]
+    [InlineData("access", null, false)]
+    [InlineData("access", null, true)]
+    [InlineData("language", "new-series", false)]
+    [InlineData("language", "new-series", true)]
+    [InlineData("language", null, false)]
+    [InlineData("language", null, true)]
+    [InlineData("access", "series", false)]
+    [InlineData("access", "series", true)]
+    [InlineData("language", "series", false)]
+    [InlineData("language", "series", true)]
+    public async Task ParentTitleRemainsBoundToItsAuthoritativeIdentity(string change, string? currentId, bool omitTitle)
+    {
+        using var scope = new Scope { Own = "Own episode plot." };
+        await scope.Vm.LoadInLibraryAsync("episode", 42);
+        var item = scope.Vm.Item;
+        await scope.Vm.ResolveOverviewAsync();
+        Assert.Equal("series", item!.SeriesId);
+        Assert.Equal("Original series", item.SeriesTitle);
+        if (change == "access") scope.Client.InvalidateAccessContext();
+        else scope.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        scope.SeriesId = currentId;
+        scope.SeriesTitle = null;
+        scope.OmitSeriesTitle = omitTitle;
+
+        var source = await scope.Vm.ResolveOverviewAsync();
+
+        Assert.False(scope.Vm.OverviewResolutionFailed);
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Same(item, source);
+        Assert.Equal(currentId, item.SeriesId);
+        Assert.True(item.HasAuthoritativeSeriesId);
+        Assert.Equal(currentId == "series" ? "Original series" : null, item.SeriesTitle);
     }
 
     [Fact]
@@ -523,7 +560,7 @@ public sealed class EpisodeOverviewTests
         internal string? Own = "", SeriesId = "series", SeriesTitle = "Original series";
         internal string ItemType = "episode", TargetLanguage = "fr";
         internal string[] OwnMachineTranslatedFields = [];
-        internal bool HoldSeries, FailSeries, Translated, HoldItem, FailItem, OmitSeriesLink;
+        internal bool HoldSeries, FailSeries, Translated, HoldItem, FailItem, OmitSeriesLink, OmitSeriesTitle;
         internal readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<string> Paths = [];
@@ -551,7 +588,11 @@ public sealed class EpisodeOverviewTests
                 ["overview"] = Own, ["pending_translation_language"] = TargetLanguage,
                 ["machine_translated_fields"] = OwnMachineTranslatedFields, ["user_state"] = new { }
             };
-            if (!OmitSeriesLink) { value["series_id"] = SeriesId; value["series_title"] = SeriesTitle; }
+            if (!OmitSeriesLink)
+            {
+                value["series_id"] = SeriesId;
+                if (!OmitSeriesTitle) value["series_title"] = SeriesTitle;
+            }
             if (HoldItem) { Entered.TrySetResult(); await Release.Task; }
             if (FailItem) return new(HttpStatusCode.InternalServerError);
             return Json(value);
