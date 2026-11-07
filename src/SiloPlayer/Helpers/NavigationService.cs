@@ -39,6 +39,7 @@ public class NavigationService
     public event EventHandler<NavigationEventArgs>? Navigated;
 
     public bool CanGoBack => Frame?.CanGoBack ?? false;
+    public bool IsRefreshingCurrentEntry { get; private set; }
 
     public void InvalidateLocalizedPageCaches()
     {
@@ -120,6 +121,7 @@ public class NavigationService
         var forward = frame.ForwardStack.ToArray();
         if (frame.Content is Page current) current.NavigationCacheMode = NavigationCacheMode.Disabled;
         _replacement = new(frame, pageType, parameter, pageType, parameter);
+        IsRefreshingCurrentEntry = true;
         try
         {
             var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
@@ -132,6 +134,7 @@ public class NavigationService
             return accepted;
         }
         catch { _replacement = null; throw; }
+        finally { IsRefreshingCurrentEntry = false; }
     }
 
     /// <summary>Resolve an intermediate route without leaving a redirect in Back history.

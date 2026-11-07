@@ -202,6 +202,7 @@ public partial class SettingsApi(SiloApiClient client)
     public event Action<string>? LocalProfileSettingChanged;
     public void NotifyLocalizedSettingChanged(string key)
     {
+        if (LibraryPageStateStore.IsRelevantKey(key)) LibraryPageState.Invalidate();
         client.LocalizedReads.NotifySettingChanged(key);
         LocalProfileSettingChanged?.Invoke(key);
     }
@@ -311,20 +312,20 @@ public partial class SettingsApi(SiloApiClient client)
         string? deviceId = null,
         string? profileId = null,
         CancellationToken ct = default)
-        => client.PutAsync<ContractEffectiveSettingEntry>(
+        => NotifyLibrarySettingWriteAsync(() => client.PutAsync<ContractEffectiveSettingEntry>(
             BuildContractSettingPath(key, scope, deviceId, profileId),
-            new Dictionary<string, object?> { ["value"] = value }, ct);
+            new Dictionary<string, object?> { ["value"] = value }, ct), key);
 
     public Task SetContractSettingValueAsync(ApiRequestContext context, string key, string scope,
         object? value, string? deviceId = null, string? profileId = null, CancellationToken ct = default)
-        => client.SendRequestAsync<ContractEffectiveSettingEntry>(context, HttpMethod.Put,
+        => NotifyLibrarySettingWriteAsync(() => client.SendRequestAsync<ContractEffectiveSettingEntry>(context, HttpMethod.Put,
             BuildContractSettingPath(key, scope, deviceId, profileId ?? context.ProfileId),
-            new Dictionary<string, object?> { ["value"] = value }, ct);
+            new Dictionary<string, object?> { ["value"] = value }, ct), key);
 
     public Task DeleteContractSettingValueAsync(ApiRequestContext context, string key, string scope,
         string? deviceId = null, string? profileId = null, CancellationToken ct = default)
-        => client.SendNoContentRequestAsync(context, HttpMethod.Delete,
-            BuildContractSettingPath(key, scope, deviceId, profileId ?? context.ProfileId), null, ct);
+        => NotifyLibrarySettingWriteAsync(() => client.SendNoContentRequestAsync(context, HttpMethod.Delete,
+            BuildContractSettingPath(key, scope, deviceId, profileId ?? context.ProfileId), null, ct), key);
 
     public Task DeleteContractSettingValueAsync(
         string key,
@@ -332,7 +333,7 @@ public partial class SettingsApi(SiloApiClient client)
         string? deviceId = null,
         string? profileId = null,
         CancellationToken ct = default)
-        => client.DeleteAsync(BuildContractSettingPath(key, scope, deviceId, profileId), ct);
+        => NotifyLibrarySettingWriteAsync(() => client.DeleteAsync(BuildContractSettingPath(key, scope, deviceId, profileId), ct), key);
 
     public Task<ContractEffectiveSettingEntry> GetContractStoredSettingAsync(string key, string scope,
         string? deviceId = null, string? profileId = null, CancellationToken ct = default)
@@ -354,10 +355,10 @@ public partial class SettingsApi(SiloApiClient client)
     }
 
     public Task ClearUserDeviceSettingsAsync(string deviceId, string? profileId = null, CancellationToken ct = default)
-        => client.DeleteAsync(BuildDevicePath(deviceId, "/settings", profileId), ct);
+        => NotifyLibrarySettingWriteAsync(() => client.DeleteAsync(BuildDevicePath(deviceId, "/settings", profileId), ct), null);
 
     public Task ForgetUserDeviceAsync(string deviceId, string? profileId = null, CancellationToken ct = default)
-        => client.DeleteAsync(BuildDevicePath(deviceId, "", profileId), ct);
+        => NotifyLibrarySettingWriteAsync(() => client.DeleteAsync(BuildDevicePath(deviceId, "", profileId), ct), null);
 
     public Task<CompatConnectInfo> GetCompatConnectInfoAsync(CancellationToken ct = default)
         => client.GetAsync<CompatConnectInfo>("/api/v2/compat/connect-info", ct);
