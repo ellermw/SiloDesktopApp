@@ -232,12 +232,21 @@ public partial class App : Application
         }
     }
 
-    private static bool PreferIncrementalUpdates()
+    private static string? ReadInstallationRoot()
+    {
+        try { return UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!); }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("updates.txt", "installation_root_invalid kind=" + ex.GetType().Name);
+            return null;
+        }
+    }
+
+    private static bool PreferIncrementalUpdates(string? root)
     {
         try
         {
-            return UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!) is { } root
-                && SideBySideInstallation.ReadState(root) is not null;
+            return root != null && SideBySideInstallation.ReadState(root) is not null;
         }
         catch (Exception ex)
         {
@@ -259,23 +268,27 @@ public partial class App : Application
 
         // Core services
         services.AddSingleton(new SettingsService(appDataDir));
-        services.AddSingleton(provider => new SiloPlayer.Core.Services.Updates.AppUpdateService(
-            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = System.Net.DecompressionMethods.None })
-                { Timeout = Timeout.InfiniteTimeSpan },
-            Path.Combine(appDataDir, "updates"), typeof(App).Assembly.GetName().Version!,
-            message => LocalLog.AppendLine("updates.txt", message))
-            {Channel=provider.GetRequiredService<SettingsService>().Load().UpdateChannel,
-                PersistChannel=channel =>
-                {
-                    var preferences=provider.GetRequiredService<SettingsService>(); var settings=preferences.Load();
-                    var previous=settings.UpdateChannel;
-                    settings.UpdateChannel=channel;
-                    try { preferences.Save(settings); }
-                    catch { settings.UpdateChannel=previous; throw; }
-                },
-                InstalledReleaseVersion=ReadInstalledReleaseVersion(),
-                PreferIncrementalUpdates=PreferIncrementalUpdates(),
-                InstalledPayloadDirectory=AppContext.BaseDirectory,InstallationRoot=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)});
+        services.AddSingleton(provider =>
+        {
+            var installationRoot = ReadInstallationRoot();
+            return new SiloPlayer.Core.Services.Updates.AppUpdateService(
+                new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = System.Net.DecompressionMethods.None })
+                    { Timeout = Timeout.InfiniteTimeSpan },
+                Path.Combine(appDataDir, "updates"), typeof(App).Assembly.GetName().Version!,
+                message => LocalLog.AppendLine("updates.txt", message))
+                {Channel=provider.GetRequiredService<SettingsService>().Load().UpdateChannel,
+                    PersistChannel=channel =>
+                    {
+                        var preferences=provider.GetRequiredService<SettingsService>(); var settings=preferences.Load();
+                        var previous=settings.UpdateChannel;
+                        settings.UpdateChannel=channel;
+                        try { preferences.Save(settings); }
+                        catch { settings.UpdateChannel=previous; throw; }
+                    },
+                    InstalledReleaseVersion=ReadInstalledReleaseVersion(),
+                    PreferIncrementalUpdates=PreferIncrementalUpdates(installationRoot),
+                    InstalledPayloadDirectory=AppContext.BaseDirectory,InstallationRoot=installationRoot};
+        });
         services.AddSingleton<IAppUpdateInstaller>(new WindowsAppUpdateInstaller(Path.Combine(appDataDir, "updates")));
         services.AddSingleton<CredentialStore>();
         services.AddSingleton<ICredentialStore>(sp => sp.GetRequiredService<CredentialStore>());

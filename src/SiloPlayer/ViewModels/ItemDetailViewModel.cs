@@ -381,7 +381,8 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     private static bool IsViewerOnlyLeaf(MediaStateInvalidated message, MediaItemDetail item) =>
         item.Type is not ("series" or "season")
-        && message.ViewerStateContentIds?.Contains(item.ContentId) == true;
+        && message.ViewerStateContentIds?.Contains(item.ContentId) == true
+        && !PlaybackScope(message).Contains(item.ContentId);
 
     private static MediaStateInvalidated MergeState(MediaStateInvalidated? earlier, MediaStateInvalidated later) =>
         earlier == null || earlier.Context != later.Context ? later : later with

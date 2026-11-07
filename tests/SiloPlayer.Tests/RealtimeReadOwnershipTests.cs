@@ -391,7 +391,7 @@ public sealed class RealtimeReadOwnershipTests
     [InlineData("episode", "watched", "favorite", true)]
     [InlineData("episode", "progress", "rating", false)]
     [InlineData("episode", "progress", "rating", true)]
-    public async Task SameLeafMixedBatchesPreserveMountedPlaybackWhileReconcilingViewerState(
+    public async Task SameLeafMixedBatchesAndMergedPlaybackScopeReconcilePlayback(
         string type, string playbackChange, string viewerChange, bool trailing)
     {
         using var f = new Fixture(); f.Seed();
@@ -406,13 +406,14 @@ public sealed class RealtimeReadOwnershipTests
         var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         f.Vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(f.Vm.Item) && f.Vm.IsFavorite && f.Vm.UserRating == 4)
+            if (e.PropertyName == nameof(f.Vm.Item) && f.Vm.IsWatched && item.UserData!.PositionSeconds == 900
+                && f.Vm.IsFavorite && f.Vm.UserRating == 4)
                 applied.TrySetResult();
         };
         if (trailing)
         {
-            // Keep the first independently targeted read consistent with the
-            // mounted /watch state; the later mixed batch owns viewer state.
+            // A legacy targeted read already owns playback scope. Merging a
+            // viewer-only batch must retain that scope in the trailing read.
             f.Wire.Played = false; f.Wire.Count = 0; f.Wire.DetailPosition = 31;
             f.Wire.Target = EpisodeA; f.Wire.Favorite = false; f.Wire.Rating = null;
             f.Wire.HoldDetails = true;
@@ -432,11 +433,11 @@ public sealed class RealtimeReadOwnershipTests
         await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Same(item, f.Vm.Item);
-        Assert.Same(mountedPlayback, item.UserData);
-        Assert.False(f.Vm.IsWatched);
-        Assert.False(item.UserData!.Played);
-        Assert.Equal(31, item.UserData.PositionSeconds);
-        Assert.Equal(EpisodeA, item.PlayContentId);
+        Assert.NotSame(mountedPlayback, item.UserData);
+        Assert.True(f.Vm.IsWatched);
+        Assert.True(item.UserData!.Played);
+        Assert.Equal(900, item.UserData.PositionSeconds);
+        Assert.Equal(EpisodeB, item.PlayContentId);
         Assert.True(f.Vm.IsFavorite);
         Assert.Equal(4, f.Vm.UserRating);
         Assert.Equal(trailing ? 2 : 1, f.Wire.DetailReads);
@@ -787,8 +788,8 @@ public sealed class RealtimeReadOwnershipTests
         var postPlayback = f.Vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
         var localRead = await f.Wire.NextAsync();
 
-        // A standalone targeted playback read can supersede the older owner;
-        // viewer batches, including mixed leaf batches, preserve mounted /watch.
+        // Both targeted playback and mixed leaf batches supersede the older
+        // playback owner; only viewer-only batches preserve its authority.
         f.Wire.Count = 3; f.Wire.Played = false;
         f.Wire.DetailPosition = 111; f.Wire.Target = EpisodeA; f.Wire.Favorite = true;
         f.Wire.HoldDetails = false;
@@ -802,7 +803,7 @@ public sealed class RealtimeReadOwnershipTests
         await postPlayback.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Same(mounted, f.Vm.Item);
-        var preservesPostPlayback = viewerOnly || mixed;
+        var preservesPostPlayback = viewerOnly;
         Assert.Equal(preservesPostPlayback, f.Vm.IsWatched);
         Assert.Equal(preservesPostPlayback, mounted.UserData!.Played);
         Assert.Equal(preservesPostPlayback ? 2 : 3, mounted.UserData.WatchedCount);
