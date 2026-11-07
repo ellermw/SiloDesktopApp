@@ -242,6 +242,39 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(Get(video, "SurfaceChanged") == null && Get(video, "_menuDismissal") == null,
                 "Audio close retained its native owner subscription or dismissal hook.");
 
+            // Access-only revisions must not strand the published capability or
+            // close a menu belonging to the same accepted account/profile.
+            menu = await OpenFromOsc();
+            var accessOwner = Get(service, "_nativeMenuOwner");
+            var accessScope = (await Query()).GetProperty("scope").GetString();
+            api.InvalidateAccessContext();
+            await Task.Delay(150); // Cross the native owner's 100 ms watch tick.
+            Call(menu, "Input", "end");
+            Require(ReferenceEquals(Menu(service), menu) && ((ListView)Get(menu, "_list")!).SelectedIndex == 71 &&
+                ReferenceEquals(Get(service, "_nativeMenuOwner"), accessOwner),
+                "An access-only revision retired the current native Audio owner.");
+            Call(menu, "Input", "cancel");
+            menu = await OpenFromOsc();
+            Require((await Query()).GetProperty("scope").GetString() == accessScope,
+                "Reopening Audio after an access-only revision required a new scope.");
+
+            // Joining/leaving a room must rotate scopes without a metadata refresh.
+            service.SetWatchTogetherPlayback(true);
+            await Until(() => Menu(service) == null, "Joining a room stranded the solo native menu.");
+            var roomScope = (await Query()).GetProperty("scope").GetString();
+            Require(!string.IsNullOrEmpty(roomScope) && roomScope != accessScope,
+                "Joining a room did not republish native menu scopes.");
+            menu = await OpenFromOsc();
+            service.SetWatchTogetherPlayback(false);
+            await Until(() => Menu(service) == null, "Leaving a room stranded the room native menu.");
+            var soloScope = (await Query()).GetProperty("scope").GetString();
+            Require(!string.IsNullOrEmpty(soloScope) && soloScope != roomScope,
+                "Leaving a room did not republish native menu scopes.");
+            menu = await OpenFromOsc();
+            Call(menu, "Input", "cancel");
+            Require(mpv.IsPaused && wire.AudioPicks.Count == 0,
+                "Access/room native menu ownership checks changed playback or selected audio.");
+
             // A second request replaces the first. Its late close/selection cannot
             // clear the new request or choose a track.
             menu = await OpenFromOsc(); var old = menu;
@@ -338,10 +371,19 @@ internal static class PlaybackAudioMenuNativeFixture
             Call(retired, "Input", "activate");
             await Until(() => Menu(service) == null, "A stale file menu did not retire before selection.");
             Require(wire.AudioPicks.Count == 0, "A stale file menu selected a track.");
+            var staleOwner = Get(service, "_nativeMenuOwner");
             Host("silo-native-audio-open", ownerState.GetProperty("scope").GetString()!, "999", "1000", "620", "40", "40", "1280", "720");
-            await Task.Delay(60); Require(Menu(service) == null, "Old file scope reopened a native menu.");
-            Call(service, "SendAudioTrackListToOsc");
+            await Until(() => Get(service, "_nativeMenuOwner") is { } refreshed && !ReferenceEquals(refreshed, staleOwner),
+                "A stale native menu open did not republish its owner.");
+            Require(Menu(service) == null, "Old file scope reopened a native menu.");
+            var recoveredScope = (await Query()).GetProperty("scope").GetString();
+            Require(!string.IsNullOrEmpty(recoveredScope) && recoveredScope != ownerState.GetProperty("scope").GetString(),
+                "Stale native menu recovery left Lua with its dead capability.");
             menu = await OpenFromOsc();
+            Host("silo-native-audio-open", ownerState.GetProperty("scope").GetString()!, "1000", "1000", "620", "40", "40", "1280", "720");
+            await Task.Delay(60);
+            Require(ReferenceEquals(Menu(service), menu) && (await Query()).GetProperty("scope").GetString() == recoveredScope,
+                "A late old-token request retired the current native menu owner.");
             foreground.Observe("profile-retirement-before");
             api.SetProfile("replacement"); Call(menu, "Input", "activate");
             await Until(() => Menu(service) == null, "A stale profile menu did not retire.");

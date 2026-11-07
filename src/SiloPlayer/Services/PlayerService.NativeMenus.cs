@@ -22,7 +22,8 @@ public partial class PlayerService
     private void PublishNativeMenuScopes()
     {
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        // Access refreshes retire reads, not the accepted playback identity.
+        var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         var version = ActiveVersion;
@@ -45,7 +46,7 @@ public partial class PlayerService
             State is PlayerState.Expanded or PlayerState.Fullscreen && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
             play == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration) &&
             playbackFile == Volatile.Read(ref _playbackFileGeneration) &&
-            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
@@ -94,7 +95,15 @@ public partial class PlayerService
             (owner?.Mpv ?? _mpv)?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
-        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
+        if (owner == null || !owner.IsCurrent())
+        {
+            Ack();
+            RetireNativeMenus();
+            PublishNativeMenuScopes();
+            return;
+        }
+        // A late request or temporary busy state must not retire a current owner.
+        if (owner.Token != request.OwnerToken || IsLoading || _switchingContent)
         { Ack(); return; }
         if (!_nativeMenuGate.TryOpen(request))
         {
