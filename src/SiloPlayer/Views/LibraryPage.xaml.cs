@@ -335,13 +335,6 @@ public sealed partial class LibraryPage : Page,
         var returningLibrary = library is not null && _activeLibraryId == library.Id;
         if (returningLibrary)
         {
-            if (_pageStateContext != _stateSettings.CaptureContext())
-            {
-                // Never keep another read authority's cards mounted during policy revalidation.
-                _libraryCatalogLoaded = false;
-                ViewModel.CancelCatalogLoads();
-                ClearVirtualCards();
-            }
             // Resume retained current binds before even the library-flags read;
             // slow policy revalidation must not block cached artwork on return.
             ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
