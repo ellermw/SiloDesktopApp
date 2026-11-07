@@ -68,7 +68,7 @@ internal static class PlaybackStatsMenuNativeFixture
                 mp.register_script_message('stats-fixture-query',function(id,kind)
                     compute_layout()
                     local r=state.layout['btn_'..kind] or {}
-                    local legacy=kind=='stats' and state.stats_visible or state[kind..'_menu_visible']
+                    local legacy=kind=='stats' and state.stats_visible or kind=='chapters' and state.chapter_menu_visible or state[kind..'_menu_visible']
                     mp.commandv('script-message','silo-stats-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=legacy or false,focus=state.controller_focus_name or '',pending=state.native_menu_request~=nil}))
                 end)
                 mp.commandv('script-message','silo-stats-fixture-ready')
@@ -130,13 +130,29 @@ internal static class PlaybackStatsMenuNativeFixture
                 Require(Gate(service).CurrentCount == 1 && mpv.IsPaused && wire.Qualities.IsEmpty,
                     "Access refresh/menu reopen changed playback or leaked a lease.");
             }
+            versions[0].Chapters =
+            [
+                new() { Index = 4, Title = "Chapter one", StartSeconds = 0, EndSeconds = 10 },
+                new() { Index = 17, Title = "Chapter two", StartSeconds = 10, EndSeconds = 30 },
+            ];
+            Call(service, "SendChapterListToOsc");
+            Call(service, "PublishNativeMenuScopes");
             // Recovery claims switching without retiring native scopes. Action
             // menus must watch both busy flags; only read-only Stats may remain.
-            foreach (var kind in new[] { "audio", "quality", "stats" })
+            foreach (var kind in new[] { "audio", "quality", "chapters", "stats" })
             foreach (var loading in new[] { false, true })
+            foreach (var queuedSelection in kind == "chapters" ? new[] { false, true } : new[] { false })
             {
                 var retained = await Open("pointer", kind);
                 Call(retained, "Input", "end");
+                var position = mpv.Position;
+                if (queuedSelection)
+                {
+                    // Simulate recovery starting between select-close and the
+                    // accepted chapter delegate, independently of the owner watch.
+                    var close = retained.GetType().GetMethod("Close", Private)!;
+                    close.Invoke(retained, [Enum.Parse(close.GetParameters()[0].ParameterType, "Selection")]);
+                }
                 try
                 {
                     if (loading) Property(service, "IsLoading", true);
@@ -148,8 +164,11 @@ internal static class PlaybackStatsMenuNativeFixture
                     var busyRevision = (long)Get(service, "_playbackBusyRevision")!;
                     // Also exercise dispatch independently of the menu's watch,
                     // as a selection may already be queued when recovery starts.
-                    if (kind != "stats")
-                        ((Action<string>)Get(retained, "_selected")!)(kind == "audio" ? "1" : "quality:720p");
+                    if (kind is "audio" or "quality" || queuedSelection)
+                        ((Action<string>)Get(retained, "_selected")!)(kind switch
+                        {
+                            "audio" => "1", "chapters" => "chapter:17", _ => "quality:720p",
+                        });
                     if (kind == "stats")
                     {
                         await Task.Delay(250);
@@ -157,11 +176,13 @@ internal static class PlaybackStatsMenuNativeFixture
                     }
                     else await Until(() => Menu(service) == null, "Busy state left native " + kind + " open.");
                     Call(retained, "Input", "activate");
-                    Require((long)Get(service, "_playbackBusyRevision")! == busyRevision &&
+                    if (kind == "chapters") await Task.Delay(150);
+                    Require(Math.Abs(mpv.Position - position) < .1 &&
+                        (long)Get(service, "_playbackBusyRevision")! == busyRevision &&
                         service.IsLoading == loading && (bool)Get(service, "_switchingContent")! == !loading &&
                         (bool)Get(service, "_prematureEofRecoveryActive")! == !loading && wire.Qualities.IsEmpty &&
                         Gate(service).CurrentCount == (kind == "stats" ? 0 : 1) && mpv.IsPaused,
-                        "A busy native menu started a replan, changed recovery ownership or leaked its lease.");
+                        "A busy native menu sought, started a replan, changed recovery ownership or leaked its lease.");
                 }
                 finally
                 {
