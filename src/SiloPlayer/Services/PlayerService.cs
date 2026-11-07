@@ -5690,8 +5690,14 @@ public partial class PlayerService : IDisposable
             var position = CurrentMediaPosition;
             transportMutationAttempted = true;
             _subtitleReplanPauseIntent = PauseIntent();
-            SetSwitchingContent(true);
-            IsLoading = true;
+            // A pick queued behind another replan must not retire that
+            // operation's busy claim before it can submit its native load.
+            // An accepted subtitle replacement claims its own load below.
+            if (!HasOtherTransportOwner())
+            {
+                SetSwitchingContent(true);
+                IsLoading = true;
+            }
             _mpv.Pause();
             if (loadingOwner != null)
                 App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
