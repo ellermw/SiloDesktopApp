@@ -5406,10 +5406,11 @@ public partial class PlayerService : IDisposable
             {
                 if (!CurrentSwitch())
                 {
-                    // A slot-limit retry can retire its own outgoing session
-                    // before a canceled replacement returns a new one.
-                    if (ReferenceEquals(manager, _playbackManager) && manager.CurrentSession == null)
-                        busyOwner = busyOwner with { Session = null };
+                    // Cancellation can follow adoption inside the replacement's
+                    // subtitle reconcile, or retirement during a slot-limit retry.
+                    // The busy revision still protects any successor's flags.
+                    if (ReferenceEquals(manager, _playbackManager))
+                        busyOwner = busyOwner with { Session = manager.CurrentSession };
                     ReleasePlaybackBusy(busyOwner, () => _subtitleVersionSwitchActive = false);
                 }
                 if (reconcileSubtitles && CurrentSwitch())

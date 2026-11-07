@@ -219,6 +219,40 @@ internal static class PlaybackQualityMenuNativeFixture
                 Require(mpv.IsPaused && service.IsPaused && !service.IsQualitySwitchActive,
                     "Legacy access-refresh selection lost pause or busy cleanup.");
                 Program.Log($"PASS: actual OSC {mode} survives stable-identity access refresh during its real transport drain, loads the chosen file/quality and retains pause.");
+
+                // A second legacy pick claims dispatch before the first switch
+                // adopts its reply. Only the second pick may load that playback.
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Legacy media publication did not settle.");
+                Call(service, "StopPlaybackStallWatchdog");
+                initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                var originalSession = manager.CurrentSession;
+                var qualityPick = mode == "legacy-access-quality";
+                var nextFile = originalSession?.MediaFileId == 71 ? "41" : "71";
+                wire.HoldSuccessfulReplan = true;
+                var predecessor = (Task)Call(service, "SwitchQualityTierAsync", "1080p", null, null)!;
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await gate.WaitAsync();
+                try
+                {
+                    drainGeneration = (long)Get(service, "_seekRestartGeneration")!;
+                    mpv.SendScriptMessage(qualityPick ? "silo-quality-select" : "silo-version-select", qualityPick ? "720p" : nextFile);
+                    await Until(() => (long)Get(service, "_seekRestartGeneration")! > drainGeneration,
+                        "The second legacy selection did not enter its held transport drain.");
+                    wire.ReleaseReplan.TrySetResult();
+                    await predecessor.WaitAsync(TimeSpan.FromSeconds(5));
+                    Require(!ReferenceEquals(originalSession, manager.CurrentSession) &&
+                        (long)Get(service, "_playbackFileGeneration")! == initialFile && (bool)Get(service, "_switchingContent")!,
+                        "The predecessor must adopt its plan without loading or releasing the second selection's claim.");
+                    wire.HoldSuccessfulReplan = false;
+                }
+                finally { gate.Release(); }
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialFile &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                    "Same-manager plan adoption stranded the second legacy selection's busy claim.");
+                Require(mpv.IsPaused && service.IsPaused && (qualityPick ? service.SelectedQualityMenuId == "720p" :
+                    manager.CurrentSession?.MediaFileId.ToString() == nextFile),
+                    "The second legacy selection lost its chosen quality/version or genuine pause.");
+                Program.Log($"PASS: actual OSC {mode} survives a predecessor's same-manager session adoption during dispatch/drain and completes its own load and busy lifecycle.");
                 return;
             }
             if (mode is "access-version" or "access-quality")
@@ -291,6 +325,31 @@ internal static class PlaybackQualityMenuNativeFixture
                 Require(service.IsWatchTogetherPlayback && mpv.IsPaused && service.ErrorMessage == originalError,
                     "A retired solo version switch changed room pause intent or published a stale error.");
                 Program.Log("PASS: actual held native version replacement is canceled by same-file room attachment; late reply preserves the room session/file and pause.");
+
+                // Also cancel after StartSessionAsync has adopted the replacement,
+                // while its pending subtitle-Off refinement still holds the await.
+                service.SetWatchTogetherPlayback(false);
+                wire.HoldReplacementStart = false;
+                wire.StartWithSubtitle = true;
+                wire.HoldSuccessfulReplan = true;
+                manager.RecordLocalSubtitleSelection(null);
+                var replacement = service.SwitchVersionAsync(versions[1]);
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(wire.Operations.Contains("track_change") && !ReferenceEquals(manager.CurrentSession, originalSession) &&
+                    manager.CurrentSession?.MediaFileId == 71 && (bool)Get(service, "_subtitleVersionSwitchActive")!,
+                    "The version switch did not adopt its replacement before the held subtitle reconcile.");
+                var adoptedSession = manager.CurrentSession;
+                service.SetWatchTogetherPlayback(true);
+                wire.ReleaseReplan.TrySetResult();
+                await replacement.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")! &&
+                    !(bool)Get(service, "_subtitleVersionSwitchActive")! && !service.IsQualitySwitchActive,
+                    "Room cancellation after replacement adoption stranded version busy ownership.");
+                Require(ReferenceEquals(manager.CurrentSession, adoptedSession) &&
+                    (long)Get(service, "_playbackFileGeneration")! == originalFile && service.IsWatchTogetherPlayback &&
+                    mpv.IsPaused && service.IsPaused && service.ErrorMessage == originalError,
+                    "Canceled subtitle reconciliation loaded stale media, replaced the adopted session or changed room pause/error state.");
+                Program.Log("PASS: room cancellation during an adopted version's track_change reconcile releases version/subtitle busy flags without a stale load or error.");
                 return;
             }
             if (mode.StartsWith("legacy-", StringComparison.Ordinal))
