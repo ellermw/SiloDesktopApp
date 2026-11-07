@@ -307,6 +307,8 @@ public sealed partial class MpvOscRuntimeTests
     [InlineData("loading")]
     [InlineData("hidden")]
     [InlineData("postroll")]
+    [InlineData("retired")]
+    [InlineData("retired-loading")]
     public void NativeAudioCannotOpenForAnUnavailablePlaybackSurface(string unavailable)
     {
         var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
@@ -316,7 +318,10 @@ public sealed partial class MpvOscRuntimeTests
             s.visible, s.current_alpha, s.target_alpha = true, 1, 1
             s.audio_tracks = { {index=0,title='English'}, {index=1,title='Japanese'} }
             native_handlers['osc-native-audio-scope']('11111111111111111111111111111111')
-            if '{{unavailable}}' == 'loading' then native_handlers['osc-set-loading']('true')
+            if '{{unavailable}}' == 'retired' or '{{unavailable}}' == 'retired-loading' then
+                native_handlers['osc-native-audio-scope']('')
+                if '{{unavailable}}' == 'retired-loading' then native_handlers['osc-set-loading']('true') end
+            elseif '{{unavailable}}' == 'loading' then native_handlers['osc-set-loading']('true')
             elseif '{{unavailable}}' == 'hidden' then native_handlers['osc-set-visibility']('false')
             else native_handlers['osc-set-post-roll']('true') end
             osc_test_layout(); s.controller_focus_name = 'btn_audio'; osc_test_activate()
@@ -384,6 +389,115 @@ public sealed partial class MpvOscRuntimeTests
             mp.set_property('user-data/native-audio-result', tostring(#native_requests)..':'..tostring(s.audio_menu_visible)..':'..tostring(s.native_menu_request == nil))
             """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe);
         Assert.Equal("0:false:true", output);
+    }
+
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(480, 270)]
+    public void NativeAudioExplicitLegacyScopePreservesLocalSelectionUntilRevoked(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause, s.playback_loading = false, false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = {{index=0,title='English'}, {index=5,title='Japanese'}}
+            local selected
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-audio-select' then selected = args[3] end
+                return command(...)
+            end
+            local scope = native_handlers['osc-native-audio-scope']
+            scope('11111111111111111111111111111111')
+            scope('legacy')
+            osc_test_layout()
+            local focus = s.layout.btn_audio and 'btn_audio' or 'overflow_btn_audio'
+            s.controller_focus_name = focus; osc_test_activate()
+            assert(s.audio_menu_visible and #native_requests == 0, 'Host fallback did not open legacy Audio')
+            native_keys['silo-menu-end']()
+            native_keys['silo-menu-activate']()
+            assert(not s.audio_menu_visible and selected == '5'
+                and #native_intents == 1 and native_intents[1] == 'silo-audio-select',
+                'Legacy Audio did not preserve the source-index selection')
+            scope('')
+            s.controller_focus_name = focus; osc_test_activate()
+            assert(not s.audio_menu_visible and #native_requests == 0, 'Revocation retained the legacy fallback')
+            scope('22222222222222222222222222222222')
+            s.controller_focus_name = focus; osc_test_activate()
+            assert(not s.audio_menu_visible and #native_requests == 1, 'A new native scope did not replace fallback')
+            mp.set_property('user-data/native-audio-result', 'passed')
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("passed", output);
+    }
+
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(480, 270)]
+    public void NativeAudioInitialEmptyScopeAdvertisesCapabilityWithoutLegacyFallback(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause, s.playback_loading = false, false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = {{index=0,title='English'}, {index=1,title='Japanese'}}
+            native_handlers['osc-native-audio-scope']('')
+            osc_test_layout()
+            s.controller_focus_name = s.layout.btn_audio and 'btn_audio' or 'overflow_btn_audio'
+            osc_test_activate()
+            mp.set_property('user-data/native-audio-result', tostring(s.native_audio_capable)..':'..tostring(#native_requests)..':'..tostring(s.audio_menu_visible))
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("true:0:false", output);
+    }
+
+    [Theory]
+    [InlineData(460, 700, 0)]
+    [InlineData(460, 700, 1)]
+    [InlineData(460, 700, 2)]
+    [InlineData(480, 270, 0)]
+    [InlineData(480, 270, 1)]
+    [InlineData(480, 270, 2)]
+    public void CompactLegacyAudioAndChaptersUseTheOverflowAnchor(int width, int height, int trackCount)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local s = osc_test_state
+            s.osc_disabled, s.pause, s.playback_loading = false, false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.duration, s.time_pos = 60, 0
+            s.audio_tracks = {}
+            for i=1,{{trackCount}} do s.audio_tracks[i] = {index=i-1,title='Audio '..i} end
+            s.chapters = { {index=0,title='Opening',start_seconds=0,end_seconds=30},
+                {index=1,title='Ending',start_seconds=30,end_seconds=60} }
+            osc_test_layout()
+            assert(not s.layout.btn_audio and not s.layout.btn_chapters and s.layout.btn_more)
+            s.controller_focus_name = 'btn_more'; osc_test_activate(); osc_test_tick()
+            local audio
+            for _, row in ipairs(s.compact_menu_items) do if row.name == 'btn_audio' then audio = row end end
+            if {{trackCount}} > 1 then
+                assert(audio, 'Multiple-track Audio must remain reachable')
+                native_handlers['osc-mouse-down'](tostring(audio.x+audio.w/2), tostring(audio.y+audio.h/2))
+                assert(s.audio_menu_visible and #s.audio_menu_items > 0)
+                assert(s.audio_menu_overlay.data:find('AUDIO', 1, true))
+                native_keys['silo-menu-escape']()
+            else
+                assert(not audio, 'Audio without alternatives must not be offered')
+                s.controller_focus_name = 'overflow_btn_audio'; osc_test_activate()
+                assert(not s.audio_menu_visible, 'A stale Audio focus must remain inert')
+            end
+            s.compact_menu_visible = false
+            s.controller_focus_name = 'btn_more'; osc_test_activate(); osc_test_tick()
+            local chapters
+            for _, row in ipairs(s.compact_menu_items) do if row.name == 'btn_chapters' then chapters = row end end
+            assert(chapters, 'Chapters must remain reachable')
+            native_handlers['osc-mouse-down'](tostring(chapters.x+chapters.w/2), tostring(chapters.y+chapters.h/2))
+            assert(s.chapter_menu_visible and #s.chapter_menu_items > 0)
+            assert(s.chapter_menu_overlay.data:find('CHAPTERS', 1, true))
+            mp.set_property('user-data/native-audio-result', 'available-without-crash')
+            """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("available-without-crash", output);
     }
 
     [Fact]

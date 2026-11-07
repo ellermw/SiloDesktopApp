@@ -158,6 +158,8 @@ local state = {
     -- Audio track menu
     audio_tracks = {},
     active_audio = -1,
+    native_audio_capable = false,
+    native_audio_legacy = false,
     native_audio_scope = nil,
     native_menu_sequence = 0,
     native_menu_request = nil,
@@ -1534,7 +1536,7 @@ local function hud_control_enabled(name)
 end
 
 local function hud_input_available()
-    return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible
+    return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible or state.native_menu_request
         or state.subtitle_menu_visible or state.audio_menu_visible or state.quality_menu_visible
         or state.chapter_menu_visible or state.compact_menu_visible or state.native_menu_request
         or state.dragging_seek or state.dragging_volume)
@@ -2192,6 +2194,7 @@ local function render_osc()
             {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
             {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
             {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}
+        if #state.audio_tracks <= 1 then table.remove(entries, 1) end
         local row_h = math.floor(40 * sc)
         local width = math.min(W - 24 * sc, math.floor(280 * sc))
         -- Compact touch surfaces use a generous sheet above the transport row.
@@ -2597,7 +2600,7 @@ local function arm_osc_hide(delay)
         local focus_owned = focus and state.layout[focus] and hud_control_enabled(focus)
             and mp.get_time() < state.controller_focus_deadline
             and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
-        if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
+        if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned or state.native_menu_request
             or (state.compact_menu_visible and state.layout.btn_more)
             or state.subtitle_menu_visible or state.audio_menu_visible
             or state.quality_menu_visible or state.chapter_menu_visible or state.native_menu_request
@@ -3709,8 +3712,9 @@ local function render_audio_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(56 * sc)
     local menu_w = math.min(math.floor(360 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_audio or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_audio.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3719,7 +3723,6 @@ local function render_audio_menu()
     state.audio_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_audio or state.layout.btn_more
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -3852,8 +3855,9 @@ local function render_chapter_menu()
     local header_h = math.floor(30 * sc)
     local item_h = math.floor(64 * sc)
     local menu_w = math.min(math.floor(300 * sc), math.max(120, W - 20))
+    local anchor = state.layout.btn_chapters or state.layout.btn_more
     local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or
-        state.layout.btn_chapters.y) - math.floor(8 * sc)
+        anchor.y) - math.floor(8 * sc)
     local available_items_height = menu_bottom - math.floor(10 * sc)
         - header_h - padding * 2
     local max_visible = math.max(1, math.floor(available_items_height / item_h))
@@ -3862,7 +3866,6 @@ local function render_chapter_menu()
     state.chapter_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_chapters or state.layout.btn_more
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -4765,7 +4768,10 @@ end
 
 local function open_native_menu(kind, keyboard)
     local scope = state['native_' .. kind .. '_scope']
-    if not scope then return false end
+    if kind == 'audio' then
+        if not state.native_audio_capable or state.native_audio_legacy then return false end
+        if not scope then return true end
+    elseif not scope then return false end
     if kind == 'party' and (state.playback_failure_visible or not state.watch_party or not state.watch_party.visible) then return true end
     if state.native_menu_request or (kind == "audio" and #state.audio_tracks <= 1) or state.osc_disabled
         or state.playback_loading or state.post_roll_active
@@ -4921,6 +4927,7 @@ end
 local function open_transport_menu_from_controller(kind)
     close_transport_menus(kind)
     if kind == "audio" then
+        if #state.audio_tracks <= 1 then return end
         if open_native_menu("audio", true) then return end
         state.audio_menu_visible = not state.audio_menu_visible
         set_keyboard_transport_menu(kind, state.audio_menu_visible)
@@ -6468,6 +6475,11 @@ local function setup_script_messages()
     for _, menu_kind in ipairs({'audio','quality','chapters','speed','stats','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
+            if kind == 'audio' then
+                -- Revocation must not silently reopen the ASS fallback.
+                state.native_audio_capable = true
+                state.native_audio_legacy = token == 'legacy'
+            end
             local scope = token and #token == 32 and token:match('^%x+$') and token or nil
             local key = 'native_' .. kind .. '_scope'
             if scope ~= state[key] then
