@@ -531,8 +531,8 @@ public sealed class PlayerServiceSourceTests
             "PlayerService.cs"));
 
         var methodStart = source.IndexOf("private async Task SwitchQualityTierCoreAsync(string tierId,", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync", methodStart, StringComparison.Ordinal);
         Assert.True(methodStart >= 0);
+        var methodEnd = source.IndexOf("private async Task ShowSubtitleSearchDialogAsync", methodStart, StringComparison.Ordinal);
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
