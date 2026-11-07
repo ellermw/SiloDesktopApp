@@ -11,5 +11,5 @@ Copy-Item -Path (Join-Path $appPath '*.pri') -Destination $referencePath
 Copy-Item -LiteralPath (Join-Path $repoRoot 'src\SiloPlayer\Assets') -Destination $referencePath -Recurse
 dotnet build (Join-Path $PSScriptRoot 'SiloPlayer.PlaybackIntegrationTests.csproj') -nologo -v:q "-p:SiloPlayerAssemblyDirectory=$referencePath"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& (Join-Path $PSScriptRoot 'bin\Debug\net8.0-windows10.0.22621.0\win-x64\SiloPlayer.PlaybackIntegrationTests.exe')
+& (Join-Path $PSScriptRoot 'bin\Debug\net10.0-windows10.0.22621.0\win-x64\SiloPlayer.PlaybackIntegrationTests.exe')
 exit $LASTEXITCODE
