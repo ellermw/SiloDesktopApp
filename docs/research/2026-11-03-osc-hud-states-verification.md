@@ -4,7 +4,7 @@
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+Source version: `1.2.709-beta.1`; numeric version: `1.2.708.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. PR #90 includes owned native Audio, Quality and Watch Party controls alongside the earlier OSC work. This entry records inspected source identity only. Builds and tests were not run for this correction; fresh pipeline verification is required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify PR #90.
 
@@ -28,7 +28,7 @@ Integrated Audio source head (PR #87): `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e
 
 Reviewed Quality source head (PR #89): `5f38c219a0b5f53b32446e0d936631ef6fa99642`.
 
-Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+Source version: `1.2.709-beta.1`; numeric version: `1.2.708.1`.
 
 These values record the existing app, updater, launcher and installer-default stamps without changing them. Neither source identity is a verification receipt for the combined merge. No builds or tests were run for this correction or merge; pipeline re-verification must record the final integrated head. The PR #86 identities, reviews and receipts below remain historical and do not verify either head or the combined merge.
 
