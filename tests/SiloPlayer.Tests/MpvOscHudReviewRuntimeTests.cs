@@ -2,6 +2,168 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData("audio", false, 1920)]
+    [InlineData("audio", true, 1920)]
+    [InlineData("chapters", false, 1920)]
+    [InlineData("chapters", true, 1920)]
+    [InlineData("quality", false, 1920)]
+    [InlineData("quality", true, 1920)]
+    [InlineData("audio", false, 460)]
+    [InlineData("audio", true, 460)]
+    [InlineData("chapters", false, 460)]
+    [InlineData("chapters", true, 460)]
+    public void HudMenuSelectionAndDismissalOwnTheCompleteNativeClick(string kind, bool dismiss, int width)
+    {
+        var expected = dismiss ? "" : kind == "audio" ? "silo-audio-select"
+            : kind == "chapters" ? "silo-seek-absolute" : "silo-quality-select";
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time = 10
+            local s = osc_test_state
+            s.osc_disabled = false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = { {index=1,title='First'}, {index=2,title='Second'} }
+            s.chapters = { {index=0,start_seconds=20,end_seconds=40,title='Chapter'} }
+            s.quality_info = {qualities={ {id='original',label='Original'}, {id='720p',label='720p'} } }
+            local prefix = '{{kind}}' == 'chapters' and 'chapter' or '{{kind}}'
+            local button = '{{kind}}' == 'chapters' and 'btn_chapters' or 'btn_{{kind}}'
+            local function click(r)
+                local x, y = tostring(r.x + r.w / 2), tostring(r.y + r.h / 2)
+                handlers['osc-mouse-down'](x, y)
+                hud_time = hud_time + .1
+                handlers['osc-mouse-up'](x, y)
+                handlers['osc-video-click'](x, y)
+            end
+            for _, paused in ipairs({false, true}) do
+                for _, room in ipairs({false, true}) do
+                    s.pause = paused
+                    mp.set_property_bool('pause', paused)
+                    s.watch_party = room and {visible=true,is_host=false,guest_control_policy='host_only'} or nil
+                    osc_test_layout()
+                    local r = s.layout[button]
+                    if not r then
+                        click(assert(s.layout.btn_more))
+                        osc_test_render_hud()
+                        r = assert(s.layout['overflow_' .. button])
+                    end
+                    click(r)
+                    assert(s[prefix .. '_menu_visible'], 'Pointer must open the menu')
+                    r = assert(s[prefix .. '_menu_items'][1])
+                    -- Do not let the opening click's suppression mask a broken row/dismissal.
+                    hud_time = hud_time + .6
+                    intents = {}
+                    if {{dismiss.ToString().ToLowerInvariant()}} then r = {x=400,y=200,w=0,h=0} end
+                    assert(r.y + r.h / 2 < s.layout.bar_hit.y, 'Click must be above the transport rail')
+                    click(r)
+                    assert(not s[prefix .. '_menu_visible'], 'Click must close the menu')
+                    assert(table.concat(intents, ',') == '{{expected}}', table.concat(intents, ','))
+                    assert(mp.get_property_bool('pause') == paused, 'Menu click changed pause')
+                    hud_time = hud_time + .6
+                    intents = {}
+                    click({x=400,y=200,w=0,h=0})
+                    assert(table.concat(intents, ',') == 'silo-pause-toggle', 'Fresh video click must still work')
+                end
+            end
+            mp.set_property('user-data/hud-result', 'owned')
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe,
+            windowWidth: width, windowHeight: 1080);
+        Assert.Equal("owned", output);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void HudStatsCloseOwnsTheCompleteNativeClick(bool paused, bool hidden)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, {{paused.ToString().ToLowerInvariant()}}
+            mp.set_property_bool('pause', s.pause)
+            s.visible, s.current_alpha, s.target_alpha = {{(hidden ? "false, 0, 0" : "true, 1, 1")}}
+            handlers['osc-toggle-stats']()
+            assert(s.stats_visible)
+            local r = assert(s.stats_close_rect)
+            local x, y = tostring(r.x + r.w / 2), tostring(r.y + r.h / 2)
+            handlers['osc-mouse-down'](x, y)
+            hud_time = 10.1
+            handlers['osc-mouse-up'](x, y)
+            handlers['osc-video-click'](x, y)
+            mp.set_property('user-data/hud-result', tostring(s.stats_visible)..':'
+                ..tostring(mp.get_property_bool('pause'))..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe,
+            windowWidth: 1920, windowHeight: 1080);
+        Assert.Equal($"false:{paused.ToString().ToLowerInvariant()}:", output);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HudCompactToDesktopResizeRetiresTheSheetAndReleasesInputAndAutoHide(bool leave)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.mouse_in_bar = false
+            s.audio_tracks = { {index=1,title='First'}, {index=2,title='Second'} }
+            osc_test_layout()
+            local r = assert(s.layout.btn_more)
+            handlers['osc-mouse-down'](tostring(r.cx), tostring(r.cy))
+            handlers['osc-mouse-up'](tostring(r.cx), tostring(r.cy))
+            handlers['osc-video-click'](tostring(r.cx), tostring(r.cy))
+            osc_test_render_hud()
+            handlers['osc-controller-nav']('right')
+            assert(s.compact_menu_visible and #s.compact_menu_items > 0)
+            assert(s.controller_focus_name:sub(1, 9) == 'overflow_')
+            assert(s.layout.overflow_btn_audio)
+            dims = {w=1920,h=1080}
+            osc_test_layout()
+            assert(not s.compact_menu_visible and s.controller_focus_name == nil)
+            assert(#s.compact_menu_items == 0 and s.layout.btn_more == nil)
+            for name in pairs(s.layout) do assert(name:sub(1, 9) ~= 'overflow_', 'Stale sheet rectangle') end
+            -- The first video click after resizing must not dismiss an invisible sheet.
+            hud_time = 11
+            handlers['osc-mouse-down']('400', '200')
+            handlers['osc-mouse-up']('400', '200')
+            handlers['osc-video-click']('400', '200')
+            assert(table.concat(intents, ',') == 'silo-pause-toggle')
+            osc_test_render_hud()
+            local normal = s.osc_overlay.data
+            r = assert(s.layout.btn_fill)
+            handlers['osc-mouse-move'](tostring(r.cx), tostring(r.cy))
+            osc_test_render_hud()
+            assert(s.osc_overlay.data ~= normal, 'Desktop controls must regain hover feedback')
+            handlers['osc-mouse-move']('400', '200')
+            hud_time = 15
+            if {{leave.ToString().ToLowerInvariant()}} then handlers['osc-mouse-leave'](); assert(leave_check)()
+            else assert(hide_check)() end
+            assert(s.target_alpha == 0, 'Resized HUD must auto-hide')
+            -- Even a stale flag cannot retain a sheet with no drawable anchor.
+            s.compact_menu_visible = true
+            handlers['osc-show']()
+            assert(hide_check)()
+            mp.set_property('user-data/hud-result', tostring(s.target_alpha)..':'..tostring(s.compact_menu_visible))
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe + """
+
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'osd-dimensions' and dims then return dims end
+                return native(name, fallback)
+            end
+            local timeout = mp.add_timeout
+            mp.add_timeout = function(seconds, callback)
+                if seconds == .5 then leave_check = callback end
+                if seconds == 3 then hide_check = callback end
+                return timeout(seconds, callback)
+            end
+            """, windowWidth: 460, windowHeight: 700);
+        Assert.Equal("0:false", output);
+    }
+
     [Fact]
     public void HudControllerOnlyPauseResumeReleasesFocusAfterTheInputIdleTimeout()
     {

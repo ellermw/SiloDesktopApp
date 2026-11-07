@@ -1206,6 +1206,18 @@ local function compute_layout()
     local L = state.layout
     local sc = ui_scale()
     local compact = W < math.floor(1024 * sc)
+    if not compact then
+        -- A sheet without its More anchor must not retain input or visibility.
+        if L.btn_more or state.compact_menu_visible then
+            state.controller_focus_name = nil
+            state.controller_focus_deadline = 0
+        end
+        state.compact_menu_visible = false
+        state.compact_menu_items = {}
+        for name in pairs(L) do
+            if name:sub(1, 9) == "overflow_" then L[name] = nil end
+        end
+    end
     local pad = math.floor((compact and 12 or config.bar_padding_x) * sc)
     local main_size = math.floor((compact and 40 or config.button_size) * sc)
     local small_size = math.floor((compact and 32 or config.small_button_size) * sc)
@@ -2552,7 +2564,8 @@ local function arm_osc_hide(delay)
             and mp.get_time() < state.controller_focus_deadline
             and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
         if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
-            or state.compact_menu_visible or state.subtitle_menu_visible or state.audio_menu_visible
+            or (state.compact_menu_visible and state.layout.btn_more)
+            or state.subtitle_menu_visible or state.audio_menu_visible
             or state.quality_menu_visible or state.chapter_menu_visible
             or (state.mouse_in_bar and state.mouse_in_window) then
             arm_osc_hide(config.hide_timeout)
@@ -5012,6 +5025,7 @@ local function handle_mouse_down()
     if state.stats_visible and state.stats_close_rect then
         local r = state.stats_close_rect
         if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            consume_video_click()
             state.stats_visible = false
             render_stats()
             return
@@ -5046,6 +5060,7 @@ local function handle_mouse_down()
 
     -- Audio menu click handling
     if state.audio_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.audio_menu_items) do
             if point_in_rect(mx, my, item) then
                 mp.commandv("script-message", "silo-audio-select", tostring(item.index))
@@ -5063,6 +5078,7 @@ local function handle_mouse_down()
 
     -- Chapter menu click handling
     if state.chapter_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.chapter_menu_items) do
             if point_in_rect(mx, my, item) then
                 seek_and_resume(item.start_seconds, "absolute+keyframes")
@@ -5131,6 +5147,7 @@ local function handle_mouse_down()
 
     -- Quality menu click handling
     if state.quality_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.quality_menu_items) do
             if point_in_rect(mx, my, item) then
                 if item.action == "version" then
