@@ -34,9 +34,10 @@ public partial class WatchTogetherRoomViewModel
         if (action == "end") ++_initializationGeneration;
         var generation = _initializationGeneration;
         var mutation = ++_playbackPanelMutation;
-        bool Current() => !_disposed && generation == _initializationGeneration
+        bool Current(bool allowClosedRoom = false) => !_disposed && generation == _initializationGeneration
             && _apiClient.IsCurrentContext(context) && RoomId == roomId && RoomToken == roomToken
-            && (endingInitialization ? Room == null : Room?.RoomId == roomId) && ownsRoom?.Invoke() != false;
+            && (endingInitialization ? Room == null : Room?.RoomId == roomId
+                || (allowClosedRoom && Room == null && ClosedReason != null)) && ownsRoom?.Invoke() != false;
         IsBusy = true; ErrorMessage = null; PendingPlaybackPanelAction = action;
         try
         {
@@ -54,7 +55,9 @@ public partial class WatchTogetherRoomViewModel
                     break;
                 default:
                     await _playbackApi.CloseWatchTogetherRoomAsync(context, roomId);
-                    if (!Current()) return;
+                    // The room_closed socket frame can clear the snapshot before
+                    // DELETE completes; that is success, not a change of owner.
+                    if (!Current(allowClosedRoom: true)) return;
                     ClosedReason = "host_left";
                     await StopWebSocketAsync();
                     return;

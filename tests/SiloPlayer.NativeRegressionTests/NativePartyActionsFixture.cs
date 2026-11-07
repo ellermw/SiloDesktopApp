@@ -48,6 +48,59 @@ internal static class NativePartyActionsFixture
         }
         Program.Log("PASS: actual Watch Party VM Stop: distinct POST, pending/deduplication, lobby/staged-item retention, failure/retry, host/connection and profile/room/coordinator ownership.");
         await VerifyPageMutationRefreshAsync();
+        await VerifyPageCloseSocketRaceAsync();
+    }
+
+    private static async Task VerifyPageCloseSocketRaceAsync()
+    {
+        foreach (var frame in new[] { "{\"type\":\"room_closed\"}", "{\"type\":\"room_closed\",\"reason\":\"server_closed\"}" })
+        foreach (var replacement in new[] { "none", "profile", "room", "token" })
+        {
+            using var wire = new CloseWire(); using var http = new HttpClient(wire);
+            var client = new SiloApiClient(http);
+            client.SetBaseUrl("https://native-party.invalid"); client.SetProfile("host");
+            using var room = new WatchTogetherRoomViewModel(new PlaybackApi(client), client)
+            {
+                RoomId = "synthetic-room", RoomToken = "synthetic-proof", ConnectionState = "connected", Room = Playing(),
+            };
+            var closing = room.CloseRoomCommand.ExecuteAsync(null);
+            try
+            {
+                await wire.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Require(room.IsBusy && room.PendingPlaybackPanelAction == "end", "Page End did not remain pending during DELETE.");
+                typeof(WatchTogetherRoomViewModel).GetMethod("HandleFrame", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .Invoke(room, [frame]);
+                var closedReason = room.ClosedReason;
+                Require(room.Room == null && closedReason != null, "room_closed did not clear the pending End snapshot.");
+                if (replacement == "profile") client.SetProfile("replacement");
+                else if (replacement == "room") room.RoomId = "replacement-room";
+                else if (replacement == "token") room.RoomToken = "replacement-proof";
+                wire.Release.TrySetResult(); await closing;
+                Require(room.Room == null && !room.IsBusy && room.PendingPlaybackPanelAction == null && room.ErrorMessage == null,
+                    "Page End socket race left pending state or reported failure.");
+                if (replacement == "none")
+                    Require(room.ClosedReason == "host_left" && room.ConnectionState == "disconnected",
+                        "Successful page End did not complete and stop its socket after room_closed won the DELETE race.");
+                else
+                    Require(room.ClosedReason == closedReason && room.ConnectionState == "connected",
+                        "Old page End completion changed replacement " + replacement + ".");
+            }
+            finally { wire.Release.TrySetResult(); await closing; }
+        }
+        Program.Log("PASS: page End completes after room_closed wins the held DELETE race, without publishing or stopping a replacement profile/room/token.");
+    }
+
+    private sealed class CloseWire : HttpMessageHandler
+    {
+        internal TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Require(request.Method == HttpMethod.Delete && request.RequestUri!.AbsolutePath == "/api/v2/watch-together/rooms/synthetic-room",
+                "Page End emitted an unrelated request.");
+            Entered.TrySetResult(); await Release.Task.WaitAsync(ct);
+            return new(HttpStatusCode.NoContent);
+        }
     }
 
     private static async Task VerifyPageMutationRefreshAsync()
