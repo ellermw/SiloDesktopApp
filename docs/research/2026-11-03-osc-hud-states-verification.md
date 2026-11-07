@@ -1,5 +1,15 @@
 # Active OSC feedback and input ownership
 
+## Current integrated source identity — PR #90
+
+Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. PR #90 includes owned native Audio, Quality and Watch Party controls alongside the earlier OSC work. This entry records inspected source identity only. Builds and tests were not run for this correction; fresh pipeline verification is required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify PR #90.
+
+## Historical PR #86 scope
+
 This is the first focused PR of the owner's approved staged native-menu work. It changes the active Lua/ASS HUD, not the dormant XAML overlay. Native audio/subtitle/quality menus remain later deliveries. Renderer policy, startup/playback loading icons and Dashboard are unchanged.
 
 ## Behavior

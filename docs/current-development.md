@@ -1,3 +1,11 @@
+# Current source identity — native Watch Party panel (PR #90)
+
+Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
+
 ## November 3 — safe retained Library activation (local Beta candidate)
 
 This task deliberately starts from Beta `f6442fd8de1b2b015d2d45a15681e20ba30de025`; source version remains **1.2.544-beta.1** and the pipeline owns stamps/delivery. Official Silo main for this pass is `bb1ee4352b1bec38b4a6441ba81e61a92da81d54` (parent's direct fetch, verified with pinned `git show`). No installer, installed-player restart, push, release or production action occurred.
