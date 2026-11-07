@@ -62,12 +62,14 @@ public sealed class UpgradeAuthenticationRegressionTests
     public void UnauthenticatedShellCannotRevealStaleServerNavigation()
     {
         var mainWindow = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var sidebarPublication = ReadRepoFile("src", "SiloPlayer", "MainWindow.SidebarPublication.cs");
 
         Assert.Contains("private bool CanExposeAuthenticatedNavigation", mainWindow);
         Assert.Contains("_authService.IsLoggedIn", mainWindow);
         Assert.Contains("!string.IsNullOrWhiteSpace(_authService.SelectedProfileId)", mainWindow);
         Assert.Contains("NavView.IsPaneOpen = false;", mainWindow);
-        Assert.Contains("RemoveDynamicLibraryNavItems();", mainWindow);
+        Assert.Contains("RetireSidebarNavigation();", mainWindow);
+        Assert.Contains("RemoveDynamicLibraryNavItems();", sidebarPublication);
         Assert.Contains("NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;", mainWindow);
         Assert.Contains("if (!CanExposeAuthenticatedNavigation)", mainWindow);
         Assert.Contains("BuildPluginApps([]);", mainWindow);

@@ -23,6 +23,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     private TextBlock? _title, _counts, _overview, _playText, _refreshNotice;
     private Button? _playButton, _refreshRetry;
     private ItemsControl? _movies;
+    private Image? _heroPoster, _heroBackdrop;
     private bool _playPending;
     private bool _active;
     private long _visit;
@@ -71,7 +72,9 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         DispatcherQueue.TryEnqueue(() =>
         {
             if (message.Context is {} context && !_catalog.IsCurrentContext(context)) return;
-            if (_knownMembership?.Items.Any(x => x.ContentId == message.ContentId) != true) return;
+            // Until the initial read completes, membership is unknown. A change
+            // must replace that read rather than let its pre-mutation state win.
+            if (!_active || (_knownMembership != null ? !_knownMembership.Items.Any(x => x.ContentId == message.ContentId) : !ViewModel.IsLoading)) return;
             if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.PlaybackProgress or MediaSurfaceChangeKind.ItemMetadataRefreshed) Refresh();
         });
     }
@@ -86,7 +89,8 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         try { await message.Persisted; } catch { return; }
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner)) Refresh();
+            if (_active && visit == _visit && _catalog.IsCurrentIdentityContext(owner) &&
+                (_knownMembership == null || _knownMembership.Items.Any(x => x.ContentId == message.ContentId))) Refresh();
         });
     });
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -99,13 +103,18 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; _visit++; _knownMembership = null; ViewModel.Cancel(); base.OnNavigatedFrom(e); }
     private async Task PlayPrimaryAsync()
     {
-        var detail = ViewModel.Detail; var movie = detail?.PlayTarget;
-        if (movie == null) return;
-        var owner = _catalog.CaptureIdentityContext();
-        await ViewModel.PlayAsync((id, library, _, ct) => MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
-            () => !ct.IsCancellationRequested && _catalog.IsCurrentIdentityContext(owner) && id == movie.ContentId,
-            (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>().PlayAsync(target,
-                libraryId: scope, expectedIdentityContext: context, cancellationToken: cancellation)));
+        var identity = _client.CaptureIdentityContext(); var visit = _visit;
+        await ViewModel.PlayAsync((id, library, owner, ct) =>
+        {
+            // PlayAsync may have revalidated access and selected a new first
+            // unplayed member. Use that refreshed movie, not the old hero target.
+            var movie = ViewModel.Detail?.Items.FirstOrDefault(item => item.ContentId == id);
+            if (movie is null) throw new InvalidOperationException("This movie is no longer available. Refresh the box set and try again.");
+            return MoviePlaybackEntry.PlayAsync(movie, library, identity, ct,
+                () => _active && visit == _visit && _client.IsCurrentIdentityContext(identity),
+                (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>()
+                    .PlayPrimaryAsync(target, scope, owner, context, cancellation));
+        });
     }
     public void Render()
     {
@@ -118,6 +127,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         else if (!ViewModel.IsLoading) _knownMembership = null;
         Body.Children.Clear();
         _renderedSet = null;
+        _heroPoster = _heroBackdrop = null;
         if (ViewModel.Detail == null && ViewModel.IsLoading)
         {
             Body.Children.Add(new ProgressRing { IsActive = true });
@@ -129,14 +139,15 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         {
             var unavailable = ViewModel.Failure is DetailFailureKind.NotFound or DetailFailureKind.AccessDenied;
             Body.Children.Add(new TextBlock { Text = unavailable ? "Box set unavailable" : "Could not load box set", FontSize = 24, TextWrapping = TextWrapping.Wrap });
-            if (ViewModel.Failure == DetailFailureKind.AccessDenied) Body.Children.Add(new TextBlock { Text = DetailFailurePolicy.Message(ViewModel.Failure), TextWrapping = TextWrapping.Wrap });
-            if (ViewModel.Failure == DetailFailureKind.Transient) { var retry = new Button { Content = "Try again" }; retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
+            if (ViewModel.Failure == DetailFailureKind.AccessDenied)
+                Body.Children.Add(new TextBlock { Text = DetailFailurePolicy.Message(ViewModel.Failure), TextWrapping = TextWrapping.Wrap });
+            if (!unavailable) { var retry = new Button { Content = "Try again" }; retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
         }
         if (ViewModel.Detail is not {} set) return;
         var hero = new Grid { MinHeight = 220 };
         if (!string.IsNullOrWhiteSpace(set.BackdropUrl))
         {
-            var backdrop = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.BackdropUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill, Opacity = .22, MaxHeight = 300 };
+            var backdrop = _heroBackdrop = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.BackdropUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill, Opacity = .22, MaxHeight = 300 };
             Grid.SetColumnSpan(backdrop, 2); hero.Children.Add(backdrop);
         }
         hero.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); hero.ColumnDefinitions.Add(new ColumnDefinition());
@@ -146,7 +157,11 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         fallback.Reset("movie", set.PosterThumbhash);
         _ = fallback.ShowThumbhashAsync();
         artwork.Children.Add(fallback);
-        if (!string.IsNullOrWhiteSpace(set.PosterUrl)) artwork.Children.Add(new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill });
+        if (!string.IsNullOrWhiteSpace(set.PosterUrl))
+        {
+            _heroPoster = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill };
+            artwork.Children.Add(_heroPoster);
+        }
         hero.Children.Add(artwork); Grid.SetColumn(info, 1);
         info.Children.Add(new TextBlock { Text = "Box set" });
         info.Children.Add(_title = new TextBlock { FontSize = 32, TextWrapping = TextWrapping.Wrap });
@@ -154,15 +169,16 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         info.Children.Add(_overview = new TextBlock { TextWrapping = TextWrapping.Wrap });
         var actionText = set.PlayTarget is {} next && !string.IsNullOrWhiteSpace(next.Title)
             ? (set.PlayLabel == "Continue" ? "Continue · " : "Play ") + next.Title : set.PlayLabel;
-        var play = new Button { Name = "BoxSetPlay", Style = (Style)Application.Current.Resources["AccentButtonStyle"], Height = 44, CornerRadius = new CornerRadius(22), Padding = new Thickness(24, 0, 24, 0), Content = new TextBlock { Text = actionText, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 400 }, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 440, IsEnabled = set.PlayTarget != null && ViewModel.IsCurrent };
+        var play = new Button { Name = "BoxSetPlay", Style = (Style)Application.Current.Resources["AccentButtonStyle"], Height = 44, CornerRadius = new CornerRadius(22), Padding = new Thickness(24, 0, 24, 0), Content = new TextBlock { Text = actionText, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 400 }, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 440, IsEnabled = set.PlayTarget != null && ViewModel.CanPlay };
         AutomationProperties.SetName(play, actionText);
         _playButton = play; _playText = (TextBlock)play.Content;
         play.Click += async (_, _) =>
         {
             if (!play.IsEnabled || _playPending) return;
+            var visit = _visit;
             _playPending = true; play.IsEnabled = false;
             try { await PlayPrimaryAsync(); }
-            catch (OperationCanceledException) { }
+            catch (Exception) when (!_active || visit != _visit) { }
             catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
             finally { _playPending = false; if (ViewModel.Detail is {} current && _renderedSet != null) UpdateDetail(current); }
         };
@@ -180,10 +196,16 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         UpdateDetail(set);
     }
     private static bool SameLayout(BoxSetDetail previous, BoxSetDetail next) => previous.Id == next.Id && previous.LibraryId == next.LibraryId
-        && previous.PosterUrl == next.PosterUrl && previous.PosterThumbhash == next.PosterThumbhash && previous.BackdropUrl == next.BackdropUrl
+        && LibraryPosterBinding.HasSameArtworkUrl(previous.PosterUrl, next.PosterUrl) && previous.PosterThumbhash == next.PosterThumbhash
+        && LibraryPosterBinding.HasSameArtworkUrl(previous.BackdropUrl, next.BackdropUrl)
         && previous.Items.Where(BoxSetDetail.IsMovieMember).Select(x => x.ContentId).SequenceEqual(next.Items.Where(BoxSetDetail.IsMovieMember).Select(x => x.ContentId));
     private void UpdateDetail(BoxSetDetail set)
     {
+        if (_renderedSet is { } previous)
+        {
+            RetryRenewedArtwork(_heroPoster, previous.PosterUrl, set.PosterUrl);
+            RetryRenewedArtwork(_heroBackdrop, previous.BackdropUrl, set.BackdropUrl);
+        }
         _title!.Text = set.Title;
         _counts!.Text = $"{set.MovieCount} films  ·  {set.Years}  ·  {set.ProgressText}";
         _overview!.Text = set.Overview;
@@ -191,11 +213,21 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             ? (set.PlayLabel == "Continue" ? "Continue · " : "Play ") + next.Title : set.PlayLabel;
         _playText!.Text = actionText;
         AutomationProperties.SetName(_playButton!, actionText);
-        _playButton!.IsEnabled = !_playPending && set.PlayTarget != null && ViewModel.IsCurrent;
+        _playButton!.IsEnabled = !_playPending && set.PlayTarget != null && ViewModel.CanPlay;
         foreach (var (card, movie) in _movies!.Items.OfType<PosterCard>().Zip(set.Items.Where(BoxSetDetail.IsMovieMember)))
             if (!ReferenceEquals(card.MediaItem, movie)) card.RefreshItem(movie);
         var notice = ViewModel.Failure != DetailFailureKind.None && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
         _refreshNotice!.Visibility = notice; _refreshRetry!.Visibility = notice;
         _renderedSet = set;
+    }
+
+    private static void RetryRenewedArtwork(Image? image, string? previousUrl, string? nextUrl)
+    {
+        if (image == null || previousUrl == nextUrl || string.IsNullOrWhiteSpace(nextUrl)) return;
+        var outcome = SiloPlayer.Converters.UrlToImageSourceConverter.GetLoadOutcome(image.Source);
+        // Keep successfully mounted artwork. A pending/failed converter
+        // operation belongs to its old signature and needs a renewed source.
+        if (image.Source != null && (outcome == null || outcome.IsCompletedSuccessfully && outcome.Result)) return;
+        image.Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(nextUrl, typeof(ImageSource), null!, "") as ImageSource;
     }
 }

@@ -277,8 +277,13 @@ try {
     if(-not $gateOwned){$failureState='deferred';throw 'Another update is running. Update postponed.'}
     foreach($running in [Diagnostics.Process]::GetProcessesByName('SiloPlayer')) {
         try {
+            $runningPath=$null
             try {$runningPath=$running.MainModule.FileName}
-            catch {if($running.HasExited){continue};$failureState='deferred';throw 'Another Silo process cannot be checked. Update postponed.'}
+            catch { } # A process can start or exit before its image is available.
+            if([string]::IsNullOrWhiteSpace($runningPath)){
+                try {if($running.HasExited){continue}}catch { }
+                $failureState='deferred';throw 'Another Silo process cannot be checked. Update postponed.'
+            }
             if($runningPath -ieq $app -or ($paths.Versioned -and $runningPath.StartsWith($appDirectory+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase))){$failureState='deferred';throw 'Another Silo instance is open. Update postponed.'}
         }finally{$running.Dispose()}
     }

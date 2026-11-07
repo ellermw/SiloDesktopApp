@@ -141,6 +141,19 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ArtworkMotionNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "grouped-post-save")
+            {
+                await LibraryLettersNativeFixture.RunAsync(parent, _window, grouped: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "grouped-library")
+            {
+                await GroupedLibraryCardsNativeFixture.RunAsync(parent);
+                await LibraryLettersNativeFixture.RunAsync(parent, _window, grouped: true);
+                await LibraryLettersNativeFixture.RunAsync(parent, _window);
+                await LibraryCursorNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-overview")
             {
                 await EpisodeOverviewNativeFixture.RunAsync(parent);
@@ -331,6 +344,14 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 await PlaybackStartupFailureNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "sidebar-publication" or "sidebar-detached-publication" ||
+                Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY")?.StartsWith("sidebar-review-", StringComparison.Ordinal) == true)
+            {
+                await ProfileMenuNavigationNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed.");
+                Exit();
+                return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-menu-navigation")
             {

@@ -64,7 +64,7 @@ public partial class SiloApiClient
         {
             if (!IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Connection owner changed.");
             using var request = hop == 0
-                ? CreateIdentityBoundRequest(owner, HttpMethod.Get, path, null)
+                ? CreateIdentityBoundRequest(owner, HttpMethod.Get, path, null, null)
                 : new HttpRequestMessage(HttpMethod.Get, target);
             request.Headers.Remove("X-Profile-Token");
             request.Version = _http.DefaultRequestVersion;

@@ -16,8 +16,7 @@ public partial class CatalogApi
     {
         var context = client.CaptureContext();
         try { return await ReadBoxSetPolicyAsync(context, ct); }
-        catch (OperationCanceledException) { throw; }
-        catch { return false; }
+        catch (ApiException ex) when (ex.StatusCode == 404) { return false; }
     }
     public async Task<bool> BoxSetsEnabledAsync(int? libraryId, CancellationToken ct = default, bool throwOnCapabilityFailure = false)
     {

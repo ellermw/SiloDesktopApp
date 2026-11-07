@@ -9,6 +9,55 @@ namespace SiloPlayer.Tests;
 
 public sealed class AuthServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SelectProfile_NotifiesAuthoritySynchronouslyForSwitchAndSameIdEdit(bool startSession)
+    {
+        using var http = new HttpClient(new DelegateHandler((_, _) => Task.FromResult(JsonResponse("{}"))));
+        var client = new SiloApiClient(http);
+        client.SetBaseUrl("https://example.test");
+        using var auth = new AuthService(client, new AuthApi(client));
+        if (startSession) auth.SetTokens("access", "refresh", 86400);
+        auth.SelectProfile("first", profile: new() { Id = "first", Name = "First" });
+
+        var events = 0;
+        Profile? observedProfile = null;
+        string? observedId = null, observedToken = null;
+        var observedContext = client.CaptureIdentityContext();
+        // A supplemental subscriber must not prevent the shell from observing authority.
+        auth.ProfileChanged += () => throw new InvalidOperationException("supplemental listener failed");
+        auth.ProfileChanged += () =>
+        {
+            events++;
+            observedProfile = auth.SelectedProfile;
+            observedId = client.ProfileId;
+            observedToken = client.ProfileToken;
+            observedContext = client.CaptureIdentityContext();
+        };
+
+        var oldContext = client.CaptureIdentityContext();
+        var selected = new Profile { Id = "second", Name = "Second", IsChild = true };
+        auth.SelectProfile(selected.Id, "selected-proof", selected);
+
+        Assert.Equal(1, events);
+        Assert.Same(selected, observedProfile);
+        Assert.Equal("second", observedId);
+        Assert.Equal("selected-proof", observedToken);
+        Assert.False(client.IsCurrentIdentityContext(oldContext));
+        Assert.True(client.IsCurrentIdentityContext(observedContext));
+
+        oldContext = observedContext;
+        var edited = new Profile { Id = "second", Name = "Edited", LibraryRestrictionsEnabled = true, AllowedLibraryIds = [1] };
+        auth.SelectProfile(edited.Id, "edited-proof", edited);
+
+        Assert.Equal(2, events);
+        Assert.Same(edited, observedProfile);
+        Assert.Equal("edited-proof", observedToken);
+        Assert.False(client.IsCurrentIdentityContext(oldContext));
+        Assert.True(client.IsCurrentIdentityContext(observedContext));
+    }
+
     [Fact]
     public async Task TokenLifetime_SchedulesProactiveRefreshAtEightyPercentWithout401()
     {
