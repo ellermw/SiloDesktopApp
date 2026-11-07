@@ -72,10 +72,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
     private Window? _window;
     private static readonly string[] NativeQualityBaseCases = ["normal", "retired", "release", "successor-failure", "successor-success"];
     private static readonly string[] NativeQualityReviewCases = ["legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality",
+        "quality-access-refresh", "version-access-refresh", "quality-noop-invalidation", "version-noop-invalidation",
         "quality-off-server-error", "quality-off-timeout", "quality-off-invalid-url", "subtitle-dialog-unavailable"];
     private static readonly string[] NativeAudioCases = ["", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
         "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
-        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure",
+        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure", "access-refresh", "noop-invalidation",
         "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor",
         "access-refresh-replan", "accepted-version", "quality-second-step-failure", "quality-second-step-cancellation",
         "audio-plan-invalidation", "quality-plan-invalidation"];
@@ -252,6 +253,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
             {
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-more-menu")
+            {
+                await PlaybackChapterMenuNativeFixture.RunMoreAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-chapters-menu")
+            {
+                await PlaybackChapterMenuNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-menu-geometry" or "native-menu-resize")

@@ -22,6 +22,7 @@ public partial class PlayerService
     private void PublishNativeMenuScopes()
     {
         var authority = _activeAuthority;
+        // Access refreshes retire reads, not the accepted playback identity.
         var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
@@ -72,6 +73,10 @@ public partial class PlayerService
             mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : version?.AudioTracks?.Count > 1 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-quality-scope", session != null && ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
+            // Sessionless direct playback keeps its inventory only in Lua.
+            // Keep compact Audio and Chapters on that same legacy path.
+            mpv.SendScriptMessage("osc-native-more-scope", legacyAudio ? "" : owner.Token);
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
@@ -93,6 +98,8 @@ public partial class PlayerService
             mpv?.SendScriptMessage("osc-native-audio-scope", "");
             mpv?.SendScriptMessage("osc-native-quality-scope", "");
             mpv?.SendScriptMessage("osc-native-party-scope", "");
+            mpv?.SendScriptMessage("osc-native-chapters-scope", "");
+            mpv?.SendScriptMessage("osc-native-more-scope", "");
         }
         if (dispatcher?.HasThreadAccess == true) Retire(); else dispatcher?.TryEnqueue(Retire);
     }
@@ -104,6 +111,7 @@ public partial class PlayerService
             (owner?.Mpv ?? _mpv)?.SendScriptMessage("osc-native-menu-closed", request.OwnerToken,
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
+        // A late request or temporary busy state must not retire a current owner.
         if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || IsLoading || _switchingContent)
         { Ack(); return; }
         if (!_nativeMenuGate.TryOpen(request))
@@ -132,6 +140,8 @@ public partial class PlayerService
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
                 "party" => CreateNativePartyMenu(owner, request, Finish),
+                "chapters" => CreateNativeChaptersMenu(owner, request, Finish),
+                "more" => CreateNativeMoreMenu(owner, request, Finish),
                 _ => null,
             };
             if (menu == null) { Finish(PlaybackMenuCloseReason.OwnerRetired); return; }
