@@ -60,7 +60,11 @@ public partial class PlaybackApi
     public Task CloseWatchTogetherRoomAsync(string roomId, CancellationToken ct = default)
         => client.DeleteAsync(RoomPath(roomId), ct);
 
-    public async Task<WatchTogetherSuggestionsResponse> ListWatchTogetherSuggestionsAsync(string roomId, string roomToken, CancellationToken ct = default)
+    public Task<WatchTogetherSuggestionsResponse> ListWatchTogetherSuggestionsAsync(string roomId, string roomToken, CancellationToken ct = default)
+        => ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct, null);
+
+    private async Task<WatchTogetherSuggestionsResponse> ListWatchTogetherSuggestionsAsync(string roomId, string roomToken, CancellationToken ct,
+        ApiIdentityContext? expectedIdentityContext)
     {
         var authority = client.CaptureContext();
         var result = new WatchTogetherSuggestionsResponse();
@@ -68,10 +72,13 @@ public partial class PlaybackApi
         var seen = new HashSet<string>(StringComparer.Ordinal);
         while (true)
         {
-            EnsureAuthority(authority);
-            var page = await client.SendRequestAsync<ApiCollectionPage<WatchTogetherSuggestion>>(
-                HttpMethod.Get, path, null, RoomProof(roomToken), ct).ConfigureAwait(false);
-            EnsureAuthority(authority);
+            EnsureRoomAuthority(authority, expectedIdentityContext);
+            var page = expectedIdentityContext is { } identity
+                ? await client.SendIdentityBoundRequestAsync<ApiCollectionPage<WatchTogetherSuggestion>>(
+                    identity, HttpMethod.Get, path, null, ct, RoomProof(roomToken)).ConfigureAwait(false)
+                : await client.SendRequestAsync<ApiCollectionPage<WatchTogetherSuggestion>>(
+                    HttpMethod.Get, path, null, RoomProof(roomToken), ct).ConfigureAwait(false);
+            EnsureRoomAuthority(authority, expectedIdentityContext);
             result.Suggestions.AddRange(page.Items);
             if (page.Page?.HasMore != true) return result;
             var cursor = page.Page.NextCursor;
@@ -116,7 +123,7 @@ public partial class PlaybackApi
         ApiIdentityContext? expectedIdentityContext = null)
     {
         await WriteSuggestionsAsync(method, roomId, roomToken, suffix, body, ct, expectedIdentityContext).ConfigureAwait(false);
-        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct).ConfigureAwait(false);
+        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct, expectedIdentityContext).ConfigureAwait(false);
     }
 
     private async Task WriteSuggestionsAsync(HttpMethod method, string roomId, string roomToken, string suffix, object? body, CancellationToken ct,
@@ -159,6 +166,13 @@ public partial class PlaybackApi
             : await client.SendRequestAsync<WatchTogetherRoomResponse>(method, path, body, headers, ct).ConfigureAwait(false);
         EnsureRoomIntentOwner(authority, expectedIdentityContext, ct);
         return response;
+    }
+
+    private void EnsureRoomAuthority(ApiRequestContext readOwner, ApiIdentityContext? identity)
+    {
+        // Only accepted playback actions opt in; ordinary room reads still retire
+        // on access revisions. The server authorizes every identity-bound action.
+        EnsureRoomIntentOwner(readOwner, identity, CancellationToken.None);
     }
 
     private void EnsureRoomIntentOwner(ApiRequestContext authority, ApiIdentityContext? identity, CancellationToken ct)

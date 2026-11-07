@@ -349,6 +349,15 @@
                 <Grid x:Name="LibraryLetterButtons" KeyDown="LibraryLetterButtons_KeyDown" />
             </Border>
 
+            <StackPanel x:Name="LibraryLetterFeedback" Orientation="Horizontal" Spacing="10"
+                        HorizontalAlignment="Center" VerticalAlignment="Top" Margin="12,8,64,0"
+                        Padding="12,6" Background="{StaticResource SurfaceBrush}" Visibility="Collapsed">
+                <TextBlock x:Name="LibraryLetterStatus" VerticalAlignment="Center"
+                           AutomationProperties.LiveSetting="Polite" />
+                <Button x:Name="LibraryLetterRetry" Content="Retry" Visibility="Collapsed"
+                        Command="{x:Bind ViewModel.RetryLetterJumpCommand}" AutomationProperties.Name="Retry letter jump" />
+            </StackPanel>
+
             <!-- Loading indicator overlaid at bottom of viewport -->
             <ProgressRing
                 x:Name="LoadingRing"

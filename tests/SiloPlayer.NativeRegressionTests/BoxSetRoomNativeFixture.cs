@@ -78,7 +78,7 @@ internal static class BoxSetRoomNativeFixture
                         .Invoke(events, [readOwner, null, catchUp]);
                     Check(published is true && !client.IsCurrentContext(readOwner) && client.IsCurrentIdentityContext(identity), "access event retires only read authority");
                     for (var i = 0; i < 100 && (wire.Reads == reads || page.ViewModel.IsLoading); i++) await Task.Delay(10);
-                    Check(wire.Reads > reads && !page.ViewModel.IsLoading && !button.IsEnabled && routeType == null, "refresh completes without abandoning the held room intent");
+                    Check(wire.Reads > reads && !page.ViewModel.IsLoading && !button.IsEnabled && routeType == null && page.ViewModel.CanPlay, "refresh completes without abandoning the held room intent");
                 }
                 finally
                 {
@@ -107,9 +107,23 @@ internal static class BoxSetRoomNativeFixture
             var movie = new MediaItem { ContentId = "second", Type = "movie", Title = "Second" };
             await (Task)helper.Invoke(null, [movie, 12, client.CaptureIdentityContext(), CancellationToken.None, (Func<bool>)(() => true), local])!;
             Check(calls == 1, "standalone delegates to ordinary movie playback");
-            await (Task)helper.Invoke(null, [movie, 12, client.CaptureIdentityContext(), CancellationToken.None, (Func<bool>)(() => false), local])!;
-            Check(calls == 1, "retired movie entry cannot start standalone playback");
-            Program.Log("PASS: actual box-set primary action stages host lobby, suggests guest/playing/vote intents, retains room/local authority, and standalone entry preserves movie/library/owner; late stage preserves replaced room.");
+            async Task DeclinedAsync(MediaItem target, Func<bool> current, string message)
+            {
+                try
+                {
+                    await (Task)helper.Invoke(null, [target, 12, client.CaptureIdentityContext(), CancellationToken.None, current, local])!;
+                }
+                catch (InvalidOperationException ex) { Check(ex.Message.Contains(message, StringComparison.OrdinalIgnoreCase), "declined entry gives actionable guidance"); return; }
+                throw new InvalidOperationException("Box-set room: declined entry returned success without feedback.");
+            }
+            await DeclinedAsync(movie, () => false, "Reopen");
+            await DeclinedAsync(new MediaItem { Type = "box_set", ContentId = "box_set:7" }, () => true, "Reopen");
+            Check(calls == 1, "retired or invalid movie entry cannot start standalone playback");
+            coordinator.SetActiveRoom(new WatchTogetherRoomViewModel(playback, client) { Room = new() { Phase = "lobby" } });
+            var unreadyStages = wire.Stages; var unreadySuggestions = wire.Suggestions;
+            await DeclinedAsync(movie, () => true, "Open the room");
+            Check(wire.Stages == unreadyStages && wire.Suggestions == unreadySuggestions && calls == 1, "unready room declines without dispatching playback");
+            Program.Log("PASS: actual box-set primary action stages host lobby, suggests guest/playing/vote intents, survives access revisions without replay or list reads, and reports declined entries; late stage preserves replaced room.");
         }
         finally { wire.ReleaseStage.TrySetResult(); wire.ReleaseSuggestion.TrySetResult(); toast.Unregister(); coordinator.ClearActiveRoom(); parent.Children.Clear(); await Task.Delay(100); slot.SetValue(null, original); }
     }

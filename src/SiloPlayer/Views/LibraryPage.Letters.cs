@@ -18,6 +18,17 @@ public sealed partial class LibraryPage
     private string? _focusedLibraryLetter;
     private string? _activeLibraryLetter;
     private string? _chosenLibraryEndLetter;
+    private long _queuedLetterJumpVersion;
+    private bool _libraryScrollIsIntermediate;
+    private Action? _pendingLibraryLetterCommit;
+    private EventHandler<object>? _libraryLetterFrameHandler;
+
+    private void ClearLibraryLetterFrame()
+    {
+        if (_libraryLetterFrameHandler is not { } handler) return;
+        CompositionTarget.Rendering -= handler;
+        _libraryLetterFrameHandler = null;
+    }
 
     private bool IsLibraryLetterGrid => _isNavigated && _currentTab == "Library" &&
         _currentAudiobookAxis == "books" && ViewModel.SelectedSort == "title";
@@ -56,18 +67,38 @@ public sealed partial class LibraryPage
     private void LibraryLetters_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(ViewModel.LetterIndex) or nameof(ViewModel.IsLetterIndexLoading) or nameof(ViewModel.SelectedSort) or
-            nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount))
-            DispatcherQueue.TryEnqueue(UpdateLibraryLetters);
+            nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount) or
+            nameof(ViewModel.PendingLetter) or nameof(ViewModel.LetterJumpError))
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                UpdateLibraryLetters();
+                if ((e.PropertyName is nameof(ViewModel.PendingLetter) or nameof(ViewModel.LetterJumpError)) &&
+                    ViewModel.LetterJumpError is not null && !ViewModel.IsLetterJumpInProgress &&
+                    !ViewModel.IsLetterJumpViewportBlocked)
+                {
+                    // The forced seek may have cancelled this exact row range.
+                    // Retry it without requiring another scroll/resize event.
+                    _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+                    ScheduleVisibleRangeLoad(force: true);
+                }
+            });
     }
 
     private void UpdateLibraryLetters()
     {
+        if (!IsLibraryLetterGrid) ViewModel.RetireLetterJump();
         if (!ReferenceEquals(_displayedLetterIndex, ViewModel.LetterIndex))
         {
             _displayedLetterIndex = ViewModel.LetterIndex;
             _chosenLibraryEndLetter = null;
         }
         LibraryLetterRail.Visibility = CanShowLibraryLetters ? Visibility.Visible : Visibility.Collapsed;
+        var pending = ViewModel.PendingLetter;
+        var error = ViewModel.LetterJumpError;
+        LibraryLetterStatus.Text = error ?? (pending is null ? "" : $"Loading {pending}…");
+        LibraryLetterFeedback.Visibility = IsLibraryLetterGrid && (pending is not null || error is not null)
+            ? Visibility.Visible : Visibility.Collapsed;
+        LibraryLetterRetry.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
         foreach (var (letter, button) in _libraryLetterButtons)
         {
             var entry = CanShowLibraryLetters ? ViewModel.LetterIndex?.Letters.FirstOrDefault(item => item.Letter == letter) : null;
@@ -126,9 +157,12 @@ public sealed partial class LibraryPage
             ViewModel.TotalCount, layout.Columns, layout.RowHeight, GetLibraryViewportHeight());
         var atBottom = Math.Abs(_libraryVerticalOffset - maxOffset) < 2;
         if (!atBottom) _chosenLibraryEndLetter = null;
-        var topRowEnd = Math.Min(ViewModel.TotalCount - 1, (_currentFirstRow + 1) * layout.Columns - 1);
-        var activeLetter = atBottom && _chosenLibraryEndLetter is not null
-            ? _chosenLibraryEndLetter : ViewModel.LetterIndex!.LetterAtIndex(topRowEnd);
+        // Native scrolling rounds fractional row boundaries to rendered pixels.
+        // Ignore a subpixel sliver of the preceding row when naming the top letter.
+        var letterRow = VirtualGridScrollGate.GetFirstVisibleRow(_libraryVerticalOffset + .5, layout.RowHeight);
+        var topRowEnd = Math.Min(ViewModel.TotalCount - 1, (letterRow + 1) * layout.Columns - 1);
+        var activeLetter = ViewModel.PendingLetter ?? (atBottom && _chosenLibraryEndLetter is not null
+            ? _chosenLibraryEndLetter : ViewModel.LetterIndex!.LetterAtIndex(topRowEnd));
         if (!force && activeLetter == _activeLibraryLetter) return;
         _activeLibraryLetter = activeLetter;
         foreach (var (letter, button) in _libraryLetterButtons)
@@ -137,7 +171,8 @@ public sealed partial class LibraryPage
             button.Background = active ? (Brush)Application.Current.Resources["AccentBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             button.Foreground = (Brush)Application.Current.Resources[active ? "PrimaryTextBrush" : "SecondaryTextBrush"];
             button.Opacity = button.IsEnabled ? 1 : .35;
-            AutomationProperties.SetHelpText(button, active ? "Current letter" : "Jump to letter");
+            AutomationProperties.SetHelpText(button, letter == ViewModel.PendingLetter ? "Loading titles" :
+                active ? "Current letter" : "Jump to letter");
         }
         UpdateLibraryLetterTabStop();
     }
@@ -159,23 +194,58 @@ public sealed partial class LibraryPage
 
     private void OnLibraryLetterJumpRequested(int index)
     {
+        var jump = ViewModel.LetterJumpVersion;
         var owner = ViewModel.LetterIndex;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var context = catalog.CaptureContext();
         var language = catalog.FilterCacheGeneration;
-        DispatcherQueue.TryEnqueue(() =>
+        var visit = _libraryVisit;
+        bool IsCurrent() => visit == _libraryVisit && CanShowLibraryLetters && ViewModel.IsCurrentLetterJump(jump) &&
+            ReferenceEquals(owner, ViewModel.LetterIndex) && index < ViewModel.TotalCount &&
+            ViewModel.GetWindowItem(index) is not null && catalog.IsCurrentContext(context) && catalog.FilterCacheGeneration == language;
+        _queuedLetterJumpVersion = jump;
+        ClearLibraryLetterFrame();
+        void Commit()
         {
-            if (!CanShowLibraryLetters || !ReferenceEquals(owner, ViewModel.LetterIndex) ||
-                index >= ViewModel.TotalCount || ViewModel.GetWindowItem(index) is null ||
-                !catalog.IsCurrentContext(context) || catalog.FilterCacheGeneration != language) return;
+            if (_queuedLetterJumpVersion != jump) return;
+            _queuedLetterJumpVersion = 0;
+            _pendingLibraryLetterCommit = null;
+            if (!IsCurrent()) return;
             UpdateVirtualGridMetrics();
             var layout = GetGridLayout();
             var offset = (index / layout.Columns) * layout.RowHeight;
             var maxOffset = VirtualGridScrollGate.GetMaxVerticalOffset(
                 ViewModel.TotalCount, layout.Columns, layout.RowHeight, GetLibraryViewportHeight());
             _chosenLibraryEndLetter = offset >= maxOffset ? owner?.LetterAtIndex(index) : null;
-            SetLibraryVerticalOffset(offset, force: true);
+            SetLibraryVerticalOffset(offset, force: true, owner: IsCurrent);
             UpdateActiveLibraryLetter();
+        }
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_queuedLetterJumpVersion != jump) return;
+            // A requested animation can start after this dispatcher turn.
+            // Observe one native frame before deciding whether it is idle.
+            EventHandler<object>? frame = null;
+            frame = (_, _) =>
+            {
+                CompositionTarget.Rendering -= frame;
+                if (!ReferenceEquals(_libraryLetterFrameHandler, frame)) return;
+                _libraryLetterFrameHandler = null;
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_queuedLetterJumpVersion != jump) return;
+                    if (_libraryScrollIsIntermediate)
+                    {
+                        // Immediate ChangeView translates existing motion.
+                        // Commit once it ends, under the same owner.
+                        _pendingLibraryLetterCommit = Commit;
+                        return;
+                    }
+                    Commit();
+                });
+            };
+            _libraryLetterFrameHandler = frame;
+            CompositionTarget.Rendering += frame;
         });
     }
 

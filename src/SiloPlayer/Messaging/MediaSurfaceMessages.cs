@@ -1,5 +1,22 @@
 namespace SiloPlayer.Messaging;
 
+/// <summary>
+/// Captured server state invalidation. The first delivery retires stale reads;
+/// the bounded, coalesced delivery also refreshes mounted detail surfaces.
+/// These IDs describe refresh scope, never watched/progress scalar values.
+/// ViewerStateContentIds permits viewer-only leaf refreshes without advancing
+/// their navigation-owned playback state, unless PlaybackStateContentIds also
+/// names that leaf in a mixed event batch.
+/// </summary>
+public sealed record MediaStateInvalidated(
+    SiloPlayer.Core.Api.ApiRequestContext Context,
+    IReadOnlySet<string> ContentIds,
+    IReadOnlySet<string> SeriesIds,
+    bool CatchUp = false,
+    bool RefreshDetails = true,
+    IReadOnlySet<string>? ViewerStateContentIds = null,
+    IReadOnlySet<string>? PlaybackStateContentIds = null);
+
 /// <summary>A captured profile's server-ordered Home preference was accepted.</summary>
 public sealed record HomePreferenceChanged(SiloPlayer.Core.Api.ApiRequestContext Context, bool ReloadLayout = false);
 
@@ -78,6 +95,8 @@ public sealed class MediaSurfaceChanged
 public sealed class PlaybackProgressUpdated
 {
     public string ContentId { get; }
+    /// <summary>The episode's series, even when its season is not loaded by a mounted detail.</summary>
+    public string? SeriesId { get; init; }
     public double PositionSeconds { get; }
     public double DurationSeconds { get; }
     public bool Completed { get; }
