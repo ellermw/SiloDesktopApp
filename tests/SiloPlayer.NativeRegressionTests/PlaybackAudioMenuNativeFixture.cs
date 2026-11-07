@@ -29,7 +29,7 @@ using Windows.Storage.Streams;
 /// generated local video and a synthetic API. No installed application, account,
 /// system input injection, foreground changes or production setup are used.
 /// </summary>
-internal static class PlaybackAudioMenuNativeFixture
+internal static partial class PlaybackAudioMenuNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -109,7 +109,9 @@ internal static class PlaybackAudioMenuNativeFixture
                     mp.commandv('script-message','silo-audio-fixture-state',request,require('mp.utils').format_json({
                         x=r.cx or 0,y=r.cy or 0,w=r.w or 0,h=r.h or 0,
                         width=state.osd_width,height=state.osd_height,scope=state.native_audio_scope or '',
+                        qualityScope=state.native_quality_scope or '',
                         sequence=pending.sequence or 0,legacy=state.audio_menu_visible or false,
+                        legacyAvailable=state.native_audio_legacy or false,directAudio=state.layout.btn_audio ~= nil,
                         notice=state.notice_visible or false,noticeTitle=state.notice_title or '',
                         closeConsume=fixture_close_consume,
                         compactX=(compactAudio.x or 0)+(compactAudio.w or 0)/2,
@@ -148,7 +150,25 @@ internal static class PlaybackAudioMenuNativeFixture
                 return;
             }
             Require(list.Items.Count == 72, "Native menu omitted source audio tracks.");
+            var technical = (ListViewItem)list.Items[0];
+            var technicalText = string.Join(" ", Descendants<TextBlock>(technical.Content as DependencyObject ?? technical).Select(text => text.Text));
+            Require(technicalText.Contains("640 kbps", StringComparison.Ordinal)
+                && technicalText.Contains("48 kHz", StringComparison.Ordinal)
+                && AutomationProperties.GetName(technical).Contains("640 kbps", StringComparison.Ordinal),
+                "Native Audio did not preserve source kbps and sample-rate metadata in its row and accessible label.");
+            var untitled = (ListViewItem)list.Items[1];
+            Require(AutomationProperties.GetName(untitled).StartsWith("Track 2,", StringComparison.Ordinal)
+                && Descendants<TextBlock>((DependencyObject)untitled.Content).Any(text => text.Text == "Track 2"),
+                "An untitled track without a language did not use its numbered fallback.");
             Require(list.SelectedIndex == 37, "The current source track was not selected on open.");
+            var accessScope = (await Query()).GetProperty("scope").GetString();
+            api.InvalidateAccessContext();
+            await Task.Delay(200); // Include the native owner's 100 ms watch tick.
+            Require(ReferenceEquals(Menu(service), menu), "An access-only refresh retired the open Audio menu.");
+            Call(menu, "Input", "cancel");
+            menu = await OpenFromOsc(); hwnd = MenuHwnd(menu); list = (ListView)Get(menu, "_list")!;
+            Require((await Query()).GetProperty("scope").GetString() == accessScope,
+                "Audio required a new scope to reopen after an access-only refresh.");
             Require(GetWindow(hwnd, 4) == video.Hwnd && (GetWindowLongPtrW(hwnd, -20).ToInt64() & 0x40000) == 0
                 && (GetWindowLongPtrW(hwnd, -20).ToInt64() & 0x80) != 0, "Native menu is not an owned tool window without an extra taskbar entry.");
             Require(IsWindowVisible(hwnd) && IsWindowVisible(video.Hwnd), "Native Audio or its synthetic video is not shown.");
@@ -242,41 +262,79 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(Get(video, "SurfaceChanged") == null && Get(video, "_menuDismissal") == null,
                 "Audio close retained its native owner subscription or dismissal hook.");
 
-            // Access-only revisions must not strand the published capability or
-            // close a menu belonging to the same accepted account/profile.
-            menu = await OpenFromOsc();
-            var accessOwner = Get(service, "_nativeMenuOwner");
-            var accessScope = (await Query()).GetProperty("scope").GetString();
-            api.InvalidateAccessContext();
-            await Task.Delay(150); // Cross the native owner's 100 ms watch tick.
-            Call(menu, "Input", "end");
-            Require(ReferenceEquals(Menu(service), menu) && ((ListView)Get(menu, "_list")!).SelectedIndex == 71 &&
-                ReferenceEquals(Get(service, "_nativeMenuOwner"), accessOwner),
-                "An access-only revision retired the current native Audio owner.");
-            Call(menu, "Input", "cancel");
-            menu = await OpenFromOsc();
-            Require((await Query()).GetProperty("scope").GetString() == accessScope,
-                "Reopening Audio after an access-only revision required a new scope.");
+            // Exercise PiP state/compact OSC offscreen, not physical topmost PiP.
+            try
+            {
+                Call(service, "RetireNativeMenus");
+                Property(service, "State", PlayerState.PictureInPicture);
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 480, 270));
+                video.SynchronizePosition();
+                Call(service, "PublishNativeMenuScopes");
+                await WaitForOscWidth(480);
+                menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
+                Require(service.State == PlayerState.PictureInPicture &&
+                    !(await Query()).GetProperty("legacy").GetBoolean(), "PiP did not use native Audio.");
+                Require(GetWindowRect(video.Hwnd, out var pipVideo) && GetWindowRect(hwnd, out var pipMenu)
+                    && pipMenu.Left >= pipVideo.Left && pipMenu.Right <= pipVideo.Right
+                    && pipMenu.Top >= pipVideo.Top && pipMenu.Bottom <= pipVideo.Bottom,
+                    "Native Audio escaped the compact PiP surface.");
+                Call(menu, "Input", "end");
+                Require(((ListView)Get(menu, "_list")!).SelectedIndex == 71, "PiP Audio could not reach the last source track.");
+                Call(menu, "Input", "cancel");
+                Require(Menu(service) == null && Gate(service).CurrentCount == 1 && mpv.IsPaused && service.IsPaused,
+                    "PiP Audio dismissal stranded its lease or changed paused intent.");
+            }
+            finally
+            {
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
+                service.SetState(PlayerState.Expanded);
+            }
+            await WaitForOscWidth(1280);
 
-            // Joining/leaving a room must rotate scopes without a metadata refresh.
-            service.SetWatchTogetherPlayback(true);
-            await Until(() => Menu(service) == null, "Joining a room stranded the solo native menu.");
-            var roomScope = (await Query()).GetProperty("scope").GetString();
-            Require(!string.IsNullOrEmpty(roomScope) && roomScope != accessScope,
-                "Joining a room did not republish native menu scopes.");
-            menu = await OpenFromOsc();
-            service.SetWatchTogetherPlayback(false);
-            await Until(() => Menu(service) == null, "Leaving a room stranded the room native menu.");
-            var soloScope = (await Query()).GetProperty("scope").GetString();
-            Require(!string.IsNullOrEmpty(soloScope) && soloScope != roomScope,
-                "Leaving a room did not republish native menu scopes.");
-            menu = await OpenFromOsc();
-            Call(menu, "Input", "cancel");
-            Require(mpv.IsPaused && wire.AudioPicks.Count == 0,
-                "Access/room native menu ownership checks changed playback or selected audio.");
+            // Only the explicitly authorized sessionless direct fallback may
+            // bypass the native host and retain the last Lua inventory.
+            var activeSession = manager.CurrentSession!;
+            var activeTransport = Get(service, "_activeTransportPlan");
+            var alternateVersion = new FileVersion { FileId = 43, Resolution = "720p" };
+            try
+            {
+                service.Versions.Add(alternateVersion);
+                Call(service, "SendQualityInfoToOsc");
+                Require(!string.IsNullOrEmpty((await Query()).GetProperty("qualityScope").GetString()),
+                    "Multi-version playback with a session did not advertise native Quality.");
+                Property(manager, "CurrentSession", null!);
+                Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", media.Origin + mediaPath));
+                Call(service, "SendAudioTrackListToOsc");
+                var sessionless = await Query();
+                Require(sessionless.GetProperty("qualityScope").GetString() == "",
+                    "Sessionless multi-version direct playback advertised a Quality menu that requires a session.");
+                Require(sessionless.GetProperty("legacyAvailable").GetBoolean(),
+                    "Sessionless direct playback did not publish its legacy Audio fallback.");
+                await TriggerOsc();
+                Require((await Query()).GetProperty("legacy").GetBoolean() && Menu(service) == null
+                    && Gate(service).CurrentCount == 1, "Sessionless direct Audio did not open the existing local menu.");
+                mpv.SendKeypress("ESC");
+                Call(service, "RetireNativeMenus");
+                var retiredFallback = await Query();
+                Require(!retiredFallback.GetProperty("legacyAvailable").GetBoolean()
+                    && !retiredFallback.GetProperty("legacy").GetBoolean(),
+                    "Retirement retained the local Audio fallback or its dismissed menu.");
+            }
+            finally
+            {
+                Property(manager, "CurrentSession", activeSession);
+                Set(service, "_activeTransportPlan", activeTransport);
+                service.Versions.Remove(alternateVersion);
+                Call(service, "SendAudioTrackListToOsc");
+                Call(service, "SendQualityInfoToOsc");
+            }
+            Set(service, "_postRollActive", true);
+            Call(service, "RetireNativeMenus");
+            mpv.SendScriptMessage("osc-set-post-roll", "true");
+            Call(service, "ReturnFromPostRollPreview");
+            Require(!string.IsNullOrEmpty((await Query()).GetProperty("scope").GetString()),
+                "Returning from post-roll preview did not republish native Audio availability.");
 
-            // A second request replaces the first. Its late close/selection cannot
-            // clear the new request or choose a track.
             menu = await OpenFromOsc(); var old = menu;
             var first = await Query();
             var token = first.GetProperty("scope").GetString()!;
@@ -292,14 +350,10 @@ internal static class PlaybackAudioMenuNativeFixture
             await Task.Delay(60);
             Require(ReferenceEquals(Menu(service), menu), "Stale cancel closed a newer menu.");
             Call(menu, "Input", "cancel");
-            // The synthetic newer request deliberately bypassed Lua's local
-            // counter. Retire that synthetic owner explicitly; unchanged
-            // metadata publication correctly retains a live menu owner.
+            // The synthetic request bypassed Lua's counter; retire it explicitly.
             Call(service, "RetireNativeMenus");
             Call(service, "SendAudioTrackListToOsc");
 
-            // Native activation dismissal is consumed before a video down/up can
-            // become osc-video-click. These messages target only our owned HWND.
             menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
             foreground.Observe("left-activation-dismiss-before");
             var activation = SendMessageW(video.Hwnd, 0x0021, video.Hwnd, new IntPtr((0x0201 << 16) | 1));
@@ -319,7 +373,6 @@ internal static class PlaybackAudioMenuNativeFixture
                 "Actual outside pointer dismissal did not acknowledge its gesture.");
             Require(mpv.IsPaused && service.IsPaused && wire.AudioPicks.Count == 0 && fullscreen == 0, "Dismissal/double-click changed paused playback, fullscreen or selected audio.");
             foreground.Observe("left-activation-dismiss-after");
-
             menu = await OpenFromOsc();
             foreground.Observe("right-activation-dismiss-before");
             activation = SendMessageW(video.Hwnd, 0x0021, video.Hwnd, new IntPtr((0x0204 << 16) | 1));
@@ -328,15 +381,11 @@ internal static class PlaybackAudioMenuNativeFixture
             await Until(() => Menu(service) == null, "Right activation dismissal left the native menu open.");
             Require(mpv.IsPaused && service.IsPaused, "Right dismissal changed paused playback.");
             foreground.Observe("right-activation-dismiss-after");
-
             menu = await OpenFromOsc();
             SendMessageW(video.Hwnd, 0x0201, new IntPtr(1), new IntPtr((100 << 16) | 100));
             SendMessageW(video.Hwnd, 0x0202, IntPtr.Zero, new IntPtr((100 << 16) | 100));
             await Until(() => Menu(service) == null, "Already-active video dismissal did not close the menu.");
             Require(mpv.IsPaused && service.IsPaused, "Already-active video dismissal leaked pause.");
-
-            // Unrelated playback dialogs keep their own lease; native Audio may
-            // not release, steal, or display over them.
             await Gate(service).WaitAsync();
             try
             {
@@ -344,7 +393,6 @@ internal static class PlaybackAudioMenuNativeFixture
                 Require(Menu(service) == null && Gate(service).CurrentCount == 0, "Audio stole or released an unrelated dialog gate.");
             }
             finally { Gate(service).Release(); }
-
             menu = await OpenFromOsc(); hwnd = MenuHwnd(menu);
             foreground.Observe("native-window-close-before");
             ((Window)Get(menu, "_window")!).Close();
@@ -352,7 +400,6 @@ internal static class PlaybackAudioMenuNativeFixture
             await Until(() => Menu(service) == null && !IsWindow(hwnd), "Native Window.Close stranded Audio ownership.");
             Call(menu, "Input", "cancel");
             Require(Gate(service).CurrentCount == 1, "Late close released the native Audio lease twice.");
-
             var originalTracks = version.AudioTracks!;
             version.AudioTracks = [originalTracks[0]];
             Call(service, "SendAudioTrackListToOsc");
@@ -362,8 +409,6 @@ internal static class PlaybackAudioMenuNativeFixture
             version.AudioTracks = originalTracks;
             Call(service, "SendAudioTrackListToOsc");
 
-            // Synthetic replacement of the actual file identity rejects an old
-            // selection/request; it is not a physical load or timeout cancel.
             menu = await OpenFromOsc();
             var retired = menu; var ownerState = await Query();
             foreground.Observe("synthetic-file-retirement-before");
@@ -371,19 +416,10 @@ internal static class PlaybackAudioMenuNativeFixture
             Call(retired, "Input", "activate");
             await Until(() => Menu(service) == null, "A stale file menu did not retire before selection.");
             Require(wire.AudioPicks.Count == 0, "A stale file menu selected a track.");
-            var staleOwner = Get(service, "_nativeMenuOwner");
             Host("silo-native-audio-open", ownerState.GetProperty("scope").GetString()!, "999", "1000", "620", "40", "40", "1280", "720");
-            await Until(() => Get(service, "_nativeMenuOwner") is { } refreshed && !ReferenceEquals(refreshed, staleOwner),
-                "A stale native menu open did not republish its owner.");
-            Require(Menu(service) == null, "Old file scope reopened a native menu.");
-            var recoveredScope = (await Query()).GetProperty("scope").GetString();
-            Require(!string.IsNullOrEmpty(recoveredScope) && recoveredScope != ownerState.GetProperty("scope").GetString(),
-                "Stale native menu recovery left Lua with its dead capability.");
+            await Task.Delay(60); Require(Menu(service) == null, "Old file scope reopened a native menu.");
+            Call(service, "SendAudioTrackListToOsc");
             menu = await OpenFromOsc();
-            Host("silo-native-audio-open", ownerState.GetProperty("scope").GetString()!, "1000", "1000", "620", "40", "40", "1280", "720");
-            await Task.Delay(60);
-            Require(ReferenceEquals(Menu(service), menu) && (await Query()).GetProperty("scope").GetString() == recoveredScope,
-                "A late old-token request retired the current native menu owner.");
             foreground.Observe("profile-retirement-before");
             api.SetProfile("replacement"); Call(menu, "Input", "activate");
             await Until(() => Menu(service) == null, "A stale profile menu did not retire.");
@@ -391,6 +427,130 @@ internal static class PlaybackAudioMenuNativeFixture
             await manager.StartSessionAsync(42, audioTrackIndex: 37);
             Call(service, "SendAudioTrackListToOsc");
 
+            var regressionCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (regressionCase is "access-refresh-replan" or "accepted-version" or "access-refresh" or "noop-invalidation")
+            {
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var initialError = service.ErrorMessage;
+                wire.HoldSuccessfulReplan = true;
+                if (regressionCase == "accepted-version")
+                {
+                    var acceptedVersion = Version(); acceptedVersion.FileId = 43;
+                    service.Versions.Add(acceptedVersion);
+                    wire.ReplanFileId = 43;
+                    wire.HoldPreference = true;
+                    wire.FailHeldPreference = false;
+                }
+                else api.InvalidateAccessContext();
+                menu = await OpenFromOsc();
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (regressionCase is "access-refresh-replan" or "access-refresh") api.InvalidateAccessContext();
+                Task? invalidation = null;
+                if (regressionCase == "noop-invalidation")
+                {
+                    var revision = (long)Get(service, "_playbackBusyRevision")!;
+                    invalidation = (Task)Call(service, "HandlePlanInvalidationAsync", new PlaybackPlanInvalidation("retired-plan", "synthetic-invalidation"))!;
+                    Require((long)Get(service, "_playbackBusyRevision")! == revision,
+                        "A no-op invalidation retired accepted Audio busy ownership.");
+                }
+                wire.ReleaseReplan.TrySetResult();
+                await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad,
+                    "The accepted Audio replan did not begin its owned load.");
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "The accepted Audio replan stranded loading/busy state.");
+                Require(manager.CurrentSession?.AudioTrackIndex == 71 && wire.AudioPicks.Single() == 71,
+                    "The accepted Audio replan lost its source index.");
+                if (regressionCase == "accepted-version")
+                {
+                    Require(service.ActiveVersion?.FileId == 43, "Audio did not adopt the server's effective version.");
+                    await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    await Task.Delay(100);
+                    var publication = (long)Get(service, "_nativeMenuPublication")!;
+                    wire.ReleasePreference.TrySetResult();
+                    await Until(() => (long)Get(service, "_nativeMenuPublication")! > publication,
+                        "Audio did not publish its accepted version after saving the preference.");
+                }
+                Require(service.ErrorMessage == initialError && !(await Query()).GetProperty("notice").GetBoolean(),
+                    "An accepted Audio replan incorrectly published an error.");
+                menu = await OpenFromOsc();
+                Call(menu, "Input", "cancel");
+                Require(Gate(service).CurrentCount == 1, "Accepted Audio stranded its native menu lease.");
+                Program.Log($"PASS: {regressionCase}: native Audio loads and republishes across access refresh, no-op invalidation and effective-version adoption.");
+                return;
+            }
+            if (regressionCase is "quality-second-step-failure" or "quality-second-step-cancellation")
+            {
+                var plan = (PlaybackPlanV3)Get(manager, "_currentPlanV3")!;
+                plan.SelectedTracks.Subtitle = new() { Id = "file:42:subtitle:0", Index = 0 };
+                manager.RecordLocalSubtitleSelection(null);
+                var initialSession = manager.CurrentSession;
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var initialError = service.ErrorMessage;
+                using var cancellation = new CancellationTokenSource();
+                var cancel = regressionCase == "quality-second-step-cancellation";
+                if (cancel) Set(service, "_playbackCts", cancellation);
+                wire.FailQualityReplan = true;
+                wire.HoldQualityReplan = cancel;
+                try
+                {
+                    var quality = service.SelectQualityAsync("auto");
+                    if (cancel)
+                    {
+                        await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        cancellation.Cancel();
+                    }
+                    await quality.WaitAsync(TimeSpan.FromSeconds(5));
+                    Require(wire.ReplanOperations.SequenceEqual(new[] { "track_change", "quality_change" }) &&
+                        !ReferenceEquals(initialSession, manager.CurrentSession),
+                        "Quality did not adopt the successful Subtitle-Off step before its second-step failure.");
+                    Require(!service.IsLoading && !service.IsSwitchingContent && !service.IsQualitySwitchActive,
+                        "A failed/canceled second quality step stranded playback busy flags.");
+                    Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
+                        "A failed second quality step unexpectedly began a media load.");
+                    var state = await Query();
+                    Require(cancel ? service.ErrorMessage == initialError && !state.GetProperty("notice").GetBoolean()
+                        : !string.IsNullOrEmpty(service.ErrorMessage) && state.GetProperty("notice").GetBoolean(),
+                        "Quality second-step failure/cancellation published the wrong error/notice state.");
+                    Program.Log($"PASS: {regressionCase}: intermediate Subtitle-Off session adoption does not strand quality busy flags.");
+                }
+                finally { if (cancel) Set(service, "_playbackCts", null); }
+                return;
+            }
+            if (regressionCase is "audio-plan-invalidation" or "quality-plan-invalidation")
+            {
+                var outgoingPlan = manager.CurrentSession!.PlanId;
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                wire.HoldSuccessfulReplan = true;
+                Task? quality = null;
+                if (regressionCase == "audio-plan-invalidation")
+                {
+                    menu = await OpenFromOsc();
+                    Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                }
+                else quality = service.SelectQualityAsync("auto");
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var revision = (long)Get(service, "_playbackBusyRevision")!;
+                var invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
+                    new PlaybackPlanInvalidation(outgoingPlan, "synthetic-invalidation"))!;
+                Require(!invalidation.IsCompleted && (int)Get(service, "_pendingPlanInvalidations")! == 1,
+                    "Plan invalidation did not wait behind the held switch.");
+                Require((long)Get(service, "_playbackBusyRevision")! == revision,
+                    "A pending invalidation retired the accepted switch's busy claim.");
+                wire.ReleaseReplan.TrySetResult();
+                await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
+                if (quality != null) await quality.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad,
+                    "A no-op invalidation abandoned the switch's accepted media load.");
+                await Until(() => !service.IsLoading && !service.IsSwitchingContent && !service.IsQualitySwitchActive,
+                    "A no-op invalidation stranded the switch's busy flags.");
+                Require(wire.AudioPicks.Count == 1 && (int)Get(service, "_pendingPlanInvalidations")! == 0,
+                    "An outgoing-plan invalidation replanned again or retained its EOF guard.");
+                Program.Log($"PASS: {regressionCase}: a queued outgoing-plan invalidation is a no-op and preserves the switch's accepted load.");
+                return;
+            }
             if (directFailureCase)
             {
                 var originalOpen = Get(mpv, "_directOpen");
@@ -406,9 +566,6 @@ internal static class PlaybackAudioMenuNativeFixture
                 AppDomain.CurrentDomain.FirstChanceException += observeFailure;
                 try
                 {
-                    // Keep the registered delegate rooted while deliberately
-                    // exercising libmpv's duplicate-protocol registration error
-                    // inside the real accepted Audio selection's BeginMpvLoad.
                     Set(mpv, "_directOpen", null);
                     menu = await OpenFromOsc();
                     Call(menu, "Input", "end"); Call(menu, "Input", "activate");
@@ -423,7 +580,7 @@ internal static class PlaybackAudioMenuNativeFixture
                         "An Audio selection's own native load failure did not publish its current error and retry notice.");
                     Require(Menu(service) == null && Gate(service).CurrentCount == 1,
                         "Owned load failure stranded native menu presentation or its lease.");
-                    Program.Log("PASS: actual native Audio source71 selection handles its own BeginMpvLoad exception from controlled duplicate silo-direct registration, clears loading/busy and shows a current error/notice; original and attempted callbacks remain rooted through native disposal. This does not identify a production failure cause.");
+                    Program.Log("PASS: actual native Audio handles its own controlled duplicate silo-direct registration load failure, clears busy flags and shows a current notice; callbacks remain rooted. No production failure cause asserted.");
                 }
                 finally
                 {
@@ -433,36 +590,89 @@ internal static class PlaybackAudioMenuNativeFixture
                 }
                 return;
             }
-
-            var acceptedSwitchCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
-            if (acceptedSwitchCase is "retired-presentation" or "access-refresh" or "noop-invalidation")
+            var overlapCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (overlapCase is "earlier-file-loaded" or "earlier-file-loaded-failure")
+            {
+                var failure = overlapCase == "earlier-file-loaded-failure";
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var initialError = service.ErrorMessage;
+                wire.HoldFailedReplan = failure;
+                wire.HoldSuccessfulReplan = !failure;
+                menu = await OpenFromOsc();
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                ((Action)Get(service, "_mpvFileLoadedHandler")!)();
+                Call(service, "StopPlaybackStallWatchdog");
+                Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
+                    "The earlier FILE_LOADED unexpectedly began a successor load.");
+                wire.ReleaseReplan.TrySetResult();
+                await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (failure)
+                {
+                    await Until(() => service.ErrorMessage != initialError, "An Audio failure after an earlier FILE_LOADED was silent.");
+                    Require((await Query()).GetProperty("notice").GetBoolean(), "Current Audio failure omitted its retry notice.");
+                    Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
+                        "A failed Audio replan loaded another transport.");
+                }
+                else
+                {
+                    await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad,
+                        "An earlier FILE_LOADED abandoned the accepted Audio replan.");
+                    Require(manager.CurrentSession?.AudioTrackIndex == 71, "Accepted Audio lost its source index.");
+                }
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Audio did not complete its busy lifecycle after the earlier FILE_LOADED.");
+                Require(Menu(service) == null && Gate(service).CurrentCount == 1, "Audio overlap stranded native presentation ownership.");
+                Program.Log($"PASS: {overlapCase}: an earlier FILE_LOADED does not retire the current Audio replan or silence its failure.");
+                return;
+            }
+            if (overlapCase == "quality-audio-successor")
+            {
+                wire.HoldFailedReplan = true;
+                Set(manager, "_connectionFeatures", new[] { "buffering_quality_v1" });
+                menu = await OpenFromOsc();
+                var initialError = service.ErrorMessage;
+                var quality = (Task)Call(service, "SwitchQualityTierAsync", "auto",
+                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession)!;
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => Menu(service) == null, "Buffering quality replacement left Audio live.");
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                Require(wire.AudioPicks.Count == 1, "A retired Audio menu dispatched against the outgoing quality plan.");
+                wire.HoldSuccessorReplan = true;
+                var previousClaim = (long)Get(service, "_playbackBusyRevision")!;
+                var audio = service.SwitchAudioTrackAsync(71);
+                await Until(() => (long)Get(service, "_playbackBusyRevision")! > previousClaim,
+                    "Successor Audio did not claim busy state.");
+                wire.ReleaseReplan.TrySetResult();
+                await quality.WaitAsync(TimeSpan.FromSeconds(5));
+                await wire.SuccessorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(service.IsLoading && (bool)Get(service, "_switchingContent")! && !audio.IsCompleted,
+                    "Failed buffering quality cleared its successor Audio's busy flags.");
+                Require(service.ErrorMessage == initialError && !(await Query()).GetProperty("notice").GetBoolean(),
+                    "Failed predecessor quality published over its successor Audio.");
+                wire.ReleaseSuccessor.TrySetResult();
+                await audio.WaitAsync(TimeSpan.FromSeconds(8));
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Successor Audio did not finish after predecessor quality failure.");
+                Require(manager.CurrentSession?.AudioTrackIndex == 71, "Successor Audio lost the accepted source index.");
+                Program.Log("PASS: buffering quality retires an open Audio menu and cannot release a newer Audio operation's busy ownership.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "retired-presentation")
             {
                 service.SetPaused(false);
                 await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
                 var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
-                var originalPlan = manager.CurrentSession!.PlanId;
                 wire.HoldSuccessfulReplan = true;
                 menu = await OpenFromOsc();
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 Require(wire.AudioPicks.Single() == 71, "Actual native keyboard selection did not retain the source index.");
-                Task? invalidation = null;
-                if (acceptedSwitchCase == "access-refresh") api.InvalidateAccessContext();
-                else if (acceptedSwitchCase == "noop-invalidation")
-                {
-                    var revision = (long)Get(service, "_playbackBusyRevision")!;
-                    invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
-                        new PlaybackPlanInvalidation(originalPlan!, "synthetic"))!;
-                    Require(!invalidation.IsCompleted && (long)Get(service, "_playbackBusyRevision")! == revision,
-                        "A waiting invalidation stole Audio's busy claim instead of borrowing its switching guard.");
-                }
-                // Use the real retirement helper, without a physical mode change.
-                else Call(service, "RetireNativeMenus");
+                Call(service, "RetireNativeMenus");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
-                    "Presentation retirement/access refresh/no-op invalidation stranded accepted Audio in loading/busy state.");
+                    "Retiring native Audio presentation stranded an already accepted selection in loading/busy state.");
                 await Until(() => !mpv.IsPaused && !service.IsPaused,
                     "Accepted Audio selection did not restore playing intent after presentation retirement.");
                 Require((long)Get(service, "_playbackFileGeneration")! > initialLoad
@@ -470,10 +680,9 @@ internal static class PlaybackAudioMenuNativeFixture
                     "Accepted Audio selection did not finish its load after presentation retirement.");
                 Require(Menu(service) == null && Gate(service).CurrentCount == 1,
                     "Presentation retirement stranded a native menu or lease.");
-                Program.Log($"PASS: actual native keyboard Audio {acceptedSwitchCase} continues its accepted source71 replan, clears loading/busy and retains playing intent. No physical mode transition asserted.");
+                Program.Log("PASS: accepted native Audio source71 replan completes across presentation retirement with playing intent and clean ownership. No physical mode transition asserted.");
                 return;
             }
-
             var retirementCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (retirementCase is "retired-replan" or "retired-success" or "retired-cancellation"
                 or "successor-seek" or "successor-recovery" or "live-successor-seek" or "live-successor-recovery"
@@ -513,17 +722,10 @@ internal static class PlaybackAudioMenuNativeFixture
                 }
                 if (retirementCase == "retired-cancellation") cancellation.Cancel();
                 else if (successor != null && !retirementCase!.StartsWith("live-", StringComparison.Ordinal))
-                {
-                    // Retire only Audio's inventory while keeping the queued
-                    // real seek/recovery's API session authorized. A profile
-                    // switch correctly cancels both operations in PlaybackApi.
                     version.AudioTracks = version.AudioTracks!.Take(2).ToList();
-                }
                 else if (successor == null) api.SetProfile("retired-during-replan");
                 wire.ReleaseReplan.TrySetResult();
                 await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                // Observe the actual asynchronous error publication, including a
-                // Lua round trip, after the held reply has been delivered.
                 await Task.Delay(500);
                 var after = await Query();
                 if (successor == null)
@@ -553,9 +755,6 @@ internal static class PlaybackAudioMenuNativeFixture
                 if (retirementCase == "retired-cancellation") Set(service, "_playbackCts", null);
                 return;
             }
-
-            // Actual UIA Invoke uses the immutable source index through the real
-            // replan caller, with native audio IDs deliberately irrelevant.
             service.SetPaused(false);
             await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
             var latePreferenceCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "late-preference";
@@ -577,10 +776,7 @@ internal static class PlaybackAudioMenuNativeFixture
                 var peer = FrameworkElementAutomationPeer.CreatePeerForElement(last) ?? new ListViewItemAutomationPeer(last);
                 if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke)
                     throw new InvalidOperationException("Actual Audio row has no UIA Invoke pattern.");
-                // WinUI's UIA Invoke explicitly asks to activate its window
-                // before raising ItemClick. Isolate that framework request on
-                // the interactive development desktop; this does not certify
-                // normal UIA focus/activation or change product behavior.
+                // Isolate only WinUI's explicit activation of our own HWND.
                 using (var veto = new OwnMenuActivationVeto(MenuHwnd(menu)))
                 {
                     foreground.Observe("uia-invoke-before");
@@ -596,7 +792,7 @@ internal static class PlaybackAudioMenuNativeFixture
             if (latePreferenceCase)
             {
                 await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                await Task.Delay(100); // FILE_LOADED initialization has its own publication.
+                await Task.Delay(100);
                 var publication = (long)Get(service, "_nativeMenuPublication")!;
                 wire.ReleasePreference.TrySetResult();
                 await Until(() => (long)Get(service, "_nativeMenuPublication")! > publication,
@@ -630,21 +826,26 @@ internal static class PlaybackAudioMenuNativeFixture
             if (Menu(service) is { } menu) Call(menu, "Input", "cancel");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket");
             Set(service, "_videoWindow", null); Set(service, "_mpv", null); Set(service, "_playbackManager", null);
-            video.Dispose();
-            mpv.Dispose();
+            video.Dispose(); mpv.Dispose();
             foreach (var callback in retainedDirectCallbacks) GC.KeepAlive(callback);
-            // Out-of-context WinEvents run on this UI thread. Pump queued events
-            // after native cleanup before checking only our process's ownership.
             await Task.Delay(40);
             foreground.Complete();
         }
-
         async Task<JsonElement> Query()
         {
             var id = Guid.NewGuid().ToString("N"); var receiver = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
             queries[id] = receiver;
             try { mpv.SendScriptMessage("osc-audio-fixture-query", id); return await receiver.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
             finally { queries.TryRemove(id, out _); }
+        }
+        async Task WaitForOscWidth(int width)
+        {
+            var wait = Stopwatch.StartNew();
+            while ((await Query()).GetProperty("width").GetDouble() != width)
+            {
+                Require(wait.Elapsed < TimeSpan.FromSeconds(8), "OSC resize did not settle.");
+                await Task.Delay(20);
+            }
         }
         async Task TriggerOsc()
         {
@@ -659,19 +860,17 @@ internal static class PlaybackAudioMenuNativeFixture
         }
         async Task<object> OpenFromOsc()
         {
-            if (compactClickCase)
+            var opener = await Query();
+            if (compactClickCase || !opener.GetProperty("directAudio").GetBoolean())
             {
-                var opener = await Query();
                 NativeClick(opener.GetProperty("x").GetDouble(), opener.GetProperty("y").GetDouble());
-                await Task.Delay(600); // Isolate Audio from More's existing gesture timer.
+                await Task.Delay(600);
                 if (Menu(service) is { } parent && RequestKind() == "more")
                 {
                     foreground.WatchMenu((Window)Get(parent, "_window")!, MenuHwnd(parent));
                     var rows = (ListView)Get(parent, "_list")!;
                     Require(rows.Items.OfType<ListViewItem>().Any(row => row.Tag is "audio" && row.IsEnabled),
                         "Native More did not expose its enabled Audio action.");
-                    // Execute the actual native pointer-selection close/handoff
-                    // boundary; this is not a physical pointer-input assertion.
                     Call(parent, "Select", "audio", true);
                     await Until(() => !ReferenceEquals(Menu(service), parent) && RequestKind() == "audio",
                         "Native More did not hand off its pointer-selected Audio action.");
@@ -698,8 +897,6 @@ internal static class PlaybackAudioMenuNativeFixture
         }
         void NativeClick(double x, double y)
         {
-            // Deliver the actual OSC pointer protocol without Windows
-            // capture/focus changes on an offscreen interactive desktop.
             var px = x.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var py = y.ToString(System.Globalization.CultureInfo.InvariantCulture);
             mpv.SendScriptMessage("osc-mouse-move", px, py);
@@ -772,19 +969,23 @@ internal static class PlaybackAudioMenuNativeFixture
             (uint)target.PixelWidth, (uint)target.PixelHeight, 96, 96, data);
         await encoder.FlushAsync();
     }
-
     private static FileVersion Version() => new()
     {
         FileId = 42, Duration = 60, AudioTracks = Enumerable.Range(0, 72).Select(i => new AudioTrackInfo
         {
             Title = i == 71 ? "A deliberately long multilingual audio label — 日本語 — " + new string('x', 180) : i == 1 ? "" : i == 2 ? "Duplicate title" : $"Audio source {i}",
-            Language = i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
+            Language = i == 1 ? "" : i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
+            Bitrate = i == 0 ? 640 : null, SampleRate = i == 0 ? 48000 : null,
         }).ToList(),
     };
-
     private sealed class Wire(string origin, string mediaPath) : HttpMessageHandler
     {
         internal readonly ConcurrentQueue<int> AudioPicks = new();
+        internal readonly ConcurrentQueue<string> ReplanOperations = new();
+        internal int ReplanFileId = 42;
+        internal bool FailQualityReplan;
+        internal bool HoldQualityReplan;
+        internal bool FailHeldPreference = true;
         internal bool HoldFailedReplan;
         internal bool HoldSuccessfulReplan;
         internal bool HoldSuccessorReplan;
@@ -806,7 +1007,8 @@ internal static class PlaybackAudioMenuNativeFixture
             {
                 PreferenceStarted.TrySetResult();
                 await ReleasePreference.Task;
-                return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}") };
+                return new(FailHeldPreference ? HttpStatusCode.InternalServerError : HttpStatusCode.OK)
+                    { Content = new StringContent("{}") };
             }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
@@ -816,6 +1018,15 @@ internal static class PlaybackAudioMenuNativeFixture
             {
                 _audio = body.GetProperty("selected_tracks").GetProperty("audio").GetProperty("index").GetInt32();
                 AudioPicks.Enqueue(_audio);
+                var operation = body.GetProperty("operation").GetString()!;
+                ReplanOperations.Enqueue(operation);
+                if (FailQualityReplan && operation == "quality_change")
+                {
+                    ReplanStarted.TrySetResult();
+                    if (HoldQualityReplan) await ReleaseReplan.Task.WaitAsync(ct);
+                    return new(HttpStatusCode.InternalServerError)
+                        { Content = new StringContent("{\"error\":\"Synthetic second quality step failure\"}", Encoding.UTF8, "application/json") };
+                }
                 if (AudioPicks.Count > 1 && HoldSuccessorReplan)
                 {
                     SuccessorEntered = true;
@@ -825,8 +1036,7 @@ internal static class PlaybackAudioMenuNativeFixture
                 else if (HoldFailedReplan || HoldSuccessfulReplan)
                 {
                     ReplanStarted.TrySetResult();
-                    // Deliberately return a reply after context retirement,
-                    // modelling an HTTP failure already in flight.
+                    // Return a reply even after retirement, modelling in-flight HTTP.
                     await ReleaseReplan.Task;
                     ReplanReplied.TrySetResult();
                     if (HoldFailedReplan)
@@ -834,21 +1044,21 @@ internal static class PlaybackAudioMenuNativeFixture
                             { Content = new StringContent("{\"error\":\"Synthetic late audio replan failure\"}", Encoding.UTF8, "application/json") };
                 }
             }
+            var fileId = path.EndsWith("/replan") ? ReplanFileId : 42;
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "native-audio-fixture",
                 playback_plan = new
                 {
-                    plan_id = $"audio-plan-{AudioPicks.Count}", plan_attempt_key = "synthetic", session_id = "native-audio-fixture", effective_media_file_id = 42,
+                    plan_id = $"audio-plan-{AudioPicks.Count}", plan_attempt_key = "synthetic", session_id = "native-audio-fixture", effective_media_file_id = fileId,
                     delivery = "original_http", stream = new { url = origin + mediaPath }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = $"file:42:audio:{_audio}", index = _audio }, subtitle = (object?)null },
+                    selected_tracks = new { audio = new { id = $"file:{fileId}:audio:{_audio}", index = _audio }, subtitle = (object?)null },
                     subtitle = new { mode = "off", inventory = Array.Empty<object>() },
                 },
             }));
         }
         private static HttpResponseMessage Json(string text) => new(HttpStatusCode.OK) { Content = new StringContent(text, Encoding.UTF8, "application/json") };
     }
-
     internal sealed class MediaServer : IDisposable
     {
         private readonly HttpListener _listener = new();
@@ -896,9 +1106,7 @@ internal static class PlaybackAudioMenuNativeFixture
                         {
                             context.Response.StatusCode = 416;
                             context.Response.Headers["Content-Range"] = $"bytes */{bytes.Length}";
-                            context.Response.ContentLength64 = 0;
-                            context.Response.Close();
-                            continue;
+                            context.Response.ContentLength64 = 0; context.Response.Close(); continue;
                         }
                     }
                     context.Response.ContentLength64 = through - from + 1;
@@ -910,11 +1118,7 @@ internal static class PlaybackAudioMenuNativeFixture
         public void Dispose() => _listener.Close();
     }
 
-    /// <summary>
-    /// Observe only foreground events generated by this fixture process. A user
-    /// switching between unrelated applications is not a fixture activation.
-    /// No external window title, content or control is inspected.
-    /// </summary>
+    /// <summary>Own-process foreground events only; no external window titles/content or control.</summary>
     internal sealed class ForegroundOwnershipProbe : IDisposable
     {
         private readonly uint _processId = (uint)Environment.ProcessId;
@@ -928,15 +1132,12 @@ internal static class PlaybackAudioMenuNativeFixture
         private GCHandle _callbackRoot;
         private IntPtr _hook;
         private readonly string? _evidenceName;
-
         internal ForegroundOwnershipProbe(IntPtr main, string? evidenceName = null)
         {
             _evidenceName = evidenceName;
             _roles[main.ToInt64()] = "fixture-main";
             _callback = (_, _, hwnd, _, _, thread, eventTime) =>
             {
-                // The hook filters the originating PID. Delivery is queued:
-                // the owned HWND may already be closed or reused by now.
                 try
                 {
                     if (hwnd == IntPtr.Zero) return;
@@ -948,8 +1149,6 @@ internal static class PlaybackAudioMenuNativeFixture
                 catch { _callbackFailed = true; }
             };
             _callbackRoot = GCHandle.Alloc(_callback);
-            // EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT; nonzero process
-            // filter avoids observing other processes' foreground event streams.
             _hook = SetWinEventHook(3, 3, IntPtr.Zero, _callback, _processId, 0, 0);
             if (_hook == IntPtr.Zero)
             {
@@ -958,7 +1157,6 @@ internal static class PlaybackAudioMenuNativeFixture
             }
             Observe("before-fixture");
         }
-
         internal void Observe(string stage, IntPtr hwnd = default, string? role = null)
         {
             _phase = stage;
@@ -967,7 +1165,6 @@ internal static class PlaybackAudioMenuNativeFixture
             GetWindowThreadProcessId(current, out var process);
             _samples.Add(new(stage, current.ToInt64(), process, process == _processId, Environment.TickCount64));
         }
-
         internal void WatchMenu(Window menu, IntPtr hwnd)
         {
             if (!_watchedMenus.Add(menu)) return;
@@ -977,12 +1174,11 @@ internal static class PlaybackAudioMenuNativeFixture
             void Closed(object sender, WindowEventArgs args)
             {
                 Observe("menu-closed", hwnd, "audio-menu");
-                menu.Activated -= Activated; menu.Closed -= Closed;
-                _watchedMenus.Remove(menu);
+                menu.Activated -= Activated; menu.Closed -= Closed; _watchedMenus.Remove(menu);
             }
             menu.Activated += Activated; menu.Closed += Closed;
         }
-
+        internal void RegisterWindow(IntPtr hwnd, string role) => _roles[hwnd.ToInt64()] = role;
         internal void Complete()
         {
             Observe("after-fixture-cleanup");
@@ -999,8 +1195,7 @@ internal static class PlaybackAudioMenuNativeFixture
             File.WriteAllText(Path.Combine(Program.ResultDirectory, caseName + "-foreground.json"), JsonSerializer.Serialize(new
             {
                 fixtureProcessId = _processId, first, last, samples = _samples,
-                ownedForegroundEvents = ownedEvents,
-                callbackFailed = _callbackFailed,
+                ownedForegroundEvents = ownedEvents, callbackFailed = _callbackFailed,
                 skipUia = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_SKIP_UIA") == "1",
                 externalForegroundChanged = first.Hwnd != last.Hwnd && !first.BelongsToFixture && !last.BelongsToFixture,
                 scope = "Own-process foreground WinEvents and explicit HWND/PID snapshots only; no external titles/content or foreground control.",
@@ -1009,14 +1204,12 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(!_callbackFailed && ownedEvents.Length == 0 && !_samples.Any(sample => sample.BelongsToFixture),
                 "Offscreen native Audio verification activated a fixture-owned foreground window.");
         }
-
         public void Dispose()
         {
             if (_hook == IntPtr.Zero) return;
             UnhookWinEvent(_hook); _hook = IntPtr.Zero;
             _callbackRoot.Free(); GC.KeepAlive(_callback);
         }
-
         private sealed record ForegroundSample(string Stage, long Hwnd, uint ProcessId, bool BelongsToFixture, long Tick);
         private sealed record ForegroundEvent(long Hwnd, uint EventThread, uint EventTime, long CallbackTick,
             string PhaseAtDelivery, long ForegroundAtDelivery, uint ForegroundProcessAtDelivery);
@@ -1026,11 +1219,7 @@ internal static class PlaybackAudioMenuNativeFixture
         private static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventCallback callback, uint process, uint thread, uint flags);
         [DllImport("user32.dll")] private static extern bool UnhookWinEvent(IntPtr hook);
     }
-
-    /// <summary>
-    /// Test isolation for the framework's explicit UIA Invoke activation.
-    /// Applies only to this exact menu HWND, current fixture PID and UI thread.
-    /// </summary>
+    /// <summary>UIA activation isolation applies only to this exact menu HWND, PID and UI thread.</summary>
     private sealed class OwnMenuActivationVeto : IDisposable
     {
         private readonly IntPtr _menu;
@@ -1041,9 +1230,7 @@ internal static class PlaybackAudioMenuNativeFixture
         private GCHandle _callbackRoot;
         private IntPtr _hook;
         private bool _callbackFailed;
-
         internal int BlockedCount => _attempts.Count;
-
         internal OwnMenuActivationVeto(IntPtr menu)
         {
             _menu = menu;
@@ -1051,7 +1238,7 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(process == _process && targetThread == _thread, "UIA isolation target is not on the fixture's own UI thread.");
             _callback = (code, window, data) =>
             {
-                if (code == 5 && window == _menu) // HCBT_ACTIVATE
+                if (code == 5 && window == _menu)
                 {
                     GetWindowThreadProcessId(window, out var targetProcess);
                     if (targetProcess == _process)
@@ -1064,20 +1251,19 @@ internal static class PlaybackAudioMenuNativeFixture
                                 fixtureThread = _thread, foreground = foreground.ToInt64(), foregroundProcess });
                         }
                         catch { _callbackFailed = true; }
-                        return new IntPtr(1); // Veto only this owned activation.
+                        return new IntPtr(1);
                     }
                 }
                 return CallNextHookEx(_hook, code, window, data);
             };
             _callbackRoot = GCHandle.Alloc(_callback);
-            _hook = SetWindowsHookExW(5, _callback, IntPtr.Zero, _thread); // WH_CBT, own thread only
+            _hook = SetWindowsHookExW(5, _callback, IntPtr.Zero, _thread);
             if (_hook == IntPtr.Zero)
             {
                 _callbackRoot.Free();
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot isolate owned UIA activation.");
             }
         }
-
         public void Dispose()
         {
             if (_hook == IntPtr.Zero) return;
@@ -1093,7 +1279,6 @@ internal static class PlaybackAudioMenuNativeFixture
             }, new JsonSerializerOptions { WriteIndented = true }));
             Require(!_callbackFailed, "Owned UIA isolation callback failed.");
         }
-
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         private delegate IntPtr CbtCallback(int code, IntPtr window, IntPtr data);
         [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
@@ -1102,7 +1287,6 @@ internal static class PlaybackAudioMenuNativeFixture
         [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr window, IntPtr data);
         [DllImport("user32.dll", SetLastError = true)] private static extern bool UnhookWindowsHookEx(IntPtr hook);
     }
-
     [StructLayout(LayoutKind.Sequential)] private struct Rect { internal int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);

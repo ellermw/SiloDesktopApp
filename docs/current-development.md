@@ -1,10 +1,26 @@
 # Current source identity — native Chapters and compact More (PR #91)
 
-Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a`.
+Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
 Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
 
-These are the existing app, updater, launcher and installer-default stamps in the supplied head; this correction does not change them. The earlier development and verification records below are historical and do not verify this head or correction. No builds or tests were run for this correction; pipeline verification is required.
+These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
+
+## PR #90 — historical source identity (QA correction)
+
+Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
+
+## PR #87 — historical source identity (QA correction)
+
+Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
 ## November 3 — safe retained Library activation (local Beta candidate)
 

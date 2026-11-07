@@ -49,7 +49,7 @@ public partial class PlayerService
             else if (option.Kind == PlaybackQualityMenuOptionKind.Quality && option.QualityId is { } quality)
             {
                 if (quality == SelectedQualityMenuId) return;
-                await SwitchQualityTierAsync(quality, acceptSelection: Accept);
+                await SwitchQualityTierCoreAsync(quality, acceptSelection: Accept);
             }
         }
         catch (Exception)

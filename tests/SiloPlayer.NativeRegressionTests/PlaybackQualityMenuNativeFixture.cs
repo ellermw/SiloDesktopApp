@@ -329,7 +329,7 @@ internal static class PlaybackQualityMenuNativeFixture
                     new PlaybackPlanInvalidation("already-retired-plan", "synthetic"))!).WaitAsync(TimeSpan.FromSeconds(5));
                 Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")! &&
                     (long)Get(service, "_playbackBusyRevision")! == idleRevision,
-                    "An idle no-op invalidation changed busy ownership or failed to restore its temporary guard.");
+                    "An idle no-op invalidation changed busy ownership or failed to release its pending guard.");
                 var temporaryGuard = Call(service, "BeginTemporarySwitchingContent")!;
                 var successorClaim = Call(service, "BeginPlaybackBusy", true, (Action?)null)!;
                 Call(service, "RestoreTemporarySwitchingContent", temporaryGuard);
@@ -337,7 +337,7 @@ internal static class PlaybackQualityMenuNativeFixture
                     (bool)Call(service, "OwnsPlaybackBusy", successorClaim)!,
                     "Restoring a temporary guard cleared a successor's busy claim.");
                 Call(service, "ReleasePlaybackBusy", successorClaim, (Action?)null);
-                Program.Log("PASS: busy release receipts reject successor cleanup; no-op invalidation restores only its borrowed flag without retiring claims or clearing successors.");
+                Program.Log("PASS: busy release receipts reject successor cleanup; no-op invalidation releases its pending guard without retiring claims or clearing successors.");
                 return;
 
                 async Task QueuedRelease(Action action)

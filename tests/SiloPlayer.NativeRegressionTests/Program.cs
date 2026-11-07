@@ -75,7 +75,10 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
         "quality-access-refresh", "version-access-refresh", "quality-noop-invalidation", "version-noop-invalidation"];
     private static readonly string[] NativeAudioCases = ["", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
         "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
-        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure", "access-refresh", "noop-invalidation"];
+        "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure", "access-refresh", "noop-invalidation",
+        "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor",
+        "access-refresh-replan", "accepted-version", "quality-second-step-failure", "quality-second-step-cancellation",
+        "audio-plan-invalidation", "quality-plan-invalidation"];
     public IXamlType GetXamlType(Type type) => _provider.GetXamlType(type);
     public IXamlType GetXamlType(string name) => _provider.GetXamlType(name);
     public XmlnsDefinition[] GetXmlnsDefinitions() => _provider.GetXmlnsDefinitions();
@@ -221,6 +224,29 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await BoxSetUnscopedNativeFixture.RunAsync(parent);
                 await EpisodeQuickPlayNativeFixture.VerifyBoxSetShellRefreshAsync();
                 await EpisodeQuickPlayNativeFixture.VerifyBoxSetPointerAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-party-refreshed")
+            {
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, "menu");
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, "stale");
+                var failures = new List<Exception>();
+                foreach (var mode in new[] { "legacy-version", "legacy-quality", "republish", "room-modes", "room-explanation", "terminal", "version-room-race", "terminal-legacy-version", "terminal-legacy-quality" })
+                {
+                    try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
+                    catch (Exception error) { Program.Log($"FAIL [{mode}]: {error.Message}"); failures.Add(error); }
+                }
+                if (failures.Count > 0) throw new AggregateException("Combined Party/Quality checks failed.", failures);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-party-actions")
+            {
+                await NativePartyActionsFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-party-menu" or "native-party-end" or "native-party-stale" or "native-party-direct")
+            {
+                await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY")![13..]);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")

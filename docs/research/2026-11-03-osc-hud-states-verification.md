@@ -1,12 +1,12 @@
 # Active OSC feedback and input ownership
 
-## Current source identity — PR #91
+## Current integrated source identity — PR #91
 
-Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a`.
+Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta PR #90 input `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
 Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
 
-These are the existing app, updater, launcher and installer-default stamps; this correction does not change them. The PR #86 scope and verification below are historical and do not verify this head or correction. No builds or tests were run for this correction; pipeline verification is required.
+The app, update host, launcher and installer defaults already carry these stamps; this merge changes none. Native Chapters and compact More are combined with Beta's owned native Audio, Quality and Watch Party controls. These input identities are not a build, test or release receipt for the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify this merge.
 
 ## Historical PR #86 scope
 
@@ -22,7 +22,15 @@ This is the first focused PR of the owner's approved staged native-menu work. It
 - Audio with no alternative and empty Chapters remain disabled across appearance, navigation and desktop/compact activation. Compact Audio/Chapters anchor to the visible More control.
 - Invisible/covered Fit and More controls cannot activate underneath a menu or hidden HUD. Existing active indicators, quality pending text and authority/track-intent routes are retained.
 
-## Historical PR #86 verification and provenance
+## Historical integrated source identity (PR #87)
+
+Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
+
+Source version: `1.2.654-beta.1`; numeric version: `1.2.653.1`.
+
+These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. The PR #86 identities and receipts below remain historical and do not verify this integrated head. No builds or tests were run for this correction; pipeline re-verification is required.
+
+## Historical PR #86 source identity, verification and provenance
 
 Base Beta: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`. Reviewed PR #86 head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`.
 

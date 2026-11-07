@@ -739,7 +739,7 @@ public partial class PlaybackManager : IDisposable
         if (currentOwner == null)
         {
             // Validate delivery before publishing any accepted plan/session fields
-            // or history. A rejected decision leaves the caller's session intact.
+            // or history. A failed decision leaves the original owner intact.
             response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
             var streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
             CommitHistory();
