@@ -13,7 +13,8 @@ public sealed class EpisodeCardCaption : StackPanel
     public TextBlock MetadataText { get; }
     public TextBlock OverviewText { get; }
     public Grid MetadataRow { get; }
-    public EpisodeCaptionPresentation Presentation { get; }
+    public EpisodeCaptionPresentation Presentation { get; private set; }
+    private readonly FrameworkElement _translationIndicator;
 
     public EpisodeCardCaption(Episode episode, string? formattedAirDate, bool hideOverview,
         bool compactTv, bool current)
@@ -61,13 +62,11 @@ public sealed class EpisodeCardCaption : StackPanel
             ToolTipService.SetToolTip(notice, "Silo couldn't read this file. It appears to be empty or damaged.");
             Grid.SetColumn(notice, 1); MetadataRow.Children.Add(notice);
         }
-        if (Presentation.ShowTranslation)
-        {
-            var translated = WebUiIcon.Create("languages", 14, muted);
-            ToolTipService.SetToolTip(translated, "AI-translated overview");
-            AutomationProperties.SetName(translated, "AI-translated overview");
-            Grid.SetColumn(translated, 2); MetadataRow.Children.Add(translated);
-        }
+        _translationIndicator = WebUiIcon.Create("languages", 14, muted);
+        _translationIndicator.Visibility = Presentation.ShowTranslation ? Visibility.Visible : Visibility.Collapsed;
+        ToolTipService.SetToolTip(_translationIndicator, "AI-translated overview");
+        AutomationProperties.SetName(_translationIndicator, "AI-translated overview");
+        Grid.SetColumn(_translationIndicator, 2); MetadataRow.Children.Add(_translationIndicator);
         MetadataRow.Visibility = compactTv || Presentation.Metadata.Length == 0 &&
             !Presentation.ShowUnreadable && !Presentation.ShowTranslation ? Visibility.Collapsed : Visibility.Visible;
         Children.Add(MetadataRow);
@@ -80,5 +79,16 @@ public sealed class EpisodeCardCaption : StackPanel
             Visibility = compactTv || Presentation.Overview.Length == 0 ? Visibility.Collapsed : Visibility.Visible,
         };
         Children.Add(OverviewText);
+    }
+
+    public void UpdateState(Episode episode, string? formattedAirDate, bool hideOverview, bool compactTv, bool watched)
+    {
+        Presentation = EpisodeCardPresentation.Caption(episode, formattedAirDate, hideOverview);
+        WatchedIndicator.Visibility = watched ? Visibility.Visible : Visibility.Collapsed;
+        OverviewText.Text = Presentation.Overview;
+        OverviewText.Visibility = compactTv || Presentation.Overview.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _translationIndicator.Visibility = Presentation.ShowTranslation ? Visibility.Visible : Visibility.Collapsed;
+        MetadataRow.Visibility = compactTv || Presentation.Metadata.Length == 0 &&
+            !Presentation.ShowUnreadable && !Presentation.ShowTranslation ? Visibility.Collapsed : Visibility.Visible;
     }
 }

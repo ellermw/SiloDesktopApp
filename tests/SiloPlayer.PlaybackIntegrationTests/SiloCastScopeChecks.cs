@@ -123,6 +123,7 @@ internal static class SiloCastScopeChecks
             [
                 new() { Index = 4, Label = "English", Language = "en", Codec = "srt" },
                 new() { Index = 8, Label = "French", Language = "fr", Codec = "vtt" },
+                new() { Index = 12, Label = "Unavailable", Language = "de", Codec = "srt", Unplayable = true },
             ],
             AvailableQualities = [new() { Label = "original", PreservesSource = true }, new() { Label = "1080p-high" }],
         };

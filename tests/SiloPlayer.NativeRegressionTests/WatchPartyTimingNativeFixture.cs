@@ -136,7 +136,14 @@ internal static class WatchPartyTimingNativeFixture
             Property(player, "IsPaused", true); Property(player, "Position", 120d);
             coordinator.NotifyPlaybackStarted("timing-session");
             Command("late-paused", "seek", 130, "paused", DateTimeOffset.UtcNow.AddSeconds(-1));
-            for (var i = 0; i < 100 && Math.Abs(mpv.GetPropertyDouble("time-pos") - 130) > .1; i++) await Task.Delay(20);
+            // FileLoaded can precede completion of the load's initial native seek.
+            // The coordinator timer is stopped above for deterministic clock checks;
+            // drive its ticks here so a command deferred while Busy can actually run.
+            for (var i = 0; i < 100 && Math.Abs(mpv.GetPropertyDouble("time-pos") - 130) > .1; i++)
+            {
+                sync.Tick(Environment.TickCount64, DateTimeOffset.UtcNow);
+                await Task.Delay(20);
+            }
             Require(Math.Abs(mpv.GetPropertyDouble("time-pos") - 130) <= .1 && mpv.GetPropertyFlag("pause"),
                 "Actual native paused seek advanced its target by transport lateness or resumed playback.");
             Property(player, "Position", 130d);

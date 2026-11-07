@@ -100,6 +100,67 @@ public sealed class DetailCacheInvalidationTests
     }
 
     [Fact]
+    public async Task SharedDetailBarrierWaitsForNewSavesAndDoesNotRetainWriteFailures()
+    {
+        var (cache, _) = CreateCache();
+        var messenger = new WeakReferenceMessenger();
+        DetailCacheInvalidation.Attach(cache, messenger);
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var successful = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        messenger.Send(new PlaybackProgressUpdated("episode-1", 90, 100, false) { Persisted = failed.Task });
+        var revision = cache.ProgressSaveRevision;
+        var waiting = cache.WaitForProgressSettlementAsync(CancellationToken.None);
+        messenger.Send(new PlaybackProgressUpdated("episode-2", 99, 100, true) { Persisted = successful.Task });
+        failed.SetException(new HttpRequestException("Synthetic final-save failure."));
+        Assert.False(waiting.IsCompleted);
+        Assert.True(cache.ProgressSaveRevision > revision);
+        successful.SetResult();
+        await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+        await cache.WaitForProgressSettlementAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task DetailBarrierAndRevisionAreScopedToTheItemOrItsKnownSeries()
+    {
+        var (cache, _) = CreateCache();
+        var messenger = new WeakReferenceMessenger();
+        DetailCacheInvalidation.Attach(cache, messenger);
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var unrelatedRevision = cache.GetProgressSaveRevision("movie:other");
+            messenger.Send(new PlaybackProgressUpdated("episode:a", 90, 100, false)
+                { SeriesId = "series:show", Persisted = save.Task });
+            await cache.WaitForProgressSettlementAsync(cancellation.Token, "movie:other").WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(unrelatedRevision, cache.GetProgressSaveRevision("movie:other"));
+            var leaf = cache.WaitForProgressSettlementAsync(cancellation.Token, "episode:a");
+            var series = cache.WaitForProgressSettlementAsync(cancellation.Token, "series:show");
+            var season = cache.WaitForProgressSettlementAsync(cancellation.Token, "series:show-S02", "series:show");
+            Assert.False(leaf.IsCompleted);
+            Assert.False(series.IsCompleted);
+            Assert.False(season.IsCompleted);
+            var revision = cache.GetProgressSaveRevision("series:show-S02", "series:show");
+            messenger.Send(new PlaybackProgressUpdated("episode:b", 99, 100, true)
+                { SeriesId = "series:show", Persisted = newer.Task });
+            Assert.True(cache.GetProgressSaveRevision("series:show-S02", "series:show") > revision);
+            save.SetException(new HttpRequestException("Synthetic final-save failure."));
+            await leaf.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.False(series.IsCompleted);
+            Assert.False(season.IsCompleted);
+            newer.SetResult();
+            await Task.WhenAll(series, season).WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            cancellation.Cancel();
+            save.TrySetResult();
+            newer.TrySetResult();
+        }
+    }
+
+    [Fact]
     public void FinalSaveCompletingDuringTheFirstClearStillGetsTheSecondClear()
     {
         var finalSave = new TaskCompletionSource();
@@ -169,10 +230,63 @@ public sealed class DetailCacheInvalidationTests
         Assert.False(freshness.IsCurrent(episode));
         Assert.True(freshness.IsCurrent(movie));
 
-        // A season id without its series cannot be matched, so it invalidates everything.
-        var again = await freshness.ReadAsync("movie:other", server.Read("movie:other"), CancellationToken.None);
+        // Without a known series, only the container's own scope is retired.
+        var refreshedEpisode = await freshness.ReadAsync("episode:show-s01e01",
+            server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+        var stamp = revision.Current;
         messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show-S01"));
-        Assert.False(freshness.IsCurrent(again));
+        Assert.False(revision.IsCurrent(stamp, "series:show-S01", null));
+        Assert.True(freshness.IsCurrent(refreshedEpisode));
+        Assert.True(freshness.IsCurrent(movie));
+
+        // A series-root mutation still reaches its episodes without a parent id.
+        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show"));
+        Assert.False(freshness.IsCurrent(refreshedEpisode));
+        Assert.True(freshness.IsCurrent(movie));
+        GC.KeepAlive(revision);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task RemoteContainerWithoutSeriesScopeRetiresOnlyItsOwnWatchScope(bool coalesced, bool explicitPlaybackScope)
+    {
+        var (freshness, messenger, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 1200 };
+        var held = await freshness.ReadAsync("episode:show-s01e01",
+            server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+        var unrelated = await freshness.ReadAsync("movie:other", server.Read("movie:other"), CancellationToken.None);
+        using var http = new HttpClient(new RejectingHandler());
+        var client = new SiloPlayer.Core.Api.SiloApiClient(http);
+        client.SetBaseUrl("https://container-scope.invalid");
+        client.SetProfile("profile");
+        var invalidation = new MediaStateInvalidated(client.CaptureContext(),
+            new HashSet<string>(["series:show-S01"]), new HashSet<string>(), RefreshDetails: false,
+            PlaybackStateContentIds: explicitPlaybackScope ? new HashSet<string>(["series:show-S01"]) : null);
+        var before = revision.Current;
+        messenger.Send(invalidation);
+        Assert.False(revision.IsCurrent(before, "series:show-S01", null));
+        Assert.True(freshness.IsCurrent(held));
+        Assert.True(freshness.IsCurrent(unrelated));
+
+        if (coalesced)
+        {
+            var refreshed = await freshness.ReadAsync("episode:show-s01e01",
+                server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+            var stamp = revision.Current;
+            messenger.Send(invalidation with { RefreshDetails = true });
+            Assert.Equal(stamp, revision.Current);
+            Assert.True(freshness.IsCurrent(refreshed));
+            Assert.True(freshness.IsCurrent(held));
+            Assert.True(freshness.IsCurrent(unrelated));
+        }
+
+        // Supplying the parent does retire descendants, but not other titles.
+        messenger.Send(invalidation with { SeriesIds = new HashSet<string>(["series:show"]) });
+        Assert.False(freshness.IsCurrent(held));
+        Assert.True(freshness.IsCurrent(unrelated));
         GC.KeepAlive(revision);
     }
 

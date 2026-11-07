@@ -383,22 +383,71 @@ public partial class PlayerService
             request.Headers.CacheControl = new() { NoCache = true, NoStore = true };
             using var response = await SubtitleSyncDownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
             response.EnsureSuccessStatusCode();
-            var bytes = await response.Content.ReadAsByteArrayAsync(bounded.Token);
+            if (response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes)
+                throw new InvalidDataException("Subtitle cues exceed the size limit.");
+            using var buffer = new MemoryStream();
+            await using (var body = await response.Content.ReadAsStreamAsync(bounded.Token))
+            {
+                var chunk = new byte[81920];
+                int read;
+                while ((read = await body.ReadAsync(chunk, bounded.Token)) > 0)
+                {
+                    if (buffer.Length + read > SubtitleSidecarFile.MaxBytes)
+                        throw new InvalidDataException("Subtitle cues exceed the size limit.");
+                    buffer.Write(chunk, 0, read);
+                }
+            }
+            var bytes = buffer.ToArray();
             if (bytes.Length == 0) throw new InvalidDataException("Empty subtitle cues.");
             var extension = state.Format.ToLowerInvariant() switch { "ass" => ".ass", "ssa" => ".ssa", "vtt" => ".vtt", _ => ".srt" };
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-sync-" + Guid.NewGuid().ToString("N") + extension);
             await File.WriteAllBytesAsync(path, bytes, bounded.Token);
+            // Notifications may start this worker while holding the sync gate.
+            // Even if every I/O await completed synchronously, leave that caller
+            // before taking the outer add gate (add -> sync -> track state).
+            await Task.Yield();
+            lock (_subtitleAddGate)
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             {
                 if (!SyncCurrent(ct) || entry.State.Timing != timing || !IsActiveSyncKey(state.Key) || _mpv == null) return;
                 var index = pair.Value.Track.Index;
                 _loadedExternalSubtitleSids.TryGetValue(index, out var oldSid);
-                _mpv.AddSubtitle(path, pair.Value.Track.Label, pair.Value.Track.Language, select: true);
-                var newSid = (int)Math.Round(_mpv.GetPropertyDouble("sid"));
-                if (newSid <= 0 || newSid == oldSid) throw new InvalidDataException("Corrected subtitle did not load.");
+                var mpv = _mpv;
+                var session = _playbackManager?.CurrentSession;
+                var fileGeneration = Volatile.Read(ref _fileLoadGeneration);
+                bool SameFile() => ReferenceEquals(mpv, _mpv) && ReferenceEquals(session, _playbackManager?.CurrentSession) &&
+                    fileGeneration == Volatile.Read(ref _fileLoadGeneration);
+                var previousSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+                var previousIds = mpv.GetSubtitleTrackIds().ToHashSet();
+                // The inventory delta may include an unrelated native async add.
+                // Only this unique, newly generated local path proves our SID.
+                var added = mpv.AddSubtitle(path, pair.Value.Track.Label, pair.Value.Track.Language, select: false);
+                var ownedIds = mpv.GetSubtitleTrackIds(externalOnly: true, externalFilename: path)
+                    .Where(id => !previousIds.Contains(id)).ToArray();
+                var newSid = ownedIds.Length == 1 ? ownedIds[0] : 0;
+                var loaded = false;
+                try
+                {
+                    if (!added || newSid <= 0 || !SameFile() || !SyncCurrent(ct))
+                        throw new InvalidDataException("Corrected subtitle did not load.");
+                    mpv.SetSubtitleTrack(newSid);
+                    if ((int)Math.Round(mpv.GetPropertyDouble("sid")) != newSid)
+                        throw new InvalidDataException("Corrected subtitle did not select.");
+                    loaded = true;
+                }
+                finally
+                {
+                    if (!loaded && SameFile())
+                    {
+                        var selectedSid = (int)Math.Round(mpv.GetPropertyDouble("sid"));
+                        if (newSid > 0) mpv.RemoveSubtitle(newSid);
+                        // A successor's native selection is not ours to undo.
+                        if (newSid > 0 && selectedSid == newSid) mpv.SetSubtitleTrack(previousSid);
+                    }
+                }
                 _loadedExternalSubtitleSids[index] = newSid;
-                if (oldSid > 0) _mpv.RemoveSubtitle(oldSid);
+                if (oldSid > 0 && oldSid != newSid && previousIds.Contains(oldSid)) _mpv.RemoveSubtitle(oldSid);
                 _subtitleSyncFiles.Add(path); path = null;
                 entry.LastAppliedTiming = timing;
                 if (IsApplyingOwnedTiming(entry, timing)) SendSubtitleSyncOutcome(entry.State);
