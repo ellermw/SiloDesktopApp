@@ -158,13 +158,46 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("source = local;", add);
         Assert.Contains("mpv.AddSubtitle(source, label, track.Language, select: false)", add);
         Assert.DoesNotContain("FullUrl", add);
-        var prefetch = Between(service, "private async Task PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
+        var prefetch = Between(service, "private async Task<string?> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
         Assert.DoesNotContain("lock (_subtitleAddGate)", prefetch);
         Assert.DoesNotContain("mpv.AddSubtitle", prefetch);
         Assert.Contains("SubtitleSidecarFile.DownloadExtension(", prefetch);
-        Assert.Contains("buffer.Length + read > SubtitleSidecarFile.MaxBytes", prefetch);
-        Assert.Contains("loadedMediaGeneration != Volatile.Read(ref _loadedMediaInitGeneration)", prefetch);
+        Assert.Contains("var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);", prefetch);
+        Assert.Contains("response.Content.Headers.ContentLength > maxBytes", prefetch);
+        Assert.Contains("total + read > maxBytes", prefetch);
+        Assert.Contains("await file.WriteAsync(chunk.AsMemory(0, read), bounded.Token)", prefetch);
+        Assert.DoesNotContain("new MemoryStream", prefetch);
+        Assert.Contains("loadedMediaGeneration == Volatile.Read(ref _loadedMediaInitGeneration)", prefetch);
+        Assert.Contains("choiceVersion == Volatile.Read(ref _legacySubtitleChoiceVersion)", prefetch);
+        Assert.Contains("playGeneration == Volatile.Read(ref _playRequestGeneration)", prefetch);
+        Assert.Contains("authority.ApiClient.IsCurrentIdentityContext(identity)", prefetch);
+        Assert.Contains("CancelRetiredSubtitleDownloadAsync(DownloadCurrent, bounded)", prefetch);
+        Assert.Contains("bounded.CancelAfter(TimeSpan.FromMinutes(10))", prefetch);
+        Assert.Contains("SubtitleSidecarDownloadClient.GetAsync", prefetch);
+        Assert.DoesNotContain("SubtitleSyncDownloadClient", prefetch);
+        Assert.Contains("SubtitleSidecarDownloadClient = new() { Timeout = Timeout.InfiniteTimeSpan }", service);
         Assert.Contains("currentOwner?.Invoke() == false || generation != _subtitleSidecarGeneration", prefetch);
+    }
+
+    [Fact]
+    public void SidecarFailuresDistinguishDownloadLimitsAndNotifyAutomaticSelections()
+    {
+        var service = Read("PlayerService.cs");
+        var prefetch = Between(service, "private async Task<string?> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
+        Assert.Contains("download limit. Choose another subtitle or turn subtitles off.", prefetch);
+        Assert.Contains("Subtitle download timed out. The server may still be extracting the track. Try again", prefetch);
+        Assert.Contains("The subtitle could not be downloaded. Try again", prefetch);
+        var manual = Between(service, "private async Task<bool> TrySetSubtitleTrackAndPersistForOwnerAsync(", "private bool MatchesSubtitlePreference(");
+        Assert.Contains("sidecarError = await PrefetchSubtitleSidecarForOwnerAsync(track, CanActivate);", manual);
+        Assert.Contains("ShowSubtitleSidecarFailure(sidecarError);", manual);
+        var loaded = Between(service, "private async Task<bool> SelectSubtitleByServerIndexAsync(", "public int ActiveSubtitleServerIndex");
+        Assert.Contains("var sidecarError = await PrefetchSubtitleSidecarForOwnerAsync(track, CurrentSelection);", loaded);
+        Assert.Contains("ShowSubtitleSidecarFailure(sidecarError, showUnavailable);", loaded);
+        var feedback = Between(service, "private void ShowSubtitleSidecarFailure(", "private bool SelectSubtitleTrack(");
+        Assert.Contains("if (downloadError == null)", feedback);
+        Assert.Contains("ShowSubtitleSelectionUnavailable(showNotice: false);", feedback);
+        Assert.Contains("ShowNotice(\"Subtitle could not load\", downloadError, \"warning\");", feedback);
+        Assert.DoesNotContain("if (showUnavailable)", feedback);
     }
 
     [Fact]

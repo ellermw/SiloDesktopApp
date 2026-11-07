@@ -8,6 +8,12 @@ namespace SiloPlayer.Core.Services;
 public static class SubtitleSidecarFile
 {
     public const int MaxBytes = 16 * 1024 * 1024;
+    public const int MaxBitmapBytes = 256 * 1024 * 1024;
+
+    // PGS contains images rather than text; feature-length tracks can readily
+    // exceed the text cue limit. Keep both routes bounded on disk.
+    public static int DownloadMaxBytes(string extension)
+        => extension.Equals(".sup", StringComparison.OrdinalIgnoreCase) ? MaxBitmapBytes : MaxBytes;
 
     /// <summary>
     /// Local download suffix, including PGS. Unknown formats use a generic

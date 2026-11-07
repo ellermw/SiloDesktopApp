@@ -16,11 +16,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         var failures = new List<string>();
-        foreach (var scenario in new[] { "dispatcher-pgs", "dispatcher-failed-text", "refresh-manual", "refresh-post-load", "refresh-reindex-manual", "refresh-reindex-post-load", "refresh-removed-manual", "refresh-removed-post-load", "add-selection-flags", "blocking-add-off", "blocking-add-native", "failed-quality-off", "failed-quality-track", "failed-audio-off", "failed-audio-track", "failed-seek-off", "failed-seek-track", "failed-quality-transport-off", "failed-quality-transport-track", "failed-audio-transport-off", "failed-audio-transport-track", "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "manual-reload-finished", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
+        foreach (var scenario in new[] { "budget-large-pgs-manual", "budget-large-pgs-loaded", "budget-slow-manual", "budget-slow-loaded", "dispatcher-pgs", "dispatcher-failed-text", "refresh-manual", "refresh-post-load", "refresh-reindex-manual", "refresh-reindex-post-load", "refresh-removed-manual", "refresh-removed-post-load", "add-selection-flags", "blocking-add-off", "blocking-add-native", "failed-quality-off", "failed-quality-track", "failed-audio-off", "failed-audio-track", "failed-seek-off", "failed-seek-track", "failed-quality-transport-off", "failed-quality-transport-track", "failed-audio-transport-off", "failed-audio-transport-track", "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "manual-reload-finished", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing" })
         {
             try
             {
-                if (scenario.StartsWith("dispatcher-", StringComparison.Ordinal)) await CheckDispatcherSidecarAsync(parent, scenario);
+                if (scenario.StartsWith("budget-", StringComparison.Ordinal)) await CheckSidecarBudgetAsync(parent, scenario);
+                else if (scenario.StartsWith("dispatcher-", StringComparison.Ordinal)) await CheckDispatcherSidecarAsync(parent, scenario);
                 else if (scenario == "add-selection-flags") await CheckAddSelectionFlagsAsync();
                 else if (scenario.StartsWith("burn-load-", StringComparison.Ordinal) || scenario.StartsWith("burn-response-", StringComparison.Ordinal)) await CheckBurnInLoadIntentAsync(scenario);
                 else if (scenario.StartsWith("load-start-", StringComparison.Ordinal) || scenario.StartsWith("loaded-settings-", StringComparison.Ordinal)) await CheckLoadStartAsync(scenario);
@@ -30,6 +31,133 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             catch (Exception ex) { failures.Add(scenario + ": " + ex.Message); Program.Log("CASE FAIL: " + scenario + ": " + ex); }
         }
         if (failures.Count != 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
+
+    private static async Task CheckSidecarBudgetAsync(StackPanel parent, string scenario)
+    {
+        var pgs = scenario.Contains("large-pgs", StringComparison.Ordinal);
+        var automatic = scenario.EndsWith("-loaded", StringComparison.Ordinal);
+        using var subtitles = new HeldSubtitleServer(false);
+        if (pgs)
+        {
+            subtitles.SubtitleBytes = CreateLargePgs();
+            subtitles.SubtitleMediaType = "application/octet-stream";
+            Require(subtitles.SubtitleBytes.Length > SubtitleSidecarFile.MaxBytes,
+                "PGS regression must exceed the old text download limit.");
+        }
+        using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://sidecar-ownership.invalid"); api.SetProfile("fixture");
+        using var auth = new AuthService(api, new AuthApi(api));
+        using var manager = new PlaybackManager(new(api), new(api), auth, api);
+        using var service = new PlayerService(new(api), new(api), auth, api,
+            new SettingsService(Path.Combine(Program.ResultDirectory, scenario)), new SettingsApi(api));
+        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [Version()] });
+        await manager.StartSessionAsync(42);
+        var track = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0);
+        if (pgs) { track.Codec = "hdmv_pgs_subtitle"; track.Url = subtitles.Origin + "/eng.raw"; }
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        var wave = Path.Combine(Program.ResultDirectory, scenario + ".wav"); WriteWave(wave);
+        mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0); mpv.Pause();
+        Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
+        Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("remux", subtitles.Origin + "/media.wav"));
+        Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "movie");
+        Property(service, "Versions", manager.WatchDetail!.Versions);
+        Call(service, "SendSubtitleListToOsc");
+        Task<bool>? selection = null;
+        try
+        {
+            if (automatic)
+            {
+                // Exercise the actual FILE_LOADED event and its initialization
+                // worker, with no manual pending owner to force feedback/saving.
+                manager.RecordLocalSubtitleSelection(0, isAutomatic: true);
+                Set(service, "_restorePausedAfterLoad", (bool?)true);
+                Call(service, "WireMpvEvents"); mpv.LoadFile(wave);
+            }
+            else
+            {
+                var started = new TaskCompletionSource<Task<bool>>(TaskCreationOptions.RunContinuationsAsynchronously);
+                Require(parent.DispatcherQueue.TryEnqueue(() =>
+                {
+                    try { started.TrySetResult((Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!); }
+                    catch (Exception ex) { started.TrySetException(ex); }
+                }), "Dispatcher rejected the manual budget regression.");
+                selection = await started.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            }
+            await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (!pgs)
+            {
+                // No headers (and hence no first byte) before the old 8s limit.
+                await Task.Delay(TimeSpan.FromSeconds(9));
+                Require(automatic ? Get(service, "_loadedMediaInitCts") != null : !selection!.IsCompleted,
+                    "Slow extraction was abandoned at the old eight-second deadline.");
+            }
+            var pulse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Require(parent.DispatcherQueue.TryEnqueue(() => pulse.TrySetResult()), "Dispatcher rejected the download pulse.");
+            await pulse.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var gate = Get(service, "_subtitleAddGate")!;
+            Require(Monitor.TryEnter(gate), "The sidecar download held the native add gate."); Monitor.Exit(gate);
+            subtitles.Release.TrySetResult();
+            if (selection != null) Require(await selection.WaitAsync(TimeSpan.FromSeconds(20)), "Manual sidecar budget regression did not execute.");
+            else
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(20);
+                while (Get(service, "_loadedMediaInitCts") != null && DateTime.UtcNow < deadline) await Task.Delay(20);
+                Require(Get(service, "_loadedMediaInitCts") == null, "FILE_LOADED sidecar initialization did not finish.");
+            }
+            var files = (Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!;
+            var sids = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+            Require(files.TryGetValue(0, out var path) && File.Exists(path) &&
+                (!pgs || new FileInfo(path).Length == subtitles.SubtitleBytes!.Length) &&
+                sids.TryGetValue(0, out var sid) && sid > 0 && mpv.GetPropertyDouble("sid") == sid &&
+                service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyFlag("pause") &&
+                subtitles.EnglishRequests == 1 && wire.PreferenceWrites == (automatic ? 0 : 1),
+                "Large/slow sidecar did not retain its bytes, actual SID, highlight, pause or preference ownership.");
+        }
+        finally
+        {
+            subtitles.Release.TrySetResult();
+            if (selection != null) try { await selection.WaitAsync(TimeSpan.FromSeconds(20)); } catch (Exception) { }
+            Call(service, "CancelPendingLoadedMediaInitialization"); Call(service, "CancelPendingFileLoadTimeout");
+            Call(service, "StopPlaybackStallWatchdog"); Call(service, "DisconnectWebSocket"); Call(service, "StopSubtitleSync");
+            Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+        }
+    }
+
+    private static byte[] CreateLargePgs()
+    {
+        // Valid SUP display sets: one full-frame solid object, palette, window,
+        // composition and END. Repeated cues model a long bitmap track, not
+        // a text body mislabeled as PGS or unparseable size padding.
+        using var stream = new MemoryStream();
+        var pixels = new byte[1080 * 6];
+        for (var y = 0; y < 1080; y++)
+            new byte[] { 0, 0xc7, 0x80, 1, 0, 0 }.CopyTo(pixels, y * 6);
+        var objectLength = pixels.Length + 4;
+        var objectData = new byte[pixels.Length + 11];
+        new byte[] { 0, 0, 0, 0xc0, (byte)(objectLength >> 16), (byte)(objectLength >> 8), (byte)objectLength,
+            0x07, 0x80, 0x04, 0x38 }.CopyTo(objectData, 0);
+        pixels.CopyTo(objectData, 11);
+        uint pts = 90000;
+        ushort composition = 0;
+        while (stream.Length <= SubtitleSidecarFile.MaxBytes)
+        {
+            Packet(0x16, [0x07, 0x80, 0x04, 0x38, 0x10, (byte)(composition >> 8), (byte)composition,
+                0x80, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+            Packet(0x17, [1, 0, 0, 0, 0, 0, 0x07, 0x80, 0x04, 0x38]);
+            Packet(0x14, [0, 0, 1, 235, 128, 128, 255]);
+            Packet(0x15, objectData);
+            Packet(0x80, []);
+            pts += 90000; composition++;
+        }
+        return stream.ToArray();
+
+        void Packet(byte type, byte[] payload)
+        {
+            stream.Write([0x50, 0x47, (byte)(pts >> 24), (byte)(pts >> 16), (byte)(pts >> 8), (byte)pts,
+                0, 0, 0, 0, type, (byte)(payload.Length >> 8), (byte)payload.Length]);
+            stream.Write(payload);
+        }
     }
 
     private static async Task CheckDispatcherSidecarAsync(StackPanel parent, string scenario)
@@ -85,8 +213,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 Monitor.Exit(gate);
                 var selection = await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
                 Require(subtitles.EnglishRequests == 1, "Failed prefetch fell through to a second HTTP sub-add.");
-                if (pgs) Require(!selection.IsCompleted && service.ActiveSubtitleServerIndex == -1,
-                    "Held PGS download blocked a newer dispatcher Off choice.");
+                if (pgs) Require(!await selection.WaitAsync(TimeSpan.FromSeconds(2)) && service.ActiveSubtitleServerIndex == -1,
+                    "Held PGS download blocked a newer dispatcher Off choice or failed to retire promptly.");
                 else Require(!await selection.WaitAsync(TimeSpan.FromSeconds(2)), "Failed prefetch claimed an executed selection.");
             }
             finally { subtitles.Release.TrySetResult(); }
@@ -854,6 +982,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         public TaskCompletionSource MediaEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource MediaRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public byte[] ReplacementMedia { get; set; } = [];
+        public byte[]? SubtitleBytes { get; set; }
+        public string SubtitleMediaType { get; set; } = "application/x-subrip";
         public int MediaRequests;
         public bool HoldOnlyFirstSubtitle;
         public bool FailFirstSubtitle;
@@ -910,8 +1040,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                             for (var i = 0; i < 257; i++) await request.Response.OutputStream.WriteAsync(chunk);
                             request.Response.Close(); return;
                         }
-                        var bytes = Encoding.UTF8.GetBytes("1\n00:00:00,000 --> 00:00:59,000\nNative ownership fixture\n");
-                        request.Response.ContentType = "application/x-subrip"; request.Response.ContentLength64 = bytes.Length;
+                        var bytes = SubtitleBytes ?? Encoding.UTF8.GetBytes("1\n00:00:00,000 --> 00:00:59,000\nNative ownership fixture\n");
+                        request.Response.ContentType = SubtitleMediaType; request.Response.ContentLength64 = bytes.Length;
                         await request.Response.OutputStream.WriteAsync(bytes); request.Response.Close();
                     }
                     catch (Exception ex) when (!listener.IsListening || ex is IOException or HttpListenerException) { }

@@ -123,8 +123,10 @@ public sealed class PlayerServiceSourceTests
         // position/duration, and nothing slides a window during playback
         // (the XAML overlay tick that once did is never activated). A windowed
         // sidecar therefore lost every cue ~10 minutes after selection.
-        // The complete-track URL is added directly, or downloaded whole first.
-        Assert.Contains("source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
+        // The complete track is downloaded first; a failed prefetch must not
+        // repeat the same remote request synchronously in sub-add.
+        Assert.Contains("if (!_prefetchedSubtitleFiles.TryGetValue(track.Index, out var local)) return false;", source, StringComparison.Ordinal);
+        Assert.Contains("source = local;", source, StringComparison.Ordinal);
         var sidecar = source[source.IndexOf("private bool SelectSubtitleSidecar(", StringComparison.Ordinal)..];
         sidecar = sidecar[..sidecar.IndexOf("private long CurrentSubtitleSidecarGeneration()", StringComparison.Ordinal)];
         var add = sidecar.IndexOf("mpv.AddSubtitle(source, label, track.Language, select: false)", StringComparison.Ordinal);
