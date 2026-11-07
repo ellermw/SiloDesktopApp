@@ -13,6 +13,23 @@ internal static partial class SubtitleIdentityNativeFixture
         MpvPlayer mpv, SubtitleServer server, Wire wire, string assets)
     {
         var original = manager.CurrentSession!;
+        async Task ReloadAndSelectAsync(int index)
+        {
+            var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Loaded() => loaded.TrySetResult();
+            mpv.FileLoaded += Loaded;
+            try { mpv.LoadFile(System.IO.Path.Combine(assets, "tracks.mkv")); await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+            finally { mpv.FileLoaded -= Loaded; }
+            mpv.Pause();
+            using var initializer = new CancellationTokenSource();
+            Set(service, "_loadedMediaInitCts", initializer);
+            try
+            {
+                Call(service, "LoadSubtitles");
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", index, false)!;
+            }
+            finally { Set(service, "_loadedMediaInitCts", null); }
+        }
         foreach (var manual in new[] { true, false })
         {
             var track = new SubtitleTrackInfo { Index = manual ? 600 : 610, TrackId = "carry-" + manual,
@@ -45,20 +62,7 @@ internal static partial class SubtitleIdentityNativeFixture
                 // Exercise the common audio/quality handoff, not the burn-in helper.
                 Call(service, "PrepareAppliedSubtitleFileForReload");
                 Require(Get(service, "_preparedSubtitleReload") != null, "An applied same-file subtitle had no prepared carry.");
-                var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                void Loaded() => loaded.TrySetResult();
-                mpv.FileLoaded += Loaded;
-                try { mpv.LoadFile(System.IO.Path.Combine(assets, "tracks.mkv")); await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
-                finally { mpv.FileLoaded -= Loaded; }
-                mpv.Pause();
-                using var initializer = new CancellationTokenSource();
-                Set(service, "_loadedMediaInitCts", initializer);
-                try
-                {
-                    Call(service, "LoadSubtitles");
-                    await (Task)Call(service, "SelectSubtitleByServerIndexAsync", after.Index, false)!;
-                }
-                finally { Set(service, "_loadedMediaInitCts", null); }
+                await ReloadAndSelectAsync(after.Index);
                 Require(service.ActiveSubtitleServerIndex == after.Index && mpv.GetPropertyDouble("sid") > 0 &&
                     files.TryGetValue(after.Index, out var retained) && retained == path && File.Exists(path) &&
                     server.Requests == reads && wire.PreferenceWrites == writes && Get(service, "_preparedSubtitleReload") == null,
@@ -66,6 +70,27 @@ internal static partial class SubtitleIdentityNativeFixture
                 granted.MediaFileId++;
                 Call(service, "PrepareAppliedSubtitleFileForReload");
                 Require(Get(service, "_preparedSubtitleReload") == null, "A changed-file grant borrowed applied sidecar bytes.");
+                granted.MediaFileId--;
+
+                // A new session cannot trust timing observations from the old
+                // one, even if the file and stable subtitle identity match.
+                Call(service, "PrepareAppliedSubtitleFileForReload");
+                Require(Get(service, "_preparedSubtitleReload") != null, "The session-boundary control did not prepare applied bytes.");
+                granted.SessionId = original.SessionId + "-replacement";
+                Require(Call(service, "TakePreparedSubtitleReload") == null,
+                    "A carry prepared before session replacement survived into the new session.");
+                Call(service, "PrepareAppliedSubtitleFileForReload");
+                Require(Get(service, "_preparedSubtitleReload") == null,
+                    "A replacement session borrowed applied bytes with unvalidated timing.");
+                Call(service, "PrepareSubtitleFileForReload", original, granted, (int?)after.Index);
+                Require(Get(service, "_preparedSubtitleReload") == null,
+                    "The explicit subtitle reload helper carried old cues across a session replacement.");
+                server.Fail = false;
+                await ReloadAndSelectAsync(after.Index);
+                Require(service.ActiveSubtitleServerIndex == after.Index && mpv.GetPropertyDouble("sid") > 0 && mpv.IsPaused &&
+                    files.TryGetValue(after.Index, out var refreshed) && refreshed != path && File.Exists(refreshed) && !File.Exists(path) &&
+                    server.Requests == reads + 1 && wire.PreferenceWrites == writes,
+                    "A replacement session did not fetch fresh cues, retain its playback choice/pause, or avoid duplicate preferences.");
             }
             finally
             {
@@ -74,7 +99,7 @@ internal static partial class SubtitleIdentityNativeFixture
                 original.SubtitleUrls.Remove(track);
             }
         }
-        Program.Log("PASS: manual and automatic applied bytes cross same-file reindexed reloads once without a busy re-read; changed-file grants refuse the carry.");
+        Program.Log("PASS: manual and automatic applied bytes cross same-session reindexed reloads once without a busy re-read; changed files/sessions refuse the carry, and replacement sessions fetch fresh cues without duplicate preferences.");
     }
 
     private static async Task CheckRetiredAddBeforeFileLoadAsync(MpvPlayer mpv, SubtitleServer server, string assets)

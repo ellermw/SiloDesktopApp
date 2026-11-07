@@ -70,6 +70,7 @@ public partial class PlayerService : IDisposable
     private int _activeSubtitleServerIndex = -1;
     private SubtitleTrackInfo? _executedSubtitleTrack;
     private int? _executedSubtitleFileId;
+    private string? _executedSubtitleSessionId;
     private ApiRequestContext? _executedSubtitleContext;
     private sealed record SubtitlePreferenceOwner(PlaybackAuthorityScope Authority, ApiRequestContext Context,
         PlaybackManager? Manager, string? Key, CancellationToken Token);
@@ -5009,9 +5010,8 @@ public partial class PlayerService : IDisposable
             }
             if (preparedSubtitle != null)
             {
-                // Detach the one-use carry before a new session's sync teardown
-                // deletes the outgoing files/cache. Re-register it only after
-                // that teardown, so SendSubtitleListToOsc cannot discard it.
+                // Protect the one-use, same-session carry while ensuring its
+                // sync lifecycle, then re-register it for this loaded file.
                 _subtitleSyncFiles.Remove(preparedSubtitle.Path);
                 EnsureSubtitleSync();
                 _subtitleSyncFiles.Add(preparedSubtitle.Path);
@@ -5303,6 +5303,7 @@ public partial class PlayerService : IDisposable
     {
         _executedSubtitleTrack = track;
         _executedSubtitleFileId = _playbackManager?.CurrentSession?.MediaFileId;
+        _executedSubtitleSessionId = _playbackManager?.CurrentSession?.SessionId;
         _executedSubtitleContext = _activeAuthority.ApiClient.CaptureContext();
     }
 

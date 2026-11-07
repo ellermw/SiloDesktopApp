@@ -24,7 +24,7 @@ public partial class PlayerService
     }
     private SubtitleSelectionOperation? _subtitleSelectionOperation;
     private SubtitleSelectionOperation? _subtitleReadOperation;
-    private sealed record PreparedSubtitleReload(SubtitleSelectionOperation? Owner, int MediaFileId, int Index,
+    private sealed record PreparedSubtitleReload(SubtitleSelectionOperation? Owner, string SessionId, int MediaFileId, int Index,
         string? TrackId, string? SyncKey, long? Id, string Path, long PlayRequest, string? Content,
         SiloPlayer.Core.Api.ApiRequestContext Context);
     private PreparedSubtitleReload? _preparedSubtitleReload;
@@ -34,36 +34,38 @@ public partial class PlayerService
         var after = granted.SubtitleUrls.FirstOrDefault(t => !t.Unplayable && t.Index == index);
         var matches = after == null ? Array.Empty<SubtitleTrackInfo>() : previous.SubtitleUrls.Where(t => !t.Unplayable &&
             HasSameSubtitleReloadIdentity(after.TrackId, after.SyncKey, after.Id, t)).Take(2).ToArray();
-        PrepareSubtitleReload(previous.MediaFileId, matches.Length == 1 ? matches[0] : null, granted, after);
+        PrepareSubtitleReload(previous.SessionId, previous.MediaFileId, matches.Length == 1 ? matches[0] : null, granted, after);
     }
 
     private void PrepareAppliedSubtitleFileForReload()
     {
-        // Every replacement load, including audio/quality/recovery, can carry
-        // already applied bytes once when the granted identity is unchanged.
+        // Same-session replacement loads can carry applied bytes once when
+        // the granted identity is unchanged. New sessions must fetch fresh cues.
         if (_preparedSubtitleReload != null || _playbackManager?.CurrentSession is not { } granted ||
             _activeSubtitleServerIndex < 0 || _executedSubtitleContext is not { } context ||
             !_activeAuthority.ApiClient.IsCurrentContext(context)) return;
         var after = granted.SubtitleUrls.FirstOrDefault(t => !t.Unplayable &&
             t.Index == (_pendingInitialServerSubtitleIndex ?? _playbackManager.SubtitleSelectionForLoad));
-        PrepareSubtitleReload(_executedSubtitleFileId, _executedSubtitleTrack, granted, after);
+        PrepareSubtitleReload(_executedSubtitleSessionId, _executedSubtitleFileId, _executedSubtitleTrack, granted, after);
     }
 
-    private void PrepareSubtitleReload(int? previousFileId, SubtitleTrackInfo? before,
+    private void PrepareSubtitleReload(string? previousSessionId, int? previousFileId, SubtitleTrackInfo? before,
         PlaybackStartResponse granted, SubtitleTrackInfo? after)
     {
         var owner = Volatile.Read(ref _subtitleSelectionOperation);
         var context = owner?.Context ?? _executedSubtitleContext;
-        // Never carry bytes by ordinal across a file or authority boundary.
+        // Never carry bytes across a session, file or authority boundary.
+        // A replacement session may have missed timing changes while offline.
         // An automatic applied selection has no manual owner, but owns bytes.
         if (context is not { } captured || !_activeAuthority.ApiClient.IsCurrentContext(captured) ||
+            previousSessionId != granted.SessionId ||
             before == null || after == null || previousFileId != granted.MediaFileId ||
             before.Unplayable || after.Unplayable ||
             !HasSameSubtitleReloadIdentity(before.TrackId, before.SyncKey, before.Id, after)) return;
         lock (_subtitleTrackStateLock)
         {
             if (!_prefetchedSubtitleFiles.TryGetValue(before.Index, out var path)) return;
-            _preparedSubtitleReload = new(owner, granted.MediaFileId, after.Index, after.TrackId, after.SyncKey, after.Id, path,
+            _preparedSubtitleReload = new(owner, granted.SessionId, granted.MediaFileId, after.Index, after.TrackId, after.SyncKey, after.Id, path,
                 Volatile.Read(ref _playRequestGeneration), ContentId, captured);
         }
     }
@@ -86,7 +88,8 @@ public partial class PlayerService
         if (prepared == null || !ReferenceEquals(prepared.Owner, Volatile.Read(ref _subtitleSelectionOperation)) ||
             prepared.Owner?.Token.IsCancellationRequested == true || prepared.PlayRequest != Volatile.Read(ref _playRequestGeneration) ||
             prepared.Content != ContentId || !_activeAuthority.ApiClient.IsCurrentContext(prepared.Context) ||
-            _playbackManager?.CurrentSession is not { } session || session.MediaFileId != prepared.MediaFileId ||
+            _playbackManager?.CurrentSession is not { } session || session.SessionId != prepared.SessionId ||
+            session.MediaFileId != prepared.MediaFileId ||
             !session.SubtitleUrls.Any(t => !t.Unplayable && t.Index == prepared.Index &&
                 HasSameSubtitleReloadIdentity(prepared.TrackId, prepared.SyncKey, prepared.Id, t)) ||
             !File.Exists(prepared.Path)) return null;
