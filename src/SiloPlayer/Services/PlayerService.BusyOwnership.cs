@@ -8,6 +8,7 @@ public partial class PlayerService
 {
     private readonly object _playbackBusyLock = new();
     private long _playbackBusyRevision;
+    private long _mpvLoadBusyRevision;
     private volatile bool _isLoading;
     private long _roomPlaybackGeneration;
     private CancellationTokenSource? _soloVersionSwitchCts;
@@ -45,6 +46,38 @@ public partial class PlayerService
             return new(_playbackBusyRevision, _activeAuthority, _playbackManager, _playbackManager?.CurrentSession,
                 _mpv, _videoWindow, _playbackCts, Volatile.Read(ref _playRequestGeneration),
                 Volatile.Read(ref _playbackFileGeneration));
+        }
+    }
+
+    // An invalidation can become a no-op after waiting for a selection's
+    // replan. Borrow its EOF guard rather than retiring that selection's claim.
+    private PlaybackBusyOwner? BeginPlanInvalidationBusy()
+    {
+        lock (_playbackBusyLock)
+            return _switchingContent || IsLoading || _qualitySwitchActive
+                ? null : BeginPlaybackBusy(loading: false);
+    }
+
+    private PlaybackBusyOwner BeginMpvLoadBusy()
+    {
+        lock (_playbackBusyLock)
+        {
+            var owner = BeginPlaybackBusy();
+            _mpvLoadBusyRevision = owner.Revision;
+            return owner;
+        }
+    }
+
+    private void CompleteMpvLoadBusy(long revision)
+    {
+        lock (_playbackBusyLock)
+        {
+            // FILE_LOADED belongs to the submitted load, not a selection that
+            // started replanning (or claimed legacy dispatch) while it opened.
+            if (revision != _playbackBusyRevision) return;
+            _qualitySwitchActive = false;
+            SetSwitchingContent(false);
+            IsLoading = false;
         }
     }
 

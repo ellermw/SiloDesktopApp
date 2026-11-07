@@ -2704,7 +2704,7 @@ public partial class PlayerService : IDisposable
         _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
             prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
             prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
-        var loadBusyOwner = BeginPlaybackBusy();
+        var loadBusyOwner = BeginMpvLoadBusy();
         acceptBusy?.Invoke(loadBusyOwner);
         SetConnectionMediaActive(true);
         if (loadingOwner != null)
@@ -4546,6 +4546,7 @@ public partial class PlayerService : IDisposable
 
         _mpvFileLoadedHandler = () =>
         {
+            var loadBusyRevision = Volatile.Read(ref _mpvLoadBusyRevision);
             var wasPrematureEofRecovery = _prematureEofRecoveryActive;
             var restorePaused = IsWatchTogetherPlayback ? _roomPlaybackPaused : _restorePausedAfterLoad == true;
             // v3 original_http is byte-for-byte source media: the server's
@@ -4572,7 +4573,6 @@ public partial class PlayerService : IDisposable
             ReconcilePlaybackSurfaceStateAfterLoad();
             CancelPendingFileLoadTimeout();
             Interlocked.Exchange(ref _consecutiveFileLoadTimeouts, 0);
-            _qualitySwitchActive = false;
             _playingNextShown = false;
             _postRollActive = false;
             _postRollVideoEnded = false;
@@ -4621,8 +4621,7 @@ public partial class PlayerService : IDisposable
 
             // Publish readiness only after pause and position settle: the UI
             // room timer must not release play ahead of this load callback.
-            SetSwitchingContent(false); // Safe to receive PlaybackEnded now
-            IsLoading = false;
+            CompleteMpvLoadBusy(loadBusyRevision);
             SynchronizeConnectionMediaActivity(restorePaused);
             StartPlaybackStallWatchdog();
             InvokeSubscribersSafely(ContentLoaded, nameof(ContentLoaded));
@@ -7393,7 +7392,6 @@ public partial class PlayerService : IDisposable
         }
         catch (Exception ex)
         {
-            SetSwitchingContent(false);
             LogToFile(
                 "player_recovery_error.txt",
                 $"Unhandled plan invalidation recovery failure: {ex}");
@@ -7416,7 +7414,7 @@ public partial class PlayerService : IDisposable
         var currentPosition = CurrentMediaPosition;
         var wasPaused = CaptureUserPausedState();
         var ct = _playbackCts?.Token ?? CancellationToken.None;
-        SetSwitchingContent(true);
+        var busyOwner = BeginPlanInvalidationBusy();
         try
         {
             var replacement = await manager.ReplanInvalidatedPlanAsync(
@@ -7426,9 +7424,10 @@ public partial class PlayerService : IDisposable
                 ct).ConfigureAwait(false);
             if (replacement == null)
             {
-                SetSwitchingContent(false);
+                if (busyOwner != null) ReleasePlaybackBusy(busyOwner);
                 return new CommandResult();
             }
+            if (busyOwner != null) busyOwner = busyOwner with { Session = replacement };
 
             var version = Versions.FirstOrDefault(item => item.FileId == replacement.MediaFileId)
                 ?? throw new InvalidOperationException("The replanned media version is unavailable.");
@@ -7445,7 +7444,7 @@ public partial class PlayerService : IDisposable
                 !ReferenceEquals(_playbackManager, manager) ||
                 !ReferenceEquals(manager.CurrentSession, replacement))
             {
-                SetSwitchingContent(false);
+                if (busyOwner != null) ReleasePlaybackBusy(busyOwner);
                 return new CommandResult { Status = "rejected", Error = "playback_session_changed" };
             }
 
@@ -7462,7 +7461,7 @@ public partial class PlayerService : IDisposable
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            SetSwitchingContent(false);
+            if (busyOwner != null) ReleasePlaybackBusy(busyOwner);
             return new CommandResult { Status = "rejected", Error = "playback_canceled" };
         }
         catch (Exception ex)

@@ -78,6 +78,74 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
             Call(service, "SendQualityInfoToOsc");
+            if (mode.StartsWith("busy-", StringComparison.Ordinal))
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                var outgoingSession = manager.CurrentSession!;
+                var initialError = service.ErrorMessage;
+                var legacy = mode.StartsWith("busy-legacy-", StringComparison.Ordinal);
+                var audio = mode.StartsWith("busy-audio-", StringComparison.Ordinal);
+                var version = mode.StartsWith("busy-version-", StringComparison.Ordinal);
+                var fileLoaded = mode.EndsWith("file-loaded", StringComparison.Ordinal);
+                Task? selection = null;
+                Task? invalidation = null;
+                wire.HoldSuccessfulReplan = !version;
+                wire.HoldReplacementStart = version;
+                if (legacy)
+                {
+                    var transportGate = (SemaphoreSlim)Get(service, "_transportRestartGate")!;
+                    var drainGeneration = (long)Get(service, "_seekRestartGeneration")!;
+                    await transportGate.WaitAsync();
+                    try
+                    {
+                        mpv.SendScriptMessage("silo-quality-select", "720p");
+                        await Until(() => service.IsQualitySwitchActive &&
+                            (long)Get(service, "_seekRestartGeneration")! > drainGeneration,
+                            "Legacy quality did not claim its held transport drain.");
+                        if (fileLoaded) await DeliverOutgoingFileLoadedAsync();
+                        else
+                            await (Task)Call(service, "HandlePlanInvalidationAsync",
+                                new PlaybackPlanInvalidation("already-replaced-plan", "synthetic-invalidation"))!;
+                        Require(service.IsQualitySwitchActive && (bool)Get(service, "_switchingContent")!,
+                            "An outgoing load/no-op invalidation retired the pending legacy selection.");
+                    }
+                    finally { transportGate.Release(); }
+                }
+                else
+                {
+                    selection = version ? service.SwitchVersionAsync(versions[1]) : audio
+                        ? service.SwitchAudioTrackAsync(0) : service.SelectQualityAsync("720p");
+                }
+                await (version ? wire.ReplacementStarted.Task : wire.ReplanStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                if (!legacy)
+                {
+                    if (fileLoaded) await DeliverOutgoingFileLoadedAsync();
+                    else
+                    {
+                        invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
+                            new PlaybackPlanInvalidation(outgoingSession.PlanId!, "synthetic-invalidation"))!;
+                        Require(!invalidation.IsCompleted, "Invalidation did not wait behind the in-flight selection replan.");
+                    }
+                }
+                wire.ReleaseReplan.TrySetResult(); wire.ReleaseReplacement.TrySetResult();
+                if (selection != null) await selection.WaitAsync(TimeSpan.FromSeconds(8));
+                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(8));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! == initialFile + 1 &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                    "An observer stranded the accepted selection without loading it or clearing its busy state.");
+                Require(!ReferenceEquals(manager.CurrentSession, outgoingSession) &&
+                    (version ? manager.CurrentSession?.MediaFileId == 71 : wire.Qualities.Count == 1) &&
+                    (audio || version || service.SelectedQualityMenuId == "720p"),
+                    "The manager and loaded selection diverged after the observer completed.");
+                Require(mpv.IsPaused && service.IsPaused && service.ErrorMessage == initialError,
+                    "Observer overlap changed genuine pause intent or published a spurious error.");
+                Call(service, "SendQualityInfoToOsc");
+                var reopened = await Open(); Call(reopened, "Input", "cancel");
+                Require(Gate(service).CurrentCount == 1, "Completed selection left native menus busy or leaked their lease.");
+                Program.Log($"PASS: {mode}: an outgoing FILE_LOADED/no-op plan invalidation preserves accepted playback and legacy dispatch ownership, completes one load and releases busy state.");
+                return;
+            }
             if (mode is "version-invalid-url" or "quality-invalid-url")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -386,6 +454,21 @@ internal static class PlaybackQualityMenuNativeFixture
             video.Dispose(); mpv.Dispose(); await Task.Delay(40); foreground.Complete();
         }
 
+        async Task DeliverOutgoingFileLoadedAsync()
+        {
+            // Deliver a real libmpv event for an already-submitted outgoing
+            // load, without beginning a successor PlayerService operation.
+            var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Loaded() => delivered.TrySetResult();
+            Set(service, "_restorePausedAfterLoad", true);
+            mpv.FileLoaded += Loaded;
+            try
+            {
+                mpv.LoadFile(media.Origin + "/video.y4m");
+                await delivered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            }
+            finally { mpv.FileLoaded -= Loaded; }
+        }
         async Task<JsonElement> Query()
         {
             var id = Guid.NewGuid().ToString("N"); var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
