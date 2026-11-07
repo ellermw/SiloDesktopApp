@@ -76,6 +76,7 @@ local state = {
     mouse_y         = -1,
     mouse_in_bar    = false,
     mouse_in_window = true,
+    pressed_control = nil,
 
     -- Drag state
     dragging_seek   = false,
@@ -197,6 +198,7 @@ local state = {
     keyboard_menu_kind = nil,
     keyboard_menu_index = -1,
     controller_focus_name = nil,
+    controller_focus_deadline = 0,
 
     -- Skip markers (intro/credits)
     intro_start     = 0,
@@ -1204,6 +1206,18 @@ local function compute_layout()
     local L = state.layout
     local sc = ui_scale()
     local compact = W < math.floor(1024 * sc)
+    if not compact then
+        -- A sheet without its More anchor must not retain input or visibility.
+        if L.btn_more or state.compact_menu_visible then
+            state.controller_focus_name = nil
+            state.controller_focus_deadline = 0
+        end
+        state.compact_menu_visible = false
+        state.compact_menu_items = {}
+        for name in pairs(L) do
+            if name:sub(1, 9) == "overflow_" then L[name] = nil end
+        end
+    end
     local pad = math.floor((compact and 12 or config.bar_padding_x) * sc)
     local main_size = math.floor((compact and 40 or config.button_size) * sc)
     local small_size = math.floor((compact and 32 or config.small_button_size) * sc)
@@ -1485,6 +1499,45 @@ local function set_osc_overlay(data, res_x, res_y)
     state.osc_overlay_shown = true
 end
 
+-- One transient feedback policy for the real HUD. Menus own their input;
+-- stale pointer coordinates beneath them must not light up another control.
+local function hud_control_enabled(name)
+    name = tostring(name or ""):gsub("^overflow_", "")
+    if name == "btn_audio" then return #state.audio_tracks > 1 end
+    if name == "btn_chapters" then return #state.chapters > 0 end
+    return true
+end
+
+local function hud_input_available()
+    return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible
+        or state.subtitle_menu_visible or state.audio_menu_visible or state.quality_menu_visible
+        or state.chapter_menu_visible or state.compact_menu_visible
+        or state.dragging_seek or state.dragging_volume)
+end
+
+local function hud_interaction(name, rect)
+    if not rect or not hud_control_enabled(name) then return "disabled" end
+    if not hud_input_available() then return "normal" end
+    local under_pointer = state.mouse_in_window and point_in_rect(state.mouse_x, state.mouse_y, rect)
+    if state.pressed_control then
+        return state.pressed_control == name and under_pointer and "pressed" or "normal"
+    end
+    if under_pointer then return "hover" end
+    return state.controller_focus_name == name and "focused" or "normal"
+end
+
+local function draw_hud_surface(ass, name, rect, master_alpha, backdrop)
+    if backdrop then
+        draw_rounded_rect(ass, rect.x, rect.y, rect.x + rect.w, rect.y + rect.h,
+            rect.h / 2, "000000", "66", master_alpha)
+    end
+    local interaction = hud_interaction(name, rect)
+    if interaction == "pressed" or interaction == "hover" or interaction == "focused" then
+        draw_rounded_rect(ass, rect.x, rect.y, rect.x + rect.w, rect.y + rect.h,
+            rect.h / 2, config.text_color, interaction == "pressed" and "B8" or "D6", master_alpha)
+    end
+end
+
 local function render_osc()
     if state.current_alpha <= 0.01 then
         remove_chapter_thumbnail_overlay()
@@ -1515,13 +1568,12 @@ local function render_osc()
     draw_gradient(ass, 0, top_mid, W, top_gh, "000000", "D1", "FF", ma, 16)
 
     local bm = L.btn_minimize
-    draw_circle(ass, bm.cx, bm.cy, bm.w / 2, "000000", "66", ma)
+    draw_hud_surface(ass, "btn_minimize", bm, ma, true)
     draw_minimize_chevron_icon(ass, bm.cx, bm.cy,
         math.floor(20 * sc), config.text_color, "00", ma)
 
     local be = L.btn_exit
-    draw_rounded_rect(ass, be.x, be.y, be.x + be.w, be.y + be.h,
-        be.h / 2, "000000", "66", ma)
+    draw_hud_surface(ass, "btn_exit", be, ma, true)
     draw_exit_icon(ass, be.x + math.floor(20 * sc), be.cy,
         math.floor(22 * sc), config.text_color, "00", ma)
     draw_text(ass, be.x + math.floor(36 * sc), be.cy, "Exit",
@@ -1764,32 +1816,35 @@ local function render_osc()
     end
 
     -- 5. Center transport cluster: glass secondaries around a glossy white disc.
-    local function draw_secondary_disc(rect)
-        local hovered = state.mouse_x >= rect.x and state.mouse_x <= rect.x + rect.w
-            and state.mouse_y >= rect.y and state.mouse_y <= rect.y + rect.h
-        local radius = rect.w / 2 * (hovered and 1.06 or 1.0)
+    local function draw_secondary_disc(name, rect)
+        local interaction = hud_interaction(name, rect)
+        local hovered = interaction == "hover" or interaction == "focused"
+        local pressed = interaction == "pressed"
+        local scale = pressed and 0.96 or hovered and 1.06 or 1.0
+        local radius = rect.w / 2 * scale
         draw_circle(ass, rect.cx, rect.cy, radius, config.text_color,
-            hovered and "C7" or "E6", ma)
+            pressed and "B8" or (hovered and "C7" or "E6"), ma)
         draw_circle(ass, rect.cx, rect.cy, radius - math.max(1, sc), config.text_color,
-            hovered and "DB" or "EF", ma)
-        return hovered
+            pressed and "C7" or (hovered and "DB" or "EF"), ma)
+        return scale
     end
 
     local bsb = L.btn_skip_back
-    local skip_back_hovered = draw_secondary_disc(bsb)
+    local skip_back_scale = draw_secondary_disc("btn_skip_back", bsb)
     draw_skip_back_icon(ass, bsb.cx, bsb.cy,
-        bsb.w * 0.7 * (skip_back_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_back), ma)
+        bsb.w * 0.7 * skip_back_scale, config.text_color, tostring(state.video_skip_back), ma)
 
     if L.btn_prev_ep then
-        local prev_hovered = draw_secondary_disc(L.btn_prev_ep)
+        local prev_scale = draw_secondary_disc("btn_prev_ep", L.btn_prev_ep)
         draw_prev_episode_icon(ass, L.btn_prev_ep.cx, L.btn_prev_ep.cy,
-            L.btn_prev_ep.w * 0.58 * (prev_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_back), ma)
+            L.btn_prev_ep.w * 0.58 * prev_scale, config.text_color, tostring(state.video_skip_back), ma)
     end
 
     local bp = L.btn_play
-    local play_hovered = state.mouse_x >= bp.x and state.mouse_x <= bp.x + bp.w
-        and state.mouse_y >= bp.y and state.mouse_y <= bp.y + bp.h
-    local play_radius = bp.w / 2 * (play_hovered and 1.04 or 1.0)
+    local play_interaction = hud_interaction("btn_play", bp)
+    local play_scale = play_interaction == "pressed" and 0.96
+        or (play_interaction == "hover" or play_interaction == "focused") and 1.04 or 1.0
+    local play_radius = bp.w / 2 * play_scale
     if state.pause then
         -- player-breathe: a 2.6s halo expands 18px while fading from 22%.
         local breathe_phase = (mp.get_time() % 2.6) / 2.6
@@ -1809,26 +1864,20 @@ local function render_osc()
     end
 
     local bsf = L.btn_skip_fwd
-    local skip_forward_hovered = draw_secondary_disc(bsf)
+    local skip_forward_scale = draw_secondary_disc("btn_skip_fwd", bsf)
     draw_skip_fwd_icon(ass, bsf.cx, bsf.cy,
-        bsf.w * 0.7 * (skip_forward_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_forward), ma)
+        bsf.w * 0.7 * skip_forward_scale, config.text_color, tostring(state.video_skip_forward), ma)
 
     if L.btn_next_ep then
-        local next_hovered = draw_secondary_disc(L.btn_next_ep)
+        local next_scale = draw_secondary_disc("btn_next_ep", L.btn_next_ep)
         draw_next_episode_icon(ass, L.btn_next_ep.cx, L.btn_next_ep.cy,
-            L.btn_next_ep.w * 0.58 * (next_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_back), ma)
+            L.btn_next_ep.w * 0.58 * next_scale, config.text_color, tostring(state.video_skip_back), ma)
     end
 
     -- 6. Utility rail. Hover produces the same faint circular wash as the
     -- WebUI; active secondary panels get an amber status dot.
-    local function utility_hover(rect)
-        return state.mouse_x >= rect.x and state.mouse_x <= rect.x + rect.w
-           and state.mouse_y >= rect.y and state.mouse_y <= rect.y + rect.h
-    end
-    local function draw_utility_state(rect, active)
-        if utility_hover(rect) then
-            draw_circle(ass, rect.cx, rect.cy, rect.w / 2, config.text_color, "EB", ma)
-        end
+    local function draw_utility_state(name, rect, active)
+        draw_hud_surface(ass, name, rect, ma)
         if active then
             draw_circle(ass, rect.cx, rect.y + rect.h - math.floor(4 * sc),
                 math.max(2, math.floor(2.2 * sc)), config.accent_color, "00", ma)
@@ -1838,7 +1887,7 @@ local function render_osc()
     local bv = L.btn_volume
     local vb = L.volume_bar
     if bv and vb then
-        draw_utility_state(bv, state.mute)
+        draw_utility_state("btn_volume", bv, state.mute)
         draw_volume_icon(ass, bv.cx, bv.cy, bv.w * 0.72,
             config.text_color, "38", ma, state.mute and 0 or state.volume, state.mute)
 
@@ -1879,30 +1928,27 @@ local function render_osc()
 
     local bcc = L.btn_cc
     local cc_active = state.active_subtitle >= 0
-    draw_utility_state(bcc, cc_active)
+    draw_utility_state("btn_cc", bcc, cc_active)
     draw_captions_icon(ass, bcc.cx, bcc.cy, math.floor(20 * sc),
         config.text_color, cc_active and "00" or "38", ma, cc_active)
 
     local bchap = L.btn_chapters
     if bchap then
-        draw_utility_state(bchap, state.chapter_menu_visible)
+        draw_utility_state("btn_chapters", bchap, state.chapter_menu_visible)
         draw_chapters_icon(ass, bchap.cx, bchap.cy, math.floor(20 * sc),
             config.text_color, "38", ma)
     end
 
     local baudio = L.btn_audio
     if baudio then
-        draw_utility_state(baudio, state.audio_menu_visible)
+        draw_utility_state("btn_audio", baudio, state.audio_menu_visible)
         draw_audio_lines_icon(ass, baudio.cx, baudio.cy, math.floor(20 * sc),
             config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma)
     end
 
     local bq = L.btn_quality
     if bq then
-    if utility_hover(bq) then
-        draw_rounded_rect(ass, bq.x, bq.y, bq.x + bq.w, bq.y + bq.h,
-            bq.h / 2, config.text_color, "EB", ma)
-    end
+    draw_hud_surface(ass, "btn_quality", bq, ma)
     if state.quality_menu_visible then
         draw_circle(ass, bq.cx, bq.y + bq.h - math.floor(4 * sc),
             math.max(2, math.floor(2.2 * sc)), config.accent_color, "00", ma)
@@ -1920,30 +1966,30 @@ local function render_osc()
     end
     local bst = L.btn_stats
     if bst then
-    draw_utility_state(bst, state.stats_visible)
+    draw_utility_state("btn_stats", bst, state.stats_visible)
     draw_info_icon(ass, bst.cx, bst.cy, math.floor(20 * sc),
         config.text_color, state.stats_visible and "00" or "38", ma)
 
     end
     local bpip = L.btn_pip
     if bpip then
-    draw_utility_state(bpip, state.picture_in_picture)
+    draw_utility_state("btn_pip", bpip, state.picture_in_picture)
     draw_pip_icon(ass, bpip.cx, bpip.cy, bpip.w * 0.66,
         config.text_color, "20", ma)
 
     end
     local fill = L.btn_fill
     if fill then
-        draw_utility_state(fill, mp.get_property_number("panscan", 0) > 0)
+        draw_utility_state("btn_fill", fill, mp.get_property_number("panscan", 0) > 0)
         draw_text(ass, fill.cx, fill.cy, "Fit", math.floor(11 * sc), config.text_color, "20", ma, 5)
     end
     local more = L.btn_more
     if more then
-        draw_utility_state(more, state.compact_menu_visible)
+        draw_utility_state("btn_more", more, state.compact_menu_visible)
         draw_text(ass, more.cx, more.cy, "...", math.floor(20 * sc), config.text_color, "20", ma, 5)
     end
     local bf = L.btn_fullscreen
-    draw_utility_state(bf, state.fullscreen)
+    draw_utility_state("btn_fullscreen", bf, state.fullscreen)
     draw_fullscreen_icon(ass, bf.cx, bf.cy, bf.w * 0.68,
         config.text_color, "20", ma, state.fullscreen)
 
@@ -1956,7 +2002,7 @@ local function render_osc()
         and not state.audio_menu_visible
         and not state.chapter_menu_visible then
         local focus_rect = L[state.controller_focus_name]
-        if focus_rect then
+        if focus_rect and hud_interaction(state.controller_focus_name, focus_rect) ~= "disabled" then
             local inset = math.max(1, math.floor(2 * sc))
             local thickness = math.max(1, math.floor(2 * sc))
             local x1 = focus_rect.x - inset
@@ -2119,13 +2165,14 @@ local function render_osc()
         local y = math.max(12 * sc, L.bar.y - row_h * #entries - 8 * sc)
         draw_rounded_rect(ass, x, y, x + width, y + row_h * #entries, 12 * sc, "171717", "10", ma)
         for index, entry in ipairs(entries) do
-            local rect = {x=x, y=y+(index-1)*row_h, w=width, h=row_h, name=entry.name}
+            local enabled = hud_control_enabled(entry.name)
+            local rect = {x=x, y=y+(index-1)*row_h, w=width, h=row_h, name=entry.name, disabled=not enabled}
             L["overflow_" .. entry.name] = rect
             table.insert(state.compact_menu_items, rect)
-            if state.controller_focus_name == "overflow_" .. entry.name or point_in_rect(state.mouse_x, state.mouse_y, rect) then
+            if enabled and (state.controller_focus_name == "overflow_" .. entry.name or point_in_rect(state.mouse_x, state.mouse_y, rect)) then
                 draw_rect(ass, x, rect.y, x+width, rect.y+row_h, config.text_color, "DC", ma)
             end
-            draw_text(ass, x+16*sc, rect.y+row_h/2, entry.label, math.floor(13*sc), config.text_color, "00", ma, 4)
+            draw_text(ass, x+16*sc, rect.y+row_h/2, entry.label, math.floor(13*sc), config.text_color, enabled and "00" or "A0", ma, 4)
         end
     end
 
@@ -2507,32 +2554,38 @@ end
 
 local hide_osc  -- forward declaration
 
+-- Both idle and pointer-leave timers respect the same presentation owner.
+-- Re-arm while held; transport focus owns only the normal input idle period.
+local function arm_osc_hide(delay)
+    if state.hide_timer then state.hide_timer:kill() end
+    state.hide_timer = mp.add_timeout(delay, function()
+        local focus = state.controller_focus_name
+        local focus_owned = focus and state.layout[focus] and hud_control_enabled(focus)
+            and mp.get_time() < state.controller_focus_deadline
+            and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
+        if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
+            or (state.compact_menu_visible and state.layout.btn_more)
+            or state.subtitle_menu_visible or state.audio_menu_visible
+            or state.quality_menu_visible or state.chapter_menu_visible
+            or (state.mouse_in_bar and state.mouse_in_window) then
+            arm_osc_hide(config.hide_timeout)
+        else
+            hide_osc()
+        end
+    end)
+end
+
 show_osc = function()
     state.visible = true
     state.target_alpha = 1
-    -- Reset hide timer
-    if state.hide_timer then
-        state.hide_timer:kill()
+    if state.controller_focus_name then
+        state.controller_focus_deadline = mp.get_time() + config.hide_timeout
     end
-    -- The timer re-arms itself while hide is blocked (mouse hovering the bar,
-    -- dragging, or paused). Without re-arming, a blocked hide means the OSC
-    -- can be stuck visible forever when stale state (e.g. mouse_in_bar) is
-    -- left over after the cursor has actually left the window.
-    local function check_hide()
-        if state.pause or state.dragging_seek or state.dragging_volume or state.compact_menu_visible then
-            state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
-            return
-        end
-        if state.mouse_in_bar and state.mouse_in_window then
-            state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
-            return
-        end
-        hide_osc()
-    end
-    state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
+    arm_osc_hide(config.hide_timeout)
 end
 
 local function dismiss_transport_menus_for_fade()
+    state.pressed_control = nil
     state.compact_menu_visible = false
     state.subtitle_menu_visible = false
     state.quality_menu_visible = false
@@ -2541,8 +2594,10 @@ local function dismiss_transport_menus_for_fade()
     state.keyboard_menu_kind = nil
     state.keyboard_menu_index = -1
     state.controller_focus_name = nil
+    state.controller_focus_deadline = 0
+    remove_chapter_thumbnail_menu_overlays()
 
-    for _, overlay in ipairs({
+    for _, overlay in pairs({
         state.subtitle_menu_overlay,
         state.quality_menu_overlay,
         state.audio_menu_overlay,
@@ -2687,12 +2742,16 @@ local function handle_mouse_move()
     local mx, my = get_mouse_pos()
     if mx == nil or my == nil or mx < 0 or my < 0 then return end
 
+    local moved = mx ~= state.mouse_x or my ~= state.mouse_y
     state.mouse_x = mx
     state.mouse_y = my
-    state.controller_focus_name = nil
-
-    -- Show OSC on any mouse movement
-    show_osc()
+    -- Embedded input ownership belongs to the host's screen-space movement
+    -- flag, not this duplicate client-space binding (in either delivery order).
+    -- Keep native mouse ownership for standalone/headless mpv callers.
+    if moved and mp.get_property_number("options/wid", 0) <= 0 then
+        state.controller_focus_name = nil
+        show_osc()
+    end
 
     -- Check if mouse is over the bar area
     compute_layout()
@@ -3624,7 +3683,7 @@ local function render_audio_menu()
     state.audio_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_audio
+    local anchor = state.layout.btn_audio or state.layout.btn_more
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -3767,7 +3826,7 @@ local function render_chapter_menu()
     state.chapter_menu_offset = first
     local visible_count = math.max(0, last - first + 1)
     local menu_h = padding * 2 + header_h + visible_count * item_h
-    local anchor = state.layout.btn_chapters
+    local anchor = state.layout.btn_chapters or state.layout.btn_more
     local menu_x = clamp(anchor.x + anchor.w - menu_w, 10, W - menu_w - 10)
     local menu_y = math.max(10, menu_bottom - menu_h)
 
@@ -4436,6 +4495,7 @@ local function toggle_stats()
 end
 
 local function close_transport_menus(except)
+    state.pressed_control = nil
     if except ~= "audio" and state.audio_menu_visible then
         state.audio_menu_visible = false
         render_audio_menu()
@@ -4714,11 +4774,13 @@ local function focusable_transport_controls()
     local L = state.layout
     local result = {}
     local function add(name)
-        if L[name] then table.insert(result, name) end
+        if L[name] and hud_control_enabled(name) then table.insert(result, name) end
     end
 
     if state.compact_menu_visible then
-        for _, item in ipairs(state.compact_menu_items or {}) do table.insert(result, "overflow_" .. item.name) end
+        for _, item in ipairs(state.compact_menu_items or {}) do
+            if hud_control_enabled(item.name) then table.insert(result, "overflow_" .. item.name) end
+        end
         return result
     end
     -- Match the visual left-to-right order of the WebUI player HUD.
@@ -4801,23 +4863,21 @@ local function open_transport_menu_from_controller(kind)
     end
 end
 
-local function activate_controller_focus()
-    if state.playback_failure_visible then
-        return invoke_playback_failure_action(state.playback_failure_focus)
-    end
-    local buffering_action = (state.buffering_quality_actions or {})[state.buffering_quality_focus or 1]
-    if buffering_action and buffering_quality_action(buffering_action.action) then return true end
-    local name = state.controller_focus_name
-    if not name then
-        move_controller_focus("next")
-        return true
-    end
+local function toggle_video_fit()
+    mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
+end
+
+-- Pointer callers already hit-tested floating prompts; dispatch their named
+-- control without applying keyboard/controller prompt precedence again.
+local function activate_transport_control(name)
+    -- A stale focus or compact-menu row cannot re-enable an unavailable action.
+    if not hud_control_enabled(name) then return true end
 
     if name:sub(1, 9) == "overflow_" then name = name:sub(10); state.compact_menu_visible = false end
     if name == "btn_more" then
         state.compact_menu_visible = not state.compact_menu_visible
     elseif name == "btn_fill" then
-        mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
+        toggle_video_fit()
     elseif name == "btn_volume_down" or name == "btn_volume_up" then
         local volume = clamp(mp.get_property_number("volume", 100) + (name == "btn_volume_up" and 10 or -10), 0, 100)
         mp.set_property_number("volume", volume)
@@ -4858,7 +4918,22 @@ local function activate_controller_focus()
     return true
 end
 
+local function activate_controller_focus()
+    if state.playback_failure_visible then
+        return invoke_playback_failure_action(state.playback_failure_focus)
+    end
+    local buffering_action = (state.buffering_quality_actions or {})[state.buffering_quality_focus or 1]
+    if buffering_action and buffering_quality_action(buffering_action.action) then return true end
+    if not state.controller_focus_name then
+        move_controller_focus("next")
+        return true
+    end
+    return activate_transport_control(state.controller_focus_name)
+end
+
 local function handle_mouse_down()
+    state.pressed_control = nil
+    state.controller_focus_name = nil
     local mx = state.mouse_x
     local my = state.mouse_y
 
@@ -4956,6 +5031,7 @@ local function handle_mouse_down()
     if state.stats_visible and state.stats_close_rect then
         local r = state.stats_close_rect
         if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            consume_video_click()
             state.stats_visible = false
             render_stats()
             return
@@ -4970,21 +5046,27 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
-                consume_video_click(); state.controller_focus_name = "overflow_" .. item.name; activate_controller_focus(); return
+                consume_video_click(); activate_transport_control("overflow_" .. item.name); return
             end
         end
         state.compact_menu_visible = false
         consume_video_click(); request_tick(); return
     end
-    if state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
-        consume_video_click(); state.controller_focus_name = "btn_more"; activate_controller_focus(); return
+    if hud_input_available() and state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
+        consume_video_click(); activate_transport_control("btn_more"); return
     end
-    if state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
-        consume_video_click(); state.controller_focus_name = "btn_fill"; activate_controller_focus(); return
+    if hud_input_available() and state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
+        state.pressed_control = "btn_fill"
+        consume_video_click()
+        toggle_video_fit()
+        show_osc()
+        request_tick()
+        return
     end
 
     -- Audio menu click handling
     if state.audio_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.audio_menu_items) do
             if point_in_rect(mx, my, item) then
                 mp.commandv("script-message", "silo-audio-select", tostring(item.index))
@@ -5002,6 +5084,7 @@ local function handle_mouse_down()
 
     -- Chapter menu click handling
     if state.chapter_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.chapter_menu_items) do
             if point_in_rect(mx, my, item) then
                 seek_and_resume(item.start_seconds, "absolute+keyframes")
@@ -5071,6 +5154,7 @@ local function handle_mouse_down()
 
     -- Quality menu click handling
     if state.quality_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.quality_menu_items) do
             if point_in_rect(mx, my, item) then
                 if item.action == "version" then
@@ -5097,6 +5181,16 @@ local function handle_mouse_down()
     local L = state.layout
 
     -- Check seek bar
+    for name, rect in pairs(L) do
+        if name:sub(1, 4) == "btn_" and hud_interaction(name, rect) ~= "disabled"
+            and point_in_rect(mx, my, rect) then
+            state.pressed_control = name
+            request_tick()
+            break
+        end
+    end
+
+    -- Seek and volume keep their existing drag/release semantics.
     if L.seek_bar then
         local sb = L.seek_bar
         if mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
@@ -5169,9 +5263,11 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check minimize
-    if L.btn_minimize and point_in_rect(mx, my, L.btn_minimize) then
-        mp.commandv("script-message", "silo-minimize")
+    -- Window actions retire the surface. Hold it until the same button's release.
+    if state.pressed_control == "btn_minimize" or state.pressed_control == "btn_exit" then
+        consume_video_click()
+        -- A press accepted during fade-out owns a visible surface until release.
+        show_osc()
         return
     end
 
@@ -5186,11 +5282,6 @@ local function handle_mouse_down()
         return
     end
 
-    -- Check exit
-    if L.btn_exit and point_in_rect(mx, my, L.btn_exit) then
-        mp.commandv("script-message", "silo-exit")
-        return
-    end
 end
 
 local function handle_mouse_down_right()
@@ -5214,6 +5305,18 @@ local function handle_mouse_down_right()
 end
 
 local function handle_mouse_up()
+    local held = state.pressed_control
+    state.pressed_control = nil
+    request_tick()
+    if held == "btn_exit" or held == "btn_minimize" then
+        consume_video_click()
+        compute_layout()
+        local button = state.layout[held]
+        if hud_input_available() and button and point_in_rect(state.mouse_x, state.mouse_y, button) then
+            mp.commandv("script-message", held == "btn_exit" and "silo-exit" or "silo-minimize")
+        end
+        return
+    end
     if state.playback_failure_visible then
         state.dragging_seek = false
         state.dragging_volume = false
@@ -5236,16 +5339,12 @@ local function handle_mouse_up()
 end
 
 local function handle_mouse_leave()
+    state.pressed_control = nil
+    request_tick()
     state.mouse_in_window = false
     state.mouse_in_bar = false
     if not state.dragging_seek and not state.dragging_volume then
-        -- Start hide timer (shorter since mouse left window)
-        if state.hide_timer then state.hide_timer:kill() end
-        state.hide_timer = mp.add_timeout(0.5, function()
-            if not state.pause then
-                hide_osc()
-            end
-        end)
+        arm_osc_hide(0.5)
     end
 end
 
@@ -5436,8 +5535,11 @@ local function observe_properties()
     end)
 
     mp.register_script_message("osc-set-visibility", function(val)
+        state.pressed_control = nil
         state.osc_disabled = (val == "false")
         if state.osc_disabled then
+            dismiss_transport_menus_for_fade()
+            state.restore_subtitle_focus_after_dialog = false
             if state.osc_overlay then
                 set_osc_overlay("", state.osc_overlay.res_x, state.osc_overlay.res_y)
             end
@@ -5839,6 +5941,10 @@ local function observe_properties()
             state.audio_tracks = data
             state.audio_menu_offset = 1
             if #state.audio_tracks <= 1 then
+                if state.controller_focus_name == "btn_audio" or state.controller_focus_name == "overflow_btn_audio" then
+                    state.controller_focus_name = nil
+                end
+                if state.pressed_control == "btn_audio" then state.pressed_control = nil end
                 state.audio_menu_visible = false
                 render_audio_menu()
             end
@@ -6225,10 +6331,14 @@ end
 local function setup_script_messages()
     -- Host app can send mouse coordinates explicitly
     -- This is the primary mouse tracking method when embedded with wid=
-    mp.register_script_message("osc-mouse-move", function(x, y)
+    mp.register_script_message("osc-mouse-move", function(x, y, screen_moved)
         local mx = tonumber(x)
         local my = tonumber(y)
         if not mx or not my then return end
+        local moved = mx ~= state.mouse_x or my ~= state.mouse_y
+        -- The desktop host compares screen points, which remain stable when
+        -- fullscreen changes the popup's origin. Retain two-argument callers.
+        if screen_moved ~= nil then moved = screen_moved == "true" end
         state.mouse_x = mx
         state.mouse_y = my
         -- WM_MOUSEMOVE is the desktop host's authoritative enter signal.
@@ -6236,8 +6346,11 @@ local function setup_script_messages()
         -- mouse_enter binding when it is expanded again.
         state.mouse_in_window = true
 
-        -- Show OSC on any mouse movement
-        show_osc()
+        -- Only real movement transfers input ownership from the controller.
+        if moved then
+            state.controller_focus_name = nil
+            show_osc()
+        end
 
         -- Check if mouse is over the bar area
         compute_layout()
@@ -6370,6 +6483,12 @@ local function setup_script_messages()
             return
         end
 
+        -- Top chrome owns its click just like the bottom transport rail.
+        if not state.osc_disabled and state.current_alpha > 0.1
+            and (point_in_rect(mx, my, L.btn_exit) or point_in_rect(mx, my, L.btn_minimize)) then
+            return
+        end
+
         -- Click on the video body — toggle pause.
         mp.commandv("script-message", "silo-pause-toggle")
     end)
@@ -6422,6 +6541,7 @@ local function init()
 
     -- Show OSC briefly on file load
     mp.register_event("file-loaded", function()
+        dismiss_transport_menus_for_fade()
         state.idle = false
         -- Reset drag state from previous session (mpv instance is reused)
         state.dragging_seek = false
