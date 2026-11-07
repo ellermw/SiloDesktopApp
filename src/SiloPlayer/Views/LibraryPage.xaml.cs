@@ -408,9 +408,12 @@ public sealed partial class LibraryPage : Page,
             var savedSearch = pendingSearch ?? snapshot?.Search;
             var restoredState = retain ? CaptureLibraryViewState(_currentTab) :
                 ParseOwnedLibrarySearch(savedSearch, visit, identity, library.Id);
-            // Replay routes only when they are new, belong to a different explicit
-            // history entry, or neither a retained nor a saved view supplies state.
+            // A temporary genre view never replaces its saved outer OR query,
+            // so a shell refresh must replay that genre instead of restoring the OR.
+            // Otherwise replay only new/different entries or when no view supplies state.
             var replayRoute = newRequest || differentExplicitEntry ||
+                isRefresh && !string.IsNullOrWhiteSpace(navigationArgs?.InitialGenre) &&
+                    restoredState is { Match: "any" } && restoredState.QueryGroups.Count > 0 ||
                 !sameLibrary && (restoredState == null || string.IsNullOrWhiteSpace(savedSearch));
             var requestedTab = replayRoute ? navigationArgs?.InitialTab : null;
             var requestedGenre = replayRoute ? navigationArgs?.InitialGenre : null;

@@ -13,7 +13,7 @@ internal static partial class RetainedLibraryNativeFixture
 {
     private static async Task CheckReportedStateOrderingsAsync(StackPanel parent, NavigationService navigation, Wire wire, SettingsApi settings)
     {
-        string[] scenarios = [ "opt-out-genre-history", "opt-out-shell-refresh", "opt-out-cross-library", "failed-shell-refresh", "failed-cross-library", "same-library-genre-back", "shell-refresh", "any-genre", "genre-empty-groups", "audiobook-author", "audiobook-narrator", "audiobook-series", "access-opt-out-mounted", "access-opt-out-detached", "access-held-read", "reconnect-mounted", "reconnect-detached", "reconnect-in-flight", "cross-library-held", "cross-library-failed" ];
+        string[] scenarios = [ "opt-out-genre-history", "opt-out-shell-refresh", "opt-out-cross-library", "failed-shell-refresh", "failed-cross-library", "same-library-genre-back", "shell-refresh", "any-genre", "any-genre-shell-refresh", "genre-empty-groups", "audiobook-author", "audiobook-narrator", "audiobook-series", "access-opt-out-mounted", "access-opt-out-detached", "access-held-read", "reconnect-mounted", "reconnect-detached", "reconnect-in-flight", "cross-library-held", "cross-library-failed" ];
         var requestedScenario = Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARY_STATE_ORDERING_CASE");
         if (!string.IsNullOrEmpty(requestedScenario))
         {
@@ -25,7 +25,7 @@ internal static partial class RetainedLibraryNativeFixture
             wire.LibraryId++; wire.Remember = !scenario.StartsWith("opt-out-", StringComparison.Ordinal) && !scenario.StartsWith("access-opt-out-", StringComparison.Ordinal);
             wire.Search = "?tab=library"; wire.FailPut = false;
             wire.PutErrorMessage = "State ordering save failure: " + scenario;
-            if (scenario == "any-genre")
+            if (scenario is "any-genre" or "any-genre-shell-refresh")
                 wire.Search += "&match=any&groups[0][match]=all&groups[0][rules][0][field]=year&groups[0][rules][0][op]=gte&groups[0][rules][0][value]=2000" +
                     "&groups[1][match]=all&groups[1][rules][0][field]=rating_imdb&groups[1][rules][0][op]=gte&groups[1][rules][0][value]=7";
             if (scenario == "genre-empty-groups")
@@ -42,7 +42,7 @@ internal static partial class RetainedLibraryNativeFixture
             try
             {
                 var explicitGenre = scenario is "opt-out-genre-history" or "opt-out-shell-refresh" or "opt-out-cross-library" or
-                    "failed-shell-refresh" or "failed-cross-library" or "same-library-genre-back" or "shell-refresh" or "any-genre" or
+                    "failed-shell-refresh" or "failed-cross-library" or "same-library-genre-back" or "shell-refresh" or "any-genre" or "any-genre-shell-refresh" or
                     "genre-empty-groups" or "access-opt-out-mounted" or "access-opt-out-detached";
                 frame.Navigate(typeof(LibraryPage), explicitGenre
                     ? new LibraryPage.NavigationArgs(library, "Library", "Crime") : (object)library);
@@ -184,8 +184,23 @@ internal static partial class RetainedLibraryNativeFixture
                         wire.StateWrites == writes && wire.Search == search,
                         "RefreshCurrentEntry replayed InitialTab/InitialGenre or overwrote the saved view.");
                 }
-                else if (scenario == "any-genre")
+                else if (scenario is "any-genre" or "any-genre-shell-refresh")
                 {
+                    if (scenario == "any-genre-shell-refresh")
+                    {
+                        var previous = page; var catalogReads = wire.CatalogReads;
+                        ((SiloApiClient)SiloPlayer.App.Services.GetService(typeof(SiloApiClient))!).InvalidateAccessContext();
+                        settings.LibraryPageState.Invalidate();
+                        Require(navigation.RefreshCurrentEntry(), "Temporary genre refresh was rejected.");
+                        page = (LibraryPage)frame.Content;
+                        Require(!ReferenceEquals(previous, page), "Temporary genre refresh did not replace the page instance.");
+                        await Ready();
+                        await Until(() => wire.CatalogReads > catalogReads && page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
+                        await Task.Delay(750);
+                        Require(Tab() == "Library" && page.ViewModel.SelectedGenres.SequenceEqual(new[] { "Crime" }) &&
+                            wire.StateWrites == initialWrites && wire.Search == originalSearch,
+                            "Shell refresh discarded the temporary genre view or overwrote the saved OR query.");
+                    }
                     var query = wire.LastCatalogRequest.TrimStart('?').Split('&').Select(part => part.Split('=', 2))
                         .Where(pair => pair.Length == 2).ToDictionary(pair => Uri.UnescapeDataString(pair[0]), pair => Uri.UnescapeDataString(pair[1]));
                     Require(query.GetValueOrDefault("match") == "any", "Explicit genre rewrote the saved OR operator.");
