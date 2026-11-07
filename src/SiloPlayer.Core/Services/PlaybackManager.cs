@@ -51,6 +51,7 @@ public partial class PlaybackManager : IDisposable
     }
 
     public string? SessionId => _sessionId;
+    public bool SessionRetirementPending { get; private set; }
     public WatchDetailResponse? WatchDetail { get; private set; }
     private PlaybackStartResponse? _currentSession;
     private long _mediaFileLifetimeGeneration;
@@ -222,6 +223,7 @@ public partial class PlaybackManager : IDisposable
         _bandwidthCapKbpsV3 = request.BandwidthCapKbps;
         _sessionId = response.SessionId;
         CurrentSession = response;
+        SessionRetirementPending = false;
         AcknowledgeGrantedSubtitleIntent(subtitleRevision);
         AcknowledgeAudioIntent(audioRevision);
         _lastReportedPosition = Math.Max(0, response.Position);
@@ -301,7 +303,8 @@ public partial class PlaybackManager : IDisposable
         {
             var terminal = decision.Terminal;
             var detail = terminal?.Message;
-            if (string.IsNullOrWhiteSpace(detail))
+            if (string.IsNullOrWhiteSpace(detail) &&
+                !PlaybackFailureDescription.IsAccountLimitReason(terminal?.Reason))
                 detail = "The server could not find a compatible playback route.";
             throw new PlaybackPlanTerminalException(
                 terminal?.Reason ?? decision.Outcome,
@@ -727,7 +730,8 @@ public partial class PlaybackManager : IDisposable
     /// Starts a replacement session before retiring the active one. This mirrors
     /// the current WebUI handoff: the old stream remains usable until the server
     /// has accepted the new session, so version and quality switches do not sit
-    /// behind synchronous history/scrobble cleanup on DELETE.
+    /// behind synchronous history/scrobble cleanup on DELETE. An account-limit
+    /// refusal instead retires the outgoing session and retries once.
     /// </summary>
     public async Task<PlaybackStartResponse> StartReplacementSessionAsync(
         int fileId,
@@ -739,10 +743,13 @@ public partial class PlaybackManager : IDisposable
         string? qualityPreference = null,
         CancellationToken ct = default)
     {
+        var owner = _apiClient.CaptureIdentityContext();
         var previousSessionId = _sessionId;
+        var previousSession = CurrentSession;
+        var retiringTranscode = previousSession?.PlayMethod == "transcode";
         CaptureReplacementSubtitleIntent();
         audioTrackIndex ??= ReplacementAudioIndex(fileId);
-        var response = await StartSessionAsync(
+        Task<PlaybackStartResponse> StartReplacementAsync() => StartSessionAsync(
             fileId,
             startPosition,
             forceStartPosition,
@@ -750,7 +757,37 @@ public partial class PlaybackManager : IDisposable
             forceDirectAudioSelection,
             qualityPreference: qualityPreference,
             ct: ct,
-            preserveTrackIntent: true).ConfigureAwait(false);
+            preserveTrackIntent: true,
+            expectedIdentityContext: owner);
+
+        PlaybackStartResponse response;
+        try
+        {
+            response = await StartReplacementAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (
+            !ct.IsCancellationRequested && _apiClient.IsCurrentIdentityContext(owner) &&
+            !string.IsNullOrWhiteSpace(previousSessionId) &&
+            ReferenceEquals(CurrentSession, previousSession) &&
+            string.Equals(_sessionId, previousSessionId, StringComparison.Ordinal) &&
+            ((ex is ApiException api && api.StatusCode == 429 &&
+                PlaybackFailureDescription.IsAccountLimitReason(api.ErrorCode, includeTranscode: retiringTranscode)) ||
+             (ex is PlaybackPlanTerminalException terminal && terminal.Retryable &&
+                PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason, includeTranscode: retiringTranscode))))
+        {
+            // Only our outgoing session can release a slot here. Other limits
+            // and a second refusal propagate normally, without a retry loop.
+            var retired = await TryRetireSessionAsync(previousFinalPosition ?? startPosition, ct: ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (!_apiClient.IsCurrentIdentityContext(owner))
+                throw new OperationCanceledException("Playback owner changed.", ct);
+            if (!retired)
+                throw;
+            if (_sessionId != null)
+                throw new OperationCanceledException("Playback owner changed.", ct);
+            previousSessionId = null;
+            response = await StartReplacementAsync().ConfigureAwait(false);
+        }
 
         if (!string.IsNullOrWhiteSpace(previousSessionId) &&
             !string.Equals(previousSessionId, response.SessionId, StringComparison.Ordinal))
@@ -875,10 +912,32 @@ public partial class PlaybackManager : IDisposable
         bool? isPaused = null,
         CancellationToken ct = default)
     {
+        await StopSessionCoreAsync(finalPosition, isPaused, ct, preserveOnFailure: false).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Returns true only after the server acknowledges retirement. An uncertain
+    /// stop retains the identity so a later replacement can retry the same stop.
+    /// Its transport must not be treated as a still-active playback session.
+    /// </summary>
+    public Task<bool> TryRetireSessionAsync(
+        double? finalPosition = null,
+        bool? isPaused = null,
+        CancellationToken ct = default)
+        => StopSessionCoreAsync(finalPosition, isPaused, ct, preserveOnFailure: true);
+
+    private async Task<bool> StopSessionCoreAsync(
+        double? finalPosition,
+        bool? isPaused,
+        CancellationToken ct,
+        bool preserveOnFailure)
+    {
         StopProgressReporting();
         var sessionId = _sessionId;
         if (sessionId == null)
-            return;
+            return false;
+        SessionRetirementPending = true;
+        var retired = false;
 
         var position = Math.Max(0, finalPosition ?? _lastReportedPosition);
         var paused = isPaused ?? _isPaused;
@@ -901,7 +960,7 @@ public partial class PlaybackManager : IDisposable
             // A newer session may have replaced the captured one while an
             // older progress request was draining. Never tear that session down.
             if (!string.Equals(_sessionId, sessionId, StringComparison.Ordinal))
-                return;
+                return false;
 
             if (double.IsFinite(position))
             {
@@ -930,6 +989,7 @@ public partial class PlaybackManager : IDisposable
                 using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(operationCts.Token);
                 stopCts.CancelAfter(TimeSpan.FromSeconds(15));
                 await _playbackApi.StopPlaybackAsync(sessionId, stopCts.Token).ConfigureAwait(false);
+                retired = true;
             }
             catch (OperationCanceledException)
             {
@@ -951,15 +1011,18 @@ public partial class PlaybackManager : IDisposable
             if (guardEntered)
                 _progressGuard.Release();
 
-            if (string.Equals(_sessionId, sessionId, StringComparison.Ordinal))
+            if ((retired || !preserveOnFailure) &&
+                string.Equals(_sessionId, sessionId, StringComparison.Ordinal))
             {
                 _sessionId = null;
                 CurrentSession = null;
                 StreamUrl = null;
+                SessionRetirementPending = false;
             }
         }
 
         // API v2 stop already persists and synchronizes the final sample.
+        return retired;
     }
 
     public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls(IEnumerable<SubtitleTrackInfo>? inventory = null)

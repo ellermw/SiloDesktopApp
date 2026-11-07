@@ -289,7 +289,10 @@ internal static partial class EpisodeQuickPlayNativeFixture
         internal TaskCompletionSource ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal List<(string Path, string? Profile)> Requests = [];
         internal bool AcceptStart;
-        internal int Stops, Suggestions;
+        internal int Stops, Suggestions, BoxSetReads, MembershipReads;
+        internal bool HoldStop, BoxSetPlayed, HoldMembership;
+        internal TaskCompletionSource StopStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource MembershipStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseMembership = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal List<JsonElement> Stages = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -297,6 +300,23 @@ internal static partial class EpisodeQuickPlayNativeFixture
             var path = request.RequestUri.AbsolutePath;
             lock (Requests) Requests.Add((path, request.Headers.TryGetValues("X-Profile-Id", out var profiles) ? profiles.Single() : null));
             if (path == "/still") return new(HttpStatusCode.OK) { Content = new ByteArrayContent(File.ReadAllBytes(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "audiobook-cover.png"))) };
+            if (path == "/api/v2/catalog/search/capabilities") return Json("""{"box_sets":true}""");
+            if (path == "/api/v2/user/libraries") return Json("""{"items":[{"id":73,"box_sets_enabled":true}]}""");
+            if (path == "/api/v2/catalog/items/boxset-film")
+                return Json("""{"content_id":"boxset-film","type":"movie","title":"Fixture movie","user_state":{}}""");
+            if (path is "/api/v2/catalog/box-sets/7" or "/api/v2/catalog/items/boxset-film/box-set")
+            {
+                var membership = path.EndsWith("/box-set", StringComparison.Ordinal);
+                if (membership)
+                {
+                    ++MembershipReads;
+                    if (HoldMembership) { MembershipStarted.TrySetResult(); await ReleaseMembership.Task.WaitAsync(ct); }
+                }
+                else ++BoxSetReads;
+                var detail = """{"id":"7","library_id":"73","title":"Shell refresh collection","movie_count":1,"played_count":COUNT,"items":[{"content_id":"boxset-film","type":"movie","title":"Fixture movie","user_state":{"played":PLAYED}}]}"""
+                    .Replace("COUNT", BoxSetPlayed ? "1" : "0").Replace("PLAYED", BoxSetPlayed ? "true" : "false");
+                return Json(membership ? "{\"box_set\":" + detail + "}" : detail);
+            }
             if (path == "/api/v2/settings/contract/capabilities") return Json("""{"api_version":1,"manifest_revision":17,"supports_batched_effective":true}""");
             if (path == "/api/v2/settings/values/effective")
             {
@@ -313,7 +333,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
                     --WatchFailuresRemaining;
                     return new(HttpStatusCode.BadRequest) { Content = new StringContent("{\"error\":\"session-retiring\"}", Encoding.UTF8, "application/json") };
                 }
-                return Json("""{"content_id":"CONTENT","type":"episode","title":"Fixture episode","versions":[{"file_id":42,"duration":1200,"resolution":"1080p","container":"mkv","codec_video":"h264","codec_audio":"aac"}],"user_data":{"position_seconds":POSITION,"duration_seconds":1200,"is_in_progress":true}}""".Replace("CONTENT", path.Split('/')[^1]).Replace("POSITION", ResumePosition.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                return Json("""{"content_id":"CONTENT","type":"episode","title":"Fixture episode","versions":[{"file_id":42,"duration":1200,"resolution":"1080p","container":"mkv","codec_video":"h264","codec_audio":"aac"}],"user_data":{"position_seconds":POSITION,"duration_seconds":1200,"is_in_progress":true}}""".Replace("\"type\":\"episode\"", path.EndsWith("/boxset-film") ? "\"type\":\"movie\"" : "\"type\":\"episode\"").Replace("CONTENT", path.Split('/')[^1]).Replace("POSITION", ResumePosition.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             }
             if (path.EndsWith("/start"))
             {
@@ -324,7 +344,12 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 // Record the real authorized request, then end before any media load.
                 return new(HttpStatusCode.Forbidden) { Content = new StringContent("{\"error\":\"fixture-denied\"}", Encoding.UTF8, "application/json") };
             }
-            if (request.Method == HttpMethod.Delete) { ++Stops; return Json("""{"outcome":"stopped"}"""); }
+            if (request.Method == HttpMethod.Delete)
+            {
+                ++Stops;
+                if (HoldStop) { StopStarted.TrySetResult(); await ReleaseStop.Task.WaitAsync(ct); BoxSetPlayed = true; }
+                return Json("""{"outcome":"stopped"}""");
+            }
             if (path.Contains("/suggestions") && request.Method == HttpMethod.Post) { ++Suggestions; return Json("""{"suggestions":[]}"""); }
             if (path.EndsWith("/staged-selection"))
             {
