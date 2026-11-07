@@ -138,6 +138,9 @@ public sealed partial class LibraryPage : Page,
     private int _currentFirstRow;
     private double _libraryVerticalOffset;
     private double? _pendingLibraryOffset;
+    private sealed record LibraryOffsetRequest(double Offset, long Visit, Func<bool>? Owner);
+    private LibraryOffsetRequest? _pendingLibraryScroll;
+    private long _libraryVisit;
     private readonly Dictionary<int, LibraryGridCard> _visibleLibraryCards = [];
     private readonly List<LibraryGridCard> _libraryCardSlots = [];
     private readonly Queue<int> _pendingCardBinds = [];
@@ -165,6 +168,15 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        // Observe input even when the ScrollViewer or its scrollbar handles it.
+        // ViewChanged also reports inertia and extent clamps, not just new intent.
+        LibraryScroller.AddHandler(UIElement.PointerWheelChangedEvent,
+            new PointerEventHandler(LibraryScroller_PointerWheelChanged), true);
+        LibraryScroller.AddHandler(UIElement.PointerPressedEvent,
+            new PointerEventHandler(LibraryScroller_PointerPressed), true);
+        LibraryScroller.AddHandler(UIElement.KeyDownEvent,
+            new KeyEventHandler(LibraryScroller_KeyDown), true);
+        LibraryScroller.DirectManipulationStarted += LibraryScroller_DirectManipulationStarted;
         InitializeLibraryLetters();
         CatalogToolbarChoices.Apply(BrowseTypeComboBox, SortComboBox, OrderComboBox);
         var savedWidth = App.Services.GetRequiredService<SettingsService>().Load().LibraryPosterWidth;
@@ -295,6 +307,7 @@ public sealed partial class LibraryPage : Page,
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _libraryVisit++;
         _isNavigated = true;
         AttachGroupedLibraryEvents();
         _uiCustomizationService.Changed += UICustomization_Changed;
@@ -356,7 +369,7 @@ public sealed partial class LibraryPage : Page,
                 ClearVirtualCards();
                 _currentFirstRow = 0;
                 _libraryVerticalOffset = 0;
-                _pendingLibraryOffset = 0;
+                QueueLibraryOffset(0);
                 _lastRequestedStartIndex = -1;
                 _lastRequestedEndIndex = -1;
                 _recommendedLoaded = false;
@@ -526,6 +539,11 @@ public sealed partial class LibraryPage : Page,
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        if (_pendingLibraryScroll is { } pendingScroll) ClearPendingLibraryOffset(pendingScroll);
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        _libraryScrollIsIntermediate = false;
         DetachGroupedLibraryEvents();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
@@ -1554,9 +1572,64 @@ public sealed partial class LibraryPage : Page,
         SaveViewState(_currentTab);
     }
 
+    private void RetireLetterJumpForManualScroll()
+    {
+        if (!_isNavigated) return;
+        ViewModel.RetireLetterJump();
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        _chosenLibraryEndLetter = null;
+        // The seek may have cancelled the read for this very same row range.
+        _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+        if (_pendingLibraryScroll is { Owner: not null } pending)
+            ClearPendingLibraryOffset(pending);
+        ScheduleVisibleRangeLoad(force: true);
+    }
+
+    private void LibraryScroller_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var properties = e.GetCurrentPoint(LibraryScroller).Properties;
+        if (!properties.IsHorizontalMouseWheel && properties.MouseWheelDelta != 0)
+            RetireLetterJumpForManualScroll();
+    }
+
+    private void LibraryScroller_DirectManipulationStarted(object? sender, object e)
+        => RetireLetterJumpForManualScroll();
+
+    private void LibraryScroller_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        for (var source = e.OriginalSource as DependencyObject; source is not null && source != LibraryScroller;
+            source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source))
+        {
+            if (source is ScrollBar)
+            {
+                RetireLetterJumpForManualScroll();
+                break;
+            }
+        }
+    }
+
+    private void LibraryScroller_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down or
+            Windows.System.VirtualKey.PageUp or Windows.System.VirtualKey.PageDown or
+            Windows.System.VirtualKey.Home or Windows.System.VirtualKey.End or Windows.System.VirtualKey.Space)
+            RetireLetterJumpForManualScroll();
+    }
+
     private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
+        if (!_isNavigated) return;
+        _libraryScrollIsIntermediate = e.IsIntermediate;
+        if (!e.IsIntermediate && _pendingLibraryLetterCommit is { } commit)
+        {
+            _pendingLibraryLetterCommit = null;
+            DispatcherQueue.TryEnqueue(() => commit());
+        }
+        if (_pendingLibraryOffset.HasValue) return;
+        // Only new input retires a choice. Coasting from an earlier manipulation
+        // and native extent clamps still update the viewport, but keep its owner.
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
     }
 
@@ -1577,7 +1650,7 @@ public sealed partial class LibraryPage : Page,
         ScheduleVisibleRangeLoad(force: true);
     }
 
-    private void SetLibraryVerticalOffset(double offset, bool force = false)
+    private void SetLibraryVerticalOffset(double offset, bool force = false, Func<bool>? owner = null)
     {
         var layout = GetGridLayout();
         var maximum = VirtualGridScrollGate.GetMaxVerticalOffset(
@@ -1587,9 +1660,24 @@ public sealed partial class LibraryPage : Page,
         if (!force && clamped == _libraryVerticalOffset)
             return;
 
-        _pendingLibraryOffset = clamped;
+        QueueLibraryOffset(clamped, owner);
         UpdateLibraryScrollPosition(clamped, force);
         ApplyPendingLibraryOffset();
+    }
+
+    private void QueueLibraryOffset(double offset, Func<bool>? owner = null)
+    {
+        _pendingLibraryOffset = offset;
+        _pendingLibraryScroll = new(offset, _libraryVisit, owner);
+    }
+
+    private void ClearPendingLibraryOffset(LibraryOffsetRequest request)
+    {
+        if (!ReferenceEquals(_pendingLibraryScroll, request)) return;
+        _pendingLibraryOffset = null;
+        _pendingLibraryScroll = null;
+        if (request.Owner is not null) _chosenLibraryEndLetter = null;
+        UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
     }
 
     private void UpdateLibraryScrollPosition(double offset, bool force = false)
@@ -1610,16 +1698,24 @@ public sealed partial class LibraryPage : Page,
 
     private void ApplyPendingLibraryOffset()
     {
-        if (_pendingLibraryOffset is not double offset || LibraryScroller.ViewportHeight <= 0) return;
+        if (_pendingLibraryOffset is not double offset || _pendingLibraryScroll is not { } request ||
+            LibraryScroller.ViewportHeight <= 0) return;
         // Wait for the new extent to be arranged (initial load or density change).
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated || _pendingLibraryOffset != offset) return;
+            if (!ReferenceEquals(request, _pendingLibraryScroll)) return;
+            if (!_isNavigated || request.Visit != _libraryVisit || request.Owner?.Invoke() == false)
+            {
+                ClearPendingLibraryOffset(request);
+                return;
+            }
             _pendingLibraryOffset = null;
-            LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true);
+            _pendingLibraryScroll = null;
             // ChangeView may settle asynchronously even with animation disabled.
             // The requested offset is already published; ViewChanged supplies the
             // accepted position. Reading the old position here loses a final-letter jump.
+            if (!LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true))
+                UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
         });
     }
 
@@ -2281,14 +2377,34 @@ public sealed partial class LibraryPage : Page,
 
     private async Task EnsureVisibleRangeLoadedAsync(bool force = false)
     {
-        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
+        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible)
             return;
 
-        if (ViewModel.IsLetterJumpInProgress)
+        // A failed scope-reset load holds an empty, retired viewport.
+        // Ordinary letter errors keep Retry without blocking newly exposed rows.
+        if (ViewModel.IsLetterJumpViewportBlocked)
+        {
+            // A new choice or manual input schedules the held range again.
+            _forceVisibleRangeLoad |= force;
+            return;
+        }
+
+        if (ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0)
         {
             // Recompute the latest viewport after the jump scrolls (or restores
             // its old cards), without letting this debounce cancel the seek.
             ScheduleVisibleRangeLoad(force);
+            return;
+        }
+
+        if (ViewModel.TotalCount <= 0)
+        {
+            // Manual input or a tab return may retire a jump before its reset
+            // catalog has any extent. Load initial cards, then fill the actual
+            // visible range under the latest navigation/letter authority.
+            await ViewModel.EnsureRangeLoadedAsync(0, 0);
+            if (ViewModel.TotalCount > 0)
+                ScheduleVisibleRangeLoad(force: true);
             return;
         }
 
@@ -2430,7 +2546,7 @@ public sealed partial class LibraryPage : Page,
         _posterWidthOverride = width;
         var layout = GetGridLayout();
         _libraryVerticalOffset = (anchor / layout.Columns + fraction) * layout.RowHeight;
-        _pendingLibraryOffset = _libraryVerticalOffset;
+        QueueLibraryOffset(_libraryVerticalOffset);
         UpdateVirtualGridMetrics();
         QueueRenderVirtualGrid(force: true);
         ScheduleVisibleRangeLoad(force: true);
@@ -2495,6 +2611,7 @@ public sealed partial class LibraryPage : Page,
 
     private void ScrollToTop_Click(object sender, RoutedEventArgs e)
     {
+        RetireLetterJumpForManualScroll();
         SetLibraryVerticalOffset(0, force: true);
         ScrollToTopButton.Visibility = Visibility.Collapsed;
         _ = EnsureVisibleRangeLoadedAsync(force: true);
