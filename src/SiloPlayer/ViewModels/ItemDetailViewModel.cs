@@ -257,10 +257,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             // Retained box-set membership also needs watched changes while
             // the detail snapshot is temporarily null during a reload.
         }
-        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
+        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && IsBoxSetMemberOrReading(message.ContentId)) _ = RefreshBoxSetAsync();
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
         {
-            if (IsBoxSetMember(message.ContentId)) _ = RefreshBoxSetAsync();
+            if (IsBoxSetMemberOrReading(message.ContentId)) _ = RefreshBoxSetAsync();
             ApplyWatchedChange(message);
             return;
         }
@@ -867,7 +867,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void Receive(PlaybackProgressUpdated message)
     {
         if (message.Identity is { } identity && !_catalogApi.IsCurrentIdentityContext(identity)) return;
-        if (Item is { Type: "movie" } movie && (movie.ContentId == message.ContentId || _boxSetMembership?.Items.Any(x => x.ContentId == message.ContentId) == true)) _ = RefreshBoxSetAfterProgressSaveAsync(message.Persisted);
+        if (IsBoxSetMemberOrReading(message.ContentId)) _ = RefreshBoxSetAfterPlaybackAsync(message);
         _detailPrefetchCache.Invalidate(message.ContentId);
         // Retain scope until the initial snapshot supplies its series ID. An
         // unrelated save must not hold this page's loading state or retry.

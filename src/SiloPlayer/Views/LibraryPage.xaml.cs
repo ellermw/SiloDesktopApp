@@ -138,6 +138,9 @@ public sealed partial class LibraryPage : Page,
     private int _currentFirstRow;
     private double _libraryVerticalOffset;
     private double? _pendingLibraryOffset;
+    private sealed record LibraryOffsetRequest(double Offset, long Visit, Func<bool>? Owner);
+    private LibraryOffsetRequest? _pendingLibraryScroll;
+    private long _libraryVisit;
     private readonly Dictionary<int, LibraryGridCard> _visibleLibraryCards = [];
     private readonly List<LibraryGridCard> _libraryCardSlots = [];
     private readonly Queue<int> _pendingCardBinds = [];
@@ -146,8 +149,9 @@ public sealed partial class LibraryPage : Page,
     private int _lastRenderedEndIndex = -1;
     private bool _renderQueued;
     private bool _forceQueuedRender;
+    private readonly ArtworkMotionPolicy _artworkMotion;
     private DispatcherTimer? _cardBindTimer;
-    private bool _isNavigated;
+    private volatile bool _isNavigated;
     private bool _viewModelEventsAttached;
     private bool _messengerRegistered;
     private int? _activeLibraryId;
@@ -165,6 +169,16 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        _artworkMotion = ArtworkViewport.For(LibraryScroller);
+        // Observe input even when the ScrollViewer or its scrollbar handles it.
+        // ViewChanged also reports inertia and extent clamps, not just new intent.
+        LibraryScroller.AddHandler(UIElement.PointerWheelChangedEvent,
+            new PointerEventHandler(LibraryScroller_PointerWheelChanged), true);
+        LibraryScroller.AddHandler(UIElement.PointerPressedEvent,
+            new PointerEventHandler(LibraryScroller_PointerPressed), true);
+        LibraryScroller.AddHandler(UIElement.KeyDownEvent,
+            new KeyEventHandler(LibraryScroller_KeyDown), true);
+        LibraryScroller.DirectManipulationStarted += LibraryScroller_DirectManipulationStarted;
         InitializeLibraryLetters();
         CatalogToolbarChoices.Apply(BrowseTypeComboBox, SortComboBox, OrderComboBox);
         var savedWidth = App.Services.GetRequiredService<SettingsService>().Load().LibraryPosterWidth;
@@ -295,20 +309,45 @@ public sealed partial class LibraryPage : Page,
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _libraryVisit++;
         _isNavigated = true;
+        var visit = ++_stateVisit;
+        var identity = _stateSettings.CaptureSettingsIdentityContext();
+        var isRefresh = App.Services.GetRequiredService<NavigationService>().IsRefreshingCurrentEntry;
+        var language = _stateSettings.LocalizedReads.Generation;
+        AttachLibraryStateEvents();
+        _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
+        AttachGroupedLibraryEvents();
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
         AttachRecommendedRealtimeEvents();
 
-        var library = e.Parameter as Library;
-        string? requestedTab = null;
-        string? requestedGenre = null;
-        if (e.Parameter is NavigationArgs navigationArgs)
+        var navigationArgs = e.Parameter as NavigationArgs;
+        var library = navigationArgs?.Library ?? e.Parameter as Library;
+        var newRequest = e.NavigationMode == NavigationMode.New && !isRefresh;
+        var historyReturn = e.NavigationMode is NavigationMode.Back or NavigationMode.Forward;
+        var differentExplicitEntry = historyReturn && !ReferenceEquals(_stateEntryParameter, e.Parameter) &&
+            (navigationArgs?.InitialTab != null || !string.IsNullOrWhiteSpace(navigationArgs?.InitialGenre));
+
+        // Back-stack parameters are snapshots. Revalidate current flags before
+        // trusting a cached grouped window, and refresh counts once on return.
+        var returningLibrary = library is not null && _activeLibraryId == library.Id;
+        if (returningLibrary)
         {
-            library = navigationArgs.Library;
-            requestedTab = navigationArgs.InitialTab;
-            requestedGenre = navigationArgs.InitialGenre;
+            // Resume retained current binds before even the library-flags read;
+            // slow policy revalidation must not block cached artwork on return.
+            ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
+            UpdateLibraryArtworkActivity();
+            var groupedVisit = _groupedLibraryVisit;
+            _libraryFlagsDirty = true;
+            await RefreshLibraryFlagsAsync();
+            if (!_isNavigated || groupedVisit != _groupedLibraryVisit) return;
+            library = ViewModel.Library;
+            _groupedCatalogDirty = IsBoxSetLibrary;
+            // Catalog subscriptions were detached while away. Without proof
+            // that changes were state-only, retire adjacent offsets on return.
+            if (_groupedCatalogDirty) _groupedStructureRequested++;
         }
 
         LibraryUnavailableState.Visibility = library == null
@@ -316,27 +355,39 @@ public sealed partial class LibraryPage : Page,
             : Visibility.Collapsed;
         if (library == null)
         {
-            HeaderGrid.Visibility = Visibility.Collapsed;
-            FilterBar.Visibility = Visibility.Collapsed;
-            ActiveFiltersBar.Visibility = Visibility.Collapsed;
-            LibraryContentArea.Visibility = Visibility.Collapsed;
-            RecommendedPanel.Visibility = Visibility.Collapsed;
-            CollectionsPanel.Visibility = Visibility.Collapsed;
-            AudiobookGroupsPanel.Visibility = Visibility.Collapsed;
+            _activeLibraryId = null;
+            _libraryStateApplied = false;
+            IsEnabled = true;
+            _stateIdentity = null;
+            _stateEntryParameter = null;
+            _stateSnapshot = null;
+            _retainedSearch = null;
+            _temporaryGenreView = false;
+            ShowLibraryUnavailable();
             return;
         }
 
         if (library != null)
         {
-            var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && _pageStateContext == _stateSettings.CaptureContext();
+            var sameLibrary = _activeLibraryId == library.Id && _libraryStateApplied && ViewModel.Library?.Id == library.Id && ViewModel.Library.Type == library.Type && _stateIdentity == identity && _stateLanguage == language;
+            // Controls still contain the previous library until its successor is applied.
+            // Do not accept input or persist that provisional view during restoration.
+            _libraryStateApplied = sameLibrary;
+            IsEnabled = sameLibrary;
+            if (_stateLanguage != language) _stateSettings.LibraryPageState.Invalidate();
+            if (_stateIdentity != identity) _stateSnapshot = null;
+            _stateIdentity = identity;
+            _stateLanguage = language;
             if (!sameLibrary)
             {
+                _groupedCatalogDirty = false;
+                if (!returningLibrary) _libraryFlagsDirty = false;
                 ResetRecommendedContent();
                 ViewModel.CancelCatalogLoads();
                 ClearVirtualCards();
                 _currentFirstRow = 0;
                 _libraryVerticalOffset = 0;
-                _pendingLibraryOffset = 0;
+                QueueLibraryOffset(0);
                 _lastRequestedStartIndex = -1;
                 _lastRequestedEndIndex = -1;
                 _recommendedLoaded = false;
@@ -344,11 +395,18 @@ public sealed partial class LibraryPage : Page,
                 _libraryCatalogLoaded = false;
             }
 
+            // Departure suspension ends on return, not after server-backed state
+            // restoration. Retained current binds must also resume if that work
+            // exits early because only the access/request context changed.
+            ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
+            UpdateLibraryArtworkActivity();
+
             _activeLibraryId = library.Id;
+            HeaderGrid.Visibility = Visibility.Visible;
             LibraryTitle.Text = library.Name;
             LibraryEyebrowName.Text = library.Name.ToUpperInvariant();
             RecommendedTab.Content = library.Type is "audiobook" or "audiobooks" ? "Home" : "Recommended";
-            _currentAudiobookAxis = "books";
+            if (!sameLibrary) _currentAudiobookAxis = "books";
             MediaTypeFilterField.Visibility = string.Equals(library.Type, "mixed", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -361,9 +419,54 @@ public sealed partial class LibraryPage : Page,
 
             // B42: Restore previously-viewed tab + filters for this library if any.
             // Falls back to fresh defaults on first visit.
-            var state = await RestoreLibraryStateAsync(library.Id);
+            var edit = _stateEdit;
+            var revision = _stateSettings.LibraryPageState.Revision;
+            var snapshot = sameLibrary && _stateSettings.LibraryPageState.TryGetConfirmed(library.Id, out var confirmed)
+                ? confirmed : await RestoreLibraryStateAsync(library.Id, visit, identity);
+            if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
             await CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<CatalogApi>());
-            if (!_isNavigated || _activeLibraryId != library.Id || _pageStateContext != _stateSettings.CaptureContext()) return;
+            if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
+            while (revision != _stateSettings.LibraryPageState.Revision)
+            {
+                revision = _stateSettings.LibraryPageState.Revision;
+                snapshot = await RestoreLibraryStateAsync(library.Id, visit, identity);
+                if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
+            }
+            // An own save can confirm a newer document during metadata revalidation
+            // without changing the invalidation revision.
+            if (_stateSettings.LibraryPageState.TryGetConfirmed(library.Id, out var latestConfirmed)) snapshot = latestConfirmed;
+            // A failed read cannot turn this owner's known opt-out into an unknown preference.
+            if (snapshot == null && _stateSnapshot is { Remember: false }) snapshot = _stateSnapshot;
+            // A newer same-library edit wins over the restore, but must not abandon
+            // activation: an interrupted tab still needs its content loaded.
+            var edited = sameLibrary && (edit != _stateEdit || HasLibraryFilterDraft);
+            var pendingSearch = snapshot is not { Remember: false } && _pendingStateSaves.TryGetValue((identity, library.Id), out var pending)
+                ? pending.Search : null;
+            var sameTemporaryEntry = _temporaryGenreView && !newRequest && ReferenceEquals(_stateEntryParameter, e.Parameter);
+            var retain = sameLibrary && (!_temporaryGenreView || sameTemporaryEntry) && !differentExplicitEntry && (edited || snapshot == null || historyReturn && !snapshot.Value.Remember || snapshot.Value.Remember &&
+                (snapshot == _stateSnapshot || snapshot.Value.Search == _retainedSearch || HasUnsavedLibraryState(library.Id, identity)));
+            var savedSearch = pendingSearch ?? snapshot?.Search;
+            var restoredState = retain ? CaptureLibraryViewState(_currentTab) :
+                ParseOwnedLibrarySearch(savedSearch, visit, identity, library.Id);
+            // A temporary genre view never replaces its saved outer OR query,
+            // so a shell refresh must replay that genre instead of restoring the OR.
+            // Otherwise replay only new/different entries or when no view supplies state.
+            var replayRoute = newRequest || differentExplicitEntry ||
+                isRefresh && !string.IsNullOrWhiteSpace(navigationArgs?.InitialGenre) &&
+                    restoredState is { Match: "any" } && restoredState.QueryGroups.Count > 0 ||
+                !sameLibrary && (restoredState == null || string.IsNullOrWhiteSpace(savedSearch));
+            var requestedTab = replayRoute ? navigationArgs?.InitialTab : null;
+            var requestedGenre = replayRoute ? navigationArgs?.InitialGenre : null;
+            var state = restoredState ?? (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
+            var temporaryGenreView = !string.IsNullOrWhiteSpace(requestedGenre) && state.Match == "any" && state.QueryGroups.Count > 0;
+            _temporaryGenreView = temporaryGenreView || retain && sameTemporaryEntry;
+            if (temporaryGenreView)
+            {
+                // The two-level query contract cannot wrap an OR query in an AND.
+                // Browse the genre alone without rewriting or saving that query.
+                state = new LibraryViewState { Axis = state.Axis, Sort = state.Sort, Order = state.Order,
+                    MediaType = state.MediaType, Match = state.Match };
+            }
             _currentAudiobookAxis = library.Type is "audiobook" or "audiobooks" ? state.Axis : "books";
             if (requestedTab is "Recommended" or "Library" or "Collections")
                 state.Tab = requestedTab;
@@ -372,11 +475,78 @@ public sealed partial class LibraryPage : Page,
                 state.Tab = "Library";
                 state.Genre = requestedGenre;
                 state.Genres = [requestedGenre];
+                foreach (var group in state.QueryGroups) group.Rules.RemoveAll(rule => rule.Field == "genre");
+                state.QueryGroups.RemoveAll(group => group.Rules.Count == 0);
+                if (state.QueryGroups.Count > 0 || temporaryGenreView)
+                    state.QueryGroups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = requestedGenre }] });
             }
 
+            if (!retain || !string.IsNullOrWhiteSpace(requestedGenre))
+            {
+                _libraryCatalogLoaded = false;
+                ViewModel.CancelCatalogLoads();
+                ClearVirtualCards();
+                _libraryVerticalOffset = 0;
+                QueueLibraryOffset(0);
+            }
+            // This library is already configured when a retained visit accepts
+            // input. Reapplying even a captured state would erase debounced drafts.
+            if (!edited || requestedTab != null || requestedGenre != null)
+                ApplyLibraryViewState(state);
+            _stateSnapshot = snapshot;
+            _stateEntryParameter = e.Parameter;
+            _libraryStateApplied = true;
+            IsEnabled = true;
+            // Only newly restored input establishes a baseline; retaining visible
+            // input must not mark an unsaved edit as already persisted.
+            if (!retain) _retainedSearch = pendingSearch ?? snapshot?.Search;
+            FlushLibraryStateSave(); // Retry failed departure saves without blocking retained activation.
+            if (newRequest && !temporaryGenreView && (requestedTab != null || requestedGenre != null))
+                ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));
+            if (!retain || temporaryGenreView) _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
+
+            if (state.Tab == "Recommended")
+            {
+                if (!_recommendedLoaded)
+                    await LoadRecommendationsAsync();
+                else
+                    QueueRecommendedRefresh();
+            }
+
+            if (state.Tab == "Library")
+            {
+                if (_currentAudiobookAxis != "books")
+                {
+                    var groupOffset = retain ? AudiobookGroupsPanel.VerticalOffset : 0;
+                    var groupEdit = _stateEdit;
+                    await LoadAudiobookGroupsAsync(true);
+                    if (IsLibraryStateVisitCurrent(visit, identity, library.Id) && groupEdit == _stateEdit && _currentTab == "Library")
+                    {
+                        AudiobookGroupsPanel.UpdateLayout();
+                        AudiobookGroupsPanel.ChangeView(null, groupOffset, null, true);
+                    }
+                    return;
+                }
+                await EnsureLibraryCatalogLoadedAsync();
+                await FillViewportAsync();
+                QueueRenderVirtualGrid(force: true);
+            }
+
+            if (state.Tab == "Collections")
+                await LoadCollectionsAsync();
+        }
+    }
+
+    private void ApplyLibraryViewState(LibraryViewState state)
+    {
+        _applyingLibraryState = true;
+        try
+        {
+            _currentAudiobookAxis = ViewModel.Library!.Type is "audiobook" or "audiobooks" ? state.Axis : "books";
+            var retainedQueryScope = ViewModel.CatalogQueryScopeKey();
             _suppressFilterEvents = true;
-            UpdateSortOptions(library.Type, state.Sort, state.MediaType);
-            ConfigureBrowseTypeSelector(library.Type, state.MediaType);
+            UpdateSortOptions(ViewModel.Library!.Type, state.Sort, state.MediaType);
+            ConfigureBrowseTypeSelector(ViewModel.Library!.Type, state.MediaType);
             MediaTypeComboBox.SelectedIndex = IndexOfMediaType(state.MediaType);
             GenreComboBox.SelectedIndex = -1;
             ContentRatingComboBox.SelectedIndex = -1;
@@ -411,7 +581,7 @@ public sealed partial class LibraryPage : Page,
             FourKToggle.IsChecked = state.FourK;
             HdrToggle.IsChecked = state.Hdr;
             DolbyVisionToggle.IsChecked = state.DolbyVision;
-            ConfigureFilterSections(library.Type);
+            ConfigureFilterSections(ViewModel.Library!.Type);
             _orderAsc = state.Order != "desc";
             UpdateOrderButton();
             var restoredSort = SortComboBox.SelectedItem is SortOption restoredOption ? restoredOption.Value : "title";
@@ -456,6 +626,16 @@ public sealed partial class LibraryPage : Page,
             if (ViewModel.AdvancedGroups.Count == 0) ViewModel.AdvancedGroups.Add(new());
             ViewModel.UseAdvancedRules = state.QueryGroups.Any(group => group.Rules.Count > 0);
             ViewModel.AdvancedRulesMatch = state.Match;
+            if (retainedQueryScope != ViewModel.CatalogQueryScopeKey())
+            {
+                // Saved state can change on another client while this page is
+                // cached. No cursor or card may cross the restored query scope.
+                _libraryCatalogLoaded = false;
+                CancelGroupedCatalogRefresh();
+                ViewModel.CancelCatalogLoads();
+                ViewModel.Items.Clear();
+                ClearVirtualCards();
+            }
             if (ViewModel.UseAdvancedRules) { BuildAdvancedRulesPanel(); GuidedFiltersScroll.Visibility = Visibility.Collapsed; AdvancedFiltersScroll.Visibility = Visibility.Visible; }
             _suppressFilterEvents = false;
             UpdateAudiobookAxisButtons();
@@ -463,25 +643,8 @@ public sealed partial class LibraryPage : Page,
 
             ShowTab(state.Tab);
 
-            if (state.Tab == "Recommended")
-            {
-                if (!_recommendedLoaded)
-                    await LoadRecommendationsAsync();
-                else
-                    QueueRecommendedRefresh();
-            }
-
-            if (state.Tab == "Library")
-            {
-                if (_currentAudiobookAxis != "books") { await LoadAudiobookGroupsAsync(true); return; }
-                await EnsureLibraryCatalogLoadedAsync();
-                await FillViewportAsync();
-                QueueRenderVirtualGrid(force: true);
-            }
-
-            if (state.Tab == "Collections")
-                await LoadCollectionsAsync();
         }
+        finally { _applyingLibraryState = false; _suppressFilterEvents = false; }
     }
 
     private void ManageLibraryVisibility_Click(object sender, RoutedEventArgs e)
@@ -489,19 +652,47 @@ public sealed partial class LibraryPage : Page,
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        ++_stateVisit;
+        DetachLibraryStateEvents();
         _shuffleLaunch?.Cancel();
         base.OnNavigatedFrom(e);
+        // Accept debounced input and capture edits before canceling their reloads.
+        // Their async continuations may not run until after this visit has ended.
+        var pendingFilters = _yearDebounceTimer != null || _advancedFilterDebounceTimer != null;
+        if (_yearDebounceTimer != null)
+        {
+            ViewModel.SelectedYearMin = NullIfWhiteSpace(YearMinBox.Text);
+            ViewModel.SelectedYearMax = NullIfWhiteSpace(YearMaxBox.Text);
+        }
+        if (_advancedFilterDebounceTimer != null && !ViewModel.UseAdvancedRules)
+            CopyAdvancedFilterInputs();
+        _yearDebounceTimer?.Stop(); _yearDebounceTimer = null;
+        _advancedFilterDebounceTimer?.Stop(); _advancedFilterDebounceTimer = null;
+        if (!ViewModel.UseAdvancedRules || _sharedFilterEditor?.IsValid != false)
+            SaveViewState(_currentTab);
         FlushLibraryStateSave();
+        if (pendingFilters || ViewModel.IsLoading && ViewModel.WindowStartIndex < 0)
+            _libraryCatalogLoaded = false;
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        if (_pendingLibraryScroll is { } pendingScroll) ClearPendingLibraryOffset(pendingScroll);
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        _libraryScrollIsIntermediate = false;
+        // Retire read-ahead before Reset releases any deferred warmup continuations.
+        _libraryReadAheadCts?.Cancel();
+        _libraryReadAheadCts?.Dispose();
+        _libraryReadAheadCts = null;
+        ArtworkViewport.SetActive(RecommendedPanel, false);
+        foreach (var card in _libraryCardSlots) card.SuspendArtwork();
+        _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
+        DetachGroupedLibraryEvents();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         DetachRecommendedRealtimeEvents();
         CancelRecommendedRefresh();
         _visibleRangeDebounceTimer?.Stop();
-        _libraryReadAheadCts?.Cancel();
-        _libraryReadAheadCts?.Dispose();
-        _libraryReadAheadCts = null;
         _posterSizeTimer?.Stop();
         _cardBindTimer?.Stop();
         _audiobookGroupSearchTimer?.Stop();
@@ -586,7 +777,7 @@ public sealed partial class LibraryPage : Page,
     {
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+            DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(); });
             return;
         }
 
@@ -603,7 +794,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+        DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(structural: false); });
     }
 
     private void QueueRecommendedRefresh()
@@ -663,7 +854,14 @@ public sealed partial class LibraryPage : Page,
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated) return;
+            if (!_isNavigated || (message.Context is {} owner && !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(owner))) return;
+            if (message.Kind is MediaSurfaceChangeKind.ItemMetadataRefreshed or MediaSurfaceChangeKind.CollectionChanged)
+                QueueGroupedCatalogRefresh();
+            else if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared
+                or MediaSurfaceChangeKind.FavoriteAdded or MediaSurfaceChangeKind.FavoriteRemoved
+                or MediaSurfaceChangeKind.WatchlistAdded or MediaSurfaceChangeKind.WatchlistRemoved
+                or MediaSurfaceChangeKind.RatingChanged or MediaSurfaceChangeKind.PlaybackProgress)
+                QueueGroupedCatalogRefresh(structural: false);
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item => message.Kind switch
             {
                 MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
@@ -684,6 +882,7 @@ public sealed partial class LibraryPage : Page,
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var owner = message.Identity ?? catalog.CaptureIdentityContext();
         if (!catalog.IsCurrentIdentityContext(owner)) return;
+        _ = RefreshGroupedAfterPlaybackAsync(message);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_isNavigated || !catalog.IsCurrentIdentityContext(owner)) return;
@@ -849,10 +1048,7 @@ public sealed partial class LibraryPage : Page,
         var type = libraryType.Trim().ToLowerInvariant();
         var isAudiobook = type is "audiobook" or "audiobooks";
         AudiobookAxisPanel.Visibility = isAudiobook ? Visibility.Visible : Visibility.Collapsed;
-        SortComboBox.Visibility = Visibility.Visible;
-        OrderComboBox.Visibility = Visibility.Visible;
-        OpenFiltersButton.Visibility = Visibility.Visible;
-        ResultCountText.Visibility = Visibility.Collapsed;
+        UpdateCatalogToolbarVisibility(!isAudiobook || _currentAudiobookAxis == "books");
         if (isAudiobook) UpdateAudiobookAxisButtons();
         List<FilterOption>? options = null;
 
@@ -900,7 +1096,12 @@ public sealed partial class LibraryPage : Page,
     private void SaveViewState(string tab)
     {
         if (ViewModel.Library == null) return;
-        var state = new LibraryViewState
+        var state = CaptureLibraryViewState(tab);
+        ScheduleLibraryStateSave(ViewModel.Library.Id, state);
+    }
+
+    private LibraryViewState CaptureLibraryViewState(string tab)
+        => new LibraryViewState
         {
             Tab = tab,
             Axis = _currentAudiobookAxis,
@@ -937,11 +1138,10 @@ public sealed partial class LibraryPage : Page,
             Hdr = ViewModel.SelectedHdr,
             DolbyVision = ViewModel.SelectedDolbyVision,
         };
-        ScheduleLibraryStateSave(ViewModel.Library.Id, state);
-    }
 
     private void ShowTab(string tag)
     {
+        if (tag != "Library" || _currentAudiobookAxis != "books") CancelGroupedCatalogRefresh();
         // Update tab button styles
         var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
         foreach (var tab in tabs)
@@ -964,8 +1164,10 @@ public sealed partial class LibraryPage : Page,
 
         FilterBar.Visibility = tag == "Library" ? Visibility.Visible : Visibility.Collapsed;
         LibraryContentArea.Visibility = tag == "Library" && _currentAudiobookAxis == "books" ? Visibility.Visible : Visibility.Collapsed;
+        UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = tag == "Library" && _currentAudiobookAxis != "books" ? Visibility.Visible : Visibility.Collapsed;
         RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
+        ArtworkViewport.SetActive(RecommendedPanel, _isNavigated && tag == "Recommended");
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
 
         _currentTab = tag;
@@ -1211,6 +1413,7 @@ public sealed partial class LibraryPage : Page,
 
     private async Task ApplyGuidedMultiSelectFiltersAsync()
     {
+        MarkLibraryStateEdited();
         ViewModel.SelectedGenres = _selectedGenres.ToList();
         ViewModel.SelectedGenre = _selectedGenres.FirstOrDefault();
         ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
@@ -1234,6 +1437,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void SortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         if (SortComboBox.SelectedItem is SortOption option)
         {
@@ -1254,6 +1458,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void OrderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || OrderComboBox.SelectedItem is not ComboBoxItem item || item.Tag is not string order)
             return;
 
@@ -1333,6 +1538,7 @@ public sealed partial class LibraryPage : Page,
         SizeLibraryFilterSheet();
         _sharedFilterEditor.SortChanged += () =>
         {
+            MarkLibraryStateEdited();
             if (query.Sort is not {} sort) return;
             ViewModel.SelectedSort = sort.Field; ViewModel.SelectedOrder = sort.Order;
             _suppressFilterEvents = true;
@@ -1357,6 +1563,7 @@ public sealed partial class LibraryPage : Page,
 
     private void StoreLibraryRuleDraft(QueryDefinition query)
     {
+        MarkLibraryStateEdited();
         ViewModel.AdvancedRulesMatch = query.Match; ViewModel.AdvancedGroups.Clear();
         foreach (var group in query.Groups)
         {
@@ -1388,6 +1595,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void AdvancedMatch_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || AdvancedMatchComboBox.SelectedItem is not ComboBoxItem { Tag: string match }) return;
         ViewModel.AdvancedRulesMatch = match == "any" ? "any" : "all";
         await ApplyAdvancedRulesAsync();
@@ -1418,6 +1626,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void MediaTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         if (MediaTypeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string type)
         {
@@ -1448,6 +1657,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void GenreComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedGenre = SelectedFilterValue(GenreComboBox);
@@ -1459,6 +1669,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void ContentRatingComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedContentRating = SelectedFilterValue(ContentRatingComboBox);
@@ -1470,6 +1681,7 @@ public sealed partial class LibraryPage : Page,
 
     private void YearFilter_TextChanged(object sender, TextChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         _suppressFilterEvents = true;
@@ -1496,6 +1708,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void DecadeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents ||
             DecadeComboBox.SelectedItem is not ComboBoxItem { Tag: string decade } ||
             string.IsNullOrEmpty(decade))
@@ -1515,9 +1728,79 @@ public sealed partial class LibraryPage : Page,
         SaveViewState(_currentTab);
     }
 
+    private void UpdateLibraryArtworkActivity()
+    {
+        if (!_isNavigated || LibraryContentArea.Visibility != Visibility.Visible)
+        {
+            _libraryReadAheadCts?.Cancel();
+            _libraryReadAheadCts?.Dispose();
+            _libraryReadAheadCts = null;
+        }
+        foreach (var card in _libraryCardSlots)
+        {
+            if (_isNavigated && LibraryContentArea.Visibility == Visibility.Visible) card.ResumeArtwork();
+            else card.SuspendArtwork();
+        }
+    }
+
+    private void RetireLetterJumpForManualScroll()
+    {
+        if (!_isNavigated) return;
+        ViewModel.RetireLetterJump();
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        _chosenLibraryEndLetter = null;
+        // The seek may have cancelled the read for this very same row range.
+        _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+        if (_pendingLibraryScroll is { Owner: not null } pending)
+            ClearPendingLibraryOffset(pending);
+        ScheduleVisibleRangeLoad(force: true);
+    }
+
+    private void LibraryScroller_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var properties = e.GetCurrentPoint(LibraryScroller).Properties;
+        if (!properties.IsHorizontalMouseWheel && properties.MouseWheelDelta != 0)
+            RetireLetterJumpForManualScroll();
+    }
+
+    private void LibraryScroller_DirectManipulationStarted(object? sender, object e)
+        => RetireLetterJumpForManualScroll();
+
+    private void LibraryScroller_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        for (var source = e.OriginalSource as DependencyObject; source is not null && source != LibraryScroller;
+            source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source))
+        {
+            if (source is ScrollBar)
+            {
+                RetireLetterJumpForManualScroll();
+                break;
+            }
+        }
+    }
+
+    private void LibraryScroller_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down or
+            Windows.System.VirtualKey.PageUp or Windows.System.VirtualKey.PageDown or
+            Windows.System.VirtualKey.Home or Windows.System.VirtualKey.End or Windows.System.VirtualKey.Space)
+            RetireLetterJumpForManualScroll();
+    }
+
     private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
+        if (!_isNavigated) return;
+        _libraryScrollIsIntermediate = e.IsIntermediate;
+        if (!e.IsIntermediate && _pendingLibraryLetterCommit is { } commit)
+        {
+            _pendingLibraryLetterCommit = null;
+            DispatcherQueue.TryEnqueue(() => commit());
+        }
+        if (_pendingLibraryOffset.HasValue) return;
+        // Only new input retires a choice. Coasting from an earlier manipulation
+        // and native extent clamps still update the viewport, but keep its owner.
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
     }
 
@@ -1538,7 +1821,7 @@ public sealed partial class LibraryPage : Page,
         ScheduleVisibleRangeLoad(force: true);
     }
 
-    private void SetLibraryVerticalOffset(double offset, bool force = false)
+    private void SetLibraryVerticalOffset(double offset, bool force = false, Func<bool>? owner = null)
     {
         var layout = GetGridLayout();
         var maximum = VirtualGridScrollGate.GetMaxVerticalOffset(
@@ -1548,13 +1831,29 @@ public sealed partial class LibraryPage : Page,
         if (!force && clamped == _libraryVerticalOffset)
             return;
 
-        _pendingLibraryOffset = clamped;
+        QueueLibraryOffset(clamped, owner);
         UpdateLibraryScrollPosition(clamped, force);
         ApplyPendingLibraryOffset();
     }
 
+    private void QueueLibraryOffset(double offset, Func<bool>? owner = null)
+    {
+        _pendingLibraryOffset = offset;
+        _pendingLibraryScroll = new(offset, _libraryVisit, owner);
+    }
+
+    private void ClearPendingLibraryOffset(LibraryOffsetRequest request)
+    {
+        if (!ReferenceEquals(_pendingLibraryScroll, request)) return;
+        _pendingLibraryOffset = null;
+        _pendingLibraryScroll = null;
+        if (request.Owner is not null) _chosenLibraryEndLetter = null;
+        UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+    }
+
     private void UpdateLibraryScrollPosition(double offset, bool force = false)
     {
+        _artworkMotion.Observe(0, offset);
         var layout = GetGridLayout();
         _libraryVerticalOffset = offset;
         _currentFirstRow = VirtualGridScrollGate.GetFirstVisibleRow(offset, layout.RowHeight);
@@ -1571,14 +1870,24 @@ public sealed partial class LibraryPage : Page,
 
     private void ApplyPendingLibraryOffset()
     {
-        if (_pendingLibraryOffset is not double offset || LibraryScroller.ViewportHeight <= 0) return;
+        if (_pendingLibraryOffset is not double offset || _pendingLibraryScroll is not { } request ||
+            LibraryScroller.ViewportHeight <= 0) return;
         // Wait for the new extent to be arranged (initial load or density change).
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated || _pendingLibraryOffset != offset) return;
+            if (!ReferenceEquals(request, _pendingLibraryScroll)) return;
+            if (!_isNavigated || request.Visit != _libraryVisit || request.Owner?.Invoke() == false)
+            {
+                ClearPendingLibraryOffset(request);
+                return;
+            }
             _pendingLibraryOffset = null;
-            LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true);
-            UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+            _pendingLibraryScroll = null;
+            // ChangeView may settle asynchronously even with animation disabled.
+            // The requested offset is already published; ViewChanged supplies the
+            // accepted position. Reading the old position here loses a final-letter jump.
+            if (!LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true))
+                UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
         });
     }
 
@@ -1680,7 +1989,8 @@ public sealed partial class LibraryPage : Page,
         foreach (var (index, card) in assignments)
         {
             _visibleLibraryCards[index] = card;
-            if (card.Tag is not int previousIndex || previousIndex != index)
+            var sameIndex = card.Tag is int previousIndex && previousIndex == index;
+            if (!sameIndex)
                 card.BindPlaceholder();
             card.Tag = index;
             PositionVirtualCardSlot(card, index, layout);
@@ -1710,7 +2020,7 @@ public sealed partial class LibraryPage : Page,
         var created = 0;
         while (_libraryCardSlots.Count < requiredCount && created < 4)
         {
-            var card = new LibraryGridCard();
+            var card = new LibraryGridCard { ArtworkMotion = _artworkMotion };
             HideVirtualCardSlot(card);
             _libraryCardSlots.Add(card);
             VirtualGridCanvas.Children.Add(card);
@@ -1723,6 +2033,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void BrowseTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || BrowseTypeComboBox.SelectedItem is not FilterOption option)
             return;
 
@@ -1750,20 +2061,20 @@ public sealed partial class LibraryPage : Page,
 
     private async void AudiobookAxis_Click(object sender, RoutedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (sender is not Button { Tag: string axis } || axis == _currentAudiobookAxis)
             return;
 
         _currentAudiobookAxis = axis;
+        if (axis != "books") CancelGroupedCatalogRefresh();
         SaveViewState(_currentTab);
         UpdateAudiobookAxisButtons();
         var showBooks = axis == "books";
         UpdateLibraryLetters();
         LibraryContentArea.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = showBooks ? Visibility.Collapsed : Visibility.Visible;
-        SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
-        OrderComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
-        OpenFiltersButton.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
-        ResultCountText.Visibility = Visibility.Collapsed;
+        UpdateCatalogToolbarVisibility(showBooks);
         ActiveFiltersBar.Visibility = showBooks && FilterBadgesPanel.Children.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -1782,6 +2093,14 @@ public sealed partial class LibraryPage : Page,
         await LoadAudiobookGroupsAsync(reset: true);
     }
 
+    private void UpdateCatalogToolbarVisibility(bool showBooks)
+    {
+        SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        OrderComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        OpenFiltersButton.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
+        ResultCountText.Visibility = Visibility.Collapsed;
+    }
+
     private void UpdateAudiobookAxisButtons()
     {
         foreach (var button in new[] { AudiobookBooksButton, AudiobookSeriesButton, AudiobookAuthorsButton, AudiobookNarratorsButton })
@@ -1795,6 +2114,7 @@ public sealed partial class LibraryPage : Page,
 
     private void AudiobookGroupSearch_TextChanged(object sender, TextChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || _currentAudiobookAxis == "books") return;
         _audiobookGroupSearchTimer?.Stop();
         _audiobookGroupSearchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -1809,6 +2129,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void AudiobookGroupSort_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents || _currentAudiobookAxis == "books") return;
         await LoadAudiobookGroupsAsync(reset: true);
     }
@@ -2081,6 +2402,7 @@ public sealed partial class LibraryPage : Page,
 
     private async Task SelectAudiobookGroupAsync(string name)
     {
+        MarkLibraryStateEdited();
         switch (_currentAudiobookAxis)
         {
             case "author": ViewModel.SelectedAuthor = name; AuthorBox.Text = name; break;
@@ -2096,6 +2418,7 @@ public sealed partial class LibraryPage : Page,
         OpenFiltersButton.Visibility = Visibility.Visible;
         ResultCountText.Visibility = Visibility.Collapsed;
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
+        UpdateLibraryArtworkActivity();
         await FillViewportAsync();
         UpdateActiveFilterBadges();
         SaveViewState(_currentTab);
@@ -2238,14 +2561,34 @@ public sealed partial class LibraryPage : Page,
 
     private async Task EnsureVisibleRangeLoadedAsync(bool force = false)
     {
-        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
+        if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible)
             return;
 
-        if (ViewModel.IsLetterJumpInProgress)
+        // A failed scope-reset load holds an empty, retired viewport.
+        // Ordinary letter errors keep Retry without blocking newly exposed rows.
+        if (ViewModel.IsLetterJumpViewportBlocked)
+        {
+            // A new choice or manual input schedules the held range again.
+            _forceVisibleRangeLoad |= force;
+            return;
+        }
+
+        if (ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0)
         {
             // Recompute the latest viewport after the jump scrolls (or restores
             // its old cards), without letting this debounce cancel the seek.
             ScheduleVisibleRangeLoad(force);
+            return;
+        }
+
+        if (ViewModel.TotalCount <= 0)
+        {
+            // Manual input or a tab return may retire a jump before its reset
+            // catalog has any extent. Load initial cards, then fill the actual
+            // visible range under the latest navigation/letter authority.
+            await ViewModel.EnsureRangeLoadedAsync(0, 0);
+            if (ViewModel.TotalCount > 0)
+                ScheduleVisibleRangeLoad(force: true);
             return;
         }
 
@@ -2268,12 +2611,13 @@ public sealed partial class LibraryPage : Page,
         var token = readAhead.Token;
         _lastRequestedStartIndex = range.StartIndex;
         _lastRequestedEndIndex = range.EndIndex;
+        var context = _stateSettings.CaptureContext();
         await ViewModel.EnsureRangeLoadedAsync(range.StartIndex, range.EndIndex);
-        if (token.IsCancellationRequested || !_isNavigated) return;
-        _ = WarmLibraryNeighborhoodAsync(range.StartIndex, range.EndIndex, forward, token);
+        if (token.IsCancellationRequested || !_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
+        _ = WarmLibraryNeighborhoodAsync(range.StartIndex, range.EndIndex, forward, context, token);
     }
 
-    private async Task WarmLibraryNeighborhoodAsync(int start, int end, bool forward, CancellationToken ct)
+    private async Task WarmLibraryNeighborhoodAsync(int start, int end, bool forward, SiloPlayer.Core.Api.ApiRequestContext context, CancellationToken ct)
     {
         try
         {
@@ -2282,6 +2626,7 @@ public sealed partial class LibraryPage : Page,
             await Task.Delay(150, ct);
             var items = await ViewModel.PrefetchAroundAsync(start, end, forward, ct);
             ct.ThrowIfCancellationRequested();
+            if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
             var images = App.Services.GetRequiredService<ImageService>();
             var http = App.Services.GetRequiredService<HttpClient>();
             await Parallel.ForEachAsync(items,
@@ -2291,15 +2636,24 @@ public sealed partial class LibraryPage : Page,
                     var poster = !string.IsNullOrWhiteSpace(item.PosterUrl);
                     var url = poster ? item.PosterUrl : item.BackdropUrl;
                     if (string.IsNullOrWhiteSpace(url)) return;
-                    await s_artworkWarmupThrottle.RunAsync(async _ =>
+                    while (true)
                     {
+                        await _artworkMotion.WaitAsync(token);
                         token.ThrowIfCancellationRequested();
-                        // Shared downloads outlive a caller's cancellation.
-                        // Keep this slot until completion so rapid reversals
-                        // cannot accumulate unbounded background downloads.
-                        await images.GetImageDiskPathAsync(item.ContentId,
-                            poster ? "poster" : "backdrop", url, http, CancellationToken.None);
-                    }, token);
+                        if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
+                        var started = await s_artworkWarmupThrottle.RunAsync(async workToken =>
+                        {
+                            workToken.ThrowIfCancellationRequested();
+                            if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return true;
+                            if (_artworkMotion.IsDeferred) return false;
+                            // Cancel work that has not started, but keep this slot
+                            // until an already-started shared download completes.
+                            await images.GetImageDiskPathAsync(item.ContentId,
+                                poster ? "poster" : "backdrop", url, http, workToken, waitForSharedDownload: true);
+                            return true;
+                        }, token);
+                        if (started) break;
+                    }
                 });
         }
         catch (OperationCanceledException) { }
@@ -2387,7 +2741,7 @@ public sealed partial class LibraryPage : Page,
         _posterWidthOverride = width;
         var layout = GetGridLayout();
         _libraryVerticalOffset = (anchor / layout.Columns + fraction) * layout.RowHeight;
-        _pendingLibraryOffset = _libraryVerticalOffset;
+        QueueLibraryOffset(_libraryVerticalOffset);
         UpdateVirtualGridMetrics();
         QueueRenderVirtualGrid(force: true);
         ScheduleVisibleRangeLoad(force: true);
@@ -2452,6 +2806,7 @@ public sealed partial class LibraryPage : Page,
 
     private void ScrollToTop_Click(object sender, RoutedEventArgs e)
     {
+        RetireLetterJumpForManualScroll();
         SetLibraryVerticalOffset(0, force: true);
         ScrollToTopButton.Visibility = Visibility.Collapsed;
         _ = EnsureVisibleRangeLoadedAsync(force: true);
@@ -2580,12 +2935,12 @@ public sealed partial class LibraryPage : Page,
 
     private async void Tab_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
+        if (!_libraryStateApplied || sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
         if (tag == _currentTab)
         {
-            if (tag == "Library" && !_libraryCatalogLoaded)
+            if (tag == "Library")
             {
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
@@ -2597,6 +2952,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
+        MarkLibraryStateEdited();
         ShowTab(tag);
 
         if (tag == "Recommended")
@@ -2620,12 +2976,16 @@ public sealed partial class LibraryPage : Page,
     private async Task EnsureLibraryCatalogLoadedAsync()
     {
         using var timing = LibraryPerformanceTrace.Measure("library-open");
+        // Revalidate pending policy changes, even while this visit's catalog is cached.
+        if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();
+        if (!_isNavigated || ViewModel.Library is null) return;
         if (_libraryCatalogLoaded)
         {
             // Leaving for an item detail may have canceled optional filters
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
             _ = ViewModel.EnsureLetterIndexAsync();
+            if (_groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
             return;
         }
 
@@ -2636,7 +2996,8 @@ public sealed partial class LibraryPage : Page,
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
             try { await overlayWarmup; } catch { }
-            _libraryCatalogLoaded = _isNavigated && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
+            _libraryCatalogLoaded = _isNavigated && ViewModel.Library is not null && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
+            if (_libraryCatalogLoaded && _groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
         }
         finally
         {
@@ -3455,6 +3816,8 @@ public sealed partial class LibraryPage : Page,
             pinButton.Click += async (_, args) =>
             {
                 if (App.MainWindowInstance is not MainWindow window) return;
+                var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+                var context = apiClient.CaptureContext();
                 pinButton.IsEnabled = false;
                 try
                 {
@@ -3463,6 +3826,17 @@ public sealed partial class LibraryPage : Page,
                     pinIcon.Glyph = nowPinned ? "\uE841" : "\uE840";
                     pinButton.Opacity = nowPinned ? 1 : 0;
                     ToolTipService.SetToolTip(pinButton, nowPinned ? "Unpin from sidebar" : "Pin to sidebar");
+                }
+                catch (OperationCanceledException)
+                {
+                    // A retired shell did not commit this control's result.
+                    // Retain its previous presentation until normal refresh.
+                }
+                catch (Exception ex)
+                {
+                    if (IsLoaded && pinButton.IsLoaded && apiClient.IsCurrentContext(context))
+                        App.Services.GetRequiredService<ToastService>().Error(ex,
+                            ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
                 }
                 finally { pinButton.IsEnabled = true; }
             };
@@ -3621,6 +3995,7 @@ public sealed partial class LibraryPage : Page,
     private async void PersonFacet_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
         if (_suppressFilterEvents || args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+        MarkLibraryStateEdited();
         if (_facetOwners.Remove(sender, out var previous)) previous.Cancel();
         var owner = new CancellationTokenSource(); _facetOwners[sender] = owner;
         var field = sender.Name.Replace("Box", "").ToLowerInvariant();
@@ -3643,6 +4018,7 @@ public sealed partial class LibraryPage : Page,
 
     private void AdvancedTextFilter_TextChanged(object sender, TextChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         _advancedFilterDebounceTimer?.Stop();
@@ -3658,17 +4034,19 @@ public sealed partial class LibraryPage : Page,
 
     private async void AdvancedComboFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         await ApplyAdvancedFiltersAsync();
     }
 
     private async void AdvancedToggle_Toggled(object sender, RoutedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
         await ApplyAdvancedFiltersAsync();
     }
 
-    private async Task ApplyAdvancedFiltersAsync()
+    private void CopyAdvancedFilterInputs()
     {
         ViewModel.SelectedMinimumRating = NullIfWhiteSpace(MinimumRatingBox.Text);
         ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
@@ -3688,7 +4066,11 @@ public sealed partial class LibraryPage : Page,
         ViewModel.SelectedFourK = FourKToggle.IsChecked == true;
         ViewModel.SelectedHdr = HdrToggle.IsChecked == true;
         ViewModel.SelectedDolbyVision = DolbyVisionToggle.IsChecked == true;
+    }
 
+    private async Task ApplyAdvancedFiltersAsync()
+    {
+        CopyAdvancedFilterInputs();
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
         UpdateActiveFilterBadges();
@@ -3706,6 +4088,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void StudioComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedStudio = SelectedFilterValue(StudioComboBox);
@@ -3717,6 +4100,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void CountryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedCountry = SelectedFilterValue(CountryComboBox);
@@ -3728,6 +4112,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void ResolutionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedResolution = SelectedFilterValue(ResolutionComboBox);
@@ -3739,6 +4124,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void AudioLangComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        MarkLibraryStateEdited();
         if (_suppressFilterEvents) return;
 
         ViewModel.SelectedAudioLanguage = SelectedFilterValue(AudioLangComboBox);
@@ -3925,6 +4311,7 @@ public sealed partial class LibraryPage : Page,
 
     private async void ClearAllFilters_Click(object sender, RoutedEventArgs e)
     {
+        MarkLibraryStateEdited();
         _suppressFilterEvents = true;
         if (ViewModel.UseAdvancedRules)
         {

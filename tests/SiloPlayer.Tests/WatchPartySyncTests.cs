@@ -51,6 +51,24 @@ public sealed class WatchPartySyncTests
     }
 
     [Fact]
+    public void LatePausedSeekDeferredDuringNativeLoadAppliesOnNextIdleTick()
+    {
+        var f = new Fixture();
+        f.Player.Position = 120;
+        f.Player.Busy = true;
+        var command = f.Command("seek", 130);
+        command.PlaybackState = "paused";
+        f.Sync.QueueCommand(command, 0);
+        f.Sync.Tick(2000);
+        Assert.Empty(f.Player.Seeks);
+        f.Player.Busy = false;
+        f.Sync.Tick(2250);
+        Assert.Equal(130, Assert.Single(f.Player.Seeks));
+        Assert.True(f.Player.Paused);
+        Assert.Equal(1, f.Player.Rate);
+    }
+
+    [Fact]
     public void ContinuousNudgeHasHysteresisAndNeverSeeksEvenBeyondFiveSeconds()
     {
         var f = new Fixture();

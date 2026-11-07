@@ -60,6 +60,12 @@ public class AuthService : IDisposable
     /// </summary>
     public event Action? UserChanged;
 
+    /// <summary>
+    /// Fires synchronously after profile authority is selected, including a
+    /// same-ID selection that replaces its metadata or PIN grant.
+    /// </summary>
+    public event Action? ProfileChanged;
+
     public void ConfigureServer(string serverUrl)
     {
         var normalized = ServerUrlIdentity.Normalize(serverUrl);
@@ -169,8 +175,18 @@ public class AuthService : IDisposable
     /// <summary>Refresh profile metadata without changing the PIN grant or selected profile.</summary>
     public void RefreshSelectedProfile(Profile profile)
     {
+        var refreshed = false;
         lock (_stateGate)
-            if (SelectedProfileId == profile.Id) SelectedProfile = profile;
+        {
+            if (SelectedProfileId == profile.Id)
+            {
+                SelectedProfile = profile;
+                refreshed = true;
+            }
+        }
+        // Metadata participates in the shell hydration key even when the
+        // selected profile and its PIN/request authority remain unchanged.
+        if (refreshed) RaiseSafely(ProfileChanged);
     }
 
     public void SelectProfile(string profileId, string? profileToken = null, Profile? profile = null)
@@ -185,6 +201,8 @@ public class AuthService : IDisposable
             serverUrl = _sessionServerUrl;
             generation = _sessionGeneration;
         }
+
+        RaiseSafely(ProfileChanged);
 
         if (string.IsNullOrWhiteSpace(serverUrl))
             return;

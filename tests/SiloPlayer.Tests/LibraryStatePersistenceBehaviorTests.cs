@@ -8,6 +8,24 @@ namespace SiloPlayer.Tests;
 public sealed class LibraryStatePersistenceBehaviorTests
 {
     [Fact]
+    public async Task UnchangedLibraryStateDoesNotWriteAnEcho()
+    {
+        using var wire = new Wire();
+        var store = new LibraryPageStateStore(new SettingsApi(wire.Client()));
+        await store.WriteAsync(2, "?tab=collections");
+        Assert.Null(wire.Saved);
+    }
+
+    [Fact]
+    public async Task RepeatedRetainedReadUsesConfirmedDocument()
+    {
+        using var wire = new Wire();
+        var store = new LibraryPageStateStore(new SettingsApi(wire.Client()));
+        await store.ReadAsync(2);
+        await store.ReadAsync(2);
+        Assert.Equal(1, wire.Reads);
+    }
+    [Fact]
     public async Task LibraryStateUsesVersionedSearchDocumentAndPreservesOtherLibraries()
     {
         using var wire = new Wire(); var client = wire.Client(); var store = new LibraryPageStateStore(new SettingsApi(client));
@@ -31,6 +49,7 @@ public sealed class LibraryStatePersistenceBehaviorTests
     private sealed class Wire : HttpMessageHandler
     {
         public bool Remember { get; set; } = true;
+        public int Reads;
         public JsonElement? Saved { get; private set; }
         public string? WritePath { get; private set; }
         public SiloApiClient Client() { var client = new SiloApiClient(new HttpClient(this)); client.SetBaseUrl("https://library-state.invalid"); return client; }
@@ -41,6 +60,7 @@ public sealed class LibraryStatePersistenceBehaviorTests
                 WritePath = request.RequestUri!.PathAndQuery; Saved = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct));
                 return new(HttpStatusCode.OK) { Content = new StringContent("{}") };
             }
+            Reads++;
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items = new object[] { new { key = "ui.remember_library_page_state", value = (object)Remember }, new { key = "ui.library_page_state", value = (object)new { version = 1, libraries = new Dictionary<string, object> { ["2"] = new { search = "?tab=collections" } } } } } })) };
         }
     }

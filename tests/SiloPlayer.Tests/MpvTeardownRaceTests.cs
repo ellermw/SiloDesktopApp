@@ -6,6 +6,23 @@ namespace SiloPlayer.Tests;
 [Collection("Native streaming")]
 public sealed class MpvTeardownRaceTests
 {
+    [Fact]
+    public void FlagReadsDistinguishPlayingFromUnavailableAndRetiredPlayers()
+    {
+        using var player = new MpvPlayer();
+        Assert.False(player.TryGetPropertyFlag("pause", out _));
+        player.Initialize(16, 16);
+        player.SetProperty("pause", "yes");
+        Assert.True(player.TryGetPropertyFlag("pause", out var paused));
+        Assert.True(paused);
+        player.Play();
+        Assert.True(player.TryGetPropertyFlag("pause", out paused));
+        Assert.False(paused);
+        Assert.False(player.TryGetPropertyFlag("silo-unknown-native-flag", out _));
+        player.Dispose();
+        Assert.False(player.TryGetPropertyFlag("pause", out _));
+    }
+
     // UI timers and background playback tasks read and write mpv properties
     // while the player can be disposed. Without call leases, a caller that
     // passed the handle check could enter libmpv after mpv_terminate_destroy.

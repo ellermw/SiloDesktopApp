@@ -180,6 +180,64 @@ public sealed class ImageServiceTests
     }
 
     [Fact]
+    public async Task GetImageDiskPathAsync_CanceledWarmupDoesNotStartDownload()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            var requests = 0;
+            using var service = new ImageService(cacheDir);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                Interlocked.Increment(ref requests);
+                return Task.FromResult(ImageResponse());
+            }));
+            using var canceled = new CancellationTokenSource();
+            canceled.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.GetImageDiskPathAsync(
+                "warmup", "poster", "https://cdn.example.test/warmup.jpg", http, canceled.Token, waitForSharedDownload: true));
+
+            Assert.Equal(0, Volatile.Read(ref requests));
+        }
+        finally { DeleteTempCacheDir(cacheDir); }
+    }
+
+    [Fact]
+    public async Task GetImageDiskPathAsync_StartedWarmupRetainsThrottleSlotWhenCanceled()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            var readStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseContent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var service = new ImageService(cacheDir);
+            using var throttle = new AsyncWorkThrottle(1);
+            using var http = new HttpClient(new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new BlockingImageContent(readStarted, releaseContent)
+            })));
+            using var canceled = new CancellationTokenSource();
+            var first = throttle.RunAsync(token => service.GetImageDiskPathAsync(
+                "warmup", "poster", "https://cdn.example.test/warmup.jpg", http, token, waitForSharedDownload: true), canceled.Token);
+            Task? queued = null;
+            try
+            {
+                await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                canceled.Cancel();
+                queued = throttle.RunAsync(_ => Task.CompletedTask);
+                Assert.False(first.IsCompleted);
+                Assert.False(queued.IsCompleted);
+            }
+            finally { releaseContent.TrySetResult(); }
+
+            Assert.True(File.Exists(await first.WaitAsync(TimeSpan.FromSeconds(5))));
+            await queued!.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally { DeleteTempCacheDir(cacheDir); }
+    }
+
+    [Fact]
     public async Task GetImageDiskPathAsync_DoesNotRepeatMissingImageRequestWithinNegativeCacheWindow()
     {
         var cacheDir = CreateTempCacheDir();

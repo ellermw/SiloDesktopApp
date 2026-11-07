@@ -39,6 +39,32 @@ public sealed class MpvVideoWindow : IDisposable
     public event Action? MinimizeRequested;
     public event Action? FullscreenToggleRequested;
     public event Action? ExpandRequested;
+    internal event Action? SurfaceChanged;
+    private Action? _menuDismissal;
+    private uint _consumeMenuPointerUp;
+    private long _menuDismissalDoubleClickUntil;
+
+    internal void SetMenuDismissal(Action dismiss) => _menuDismissal = dismiss;
+
+    internal void ClearMenuDismissal(Action dismiss)
+    {
+        if (_menuDismissal == dismiss) _menuDismissal = null;
+    }
+
+    private void DismissMenuPointer(uint buttonDown)
+    {
+        _consumeMenuPointerUp = buttonDown switch
+        {
+            0x0204 or 0x0206 => 0x0205, // right
+            0x0207 or 0x0209 => 0x0208, // middle
+            0x020B or 0x020D => 0x020C, // X button
+            _ => 0x0202,               // left (including double click)
+        };
+        _menuDismissalDoubleClickUntil = Environment.TickCount64 + GetDoubleClickTime();
+        _lbuttonDownTicks = 0;
+        try { _menuDismissal?.Invoke(); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Menu dismissal: {ex.GetType().Name}"); }
+    }
 
     // Reference to mpv for forwarding input events
     private SiloPlayer.Player.MpvPlayer? _mpv;
@@ -81,6 +107,9 @@ public sealed class MpvVideoWindow : IDisposable
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X, Y; }
 
@@ -101,6 +130,9 @@ public sealed class MpvVideoWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDoubleClickTime();
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
@@ -145,6 +177,29 @@ public sealed class MpvVideoWindow : IDisposable
     // Set when TrackMouseEvent is armed; cleared when WM_MOUSELEAVE fires.
     // Ensures we only re-arm after each leave — avoids piling up tracking requests.
     private bool _mouseTracking;
+    private POINT? _lastMouseScreenPosition;
+
+    private void ResetMouseScreenPosition()
+    {
+        _lastMouseScreenPosition = GetCursorPos(out var point) ? point : null;
+    }
+
+    private void ForwardMouseMove(int x, int y)
+    {
+        // Client coordinates change when the popup moves under a stationary
+        // cursor. Only a screen-space delta may take ownership from a controller.
+        var moved = false;
+        if (GetCursorPos(out var point))
+        {
+            moved = _lastMouseScreenPosition is not { } previous ||
+                point.X != previous.X || point.Y != previous.Y;
+            _lastMouseScreenPosition = point;
+        }
+        _mpv?.SendMousePos(x, y);
+        _mpv?.SendScriptMessage("osc-mouse-move",
+            SiloPlayer.Player.MpvPlayer.FormatCoordinate(x),
+            SiloPlayer.Player.MpvPlayer.FormatCoordinate(y), moved ? "true" : "false");
+    }
 
     // Cursor visibility — driven by the Lua OSC. When the controls fade out,
     // Lua sends `silo-cursor-hidden`; PlayerService routes that to
@@ -551,6 +606,9 @@ public sealed class MpvVideoWindow : IDisposable
         // Skip WINDOWPOSCHANGING negotiation and send mpv only the committed
         // rectangle through WINDOWPOSCHANGED.
         flags |= SWP_NOSENDCHANGING;
+        // The pointer may have been outside the old popup, so its last mouse
+        // message is not a baseline for the synthetic move after this resize.
+        ResetMouseScreenPosition();
         SetWindowPos(
             _hwnd,
             insertAfter,
@@ -565,6 +623,38 @@ public sealed class MpvVideoWindow : IDisposable
 
     private IntPtr WndProcInstance(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        // Eat the activation click before Windows forwards its button-down.
+        // Keep its up suppression after the menu's scoped hook is removed.
+        if (msg == 0x0021 && _menuDismissal != null)
+        {
+            DismissMenuPointer((uint)((lParam.ToInt64() >> 16) & 0xFFFF));
+            return new IntPtr(2); // MA_ACTIVATEANDEAT
+        }
+        if (msg is 0x0201 or 0x0203 or 0x0204 or 0x0206 or 0x0207 or 0x0209 or 0x020B or 0x020D
+            && _menuDismissal != null)
+        {
+            DismissMenuPointer(msg);
+            return IntPtr.Zero;
+        }
+        if (msg == 0x0203 && Environment.TickCount64 <= _menuDismissalDoubleClickUntil)
+        {
+            // Windows can report the second press of the dismissal gesture
+            // as a double click after the menu and its hook are already gone.
+            _consumeMenuPointerUp = 0x0202;
+            _lbuttonDownTicks = 0;
+            return IntPtr.Zero;
+        }
+        if (msg == _consumeMenuPointerUp && _consumeMenuPointerUp != 0)
+        {
+            _consumeMenuPointerUp = 0;
+            _lbuttonDownTicks = 0;
+            return IntPtr.Zero;
+        }
+        if (msg is 0x0018 or 0x0047)
+        {
+            try { SurfaceChanged?.Invoke(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Menu owner geometry: {ex.GetType().Name}"); }
+        }
         const uint WM_MOUSEMOVE = 0x0200;
         const uint WM_LBUTTONDOWN = 0x0201;
         const uint WM_LBUTTONUP = 0x0202;
@@ -585,8 +675,7 @@ public sealed class MpvVideoWindow : IDisposable
         if (msg == WM_MOUSEMOVE)
         {
             int x = loWord(lParam), y = hiWord(lParam);
-            _mpv?.SendMousePos(x, y);
-            _mpv?.SendScriptMessage("osc-mouse-move", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
+            ForwardMouseMove(x, y);
 
             // Arm TrackMouseEvent so we get a single WM_MOUSELEAVE when the cursor
             // leaves this window. Without this, the OSC can stay visible forever
@@ -622,6 +711,7 @@ public sealed class MpvVideoWindow : IDisposable
         }
         else if (msg == WM_LBUTTONDOWN)
         {
+            if (_consumeMenuPointerUp == WM_LBUTTONUP) _consumeMenuPointerUp = 0;
             // In mini-bar mode (small popup), click expands back to full player
             if (_isMiniBar) { ExpandRequested?.Invoke(); return IntPtr.Zero; }
 
@@ -630,8 +720,7 @@ public sealed class MpvVideoWindow : IDisposable
             _lbuttonDownTicks = Environment.TickCount64;
             _lbuttonDownX = x;
             _lbuttonDownY = y;
-            _mpv?.SendMousePos(x, y);
-            _mpv?.SendScriptMessage("osc-mouse-move", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
+            ForwardMouseMove(x, y);
             _mpv?.SendScriptMessage("osc-mouse-down", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
             _mpv?.SendKeydown("MBTN_LEFT");
         }
@@ -718,10 +807,26 @@ public sealed class MpvVideoWindow : IDisposable
                 _mpv?.SendScriptMessage("osc-controller-nav", controllerDirection);
                 return IntPtr.Zero;
             }
-            // N — minimize
-            if (vk == 0x4E) { if (!isRepeat) MinimizeRequested?.Invoke(); return IntPtr.Zero; }
-            // F — fullscreen toggle (handled by host, not mpv)
-            if (vk == 0x46) { if (!isRepeat) FullscreenToggleRequested?.Invoke(); return IntPtr.Zero; }
+            // Let the OSC's pending native-menu guard own these shortcuts,
+            // including the interval before its WinUI window is shown.
+            if (vk == 0x4E)
+            {
+                if (!isRepeat)
+                {
+                    if (_mpv != null) _mpv.SendKeypress("n");
+                    else MinimizeRequested?.Invoke();
+                }
+                return IntPtr.Zero;
+            }
+            if (vk == 0x46)
+            {
+                if (!isRepeat)
+                {
+                    if (_mpv != null) _mpv.SendKeypress("f");
+                    else FullscreenToggleRequested?.Invoke();
+                }
+                return IntPtr.Zero;
+            }
             // Forward all other keys to mpv
             var keyName = VkToMpvKey(vk);
             if (keyName != null) _mpv?.SendKeypress(keyName);
@@ -758,10 +863,13 @@ public sealed class MpvVideoWindow : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        if (_hwnd != IntPtr.Zero)
+        var hwnd = _hwnd;
+        _hwnd = IntPtr.Zero;
+        try { SurfaceChanged?.Invoke(); } catch { /* Teardown must complete. */ }
+        _menuDismissal = null;
+        SurfaceChanged = null;
+        if (hwnd != IntPtr.Zero)
         {
-            var hwnd = _hwnd;
-            _hwnd = IntPtr.Zero;
             s_windows.TryRemove(hwnd, out _);
             DestroyWindow(hwnd);
         }
