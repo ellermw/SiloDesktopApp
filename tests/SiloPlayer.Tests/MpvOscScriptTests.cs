@@ -209,7 +209,7 @@ public sealed class MpvOscScriptTests
     [Fact]
     public void TransportMenusUseReadableWebUiSurfacesAndStayAboveTheSeekRail()
     {
-        var script = File.ReadAllText(FindOscScriptPath());
+        var script = File.ReadAllText(FindOscScriptPath()).ReplaceLineEndings("\n");
 
         Assert.True(
             System.Text.RegularExpressions.Regex.Matches(
@@ -218,8 +218,15 @@ public sealed class MpvOscScriptTests
         Assert.Contains(
             "local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y",
             script);
-        Assert.Contains("state.layout.btn_audio.y) - math.floor(8 * sc)", script);
-        Assert.Contains("state.layout.btn_chapters.y) - math.floor(8 * sc)", script);
+        // Compact layouts use More as the opener; both menus must still prefer the seek rail.
+        foreach (var button in new[] { "btn_audio", "btn_chapters" })
+        {
+            Assert.Contains(
+                $"local anchor = state.layout.{button} or state.layout.btn_more\n" +
+                "    local menu_bottom = (state.layout.seek_bar and state.layout.seek_bar.y or\n" +
+                "        anchor.y) - math.floor(8 * sc)",
+                script);
+        }
         Assert.True(
             System.Text.RegularExpressions.Regex.Matches(
                 script,

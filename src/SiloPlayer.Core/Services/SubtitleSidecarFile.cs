@@ -1,18 +1,32 @@
 namespace SiloPlayer.Core.Services;
 
 /// <summary>
-/// Rules for downloading a text subtitle sidecar to a local file before mpv
+/// Rules for downloading a subtitle sidecar to a local file before mpv
 /// loads it. A synchronous libmpv <c>sub-add</c> of an HTTP URL blocks its
 /// caller for the whole download; adding a local file does not.
 /// </summary>
 public static class SubtitleSidecarFile
 {
     public const int MaxBytes = 16 * 1024 * 1024;
+    public const int MaxBitmapBytes = 256 * 1024 * 1024;
+
+    // PGS contains images rather than text; feature-length tracks can readily
+    // exceed the text cue limit. Keep both routes bounded on disk.
+    public static int DownloadMaxBytes(string extension)
+        => extension.Equals(".sup", StringComparison.OrdinalIgnoreCase) ? MaxBitmapBytes : MaxBytes;
+
+    /// <summary>
+    /// Local download suffix, including PGS. Unknown formats use a generic
+    /// subtitle suffix so mpv can probe the bytes without fetching a URL itself.
+    /// </summary>
+    public static string DownloadExtension(string? mediaType, Uri url, string? codec)
+        => Extension(mediaType, url, codec) ??
+            (Path.GetExtension(url.AbsolutePath).Equals(".sup", StringComparison.OrdinalIgnoreCase) ||
+             codec?.Trim().ToLowerInvariant() is "pgs" or "hdmv_pgs_subtitle" or "sup" ? ".sup" : ".sub");
 
     /// <summary>
     /// The local file extension mpv needs to identify the downloaded cues, or
-    /// null when the sidecar is not a known text format (it then uses the
-    /// asynchronous mpv URL reader, including for bitmap sidecars).
+    /// null when the sidecar is not a known text format.
     /// </summary>
     public static string? Extension(string? mediaType, Uri url, string? codec)
     {

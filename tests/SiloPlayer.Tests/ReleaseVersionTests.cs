@@ -4,6 +4,35 @@ namespace SiloPlayer.Tests;
 
 public sealed class ReleaseVersionTests
 {
+    [Fact]
+    public void CurrentOscReceiptMatchesAllSourceVersionStamps()
+    {
+        var root = TestRepository.Root;
+        var projects = new[] { "SiloPlayer", "SiloPlayer.UpdateHost", "SiloPlayer.Launcher" }
+            .Select(name => System.Xml.Linq.XDocument.Load(Path.Combine(root, "src", name, name + ".csproj")))
+            .ToArray();
+        static string Stamp(System.Xml.Linq.XDocument project, string name) =>
+            Assert.Single(project.Descendants(name)).Value;
+        var semantic = Stamp(projects[0], "Version");
+        var numeric = ReleaseVersion.Parse(semantic).GetWindowsVersion().ToString();
+        foreach (var project in projects)
+        {
+            Assert.Equal(semantic, Stamp(project, "Version"));
+            Assert.Equal(numeric, Stamp(project, "FileVersion"));
+            Assert.Equal(numeric, Stamp(project, "AssemblyVersion"));
+        }
+        var installer = File.ReadAllText(Path.Combine(root, "installer", "SiloInstaller.iss"));
+        static string InnoStamp(string source, string name) => Assert.Single(
+            System.Text.RegularExpressions.Regex.Matches(source, $"""(?m)^#define {name} "([^"]+)"\r?$""")
+                .Cast<System.Text.RegularExpressions.Match>()).Groups[1].Value;
+        Assert.Equal(semantic, InnoStamp(installer, "MyAppVersion"));
+        Assert.Equal(numeric, InnoStamp(installer, "MyAppFourPartVersion"));
+        var identity = $"Source version: `{semantic}`; numeric version: `{numeric}`.";
+        foreach (var path in new[] { "docs/current-development.md", "docs/research/2026-11-03-osc-hud-states-verification.md" })
+            Assert.Equal(identity, File.ReadLines(Path.Combine(root, path))
+                .First(line => line.StartsWith("Source version: ", StringComparison.Ordinal)));
+    }
+
     [Theory]
     [InlineData("1.2.518-beta.2", "1.2.518-beta.12", -1)]
     [InlineData("1.2.518-beta.12", "1.2.518", -1)]

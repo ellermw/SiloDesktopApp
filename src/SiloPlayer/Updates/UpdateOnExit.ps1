@@ -203,8 +203,11 @@ function Confirm-UpdateInstallerIdentity([string]$Tag,[string]$TargetVersion,$In
     if($semantic -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+\.0\z'){$semantic=$semantic.Substring(0,$semantic.Length-2)}
     $file='{0}.{1}.{2}.{3}' -f $Info.FileMajorPart,$Info.FileMinorPart,$Info.FileBuildPart,$Info.FilePrivatePart
     $product='{0}.{1}.{2}.{3}' -f $Info.ProductMajorPart,$Info.ProductMinorPart,$Info.ProductBuildPart,$Info.ProductPrivatePart
+    # Inno Setup writes version text into fixed-width resource slots and pads it with spaces: the
+    # 1.2.810-beta.1 installer's ProductVersion is the release text plus 36 spaces. Only trailing spaces are ignored.
+    $productText=([string]$Info.ProductVersion).TrimEnd(' ')
     if($file -cne $TargetVersion -or $product -cne $TargetVersion -or
-        ($Info.ProductVersion -cne $semantic -and !($semantic -cnotmatch '-' -and $Info.ProductVersion -ceq ($semantic+'.0')))){
+        ($productText -cne $semantic -and !($semantic -cnotmatch '-' -and $productText -ceq ($semantic+'.0')))){
         throw 'The installer PE identity disagrees with the verified release.'
     }
 }
@@ -277,8 +280,13 @@ try {
     if(-not $gateOwned){$failureState='deferred';throw 'Another update is running. Update postponed.'}
     foreach($running in [Diagnostics.Process]::GetProcessesByName('SiloPlayer')) {
         try {
+            $runningPath=$null
             try {$runningPath=$running.MainModule.FileName}
-            catch {if($running.HasExited){continue};$failureState='deferred';throw 'Another Silo process cannot be checked. Update postponed.'}
+            catch { } # A process can start or exit before its image is available.
+            if([string]::IsNullOrWhiteSpace($runningPath)){
+                try {if($running.HasExited){continue}}catch { }
+                $failureState='deferred';throw 'Another Silo process cannot be checked. Update postponed.'
+            }
             if($runningPath -ieq $app -or ($paths.Versioned -and $runningPath.StartsWith($appDirectory+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase))){$failureState='deferred';throw 'Another Silo instance is open. Update postponed.'}
         }finally{$running.Dispose()}
     }

@@ -330,9 +330,21 @@ internal static class AppUpdateNativeFixture
         await installer.PrepareAsync(release, package, true, 0, CancellationToken.None);
         typeof(MainWindow).GetField("_manualUpdateRequested", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true);
         var heldSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var save = scenario == "staged-drain-held" ? heldSave.Task : scenario == "staged-drain-faulted"
+        var retiredIdentity = scenario is "staged-drain-foreign" or "staged-drain-aba";
+        var save = scenario == "staged-drain-held" || retiredIdentity ? heldSave.Task : scenario == "staged-drain-faulted"
             ? Task.FromException(new IOException("Synthetic progress save failed.")) : Task.CompletedTask;
-        typeof(PlayerService).GetProperty(nameof(PlayerService.PendingProgressSave))!.SetValue(services.GetRequiredService<PlayerService>(), save);
+        var client = services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+        var saveIdentity = client.CaptureIdentityContext();
+        var player = services.GetRequiredService<PlayerService>();
+        typeof(PlayerService).GetMethod("TrackFinalProgressSave", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(player, [save, saveIdentity, true]);
+        if (retiredIdentity)
+        {
+            client.SetProfile("synthetic-update-successor");
+            if (scenario == "staged-drain-aba") client.SetProfile(saveIdentity.ProfileId);
+            if (client.IsCurrentIdentityContext(saveIdentity) || !player.PendingProgressSave.IsCompleted || heldSave.Task.IsCompleted)
+                throw new InvalidOperationException("The retired save must be excluded from the current viewer's navigation barrier while remaining outstanding.");
+        }
         try
         {
             SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(window), 0x10, IntPtr.Zero, IntPtr.Zero);
@@ -344,6 +356,8 @@ internal static class AppUpdateNativeFixture
             }
             else
             {
+                if (retiredIdentity && await Task.WhenAny(installer.Canceled.Task, closed).WaitAsync(TimeSpan.FromSeconds(9)) == closed)
+                    throw new InvalidOperationException($"An outstanding {scenario} playback save authorized restart: arms={installer.Arms}, preparedCloses={installer.PreparedCloses}, cancels={installer.Cancels}, saveCompleted={heldSave.Task.IsCompleted}.");
                 await installer.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(9)); await Task.Delay(100);
                 if (installer.Arms != 0 || installer.PreparedCloses != 0 || installer.Cancels == 0 || closed.IsCompleted)
                     throw new InvalidOperationException($"Failed playback save closed Silo or authorized activation: arms={installer.Arms}, preparedCloses={installer.PreparedCloses}, cancels={installer.Cancels}, closed={closed.IsCompleted}.");

@@ -57,6 +57,9 @@ internal static class SiloCastScopeChecks
         {
             var sameServerApi = new SiloApiClient(sameServerHttp);
             sameServerApi.SetBaseUrl("https://local.fixture.invalid");
+            // Match the local device setup too: changing device identity advances
+            // the request epoch, so omitting it would miss the intended collision.
+            sameServerApi.SetDeviceMetadata("fixture-pc", "Fixture PC", "windows");
             using var sameServerAuth = new AuthService(sameServerApi, new AuthApi(sameServerApi), credentialStore: null);
             sameServerAuth.SetTokens("same-server-remote-access", "same-server-remote-refresh", 3600);
             sameServerAuth.SelectProfile("local-profile", "same-server-remote-proof");
@@ -123,6 +126,7 @@ internal static class SiloCastScopeChecks
             [
                 new() { Index = 4, Label = "English", Language = "en", Codec = "srt", Url = "https://sidecar.fixture.invalid/english.srt" },
                 new() { Index = 8, Label = "French", Language = "fr", Codec = "vtt", Url = "https://sidecar.fixture.invalid/french.vtt" },
+                new() { Index = 12, Label = "Unavailable", Language = "de", Codec = "srt", Unplayable = true },
             ],
             AvailableQualities = [new() { Label = "original", PreservesSource = true }, new() { Label = "1080p-high" }],
         };

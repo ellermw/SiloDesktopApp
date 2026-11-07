@@ -21,6 +21,8 @@ public readonly record struct ProfileVerificationContext(
     string? ProfileId);
 
 public readonly record struct ApiRequestContext(long AuthenticationGeneration, long RequestContextGeneration, string BaseUrl, string? ProfileId);
+public readonly record struct SettingsRequestContext(ApiRequestContext Request, string? DeviceId, long DeviceGeneration);
+public readonly record struct SettingsIdentityContext(ApiIdentityContext Identity, string? DeviceId, long DeviceGeneration);
 /// <summary>Account/profile ownership, stable across read-cache/access refreshes.</summary>
 public readonly record struct ApiIdentityContext(long AuthenticationGeneration, long IdentityGeneration, string BaseUrl, string? ProfileId);
 public sealed record ApiResponse<T>(T Body, string? ETag);
@@ -48,6 +50,7 @@ public partial class SiloApiClient
     private string? _profileId;
     private string? _profileToken;
     private string? _deviceId;
+    private long _settingsDeviceGeneration;
     private string? _deviceName;
     private string? _devicePlatform;
     private string _clientName = DefaultClientName;
@@ -67,6 +70,22 @@ public partial class SiloApiClient
         lock (_authStateGate) return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
     }
     public bool IsCurrentContext(ApiRequestContext context) => CaptureContext() == context;
+    public string? DeviceId { get { lock (_authStateGate) return _deviceId; } }
+    public SettingsRequestContext CaptureSettingsContext()
+    {
+        lock (_authStateGate) return new(new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
+    }
+
+    public SettingsIdentityContext CaptureSettingsIdentityContext()
+    {
+        lock (_authStateGate) return new(new(_authenticationGeneration, _identityGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
+    }
+
+    /// <summary>Current request authority for an accepted settings identity, or null once that identity retires.</summary>
+    public SettingsRequestContext? CaptureSettingsContext(SettingsIdentityContext owner)
+    {
+        lock (_authStateGate) return CaptureSettingsIdentityContext() == owner ? CaptureSettingsContext() : null;
+    }
 
     public ApiIdentityContext CaptureIdentityContext()
     {
@@ -75,25 +94,26 @@ public partial class SiloApiClient
     public bool IsCurrentIdentityContext(ApiIdentityContext context) => CaptureIdentityContext() == context;
 
     public async Task<T> SendIdentityBoundRequestAsync<T>(ApiIdentityContext context, HttpMethod method,
-        string path, object? body, CancellationToken ct = default)
+        string path, object? body, CancellationToken ct = default, IReadOnlyDictionary<string, string>? headers = null)
     {
-        using var request = CreateIdentityBoundRequest(context, method, path, body);
+        using var request = CreateIdentityBoundRequest(context, method, path, body, headers);
         return await SendAsync<T>(request, ct).ConfigureAwait(false);
     }
 
     public async Task SendIdentityBoundNoContentAsync(ApiIdentityContext context, HttpMethod method,
-        string path, object? body, CancellationToken ct = default)
+        string path, object? body, CancellationToken ct = default, IReadOnlyDictionary<string, string>? headers = null)
     {
-        using var request = CreateIdentityBoundRequest(context, method, path, body);
+        using var request = CreateIdentityBoundRequest(context, method, path, body, headers);
         await SendNoContentAsync(request, ct).ConfigureAwait(false);
     }
 
-    private HttpRequestMessage CreateIdentityBoundRequest(ApiIdentityContext context, HttpMethod method, string path, object? body)
+    private HttpRequestMessage CreateIdentityBoundRequest(ApiIdentityContext context, HttpMethod method, string path, object? body,
+        IReadOnlyDictionary<string, string>? headers = null)
     {
         lock (_authStateGate)
         {
             if (!IsCurrentIdentityContext(context)) throw new OperationCanceledException("Playback identity changed.");
-            return CreateRequest(method, path, body, null);
+            return CreateRequest(method, path, body, headers);
         }
     }
 
@@ -373,6 +393,11 @@ public partial class SiloApiClient
     {
         lock (_authStateGate)
         {
+            if (!string.Equals(_deviceId, deviceId, StringComparison.Ordinal))
+            {
+                _requestContextGeneration++;
+                _settingsDeviceGeneration++;
+            }
             _deviceId = deviceId;
             _deviceName = deviceName;
             _devicePlatform = devicePlatform;

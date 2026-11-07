@@ -22,7 +22,12 @@ public class PlaybackStartResponse
     public double TimelineOffsetSeconds { get; set; }
     public bool CanSeekAnywhere { get; set; } = true;
     public string? SelectedSubtitleTrackId { get; set; }
+    public int? SelectedSubtitleTrackIndex { get; set; }
     public string SubtitleMode { get; set; } = "off";
+
+    /// <summary>A replacement start survived a rejected subtitle refinement; show local feedback.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool SubtitleReconciliationFailed { get; set; }
 
     /// <summary>
     /// The server composites the selected subtitle into the video (plan

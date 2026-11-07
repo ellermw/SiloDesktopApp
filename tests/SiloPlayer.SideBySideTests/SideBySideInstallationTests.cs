@@ -474,16 +474,46 @@ public sealed class SideBySideInstallationTests : IDisposable
         Assert.Equal("1.0.0.1", SideBySideInstallation.ReadState(Root)!.ActiveVersion);
     }
 
-    [Fact]
-    public void ChangedBootstrapIsRejectedBeforeCreatingTransaction()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void ChangedBootstrapIsRejectedBeforeCreatingTransaction(int bootstrapProtocol)
     {
         Initialize();
         File.WriteAllText(Path.Combine(Root, "first.dll"), "old first");
         File.WriteAllText(Path.Combine(Root, "second.dll"), "old second");
-        Assert.ThrowsAny<InvalidDataException>(() => SideBySideInstallation.Stage(Root, Package("1.0.0.2", true), _ => { }, default));
+        var error = Assert.Throws<InvalidDataException>(() => SideBySideInstallation.Stage(Root,
+            Package("1.0.0.2", true, bootstrapProtocol: bootstrapProtocol), _ => { }, default));
+        Assert.Contains("full installer migration", error.Message);
         Assert.Equal("old first", File.ReadAllText(Path.Combine(Root, "first.dll")));
         Assert.Equal("1.0.0.1", SideBySideInstallation.ReadState(Root)!.ActiveVersion);
         Assert.False(File.Exists(Path.Combine(Root, ".silo-update", "transaction.json")));
+    }
+
+    [Fact]
+    public void FullInstallerCanMigrateBootstrapToProtocol2AndRetainProtocol1RecoveryInventory()
+    {
+        Initialize();
+        var previous = SideBySideInstallation.ResolveClientExecutable(Root);
+        var package = Package("1.0.0.2", true, bootstrapProtocol: 2);
+        // Only the full installer may replace the root bootstrap and copy the
+        // new version before initialization. Incremental Stage cannot do this.
+        var target = Path.Combine(Root, "versions", package.Manifest.Version);
+        Directory.CreateDirectory(target);
+        foreach (var file in package.Manifest.Files)
+            File.Copy(Path.Combine(package.Directory, file.Area, file.Path),
+                Path.Combine(file.Area == "client" ? target : Root, file.Path));
+
+        SideBySideInstallation.InitializeFromInstaller(Root, package.Manifest);
+
+        Assert.Equal("new first", File.ReadAllText(Path.Combine(Root, "first.dll")));
+        Assert.Equal(Path.Combine(target, "SiloPlayer.exe"), SideBySideInstallation.ResolveClientExecutable(Root));
+        Assert.Equal("1.0.0.1", SideBySideInstallation.ReadState(Root)!.PreviousVersion);
+        Assert.True(File.Exists(previous));
+        var staged = SideBySideInstallation.Stage(Root, Package("1.0.0.3", true, bootstrapProtocol: 2), _ => { }, default);
+        SideBySideInstallation.Activate(staged);
+        SideBySideInstallation.Rollback(Root, staged.TransactionId);
+        Assert.Equal(Path.Combine(target, "SiloPlayer.exe"), SideBySideInstallation.ResolveClientExecutable(Root));
     }
 
     [Fact]
@@ -527,7 +557,7 @@ public sealed class SideBySideInstallationTests : IDisposable
         SideBySideInstallation.Initialize(Root, package.Manifest);
     }
 
-    private PreparedUpdatePackage Package(string version, bool bootstrap = false, bool realClient = false)
+    private PreparedUpdatePackage Package(string version, bool bootstrap = false, bool realClient = false, int bootstrapProtocol = 1)
     {
         var directory = Path.Combine(sandbox, Guid.NewGuid().ToString("N"));
         var entries = new List<UpdateFileEntry>();
@@ -545,7 +575,7 @@ public sealed class SideBySideInstallationTests : IDisposable
         Add("client", "SiloPlayer.exe", "synthetic exe " + version);
         Add("client", "SiloPlayer.dll", "synthetic dll " + version);
         if (bootstrap) { Add("bootstrap", "first.dll", "new first"); Add("bootstrap", "second.dll", "new second"); }
-        var manifest = new UpdateManifest(1, version, offset, new string('A', 64), entries);
+        var manifest = new UpdateManifest(1, version, offset, new string('A', 64), entries, BootstrapProtocol: bootstrapProtocol);
         var manifestPath = Path.Combine(directory, "manifest.json");
         File.WriteAllBytes(manifestPath, JsonSerializer.SerializeToUtf8Bytes(manifest));
         return new(directory, manifestPath, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(manifestPath))), manifest);

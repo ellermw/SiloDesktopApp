@@ -23,22 +23,27 @@ public partial class PlayerService
                 ["title"] = t.Title ?? t.Language ?? $"Audio {index + 1}", ["detail"] = t.Codec });
         var subtitles = new JsonArray();
         var mpv = _mpv;
-        var subtitleTracks = _playbackManager?.CurrentSession?.SubtitleUrls ?? [];
-        // A capture runs twice a second on the UI dispatcher. Read the native
-        // inventory/attestation and build authorized URLs once, not per row.
-        var inspectNative = mpv != null && CanUseNativeEmbeddedSubtitleTrack() &&
-            subtitleTracks.Any(t => !t.Unplayable && string.Equals(t.Source, "embedded", StringComparison.OrdinalIgnoreCase));
-        IReadOnlyList<NativeSubtitleTrack> nativeTracks = inspectNative ? mpv!.GetEmbeddedSubtitleTracks() : [];
-        var trustworthyStreamIndex = inspectNative && mpv!.HasFfmpegTrackIndices();
-        var trustworthyContainerTrackId = inspectNative && mpv!.HasContainerTrackIds();
-        var sidecarIndices = (_playbackManager?.GetSubtitleUrls() ?? [])
-            .Where(pair => Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
-            .Select(pair => pair.Track.Index).ToHashSet();
-        Func<SubtitleTrackInfo, int> resolveNativeSid = track =>
-            ResolveNativeEmbeddedSid(track, nativeTracks, trustworthyStreamIndex, trustworthyContainerTrackId);
-        foreach (var t in subtitleTracks.Where(t => HasSubtitleSelectionRoute(t, resolveNativeSid, sidecarIndices)))
-            subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
-                ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
+        int? selectedSubtitleTrackId = null;
+        var manager = _playbackManager;
+        if (manager != null)
+        {
+            lock (manager.SubtitleInventorySyncRoot)
+            {
+                var subtitleInventory = manager.CurrentSession?.SubtitleUrls ?? [];
+                var routes = CaptureSubtitleSelectionRoutes(subtitleInventory);
+                // Before native initialization, lack of a loaded route is not
+                // evidence that a server choice is unavailable. Keep its wire ID;
+                // control execution still validates the actual route.
+                var advertisedSubtitles = _mpv == null
+                    ? subtitleInventory.Where(t => !t.Unplayable)
+                    : subtitleInventory.Where(t => HasSubtitleSelectionRoute(t, routes));
+                foreach (var t in advertisedSubtitles)
+                    subtitles.Add(new JsonObject { ["kind"] = "subtitle", ["trackId"] = t.Index + 1,
+                        ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
+                selectedSubtitleTrackId = State == PlayerState.Idle || _activeSubtitleServerIndex < 0
+                    ? null : _activeSubtitleServerIndex + 1;
+            }
+        }
         var qualities = new JsonArray();
         foreach (var q in AvailableQualities)
             qualities.Add(new JsonObject { ["id"] = q.Label, ["label"] = q.DisplayName ?? q.Label });
@@ -53,7 +58,7 @@ public partial class PlayerService
             ["currentTime"] = CurrentMediaPosition, ["duration"] = CurrentMediaDuration,
             ["audioTracks"] = audio, ["subtitleTracks"] = subtitles,
             ["selectedAudioTrackId"] = _playbackManager?.CurrentSession is { } session ? session.AudioTrackIndex + 1 : null,
-            ["selectedSubtitleTrackId"] = State == PlayerState.Idle || _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex + 1,
+            ["selectedSubtitleTrackId"] = selectedSubtitleTrackId,
             ["qualityOptions"] = qualities, ["activeQualityId"] = SelectedQualityMenuId,
             ["isQualitySwitching"] = IsQualitySwitchActive, ["playbackSpeed"] = speed > 0 ? speed : 1,
             ["videoGravity"] = _castVideoGravity, ["hdrEnabled"] = ActiveVersion?.Hdr ?? false,

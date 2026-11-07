@@ -14,6 +14,9 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 {
     private readonly UICustomizationService _uiCustomizationService;
     private bool _observingUICustomization;
+    private ArtworkBindingOwner? _artworkOwner;
+    private IDisposable? _artworkActivity;
+    private bool _artworkSuspended;
     private EpisodeSpoilerPreferences? _spoilerPreferences;
     private bool? _spoilerArtworkHidden;
     private CardOverlayGeometry _overlayGeometry = CardOverlayGeometry.ForPoster(176);
@@ -77,6 +80,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     }
 
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _overlayLoadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
     private MediaItem? _deferredPosterItem;
     private MediaItem? _deferredOverlayItem;
@@ -162,10 +166,21 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         SizeChanged += (_, _) => ApplyActionGeometry();
         this.Loaded += (_, _) =>
         {
+            // A bind can precede first attachment long enough to reach a stage gate.
+            // Loaded owns retrying that missing source with the original binding owner.
+            if (PosterImage.Source == null)
+            {
+                _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+            }
+            ArtworkViewport.ObserveAncestors(this);
+            _artworkActivity?.Dispose();
+            _artworkActivity = ArtworkViewport.ObserveActivity(this, SetArtworkActive);
             _spoilerPreferences = App.Services.GetService<EpisodeSpoilerPreferences>();
             if (_spoilerPreferences != null) { _spoilerPreferences.Changed -= SpoilersChanged; _spoilerPreferences.Changed += SpoilersChanged; }
 
             ObserveArtwork(MediaItem);
+            if (MediaItem is { } overlayItem)
+                RefreshOverlayPreferences(overlayItem);
             if (!_observingOverlayPreferences) { _observingOverlayPreferences = true; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; }
             if (!_observingUICustomization)
             {
@@ -176,7 +191,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             // Cached pages retain their card controls across navigation. Their
             // Unloaded handler deliberately drops the decoded bitmap, so reload
             // the unchanged item when the card becomes live again.
-            if (_loadCts == null &&
+            if (!_artworkSuspended && _loadCts == null &&
                 PosterImage.Source == null &&
                 !SuppressImageLoading &&
                 !DeferImageLoading &&
@@ -193,6 +208,9 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         this.Unloaded += (_, _) =>
         {
             if (IsLoaded) return;
+            CancelOverlayLoad();
+            _artworkActivity?.Dispose(); _artworkActivity = null;
+            SetArtworkActive(false);
             if (_spoilerPreferences != null) _spoilerPreferences.Changed -= SpoilersChanged;
             _spoilerArtworkHidden = null;
             ObserveArtwork(null);
@@ -239,7 +257,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void PosterCard_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs args)
     {
-        if (MediaItem is not { } item) return;
+        if (MediaItem is not { } item || item.Type == "box_set") return;
         var flyout = MediaItemMenu.Build(
             item,
             MediaItemMenu.Surface.Default,
@@ -258,6 +276,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not PosterCard card) return;
+        card._artworkOwner = ArtworkBindingOwner.Capture();
         if (!ReferenceEquals(e.OldValue, e.NewValue)) card.MediaItemChanged?.Invoke();
 
         card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
@@ -294,6 +313,10 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void ShowPlaceholder()
     {
+        CancelOverlayLoad();
+        if (_aggregateUnavailable) { _aggregateUnavailable = false; Visibility = Visibility.Visible; }
+        if (_ordinaryCardContent != null) Content = _ordinaryCardContent;
+        IsTabStop = true;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -322,8 +345,42 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         OverlayBottomRight.Children.Clear();
     }
 
+    private UIElement? _ordinaryCardContent;
+    private bool _preserveArtworkOnUpdate, _aggregateUnavailable;
+    /// <summary>Rebind refreshed member data without discarding unchanged artwork or focus.</summary>
+    public void RefreshItem(MediaItem item)
+    {
+        var old = MediaItem;
+        _preserveArtworkOnUpdate = old != null && item.Type == "movie" && old.ContentId == item.ContentId && old.Type == item.Type
+            && LibraryPosterBinding.HasSameArtworkUrl(old.PosterUrl, item.PosterUrl) && old.PosterThumbhash == item.PosterThumbhash
+            && LibraryPosterBinding.HasSameArtworkUrl(old.BackdropUrl, item.BackdropUrl) && old.BackdropThumbhash == item.BackdropThumbhash;
+        try { MediaItem = item; }
+        finally { _preserveArtworkOnUpdate = false; }
+    }
     private void UpdateContent(MediaItem item)
     {
+        CancelOverlayLoad();
+        _ordinaryCardContent ??= Content;
+        if (_aggregateUnavailable) { _aggregateUnavailable = false; Visibility = Visibility.Visible; }
+        if (item.Type == "box_set")
+        {
+            _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+            CancelPlaybackPrefetch();
+            if (item.BoxSet is not {} summary || string.IsNullOrWhiteSpace(summary.Id) || string.IsNullOrWhiteSpace(summary.LibraryId))
+            {
+                // An aggregate without a destination is not an empty, focusable button.
+                Content = null; IsTabStop = false; _aggregateUnavailable = true; Visibility = Visibility.Collapsed;
+                return;
+            }
+            var aggregate = new BoxSetCard();
+            aggregate.SetSummary(summary, item.PosterUrl, item.PosterThumbhash);
+            aggregate.Invoked += set => App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
+            IsTabStop = false;
+            Content = aggregate;
+            return;
+        }
+        Content = _ordinaryCardContent;
+        IsTabStop = true;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
@@ -351,19 +408,20 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
         ApplyCardPresentation();
         ApplyActionGeometry(item);
-        UpdateQuickActionState(item);
-
-        PosterImage.Opacity = 0;
-
-        // Skip thumbhash -- go straight to loading the real image.
-        // Thumbhash decoding on UI thread for hundreds of cards causes jank.
-        ThumbhashImage.Source = null;
+        // This bind owns the artwork load below; action updates must not replace its token.
+        UpdateQuickActionState(item, refreshArtwork: false);
 
         string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        PosterImage.Source = null;
-        ArtworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
-        ArtworkFallback.Visibility = SuppressImageLoading || string.IsNullOrEmpty(imageUrl) ? Visibility.Visible : Visibility.Collapsed;
-        if (string.IsNullOrEmpty(imageUrl)) _ = ArtworkFallback.ShowThumbhashAsync();
+        if (!_preserveArtworkOnUpdate)
+        {
+            PosterImage.Opacity = 0;
+            // Skip thumbhash -- go straight to loading the real image.
+            ThumbhashImage.Source = null;
+            PosterImage.Source = null;
+            ArtworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
+            ArtworkFallback.Visibility = SuppressImageLoading || string.IsNullOrEmpty(imageUrl) ? Visibility.Visible : Visibility.Collapsed;
+            if (string.IsNullOrEmpty(imageUrl)) _ = ArtworkFallback.ShowThumbhashAsync();
+        }
 
         if (DeferOverlayLoading)
         {
@@ -373,10 +431,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         else
         {
             _deferredOverlayItem = null;
-            UpdateBadges(item);
-            var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
-            if (!overlayService.IsLoaded)
-                _ = EnsureBadgesLoadedAsync(item, ct);
+            RefreshOverlayPreferences(item, refreshArtwork: false);
         }
 
         if (SuppressImageLoading)
@@ -392,17 +447,42 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         }
 
         _deferredPosterItem = null;
-        _ = LoadPosterAsync(item, ct);
+        if (!_preserveArtworkOnUpdate || (PosterImage.Source == null && !string.IsNullOrEmpty(imageUrl)))
+            _ = LoadPosterAsync(item, ct);
     }
 
-    private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
+    private void CancelOverlayLoad()
+    {
+        _overlayLoadCts?.Cancel();
+        _overlayLoadCts?.Dispose();
+        _overlayLoadCts = null;
+    }
+
+    private void RefreshOverlayPreferences(MediaItem item, bool refreshArtwork = true)
+    {
+        if (DeferOverlayLoading || _artworkOwner?.IsCurrent == false) return;
+        UpdateQuickActionState(item, refreshArtwork);
+        UpdateBadges(item);
+        var service = App.Services.GetRequiredService<CardOverlayService>();
+        if (service.IsLoaded || _overlayLoadCts != null) return;
+        // Overlay waits belong to the bind, not artwork retries or activity changes.
+        _overlayLoadCts = new CancellationTokenSource();
+        _ = EnsureBadgesLoadedAsync(item, _overlayLoadCts.Token, refreshArtwork);
+    }
+
+    private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct, bool refreshArtwork)
     {
         try
         {
-            var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-            await service.EnsureLoadedAsync(ct);
-            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+            var service = App.Services.GetRequiredService<CardOverlayService>();
+            // Retiring one card must not cancel the shared service initialization.
+            await service.EnsureLoadedAsync().WaitAsync(ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item) &&
+                !DeferOverlayLoading && _artworkOwner?.IsCurrent != false)
+            {
+                UpdateQuickActionState(item, refreshArtwork);
                 UpdateBadges(item);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch { }
@@ -716,6 +796,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private void SpoilersChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(RefreshSpoilerArtwork);
     private void RefreshSpoilerArtwork()
     {
+        if (SuppressImageLoading || DeferImageLoading) return;
         if (!IsLoaded || MediaItem is not { Type: "episode" } item) return;
         var hidden = HideEpisodeArtwork(item);
         if (_spoilerArtworkHidden == hidden) return;
@@ -725,16 +806,32 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         _ = LoadPosterAsync(item, _loadCts.Token);
     }
 
+    private void SetArtworkActive(bool active)
+    {
+        if (_artworkSuspended == !active) return;
+        _artworkSuspended = !active;
+        _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+        if (active && IsLoaded && PosterImage.Source == null && !SuppressImageLoading && !DeferImageLoading && MediaItem is { } item)
+        {
+            _loadCts = new();
+            _ = LoadPosterAsync(item, _loadCts.Token);
+        }
+    }
+
     private async Task LoadPosterAsync(MediaItem item, CancellationToken ct)
     {
+        if (_artworkSuspended || _artworkOwner?.IsCurrent == false) return;
         var imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
         if (string.IsNullOrEmpty(imageUrl)) return;
 
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
+            var imageClient = App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>();
+            var identity = imageClient?.CaptureIdentityContext();
             _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+            if (identity is { } capturedIdentity && !imageClient!.IsCurrentIdentityContext(capturedIdentity)) return;
             var hidden = HideEpisodeArtwork(item);
             var key = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, hidden);
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
@@ -747,15 +844,17 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             // Short grace window: skip transient recycle churn without making
             // the visible page wait noticeably before poster fetches begin.
             await Task.Delay(60, ct);
-            if (ct.IsCancellationRequested) return;
+            await ArtworkViewport.WaitAsync(this, ct);
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
 
             var httpClient = App.Services.GetRequiredService<HttpClient>();
             var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
 
-            await s_imageLoadLock.WaitAsync(ct);
+            await ArtworkViewport.EnterDecodeAsync(this, s_imageLoadLock, ct);
             string? diskPath;
             try
             {
+                if (!DecodedArtworkCache.IsCurrent(key)) return;
                 diskPath = await imageService.GetImageDiskPathAsync(
                     item.ContentId, imageType, imageUrl, httpClient, ct);
             }
@@ -765,24 +864,40 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             }
 
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+            await ArtworkViewport.WaitAsync(this, ct);
+            if (!DecodedArtworkCache.IsCurrent(key)) return;
             if (string.IsNullOrEmpty(diskPath)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
 
-            await s_bitmapCreateLock.WaitAsync(ct);
-            try
+            _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+            var currentHidden = HideEpisodeArtwork(item);
+            var gate = new ArtworkDecodeGate(this,
+                () => IsLoaded && !_artworkSuspended && ReferenceEquals(item, MediaItem) && DecodedArtworkCache.IsCurrent(key), s_bitmapCreateLock);
+            var stages = gate.ForPipelineStages();
+            while (true)
             {
-                if (ct.IsCancellationRequested) return;
-                _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
-                if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
-                var currentHidden = HideEpisodeArtwork(item);
-                var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, currentHidden, ct);
-                if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
-                _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, currentHidden);
-                _spoilerArtworkHidden = currentHidden;
-                PosterImage.Source = bitmapImage;
-                DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-                PosterImage.Opacity = 1;
+                Microsoft.UI.Xaml.Media.Imaging.BitmapImage? bitmapImage = null;
+                try
+                {
+                    // Preserve the one-pipeline bound, including progressive presentation.
+                    // Stage checks unwind on motion; only the next attempt waits, after
+                    // disposing native resources and releasing this outer decoder lease.
+                    using var pipeline = await gate.EnterAsync(ct);
+                    bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, currentHidden, ct, stages);
+                    using var presentation = await stages.EnterAsync(ct);
+                    _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, currentHidden);
+                    _spoilerArtworkHidden = currentHidden;
+                    PosterImage.Source = bitmapImage;
+                    DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
+                    PosterImage.Opacity = 1;
+                    return;
+                }
+                catch (ArtworkDecodeGate.MotionDeferredException)
+                {
+                    // Restart from disk after settling, never retain a partial decode.
+                }
+                finally { bitmapImage = null; }
             }
-            finally { s_bitmapCreateLock.Release(); }
         }
         catch (OperationCanceledException) { }
         catch { if (!ct.IsCancellationRequested && ReferenceEquals(item, MediaItem)) await ArtworkFallback.ShowThumbhashAsync(); }
@@ -807,6 +922,12 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     {
         if (MediaItem == null) return false;
 
+        if (MediaItem.Type == "box_set")
+        {
+            if (MediaItem.BoxSet is not {} set || string.IsNullOrWhiteSpace(set.Id) || string.IsNullOrWhiteSpace(set.LibraryId)) return false;
+            App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(set.Id, set.LibraryId));
+            return true;
+        }
         if (SelectionMode)
         {
             IsSelected = !IsSelected;
@@ -871,7 +992,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private async void QueuePlaybackPrefetch()
     {
         var item = MediaItem;
-        if (item == null || SelectionMode)
+        if (item == null || item.Type == "box_set" || SelectionMode)
             return;
 
         CancelPlaybackPrefetch();
@@ -981,13 +1102,13 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     private void QuickAction_Tapped(object sender, TappedRoutedEventArgs e)
         => e.Handled = true;
 
-    private void UpdateQuickActionState(MediaItem item)
+    private void UpdateQuickActionState(MediaItem item, bool refreshArtwork = true)
     {
         var preferences = App.Services.GetRequiredService<CardOverlayService>();
         var hasState = item.UserState != null && !SelectionMode && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
         var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");
         var showFavorite = hasState && MediaItemActionPolicy.CanAddToPersonalLists(item.Type) && (preferences.QuickActionMode is "both" or "favorites");
-        RefreshSpoilerArtwork();
+        if (refreshArtwork) RefreshSpoilerArtwork();
         var isWatched = item.UserState?.Played == true;
         var isFavorite = item.UserState?.IsFavorite == true;
 

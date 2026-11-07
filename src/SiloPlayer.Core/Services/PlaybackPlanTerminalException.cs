@@ -22,6 +22,9 @@ public sealed class PlaybackPlanTerminalException : InvalidOperationException
     private static string BuildExceptionMessage(string reason, string? serverMessage)
     {
         var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "adaptation_unavailable" : reason.Trim();
+        var accountLimit = PlaybackFailureDescription.DescribeAccountLimit(normalizedReason, serverMessage, retryable: false);
+        if (accountLimit != null)
+            return $"{accountLimit.Title}: {accountLimit.Message}";
         var detail = string.IsNullOrWhiteSpace(serverMessage)
             ? "The server could not find a compatible playback route."
             : serverMessage.Trim();

@@ -134,6 +134,9 @@ public sealed class NativeSubtitleSelectionTests
     [Theory]
     [InlineData("en", "eng")]
     [InlineData("", null)]
+    [InlineData("und", null)]
+    [InlineData(" UND ", "")]
+    [InlineData("", "und")]
     public void LegacyMetadataNormalizesLanguageAndAllowsUntitledTracks(string language, string? loadedLanguage)
     {
         var requested = English with { StreamIndex = null, ContainerTrackId = null, Language = language, Title = null };

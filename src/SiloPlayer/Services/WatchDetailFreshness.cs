@@ -18,22 +18,26 @@ public sealed class WatchDetailFreshness<T>(
     Func<T, string?> seriesOf) where T : class
 {
     private readonly ConditionalWeakTable<T, StrongBox<long>> _stamps = new();
-    private readonly ConcurrentDictionary<string, Task> _finalSaves = new(StringComparer.Ordinal);
+    private sealed record FinalSave(Task Pending, Func<bool>? IsCurrent);
+    private readonly ConcurrentDictionary<string, FinalSave[]> _finalSaves = new(StringComparer.Ordinal);
 
     /// <summary>Makes later reads of <paramref name="contentId"/> wait for its final write.</summary>
-    public void TrackFinalSave(string contentId, Task persisted)
+    public void TrackFinalSave(string contentId, Task persisted, Func<bool>? isCurrent = null)
     {
-        if (string.IsNullOrEmpty(contentId) || persisted.IsCompleted) return;
-        var tracked = _finalSaves.AddOrUpdate(contentId, persisted,
-            (_, previous) => previous.IsCompleted ? persisted : Task.WhenAll(previous, persisted));
-        _ = tracked.ContinueWith(_ => _finalSaves.TryRemove(new KeyValuePair<string, Task>(contentId, tracked)),
+        if (string.IsNullOrEmpty(contentId) || persisted.IsCompleted || isCurrent?.Invoke() == false) return;
+        var save = new FinalSave(persisted, isCurrent);
+        var tracked = _finalSaves.AddOrUpdate(contentId, [save],
+            (_, previous) => [.. previous.Where(entry => !entry.Pending.IsCompleted && entry.IsCurrent?.Invoke() != false), save]);
+        _ = Task.WhenAll(tracked.Select(entry => entry.Pending)).ContinueWith(_ =>
+            _finalSaves.TryRemove(new KeyValuePair<string, FinalSave[]>(contentId, tracked)),
             CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     public async Task<T> ReadAsync(string contentId, Func<CancellationToken, Task<T>> read, CancellationToken ct)
     {
-        if (_finalSaves.TryGetValue(contentId, out var pending) && !pending.IsCompleted)
+        if (_finalSaves.TryGetValue(contentId, out var saves))
         {
+            var pending = Task.WhenAll(saves.Where(entry => entry.IsCurrent?.Invoke() != false).Select(entry => entry.Pending));
             try { await pending.WaitAsync(finalSaveBarrier, ct).ConfigureAwait(false); }
             catch (Exception) when (!ct.IsCancellationRequested) { /* Final-write failures are reported by their owner. */ }
         }
