@@ -272,8 +272,9 @@ internal static class EpisodeOverviewNativeFixture
                 // Also exercise a fresh card/still created after the replacement read has failed.
                 Call(page, "BuildSiblingEpisodeCards");
                 await Until(() => Still() != null); page.UpdateLayout();
+                var reloadedPixels = await Pixels(Still()!);
                 Check(Descendants(protectedRail).OfType<EpisodeCardCaption>().Single().OverviewText.Visibility == Visibility.Collapsed &&
-                    protectedPixels.SequenceEqual(await Pixels(Still()!)),
+                    protectedPixels.SequenceEqual(reloadedPixels),
                     "Sibling captions remain hidden and freshly loaded still pixels retain the same spoiler blur after a failed reload");
                 wire.SpoilerFailure = null; Set(spoilers, "_retryAt", DateTimeOffset.UtcNow.AddSeconds(-1));
                 await spoilers.EnsureLoadedAsync();
