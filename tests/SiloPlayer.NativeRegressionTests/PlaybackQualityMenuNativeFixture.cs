@@ -323,9 +323,16 @@ internal static class PlaybackQualityMenuNativeFixture
             Require((await Query()).GetProperty("legacy").GetBoolean() == false, "Native and legacy quality overlap.");
             Call(menu, "Input", "end");
             Require(list.SelectedItem is ListViewItem { Tag: "quality:720p" }, "End did not reach the last server quality.");
+            wire.HoldSuccessfulReplan = true;
+            var qualityLoad = (long)Get(service, "_playbackFileGeneration")!;
             Call(menu, "Input", "activate");
-            await Until(() => wire.Qualities.Contains("720p") && !service.IsLoading && !service.IsQualitySwitchActive,
-                "Native quality did not finish the existing replan.");
+            await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            api.InvalidateAccessContext();
+            wire.ReleaseReplan.TrySetResult();
+            await Until(() => wire.Qualities.Count == 1 && wire.Qualities.Contains("720p") &&
+                (long)Get(service, "_playbackFileGeneration")! == qualityLoad + 1 &&
+                !service.IsLoading && !service.IsQualitySwitchActive && !(bool)Get(service, "_switchingContent")!,
+                "Access invalidation stranded the accepted Quality plan or its busy state.");
             Require(mpv.IsPaused && service.IsPaused, "Quality replan resumed a genuinely paused viewer.");
             Require(service.SelectedQualityMenuId == "720p", "Accepted quality did not become current.");
             Require(Menu(service) == null && Gate(service).CurrentCount == 1, "Selection stranded the native lease.");
@@ -344,10 +351,15 @@ internal static class PlaybackQualityMenuNativeFixture
             service.SetPaused(false);
             await Until(() => !mpv.IsPaused && !service.IsPaused, "The viewer did not enter playing intent before selecting a version.");
             var versionLoad = (long)Get(service, "_playbackFileGeneration")!;
+            wire.HoldReplacementStart = true;
             Call(menu, "Input", "activate");
-            await Until(() => wire.Files.Contains(71) && manager.CurrentSession?.MediaFileId == 71 &&
-                (long)Get(service, "_playbackFileGeneration")! > versionLoad && !service.IsLoading,
-                "Version selection did not use the existing replacement-session workflow.");
+            await wire.ReplacementStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            api.InvalidateAccessContext();
+            wire.ReleaseReplacement.TrySetResult();
+            await Until(() => wire.Files.Count == 2 && wire.Files.Contains(71) && manager.CurrentSession?.MediaFileId == 71 &&
+                (long)Get(service, "_playbackFileGeneration")! == versionLoad + 1 && !service.IsLoading &&
+                !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                "Access invalidation stranded the accepted version session or its busy state.");
             await Until(() => !mpv.IsPaused && !service.IsPaused, "Version selection paused a playing viewer.");
             Call(service, "StopPlaybackStallWatchdog");
 

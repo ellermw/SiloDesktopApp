@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
@@ -66,8 +67,9 @@ internal static class PlaybackStatsMenuNativeFixture
 
                 mp.register_script_message('stats-fixture-query',function(id,kind)
                     compute_layout()
-                    local r=state.layout[kind=='stats' and 'btn_stats' or 'btn_quality'] or {}
-                    mp.commandv('script-message','silo-stats-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=state.stats_visible or false,focus=state.controller_focus_name or '',pending=state.native_menu_request~=nil}))
+                    local r=state.layout['btn_'..kind] or {}
+                    local legacy=kind=='stats' and state.stats_visible or state[kind..'_menu_visible']
+                    mp.commandv('script-message','silo-stats-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=legacy or false,focus=state.controller_focus_name or '',pending=state.native_menu_request~=nil}))
                 end)
                 mp.commandv('script-message','silo-stats-fixture-ready')
                 """);
@@ -110,6 +112,24 @@ internal static class PlaybackStatsMenuNativeFixture
                 Program.Log("PASS: actual held quality replan permits read-only native Stats key open/End/Enter/second-i close, preserving its exact busy revision, file, pause and single request; replan completes its own cleanup.");
                 return;
             }
+            // Reconnect/access changes retire reads, not any playback menu.
+            versions[0].AudioTracks = [new() { Title = "Audio one", Codec = "aac" }, new() { Title = "Audio two", Codec = "aac" }];
+            Call(service, "SendAudioTrackListToOsc");
+            foreach (var kind in new[] { "audio", "quality", "stats" })
+            {
+                var retained = await Open("pointer", kind);
+                api.InvalidateAccessContext();
+                await Task.Delay(250); await Query(kind);
+                Require(ReferenceEquals(Menu(service), retained) && Gate(service).CurrentCount == 0,
+                    "Read-context invalidation retired the live native " + kind + " menu.");
+                Call(retained, "Input", "cancel");
+                await UntilAsync(async () => !(await Query(kind)).GetProperty("pending").GetBoolean(), "Menu close did not acknowledge " + kind);
+                var reopened = await Open("pointer", kind);
+                Call(reopened, "Input", "cancel");
+                await UntilAsync(async () => !(await Query(kind)).GetProperty("pending").GetBoolean(), "Reopened menu did not close " + kind);
+                Require(Gate(service).CurrentCount == 1 && mpv.IsPaused && wire.Qualities.IsEmpty,
+                    "Access refresh/menu reopen changed playback or leaked a lease.");
+            }
             var menu = await Open("pointer");
             var list = (ListView)Get(menu, "_list")!;
             await Until(() => list.Items.Count >= 25, "Native playback info did not receive the actual OSC diagnostic sections.");
@@ -124,6 +144,22 @@ internal static class PlaybackStatsMenuNativeFixture
             Require(ids.Select(id => id.Split('\n')[0]).Distinct().SequenceEqual(new[] { "PLAYER", "VIDEO INFO", "PLAYBACK STREAM INFO", "CURRENT SOURCE FILE" }), "Missing diagnostic section.");
             Require(visibleRows >= 6, "Playback info used selection-menu density instead of a compact diagnostic layout.");
             Require(mpv.IsPaused && wire.Qualities.IsEmpty, "Opening playback info changed playback.");
+            await Task.Delay(150);
+            Call(menu, "Input", "home");
+            var viewport = Descendants<ScrollViewer>(list).OrderByDescending(view => view.ScrollableHeight).First();
+            Require(viewport.ScrollableHeight > 200, "Stats has no native scroll extent.");
+            // Change the native offset without a wheel event, as scrollbar/touch
+            // scrolling does, while the selected row remains at the top.
+            viewport.ChangeView(null, 200, null, true);
+            await Until(() => Math.Abs(viewport.VerticalOffset - 200) < 1, "Could not establish a non-wheel Stats offset.");
+            var scrolledOffset = viewport.VerticalOffset;
+            var scrolledRow = list.Items.OfType<ListViewItem>().Single(row => (string)row.Tag == "PLAYBACK STREAM INFO\nVideo codec");
+            mpv.SendScriptMessage("osc-set-stream-info", "Direct Play", "Original", "HTTP", "scrolled-codec", "aac", "0");
+            await Until(() => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(scrolledRow).Contains("scrolled-codec"),
+                "Stats did not refresh its scrolled native row.");
+            await Task.Delay(150);
+            Require(Math.Abs(viewport.VerticalOffset - scrolledOffset) < 1 && list.SelectedIndex == 0,
+                "A live Stats refresh snapped non-wheel scrolling back to the selected row.");
             Command(mpv, "keypress", "END");
             await Until(() => ReferenceEquals(list.SelectedItem, list.Items[list.Items.Count - 1]), "End did not navigate Stats.");
             var last = list.SelectedItem;
@@ -173,17 +209,17 @@ internal static class PlaybackStatsMenuNativeFixture
             video.Dispose(); mpv.Dispose(); await Task.Delay(40); foreground.Complete();
         }
 
-        async Task<JsonElement> Query()
+        async Task<JsonElement> Query(string kind = "stats")
         {
             var id = Guid.NewGuid().ToString("N"); var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
             queries[id] = reply;
-            try { mpv.SendScriptMessage("stats-fixture-query", id, "stats"); return await reply.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
+            try { mpv.SendScriptMessage("stats-fixture-query", id, kind); return await reply.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
             finally { queries.TryRemove(id, out _); }
         }
-        async Task<object> Open(string route)
+        async Task<object> Open(string route, string kind = "stats")
         {
-            mpv.SendScriptMessage("osc-show"); var geometry = await Query();
-            Require(geometry.GetProperty("w").GetDouble() > 0, "Stats opener missing from actual OSC.");
+            mpv.SendScriptMessage("osc-show"); var geometry = await Query(kind);
+            Require(geometry.GetProperty("w").GetDouble() > 0, kind + " opener missing from actual OSC.");
             var x = geometry.GetProperty("x").ToString(); var y = geometry.GetProperty("y").ToString();
             if (route == "controller")
             {
@@ -198,11 +234,21 @@ internal static class PlaybackStatsMenuNativeFixture
                 mpv.SendScriptMessage("osc-mouse-up", x, y); mpv.SendScriptMessage("osc-video-click", x, y);
             }
             await Until(() => Menu(service) is { } value && Get(value, "_list") is ListView { XamlRoot: not null },
-                "Actual OSC " + route + " produced no native Stats menu.");
-            Require(!(await Query()).GetProperty("legacy").GetBoolean(), "Legacy stats overlapped native stats.");
+                "Actual OSC " + route + " produced no native " + kind + " menu.");
+            Require(!(await Query(kind)).GetProperty("legacy").GetBoolean(), "Legacy " + kind + " overlapped its native menu.");
             var menu = Menu(service)!; var native = (Window)Get(menu, "_window")!;
             foreground.WatchMenu(native, WinRT.Interop.WindowNative.GetWindowHandle(native));
             foreground.Observe("stats-opened"); return menu;
+        }
+    }
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) yield return match;
+            foreach (var descendant in Descendants<T>(child)) yield return descendant;
         }
     }
 

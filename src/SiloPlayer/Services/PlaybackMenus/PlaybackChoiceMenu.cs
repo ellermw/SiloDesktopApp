@@ -178,6 +178,10 @@ internal class PlaybackChoiceMenu
             a.CloseOnInvoke == b.CloseOnInvoke && a.IsPending == b.IsPending;
         if (_choices.Count == choices.Count && _choices.Zip(choices).All(pair => Same(pair.First, pair.Second))) return;
         var sameIds = _choices.Count == choices.Count && _choices.Zip(choices).All(pair => pair.First.Id == pair.Second.Id);
+        // A live refresh is not navigation. Leave scrollbar/touch offsets alone,
+        // including layout queued by updated row sizes; explicit navigation
+        // resumes selection-following in Input.
+        if (sameIds || _choiceContent != null) _keepSelectionVisible = false;
         var previous = _choices; _choices = choices;
         void UpdateContainer(ListViewItem row, PlaybackMenuChoice choice)
         {

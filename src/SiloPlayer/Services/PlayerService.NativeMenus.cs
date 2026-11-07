@@ -22,7 +22,8 @@ public partial class PlayerService
     private void PublishNativeMenuScopes()
     {
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        // Access revisions retire reads, not the accepted playback identity.
+        var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         var version = ActiveVersion;
@@ -45,7 +46,7 @@ public partial class PlayerService
             State is PlayerState.Expanded or PlayerState.Fullscreen && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
             play == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration) &&
             playbackFile == Volatile.Read(ref _playbackFileGeneration) &&
-            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
@@ -93,8 +94,18 @@ public partial class PlayerService
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
         var busyAction = request.Kind != "stats" && (IsLoading || _switchingContent);
-        if (owner == null || owner.Token != request.OwnerToken || !owner.IsCurrent() || busyAction)
+        if (owner == null || owner.Token != request.OwnerToken)
         { Ack(); return; }
+        if (!owner.IsCurrent())
+        {
+            Ack();
+            // A matching stale capability must not leave Lua swallowing every
+            // later opener (for example after an accepted plan fails to load).
+            RetireNativeMenus();
+            PublishNativeMenuScopes();
+            return;
+        }
+        if (busyAction) { Ack(); return; }
         if (!_nativeMenuGate.TryOpen(request))
         {
             if (_nativeMenuRequest is not { } active || active.Sequence != request.Sequence) Ack();

@@ -349,7 +349,9 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(wire.AudioPicks.Count == 0, "A stale file menu selected a track.");
             Host("silo-native-audio-open", ownerState.GetProperty("scope").GetString()!, "999", "1000", "620", "40", "40", "1280", "720");
             await Task.Delay(60); Require(Menu(service) == null, "Old file scope reopened a native menu.");
-            Call(service, "SendAudioTrackListToOsc");
+            var healedScope = (await Query()).GetProperty("scope").GetString();
+            Require(!string.IsNullOrEmpty(healedScope) && healedScope != ownerState.GetProperty("scope").GetString(),
+                "Rejecting a matching stale owner left Lua with a dead capability instead of republishing.");
             menu = await OpenFromOsc();
             foreground.Observe("profile-retirement-before");
             api.SetProfile("replacement"); Call(menu, "Input", "activate");
@@ -515,6 +517,8 @@ internal static class PlaybackAudioMenuNativeFixture
             await Until(() => !mpv.IsPaused && !service.IsPaused, "Fixture did not enter playing intent.");
             var latePreferenceCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "late-preference";
             wire.HoldPreference = latePreferenceCase;
+            wire.HoldSuccessfulReplan = true;
+            var acceptedLoad = (long)Get(service, "_playbackFileGeneration")!;
             menu = await OpenFromOsc(); list = (ListView)Get(menu, "_list")!;
             Call(menu, "Input", "end");
             var last = (ListViewItem)list.Items[71];
@@ -544,10 +548,16 @@ internal static class PlaybackAudioMenuNativeFixture
                 }
                 foreground.Observe("uia-isolation-ended");
             }
+            await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            api.InvalidateAccessContext();
+            wire.ReleaseReplan.TrySetResult();
             await Until(() => wire.AudioPicks.Count == 1, "Native Audio Invoke did not reach the existing replan caller.");
             foreground.Observe("accepted-replan-observed");
             Require(wire.AudioPicks.Single() == 71, "Native Audio reinterpreted a source index as an mpv track ID.");
-            await Until(() => !service.IsLoading && !mpv.IsPaused && !service.IsPaused, "Accepted Audio replan did not preserve playing intent.");
+            await Until(() => (long)Get(service, "_playbackFileGeneration")! == acceptedLoad + 1 &&
+                !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !mpv.IsPaused && !service.IsPaused,
+                "Access invalidation stranded the accepted Audio plan or changed playing intent.");
+            Require(manager.CurrentSession?.AudioTrackIndex == 71, "Access invalidation lost the accepted Audio selection.");
             if (latePreferenceCase)
             {
                 await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
