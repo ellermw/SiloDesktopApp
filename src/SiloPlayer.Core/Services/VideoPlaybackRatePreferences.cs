@@ -32,15 +32,15 @@ public sealed class VideoPlaybackRatePreferences(SettingsApi api)
             ? rate : 1;
     }
 
-    internal async Task SaveAsync(ApiRequestContext context, string? deviceId, double rate, Func<bool> ownsIntent)
+    internal async Task SaveAsync(ApiRequestContext context, string? deviceId, double rate)
     {
         await _writes.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (!ownsIntent()) return;
             EnsureCurrent(context, deviceId, default);
-            // Once dispatched, an accepted write settles in order. A later edit
-            // waits behind it and an old completion cannot publish session state.
+            // Accepted preferences belong to the profile/device, not the playback
+            // session. Persist them in order even after that session retires;
+            // session-state publication is guarded separately by the caller.
             await api.SetContractSettingValueAsync(context, Key, "profile_device", rate,
                 deviceId: deviceId, profileId: context.ProfileId).ConfigureAwait(false);
             EnsureCurrent(context, deviceId, default);
@@ -123,11 +123,10 @@ public sealed class VideoPlaybackRateSession
 
     private async Task SaveAsync(double rate, long intent)
     {
-        // Eligibility gates accepting a click, not finishing already accepted
-        // viewer intent while a same-owner replan temporarily disables the UI.
-        bool OwnsIntent() { lock (_gate) return Current && intent == _intent; }
+        // Eligibility gates accepting a click, not persisting accepted viewer
+        // intent after a replan or playback-session retirement.
         string? error = null;
-        try { await _preferences.SaveAsync(_context, _deviceId, rate, OwnsIntent).ConfigureAwait(false); }
+        try { await _preferences.SaveAsync(_context, _deviceId, rate).ConfigureAwait(false); }
         catch (Exception) { error = "Playback speed could not save. Choose a speed to retry."; }
         lock (_gate)
         {
