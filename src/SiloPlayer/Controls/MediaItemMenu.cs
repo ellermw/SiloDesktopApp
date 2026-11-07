@@ -38,11 +38,13 @@ public static class MediaItemMenu
         FrameworkElement? owner = null)
     {
         var flyout = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
+        if (item.Type == "box_set") return flyout;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         var authService = App.Services.GetRequiredService<AuthService>();
         var toast = App.Services.GetRequiredService<ToastService>();
         var client = App.Services.GetRequiredService<SiloApiClient>();
+        var menuOwner = client.CaptureIdentityContext();
         XamlRoot? DialogRoot() => owner?.XamlRoot ?? App.MainWindowInstance?.Content.XamlRoot;
 
         bool canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
@@ -51,24 +53,38 @@ public static class MediaItemMenu
         bool isFavorite = item.UserState?.IsFavorite ?? false;
         bool inWatchlist = item.UserState?.InWatchlist ?? false;
         bool isLeaf = item.Type is "movie" or "episode" or "audiobook";
-        bool hasPartialProgress = item.PositionSeconds is > 0 && !isWatched;
 
         // Current WebUI order: restart, watched state, collection actions,
         // manga details, permission-gated maintenance, then surface-specific dismissal.
-        if (isLeaf && (hasPartialProgress || isWatched))
+        if (isLeaf)
         {
-            flyout.Items.Add(BuildItem(
+            var restartLibrary = owner != null ? MediaNavigationContext.LibraryId(owner) : null;
+            var restartIdentity = client.CaptureIdentityContext();
+            bool OwnsRestart() => client.IsCurrentIdentityContext(restartIdentity)
+                && (owner == null || (owner.IsLoaded && MediaNavigationContext.LibraryId(owner) == restartLibrary
+                    && (owner is not IMediaItemOwner itemOwner || OwnsContent(itemOwner.MediaItem, item))));
+            var restart = BuildItem(
                 item.Type == "audiobook" ? "Listen from Beginning" : "Play from Beginning",
                 "\uE768",
                 async () =>
                 {
+                    if (!OwnsRestart())
+                    {
+                        toast.Error(new InvalidOperationException("This item is no longer available from this card. Open its menu again."));
+                        return;
+                    }
                     try
                     {
                         await App.Services.GetRequiredService<PlayerService>()
-                            .PlayAsync(item.ContentId, fromStart: true);
+                            .RestartAsync(item.ContentId, restartLibrary, restartIdentity);
                     }
                     catch (Exception ex) { toast.Error(ex); }
-                }));
+                });
+            void RefreshRestartAction() => restart.Visibility = item.PositionSeconds is > 0 || item.UserState?.Played == true
+                ? Visibility.Visible : Visibility.Collapsed;
+            RefreshRestartAction();
+            flyout.Items.Add(restart);
+            flyout.Opening += (_, _) => RefreshRestartAction();
         }
 
         if (item.UserState != null)
@@ -83,14 +99,20 @@ public static class MediaItemMenu
                     {
                         await MediaItemCardActions.ToggleWatchedAsync(item);
                         stateChanged?.Invoke();
-                        var nowWatched = item.UserState?.Played == true;
-                        watchedAction.Text = MediaItemCardActions.GetWatchedActionLabel(item.Type, nowWatched);
-                        watchedAction.Icon = new FontIcon { Glyph = nowWatched ? "\uE711" : "\uE73E" };
-                        AutomationProperties.SetName(watchedAction, watchedAction.Text);
+                        RefreshWatchedAction();
                     }
                     catch (Exception ex) { toast.Error(ex); }
                 });
+            void RefreshWatchedAction()
+            {
+                var nowWatched = item.UserState?.Played == true;
+                watchedAction.Text = MediaItemCardActions.GetWatchedActionLabel(item.Type, nowWatched);
+                watchedAction.Icon = new FontIcon { Glyph = nowWatched ? "\uE711" : "\uE73E" };
+                AutomationProperties.SetName(watchedAction, watchedAction.Text);
+            }
             flyout.Items.Add(watchedAction);
+            // Retained cards can change remotely without rebuilding their menu.
+            flyout.Opening += (_, _) => RefreshWatchedAction();
 
             if (showCollectionActions)
             {
@@ -159,25 +181,31 @@ public static class MediaItemMenu
 
         if (item.Type is "movie" or "series" && item.UserState != null)
         {
-            var interestContext = catalog.CaptureContext();
             var interest = NotInterestedActions.CreateMenuItem(item, stateChanged);
             flyout.Items.Add(interest);
-            flyout.Opening += async (_, _) => await NotInterestedActions.RefreshMenuItemAsync(interest, item, interestContext);
+            flyout.Opening += async (_, _) => await NotInterestedActions.RefreshMenuItemAsync(interest, item, catalog.CaptureContext());
         }
 
-        if (MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true))
+        // Retained menus must also support a leaf gaining progress after construction.
+        if (item.Type is "movie" or "episode")
         {
-            var context = catalog.CaptureContext();
             var reset = BuildItem("Reset Progress", "\uE777", async () =>
             {
-                if (!catalog.IsCurrentContext(context)) return;
+                var context = catalog.CaptureContext();
+                if (!client.IsCurrentIdentityContext(menuOwner)) return;
                 await MediaItemCardActions.ResetProgressAsync(item);
+                if (!catalog.IsCurrentContext(context)) return;
                 stateChanged?.Invoke();
             });
             reset.Visibility = Visibility.Collapsed;
             flyout.Items.Insert(Math.Min(2, flyout.Items.Count), reset);
             flyout.Opening += async (_, _) =>
             {
+                // A reconnect retires reads, not this retained menu's lifetime.
+                var context = catalog.CaptureContext();
+                reset.Visibility = Visibility.Collapsed;
+                if (!client.IsCurrentIdentityContext(menuOwner)) { reset.IsEnabled = false; return; }
+                if (!MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true)) return;
                 try
                 {
                     var capabilities = await catalog.GetProgressCapabilitiesAsync();
@@ -185,7 +213,7 @@ public static class MediaItemMenu
                     reset.Visibility = MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, capabilities.ClearResumePosition)
                         ? Visibility.Visible : Visibility.Collapsed;
                 }
-                catch { reset.Visibility = Visibility.Collapsed; }
+                catch { if (catalog.IsCurrentContext(context)) reset.Visibility = Visibility.Collapsed; }
             };
         }
 
@@ -305,6 +333,9 @@ public static class MediaItemMenu
         return flyout;
     }
 
+    private static bool OwnsContent(MediaItem? current, MediaItem captured) => current is not null
+        && current.ContentId == captured.ContentId && current.Type == captured.Type;
+
     private static async Task ShowRefreshMetadataDialogAsync(
         MediaItem item,
         MediaMaintenanceApi maintenanceApi,
@@ -344,7 +375,9 @@ public static class MediaItemMenu
         var surface = owner ?? frame?.Content as FrameworkElement ?? root.Content as FrameworkElement;
         if (surface?.IsLoaded != true) return;
         var itemOwner = surface as IMediaItemOwner;
-        bool OwnsItem() => itemOwner == null || ReferenceEquals(itemOwner.MediaItem, item);
+        var library = MediaNavigationContext.LibraryId(surface);
+        bool OwnsItem() => (itemOwner == null || OwnsContent(itemOwner.MediaItem, item))
+            && MediaNavigationContext.LibraryId(surface) == library;
         var frameContent = frame?.Content;
         bool Authorized() => client.IsCurrentContext(context) && auth.SessionGeneration == session
             && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);

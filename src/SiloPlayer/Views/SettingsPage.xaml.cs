@@ -61,6 +61,7 @@ public sealed partial class SettingsPage : Page
     private readonly List<PrimaryMenuItem> _interfaceMenuDraft = [];
     private bool _interfaceMenuDirty;
     private bool _suppressInterfaceEvents;
+    private int _interfaceLoadGeneration;
     private CardOverlayPrefs? _cardOverlayDraft;
     private string _cardOverlayPreviewVariant = "movie";
     private CancellationTokenSource? _overlaySaveCts;
@@ -1395,6 +1396,9 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task LoadInterfaceCustomizationAsync()
     {
+        var loadGeneration = ++_interfaceLoadGeneration;
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
         InterfaceControls.IsHitTestVisible = false;
         InterfaceControls.Opacity = 0.55;
         InterfaceStatusCard.Visibility = Visibility.Visible;
@@ -1403,6 +1407,7 @@ _webhookPlexAuthCts?.Cancel();
         try
         {
             await _uiCustomizationService.RefreshAsync();
+            if (loadGeneration != _interfaceLoadGeneration || !ownerApi.IsCurrentContext(ownerContext)) return;
             if (_uiCustomizationService.IsUnavailable)
             {
                 ShowInterfaceUnavailable(
@@ -1430,7 +1435,15 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
+            if (loadGeneration != _interfaceLoadGeneration || !ownerApi.IsCurrentContext(ownerContext)) return;
             ShowInterfaceUnavailable("Customization unavailable", ex.Message);
+        }
+        finally
+        {
+            if (loadGeneration == _interfaceLoadGeneration && !ownerApi.IsCurrentContext(ownerContext))
+                ShowInterfaceUnavailable(
+                    "Customization changed",
+                    "Your session or permissions changed while loading. Reopen Interface to load the current settings.");
         }
     }
 
@@ -1494,33 +1507,43 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task SaveInterfaceCardPresentationAsync(CardPresentation presentation)
     {
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
+        var loadGeneration = _interfaceLoadGeneration;
         InterfaceControls.IsHitTestVisible = false;
         try
         {
-            await _uiCustomizationService.SaveCardPresentationAsync(presentation);
+            var committed = await _uiCustomizationService.SaveCardPresentationAsync(presentation);
+            if (!committed || !IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             SyncInterfaceControls();
             App.Services.GetRequiredService<ToastService>().Success("Desktop card layout saved");
         }
         catch (Exception ex)
         {
+            if (!IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save card layout: {ex.Message}");
         }
         finally
         {
-            InterfaceControls.IsHitTestVisible = true;
+            if (IsLoaded && loadGeneration == _interfaceLoadGeneration && ownerApi.IsCurrentContext(ownerContext))
+                InterfaceControls.IsHitTestVisible = true;
         }
     }
 
     private async void ResetDesktopCardLayout_Click(object sender, RoutedEventArgs e)
     {
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.ResetCardPresentationAsync();
+            var committed = await _uiCustomizationService.ResetCardPresentationAsync();
+            if (!committed || !IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             SyncInterfaceControls();
             App.Services.GetRequiredService<ToastService>().Success("Desktop card layout reset");
         }
         catch (Exception ex)
         {
+            if (!IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
             App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset card layout: {ex.Message}");
         }
     }
@@ -1537,19 +1560,26 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task ClearInterfaceDeviceOverrideAsync(string key, string label)
     {
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.ClearDeviceOverrideAsync(key);
-            _interfaceMenuDraft.Clear();
-            _interfaceMenuDraft.AddRange(
-                (_uiCustomizationService.PrimaryMenu?.Items ?? UICustomizationService.DefaultDesktopMenu())
-                .Select(item => item.Clone()));
-            _interfaceMenuDirty = false;
+            if (!await _uiCustomizationService.ClearDeviceOverrideAsync(key)) return;
+            if (!ownerApi.IsCurrentContext(ownerContext)) return;
+            if (key == UICustomizationSettingKeys.PrimaryMenu)
+            {
+                _interfaceMenuDraft.Clear();
+                _interfaceMenuDraft.AddRange(
+                    (_uiCustomizationService.PrimaryMenu?.Items ?? UICustomizationService.DefaultDesktopMenu())
+                    .Select(item => item.Clone()));
+                _interfaceMenuDirty = false;
+            }
             SyncInterfaceControls();
             App.Services.GetRequiredService<ToastService>().Success($"{label} now follows the desktop-family preference");
         }
         catch (Exception ex)
         {
+            if (!ownerApi.IsCurrentContext(ownerContext)) return;
             App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not clear {label.ToLowerInvariant()}: {ex.Message}");
         }
     }
@@ -1688,24 +1718,31 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void SaveInterfaceMenu_Click(object sender, RoutedEventArgs e)
     {
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.SavePrimaryMenuAsync(_interfaceMenuDraft);
+            if (!await _uiCustomizationService.SavePrimaryMenuAsync(_interfaceMenuDraft)) return;
+            if (!ownerApi.IsCurrentContext(ownerContext)) return;
             _interfaceMenuDirty = false;
             SyncInterfaceControls();
             App.Services.GetRequiredService<ToastService>().Success("Desktop navigation saved");
         }
         catch (Exception ex)
         {
+            if (!ownerApi.IsCurrentContext(ownerContext)) return;
             App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save navigation: {ex.Message}");
         }
     }
 
     private async void ResetInterfaceMenu_Click(object sender, RoutedEventArgs e)
     {
+        var ownerApi = App.Services.GetRequiredService<SettingsApi>();
+        var ownerContext = ownerApi.CaptureContext();
         try
         {
-            await _uiCustomizationService.ResetPrimaryMenuAsync();
+            if (!await _uiCustomizationService.ResetPrimaryMenuAsync()) return;
+            if (!ownerApi.IsCurrentContext(ownerContext)) return;
             _interfaceMenuDraft.Clear();
             _interfaceMenuDraft.AddRange(UICustomizationService.DefaultDesktopMenu());
             _interfaceMenuDirty = false;
@@ -1714,6 +1751,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
+            if (!ownerApi.IsCurrentContext(ownerContext)) return;
             App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset navigation: {ex.Message}");
         }
     }

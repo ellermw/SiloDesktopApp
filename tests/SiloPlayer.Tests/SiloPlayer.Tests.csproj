@@ -27,6 +27,8 @@
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Letters.cs" Link="Production\LibraryViewModel.Letters.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\BoxSetViewModel.cs" Link="Production\BoxSetViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.BoxSets.cs" Link="Production\ItemDetailViewModel.BoxSets.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.cs" Link="Production\ItemDetailViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationsViewModel.cs" Link="Production\RecommendationsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationSectionViewModel.cs" Link="Production\RecommendationSectionViewModel.cs" />
@@ -36,6 +38,7 @@
     <Compile Include="..\..\src\SiloPlayer\ViewModels\AccountPasswordViewModel.cs" Link="Production\AccountPasswordViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\Messaging\MediaSurfaceMessages.cs" Link="Production\MediaSurfaceMessages.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\DetailCacheInvalidation.cs" Link="Production\DetailCacheInvalidation.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\RealtimeMediaStateRefresh.cs" Link="Production\RealtimeMediaStateRefresh.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\WatchDetailFreshness.cs" Link="Production\WatchDetailFreshness.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackMenuRequest.cs" Link="Production\PlaybackMenuRequest.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
@@ -44,11 +47,13 @@
     <Compile Include="..\..\src\SiloPlayer\Helpers\ServerOriginDisplay.cs" Link="Production\ServerOriginDisplay.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\EbookPackageExtractor.cs" Link="Production\EbookPackageExtractor.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\CardOverlayService.cs" Link="Production\CardOverlayService.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\UICustomizationService.cs" Link="Production\UICustomizationService.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SearchViewModel.cs" Link="Production\SearchViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SmartCollectionWizardViewModel.cs" Link="Production\SmartCollectionWizardViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionEditorViewModel.cs" Link="Production\CollectionEditorViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionEditorViewModel.Preview.cs" Link="Production\CollectionEditorViewModel.Preview.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionsViewModel.cs" Link="Production\CollectionsViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\FavoritesViewModel.cs" Link="Production\FavoritesViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\WatchlistViewModel.cs" Link="Production\WatchlistViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RequestsViewModel.cs" Link="Production\RequestsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\NotificationsViewModel.cs" Link="Production\NotificationsViewModel.cs" />

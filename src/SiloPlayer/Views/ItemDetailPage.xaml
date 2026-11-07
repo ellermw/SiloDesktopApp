@@ -370,6 +370,31 @@
 
                             <TextBlock x:Name="TaglineTranslationLabel" Text="AI-translated tagline" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" Visibility="Collapsed" />
 
+                            <!-- Background refresh failures never replace the mounted detail. -->
+                            <Border x:Name="RemoteStateRefreshError"
+                                    Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12"
+                                    Visibility="{x:Bind ViewModel.RemoteStateErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{x:Bind ViewModel.RemoteStateErrorMessage, Mode=OneWay}"
+                                               Foreground="{StaticResource SecondaryTextBrush}"
+                                               FontSize="14" TextWrapping="Wrap" />
+                                    <Button Content="Retry" HorizontalAlignment="Left"
+                                            Command="{x:Bind ViewModel.RetryRemoteStateCommand}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="MetadataRefreshError"
+                                    Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12"
+                                    Visibility="{x:Bind ViewModel.MetadataRefreshErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{x:Bind ViewModel.MetadataRefreshErrorMessage, Mode=OneWay}"
+                                               Foreground="{StaticResource SecondaryTextBrush}"
+                                               FontSize="14" TextWrapping="Wrap" />
+                                    <Button Content="Retry" HorizontalAlignment="Left"
+                                            Click="RetryMetadataRefresh_Click" />
+                                </StackPanel>
+                            </Border>
+
                             <!-- AudiobookContent renders these as two distinct subtitle
                                  lines between the title and metadata. Keeping them out of
                                  HeroCrewLine preserves the exact WebUI information order. -->
@@ -1274,6 +1299,13 @@
                                 Spacing="12"
                                 Margin="16,0,0,0" />
                         </ScrollView>
+                    </StackPanel>
+
+                    <StackPanel x:Name="BoxSetSection" Visibility="Collapsed" Spacing="12">
+                        <Grid><TextBlock x:Name="BoxSetTitle" FontSize="20" TextWrapping="Wrap" Margin="0,0,100,0"/><Button Content="View all" HorizontalAlignment="Right" Click="BoxSetViewAll_Click"/></Grid>
+                        <ScrollViewer x:Name="BoxSetScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled">
+                            <StackPanel x:Name="BoxSetMovies" Orientation="Horizontal" Spacing="16"/>
+                        </ScrollViewer>
                     </StackPanel>
 
                     <!-- More Like This section -->

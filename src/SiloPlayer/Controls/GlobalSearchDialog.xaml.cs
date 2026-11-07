@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Messaging;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
@@ -34,6 +36,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
 
     private readonly CatalogApi _catalogApi;
+    private readonly BoxSetSearchState _boxSets;
     private readonly SettingsApi _settingsApi;
     private readonly RequestsApi _requestsApi;
     private readonly PeopleApi _peopleApi;
@@ -71,6 +74,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     public GlobalSearchDialog()
     {
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
+        _boxSets = new BoxSetSearchState(_catalogApi);
         _settingsApi = App.Services.GetRequiredService<SettingsApi>();
         _requestsApi = App.Services.GetRequiredService<RequestsApi>();
         _peopleApi = App.Services.GetRequiredService<PeopleApi>();
@@ -78,6 +82,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         _dialogContext = _apiClient.CaptureContext();
         this.InitializeComponent();
+        _boxSets.Items.CollectionChanged += (_, _) => Render();
+        _boxSets.PropertyChanged += (_, _) => Render();
         // TextBox consumes arrow navigation before ordinary routed handlers.
         SearchBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(SearchBox_KeyDown), true);
         _scopeLoadTask = LoadScopeAsync();
@@ -89,6 +95,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         Resources["ContentDialogMinWidth"] = 0d;
         this.Opened += (_, _) =>
         {
+            _catalogApi.LibraryCacheInvalidated += RefreshBoxSets;
+            _apiClient.LocalizedReads.Invalidated += BoxSetLanguageChanged;
             UpdateDialogGeometry();
             if (XamlRoot != null) XamlRoot.Changed += SearchRoot_Changed;
             // WinUI hosts this template part in a separate popup, so its
@@ -107,6 +115,13 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             SearchBox.Focus(FocusState.Programmatic);
         };
         this.Closed += OnClosed;
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
+        {
+            if (change.Context is {} owner && !_apiClient.IsCurrentContext(owner)) return;
+            if (change.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.ItemMetadataRefreshed)
+                DispatcherQueue.TryEnqueue(RefreshBoxSets);
+        });
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) => RefreshBoxSetsAfterPlayback(change));
     }
 
     private void SearchRoot_Changed(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateDialogGeometry();
@@ -192,6 +207,10 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        _results.Clear(); _peopleResults.Clear(); _requestResults.Clear();
+        _catalogPending = _peoplePending = !string.IsNullOrWhiteSpace(SearchBox.Text);
+        _requestsPending = false;
+        _boxSets.Retire();
         _selectedByPointer = false;
         _selection.ClearSelection();
         SyncSelectionHighlight();
@@ -251,7 +270,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         try
         {
             await _scopeLoadTask;
-            if (!_apiClient.IsCurrentContext(_dialogContext)) return;
+            if (!IsCurrentSearchOwner(cts, query)) return;
+            _ = _boxSets.SearchAsync(query, enabled: _mediaScope != "audiobook", isCurrent: () => IsCurrentSearchOwner(cts, query));
             var catalogTask = _catalogApi.SearchAsync(query, PreviewLimit, _mediaScope, cts.Token);
             var requestsTask = _requestDiscoveryEnabled && query.Length > 1 ? SearchRequestsAsync(query, cts.Token) : Task.FromResult(new List<RequestMediaResult>());
             var peopleTask = _peopleApi.SearchScopedAsync(query, _mediaScope == "all" ? null : _mediaScope, 4, cts.Token);
@@ -334,6 +354,9 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void OnClosed(ContentDialog sender, ContentDialogClosedEventArgs args)
     {
+        _catalogApi.LibraryCacheInvalidated -= RefreshBoxSets;
+        _apiClient.LocalizedReads.Invalidated -= BoxSetLanguageChanged;
+        _boxSets.Retire();
         _dismissBackdrop?.RemoveHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnBackdropPressed));
         _dismissBackdrop = null;
         if (XamlRoot != null) XamlRoot.Changed -= SearchRoot_Changed;
@@ -355,6 +378,29 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _debounceTimer?.Stop();
     }
 
+    private void BoxSetLanguageChanged(long _) => DispatcherQueue.TryEnqueue(RefreshBoxSets);
+
+    private void RefreshBoxSets()
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(RefreshBoxSets); return; }
+        var owner = _searchCts; var query = SearchBox.Text.Trim();
+        if (owner == null || !IsCurrentSearchOwner(owner, query)) return;
+        _ = _boxSets.SearchAsync(query, enabled: _mediaScope != "audiobook",
+            isCurrent: () => IsCurrentSearchOwner(owner, query), refresh: true);
+    }
+
+    private async void RefreshBoxSetsAfterPlayback(PlaybackProgressUpdated change)
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => RefreshBoxSetsAfterPlayback(change)); return; }
+        var search = _searchCts; var query = SearchBox.Text.Trim();
+        if (search == null || !IsCurrentSearchOwner(search, query)) return;
+        try { await change.Persisted; } catch { return; }
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (IsCurrentSearchOwner(search, query)) RefreshBoxSets();
+        });
+    }
+
     private async Task<List<RequestMediaResult>> SearchRequestsAsync(string query, CancellationToken ct)
     {
         if (!_requestDiscoveryEnabled || !_apiClient.IsCurrentContext(_dialogContext)) return [];
@@ -366,7 +412,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void Render()
     {
-        LoadingPanel.Visibility = (_catalogPending || _peoplePending) && !_searchFailed && _results.Count + _peopleResults.Count == 0
+        LoadingPanel.Visibility = (_catalogPending || _peoplePending || _boxSets.IsLoading) && !_searchFailed && _results.Count + _peopleResults.Count + _boxSets.Items.Count == 0
             ? Visibility.Visible : Visibility.Collapsed;
 
         var query = SearchBox.Text.Trim();
@@ -374,7 +420,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _peopleFirst = _peopleResults.Any(person => person.Name.Trim().Equals(query, StringComparison.OrdinalIgnoreCase));
         var catalogKeys = _results.Select(item => "catalog:" + item.ContentId);
         var peopleKeys = _peopleResults.Select(person => "person:" + person.Id);
-        _selection.Replace((_peopleFirst ? peopleKeys.Concat(catalogKeys) : catalogKeys.Concat(peopleKeys))
+        _selection.Replace(_boxSets.Items.Select(set => $"box-set:{set.LibraryId}:{set.Id}")
+            .Concat(_peopleFirst ? peopleKeys.Concat(catalogKeys) : catalogKeys.Concat(peopleKeys))
             .Concat(_requestResults.Select(item => $"request:{item.MediaType}:{item.TmdbId}")));
         SyncSelectionHighlight();
         if (string.IsNullOrEmpty(query))
@@ -392,14 +439,14 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         ResultsPanel.Children.Clear();
 
         EmptyText.Visibility = Visibility.Collapsed;
-        if (_searchFailed || _peopleSearchFailed && _results.Count + _peopleResults.Count == 0)
+        if ((_searchFailed || _peopleSearchFailed) && _results.Count + _peopleResults.Count + _boxSets.Items.Count == 0)
         {
             EmptyText.Text = "Could not load results. Press Enter to open the search page.";
             EmptyText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
             EmptyText.Padding = new Thickness(12, 16, 12, 16);
             EmptyText.Visibility = Visibility.Visible;
         }
-        else if (!_catalogPending && !_peoplePending && !_requestsPending && _results.Count + _peopleResults.Count + _requestResults.Count == 0)
+        else if (!_catalogPending && !_peoplePending && !_requestsPending && !_boxSets.IsLoading && _results.Count + _peopleResults.Count + _requestResults.Count + _boxSets.Items.Count == 0)
         {
             EmptyText.Text = "No matches";
             EmptyText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
@@ -409,16 +456,22 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
         void AddCatalogRows()
         {
-            if (_results.Count > 0 && _peopleResults.Count > 0)
+            if (_results.Count > 0 && (_peopleResults.Count > 0 || _boxSets.Items.Count > 0))
             {
                 if (_peopleFirst) AddGroupDivider();
                 AddGroupHeading("TITLES");
             }
             for (int i = 0; i < _results.Count; i++)
-                ResultsPanel.Children.Add(BuildResultRow(_results[i], (_peopleFirst ? _peopleResults.Count : 0) + i));
+                ResultsPanel.Children.Add(BuildResultRow(_results[i], _boxSets.Items.Count + (_peopleFirst ? _peopleResults.Count : 0) + i));
         }
         void AddGroupHeading(string text) => ResultsPanel.Children.Add(new TextBlock { Text = text, FontSize = 10, FontWeight = FontWeights.Medium, LineHeight = 40d / 3, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, CharacterSpacing = 100, Margin = new Thickness(12, 8, 12, 4), Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         void AddGroupDivider() => ResultsPanel.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 4, 0, 4), Background = new SolidColorBrush(Colors.White) { Opacity = .05 } });
+        if (_boxSets.Items.Count > 0)
+        {
+            AddGroupHeading("BOX SETS");
+            for (var i = 0; i < _boxSets.Items.Count; i++) ResultsPanel.Children.Add(BuildBoxSetRow(_boxSets.Items[i], i));
+            if (_results.Count + _peopleResults.Count > 0) AddGroupDivider();
+        }
         if (!_peopleFirst) AddCatalogRows();
         if (_peopleResults.Count > 0)
         {
@@ -427,7 +480,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             for (var i = 0; i < _peopleResults.Count; i++)
             {
                 var person = _peopleResults[i];
-                ResultsPanel.Children.Add(BuildResultRow(new MediaItem { ContentId = person.Id, Title = person.Name, PosterUrl = person.PhotoUrl, Type = "person" }, (_peopleFirst ? 0 : _results.Count) + i));
+                ResultsPanel.Children.Add(BuildResultRow(new MediaItem { ContentId = person.Id, Title = person.Name, PosterUrl = person.PhotoUrl, Type = "person" }, _boxSets.Items.Count + (_peopleFirst ? 0 : _results.Count) + i));
             }
         }
         if (_peopleFirst) AddCatalogRows();
@@ -483,10 +536,34 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             }
             var suggestions = new StackPanel { Padding = new Thickness(4) };
             for (var i = 0; i < _requestResults.Count; i++)
-                suggestions.Children.Add(BuildRequestRow(_requestResults[i], _results.Count + _peopleResults.Count + i));
+                suggestions.Children.Add(BuildRequestRow(_requestResults[i], _boxSets.Items.Count + _results.Count + _peopleResults.Count + i));
             ResultsPanel.Children.Add(suggestions);
         }
         SyncSelectionHighlight();
+    }
+
+    private Button BuildBoxSetRow(BoxSetSummary set, int index)
+    {
+        var thumb = new Grid { Width = 40, Height = 56, Margin = new Thickness(0, 4, 4, 0) };
+        thumb.Children.Add(new Border { Background = (Brush)Application.Current.Resources["BorderBrush"], CornerRadius = new CornerRadius(5), Margin = new Thickness(4, -4, -4, 4) });
+        thumb.Children.Add(new Border { Background = (Brush)Application.Current.Resources["SurfaceBrush"], CornerRadius = new CornerRadius(5), Margin = new Thickness(2, -2, -2, 2) });
+        var face = new Grid(); var fallback = new DefaultArtwork(); fallback.Reset("movie", set.PosterThumbhash); _ = fallback.ShowThumbhashAsync(); face.Children.Add(fallback);
+        if (!string.IsNullOrWhiteSpace(set.PosterUrl)) face.Children.Add(new Image { Source = RemoteImageConverter.Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill });
+        thumb.Children.Add(face);
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = set.Title, FontSize = 14, FontWeight = FontWeights.Medium, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
+        text.Children.Add(new TextBlock { Text = $"Box set · {set.MovieCount} films" + (set.Years.Length > 0 ? " · " + set.Years : ""), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        grid.Children.Add(thumb); Grid.SetColumn(text, 1); grid.Children.Add(text);
+        var enter = CreateKeyChip("↵"); enter.Tag = "QuickSelectedEnter"; enter.Visibility = Visibility.Collapsed; AutomationProperties.SetAccessibilityView(enter, AccessibilityView.Raw); Grid.SetColumn(enter, 2); grid.Children.Add(enter);
+        var row = new Button { Tag = index, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Colors.Transparent), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = new Border { CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 12, 8), Child = grid } };
+        AutomationProperties.SetName(row, $"Open {set.Title}, Box set, {set.MovieCount} films, {set.Years}");
+        var owner = _searchCts; var query = _renderedQuery; var generation = _boxSets.Generation;
+        row.Click += (_, _) => { if (owner != null && IsCurrentSearchOwner(owner, query) && _boxSets.CanOpen(set, generation)) PickResult(index); };
+        row.PointerMoved += (_, _) => { if (_boxSets.CanOpen(set, generation)) SelectResultByPointer($"box-set:{set.LibraryId}:{set.Id}"); };
+        return row;
     }
 
     private FrameworkElement BuildResultRow(MediaItem item, int index)
@@ -581,7 +658,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         };
         AutomationProperties.SetName(row,
             $"Open {item.Title}, {string.Join(", ", subtitle)}");
-        row.Click += (_, _) => PickResult(index);
+        var callbackOwner = _searchCts; var callbackQuery = _renderedQuery;
+        row.Click += (_, _) => { if (callbackOwner != null && IsCurrentSearchOwner(callbackOwner, callbackQuery)) PickResultByKey((item.Type == "person" ? "person:" : "catalog:") + item.ContentId); };
         row.PointerMoved += (_, _) => SelectResultByPointer((item.Type == "person" ? "person:" : "catalog:") + item.ContentId);
         if (string.IsNullOrWhiteSpace(item.PlayContentId)) return row;
         var container = new Grid { Tag = index };
@@ -676,7 +754,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         };
         AutomationProperties.SetName(row,
             $"Open request details for {item.Title}, {string.Join(", ", metadata)}");
-        row.Click += (_, _) => PickResult(index);
+        var callbackOwner = _searchCts; var callbackQuery = _renderedQuery;
+        row.Click += (_, _) => { if (callbackOwner != null && IsCurrentSearchOwner(callbackOwner, callbackQuery)) PickResultByKey($"request:{item.MediaType}:{item.TmdbId}"); };
         row.PointerMoved += (_, _) => SelectResultByPointer($"request:{item.MediaType}:{item.TmdbId}");
         return row;
     }
@@ -710,7 +789,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         var hasQuery = !string.IsNullOrEmpty(SearchBox.Text.Trim());
         EscapeHint.Visibility = wide && !hasQuery ? Visibility.Visible : Visibility.Collapsed;
         SeeAllHint.Visibility = wide && hasQuery && _selection.Index < 0 && LoadingPanel.Visibility != Visibility.Visible
-            && ResultsScroll.Visibility == Visibility.Visible && _results.Count + _peopleResults.Count + _requestResults.Count > 0
+            && ResultsScroll.Visibility == Visibility.Visible && _boxSets.Items.Count + _results.Count + _peopleResults.Count + _requestResults.Count > 0
             ? Visibility.Visible : Visibility.Collapsed;
         SearchFooter.Visibility = wide && hasQuery ? Visibility.Visible : Visibility.Collapsed;
         FrameworkElement? selectedElement = null;
@@ -792,11 +871,25 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         }
     }
 
+    private void PickResultByKey(string key)
+    {
+        _selection.Select(key);
+        PickResult(_selection.Index);
+    }
+
     private void PickResult(int index)
     {
-        if (_renderedQuery != SearchBox.Text.Trim() || index < 0 || index >= _results.Count + _peopleResults.Count + _requestResults.Count) return;
-        this.Hide();
+        if (_searchCts == null || !IsCurrentSearchOwner(_searchCts, _renderedQuery) || index < 0
+            || index >= _boxSets.Items.Count + _results.Count + _peopleResults.Count + _requestResults.Count) return;
         var nav = App.Services.GetRequiredService<NavigationService>();
+        if (index < _boxSets.Items.Count)
+        {
+            var set = _boxSets.Items[index];
+            if (!_boxSets.CanOpen(set, _boxSets.Generation)) return;
+            Hide(); nav.Navigate(typeof(BoxSetPage), new BoxSetNavigationArgs(set.Id, set.LibraryId)); return;
+        }
+        index -= _boxSets.Items.Count;
+        this.Hide();
         if (_peopleFirst && index < _peopleResults.Count)
             nav.Navigate(typeof(PersonDetailPage), _peopleResults[index].Id);
         else if (_peopleFirst && index < _peopleResults.Count + _results.Count)
