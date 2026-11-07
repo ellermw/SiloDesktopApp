@@ -327,6 +327,10 @@ public sealed partial class LibraryPage : Page,
                 ViewModel.CancelCatalogLoads();
                 ClearVirtualCards();
             }
+            // Resume retained current binds before even the library-flags read;
+            // slow policy revalidation must not block cached artwork on return.
+            ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
+            UpdateLibraryArtworkActivity();
             var visit = _groupedLibraryVisit;
             _libraryFlagsDirty = true;
             await RefreshLibraryFlagsAsync();

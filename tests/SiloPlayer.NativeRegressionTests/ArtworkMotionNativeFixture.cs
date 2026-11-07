@@ -133,16 +133,27 @@ internal static partial class ArtworkMotionNativeFixture
                 "Library departure cancels and clears read-ahead before releasing the deferred artwork policy.");
             Check(!wire.Requests.ContainsKey("/art/library-retained"), "Library departure cancels a pending current bind.");
             var heldReads = wire.HeldLibraryStateReads;
+            var heldFlagsReads = wire.HeldLibraryFlagsReads;
+            var flagsGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var stateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.LibraryFlagsReadGate = flagsGate;
             wire.LibraryStateReadGate = stateGate;
             try
             {
                 frame.GoBack();
-                await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && wire.HeldLibraryStateReads > heldReads);
+                await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && wire.HeldLibraryFlagsReads > heldFlagsReads);
                 await Until(() => slots.Any(card => card.MediaItem?.PosterUrl == retainedItem.PosterUrl && CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+                Check(!flagsGate.Task.IsCompleted && wire.HeldLibraryStateReads == heldReads,
+                    "Retained library slots resume before the include_hidden library-flags read completes.");
+                flagsGate.TrySetResult();
+                await Until(() => wire.HeldLibraryStateReads > heldReads);
                 Check(!stateGate.Task.IsCompleted, "Retained library slots resume before server-backed state restoration completes.");
             }
-            finally { wire.LibraryStateReadGate = null; stateGate.TrySetResult(); }
+            finally
+            {
+                wire.LibraryFlagsReadGate = null; flagsGate.TrySetResult();
+                wire.LibraryStateReadGate = null; stateGate.TrySetResult();
+            }
             await Task.Delay(300); // Drain restoration before the next tab interaction.
             Program.Log("PASS artwork cached LibraryPage resumes missing current bind.");
             await RecommendedCasesAsync(page, frame, wire, client);
@@ -336,8 +347,8 @@ internal static partial class ArtworkMotionNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int InvalidCursors, LibraryId = 11;
-        internal int ImageRequests, HeldLibraryStateReads;
-        internal TaskCompletionSource? LibraryStateReadGate;
+        internal int ImageRequests, HeldLibraryStateReads, HeldLibraryFlagsReads;
+        internal TaskCompletionSource? LibraryStateReadGate, LibraryFlagsReadGate;
         internal ConcurrentDictionary<string, int> Requests = new();
         internal ConcurrentDictionary<string, TaskCompletionSource> Gates = new();
         internal List<int> Seeks { get; } = [];
@@ -352,6 +363,12 @@ internal static partial class ArtworkMotionNativeFixture
                 var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
                 response.Content.Headers.ContentType = new("image/png");
                 return Gates.TryGetValue(path, out var gate) ? CompleteImageAsync(response, gate) : Task.FromResult(response);
+            }
+            if (path == "/api/v2/user/libraries" && request.RequestUri.Query.Contains("include_hidden=true", StringComparison.Ordinal)
+                && LibraryFlagsReadGate is { } flagsGate)
+            {
+                Interlocked.Increment(ref HeldLibraryFlagsReads);
+                return CompleteLibraryFlagsReadAsync(flagsGate, ct);
             }
             if (path == "/api/v2/catalog/search/capabilities") return Reply(new { letter_index = true });
             if (path == "/api/v2/catalog/letters") return Reply(new
@@ -405,6 +422,11 @@ internal static partial class ArtworkMotionNativeFixture
         }
         private static Task<HttpResponseMessage> EffectiveSettingsReply()
             => Reply(new { items = new[] { new { key = "catalog.hide_unwatched_episode_images", value = true }, new { key = "catalog.hide_unwatched_episode_overviews", value = true } } });
+        private static async Task<HttpResponseMessage> CompleteLibraryFlagsReadAsync(TaskCompletionSource gate, CancellationToken ct)
+        {
+            await gate.Task.WaitAsync(ct);
+            return await Reply(new { items = new[] { new { id = 11, name = "Synthetic artwork", type = "movie", enabled = true } } });
+        }
         private static async Task<HttpResponseMessage> CompleteLibraryStateReadAsync(TaskCompletionSource gate, CancellationToken ct)
         { await gate.Task.WaitAsync(ct); return await EffectiveSettingsReply(); }
         private static async Task<HttpResponseMessage> CompleteImageAsync(HttpResponseMessage response, TaskCompletionSource gate)

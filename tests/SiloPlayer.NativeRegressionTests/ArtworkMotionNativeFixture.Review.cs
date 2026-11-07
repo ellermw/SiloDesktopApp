@@ -84,12 +84,21 @@ internal static partial class ArtworkMotionNativeFixture
         await Until(() => !page.IsLoaded && cards.All(card => CardImage(card).Source == null));
         await Task.Delay(200); // Drain departure state writes before holding the return read.
         var heldReads = wire.HeldLibraryStateReads;
+        var heldFlagsReads = wire.HeldLibraryFlagsReads;
+        var flagsGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.LibraryFlagsReadGate = flagsGate;
         wire.LibraryStateReadGate = stateGate;
         try
         {
             frame.GoBack();
-            await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && wire.HeldLibraryStateReads > heldReads);
+            await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && wire.HeldLibraryFlagsReads > heldFlagsReads);
+            await Until(() => cards.All(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+            Check(!flagsGate.Task.IsCompleted && wire.HeldLibraryStateReads == heldReads &&
+                requests.All(request => wire.Requests.GetValueOrDefault(request.Path) == request.Count),
+                "Cached Recommended poster and landscape artwork resumes without network before the include_hidden library-flags read completes.");
+            flagsGate.TrySetResult();
+            await Until(() => wire.HeldLibraryStateReads > heldReads);
             if (changeAccessContext) client.InvalidateAccessContext();
             // Deliberately do not click a tab: Loaded must recover these retained
             // poster and landscape binds using decoded/disk cache while settings wait.
@@ -97,7 +106,11 @@ internal static partial class ArtworkMotionNativeFixture
             Check(!stateGate.Task.IsCompleted && requests.All(request => wire.Requests.GetValueOrDefault(request.Path) == request.Count),
                 $"Cached Recommended artwork resumes without network before settings complete (access race={changeAccessContext}).");
         }
-        finally { wire.LibraryStateReadGate = null; stateGate.TrySetResult(); }
+        finally
+        {
+            wire.LibraryFlagsReadGate = null; flagsGate.TrySetResult();
+            wire.LibraryStateReadGate = null; stateGate.TrySetResult();
+        }
         await Task.Delay(300); // Let restoration reach ShowTab or its stale-context early exit.
         if (changeAccessContext)
         {
