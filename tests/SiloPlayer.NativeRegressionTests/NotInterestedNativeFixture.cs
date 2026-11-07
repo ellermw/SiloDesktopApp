@@ -71,6 +71,9 @@ internal static class NotInterestedNativeFixture
             Require(stableCard != null, "actual mounted Home poster exists");
             var item = recommended.Items.Single(item => item.ContentId == "movie:one");
             var menu = MediaItemMenu.Build(item, owner: owner);
+            var menuContext = client.CaptureContext();
+            client.InvalidateAccessContext();
+            Require(!client.IsCurrentContext(menuContext), "reconnect retires the retained menu's build-time request context");
             menu.ShowAt(owner);
             await Until(() => menu.Items.OfType<MenuFlyoutItem>().Any(action => action.Text == "Not Interested" && action.Visibility == Visibility.Visible));
             var action = menu.Items.OfType<MenuFlyoutItem>().Single(action => action.Text == "Not Interested");

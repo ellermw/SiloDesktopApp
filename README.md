@@ -1,22 +1,41 @@
 # Silo Desktop Player
 
+<!-- badges:start -->
+[![Stable](https://img.shields.io/github/v/release/ellermw/SiloDesktopApp?label=stable&color=2ea44f)](https://github.com/ellermw/SiloDesktopApp/releases/latest)
+[![Beta](https://img.shields.io/badge/beta-1.2.634--beta.1-orange)](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.634-beta.1)
+[![Downloads](https://img.shields.io/github/downloads/ellermw/SiloDesktopApp/total)](https://github.com/ellermw/SiloDesktopApp/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)](#download)
+[![Open pull requests](https://img.shields.io/github/issues-pr/ellermw/SiloDesktopApp)](https://github.com/ellermw/SiloDesktopApp/pulls)
+[![Last commit](https://img.shields.io/github/last-commit/ellermw/SiloDesktopApp/beta)](https://github.com/ellermw/SiloDesktopApp/commits/beta)
+<!-- badges:end -->
+
 A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. Browse your libraries and play media with broad codec support, hardware decoding and a preference for direct play.
 
 ## Download
 
-**Current release: 1.2.519** · [View latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest)
+**Current release: 1.2.587** · [View latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest)
 
-[**Download version 1.2.519 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.519/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.587 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.587/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.519) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.519/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.587) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.587/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-See the [release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.519) for what's new in 1.2.519.
+<!-- beta-download:start -->
+### Beta
+
+**Latest beta: 1.2.634-beta.1** · An optional pre-release for testing, which may be less stable than the current release.
+
+[**Download beta 1.2.634-beta.1 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.634-beta.1/SiloInstaller-Windows-x64.exe)
+
+[Beta release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.634-beta.1) · [Beta SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.634-beta.1/SiloInstaller-Windows-x64.exe.sha256)
+<!-- beta-download:end -->
+
+See the [release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.587) for what's new in 1.2.587.
 
 The Silo icons, stable taskbar identity, centered keep-open updates and subtitle continuity are retained. For pins created before 1.2.514, unpin the old entry once, launch updated Silo and pin it again. The progress window uses the currently installed helper; updates started after 1.2.515's helper is installed use its corrected Silo icon. Legacy installations require one full installer migration; compatible versioned installations reuse unchanged files.
 
-The download above and GitHub's **Latest** release identify the supported current version. Older releases, tags and version numbers in past commit messages are historical records. Development candidates are not additional update channels.
+The download above and GitHub's **Latest** release identify the supported current version. Older releases, tags and version numbers in past commit messages are historical records. The Beta download is an optional pre-release; everyone else stays on the current release.
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 

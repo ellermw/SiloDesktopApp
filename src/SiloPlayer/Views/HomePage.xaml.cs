@@ -34,6 +34,7 @@ public sealed partial class HomePage : Page
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        ArtworkViewport.For(ContentScrollViewer);
         // Reuse the mounted home surface instead of reconstructing its hero,
         // section rows, and cards on every top-level navigation.
         NavigationCacheMode = NavigationCacheMode.Required;

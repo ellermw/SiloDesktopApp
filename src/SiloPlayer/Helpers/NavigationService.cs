@@ -110,6 +110,14 @@ public class NavigationService
         var pageType = _currentPageType;
         var parameter = _currentParameter;
         if (frame == null || pageType == null) return false;
+        if (pageType == typeof(SiloPlayer.Views.BoxSetPage) && frame.Content is SiloPlayer.Views.BoxSetPage boxSet)
+        {
+            // Replacing this route would cancel its accepted Play while the player
+            // is still preparing in Idle/Minimized. The model refreshes read authority
+            // in place, retaining mounted detail and retiring a changed viewer itself.
+            _ = boxSet.ViewModel.RefreshAsync();
+            return true;
+        }
         var forward = frame.ForwardStack.ToArray();
         if (frame.Content is Page current) current.NavigationCacheMode = NavigationCacheMode.Disabled;
         _replacement = new(frame, pageType, parameter, pageType, parameter);

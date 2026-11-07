@@ -5,6 +5,9 @@ using SiloPlayer.Core.Services.Updates;
 
 namespace SiloPlayer.Tests;
 
+// These capability checks enumerate SiloPlayer images; the transaction fixture
+// starts real dummy clients with that name and must not race this global scan.
+[Collection("Synthetic Silo process lifetime")]
 public sealed class FullInstallerFallbackTests
 {
     [Fact]
