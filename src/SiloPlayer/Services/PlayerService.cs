@@ -5744,8 +5744,18 @@ public partial class PlayerService : IDisposable
             var position = CurrentMediaPosition;
             transportMutationAttempted = true;
             _subtitleReplanPauseIntent = PauseIntent();
-            SetSwitchingContent(true);
-            IsLoading = true;
+            lock (_playbackBusyLock)
+            {
+                // A subtitle pick can queue behind a quality/audio/version replan.
+                // Reassigning its busy flags would retire that operation's revision
+                // before either plan is accepted, stranding its pending native load.
+                // Borrow the existing busy state until our own plan starts a load.
+                if (!HasOtherTransportOwner())
+                {
+                    SetSwitchingContent(true);
+                    IsLoading = true;
+                }
+            }
             _mpv.Pause();
             if (loadingOwner != null)
                 App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
