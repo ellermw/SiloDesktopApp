@@ -154,8 +154,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                 item.Overview = refreshed.Overview;
                 item.PendingTranslationLanguage = refreshed.PendingTranslationLanguage;
                 item.MachineTranslatedFields = refreshed.MachineTranslatedFields;
+                var parentChanged = refreshed.HasAuthoritativeSeriesId && refreshed.SeriesId != item.SeriesId;
                 if (refreshed.HasAuthoritativeSeriesId) item.SeriesId = refreshed.SeriesId;
-                if (refreshed.SeriesTitle != null) item.SeriesTitle = refreshed.SeriesTitle;
+                if (refreshed.SeriesTitle != null || parentChanged) item.SeriesTitle = refreshed.SeriesTitle;
             }
             _seriesOverview = series;
             _overviewLibrary = library;
@@ -381,7 +382,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private static bool IsViewerOnlyLeaf(MediaStateInvalidated message, MediaItemDetail item) =>
         item.Type is not ("series" or "season")
         && message.ViewerStateContentIds?.Contains(item.ContentId) == true
-        && message.PlaybackStateContentIds?.Contains(item.ContentId) != true;
+        && !PlaybackScope(message).Contains(item.ContentId);
 
     private static MediaStateInvalidated MergeState(MediaStateInvalidated? earlier, MediaStateInvalidated later) =>
         earlier == null || earlier.Context != later.Context ? later : later with
@@ -452,13 +453,11 @@ public partial class ItemDetailViewModel : ObservableObject,
                         if (command is { IsRunning: true, ExecutionTask: { } viewerMutation })
                             await viewerMutation.WaitAsync(ct);
                     await _detailPrefetchCache.WaitForProgressSettlementAsync(ct, item.ContentId, ProgressSeriesScope(item));
-                    await WaitForLocalProgressSettlementAsync(ct);
+                    revision = await WaitForLocalProgressSettlementAsync(ct);
                     // A mutation can start while another write/save is pending.
                 } while (ToggleWatchedCommand.IsRunning || ToggleFavoriteCommand.IsRunning
                     || ToggleWatchlistCommand.IsRunning || SetRatingCommand.IsRunning);
-                if (!_stateRefreshActive || ct.IsCancellationRequested || !ReferenceEquals(Item, item)
-                    || LibraryId != libraryId || !_catalogApi.IsCurrentContext(message.Context)) continue;
-                revision = Volatile.Read(ref _localStateGeneration);
+                if (!Current()) continue;
                 _detailPrefetchCache.Invalidate(item.ContentId);
                 // Mounted reads own their transport and snapshot. Raw ticks
                 // still clear speculative cache entries, without retrying or
@@ -695,7 +694,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         && (left.Played, left.IsInProgress, left.PositionSeconds, left.DurationSeconds)
         == (right.Played, right.IsInProgress, right.PositionSeconds, right.DurationSeconds);
 
-    private async Task WaitForLocalProgressSettlementAsync(CancellationToken ct)
+    private async Task<long> WaitForLocalProgressSettlementAsync(CancellationToken ct)
     {
         while (true)
         {
@@ -704,7 +703,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             await pending.WaitAsync(ct);
             // A newer final save may have joined while this barrier waited.
             lock (_remoteStateGate)
-                if (ReferenceEquals(pending, _pendingLocalProgressSave)) return;
+                if (ReferenceEquals(pending, _pendingLocalProgressSave))
+                    // Return the revision of this settled barrier, rather than
+                    // letting a caller borrow a newer still-pending save's revision.
+                    return Volatile.Read(ref _localStateGeneration);
         }
     }
 
@@ -865,6 +867,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        if (message.Identity is { } identity && !_catalogApi.IsCurrentIdentityContext(identity)) return;
         if (IsBoxSetMemberOrReading(message.ContentId)) _ = RefreshBoxSetAfterPlaybackAsync(message);
         _detailPrefetchCache.Invalidate(message.ContentId);
         // Retain scope until the initial snapshot supplies its series ID. An
@@ -952,10 +955,9 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             await ProgressSaveSettledAsync(pendingProgressSave).WaitAsync(cancellationToken);
-            await WaitForLocalProgressSettlementAsync(cancellationToken);
+            localRevision = await WaitForLocalProgressSettlementAsync(cancellationToken);
             // Progress arriving during settlement belongs to this refresh;
             // watched commands and navigation still retire its authority.
-            localRevision = Volatile.Read(ref _localStateGeneration);
             // A playback-owning sweep begun after this read owns the newer
             // snapshot, even if this response (or its seasons) completes last.
             remoteRevision = Volatile.Read(ref _remotePlaybackStateGeneration);
@@ -1355,7 +1357,9 @@ public partial class ItemDetailViewModel : ObservableObject,
         using var owner = new CancellationTokenSource();
         _metadataLoadCts = owner;
         var context = _catalogApi.CaptureContext();
+        var identity = _catalogApi.CaptureIdentityContext();
         var libraryId = LibraryId;
+        var completed = false;
         bool Current() => !owner.IsCancellationRequested && ReferenceEquals(_metadataLoadCts, owner)
             && _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
             && _catalogApi.IsCurrentContext(context);
@@ -1431,6 +1435,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
             OnPropertyChanged(nameof(RatingDisplay));
+            completed = true;
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
         catch (Exception ex)
@@ -1442,19 +1447,30 @@ public partial class ItemDetailViewModel : ObservableObject,
         finally
         {
             if (ReferenceEquals(_metadataLoadCts, owner))
+            {
+                if (!completed && !owner.IsCancellationRequested && _stateRefreshActive
+                    && ReferenceEquals(Item, item) && LibraryId == libraryId && _catalogApi.IsCurrentIdentityContext(identity))
+                    MetadataRefreshErrorMessage = "Silo couldn't refresh this item's metadata. Displayed information may be out of date.";
                 _metadataLoadCts = null;
+            }
         }
     }
 
     private async Task CheckFavoriteWatchlistAsync(string contentId, CancellationTokenSource owner)
     {
+        var item = Item;
+        var context = _catalogApi.CaptureContext();
+        var localRevision = Volatile.Read(ref _localStateGeneration);
+        var remoteRevision = RemoteStateRevision;
         try
         {
             var ct = owner.Token;
             var favTask = _catalogApi.GetFavoriteItemAsync(contentId, ct);
             var wlTask = _catalogApi.GetWatchlistItemAsync(contentId, ct);
             await Task.WhenAll(favTask, wlTask);
-            if (!ReferenceEquals(_loadCts, owner) || Item?.ContentId != contentId) return;
+            if (!ReferenceEquals(_loadCts, owner) || !_stateRefreshActive || !ReferenceEquals(Item, item)
+                || Item?.ContentId != contentId || !_catalogApi.IsCurrentContext(context)
+                || localRevision != Volatile.Read(ref _localStateGeneration) || remoteRevision != RemoteStateRevision) return;
             IsFavorite = await favTask;
             InWatchlist = await wlTask;
         }
@@ -1470,13 +1486,18 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task LoadRatingAsync()
     {
-        var contentId = Item?.ContentId;
+        var item = Item;
+        var contentId = item?.ContentId;
         if (string.IsNullOrWhiteSpace(contentId)) return;
+        var context = _catalogApi.CaptureContext();
+        var localRevision = Volatile.Read(ref _localStateGeneration);
+        var remoteRevision = RemoteStateRevision;
 
         try
         {
             var rating = await _catalogApi.GetRatingAsync(contentId);
-            if (Item?.ContentId != contentId) return;
+            if (!_stateRefreshActive || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)
+                || localRevision != Volatile.Read(ref _localStateGeneration) || remoteRevision != RemoteStateRevision) return;
             UserRating = rating;
         }
         catch
@@ -1493,6 +1514,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         var seriesId = item?.SeriesId;
         if (string.IsNullOrWhiteSpace(contentId)) return;
         var context = _catalogApi.CaptureContext();
+        var identity = _catalogApi.CaptureIdentityContext();
         bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context);
 
         // B13 + F4: optimistic rating swap. Clicking an already-selected star
@@ -1508,9 +1530,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.SetRatingAsync(contentId, nextRating.Value);
 
-            if (!_catalogApi.IsCurrentContext(context)) return;
+            var publicationContext = _catalogApi.CaptureContext();
+            if (!_catalogApi.IsCurrentIdentityContext(identity)) return;
             var message = new MediaSurfaceChanged(
-                MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, context);
+                MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating, publicationContext);
             // Accepted writes still invalidate app-lifetime state after this viewer departs.
             if (!Current()) _suppressedViewerFeedback = message;
             try { WeakReferenceMessenger.Default.Send(message); }
@@ -1532,6 +1555,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         var seriesId = item?.SeriesId;
         if (string.IsNullOrWhiteSpace(contentId)) return;
         var context = _catalogApi.CaptureContext();
+        var identity = _catalogApi.CaptureIdentityContext();
 
         // B13 + F4: optimistic update — flip the flag immediately so the UI
         // responds instantly, then call the API. If it fails, revert. Publish
@@ -1550,11 +1574,12 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.MarkWatchedAsync(contentId);
 
-            if (!_catalogApi.IsCurrentContext(context)) return;
+            var publicationContext = _catalogApi.CaptureContext();
+            if (!_catalogApi.IsCurrentIdentityContext(identity)) return;
             var message = new MediaSurfaceChanged(
                 wasWatched ? MediaSurfaceChangeKind.WatchedCleared : MediaSurfaceChangeKind.WatchedMarked,
                 contentId,
-                seriesId, context: context);
+                seriesId, context: publicationContext);
             // Accepted writes still invalidate app-lifetime state after navigation
             // or newer local intent, without granting this VM stale feedback authority.
             if (!Current()) _suppressedWatchedFeedback = message;
@@ -1604,7 +1629,12 @@ public partial class ItemDetailViewModel : ObservableObject,
         var contentId = Item.ContentId;
         var item = Item;
         var context = _catalogApi.CaptureContext();
+        var identity = _catalogApi.CaptureIdentityContext();
+        var libraryId = LibraryId;
         var generation = Interlocked.Increment(ref _seasonsLoadGeneration);
+        var committed = false;
+        bool OwnsList() => _stateRefreshActive && generation == Volatile.Read(ref _seasonsLoadGeneration)
+            && ReferenceEquals(Item, item) && LibraryId == libraryId && _catalogApi.IsCurrentIdentityContext(identity);
 
         IsSeasonsLoading = true;
         SeasonsLoadFailed = false;
@@ -1616,15 +1646,23 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 var watchedRevision = WatchedStateRevision;
                 var remoteRevision = RemoteStateRevision;
-                response = await _catalogApi.GetSeasonsAsync(contentId, LibraryId);
-                if (generation != Volatile.Read(ref _seasonsLoadGeneration)
-                    || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
-                if (++attempt == 2 || watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
+                response = await _catalogApi.GetSeasonsAsync(contentId, libraryId);
+                if (!OwnsList() || !_catalogApi.IsCurrentContext(context)) return;
+                if (watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
+                // Empty initial lists are not repaired by a mounted-state sweep.
+                // After the normal trailing read, allow one owned correction,
+                // then expose Retry rather than install a known pre-event list.
+                if (++attempt == 3)
+                {
+                    SeasonsLoadFailed = true;
+                    return;
+                }
             }
             Seasons.Clear();
             foreach (var season in response.Seasons)
                 Seasons.Add(season);
             _seasonsLoaded = true;
+            committed = true;
 
             // Auto-select the first season
             if (Seasons.Count > 0)
@@ -1632,13 +1670,13 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
         catch (Exception ex)
         {
-            if (generation != Volatile.Read(ref _seasonsLoadGeneration)
-                || Item?.ContentId != contentId) return;
+            if (!OwnsList()) return;
             SeasonsLoadFailed = true;
             System.Diagnostics.Debug.WriteLine($"Seasons load failed for {contentId}: {ex}");
         }
         finally
         {
+            if (!committed && OwnsList()) SeasonsLoadFailed = true;
             if (generation == Volatile.Read(ref _seasonsLoadGeneration)
                 && Item?.ContentId == contentId)
                 IsSeasonsLoading = false;
@@ -1653,7 +1691,12 @@ public partial class ItemDetailViewModel : ObservableObject,
         var contentId = Item.ContentId;
         var item = Item;
         var context = _catalogApi.CaptureContext();
+        var identity = _catalogApi.CaptureIdentityContext();
+        var libraryId = LibraryId;
         var generation = Interlocked.Increment(ref _episodesLoadGeneration);
+        var committed = false;
+        bool OwnsList() => _stateRefreshActive && generation == Volatile.Read(ref _episodesLoadGeneration)
+            && ReferenceEquals(Item, item) && LibraryId == libraryId && _catalogApi.IsCurrentIdentityContext(identity);
 
         SelectedSeasonNumber = seasonNumber;
         EpisodesSeasonContentId = null;
@@ -1669,23 +1712,28 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 var watchedRevision = WatchedStateRevision;
                 var remoteRevision = RemoteStateRevision;
-                response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber, LibraryId);
-                if (generation != Volatile.Read(ref _episodesLoadGeneration)
-                    || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
-                if (++attempt == 2 || watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
+                response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber, libraryId);
+                if (!OwnsList() || !_catalogApi.IsCurrentContext(context)) return;
+                if (watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
+                if (++attempt == 3)
+                {
+                    EpisodesLoadFailed = true;
+                    return;
+                }
             }
             foreach (var episode in response.Episodes)
                 Episodes.Add(episode);
+            committed = true;
         }
         catch (Exception ex)
         {
-            if (generation != Volatile.Read(ref _episodesLoadGeneration)
-                || Item?.ContentId != contentId) return;
+            if (!OwnsList()) return;
             EpisodesLoadFailed = true;
             System.Diagnostics.Debug.WriteLine($"Episode load failed for season {seasonNumber}: {ex}");
         }
         finally
         {
+            if (!committed && OwnsList()) EpisodesLoadFailed = true;
             if (generation == Volatile.Read(ref _episodesLoadGeneration)
                 && Item?.ContentId == contentId)
                 IsEpisodesLoading = false;
@@ -1700,6 +1748,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         var contentId = item.ContentId;
         var seriesId = item.SeriesId;
         var context = _catalogApi.CaptureContext();
+        var identity = _catalogApi.CaptureIdentityContext();
         bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context);
 
         // B13 + F4: optimistic flip, revert on failure, publish on success.
@@ -1713,10 +1762,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.AddFavoriteAsync(contentId);
 
-            if (!_catalogApi.IsCurrentContext(context)) return;
+            var publicationContext = _catalogApi.CaptureContext();
+            if (!_catalogApi.IsCurrentIdentityContext(identity)) return;
             var message = new MediaSurfaceChanged(
                 wasFavorite ? MediaSurfaceChangeKind.FavoriteRemoved : MediaSurfaceChangeKind.FavoriteAdded,
-                contentId, seriesId, context: context);
+                contentId, seriesId, context: publicationContext);
             // App-lifetime surfaces still need accepted writes after this viewer departs.
             if (!Current()) _suppressedViewerFeedback = message;
             try { WeakReferenceMessenger.Default.Send(message); }
@@ -1737,6 +1787,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         var contentId = item.ContentId;
         var seriesId = item.SeriesId;
         var context = _catalogApi.CaptureContext();
+        var identity = _catalogApi.CaptureIdentityContext();
         bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context);
 
         // B13 + F4: optimistic flip, revert on failure, publish on success.
@@ -1750,10 +1801,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.AddToWatchlistAsync(contentId);
 
-            if (!_catalogApi.IsCurrentContext(context)) return;
+            var publicationContext = _catalogApi.CaptureContext();
+            if (!_catalogApi.IsCurrentIdentityContext(identity)) return;
             var message = new MediaSurfaceChanged(
                 wasInList ? MediaSurfaceChangeKind.WatchlistRemoved : MediaSurfaceChangeKind.WatchlistAdded,
-                contentId, seriesId, context: context);
+                contentId, seriesId, context: publicationContext);
             if (!Current()) _suppressedViewerFeedback = message;
             try { WeakReferenceMessenger.Default.Send(message); }
             finally { _suppressedViewerFeedback = null; }

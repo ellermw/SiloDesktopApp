@@ -53,7 +53,7 @@ public sealed class ShellNavigationReentrancySourceTests
         Assert.Contains("!ViewModel.IsEpisodesLoading", health);
         Assert.Contains("_seasonEpisodesLoads == 0", health);
         foreach (var member in new[] { "!_isTranslatingEpisodes", "_episodesTranslationStatusReads == 0", "!_episodesTranslationInterrupted",
-            "!_isTranslatingOverview", "_overviewTranslationStatusReads == 0", "!_overviewTranslationInterrupted",
+            "_translationCts == null", "_overviewPendingOwner == null", "_overviewTranslationStatusReads == 0", "!_overviewTranslationInterrupted",
             "_detailArtworkLoads == 0", "!_detailArtworkInterrupted" })
             Assert.Contains(member, health);
         Assert.Contains("!ViewModel.SeasonsLoadFailed", health);
@@ -95,16 +95,21 @@ public sealed class ShellNavigationReentrancySourceTests
         Assert.Contains("++_overviewTranslationStatusReads", configure);
         Assert.Contains("--_overviewTranslationStatusReads", configure);
         Assert.Contains("finally", configure);
-        Assert.Contains("ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context)", configure);
+        Assert.Contains("revision == _overviewConfigurationRevision", configure);
+        Assert.Contains("ReferenceEquals(navigation, _navigationCts) && ReferenceEquals(ViewModel.Item, item)", configure);
+        Assert.Contains("ViewModel.LibraryId == library", configure);
+        Assert.Contains("!configurationCompleted || !api.IsCurrentContext(context)", configure);
         Assert.Contains("_overviewTranslationInterrupted = true", configure);
         var translate = MethodBody(overview, "private async Task TranslateOverviewAsync(");
-        Assert.Contains("_isTranslatingOverview = true", translate);
-        Assert.Contains("_isTranslatingOverview = false", translate);
+        Assert.Contains("_translationCts = cts", translate);
+        Assert.Contains("if (ReferenceEquals(_translationCts, cts)) _translationCts = null", translate);
         Assert.Contains("ReferenceEquals(_translationCts, cts)", translate);
-        Assert.Contains("ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context)", translate);
+        Assert.Contains("var restoreControls = ControlsCurrent()", translate);
+        Assert.Contains("if (!api.IsCurrentContext(context) || api.LocalizedReadGeneration != language) _overviewTranslationInterrupted = true", translate);
         Assert.Contains("_overviewTranslationInterrupted = true", translate);
         var departed = MethodBody(page, "protected override void OnNavigatedFrom(");
-        Assert.Contains("_isTranslatingOverview = false", departed);
+        Assert.Contains("_translationCts?.Cancel();", departed);
+        Assert.Contains("_translationCts = null;", departed);
         Assert.Contains("_overviewTranslationInterrupted = false", departed);
         Assert.Contains("_detailArtworkInterrupted = false", departed);
     }

@@ -348,7 +348,7 @@ public sealed partial class MainWindow
             }
             using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await _playerService.CloseAsync().WaitAsync(drain.Token);
-            await _playerService.PendingProgressSave.WaitAsync(drain.Token);
+            await _playerService.AllPendingProgressSaves.WaitAsync(drain.Token);
             if(installer is IStagedAppUpdateInstaller stagedInstaller && stagedInstaller.HasPreparedHandoff)
             {stagedInstaller.ArmNormalClose();closeArmed=true;allowClose=true;}
             var state = _appUpdates.State;

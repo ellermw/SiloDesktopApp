@@ -30,10 +30,12 @@ public sealed partial class ItemDetailPage : Page
     public bool CanPreserveOnReconnect => ViewModel.Item != null
         && (ViewModel.Item.Type is "series" or "season")
         && ViewModel.FailureKind == DetailFailureKind.None
-        && !ViewModel.IsLoading && !ViewModel.IsMetadataRefreshing && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
+        && !ViewModel.IsLoading && !ViewModel.IsMetadataRefreshing && string.IsNullOrEmpty(ViewModel.MetadataRefreshErrorMessage)
+        && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
         && _seasonEpisodesLoads == 0 && _seriesPrimaryEpisodesTask is not { IsCompleted: false }
         && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
-        && !_isTranslatingOverview && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
+        && _translationCts == null && _overviewPendingOwner == null
+        && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
         && _detailArtworkLoads == 0 && !_detailArtworkInterrupted
         && !_interruptedCardArtwork.Any(border => border.IsLoaded)
         && _detailCompanionLoads == 0 && !_detailCompanionInterrupted
@@ -1183,7 +1185,6 @@ public sealed partial class ItemDetailPage : Page
         _translationCts?.Cancel();
         _translationCts?.Dispose();
         _translationCts = null;
-        _isTranslatingOverview = false;
         _overviewTranslationInterrupted = false;
         _translateButtonMode = false;
         _episodesTranslationCts?.Cancel();
@@ -3366,8 +3367,12 @@ public sealed partial class ItemDetailPage : Page
         var libraryId = ViewModel.LibraryId;
         // Realtime refreshes can replace the mounted season list during a read.
         var seasons = ViewModel.Seasons.ToArray();
+        var seasonMembership = seasons.Select(season => (season.ContentId, season.SeasonNumber)).ToArray();
+        (string ContentId, int EpisodeNumber)[]? episodeMembership = null;
         bool Current() => client.IsCurrentContext(authority) && ReferenceEquals(_navigationCts, navigation)
-            && ReferenceEquals(ViewModel.Item, item) && ViewModel.LibraryId == libraryId && IsCurrentDetail(item.ContentId);
+            && ReferenceEquals(ViewModel.Item, item) && ViewModel.LibraryId == libraryId && IsCurrentDetail(item.ContentId)
+            && (item.Type != "series" || ViewModel.Seasons.Select(season => (season.ContentId, season.SeasonNumber)).SequenceEqual(seasonMembership))
+            && (episodeMembership == null || ViewModel.Episodes.Select(episode => (episode.ContentId, episode.EpisodeNumber)).SequenceEqual(episodeMembership));
         if (!Current()) return;
         try
         {
@@ -3376,6 +3381,10 @@ public sealed partial class ItemDetailPage : Page
             if (!capabilities.Allowed || capabilities.State != "available" || !capabilities.StagedSelection) { App.Services.GetRequiredService<ToastService>().Error("Watch Together is unavailable on this server."); return; }
             var target = await ResolvePlayableContentIdForPlaybackAsync();
             if (!Current()) return;
+            // Resolving a season target may populate its canonical episode list.
+            var seasonEpisodes = ViewModel.Episodes.ToArray();
+            if (item.Type == "season")
+                episodeMembership = seasonEpisodes.Select(episode => (episode.ContentId, episode.EpisodeNumber)).ToArray();
             var panel = new StackPanel { Spacing = 14, Width = Math.Min(400, Math.Max(240, XamlRoot.Size.Width - 100)) };
             panel.Children.Add(new TextBlock { Text = item.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             var targetChoice = new ComboBox { Header = "Episode", HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -3392,7 +3401,7 @@ public sealed partial class ItemDetailPage : Page
                     }
                 }
                 else
-                    foreach (var ep in ViewModel.Episodes) targetChoice.Items.Add(new ComboBoxItem { Content = $"E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
+                    foreach (var ep in seasonEpisodes) targetChoice.Items.Add(new ComboBoxItem { Content = $"E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
                 targetChoice.SelectedItem = targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(e => Equals(e.Tag, target)) ?? targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault();
                 panel.Children.Add(targetChoice);
             }
@@ -3406,7 +3415,12 @@ public sealed partial class ItemDetailPage : Page
                 args.Cancel = true; var deferral = args.GetDeferral(); dialog.IsPrimaryButtonEnabled = false;
                 try
                 {
-                    if (!client.IsCurrentContext(authority)) return;
+                    if (!Current())
+                    {
+                        error.Text = "This title changed. Close this window and choose an episode again.";
+                        error.Visibility = Visibility.Visible;
+                        return;
+                    }
                     target = targetChoice.SelectedItem is ComboBoxItem { Tag: string chosen } ? chosen : target;
                     var response = await api.CreateWatchTogetherRoomAsync(mode.SelectedIndex == 1 ? "vote" : "host_pick");
                     if (!client.IsCurrentContext(authority) || response.RoomAccessToken == null) return;
@@ -3560,12 +3574,13 @@ public sealed partial class ItemDetailPage : Page
                 reset.IsEnabled = false;
                 var api = App.Services.GetRequiredService<CatalogApi>();
                 var context = api.CaptureContext();
+                var identity = api.CaptureIdentityContext();
                 try
                 {
                     await api.ClearResumePositionAsync(item.ContentId);
                     if (!api.IsCurrentContext(context) || !IsCurrentDetail(item.ContentId)) return;
                     App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
-                    WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(item.ContentId, 0, item.UserData?.DurationSeconds ?? 0, item.UserData?.Played == true));
+                    WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(item.ContentId, 0, item.UserData?.DurationSeconds ?? 0, item.UserData?.Played == true) { Identity = identity });
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, item.ContentId, item.SeriesId));
                     await ViewModel.ReloadAsync(item.ContentId);
                     if (api.IsCurrentContext(context) && IsCurrentDetail(item.ContentId)) UpdateUI();
@@ -7075,7 +7090,8 @@ public sealed partial class ItemDetailPage : Page
                     || !ReferenceEquals(ViewModel.Item, item) || item?.SeriesId != parentId
                     || ViewModel.ParentPlaybackRevision != parentRevision
                     || !catalogApi.IsCurrentContext(context)) return false;
-                if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                if (++attempt == 3) return false;
             }
             if (response?.Episodes != null)
             {
@@ -7425,16 +7441,23 @@ public sealed partial class ItemDetailPage : Page
     {
         var client = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
         var authority = client.CaptureContext();
+        var completed = false;
         try
         {
-            var bytes = await App.Services.GetRequiredService<ImageService>().GetImageAsync(
+            var images = App.Services.GetRequiredService<ImageService>();
+            var bytes = await images.GetImageAsync(
                 contentId,
                 "logo",
                 logoUrl,
                 App.Services.GetRequiredService<HttpClient>(),
                 ct);
             if (ct.IsCancellationRequested || revision != _titleArtRevision || !client.IsCurrentContext(authority)) return;
-            if (bytes == null) { TitleText.Visibility = Visibility.Visible; return; }
+            if (bytes == null)
+            {
+                completed = images.IsKnownUnavailable(contentId, "logo", logoUrl);
+                TitleText.Visibility = Visibility.Visible;
+                return;
+            }
 
             var bitmap = new BitmapImage
             {
@@ -7448,12 +7471,18 @@ public sealed partial class ItemDetailPage : Page
             HeroLogoImage.Source = bitmap;
             HeroLogoImage.Visibility = Visibility.Visible;
             TitleText.Visibility = Visibility.Collapsed;
+            completed = true;
         }
         catch (OperationCanceledException) { }
         catch
         {
             if (!ct.IsCancellationRequested && revision == _titleArtRevision && client.IsCurrentContext(authority) && ViewModel.Item?.ContentId == contentId)
                 TitleText.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            if (!completed && !ct.IsCancellationRequested && revision == _titleArtRevision
+                && ViewModel.Item?.ContentId == contentId) _detailArtworkInterrupted = true;
         }
     }
 
@@ -8112,9 +8141,11 @@ public sealed partial class ItemDetailPage : Page
         var context = api.CaptureContext();
         var navigation = _navigationCts;
         ++_episodesTranslationStatusReads;
+        var statusRead = false;
         try
         {
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
+            statusRead = true;
             if (!api.IsCurrentContext(context) || owner == null || !IsCurrentDetail(owner) || key != _episodesTranslationKey || !status.Enabled) return;
             if (status.OnView == "auto") await TranslateEpisodesAsync();
             else if (status.OnView == "button")
@@ -8128,7 +8159,8 @@ public sealed partial class ItemDetailPage : Page
         finally
         {
             --_episodesTranslationStatusReads;
-            if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+            if (ReferenceEquals(_navigationCts, navigation) && key == _episodesTranslationKey
+                && (!statusRead || !api.IsCurrentContext(context)))
                 _episodesTranslationInterrupted = true;
         }
     }
@@ -8759,6 +8791,7 @@ public sealed partial class ItemDetailPage : Page
             return _seriesPrimaryEpisodesTask;
 
         var generation = ++_seriesPrimaryEpisodesGeneration;
+        ViewModel.EpisodesLoadFailed = false;
         var item = ViewModel.Item;
         var parentId = item?.SeriesId;
         var parentRevision = ViewModel.ParentPlaybackRevision;
@@ -8790,7 +8823,8 @@ public sealed partial class ItemDetailPage : Page
                     var remoteRevision = ViewModel.RemoteStateRevision;
                     response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, token);
                     if (!Current()) return;
-                    if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                    if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                    if (++attempt == 3) { ViewModel.EpisodesLoadFailed = true; return; }
                 }
                 ViewModel.EpisodesSeasonContentId = seasonContentId;
                 ViewModel.Episodes.Clear();
