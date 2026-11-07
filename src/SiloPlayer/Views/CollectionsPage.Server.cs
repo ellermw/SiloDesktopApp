@@ -5,8 +5,10 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Converters;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -124,6 +126,8 @@ public sealed partial class CollectionsPage
             UpdatePin();
             pin.Click += async (_, _) =>
             {
+                var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+                var context = apiClient.CaptureContext();
                 pin.IsEnabled = false;
                 try
                 {
@@ -133,6 +137,12 @@ public sealed partial class CollectionsPage
                 catch (OperationCanceledException)
                 {
                     // A retired action cannot change the retained card state.
+                }
+                catch (Exception ex)
+                {
+                    if (IsLoaded && pin.IsLoaded && apiClient.IsCurrentContext(context))
+                        App.Services.GetRequiredService<ToastService>().Error(ex,
+                            ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
                 }
                 finally { pin.IsEnabled = true; }
             };

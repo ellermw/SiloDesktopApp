@@ -3452,6 +3452,8 @@ public sealed partial class LibraryPage : Page,
             pinButton.Click += async (_, args) =>
             {
                 if (App.MainWindowInstance is not MainWindow window) return;
+                var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+                var context = apiClient.CaptureContext();
                 pinButton.IsEnabled = false;
                 try
                 {
@@ -3465,6 +3467,12 @@ public sealed partial class LibraryPage : Page,
                 {
                     // A retired shell did not commit this control's result.
                     // Retain its previous presentation until normal refresh.
+                }
+                catch (Exception ex)
+                {
+                    if (IsLoaded && pinButton.IsLoaded && apiClient.IsCurrentContext(context))
+                        App.Services.GetRequiredService<ToastService>().Error(ex,
+                            ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
                 }
                 finally { pinButton.IsEnabled = true; }
             };

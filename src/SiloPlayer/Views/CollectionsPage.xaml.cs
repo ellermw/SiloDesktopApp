@@ -3,8 +3,10 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -830,6 +832,8 @@ public sealed partial class CollectionsPage : Page
         pinButton.Click += async (_, _) =>
         {
             if (App.MainWindowInstance is not MainWindow window) return;
+            var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+            var context = apiClient.CaptureContext();
             pinButton.IsEnabled = false;
             try
             {
@@ -845,6 +849,12 @@ public sealed partial class CollectionsPage : Page
             catch (OperationCanceledException)
             {
                 // No current shell result was committed; preserve this card.
+            }
+            catch (Exception ex)
+            {
+                if (IsLoaded && pinButton.IsLoaded && apiClient.IsCurrentContext(context))
+                    App.Services.GetRequiredService<ToastService>().Error(ex,
+                        ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
             }
             finally
             {
