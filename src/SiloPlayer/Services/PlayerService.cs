@@ -7208,7 +7208,7 @@ public partial class PlayerService : IDisposable
                 {
                     var tier = args[1];
                     DispatchLegacyPlaybackSwitch(dispatch, quality: true,
-                        current => SwitchQualityTierAsync(tier, acceptSelection: current));
+                        current => SwitchQualityTierCoreAsync(tier, acceptSelection: current));
                 }
                 break;
             case "silo-seek-absolute":
@@ -7285,7 +7285,12 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    private async Task SwitchQualityTierAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
+    // Keep the existing three-parameter entry point for native regression callers.
+    private Task SwitchQualityTierAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
+        PlaybackStartResponse? bufferingExpectedSession = null)
+        => SwitchQualityTierCoreAsync(tierId, bufferingReplan, bufferingExpectedSession);
+
+    private async Task SwitchQualityTierCoreAsync(string tierId, PlaybackBufferingReplan? bufferingReplan = null,
         PlaybackStartResponse? bufferingExpectedSession = null, Func<bool>? acceptSelection = null)
     {
         if (_playbackTerminalState != null) return;
