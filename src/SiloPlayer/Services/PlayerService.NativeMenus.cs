@@ -71,7 +71,8 @@ public partial class PlayerService
                 _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             }
             mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : version?.AudioTracks?.Count > 1 ? owner.Token : "");
-            mpv.SendScriptMessage("osc-native-quality-scope", session != null && ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-quality-scope", session != null && (CanPresentNativeSpeed || (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
+            mpv.SendScriptMessage("osc-native-speed-scope", session != null && CanPresentNativeSpeed ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-stats-scope", owner.Token);
             mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
@@ -98,6 +99,7 @@ public partial class PlayerService
             // fallback while the playback surface is unavailable.
             mpv?.SendScriptMessage("osc-native-audio-scope", "");
             mpv?.SendScriptMessage("osc-native-quality-scope", "");
+            mpv?.SendScriptMessage("osc-native-speed-scope", "");
             mpv?.SendScriptMessage("osc-native-party-scope", "");
             mpv?.SendScriptMessage("osc-native-stats-scope", "");
             mpv?.SendScriptMessage("osc-native-chapters-scope", "");
@@ -152,6 +154,7 @@ public partial class PlayerService
             {
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
+                "speed" => CreateNativeSpeedMenu(owner, request, Finish),
                 "party" => CreateNativePartyMenu(owner, request, Finish),
                 "stats" => CreateNativeStatsMenu(owner, request, Finish),
                 "chapters" => CreateNativeChaptersMenu(owner, request, Finish),

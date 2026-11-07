@@ -560,10 +560,18 @@ public partial class PlayerService : IDisposable
             CancelPendingSoloVersionSwitch();
         }
         IsWatchTogetherPlayback = active;
-        if (joining) SetPaused(true);
+        if (joining)
+        {
+            // Room time advances at 1×; retain the viewer's separate saved
+            // desire so drift correction never restores their solo rate.
+            NativePlaybackRate = 1;
+            SetPaused(true);
+        }
         if (!active) _offeredRoomQuality = _offeredFromQuality = null;
         UpdateRoomInputBindings();
         UpdateRoomSeekDisplay();
+        if (!active) RestoreVideoPlaybackRate();
+        else PublishVideoPlaybackRateStatus();
         if (changed)
         {
             RetireNativeMenus();
@@ -2546,6 +2554,7 @@ public partial class PlayerService : IDisposable
         // preparation so fresh launches render the first subtitle correctly
         // without adding another serial request to startup time.
         ResetSubtitlePreferenceSession();
+        ResetVideoPlaybackRateSession();
         var subtitleAppearanceTask = EnsureSubtitleAppearanceLoadedAsync(requestToken);
         _pendingSubtitleSelection = subtitleSelection;
         _pendingInitialServerSubtitleIndex = null;
@@ -2810,6 +2819,7 @@ public partial class PlayerService : IDisposable
             EnsureCurrentOwner();
             var bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? throw new InvalidOperationException("The accepted playback source is missing from the version inventory.");
+            EnsureVideoPlaybackRateSession();
             Resolution = bestVersion.Resolution;
             ResolveInitialSubtitleSelection(
                 watchDetail,
@@ -2851,7 +2861,8 @@ public partial class PlayerService : IDisposable
 
             _mpv?.SetProperty(
                 "speed",
-                (IsAudiobook ? _settingsService.GetAudiobookPlaybackRate(ContentId) : 1)
+                (IsAudiobook ? _settingsService.GetAudiobookPlaybackRate(ContentId) :
+                    IsWatchTogetherPlayback ? 1 : DesiredVideoPlaybackRate)
                     .ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (subtitleAppearanceTask.IsCompletedSuccessfully)
             {
@@ -3017,6 +3028,7 @@ public partial class PlayerService : IDisposable
         var fileOwner = Interlocked.Increment(ref _playbackFileGeneration);
         acceptLoad?.Invoke(fileOwner);
         RetireNativeMenus();
+        EnsureVideoPlaybackRateSession();
         AdoptBufferingQualityPlan();
         StartPlaybackStallWatchdog();
         _idleRemuxResume.ResetPauseClock();
@@ -5154,6 +5166,7 @@ public partial class PlayerService : IDisposable
             // room timer must not release play ahead of this load callback.
             CompleteMpvLoadBusy(loadBusyRevision);
             SynchronizeConnectionMediaActivity(restorePaused);
+            RestoreVideoPlaybackRate();
             StartPlaybackStallWatchdog();
             InvokeSubscribersSafely(ContentLoaded, nameof(ContentLoaded));
 
@@ -7187,6 +7200,7 @@ public partial class PlayerService : IDisposable
             case "silo-native-audio-open":
             case "silo-native-stats-open":
             case "silo-native-quality-open":
+            case "silo-native-speed-open":
             case "silo-native-party-open":
             case "silo-native-chapters-open":
             case "silo-native-more-open":
@@ -7525,6 +7539,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleSearchDialogAsync()
     {
+        RetireNativeMenus();
         var session = _playbackManager?.CurrentSession;
         var mainWindow = App.MainWindowInstance;
         if (session == null || mainWindow?.Content?.XamlRoot == null)
@@ -7582,6 +7597,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAppearanceDialogAsync()
     {
+        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow?.Content?.XamlRoot == null)
             return;
@@ -7643,6 +7659,7 @@ public partial class PlayerService : IDisposable
 
     private async Task ShowSubtitleAiDialogAsync()
     {
+        RetireNativeMenus();
         var mainWindow = App.MainWindowInstance;
         if (mainWindow == null)
             return;
@@ -7853,6 +7870,7 @@ public partial class PlayerService : IDisposable
         var closingAuthority = _activeAuthority;
         await Task.WhenAny(FlushSubtitleOffsetAsync(), Task.Delay(2000));
         ResetSubtitlePreferenceSession();
+        ResetVideoPlaybackRateSession();
         _authorityLifetimeCts.Cancel();
         _shuffleController?.Leave();
         ActiveLibraryId = null;
@@ -8016,6 +8034,7 @@ public partial class PlayerService : IDisposable
     public void Dispose()
     {
         RetireNativeMenus();
+        ResetVideoPlaybackRateSession();
         _volumePersistenceDisposed = true;
         try { _volumeSaveTimer?.Stop(); } catch { /* Dispatcher may be shutting down. */ }
         EndBufferingQuality();

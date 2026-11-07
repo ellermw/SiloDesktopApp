@@ -148,6 +148,24 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "video-speed")
+            {
+                await VideoPlaybackRateNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-speed-menu")
+            {
+                await PlaybackSpeedMenuNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-speed-all")
+            {
+                await VideoPlaybackRateNativeFixture.RunAsync();
+                await PlaybackSpeedMenuNativeFixture.RunAsync(_window);
+                foreach (var mode in new[] { "normal", "retired", "release", "successor-failure", "successor-success" })
+                    await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "artwork-motion" or "artwork-review" or "artwork-first-mount")
             {
                 await ArtworkMotionNativeFixture.RunAsync(parent, _window);

@@ -162,7 +162,7 @@ internal class PlaybackChoiceMenu
                 content.Children.Add(leading); Grid.SetColumn(copy, 1); content.Children.Add(copy); row.Children.Add(content);
             }
             else row.Children.Add(copy);
-            var check = new TextBlock { Text = choice.IsPending ? "Pending" : choice.IsCurrent ? "\u2713" : "", VerticalAlignment = VerticalAlignment.Center };
+            var check = new TextBlock { Text = choice.IsPending ? "Pending" : choice.IsCurrent ? "✓" : "", VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(check, 1); row.Children.Add(check);
             var item = new ListViewItem { Content = row, Tag = choice.Id, IsEnabled = choice.IsEnabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(item, string.Join(", ", new[] { choice.Title, choice.Metadata, string.Join(", ", choice.Badges),

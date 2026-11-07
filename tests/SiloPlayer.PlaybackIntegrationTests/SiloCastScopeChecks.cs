@@ -57,6 +57,9 @@ internal static class SiloCastScopeChecks
         {
             var sameServerApi = new SiloApiClient(sameServerHttp);
             sameServerApi.SetBaseUrl("https://local.fixture.invalid");
+            // Match the local device setup too: changing device identity advances
+            // the request epoch, so omitting it would miss the intended collision.
+            sameServerApi.SetDeviceMetadata("fixture-pc", "Fixture PC", "windows");
             using var sameServerAuth = new AuthService(sameServerApi, new AuthApi(sameServerApi), credentialStore: null);
             sameServerAuth.SetTokens("same-server-remote-access", "same-server-remote-refresh", 3600);
             sameServerAuth.SelectProfile("local-profile", "same-server-remote-proof");

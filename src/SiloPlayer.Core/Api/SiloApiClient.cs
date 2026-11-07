@@ -70,6 +70,7 @@ public partial class SiloApiClient
         lock (_authStateGate) return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
     }
     public bool IsCurrentContext(ApiRequestContext context) => CaptureContext() == context;
+    public string? DeviceId { get { lock (_authStateGate) return _deviceId; } }
     public SettingsRequestContext CaptureSettingsContext()
     {
         lock (_authStateGate) return new(new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
@@ -78,6 +79,12 @@ public partial class SiloApiClient
     public SettingsIdentityContext CaptureSettingsIdentityContext()
     {
         lock (_authStateGate) return new(new(_authenticationGeneration, _identityGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
+    }
+
+    /// <summary>Current request authority for an accepted settings identity, or null once that identity retires.</summary>
+    public SettingsRequestContext? CaptureSettingsContext(SettingsIdentityContext owner)
+    {
+        lock (_authStateGate) return CaptureSettingsIdentityContext() == owner ? CaptureSettingsContext() : null;
     }
 
     public ApiIdentityContext CaptureIdentityContext()
@@ -386,7 +393,11 @@ public partial class SiloApiClient
     {
         lock (_authStateGate)
         {
-            if (_deviceId != deviceId) _settingsDeviceGeneration++;
+            if (!string.Equals(_deviceId, deviceId, StringComparison.Ordinal))
+            {
+                _requestContextGeneration++;
+                _settingsDeviceGeneration++;
+            }
             _deviceId = deviceId;
             _deviceName = deviceName;
             _devicePlatform = devicePlatform;
