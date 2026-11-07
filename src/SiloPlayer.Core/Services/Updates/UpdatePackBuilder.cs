@@ -60,7 +60,8 @@ public static class UpdatePackBuilder
         }
         await using var completed = File.OpenRead(packPath);
         var manifest = new UpdateManifest(1, GitHubReleaseReader.Normalize(version).ToString(4), completed.Length,
-            Convert.ToHexString(await SHA256.HashDataAsync(completed, ct).ConfigureAwait(false)), entries) { ReleaseVersion = releaseVersion };
+            Convert.ToHexString(await SHA256.HashDataAsync(completed, ct).ConfigureAwait(false)), entries,
+            BootstrapProtocol: UpdateManifestValidation.CurrentBootstrapProtocol) { ReleaseVersion = releaseVersion };
         UpdateManifestValidation.Validate(manifest);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
         if (bytes.Length > UpdateManifestValidation.MaximumManifestBytes) throw new InvalidDataException("Generated manifest is too large.");
