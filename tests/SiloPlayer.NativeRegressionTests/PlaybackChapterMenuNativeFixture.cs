@@ -91,6 +91,10 @@ internal static class PlaybackChapterMenuNativeFixture
                         scope_present=state['native_' .. kind .. '_scope'] ~= nil,
                         scope=state.native_chapters_scope or '',
                         sequence=state.native_menu_request and state.native_menu_request.sequence or 0,
+                        compact=state.compact_menu_visible or false,
+                        compact_items=state.compact_menu_items or {},
+                        audio_count=#state.audio_tracks,chapter_count=#state.chapters,
+                        audio_legacy=state.audio_menu_visible or false,
                         legacy=state.chapter_menu_visible or false}))
                 end)
                 mp.commandv('script-message','silo-chapters-fixture-ready')
@@ -150,6 +154,51 @@ internal static class PlaybackChapterMenuNativeFixture
                 Require(ReferenceEquals(Menu(service), childMenu), "Retired More dismissal retired the child menu.");
                 Call(childMenu, "Input", "cancel");
                 await Until(() => Menu(service) == null, "Child menu did not close.");
+
+                // A completed direct session retains its source inventory in
+                // Lua only. Compact More must still expose both legacy menus.
+                var activeSession = manager.CurrentSession!;
+                var originalAudio = version.AudioTracks;
+                try
+                {
+                    version.AudioTracks = [new AudioTrackInfo { Title = "English" }, new AudioTrackInfo { Title = "Japanese" }];
+                    Call(service, "SendAudioTrackListToOsc");
+                    Property(manager, "CurrentSession", null!);
+                    Call(service, "SendAudioTrackListToOsc");
+                    var sessionless = await Query();
+                    Require(!sessionless.GetProperty("scope_present").GetBoolean() &&
+                        sessionless.GetProperty("audio_count").GetInt32() == 2 &&
+                        sessionless.GetProperty("chapter_count").GetInt32() == 72,
+                        "Sessionless direct More did not retain its legacy audio/chapter inventory.");
+                    foreach (var kind in new[] { "audio", "chapters" })
+                    {
+                        await Task.Delay(600); // Let the previous legacy pointer gesture expire.
+                        mpv.SendScriptMessage("osc-show");
+                        var opener = await Query();
+                        Click(opener.GetProperty("x").GetDouble(), opener.GetProperty("y").GetDouble());
+                        await Task.Delay(600);
+                        var compact = await Query();
+                        Require(compact.GetProperty("compact").GetBoolean() && Menu(service) == null,
+                            "Sessionless direct More opened the native host instead of the legacy overflow.");
+                        var row = compact.GetProperty("compact_items").EnumerateArray()
+                            .Single(item => item.GetProperty("name").GetString() == "btn_" + kind);
+                        Click(row.GetProperty("x").GetDouble() + row.GetProperty("w").GetDouble() / 2,
+                            row.GetProperty("y").GetDouble() + row.GetProperty("h").GetDouble() / 2);
+                        var opened = await Query();
+                        var visibility = kind == "audio" ? "audio_legacy" : "legacy";
+                        Require(opened.GetProperty(visibility).GetBoolean() && Menu(service) == null &&
+                            ((SemaphoreSlim)Get(service, "_playbackDialogGate")!).CurrentCount == 1 && mpv.IsPaused,
+                            "Sessionless compact " + kind + " did not open its existing local menu with pause and gate intact.");
+                        mpv.SendKeypress("ESC");
+                        Require(!(await Query()).GetProperty(visibility).GetBoolean(), "Legacy menu did not close.");
+                    }
+                }
+                finally
+                {
+                    Property(manager, "CurrentSession", activeSession);
+                    version.AudioTracks = originalAudio;
+                    Call(service, "SendAudioTrackListToOsc");
+                }
                 mpv.SetVolume(50);
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 await Choose(6);
@@ -307,6 +356,15 @@ internal static class PlaybackChapterMenuNativeFixture
             Require(selectedRow?.Tag is string, "The pointer selection fixture has no current native row.");
             Program.Log("Fixture invokes actual shared pointer-selection route: " + selectedRow!.Tag);
             Call(target, "Select", (string)selectedRow.Tag, true);
+        }
+        void Click(double x, double y)
+        {
+            var px = x.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var py = y.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            mpv.SendScriptMessage("osc-mouse-move", px, py);
+            mpv.SendScriptMessage("osc-mouse-down", px, py);
+            mpv.SendScriptMessage("osc-mouse-up", px, py);
+            mpv.SendScriptMessage("osc-video-click", px, py);
         }
         async Task<JsonElement> Query()
         {

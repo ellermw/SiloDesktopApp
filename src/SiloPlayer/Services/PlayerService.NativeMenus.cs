@@ -74,7 +74,9 @@ public partial class PlayerService
             mpv.SendScriptMessage("osc-native-quality-scope", session != null && ((!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
-            mpv.SendScriptMessage("osc-native-more-scope", owner.Token);
+            // Sessionless direct playback keeps its inventory only in Lua.
+            // Keep compact Audio and Chapters on that same legacy path.
+            mpv.SendScriptMessage("osc-native-more-scope", legacyAudio ? "" : owner.Token);
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
     }
