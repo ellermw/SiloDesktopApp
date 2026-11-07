@@ -21,7 +21,7 @@ public partial class PlayerService
                 ? row.DisabledReason : row.IsEnabled ? "" : "A playback change is already in progress.",
             IsPending: row.IsPending)).ToArray();
         return new PlaybackChoiceMenu(owner.Video, request.Anchor, "Quality", choices,
-            () => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request), id =>
+            () => owner.IsCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request), id =>
             {
                 var option = options.FirstOrDefault(row => row.Id == id && row.IsEnabled);
                 if (option != null && owner.IsCurrent() && !IsLoading && !_switchingContent)

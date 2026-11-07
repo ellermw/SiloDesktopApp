@@ -130,6 +130,49 @@ internal static class PlaybackStatsMenuNativeFixture
                 Require(Gate(service).CurrentCount == 1 && mpv.IsPaused && wire.Qualities.IsEmpty,
                     "Access refresh/menu reopen changed playback or leaked a lease.");
             }
+            // Recovery claims switching without retiring native scopes. Action
+            // menus must watch both busy flags; only read-only Stats may remain.
+            foreach (var kind in new[] { "audio", "quality", "stats" })
+            foreach (var loading in new[] { false, true })
+            {
+                var retained = await Open("pointer", kind);
+                Call(retained, "Input", "end");
+                try
+                {
+                    if (loading) Property(service, "IsLoading", true);
+                    else
+                    {
+                        Set(service, "_prematureEofRecoveryActive", true);
+                        Call(service, "SetSwitchingContent", true);
+                    }
+                    var busyRevision = (long)Get(service, "_playbackBusyRevision")!;
+                    // Also exercise dispatch independently of the menu's watch,
+                    // as a selection may already be queued when recovery starts.
+                    if (kind != "stats")
+                        ((Action<string>)Get(retained, "_selected")!)(kind == "audio" ? "1" : "quality:720p");
+                    if (kind == "stats")
+                    {
+                        await Task.Delay(250);
+                        Require(ReferenceEquals(Menu(service), retained), "Busy state retired read-only Stats.");
+                    }
+                    else await Until(() => Menu(service) == null, "Busy state left native " + kind + " open.");
+                    Call(retained, "Input", "activate");
+                    Require((long)Get(service, "_playbackBusyRevision")! == busyRevision &&
+                        service.IsLoading == loading && (bool)Get(service, "_switchingContent")! == !loading &&
+                        (bool)Get(service, "_prematureEofRecoveryActive")! == !loading && wire.Qualities.IsEmpty &&
+                        Gate(service).CurrentCount == (kind == "stats" ? 0 : 1) && mpv.IsPaused,
+                        "A busy native menu started a replan, changed recovery ownership or leaked its lease.");
+                }
+                finally
+                {
+                    Set(service, "_prematureEofRecoveryActive", false);
+                    Call(service, "SetSwitchingContent", false);
+                    Property(service, "IsLoading", false);
+                    Call(retained, "Input", "cancel");
+                }
+                await UntilAsync(async () => !(await Query(kind)).GetProperty("pending").GetBoolean(),
+                    "Busy menu close did not acknowledge " + kind);
+            }
             var menu = await Open("pointer");
             var list = (ListView)Get(menu, "_list")!;
             await Until(() => list.Items.Count >= 25, "Native playback info did not receive the actual OSC diagnostic sections.");

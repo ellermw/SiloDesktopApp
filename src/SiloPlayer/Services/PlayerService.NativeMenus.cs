@@ -164,14 +164,15 @@ public partial class PlayerService
     {
         var tracks = ActiveVersion?.AudioTracks?.ToArray() ?? [];
         if (tracks.Length <= 1) return null;
+        // An accepted selection must survive the busy state it claims itself.
         bool InventoryCurrent() => owner.IsCurrent() && ActiveVersion?.AudioTracks is { } current && current.SequenceEqual(tracks);
         var current = _playbackManager?.CurrentSession?.AudioTrackIndex ?? -1;
         return new PlaybackAudioMenu(owner.Video, request.Anchor,
             tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current)).ToArray(),
-            () => InventoryCurrent() && _nativeMenuGate.IsCurrent(request),
+            () => InventoryCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request),
             index =>
             {
-                if (InventoryCurrent() && index >= 0 && index < tracks.Length && index != current)
+                if (InventoryCurrent() && !IsLoading && !_switchingContent && index >= 0 && index < tracks.Length && index != current)
                     _ = SelectNativeAudioAsync(owner, index, InventoryCurrent);
             }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
     }
