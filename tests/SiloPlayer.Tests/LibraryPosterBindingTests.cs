@@ -5,6 +5,16 @@ namespace SiloPlayer.Tests;
 
 public class LibraryPosterBindingTests
 {
+    [Theory]
+    [InlineData("https://example.test/poster?width=300&X-Amz-Signature=old", "https://example.test/poster?X-Amz-Signature=new&width=300", true)]
+    [InlineData("https://example.test/backdrop?X-Goog-Signature=old", "https://example.test/backdrop?X-Goog-Signature=new", true)]
+    [InlineData("https://example.test/poster?width=300", "https://example.test/poster?width=600", false)]
+    [InlineData("https://example.test/poster", "https://example.test/other-poster", false)]
+    [InlineData("https://example.test/poster", null, false)]
+    [InlineData(null, null, true)]
+    public void ArtworkIdentityIgnoresOnlyVolatileUrlParts(string? previous, string? next, bool same)
+        => Assert.Equal(same, LibraryPosterBinding.HasSameArtworkUrl(previous, next));
+
     [Fact]
     public void RenewedSignatureDoesNotClearTheSamePoster()
     {

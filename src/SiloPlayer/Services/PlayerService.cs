@@ -1889,12 +1889,27 @@ public partial class PlayerService : IDisposable
             startPositionOverride, prefetchedWatchDetail, subtitleTrackSignature, libraryId, shuffleId,
             authority, cancellationToken, sourceVersionPinned, expectedContext, expectedIdentityContext);
 
+    // Explicit primary actions need actionable feedback if their scoped intent
+    // is retired; existing quick-play and ordinary restart policies stay intact.
+    public Task PlayPrimaryAsync(string contentId, int libraryId, ApiRequestContext context,
+        ApiIdentityContext identity, CancellationToken cancellationToken)
+        => PlayWithOwnerAsync(contentId, libraryId: libraryId, expectedContext: context,
+            expectedIdentityContext: identity, cancellationToken: cancellationToken, reportAbandonment: true);
+
     // Ordinary restarts keep their accepted identity without acquiring the
     // quick-play policy that supersedes preparation and requires no active room.
     public Task RestartAsync(string contentId, int? libraryId, ApiIdentityContext identity)
         => PlayWithOwnerAsync(contentId, fromStart: true, libraryId: libraryId, ordinaryIdentity: identity);
 
-    private readonly record struct ViewerPlayOwner(ApiIdentityContext Identity, bool SupersedesPreparation);
+    private readonly record struct ViewerPlayOwner(ApiIdentityContext Identity, bool SupersedesPreparation, bool ReportAbandonment);
+
+    private static void ReportAbandonedPlayback(ViewerPlayOwner? owner)
+    {
+        // Quick-play callers may retire silently; an explicit primary action
+        // must give the user feedback when it never reaches media loading.
+        if (owner is { ReportAbandonment: true })
+            throw new InvalidOperationException("Playback was interrupted by another action. Wait for the player to finish closing or open the current Watch Party, then try again.");
+    }
 
     private async Task PlayWithOwnerAsync(
         string contentId,
@@ -1912,7 +1927,8 @@ public partial class PlayerService : IDisposable
         bool? sourceVersionPinned = null,
         ApiRequestContext? expectedContext = null,
         ApiIdentityContext? expectedIdentityContext = null,
-        ApiIdentityContext? ordinaryIdentity = null)
+        ApiIdentityContext? ordinaryIdentity = null,
+        bool reportAbandonment = false)
     {
         var closeGeneration = Volatile.Read(ref _closeGeneration);
         var nextAuthority = authority ?? _localAuthority;
@@ -1921,14 +1937,16 @@ public partial class PlayerService : IDisposable
         ApiIdentityContext? expectedIdentity = expectedIdentityContext ?? (expectedContext.HasValue
             ? nextAuthority.ApiClient.CaptureIdentityContext() : ordinaryIdentity);
         ViewerPlayOwner? expectedOwner = expectedIdentity is { } identity
-            ? new(identity, SupersedesPreparation: ordinaryIdentity == null) : null;
+            ? new(identity, SupersedesPreparation: ordinaryIdentity == null, ReportAbandonment: reportAbandonment) : null;
         var supersedesPreparation = expectedOwner?.SupersedesPreparation == true;
-        if (!expectedIdentityContext.HasValue && expectedContext is { } expected && !nextAuthority.ApiClient.IsCurrentContext(expected)) return;
+        if (!expectedIdentityContext.HasValue && expectedContext is { } expected && !nextAuthority.ApiClient.IsCurrentContext(expected))
+        { ReportAbandonedPlayback(expectedOwner); return; }
         bool IsCurrentOwner() => !cancellationToken.IsCancellationRequested &&
             (expectedOwner is not { } owner || IsCurrentViewerPlayOwner(nextAuthority, owner));
         // A scoped UI action may wait behind another authority switch. Do not
         // cancel current playback until that action still owns its request.
-        if (expectedOwner.HasValue && !IsCurrentOwner()) return;
+        if (expectedOwner.HasValue && !IsCurrentOwner())
+        { ReportAbandonedPlayback(expectedOwner); return; }
         CancellationTokenSource? scopedIntent = null;
         if (supersedesPreparation)
         {
@@ -1968,7 +1986,8 @@ public partial class PlayerService : IDisposable
                 // Close retires queued still actions even after _closing resets.
                 // Check before canceling playback or preparing the replacement;
                 // an intentional authority-switch close below is not a queued wait.
-                if (expectedOwner.HasValue && (!IsCurrentOwner() || (supersedesPreparation && closeGeneration != Volatile.Read(ref _closeGeneration)))) return;
+                if (expectedOwner.HasValue && (!IsCurrentOwner() || (supersedesPreparation && closeGeneration != Volatile.Read(ref _closeGeneration))))
+                { ReportAbandonedPlayback(expectedOwner); return; }
                 if (supersedesPreparation)
                 {
                     _ = FlushSubtitleOffsetAsync();
@@ -1977,13 +1996,15 @@ public partial class PlayerService : IDisposable
                 if (_closing)
                     await CloseAsync();
                 cancellationToken.ThrowIfCancellationRequested();
-                if (expectedOwner.HasValue && (!IsCurrentOwner() || (supersedesPreparation && closeGeneration != Volatile.Read(ref _closeGeneration)))) return;
+                if (expectedOwner.HasValue && (!IsCurrentOwner() || (supersedesPreparation && closeGeneration != Volatile.Read(ref _closeGeneration))))
+                { ReportAbandonedPlayback(expectedOwner); return; }
                 if (!ReferenceEquals(_activeAuthority, nextAuthority))
                 {
                     await CloseAsync();
                     try { await PendingProgressSave; } catch { /* The outgoing manager reports final-write failures. */ }
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (expectedOwner.HasValue && !IsCurrentOwner()) return;
+                    if (expectedOwner.HasValue && !IsCurrentOwner())
+                    { ReportAbandonedPlayback(expectedOwner); return; }
                     _activeAuthority = nextAuthority;
                     _shuffleController = null;
                     _watchDetailPrefetches.Clear();
@@ -2003,7 +2024,8 @@ public partial class PlayerService : IDisposable
             }
             finally { _authoritySwitchGate.Release(); }
         }
-        catch (OperationCanceledException) when (scopedIntent?.IsCancellationRequested == true) { }
+        catch (OperationCanceledException) when (scopedIntent?.IsCancellationRequested == true)
+        { ReportAbandonedPlayback(expectedOwner); }
         finally
         {
             try
@@ -2064,11 +2086,14 @@ public partial class PlayerService : IDisposable
         ViewerPlayOwner? expectedOwner)
     {
         if (_closing)
-            return;
+        { ReportAbandonedPlayback(expectedOwner); return; }
 
         App.Services.GetService<ThemeMusicService>()?.Interrupt();
         var connectionObserver = PlaybackConnectionService.For(_activeAuthority.PlaybackApi);
         var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _authorityLifetimeCts.Token);
+        // A successor can cancel and dispose the published source while this
+        // request waits for the gate. Its token remains safe to observe.
+        var ownerToken = ownerCts.Token;
         var previous = Interlocked.Exchange(ref _playRequestCts, ownerCts);
         try { previous?.Cancel(); }
         catch (ObjectDisposedException) { }
@@ -2078,14 +2103,15 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            await _playRequestGate.WaitAsync(ownerCts.Token);
+            await _playRequestGate.WaitAsync(ownerToken);
             gateEntered = true;
-            if (expectedOwner is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner)) return;
+            if (expectedOwner is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner))
+            { ReportAbandonedPlayback(expectedOwner); return; }
             ResetStartupTelemetry();
             SetConnectionMediaActive(true);
-            ownerCts.Token.ThrowIfCancellationRequested();
+            ownerToken.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _playRequestGeneration))
-                return;
+            { ReportAbandonedPlayback(expectedOwner); return; }
 
             await PlayCoreAsync(
                 contentId,
@@ -2098,13 +2124,14 @@ public partial class PlayerService : IDisposable
                 prefetchedWatchDetail,
                 libraryId,
                 shuffleId,
-                ownerCts.Token,
+                ownerToken,
                 sourceVersionPinned, expectedOwner);
         }
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested ||
             expectedOwner is { } owner && !IsCurrentViewerPlayOwner(_activeAuthority, owner))
         {
             LogToFile("state_trace.txt", $"Play request superseded: contentId={contentId}");
+            ReportAbandonedPlayback(expectedOwner);
         }
         finally
         {
@@ -2482,7 +2509,7 @@ public partial class PlayerService : IDisposable
 
             EnsureCurrentOwner();
             if (_closing || !ReferenceEquals(_playbackManager?.CurrentSession, session))
-                return;
+            { ReportAbandonedPlayback(expectedOwner); return; }
 
             _mpv?.SetProperty(
                 "speed",
@@ -2511,7 +2538,7 @@ public partial class PlayerService : IDisposable
 
             EnsureCurrentOwner();
             if (_closing || !ReferenceEquals(_playbackManager?.CurrentSession, session))
-                return;
+            { ReportAbandonedPlayback(expectedOwner); return; }
             // Room startup stays held through FileLoaded. Only a due room
             // command may release it after the media becomes playable.
             IsPaused = IsWatchTogetherPlayback;

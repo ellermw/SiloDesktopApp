@@ -62,13 +62,17 @@ public static class MediaItemMenu
             var restartIdentity = client.CaptureIdentityContext();
             bool OwnsRestart() => client.IsCurrentIdentityContext(restartIdentity)
                 && (owner == null || (owner.IsLoaded && MediaNavigationContext.LibraryId(owner) == restartLibrary
-                    && (owner is not IMediaItemOwner itemOwner || ReferenceEquals(itemOwner.MediaItem, item))));
+                    && (owner is not IMediaItemOwner itemOwner || OwnsContent(itemOwner.MediaItem, item))));
             var restart = BuildItem(
                 item.Type == "audiobook" ? "Listen from Beginning" : "Play from Beginning",
                 "\uE768",
                 async () =>
                 {
-                    if (!OwnsRestart()) return;
+                    if (!OwnsRestart())
+                    {
+                        toast.Error(new InvalidOperationException("This item is no longer available from this card. Open its menu again."));
+                        return;
+                    }
                     try
                     {
                         await App.Services.GetRequiredService<PlayerService>()
@@ -329,6 +333,9 @@ public static class MediaItemMenu
         return flyout;
     }
 
+    private static bool OwnsContent(MediaItem? current, MediaItem captured) => current is not null
+        && current.ContentId == captured.ContentId && current.Type == captured.Type;
+
     private static async Task ShowRefreshMetadataDialogAsync(
         MediaItem item,
         MediaMaintenanceApi maintenanceApi,
@@ -368,7 +375,9 @@ public static class MediaItemMenu
         var surface = owner ?? frame?.Content as FrameworkElement ?? root.Content as FrameworkElement;
         if (surface?.IsLoaded != true) return;
         var itemOwner = surface as IMediaItemOwner;
-        bool OwnsItem() => itemOwner == null || ReferenceEquals(itemOwner.MediaItem, item);
+        var library = MediaNavigationContext.LibraryId(surface);
+        bool OwnsItem() => (itemOwner == null || OwnsContent(itemOwner.MediaItem, item))
+            && MediaNavigationContext.LibraryId(surface) == library;
         var frameContent = frame?.Content;
         bool Authorized() => client.IsCurrentContext(context) && auth.SessionGeneration == session
             && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);
