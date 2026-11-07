@@ -25,7 +25,7 @@ public partial class PlayerService
     private void PublishNativeAudioScope()
     {
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var session = manager?.CurrentSession;
         var version = ActiveVersion;
@@ -44,7 +44,7 @@ public partial class PlayerService
             playGeneration == Volatile.Read(ref _playRequestGeneration) &&
             fileGeneration == Volatile.Read(ref _fileLoadGeneration) &&
             playbackFileGeneration == Volatile.Read(ref _playbackFileGeneration) &&
-            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+            ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) &&

@@ -159,6 +159,14 @@ internal static class PlaybackAudioMenuNativeFixture
                 && Descendants<TextBlock>((DependencyObject)untitled.Content).Any(text => text.Text == "Track 2"),
                 "An untitled track without a language did not use its numbered fallback.");
             Require(list.SelectedIndex == 37, "The current source track was not selected on open.");
+            var accessScope = (await Query()).GetProperty("scope").GetString();
+            api.InvalidateAccessContext();
+            await Task.Delay(200); // Include the native owner's 100 ms watch tick.
+            Require(ReferenceEquals(Menu(service), menu), "An access-only refresh retired the open Audio menu.");
+            Call(menu, "Input", "cancel");
+            menu = await OpenFromOsc(); hwnd = MenuHwnd(menu); list = (ListView)Get(menu, "_list")!;
+            Require((await Query()).GetProperty("scope").GetString() == accessScope,
+                "Audio required a new scope to reopen after an access-only refresh.");
             Require(GetWindow(hwnd, 4) == video.Hwnd && (GetWindowLongPtrW(hwnd, -20).ToInt64() & 0x40000) == 0
                 && (GetWindowLongPtrW(hwnd, -20).ToInt64() & 0x80) != 0, "Native menu is not an owned tool window without an extra taskbar entry.");
             Require(IsWindowVisible(hwnd) && IsWindowVisible(video.Hwnd), "Native Audio or its synthetic video is not shown.");
@@ -306,6 +314,126 @@ internal static class PlaybackAudioMenuNativeFixture
             Require(wire.AudioPicks.Count == 0, "A retired profile selected audio.");
             await manager.StartSessionAsync(42, audioTrackIndex: 37);
             Call(service, "SendAudioTrackListToOsc");
+
+            var regressionCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (regressionCase is "access-refresh-replan" or "accepted-version")
+            {
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var initialError = service.ErrorMessage;
+                wire.HoldSuccessfulReplan = true;
+                if (regressionCase == "accepted-version")
+                {
+                    var acceptedVersion = Version(); acceptedVersion.FileId = 43;
+                    service.Versions.Add(acceptedVersion);
+                    wire.ReplanFileId = 43;
+                    wire.HoldPreference = true;
+                    wire.FailHeldPreference = false;
+                }
+                else api.InvalidateAccessContext(); // Open with the existing scope.
+                menu = await OpenFromOsc();
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (regressionCase == "access-refresh-replan") api.InvalidateAccessContext();
+                wire.ReleaseReplan.TrySetResult();
+                await wire.ReplanReplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad,
+                    "The accepted Audio replan did not begin its owned load.");
+                await Until(() => !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "The accepted Audio replan stranded loading/busy state.");
+                Require(manager.CurrentSession?.AudioTrackIndex == 71 && wire.AudioPicks.Single() == 71,
+                    "The accepted Audio replan lost its source index.");
+                if (regressionCase == "accepted-version")
+                {
+                    Require(service.ActiveVersion?.FileId == 43, "Audio did not adopt the server's effective version.");
+                    await wire.PreferenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    await Task.Delay(100); // Let FILE_LOADED's independent publication settle.
+                    var publication = (long)Get(service, "_nativeAudioPublication")!;
+                    wire.ReleasePreference.TrySetResult();
+                    await Until(() => (long)Get(service, "_nativeAudioPublication")! > publication,
+                        "Audio did not publish its accepted version after saving the preference.");
+                }
+                Require(service.ErrorMessage == initialError && !(await Query()).GetProperty("notice").GetBoolean(),
+                    "An accepted Audio replan incorrectly published an error.");
+                menu = await OpenFromOsc();
+                Call(menu, "Input", "cancel");
+                Require(Gate(service).CurrentCount == 1, "Accepted Audio stranded its native menu lease.");
+                Program.Log($"PASS: {regressionCase}: native Audio opens, loads the accepted plan and republishes across access refresh/effective-version adoption.");
+                return;
+            }
+
+            if (regressionCase is "quality-second-step-failure" or "quality-second-step-cancellation")
+            {
+                // Model an active server subtitle that the viewer turned Off
+                // locally. Quality must first grant Off via track_change.
+                var plan = (PlaybackPlanV3)Get(manager, "_currentPlanV3")!;
+                plan.SelectedTracks.Subtitle = new() { Id = "file:42:subtitle:0", Index = 0 };
+                manager.RecordLocalSubtitleSelection(null);
+                var initialSession = manager.CurrentSession;
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var initialError = service.ErrorMessage;
+                using var cancellation = new CancellationTokenSource();
+                var cancel = regressionCase == "quality-second-step-cancellation";
+                if (cancel) Set(service, "_playbackCts", cancellation);
+                wire.FailQualityReplan = true;
+                wire.HoldQualityReplan = cancel;
+                try
+                {
+                    var quality = service.SelectQualityAsync("auto");
+                    if (cancel)
+                    {
+                        await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        cancellation.Cancel();
+                    }
+                    await quality.WaitAsync(TimeSpan.FromSeconds(5));
+                    Require(wire.ReplanOperations.SequenceEqual(new[] { "track_change", "quality_change" }) &&
+                        !ReferenceEquals(initialSession, manager.CurrentSession),
+                        "Quality did not adopt the successful Subtitle-Off step before its second-step failure.");
+                    Require(!service.IsLoading && !service.IsSwitchingContent && !service.IsQualitySwitchActive,
+                        "A failed/canceled second quality step stranded playback busy flags.");
+                    Require((long)Get(service, "_playbackFileGeneration")! == initialLoad,
+                        "A failed second quality step unexpectedly began a media load.");
+                    var state = await Query();
+                    Require(cancel ? service.ErrorMessage == initialError && !state.GetProperty("notice").GetBoolean()
+                        : !string.IsNullOrEmpty(service.ErrorMessage) && state.GetProperty("notice").GetBoolean(),
+                        "Quality second-step failure/cancellation published the wrong error/notice state.");
+                    Program.Log($"PASS: {regressionCase}: intermediate Subtitle-Off session adoption does not strand quality busy flags.");
+                }
+                finally { if (cancel) Set(service, "_playbackCts", null); }
+                return;
+            }
+
+            if (regressionCase is "audio-plan-invalidation" or "quality-plan-invalidation")
+            {
+                var outgoingPlan = manager.CurrentSession!.PlanId;
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                wire.HoldSuccessfulReplan = true;
+                Task? quality = null;
+                if (regressionCase == "audio-plan-invalidation")
+                {
+                    menu = await OpenFromOsc();
+                    Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                }
+                else quality = service.SelectQualityAsync("auto");
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var revision = (long)Get(service, "_playbackBusyRevision")!;
+                var invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
+                    new PlaybackPlanInvalidation(outgoingPlan, "synthetic-invalidation"))!;
+                Require(!invalidation.IsCompleted && (int)Get(service, "_pendingPlanInvalidations")! == 1,
+                    "Plan invalidation did not wait behind the held switch.");
+                Require((long)Get(service, "_playbackBusyRevision")! == revision,
+                    "A pending invalidation retired the accepted switch's busy claim.");
+                wire.ReleaseReplan.TrySetResult();
+                await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
+                if (quality != null) await quality.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad,
+                    "A no-op invalidation abandoned the switch's accepted media load.");
+                await Until(() => !service.IsLoading && !service.IsSwitchingContent && !service.IsQualitySwitchActive,
+                    "A no-op invalidation stranded the switch's busy flags.");
+                Require(wire.AudioPicks.Count == 1 && (int)Get(service, "_pendingPlanInvalidations")! == 0,
+                    "An outgoing-plan invalidation replanned again or retained its EOF guard.");
+                Program.Log($"PASS: {regressionCase}: a queued outgoing-plan invalidation is a no-op and preserves the switch's accepted load.");
+                return;
+            }
 
             if (directFailureCase)
             {
@@ -722,6 +850,11 @@ internal static class PlaybackAudioMenuNativeFixture
     private sealed class Wire(string origin, string mediaPath) : HttpMessageHandler
     {
         internal readonly ConcurrentQueue<int> AudioPicks = new();
+        internal readonly ConcurrentQueue<string> ReplanOperations = new();
+        internal int ReplanFileId = 42;
+        internal bool FailQualityReplan;
+        internal bool HoldQualityReplan;
+        internal bool FailHeldPreference = true;
         internal bool HoldFailedReplan;
         internal bool HoldSuccessfulReplan;
         internal bool HoldSuccessorReplan;
@@ -743,7 +876,8 @@ internal static class PlaybackAudioMenuNativeFixture
             {
                 PreferenceStarted.TrySetResult();
                 await ReleasePreference.Task;
-                return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}") };
+                return new(FailHeldPreference ? HttpStatusCode.InternalServerError : HttpStatusCode.OK)
+                    { Content = new StringContent("{}") };
             }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
@@ -753,6 +887,15 @@ internal static class PlaybackAudioMenuNativeFixture
             {
                 _audio = body.GetProperty("selected_tracks").GetProperty("audio").GetProperty("index").GetInt32();
                 AudioPicks.Enqueue(_audio);
+                var operation = body.GetProperty("operation").GetString()!;
+                ReplanOperations.Enqueue(operation);
+                if (FailQualityReplan && operation == "quality_change")
+                {
+                    ReplanStarted.TrySetResult();
+                    if (HoldQualityReplan) await ReleaseReplan.Task.WaitAsync(ct);
+                    return new(HttpStatusCode.InternalServerError)
+                        { Content = new StringContent("{\"error\":\"Synthetic second quality step failure\"}", Encoding.UTF8, "application/json") };
+                }
                 if (AudioPicks.Count > 1 && HoldSuccessorReplan)
                 {
                     SuccessorEntered = true;
@@ -771,14 +914,15 @@ internal static class PlaybackAudioMenuNativeFixture
                             { Content = new StringContent("{\"error\":\"Synthetic late audio replan failure\"}", Encoding.UTF8, "application/json") };
                 }
             }
+            var fileId = path.EndsWith("/replan") ? ReplanFileId : 42;
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "native-audio-fixture",
                 playback_plan = new
                 {
-                    plan_id = $"audio-plan-{AudioPicks.Count}", plan_attempt_key = "synthetic", session_id = "native-audio-fixture", effective_media_file_id = 42,
+                    plan_id = $"audio-plan-{AudioPicks.Count}", plan_attempt_key = "synthetic", session_id = "native-audio-fixture", effective_media_file_id = fileId,
                     delivery = "original_http", stream = new { url = origin + mediaPath }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = $"file:42:audio:{_audio}", index = _audio }, subtitle = (object?)null },
+                    selected_tracks = new { audio = new { id = $"file:{fileId}:audio:{_audio}", index = _audio }, subtitle = (object?)null },
                     subtitle = new { mode = "off", inventory = Array.Empty<object>() },
                 },
             }));

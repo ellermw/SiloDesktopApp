@@ -148,7 +148,9 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                     ? new[] { "", "keyboard-click", "compact-keyboard-click", "retired-replan", "retired-success", "retired-cancellation",
                         "successor-seek", "successor-recovery", "live-successor-seek", "live-successor-recovery",
                         "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure",
-                        "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor" }
+                        "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor",
+                        "access-refresh-replan", "accepted-version", "quality-second-step-failure", "quality-second-step-cancellation",
+                        "audio-plan-invalidation", "quality-plan-invalidation" }
                     : new[] { selectedAudioCase };
                 try
                 {
