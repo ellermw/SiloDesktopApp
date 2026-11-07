@@ -187,7 +187,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         if (unsupportedProtocol)
         {
             var path = Path.Combine(source.Assets, UpdateManifestValidation.ManifestName);
-            var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 2;
+            var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 3;
             await File.WriteAllTextAsync(path, json.ToJsonString());
         }
         using var wire = new Assets("1.2.518-beta.12", unsupportedProtocol ? source.Assets : null);
@@ -225,7 +225,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         var source = await ArrangeAsync("1.2.518-beta.2", "1.2.518-beta.12");
         // The future inventory deliberately cannot deserialize as a v1 manifest.
         var json = new JsonObject { ["Schema"] = kind == "schema" ? 2 : 1,
-            ["BootstrapProtocol"] = kind == "protocol" ? 2 : 1,
+            ["BootstrapProtocol"] = kind == "protocol" ? 3 : 1,
             ["BackwardCompatibleData"] = kind != "data",
             ["Files"] = new JsonObject { ["future-inventory"] = true } };
         if (kind == "missing-schema") json.Remove("Schema");
@@ -259,7 +259,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         if (unsupportedProtocol)
         {
             var path = Path.Combine(source.Assets, UpdateManifestValidation.ManifestName);
-            var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 2;
+            var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 3;
             await File.WriteAllTextAsync(path, json.ToJsonString());
         }
         using var wire = new Assets("1.2.518-beta.12", unsupportedProtocol ? source.Assets : null);
@@ -285,7 +285,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
     {
         var source = await ArrangeAsync("1.2.518-beta.2", "1.2.518-beta.12");
         var path = Path.Combine(source.Assets, UpdateManifestValidation.ManifestName);
-        var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 2;
+        var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 3;
         await File.WriteAllTextAsync(path, json.ToJsonString());
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

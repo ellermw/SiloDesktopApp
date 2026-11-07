@@ -7,6 +7,9 @@ namespace SiloPlayer.Core.Services.Updates;
 
 public static class UpdateManifestValidation
 {
+    // Protocol 2 requires the .NET 10 bootstrap. Protocol 1 clients reject this
+    // envelope and use the full installer instead of retaining their .NET 8 root.
+    public const int CurrentBootstrapProtocol = 2;
     public const string ManifestName = "SiloUpdate-Windows-x64.manifest.json";
     public const string PackName = "SiloUpdate-Windows-x64.pack";
     public const int MaximumManifestBytes = 2 * 1024 * 1024;
@@ -15,7 +18,8 @@ public static class UpdateManifestValidation
     public static void Validate(UpdateManifest manifest)
     {
         if (manifest is null) throw new InvalidDataException("Missing update manifest.");
-        if (manifest.Schema != 1 || manifest.BootstrapProtocol != 1 || !manifest.BackwardCompatibleData)
+        // Retain protocol 1 inventory/journal support for full-installer recovery.
+        if (manifest.Schema != 1 || manifest.BootstrapProtocol is not (1 or CurrentBootstrapProtocol) || !manifest.BackwardCompatibleData)
             throw new InvalidDataException("Unsupported update schema, bootstrap protocol or data migration.");
         if (!Version.TryParse(manifest.Version, out var version) || version.Build < 0 || version.Revision < 0 || version.ToString(4) != manifest.Version ||
             version.Major > 65534 || version.Minor > 65534 || version.Build > 65534 || version.Revision > 65534 ||
@@ -117,7 +121,7 @@ public static class UpdateManifestValidation
                 // already verified the manifest bytes against their size/hash.
                 var compatibility = JsonSerializer.Deserialize<ManifestCompatibility>(bytes, options);
                 if (compatibility?.Schema is null) throw new InvalidDataException("Missing update schema.");
-                if (compatibility.Schema != 1 || compatibility.BootstrapProtocol != 1 || !compatibility.BackwardCompatibleData)
+                if (compatibility.Schema != 1 || compatibility.BootstrapProtocol is not (1 or CurrentBootstrapProtocol) || !compatibility.BackwardCompatibleData)
                     throw new UpdateMigrationRequiredException();
             }
             var manifest = JsonSerializer.Deserialize<UpdateManifest>(bytes, options)
