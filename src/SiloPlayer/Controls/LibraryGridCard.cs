@@ -14,6 +14,9 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 {
     private readonly Border _posterBackground;
     private readonly Image _posterImage;
+    // Fades the poster in. The image itself carries the hover RenderTransform, and WinUI refuses an
+    // OpacityTransition on an element whose RenderTransform is in use.
+    private readonly Grid _posterReveal = new() { Opacity = 0 };
     private readonly Border _hoverBrighten;
     private readonly CompositeTransform _cardHoverTransform;
     private readonly CompositeTransform _posterHoverTransform;
@@ -40,6 +43,24 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private bool _quickActionPending;
     private bool _isPointerOver;
     private CardOverlayGeometry _overlayGeometry;
+
+    // Artwork that arrives this soon after the card asked for it was never waited on and shows at once;
+    // later artwork fades in over its blurred placeholder instead of popping in.
+    internal static readonly TimeSpan InstantReveal = TimeSpan.FromMilliseconds(100);
+    internal static readonly TimeSpan RevealDuration = TimeSpan.FromMilliseconds(250);
+    private static readonly Windows.UI.ViewManagement.UISettings? s_uiSettings = CreateUISettings();
+    private static Windows.UI.ViewManagement.UISettings? CreateUISettings()
+    {
+        try { return new Windows.UI.ViewManagement.UISettings(); } catch { return null; }
+    }
+    // Reduced motion (Windows "Animation effects" off) reveals at once, as HeroCarousel does.
+    private static bool AnimationsEnabled
+    {
+        get { try { return s_uiSettings?.AnimationsEnabled ?? true; } catch { return true; } }
+    }
+    private long _posterLoadStarted;
+    private ScalarTransition? _revealTransition;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _placeholderHideTimer;
 
     private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 8);
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
@@ -91,11 +112,12 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
         var posterHost = new Grid();
         posterHost.Children.Add(_artworkFallback);
-        posterHost.Children.Add(_posterImage);
-        _posterImage.ImageOpened += (_, _) => _artworkFallback.Visibility = Visibility.Collapsed;
+        _posterReveal.Children.Add(_posterImage);
+        posterHost.Children.Add(_posterReveal);
+        _posterImage.ImageOpened += (_, _) => RevealPoster();
         _posterImage.ImageFailed += (_, _) =>
         {
-            _posterImage.Source = null; _posterImage.Opacity = 0;
+            _posterImage.Source = null; HidePoster();
             _artworkFallback.Visibility = Visibility.Visible;
             _ = _artworkFallback.ShowThumbhashAsync();
         };
@@ -293,7 +315,12 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         _moreButton.Visibility = Visibility.Visible;
 
         _artworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
-        _artworkFallback.Visibility = string.IsNullOrWhiteSpace(item.PosterUrl) && string.IsNullOrWhiteSpace(item.BackdropUrl) ? Visibility.Visible : Visibility.Collapsed;
+        if (string.IsNullOrWhiteSpace(item.PosterUrl) && string.IsNullOrWhiteSpace(item.BackdropUrl))
+            _artworkFallback.Visibility = Visibility.Visible;
+        else if (_posterImage.Source != null && _posterImage.Opacity >= 1 && _placeholderHideTimer?.IsRunning != true)
+            _artworkFallback.Visibility = Visibility.Collapsed; // A preserved poster is already showing.
+        else if (!_artworkFallback.ShowLoadingThumbhash())
+            _artworkFallback.Visibility = Visibility.Collapsed;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, MediaItemDisplayText.BuildTitle(item));
         _titleText.Text = MediaItemDisplayText.BuildTitle(item);
         var episodeTitle = MediaItemDisplayText.BuildEpisodeTitle(item);
@@ -449,7 +476,9 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         if (_artworkOwner?.IsCurrent == false) { CancelPosterLoad(clearImage: true); return; }
         if (_artworkSuspended || MediaItem is not { } item || _posterImage.Source != null || _posterLoadCts != null) return;
         var url = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        if (string.IsNullOrWhiteSpace(url)) return;
+        if (string.IsNullOrWhiteSpace(url)) { _ = _artworkFallback.ShowThumbhashAsync(); return; }
+        // Unloading invalidates an unfinished blur; request it again for the current generation.
+        _artworkFallback.ShowLoadingThumbhash();
         _posterLoadCts = new CancellationTokenSource();
         _ = LoadPosterAsync(item, url, ++_posterLoadVersion, _posterLoadCts.Token);
     }
@@ -457,6 +486,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private async Task LoadPosterAsync(MediaItem item, string imageUrl, int version, CancellationToken ct)
     {
         if (_artworkOwner?.IsCurrent == false) return;
+        _posterLoadStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
@@ -508,8 +538,9 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
                 if (!IsCurrentPosterLoad(item, version, ct))
                     return;
 
+                // Revealed once decoded (RevealPoster on ImageOpened), not when the source is set.
+                HidePoster();
                 _posterImage.Source = bitmapImage;
-                _posterImage.Opacity = 1;
             }
             finally
             {
@@ -546,7 +577,42 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             return;
 
         _posterImage.Source = null;
+        HidePoster();
+    }
+
+    // A recycled card clears at once: never fade the previous title's poster out.
+    private void HidePoster()
+    {
+        _posterReveal.OpacityTransition = null;
+        _posterReveal.Opacity = 0;
         _posterImage.Opacity = 0;
+    }
+
+    private void RevealPoster()
+    {
+        if (_posterImage.Source is null) return;
+        var waited = System.Diagnostics.Stopwatch.GetElapsedTime(_posterLoadStarted) > InstantReveal;
+        var fade = waited && AnimationsEnabled;
+        _posterImage.Opacity = 1;
+        _posterReveal.OpacityTransition = fade ? _revealTransition ??= new ScalarTransition { Duration = RevealDuration } : null;
+        _posterReveal.Opacity = 1;
+        if (_artworkFallback.Visibility != Visibility.Visible) return;
+        if (!fade) { _artworkFallback.Visibility = Visibility.Collapsed; return; }
+        // Keep the blur under the poster until the fade ends, then drop it from the tree.
+        if (_placeholderHideTimer is null)
+        {
+            _placeholderHideTimer = DispatcherQueue.CreateTimer();
+            _placeholderHideTimer.Interval = RevealDuration + TimeSpan.FromMilliseconds(50);
+            _placeholderHideTimer.IsRepeating = false;
+            _placeholderHideTimer.Tick += (_, _) =>
+            {
+                // Only while a revealed poster still covers it: a rebind meanwhile owns the fallback.
+                if (_posterImage.Source != null && _posterImage.Opacity >= 1)
+                    _artworkFallback.Visibility = Visibility.Collapsed;
+            };
+        }
+        _placeholderHideTimer.Stop();
+        _placeholderHideTimer.Start();
     }
 
     private void OnTapped(object sender, TappedRoutedEventArgs e)
