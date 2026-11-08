@@ -163,8 +163,17 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.DoesNotContain("if (_libraryCatalogLoaded) return;\n        _libraryCatalogLoaded = true;", code.ReplaceLineEndings("\n"));
         Assert.Contains("_libraryCatalogLoaded = _isNavigated && ViewModel.Library is not null && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);", code);
         // Even a cached catalog must let the current tab retry dirty library flags.
-        Assert.Contains("if (tag == _currentTab)\n        {\n            if (tag == \"Library\")\n            {\n                await EnsureLibraryCatalogLoadedAsync();\n                await FillViewportAsync();", code.ReplaceLineEndings("\n"));
-        Assert.Contains("if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();\n        if (!_isNavigated || ViewModel.Library is null) return;\n        if (_libraryCatalogLoaded)", code.ReplaceLineEndings("\n"));
+        var retryStart = code.IndexOf("if (tag == _currentTab)", StringComparison.Ordinal);
+        Assert.True(retryStart >= 0);
+        var retryEnd = code.IndexOf("ShowTab(tag);", retryStart, StringComparison.Ordinal);
+        var retry = code[retryStart..retryEnd];
+        Assert.Contains("if (tag == \"Library\")", retry);
+        Assert.Contains("if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();", retry);
+        Assert.Contains("await EnsureLibraryCatalogLoadedAsync();", retry);
+        Assert.Contains("await FillViewportAsync();", retry);
+        Assert.True(retry.IndexOf("await RefreshLibraryFlagsAsync()", StringComparison.Ordinal) < retry.IndexOf("await EnsureLibraryCatalogLoadedAsync()", StringComparison.Ordinal));
+        // Opening the tab does not repeat a policy read this visit already attempted.
+        Assert.Contains("if (_libraryFlagsDirty && _libraryFlagsAttemptedVisit != _groupedLibraryVisit)\n            await RefreshLibraryFlagsAsync();\n        if (!_isNavigated || ViewModel.Library is null) return;\n        if (_libraryCatalogLoaded)", code.ReplaceLineEndings("\n"));
         Assert.Contains("await EnsureLibraryCatalogLoadedAsync();", code);
         Assert.Contains("await FillViewportAsync();", code);
     }

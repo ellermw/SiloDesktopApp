@@ -89,6 +89,8 @@ internal static partial class ArtworkMotionNativeFixture
         var stateGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         wire.LibraryFlagsReadGate = flagsGate;
         wire.LibraryStateReadGate = stateGate;
+        var stateVisit = typeof(LibraryPage).GetField("_stateVisit", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var appliedVisit = typeof(LibraryPage).GetField("_stateAppliedVisit", BindingFlags.NonPublic | BindingFlags.Instance)!;
         try
         {
             frame.GoBack();
@@ -122,11 +124,14 @@ internal static partial class ArtworkMotionNativeFixture
         }
         else
         {
-            // The original navigation parameter requests Library once restoration
-            // completes; wait for that correction before starting the next return.
-            await Until(() => (string)currentTab.GetValue(page)! == "Library");
-            Tab(page, "Recommended");
+            // A history return to this retained entry keeps the viewer's tab; it
+            // never replays the original navigation parameter's Library tab. Wait
+            // for restoration to apply before checking, and before the next return.
+            await Until(() => (long)appliedVisit.GetValue(page)! == (long)stateVisit.GetValue(page)!);
             await Until(() => cards.All(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+            Check((string)currentTab.GetValue(page)! == "Recommended" &&
+                requests.All(request => wire.Requests.GetValueOrDefault(request.Path) == request.Count),
+                "Completed state restoration keeps the retained Recommended tab and its cached artwork on a history return.");
         }
     }
 
