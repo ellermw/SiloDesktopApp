@@ -258,9 +258,13 @@ public partial class PlaybackManager
                 if (stored.Length > 0)
                     return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
             }
-            // A replacement download requires a stable identity. Metadata or
-            // a reused index cannot establish that it is the same subtitle file.
-            return null;
+            // An identified download must not fall back to metadata or a
+            // reused index when its stable identity is missing.
+            if (hasIdentity || key != null) return null;
+            // Fully identityless legacy rows may use the strict metadata/index
+            // fallback below, but cannot bridge to a newly identified download.
+            inventory = inventory.Where(t => string.IsNullOrWhiteSpace(t.TrackId) &&
+                SubtitleStoredKey(t) == null).ToList();
         }
         var candidates = inventory.Where(t => !t.Unplayable &&
             (!sameFile || !hasIdentity) &&
