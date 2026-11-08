@@ -383,6 +383,13 @@ public sealed partial class MainWindow
         LocalLog.AppendLine("updates.txt", $"exit_requested manual={_manualUpdateRequested} automaticEligible={_appUpdates.ShouldInstallOnExit} sessionEnding={_updateSessionEnding} closeGuard={_updateCloseGuardAvailable}");
         try
         {
+            if (_updateWindowOwnsUpdate && !_manualUpdateRequested)
+            {
+                // A user close abandons the window's handoff, never starts a second one.
+                _manualUpdateConsent?.Cancel();
+                await _appUpdates.StopAsync();
+                return allowClose;
+            }
             await _appUpdates.StopAsync();
             if (!_manualUpdateRequested && !_updateCloseGuardAvailable) return allowClose;
             if (_updateSessionEnding || (!_manualUpdateRequested && !_appUpdates.ShouldInstallOnExit)) return allowClose;
