@@ -1563,6 +1563,11 @@ public partial class PlayerService : IDisposable
     private SubtitlePreferenceOwner? ConsumeExecutedSubtitlePreference(SubtitleTrackInfo? track)
     {
         var owner = _pendingSubtitlePreferenceOwner;
+        // A replacement initializer can execute the prior grant while a manual
+        // draft is still awaiting readable bytes. It must leave that draft's
+        // owner intact so its caller can re-resolve it after initialization.
+        if (owner is { RequestedIntent: null, NeedsDeferredExecution: false, DeferredExecutionStarted: false } &&
+            !MatchesSubtitlePreference(owner, track)) return null;
         _pendingSubtitlePreferenceIndex = null;
         _pendingSubtitlePreferenceOwner = null;
         return owner != null && MatchesSubtitlePreference(owner, track) ? owner : null;
