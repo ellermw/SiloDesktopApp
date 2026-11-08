@@ -244,15 +244,16 @@ internal static partial class SubtitleIdentityNativeFixture
                             if (retirement == "positive")
                                 Require(cached && sid > 2 && mpv.GetPropertyDouble("sid") == sid && service.ActiveSubtitleServerIndex == track.Index &&
                                     wire.PreferenceWrites == beforeFallbackWrites + 1 && mpv.IsPaused &&
-                                    subtitles.Requests == beforeReads + 2 && subtitles.NativeRequests == beforeNativeReads + 1 &&
-                                    !((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(track.Index),
-                                    "Supported async native URL fallback did not execute/persist its actual SID under current service ownership, or downloaded a managed fallback file.");
+                                    subtitles.Requests == beforeReads + 2 && subtitles.NativeRequests == beforeNativeReads &&
+                                    ((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).TryGetValue(track.Index, out var path) &&
+                                    File.Exists(path) && File.ReadAllBytes(path).SequenceEqual(File.ReadAllBytes(Path.Combine(assets, "english.srt"))),
+                                    "Supported async managed URL fallback did not retain its bytes and execute/persist its actual SID under current service ownership, or issued a remote native read.");
                             else
                                 Require(!cached && mpv.GetPropertyDouble("sid") <= 0 && service.ActiveSubtitleServerIndex == -1 &&
                                     wire.PreferenceWrites == beforeFallbackWrites && mpv.IsPaused &&
                                     subtitles.Requests == beforeReads + 1 && subtitles.NativeRequests == beforeNativeReads,
                                     "Retired profile/ABA URL fallback enabled captions, cached its SID or persisted a stale choice.");
-                            Program.Log($"PASS: actual service unknown-format async fallback {retirement} ownership/pause/preference.");
+                            Program.Log($"PASS: actual service unknown-format managed fallback {retirement} bytes/ownership/pause/preference.");
                         }
                         finally { held.Release.TrySetResult(); }
                     }

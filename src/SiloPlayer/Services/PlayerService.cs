@@ -6757,9 +6757,9 @@ public partial class PlayerService : IDisposable
 
     /// <summary>
     /// A synchronous libmpv sub-add of an HTTP URL blocks its caller for the
-    /// whole download. Prefetch bounded text locally; non-busy failures and
-    /// native-probed formats use an asynchronous, unselected native URL add.
-    /// Only a current picker may select either result; busy retains the SID.
+    /// whole download. Download sidecars locally, with a longer disk-streaming
+    /// fallback for non-busy text failures and native-probed formats. Only a
+    /// current picker may select the result; busy retains the applied SID.
     /// </summary>
     private long CurrentSubtitleSidecarGeneration() => Interlocked.Read(ref _subtitleSidecarGeneration);
 
@@ -6767,7 +6767,8 @@ public partial class PlayerService : IDisposable
     // the short text timing-correction client for complete subtitle tracks.
     private static readonly HttpClient SubtitleSidecarDownloadClient = new() { Timeout = Timeout.InfiniteTimeSpan };
 
-    // Native URL reads have their own deadline, outside the text budget/cap.
+    // Disk-streaming URL reads have their own deadline, outside the text probe.
+    // Managed HTTP, unlike mpv's reader, can wait minutes for extraction headers.
     private static readonly TimeSpan SubtitleUrlFallbackTimeout = TimeSpan.FromMinutes(5);
     private TimeProvider _subtitleUrlFallbackTimeProvider = TimeProvider.System;
 
@@ -6871,34 +6872,50 @@ public partial class PlayerService : IDisposable
             using var fallbackDeadline = new CancellationTokenSource(SubtitleUrlFallbackTimeout, _subtitleUrlFallbackTimeProvider);
             using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token, fallbackDeadline.Token);
             ShowNotice("Loading subtitle", "Large or bitmap subtitles can take a few minutes to load. Your current captions stay applied; choose another subtitle to cancel this download.", "info");
-            // mpv's URL reader is not subject to the managed buffering cap.
-            // Its async lane owns exact-URL discovery and late-SID cleanup if
-            // cancellation returns before the native command's actual reply.
-            var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
-            var sid = await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, label, track.Language, fallbackBudget.Token);
-            if (sid <= 0) return CurrentOwner() ? SubtitlePrefetchOutcome.Error : SubtitlePrefetchOutcome.Retired;
+            // Do not hand slow extraction to mpv: its per-file socket timeout
+            // also limits the header wait. Stream to disk without buffering a
+            // second full copy of bitmap tracks or changing the applied SID.
+            using var response = await SubtitleSidecarDownloadClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, fallbackBudget.Token);
+            if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+            if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable) return SubtitlePrefetchOutcome.Busy;
+            response.EnsureSuccessStatusCode();
+            var extension = SubtitleSidecarFile.DownloadExtension(response.Content.Headers.ContentType?.MediaType, url, track.Codec);
+            var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);
+            if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.TooLarge;
+            path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + extension);
+            long total = 0;
+            await using (var body = await response.Content.ReadAsStreamAsync(fallbackBudget.Token))
+            await using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                var chunk = new byte[81920];
+                int read;
+                while ((read = await body.ReadAsync(chunk, fallbackBudget.Token)) > 0)
+                {
+                    if (total + read > maxBytes) return SubtitlePrefetchOutcome.TooLarge;
+                    await file.WriteAsync(chunk.AsMemory(0, read), fallbackBudget.Token);
+                    total += read;
+                }
+            }
+            if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+            fallbackBudget.Token.ThrowIfCancellationRequested();
+            if (total == 0) throw new InvalidDataException("Empty subtitle sidecar.");
+            lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             {
-                var current = CurrentOwner();
-                if (!current || fallbackBudget.IsCancellationRequested ||
-                    !mpv.GetSubtitleTrackIds(externalOnly: true, externalFilename: url.AbsoluteUri).Contains(sid))
-                {
-                    // Never remove a successor file's reused numeric SID.
-                    if (!_closing && ReferenceEquals(mpv, _mpv) &&
-                        fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration))
-                        mpv.RemoveSubtitle(sid);
-                    return !current ? SubtitlePrefetchOutcome.Retired :
-                        fallbackBudget.IsCancellationRequested ? SubtitlePrefetchOutcome.TimedOut : SubtitlePrefetchOutcome.Error;
-                }
-                _prefetchedSubtitleSids[track.Index] = (sid, fileLoadGeneration);
+                if (generation != _subtitleSidecarGeneration || !CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+                if (_prefetchedSubtitleFiles.ContainsKey(track.Index)) return SubtitlePrefetchOutcome.Ready;
+                _prefetchedSubtitleFiles[track.Index] = path;
+                _subtitleSyncFiles.Add(path);
+                path = null;
             }
             return SubtitlePrefetchOutcome.Ready;
         }
         try
         {
             if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
-            // Known bitmap sidecars go straight to native probing, without a
-            // redundant managed text probe or the text buffering cap.
+            // Known bitmap sidecars stream straight to disk for local probing,
+            // without a redundant text probe or the text buffering cap.
             if (SubtitleSidecarFile.DownloadExtension(null, url, track.Codec) == ".sup")
                 return await ReadUrlFallbackAsync();
             // Same URL mpv would request; never attach account Authorization

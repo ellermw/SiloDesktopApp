@@ -7,7 +7,7 @@ public enum SubtitleSidecarReadOutcome { Ready, Fallback, Busy, Error }
 public sealed record SubtitleSidecarRead(SubtitleSidecarReadOutcome Outcome, byte[]? Bytes = null, string? Extension = null, bool WasBusy = false)
 {
     // Error describes this bounded prefetch, not refusal of the playback
-    // choice. Only a non-busy failure may try the asynchronous mpv URL route.
+    // choice. Only a non-busy failure may try the longer disk-streaming URL read.
     public bool CanUseUrlFallback => !WasBusy && Outcome is SubtitleSidecarReadOutcome.Error or SubtitleSidecarReadOutcome.Fallback;
 }
 
@@ -25,7 +25,8 @@ public static class SubtitleSidecarReader
             return new(SubtitleSidecarReadOutcome.Fallback);
         var wasBusy = false;
         // Any busy history suppresses the URL fallback, even if a later
-        // attempt fails differently: mpv cannot honor 503/Retry-After.
+        // attempt fails differently: a fresh download must not reset the
+        // bounded 503/Retry-After budget.
         SubtitleSidecarRead Failure() => new(wasBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: wasBusy);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(Budget);
@@ -54,8 +55,8 @@ public static class SubtitleSidecarReader
                 if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes) return Failure();
                 var extension = SubtitleSidecarFile.Extension(response.Content.Headers.ContentType?.MediaType, url, codec);
                 // Missing path/codec metadata must not bypass MIME discovery or
-                // 503 handling. Opaque formats still use the owned native route,
-                // but never after this read has observed a busy response.
+                // 503 handling. Opaque formats still use the owned disk download
+                // for local probing, but never after observing a busy response.
                 if (extension == null) return wasBusy ? Failure() : new(SubtitleSidecarReadOutcome.Fallback);
                 using var buffer = new MemoryStream();
                 await using var body = await response.Content.ReadAsStreamAsync(bounded.Token).ConfigureAwait(false);

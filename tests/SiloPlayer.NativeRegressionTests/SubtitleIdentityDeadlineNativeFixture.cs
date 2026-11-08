@@ -98,58 +98,74 @@ internal static partial class SubtitleIdentityNativeFixture
         // A successful read beyond the former eight-second budget must survive.
         var clock = new FallbackDeadlineClock();
         Set(service, "_subtitleUrlFallbackTimeProvider", clock);
-        var slow = server.HoldNextNative();
+        var nativeReads = server.NativeRequests;
+        SubtitleServer.Gate HoldFallback()
+        {
+            var gate = new SubtitleServer.Gate();
+            var reads = server.Requests;
+            // Let the opaque header probe finish, then hold the second,
+            // disk-streaming request before it sends headers or any body.
+            server.BeforeSubtitleResponse = async () =>
+            {
+                if (server.Requests != reads + 2) return;
+                gate.Started.TrySetResult();
+                await gate.Release.Task;
+            };
+            return gate;
+        }
+        var slow = HoldFallback();
         var slowPick = service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track);
         try
         {
             await slow.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Require(clock.DueTime == TimeSpan.FromMinutes(5), "Native fallback did not use its separate five-minute deadline.");
+            Require(clock.DueTime == TimeSpan.FromMinutes(5), "Managed fallback did not use its separate five-minute deadline.");
             clock.Advance(TimeSpan.FromSeconds(9));
-            Require(!slowPick.IsCompleted, "A pending native sidecar was refused at the managed text deadline.");
+            Require(!slowPick.IsCompleted, "A pending disk-streaming sidecar was refused at the text-probe deadline.");
             slow.Release.TrySetResult();
             await slowPick.WaitAsync(TimeSpan.FromSeconds(5));
             Require(service.ActiveSubtitleServerIndex == track.Index && mpv.GetPropertyDouble("sid") > 0 && mpv.IsPaused &&
-                wire.PreferenceWrites == writes + 1,
-                "A native fallback past eight seconds on the controlled clock failed to apply and save once.");
+                wire.PreferenceWrites == writes + 1 && server.NativeRequests == nativeReads &&
+                ((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).TryGetValue(track.Index, out var path) && File.Exists(path),
+                "A managed fallback past eight seconds on the controlled clock failed to retain its bytes, apply and save once without a native URL read.");
         }
-        finally { slow.Release.TrySetResult(); }
+        finally { slow.Release.TrySetResult(); server.BeforeSubtitleResponse = null; }
         await service.SetSubtitleTrackAndPersistAsync(3, prior.Language, prior);
         writes = wire.PreferenceWrites;
         // Do not let the success cache bypass the subsequent stalled-read test.
         track = new SubtitleTrackInfo { Index = 41, TrackId = "stalled-deadline", Source = "external", Codec = "opaque",
             Language = "en", Url = server.Origin + "/stalled-deadline.probe" };
         manager.CurrentSession.SubtitleUrls.Add(track);
-        var held = server.HoldNextNative();
+        var held = HoldFallback();
         var pending = service.SetSubtitleTrackAndPersistAsync(track.Index + 1, track.Language, track);
-        NativeGateHold? hold = null;
         try
         {
             await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var owner = Get(service, "_subtitleReadOperation")!;
             var originalToken = (CancellationToken)owner.GetType().GetProperty("Token")!.GetValue(owner)!;
-            hold = await NativeGateHold.EnterAsync(Get(mpv, "_asyncSubtitleGate")!);
             Require(clock.DueTime == TimeSpan.FromMinutes(5), "The stalled fallback lost its production deadline.");
             clock.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromMilliseconds(1));
-            Require(!pending.IsCompleted, "A current-owner native fallback timed out before its bitmap/oversized budget.");
+            Require(!pending.IsCompleted, "A current-owner managed fallback timed out before its disk-download budget.");
             clock.Advance(TimeSpan.FromMilliseconds(1));
             await pending.WaitAsync(TimeSpan.FromSeconds(2));
             Require(!held.Release.Task.IsCompleted && !originalToken.IsCancellationRequested && ReferenceEquals(owner, Get(service, "_subtitleReadOperation")) &&
                 service.ActiveSubtitleServerIndex == prior.Index && mpv.GetPropertyDouble("sid") == priorSid && mpv.IsPaused &&
-                wire.PreferenceWrites == writes && !((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).ContainsKey(track.Index),
-                "The native fallback deadline depended on owner retirement/reply release or changed current SID/pause/preferences/cache.");
-            Program.Log("PASS: native fallback survives the old text deadline and refuses at its five-minute deadline while HTTP/reply remain held (controlled timer).");
+                wire.PreferenceWrites == writes && server.NativeRequests == nativeReads &&
+                !((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).ContainsKey(track.Index) &&
+                !((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(track.Index),
+                "The managed fallback deadline depended on owner retirement/HTTP release or changed current SID/pause/preferences/cache.");
+            Program.Log("PASS: managed fallback survives the old text deadline and refuses at its five-minute deadline while HTTP headers remain held (controlled timer).");
         }
         finally
         {
             Call(service, "CancelSubtitleSelectionRead");
             held.Release.TrySetResult();
-            if (hold != null) await hold.ReleaseAsync();
             await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            server.BeforeSubtitleResponse = null;
             Set(service, "_subtitleUrlFallbackTimeProvider", TimeProvider.System);
         }
-        await WaitNativeAsync(() => ((SemaphoreSlim)Get(mpv, "_asyncSubtitleAddLane")!).CurrentCount == 1);
-        Require(mpv.GetPropertyDouble("sid") == priorSid && wire.PreferenceWrites == writes,
-            "A late reply after refusal revived the unapplied choice or saved its preference.");
+        Require(mpv.GetPropertyDouble("sid") == priorSid && wire.PreferenceWrites == writes && server.NativeRequests == nativeReads &&
+            !((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(track.Index),
+            "A late response after refusal revived the unapplied choice, retained a file or saved its preference.");
     }
 
     private static async Task CheckCastPollingAsync(PlayerService service, PlaybackManager manager, MpvPlayer mpv, SubtitleServer server, Wire wire)
@@ -189,8 +205,8 @@ internal static partial class SubtitleIdentityNativeFixture
         Require(ready(), "The actual native lifecycle did not reach its bounded completion state.");
     }
 
-    // Only the URL fallback's one-shot deadline uses this provider. Native
-    // HTTP/replies remain genuinely held, and owner cancellation stays real.
+    // Only the URL fallback's one-shot deadline uses this provider. Managed
+    // HTTP headers remain genuinely held, and owner cancellation stays real.
     private sealed class FallbackDeadlineClock : TimeProvider
     {
         private DeadlineTimer? timer;

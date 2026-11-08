@@ -37,7 +37,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             return;
         }
         var failures = new List<string>();
-        foreach (var scenario in new[] { "legacy-direct-reopen", "budget-large-pgs-manual", "budget-large-pgs-loaded", "budget-slow-manual", "budget-slow-loaded", "dispatcher-pgs", "dispatcher-failed-text", "refresh-manual", "refresh-post-load", "refresh-reindex-manual", "refresh-reindex-post-load", "refresh-removed-manual", "refresh-removed-post-load", "add-selection-flags", "blocking-add-off", "blocking-add-native", "failed-quality-off", "failed-quality-track", "failed-audio-off", "failed-audio-track", "failed-seek-off", "failed-seek-track", "failed-quality-transport-off", "failed-quality-transport-track", "failed-audio-transport-off", "failed-audio-transport-track", "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "manual-reload-finished", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-retired-with-prior", "load-start-retired-newer-off", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing", "busy-reload-newer-pick", "initializer-timing-change" })
+        foreach (var scenario in new[] { "legacy-direct-reopen", "budget-large-pgs-manual", "budget-large-pgs-loaded", "budget-slow-manual", "budget-slow-loaded", "budget-slow-headers-manual", "dispatcher-pgs", "dispatcher-failed-text", "refresh-manual", "refresh-post-load", "refresh-reindex-manual", "refresh-reindex-post-load", "refresh-removed-manual", "refresh-removed-post-load", "add-selection-flags", "blocking-add-off", "blocking-add-native", "failed-quality-off", "failed-quality-track", "failed-audio-off", "failed-audio-track", "failed-seek-off", "failed-seek-track", "failed-quality-transport-off", "failed-quality-transport-track", "failed-audio-transport-off", "failed-audio-transport-track", "newer-off", "newer-track", "loaded-bitmap-newer-track", "reload-gap", "manual-reload-gap", "manual-reload-finished", "reload-cleanup", "loaded-file-cleanup", "close", "viewer-pauses", "viewer-resumes", "viewer-seeks", "oversized-chunked", "load-start-retired", "load-start-retired-with-prior", "load-start-retired-newer-off", "load-start-cached-track", "load-start-off", "loaded-settings-cached-track", "loaded-settings-off", "load-start-retired-bitmap", "burn-load-bitmap-playing", "burn-load-bitmap-paused", "burn-load-off-playing", "burn-load-off-paused", "burn-load-text-playing", "burn-load-text-paused", "load-start-superseded-bitmap-off", "load-start-superseded-bitmap-text", "burn-response-off-playing", "burn-response-text-playing", "busy-reload-newer-pick", "initializer-timing-change" })
         {
             try
             {
@@ -1294,6 +1294,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0); mpv.Pause();
         Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
         Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("remux", subtitles.Origin + "/media.wav"));
+        mpv.SetProperty("network-timeout", "30");
         Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "movie");
         Property(service, "Versions", manager.WatchDetail!.Versions);
         Call(service, "SendSubtitleListToOsc");
@@ -1363,6 +1364,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 // non-busy disk fallback owns one fresh, longer-lived read.
                 // Unlike PGS, this path intentionally makes two HTTP requests.
                 await Until(() => subtitles.EnglishRequests == 2);
+                // On remux, hold the fallback's headers longer than mpv's
+                // 30s socket timeout too. The managed disk read must survive.
+                if (scenario == "budget-slow-headers-manual")
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(31));
+                    Require(!selection!.IsCompleted, "Slow remux extraction was abandoned at mpv's network timeout.");
+                }
                 Require(((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).Count == 0 &&
                     ((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).Count == 0 &&
                     mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
