@@ -65,6 +65,24 @@ public sealed class UpdateProtocolTests
     }
 
     [Fact]
+    public async Task Original_eight_argument_constructor_remains_available_to_reflection()
+    {
+        // The native progress-window fixture creates messages in the helper's assembly identity.
+        var message = Assert.IsType<UpdateHostMessage>(Activator.CreateInstance(typeof(UpdateHostMessage),
+            "progress", null, "Installing alongside current version", 50L, 100L, 0, 0L, null));
+        Assert.Equal(("progress", "Installing alongside current version", 50L, 100L),
+            (message.Kind, message.Text, message.Completed, message.Total));
+        Assert.Null(message.TransactionId);
+        Assert.Equal((0, 0L, (DateTimeOffset?)null), (message.ProcessId, message.StartUtcTicks, message.CooldownUntil));
+        Assert.Equal((0, 0, 0L, 0L), (message.Files, message.FileCount, message.FileBytes, message.FileTotal));
+
+        using var stream = new MemoryStream();
+        await UpdateHostProtocol.WriteAsync(stream, message, default);
+        stream.Position = 0;
+        Assert.Equal(message, await UpdateHostProtocol.ReadAsync(stream, default));
+    }
+
+    [Fact]
     public async Task Download_frames_carry_counts_for_the_window_and_reject_negative_values()
     {
         using var stream = new MemoryStream();

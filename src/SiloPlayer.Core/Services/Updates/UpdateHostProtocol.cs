@@ -1,13 +1,21 @@
 using System.Buffers.Binary;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Services.Updates;
 
 // Files/FileCount and FileBytes/FileTotal are only set on "download" frames: the number of
 // objects actually fetched and the object being fetched now. Older peers ignore them.
+[method: JsonConstructor]
 public sealed record UpdateHostMessage(string Kind, string? TransactionId = null, string? Text = null,
     long Completed = 0, long Total = 0, int ProcessId = 0, long StartUtcTicks = 0, DateTimeOffset? CooldownUntil = null,
-    int Files = 0, int FileCount = 0, long FileBytes = 0, long FileTotal = 0);
+    int Files = 0, int FileCount = 0, long FileBytes = 0, long FileTotal = 0)
+{
+    // Optional parameters do not preserve the original constructor for reflection or compiled callers.
+    public UpdateHostMessage(string Kind, string? TransactionId, string? Text, long Completed, long Total,
+        int ProcessId, long StartUtcTicks, DateTimeOffset? CooldownUntil)
+        : this(Kind, TransactionId, Text, Completed, Total, ProcessId, StartUtcTicks, CooldownUntil, 0, 0, 0, 0) { }
+}
 
 /// <summary>Length-bounded frames; pipe endpoints separately authenticate process identity.</summary>
 public static class UpdateHostProtocol
