@@ -24,7 +24,7 @@ public partial class PlayerService
         var roomId = room.Room.RoomId;
         bool RoomCurrent() => owner.IsCurrent() && _playbackTerminalState == null && ReferenceEquals(coordinator!.ActiveRoom, room)
             && room.Room?.RoomId == roomId && room.ClosedReason == null;
-        bool Current() => RoomCurrent() && _nativeMenuGate.IsCurrent(request);
+        bool Current() => RoomCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request);
         if (!RoomCurrent()) return null;
         var footer = new StackPanel { Spacing = 8, Margin = new Thickness(12, 6, 12, 12), MaxHeight = 270 };
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
@@ -119,7 +119,7 @@ public partial class PlayerService
         {
             // Close-on-invoke legitimately retires the presentation gate. The
             // captured playback and room still own dispatch after that close.
-            if (!RoomCurrent() || !Choices().Any(row => row.Id == id && row.IsEnabled)) return;
+            if (!RoomCurrent() || IsLoading || _switchingContent || !Choices().Any(row => row.Id == id && row.IsEnabled)) return;
             if (id == "end")
             {
                 owner.Mpv.SendScriptMessage("osc-native-dialog-opening", request.OwnerToken, request.Sequence.ToString(CultureInfo.InvariantCulture));

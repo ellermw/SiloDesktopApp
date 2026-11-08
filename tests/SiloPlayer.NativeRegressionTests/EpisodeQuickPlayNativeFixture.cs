@@ -291,7 +291,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
         internal TaskCompletionSource BoundaryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal List<(string Path, string? Profile)> Requests = [];
-        internal bool AcceptStart;
+        internal bool AcceptStart, BoxSetsEnabled, HoldBoxSet;
         internal int Stops, Suggestions, BoxSetReads, MembershipReads;
         internal bool HoldStop, BoxSetPlayed, HoldMembership;
         internal TaskCompletionSource StopStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -325,7 +325,11 @@ internal static partial class EpisodeQuickPlayNativeFixture
                     ++MembershipReads;
                     if (HoldMembership) { MembershipStarted.TrySetResult(); await ReleaseMembership.Task.WaitAsync(ct); }
                 }
-                else ++BoxSetReads;
+                else
+                {
+                    ++BoxSetReads;
+                    if (HoldBoxSet) { BoundaryStarted.TrySetResult(); await ReleaseBoundary.Task; }
+                }
                 var detail = """{"id":"7","library_id":"73","title":"Shell refresh collection","movie_count":1,"played_count":COUNT,"items":[{"content_id":"boxset-film","type":"movie","title":"Fixture movie","user_state":{"played":PLAYED}}]}"""
                     .Replace("COUNT", BoxSetPlayed ? "1" : "0").Replace("PLAYED", BoxSetPlayed ? "true" : "false");
                 return Json(membership ? "{\"box_set\":" + detail + "}" : detail);

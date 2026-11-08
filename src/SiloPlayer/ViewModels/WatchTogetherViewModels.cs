@@ -279,7 +279,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private Task TogglePolicyAsync() => RunPlaybackPanelMutationAsync("toggle-policy");
 
     [RelayCommand]
-    private Task CloseRoomAsync() => RunPlaybackPanelMutationAsync("end");
+    private Task CloseRoomAsync() => RunPlaybackPanelMutationAsync("end", allowPendingInitialization: true);
 
     public async Task VoteAsync(string suggestionId)
     {

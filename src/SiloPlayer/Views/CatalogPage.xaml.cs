@@ -272,8 +272,11 @@ public sealed partial class CatalogPage : Page,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        var owner = message.Identity ?? _api.CaptureIdentityContext();
+        if (!_api.IsCurrentIdentityContext(owner)) return;
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (!_api.IsCurrentIdentityContext(owner)) return;
             var item = _items.FirstOrDefault(candidate =>
                 string.Equals(candidate.ContentId, message.ContentId, StringComparison.OrdinalIgnoreCase));
             if (item == null) return;

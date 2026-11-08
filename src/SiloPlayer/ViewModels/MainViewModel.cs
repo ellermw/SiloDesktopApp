@@ -13,6 +13,9 @@ public partial class MainViewModel : ObservableObject
     private readonly AuthService _authService;
     private CancellationTokenSource? _libraryLoadCts;
     private long _libraryLoadGeneration;
+    public bool HasCurrentLibrarySnapshot { get; private set; }
+    // Retry readiness is separate from the accepted snapshot used by the sidebar.
+    public bool NeedsLibraryReload { get; private set; } = true;
 
     public MainViewModel(CatalogApi catalogApi, AuthService authService)
     {
@@ -32,6 +35,17 @@ public partial class MainViewModel : ObservableObject
     private Task LoadLibrariesAsync()
         => ReloadLibrariesAsync();
 
+    public void RetireLibraries()
+    {
+        HasCurrentLibrarySnapshot = false;
+        NeedsLibraryReload = true;
+        Interlocked.Increment(ref _libraryLoadGeneration);
+        _libraryLoadCts?.Cancel();
+        _libraryLoadCts = null;
+        IsLoadingLibraries = false;
+        Libraries.Clear();
+    }
+
     public async Task ReloadLibrariesAsync(CancellationToken cancellationToken = default)
     {
         _libraryLoadCts?.Cancel();
@@ -40,16 +54,21 @@ public partial class MainViewModel : ObservableObject
         _libraryLoadCts = loadCts;
         var generation = Interlocked.Increment(ref _libraryLoadGeneration);
 
+        var context = _catalogApi.CaptureContext();
+        NeedsLibraryReload = true;
         IsLoadingLibraries = true;
         try
         {
             var libraries = await _catalogApi.GetLibrariesAsync(loadCts.Token);
             if (loadCts.IsCancellationRequested ||
-                generation != Volatile.Read(ref _libraryLoadGeneration))
+                generation != Volatile.Read(ref _libraryLoadGeneration) ||
+                !_catalogApi.IsCurrentContext(context))
             {
                 return;
             }
 
+            HasCurrentLibrarySnapshot = true;
+            NeedsLibraryReload = false;
             Libraries.Clear();
             foreach (var lib in libraries)
             {
@@ -62,7 +81,8 @@ public partial class MainViewModel : ObservableObject
         }
         catch
         {
-            // Non-fatal, sidebar just won't show libraries
+            // Keep the accepted snapshot, but leave NeedsLibraryReload set so
+            // a later catch-up retries the failed replacement.
         }
         finally
         {

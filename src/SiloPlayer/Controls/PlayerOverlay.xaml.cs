@@ -1230,15 +1230,14 @@ public sealed partial class PlayerOverlay : UserControl
 
         // Subtitle tracks from the session, sorted by source priority:
         // external > downloaded > embedded (matches webui).
-        var subtitleTracks = _playerService.Manager?.CurrentSession?.SubtitleUrls ?? [];
-        var sortedSubs = subtitleTracks
-            .Select((track, idx) => (Track: track, OrigIndex: idx))
-            .OrderBy(s => SourceSortKey(s.Track.Source))
+        var menu = _playerService.CaptureSubtitleMenuSnapshot();
+        var sortedSubs = (menu?.Entries ?? [])
+            .OrderBy(entry => SourceSortKey(entry.Track.Source))
             .ToList();
 
         // Selection resolves the server track to its actual native/sidecar SID;
         // keep the complete inventory here, including URL-less unavailable rows.
-        foreach (var (track, origIdx) in sortedSubs)
+        foreach (var (track, canSelect) in sortedSubs)
         {
             var langName = PlayerService.LanguageCodeToName(track.Language);
             var trackTitle = track.Label;
@@ -1251,7 +1250,7 @@ public sealed partial class PlayerOverlay : UserControl
             var label = langName;
             if (!string.IsNullOrEmpty(trackTitle) && !string.Equals(trackTitle, langName, StringComparison.OrdinalIgnoreCase))
                 label += $" \u2014 {trackTitle}";
-            if (string.IsNullOrEmpty(label)) label = $"Track {origIdx + 1}";
+            if (string.IsNullOrEmpty(label)) label = $"Track {track.Index + 1}";
             if (track.HearingImpaired && !label.Contains("SDH", StringComparison.OrdinalIgnoreCase)) label += " (SDH)";
             if (track.Forced && !label.Contains("Forced", StringComparison.OrdinalIgnoreCase)) label += " (Forced)";
             var format = SubtitleFormatLabel(track.Codec);
@@ -1280,18 +1279,18 @@ public sealed partial class PlayerOverlay : UserControl
             Grid.SetColumn(descriptor, 1);
             row.Children.Add(descriptor);
             var item = CreatePlayerMenuButton(row, isActive);
-            if (track.Unplayable)
+            if (!canSelect)
             {
+                if (!track.Unplayable) badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
                 item.IsEnabled = false;
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, "Subtitle unavailable");
             }
-            int capturedMpvIndex = origIdx + 1;
             var capturedTrack = track;
             item.Click += (_, _) =>
             {
                 SubtitleFlyout.Hide();
                 _ = _playerService.SetSubtitleTrackAndPersistAsync(
-                    capturedMpvIndex, capturedTrack.Language, capturedTrack);
+                    capturedTrack.Index + 1, capturedTrack.Language, capturedTrack);
             };
             SubtitleListPanel.Children.Add(item);
         }
@@ -1376,7 +1375,8 @@ public sealed partial class PlayerOverlay : UserControl
                     searchAuthority.ApiClient.IsCurrentContext(searchContext) && ReferenceEquals(manager, _playerService.Manager) &&
                     ReferenceEquals(session, manager?.CurrentSession);
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(searchAuthority, session.MediaFileId, subtitleTracks.FirstOrDefault(t => t.Index == activeSubtitleIndex)?.Language)
+                var dialog = new SubtitleSearchDialog(searchAuthority, session.MediaFileId,
+                    menu?.Entries.FirstOrDefault(entry => entry.Track.Index == activeSubtitleIndex).Track?.Language)
                 {
                     XamlRoot = XamlRoot
                 };
@@ -1453,12 +1453,12 @@ public sealed partial class PlayerOverlay : UserControl
     private bool CanShowSubtitleAi()
     {
         var status = _subtitleAiStatus;
-        var session = _playerService.Manager?.CurrentSession;
+        var menu = _playerService.CaptureSubtitleMenuSnapshot();
+        var session = menu?.Session;
         if (status == null || session == null) return false;
 
         var canTranslate = status.Enabled &&
-            (_playerService.Manager?.GetSubtitleUrls() ?? [])
-                .Any(pair => IsTranslatableSubtitleSource(pair.Track));
+            menu!.Entries.Any(entry => IsTranslatableSubtitleSource(entry.Track));
         var version = _playerService.Versions.FirstOrDefault(item => item.FileId == session.MediaFileId);
         var canTranscribe = status.TranscribeEnabled && version?.AudioTracks?.Count > 0;
         return canTranslate || canTranscribe;
@@ -1520,14 +1520,14 @@ public sealed partial class PlayerOverlay : UserControl
         var authority = _playerService.ActiveAuthority;
         var context = authority.ApiClient.CaptureContext();
         var manager = _playerService.Manager;
-        bool Current() => (isCurrent?.Invoke() ?? true) && ReferenceEquals(authority, _playerService.ActiveAuthority) &&
+        bool CurrentDialog() => (isCurrent?.Invoke() ?? true) && ReferenceEquals(authority, _playerService.ActiveAuthority) &&
             authority.ApiClient.IsCurrentContext(context) && ReferenceEquals(manager, _playerService.Manager) &&
             ReferenceEquals(session, manager?.CurrentSession) && _playerService.State != PlayerState.Idle;
-        bool CurrentJob() => ReferenceEquals(authority, _playerService.ActiveAuthority) && authority.ApiClient.IsCurrentContext(context) &&
-            ReferenceEquals(manager, _playerService.Manager) && manager?.CurrentSession?.MediaFileId == session.MediaFileId &&
-            _playerService.State != PlayerState.Idle;
-        if (!Current()) return;
+        if (!CurrentDialog()) return;
         var api = authority.PlaybackApi;
+        var operationOwner = _playerService.CaptureSubtitleOperationOwner(session);
+        if (operationOwner == null) return;
+        bool Current() => CurrentDialog() && operationOwner.IsCurrent;
         SubtitleAiStatus capability;
         try { capability = await api.GetSubtitleAiStatusAsync(); }
         catch (Exception ex) { if (Current()) await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot, activate, showDialog); return; }
@@ -1539,8 +1539,10 @@ public sealed partial class PlayerOverlay : UserControl
         }
 
         var version = _playerService.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId);
-        var subtitleTracks = (_playerService.Manager?.GetSubtitleUrls() ?? [])
-            .Select(pair => pair.Track)
+        var menu = _playerService.CaptureSubtitleMenuSnapshot();
+        if (!ReferenceEquals(menu?.Session, session)) return;
+        var subtitleTracks = menu!.Entries
+            .Select(entry => entry.Track)
             .Where(IsTranslatableSubtitleSource)
             .ToList();
         var audioTracks = version?.AudioTracks ?? [];
@@ -1594,11 +1596,10 @@ public sealed partial class PlayerOverlay : UserControl
                         request.TargetLanguage = "";
                 }
 
-                var activation = _playerService.BeginSubtitleActivationIntent();
-                _playerService.RegisterSubtitleAiActivationIntent(0, session.MediaFileId, activation);
-                var started = await api.StartSubtitleAiAsync(request);
-                if (!CurrentJob()) return;
-                _playerService.RegisterSubtitleAiActivationIntent(started.Job.Id, session.MediaFileId, activation);
+                SubtitleAiStartResponse started;
+                try { started = await api.StartSubtitleAiAsync(request); }
+                catch when (!Current()) { return; }
+                if (!operationOwner.IsCurrentForAi) return;
                 var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
                     ? request.SourceLanguage
                     : request.TargetLanguage;
@@ -1607,19 +1608,20 @@ public sealed partial class PlayerOverlay : UserControl
                     App.Services.GetService<ToastService>()?.Info(
                         "A job for this track is already in progress — it'll appear when it's ready.");
                 }
-                else if (activation())
+                else if (operationOwner.HasCurrentSubtitleChoice)
                 {
-                    _playerService.PrepareLiveSubtitleTranslation(
+                    _playerService.PrepareLiveSubtitleTranslationForOwner(
                         started.Job.Id,
                         session.MediaFileId,
                         liveLanguage,
-                        $"{PlayerService.LanguageCodeToName(liveLanguage)} AI");
+                        $"{PlayerService.LanguageCodeToName(liveLanguage)} AI", operationOwner);
                 }
-                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, CurrentJob, activation);
+                _ = MonitorSubtitleAiJobAsync(api, started.Job.Id, session.MediaFileId, operationOwner);
             },
             async () =>
             {
-                try { if (!Current()) return null; var result = await api.GetSubtitleAiQuotaAsync(); return Current() ? result : null; }
+                if (!Current()) return null;
+                try { var refreshed = await api.GetSubtitleAiQuotaAsync(); return Current() ? refreshed : null; }
                 catch { return null; }
             })
         {
@@ -1633,13 +1635,14 @@ public sealed partial class PlayerOverlay : UserControl
         }
     }
 
-    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, Func<bool> isCurrent, Func<bool> mayActivate)
+    private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, PlayerService.SubtitleOperationOwner operationOwner)
     {
+        bool currentOwner() => operationOwner.IsCurrentForAi;
         if (jobId <= 0) return;
         for (var attempt = 0; attempt < 3600; attempt++)
         {
             var activeSession = _playerService.Manager?.CurrentSession;
-            if (!isCurrent() || activeSession == null ||
+            if (!currentOwner() || activeSession == null ||
                 activeSession.MediaFileId != mediaFileId ||
                 _playerService.State == PlayerState.Idle)
             {
@@ -1647,20 +1650,25 @@ public sealed partial class PlayerOverlay : UserControl
             }
 
             await Task.Delay(TimeSpan.FromSeconds(2));
-            if (!isCurrent()) return;
+            if (!currentOwner()) return;
             SubtitleAiJob job;
             try { job = await api.GetSubtitleAiJobAsync(jobId); }
-            catch { continue; }
-            if (!isCurrent()) return;
+            catch { if (!currentOwner()) return; continue; }
+            if (!currentOwner()) return;
             if (job.Status is "failed" or "cancelled")
             {
                 DispatcherQueue.TryEnqueue(() =>
-                    { if (isCurrent()) _playerService.FailLiveSubtitleTranslation(jobId, job.ErrorMessage); });
+                {
+                    if (currentOwner()) _playerService.FailLiveSubtitleTranslation(jobId, job.ErrorMessage);
+                });
                 return;
             }
             if (job.Status != "completed") continue;
-            DispatcherQueue.TryEnqueue(() => { if (isCurrent()) _ = _playerService.RefreshSubtitlesAfterAiAsync(
-                mediaFileId, job.ResultSubtitleId, isCurrent, mayActivate); });
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (currentOwner()) _ = _playerService.RefreshSubtitlesAfterAiForOwnerAsync(
+                    mediaFileId, job.ResultSubtitleId, operationOwner);
+            });
             return;
         }
     }

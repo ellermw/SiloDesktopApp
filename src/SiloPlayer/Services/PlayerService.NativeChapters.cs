@@ -39,7 +39,7 @@ public partial class PlayerService
             App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom?.Room?.SelfCanManageRoom == true;
         bool Owned() => owner.IsCurrent() && ReferenceEquals(version, ActiveVersion) &&
             ReferenceEquals(session, _playbackManager?.CurrentSession);
-        bool Current() => !closed && Owned() && _nativeMenuGate.IsCurrent(request);
+        bool Current() => !closed && Owned() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request);
         NativeChapterChoice[] Snapshot() => (version.Chapters ?? [])
             .Where(chapter => chapter.Index >= 0)
             .DistinctBy(chapter => chapter.Index)
@@ -102,7 +102,7 @@ public partial class PlayerService
         {
             // Select-close retires the presentation gate before this delegate.
             // Keep playback identity and the accepted chapter source authoritative.
-            if (!selected || !Owned() || !CanSeek()) return;
+            if (!selected || !Owned() || IsLoading || _switchingContent || !CanSeek()) return;
             var captured = chapters.FirstOrDefault(chapter => chapter.Id == id);
             var current = version.Chapters?.FirstOrDefault(chapter => chapter.Index == captured?.Index);
             if (captured == null || current == null || current.StartSeconds != captured.Start ||

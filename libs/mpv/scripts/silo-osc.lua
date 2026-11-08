@@ -159,6 +159,7 @@ local state = {
     audio_tracks = {},
     active_audio = -1,
     native_audio_capable = false,
+    native_audio_legacy = false,
     native_audio_scope = nil,
     native_subtitle_scope = nil,
     native_subtitle_dialog_request = nil,
@@ -428,7 +429,7 @@ local function quality_choices_available()
 end
 local function native_menu_active(kind)
     local request = state.native_menu_request
-    return request ~= nil and (request.kind == kind
+    return request ~= nil and ((request.kind or "audio") == kind
         or (kind == "more" and request.opener == "btn_more"))
 end
 local function native_menu_input(action)
@@ -1239,6 +1240,18 @@ local function compute_layout()
     local L = state.layout
     local sc = ui_scale()
     local compact = W < math.floor(1024 * sc)
+    if not compact then
+        -- A sheet without its More anchor must not retain input or visibility.
+        if L.btn_more or state.compact_menu_visible then
+            state.controller_focus_name = nil
+            state.controller_focus_deadline = 0
+        end
+        state.compact_menu_visible = false
+        state.compact_menu_items = {}
+        for name in pairs(L) do
+            if name:sub(1, 9) == "overflow_" then L[name] = nil end
+        end
+    end
     local pad = math.floor((compact and 12 or config.bar_padding_x) * sc)
     local main_size = math.floor((compact and 40 or config.button_size) * sc)
     local small_size = math.floor((compact and 32 or config.small_button_size) * sc)
@@ -1537,6 +1550,7 @@ end
 
 local function hud_input_available()
     return not (state.osc_disabled or state.current_alpha < 0.1 or state.playback_failure_visible
+        or state.native_menu_request or native_dialog_active()
         or state.subtitle_menu_visible or state.audio_menu_visible or state.quality_menu_visible
         or state.chapter_menu_visible or state.compact_menu_visible
         or state.dragging_seek or state.dragging_volume)
@@ -2190,11 +2204,15 @@ local function render_osc()
 
     state.compact_menu_items = {}
     if state.compact_menu_visible and L.btn_more then
-        local entries = {{name="btn_audio", label="Audio tracks"}, {name="btn_chapters", label="Chapters"},
+        local entries = {}
+        if #state.audio_tracks > 1 then table.insert(entries, {name="btn_audio", label="Audio tracks"}) end
+        if #state.chapters > 0 then table.insert(entries, {name="btn_chapters", label="Chapters"}) end
+        for _, entry in ipairs({
             {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
             {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
-            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}
-        if #state.audio_tracks <= 1 then table.remove(entries, 1) end
+            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}) do
+            table.insert(entries, entry)
+        end
         local row_h = math.floor(40 * sc)
         local width = math.min(W - 24 * sc, math.floor(280 * sc))
         -- Compact touch surfaces use a generous sheet above the transport row.
@@ -2618,7 +2636,8 @@ local function arm_osc_hide(delay)
             and (focus:sub(1, 9) ~= "overflow_" or state.compact_menu_visible)
         if state.pause or state.dragging_seek or state.dragging_volume or state.pressed_control or focus_owned
             or state.native_menu_request or native_dialog_active()
-            or state.compact_menu_visible or state.subtitle_menu_visible or state.audio_menu_visible
+            or (state.compact_menu_visible and state.layout.btn_more)
+            or state.subtitle_menu_visible or state.audio_menu_visible
             or state.quality_menu_visible or state.chapter_menu_visible
             or (state.mouse_in_bar and state.mouse_in_window) then
             arm_osc_hide(config.hide_timeout)
@@ -2797,12 +2816,16 @@ local function handle_mouse_move()
     local mx, my = get_mouse_pos()
     if mx == nil or my == nil or mx < 0 or my < 0 then return end
 
+    local moved = mx ~= state.mouse_x or my ~= state.mouse_y
     state.mouse_x = mx
     state.mouse_y = my
-    state.controller_focus_name = nil
-
-    -- Show OSC on any mouse movement
-    show_osc()
+    -- Embedded input ownership belongs to the host's screen-space movement
+    -- flag, not this duplicate client-space binding (in either delivery order).
+    -- Keep native mouse ownership for standalone/headless mpv callers.
+    if moved and mp.get_property_number("options/wid", 0) <= 0 then
+        state.controller_focus_name = nil
+        show_osc()
+    end
 
     -- Check if mouse is over the bar area
     compute_layout()
@@ -4773,8 +4796,10 @@ end
 
 local function open_native_menu(kind, keyboard)
     local scope = state['native_' .. kind .. '_scope']
-    if kind == 'audio' and state.native_audio_capable and not scope then return true end
-    if not scope then return false end
+    if kind == 'audio' then
+        if not state.native_audio_capable or state.native_audio_legacy then return false end
+        if not scope then return true end
+    elseif not scope then return false end
     if kind == 'party' and (state.playback_failure_visible or not state.watch_party or not state.watch_party.visible) then return true end
     if state.native_menu_request or native_dialog_active() or (kind == "audio" and #state.audio_tracks <= 1)
         or (kind == "chapters" and #state.chapters == 0) or state.osc_disabled
@@ -4956,6 +4981,8 @@ end
 
 local function open_transport_menu_from_controller(kind, keyboard)
     if keyboard == nil then keyboard = true end
+    if (kind == "audio" and #state.audio_tracks <= 1)
+        or (kind == "chapters" and #state.chapters == 0) then return end
     close_transport_menus(kind)
     if kind == "audio" then
         if #state.audio_tracks <= 1 then return end
@@ -5016,6 +5043,7 @@ end
 -- Pointer callers already hit-tested floating prompts; dispatch their named
 -- control without applying keyboard/controller prompt precedence again.
 local function activate_transport_control(name, keyboard)
+    if keyboard == nil then keyboard = true end
     -- A stale focus or compact-menu row cannot re-enable an unavailable action.
     if not hud_control_enabled(name) then return true end
 
@@ -5031,6 +5059,7 @@ local function activate_transport_control(name, keyboard)
     elseif name == "btn_more" then
         if open_native_menu("more", keyboard) then return true end
         state.compact_menu_visible = not state.compact_menu_visible
+
     elseif name == "btn_prev_ep" then
         state.prev_ep_available = false
         mp.commandv("script-message", "silo-prev-episode")
@@ -5060,9 +5089,14 @@ end
 
 local function activate_controller_focus()
     if native_menu_input("activate") then return true end
-    -- A focused Party or settings opener keeps its explicit native intent.
+    -- A focused Party opener expresses that intent. It must never run a
+    -- buffering/failure action merely because that unrelated surface appeared.
     if state.controller_focus_name == 'btn_party' then return open_native_menu('party', true) end
-    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then return open_native_menu('quality', true) end
+    if state.controller_focus_name == 'btn_quality' and state.native_speed_scope then
+        -- The failure scrim owns playback; consume the settings intent without retrying.
+        if state.playback_failure_visible then return true end
+        return open_native_menu('quality', true)
+    end
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
     end
@@ -5188,6 +5222,7 @@ local function handle_mouse_down()
     if state.stats_visible and state.stats_close_rect then
         local r = state.stats_close_rect
         if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
+            consume_video_click()
             state.stats_visible = false
             render_stats()
             return
@@ -5202,14 +5237,20 @@ local function handle_mouse_down()
     if state.compact_menu_visible then
         for _, item in ipairs(state.compact_menu_items or {}) do
             if point_in_rect(mx, my, item) then
-                activate_transport_control("overflow_" .. item.name, false); return
+                activate_transport_control("overflow_" .. item.name, false)
+                -- Native handoff owns this gesture through its release; do not
+                -- also suppress a fresh click with the legacy timeout.
+                if not state.native_menu_request then consume_video_click() end
+                return
             end
         end
         state.compact_menu_visible = false
         consume_video_click(); request_tick(); return
     end
     if hud_input_available() and state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
-        activate_transport_control("btn_more", false); return
+        activate_transport_control("btn_more", false)
+        if not state.native_menu_request then consume_video_click() end
+        return
     end
     if hud_input_available() and state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
         state.pressed_control = "btn_fill"
@@ -5222,6 +5263,7 @@ local function handle_mouse_down()
 
     -- Audio menu click handling
     if state.audio_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.audio_menu_items) do
             if point_in_rect(mx, my, item) then
                 mp.commandv("script-message", "silo-audio-select", tostring(item.index))
@@ -5239,6 +5281,7 @@ local function handle_mouse_down()
 
     -- Chapter menu click handling
     if state.chapter_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.chapter_menu_items) do
             if point_in_rect(mx, my, item) then
                 seek_and_resume(item.start_seconds, "absolute+keyframes")
@@ -5308,6 +5351,7 @@ local function handle_mouse_down()
 
     -- Quality menu click handling
     if state.quality_menu_visible then
+        consume_video_click()
         for _, item in ipairs(state.quality_menu_items) do
             if point_in_rect(mx, my, item) then
                 if item.action == "version" then
@@ -5472,6 +5516,7 @@ local function handle_mouse_up()
         end
         return
     end
+
     if state.playback_failure_visible then
         state.dragging_seek = false
         state.dragging_volume = false
@@ -5583,6 +5628,44 @@ end
 --------------------------------------------------------------------------------
 -- Property Observers
 --------------------------------------------------------------------------------
+
+local function remember_subtitle(index)
+    state.last_subtitle = index
+    state.last_subtitle_track = nil
+    for _, track in ipairs(state.subtitle_tracks) do
+        if track.index == index then state.last_subtitle_track = track; break end
+    end
+end
+
+local function same_subtitle_identity(previous, track)
+    if type(previous.track_id) == "string" and previous.track_id ~= "" then
+        return previous.track_id == track.track_id
+    end
+    if type(track.track_id) == "string" and track.track_id ~= "" then return false end
+    if type(previous.sync_key) == "string" and previous.sync_key ~= "" then
+        return previous.sync_key == track.sync_key
+    end
+    if type(track.sync_key) == "string" and track.sync_key ~= "" then return false end
+    -- Older inventories have no stable ID. Retain only an unchanged legacy
+    -- row, never an ordinal now owned by different metadata.
+    return previous.index == track.index and previous.language == track.language
+        and previous.source == track.source and previous.codec == track.codec
+        and previous.label == track.label and previous.forced == track.forced
+        and previous.hearing_impaired == track.hearing_impaired
+end
+
+local function remembered_subtitle(tracks)
+    local previous = state.last_subtitle_track
+    if not previous then return nil end
+    local match = nil
+    for _, track in ipairs(tracks) do
+        if same_subtitle_identity(previous, track) then
+            if match then return nil end -- Ambiguous identity is not a route.
+            match = track
+        end
+    end
+    return match and not match.unplayable and match or nil
+end
 
 local function observe_properties()
     mp.observe_property("time-pos", "number", function(_, val)
@@ -6030,6 +6113,7 @@ local function observe_properties()
                 -- Combined indices and the caption shortcut's remembered row
                 -- belong to one file, even when the new list reuses an index.
                 state.last_subtitle = -1
+                state.last_subtitle_track = nil
                 state.active_subtitle = -1
                 state.subtitle_menu_visible = false
                 state.subtitle_menu_items = {}
@@ -6038,6 +6122,14 @@ local function observe_properties()
                     state.keyboard_menu_index = 0
                 end
             end
+            -- The same file can reassign combined indices. Rebind the saved
+            -- caption by identity before replacing the inventory it came from.
+            local remembered = remembered_subtitle(data)
+            if state.active_subtitle >= 0 then
+                state.active_subtitle = remembered and remembered.index or -1
+            end
+            state.last_subtitle = remembered and remembered.index or -1
+            state.last_subtitle_track = remembered
             state.subtitle_menu_file_id = file_id
             state.subtitle_tracks = data
             state.subtitle_menu_offset = 1
@@ -6058,7 +6150,7 @@ local function observe_properties()
     mp.register_script_message("osc-set-active-subtitle", function(idx)
         state.active_subtitle = tonumber(idx) or -1
         if state.active_subtitle >= 0 then
-            state.last_subtitle = state.active_subtitle
+            remember_subtitle(state.active_subtitle)
         end
     end)
 
@@ -6302,9 +6394,9 @@ local function setup_key_bindings()
         if not state.playback_failure_visible and not native_dialog_active() then toggle_stats(true) end
     end)
 
-    -- Subtitle delay nudge (matches mpv defaults but bound explicitly because
-    -- input-default-bindings=no in the host). Z slows subs (shows them later
-    -- relative to audio); X speeds them up. Each press shifts by 100 ms; the
+    -- Subtitle delay nudge routes through host-owned timing preferences rather
+    -- than mpv's default action. Z slows subs (shows them later relative to
+    -- audio); X speeds them up. Each press shifts by 100 ms; the
     -- OSD shows the current absolute delay so the user can dial it in.
     local function nudge_sub_delay(delta)
         if state.playback_failure_visible or state.native_menu_request or native_dialog_active() then return end
@@ -6415,22 +6507,20 @@ local function setup_key_bindings()
     local function toggle_captions()
         if state.playback_failure_visible or state.native_menu_request or native_dialog_active() then return end
         if state.active_subtitle >= 0 then
-            state.last_subtitle = state.active_subtitle
+            remember_subtitle(state.active_subtitle)
             state.active_subtitle = -1
             mp.commandv("script-message", "silo-subtitle-select", "-1")
         else
-            local target = state.last_subtitle
-            local available = false
-            for _, track in ipairs(state.subtitle_tracks) do
-                if track.index == target and not track.unplayable then available = true; break end
-            end
-            if not available then
+            local remembered = remembered_subtitle(state.subtitle_tracks)
+            local target = remembered and remembered.index or -1
+            if target < 0 then
                 target = -1
                 for _, track in ipairs(state.subtitle_tracks) do
                     if not track.unplayable then target = track.index or -1; break end
                 end
             end
             if target >= 0 then
+                remember_subtitle(target)
                 state.active_subtitle = target
                 mp.commandv("script-message", "silo-subtitle-select", tostring(target))
             end
@@ -6438,6 +6528,17 @@ local function setup_key_bindings()
     end
     mp.add_forced_key_binding("c", "silo-captions-toggle", toggle_captions)
     mp.add_forced_key_binding("C", "silo-captions-toggle-shift", toggle_captions)
+
+    -- Never let mpv's builtin j/J cycle an unverified or unavailable SID.
+    -- Keep both directions local, using the same host-owned routes as CC.
+    mp.add_forced_key_binding("j", "silo-subtitle-cycle-forward", function()
+        if state.playback_failure_visible or state.native_menu_request or native_dialog_active() then return end
+        mp.commandv("script-message", "silo-subtitle-cycle", "forward")
+    end)
+    mp.add_forced_key_binding("J", "silo-subtitle-cycle-backward", function()
+        if state.playback_failure_visible or state.native_menu_request or native_dialog_active() then return end
+        mp.commandv("script-message", "silo-subtitle-cycle")
+    end)
 
     mp.add_forced_key_binding("f", "silo-fs-override", function()
         if state.playback_failure_visible or state.native_menu_request or native_dialog_active() then return end
@@ -6500,7 +6601,11 @@ local function setup_script_messages()
     for _, menu_kind in ipairs({'audio','subtitle','quality','chapters','speed','stats','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
-            if kind == 'audio' then state.native_audio_capable = true end
+            if kind == 'audio' then
+                -- Revocation must not silently reopen the ASS fallback.
+                state.native_audio_capable = true
+                state.native_audio_legacy = token == 'legacy'
+            end
             local scope = token and #token == 32 and token:match('^%x+$') and token or nil
             local key = 'native_' .. kind .. '_scope'
             if scope ~= state[key] then
@@ -6553,21 +6658,27 @@ local function setup_script_messages()
     end)
     -- Host app can send mouse coordinates explicitly
     -- This is the primary mouse tracking method when embedded with wid=
-    mp.register_script_message("osc-mouse-move", function(x, y)
+    mp.register_script_message("osc-mouse-move", function(x, y, screen_moved)
         if state.native_menu_request or native_dialog_active() then return end
         local mx = tonumber(x)
         local my = tonumber(y)
         if not mx or not my then return end
+        local moved = mx ~= state.mouse_x or my ~= state.mouse_y
+        -- The desktop host compares screen points, which remain stable when
+        -- fullscreen changes the popup's origin. Retain two-argument callers.
+        if screen_moved ~= nil then moved = screen_moved == "true" end
         state.mouse_x = mx
         state.mouse_y = my
-        state.controller_focus_name = nil
         -- WM_MOUSEMOVE is the desktop host's authoritative enter signal.
         -- A hidden/post-roll popup may never receive a separate mpv
         -- mouse_enter binding when it is expanded again.
         state.mouse_in_window = true
 
-        -- Show OSC on any mouse movement
-        show_osc()
+        -- Only real movement transfers input ownership from the controller.
+        if moved then
+            state.controller_focus_name = nil
+            show_osc()
+        end
 
         -- Check if mouse is over the bar area
         compute_layout()

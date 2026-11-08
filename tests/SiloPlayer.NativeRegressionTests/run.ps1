@@ -35,7 +35,7 @@ try {
     $env:SILO_NATIVE_TEST_THEME_PATH = Join-Path $repoRoot 'src\SiloPlayer\Themes\DarkTheme.xaml'
     $env:SILO_NATIVE_TEST_READER_FIXTURES = Join-Path $repoRoot 'tests\reader-fixtures'
     $env:SILO_NATIVE_TEST_ONLY = $Only
-    $executable = Join-Path $PSScriptRoot 'bin\Debug\net8.0-windows10.0.22621.0\win-x64\SiloPlayer.NativeRegressionTests.exe'
+    $executable = Join-Path $PSScriptRoot 'bin\Debug\net10.0-windows10.0.22621.0\win-x64\SiloPlayer.NativeRegressionTests.exe'
     $nativeProcess = Start-Process -FilePath $executable -WindowStyle Hidden -Wait -PassThru
     $testExitCode = $nativeProcess.ExitCode
     $resultsFile = Join-Path $resultPath 'results.txt'

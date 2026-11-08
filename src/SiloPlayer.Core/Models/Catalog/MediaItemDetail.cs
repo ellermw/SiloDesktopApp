@@ -16,6 +16,16 @@ public class MediaItemDetail
     public int? PlaySeasonNumber { get; set; }
     [JsonIgnore]
     public bool HasAuthoritativePlayTarget { get; private set; }
+
+    // A target from a previous parent is neither a current target nor an
+    // authoritative null. Allow legacy resolution to establish a new action.
+    public void ResetPlayTarget()
+    {
+        _playContentId = null;
+        PlaySeasonNumber = null;
+        HasAuthoritativePlayTarget = false;
+    }
+
     public string Type { get; set; } = "";
     public string Status { get; set; } = "";
     public string Title { get; set; } = "";
@@ -64,7 +74,16 @@ public class MediaItemDetail
     public string? ShowStatus { get; set; }
     public int? SeasonCount { get; set; }
     public int? EpisodeCount { get; set; }
-    public string? SeriesId { get; set; }
+    private string? _seriesId;
+    public string? SeriesId
+    {
+        get => _seriesId;
+        set { _seriesId = value; HasAuthoritativeSeriesId = true; }
+    }
+    // Preserve a known parent when a legacy state response omits the field;
+    // an explicit null can still authoritatively remove it.
+    [JsonIgnore]
+    public bool HasAuthoritativeSeriesId { get; private set; }
     public string? SeriesTitle { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
@@ -104,8 +123,16 @@ public class MediaItemDetail
     [JsonPropertyName("user_state")]
     public MediaItemUserState? UserState { get; set; }
 
+    private int? _userRating;
     [JsonPropertyName("user_rating")]
-    public int? UserRating { get; set; }
+    public int? UserRating
+    {
+        get => _userRating;
+        set { _userRating = value; HasAuthoritativeUserRating = true; }
+    }
+    // An omitted legacy field is not an authoritative rating removal.
+    [JsonIgnore]
+    public bool HasAuthoritativeUserRating { get; private set; }
 }
 
 public sealed class MangaDetailExtension

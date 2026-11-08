@@ -9,7 +9,7 @@ public partial class PlayerService
 {
     private long _nativeQualitySelection;
 
-    private PlaybackChoiceMenu CreateNativeQualityMenu(NativeMenuOwner owner, PlaybackMenuRequest request,
+    private PlaybackChoiceMenu? CreateNativeQualityMenu(NativeMenuOwner owner, PlaybackMenuRequest request,
         Action<PlaybackMenuCloseReason> finish)
     {
         var session = _playbackManager?.CurrentSession
@@ -29,7 +29,7 @@ public partial class PlayerService
                     IsPending: VideoPlaybackRatePending));
             return rows;
         }
-        bool Current() => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request);
+        bool Current() => owner.IsCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request);
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(12, 4, 12, 12) };
         PlaybackChoiceMenu? menu = null;
         void Refresh()
@@ -37,14 +37,19 @@ public partial class PlayerService
             if (!Current()) { menu?.Close(PlaybackMenuCloseReason.OwnerRetired); return; }
             error.Text = VideoPlaybackRateError ?? "";
             error.Visibility = CanPresentNativeSpeed && error.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-            menu?.UpdateChoices(Choices());
+            // Speed may be the only row; once it retires the settings surface has nothing to offer.
+            var choices = Choices();
+            if (choices.Count == 0) { menu?.Close(PlaybackMenuCloseReason.OwnerRetired); return; }
+            menu?.UpdateChoices(choices);
         }
         void Changed()
         {
             if (_nativeMenuDispatcher?.HasThreadAccess == true) Refresh();
             else _nativeMenuDispatcher?.TryEnqueue(Refresh);
         }
-        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, CanPresentNativeSpeed ? "Playback settings" : "Quality", Choices(),
+        var initial = Choices();
+        if (initial.Count == 0) return null;
+        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, CanPresentNativeSpeed ? "Playback settings" : "Quality", initial,
             Current, id =>
             {
                 if (id == "speed")
@@ -84,7 +89,7 @@ public partial class PlayerService
             else if (option.Kind == PlaybackQualityMenuOptionKind.Quality && option.QualityId is { } quality)
             {
                 if (quality == SelectedQualityMenuId) return;
-                await SwitchQualityTierAsync(quality, acceptSelection: Accept);
+                await SwitchQualityTierCoreAsync(quality, acceptSelection: Accept);
             }
         }
         catch (Exception)

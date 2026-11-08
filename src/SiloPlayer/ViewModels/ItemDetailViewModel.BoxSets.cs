@@ -3,6 +3,7 @@ namespace SiloPlayer.ViewModels;
 public partial class ItemDetailViewModel
 {
     private CancellationTokenSource? _boxSetCts;
+    private CancellationTokenSource? _boxSetReadInFlight;
     private BoxSetDetail? _boxSet;
     // Survives an in-flight refresh so final playback writes still invalidate this visit.
     private BoxSetDetail? _boxSetMembership;
@@ -17,7 +18,17 @@ public partial class ItemDetailViewModel
         && _boxSetLanguage == _catalogApi.MetadataLanguageGeneration;
     private bool IsBoxSetMember(string contentId) => Item is { Type: "movie" } movie
         && (movie.ContentId == contentId || _boxSetMembership?.Items.Any(x => x.ContentId == contentId) == true);
+    private bool IsBoxSetMemberOrReading(string contentId) => IsBoxSetMember(contentId)
+        || Item is { Type: "movie" } movie && _boxSetMembership == null && CanPreserveBoxSet(movie.ContentId)
+            && _boxSetReadInFlight is { IsCancellationRequested: false } pending && ReferenceEquals(_boxSetCts, pending);
     public BoxSetDetail? BoxSet { get => _boxSet; private set => SetProperty(ref _boxSet, value); }
+    private async Task RefreshBoxSetAfterPlaybackAsync(SiloPlayer.Messaging.PlaybackProgressUpdated message)
+    {
+        var item = Item; var library = LibraryId; var lifetime = _boxSetLifetime; var owner = _catalogApi.CaptureIdentityContext();
+        try { await message.Persisted; } catch { return; }
+        if (Item?.ContentId == item?.ContentId && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime
+            && _catalogApi.IsCurrentIdentityContext(owner) && IsBoxSetMemberOrReading(message.ContentId)) await RefreshBoxSetAsync();
+    }
     private async Task RefreshBoxSetAfterProgressSaveAsync(Task pendingProgressSave)
     {
         // Access revisions retire reads, not this visit's required post-save refresh.
@@ -32,6 +43,7 @@ public partial class ItemDetailViewModel
     }
     private void CancelBoxSetRead()
     {
+        _boxSetReadInFlight = null;
         _boxSetCts?.Cancel(); _boxSetCts?.Dispose(); _boxSetCts = null;
     }
     public async Task RefreshBoxSetAsync()
@@ -40,12 +52,14 @@ public partial class ItemDetailViewModel
         if (_boxSetRetired || Item is not { Type: "movie" } item || LibraryId is <= 0)
         { _boxSetMembership = null; BoxSet = null; return; }
         if (!CanPreserveBoxSet(item.ContentId)) { _boxSetMembership = null; BoxSet = null; }
-        var library = LibraryId; var context = _catalogApi.CaptureContext(); var language = _catalogApi.MetadataLanguageGeneration;
-        _boxSetContentId = item.ContentId; _boxSetLibrary = library;
-        _boxSetOwner = _catalogApi.CaptureIdentityContext(); _boxSetLanguage = language;
+        var library = LibraryId; var identity = _catalogApi.CaptureIdentityContext();
+        var context = _catalogApi.CaptureContext(); var language = _catalogApi.MetadataLanguageGeneration;
+        _boxSetContentId = item.ContentId; _boxSetLibrary = library; _boxSetOwner = identity; _boxSetLanguage = language;
         var pending = _boxSetCts = new(); var ct = pending.Token;
+        _boxSetReadInFlight = pending;
         bool Current() => ReferenceEquals(_boxSetCts, pending) && !ct.IsCancellationRequested && ReferenceEquals(Item, item)
-            && LibraryId == library && _catalogApi.IsCurrentContext(context) && _catalogApi.MetadataLanguageGeneration == language;
+            && LibraryId == library && _catalogApi.IsCurrentIdentityContext(identity)
+            && _catalogApi.IsCurrentContext(context) && _catalogApi.MetadataLanguageGeneration == language;
         try
         {
             var eligibleLibraries = await _catalogApi.GetBoxSetLibraryIdsAsync(ct, throwOnCapabilityFailure: true);
@@ -58,7 +72,8 @@ public partial class ItemDetailViewModel
                 // library must have its own flag. Explicit routes also require a match.
                 var detail = response.BoxSet;
                 if (detail != null && (!int.TryParse(detail.LibraryId, out var returnedLibrary)
-                    || !eligibleLibraries.Contains(returnedLibrary) || (library.HasValue && returnedLibrary != library.Value))) detail = null;
+                    || !eligibleLibraries.Contains(returnedLibrary) || (library.HasValue && returnedLibrary != library.Value)
+                    || !detail.Items.Any(member => BoxSetDetail.IsMovieMember(member) && member.ContentId == item.ContentId))) detail = null;
                 _boxSetMembership = detail;
                 BoxSet = detail is { Items.Count: > 0 } ? detail : null;
             }
@@ -67,5 +82,6 @@ public partial class ItemDetailViewModel
         catch (SiloPlayer.Core.Api.ApiException ex) when (ex.StatusCode is 403 or 404)
         { if (Current()) { _boxSetMembership = null; BoxSet = null; } }
         catch { /* Optional refresh failure preserves the last successful row. */ }
+        finally { if (ReferenceEquals(_boxSetReadInFlight, pending)) _boxSetReadInFlight = null; }
     }
 }

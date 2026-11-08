@@ -95,13 +95,17 @@ internal static class EmbeddedSubtitleChecks
             mpv.FileLoaded += () => loaded.TrySetResult();
             mpv.LoadFile(media); mpv.Play();
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(8));
-            Call(service, "SelectSubtitleTrack", track);
+            // Selection now downloads asynchronously before the local-only native add.
+            // Exercise that orchestration rather than bypassing its prefetch step.
+            if (!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!)
+                throw new InvalidOperationException("Embedded sidecar selection did not execute.");
             if (bounded) throw new InvalidOperationException("Embedded sidecar was requested with a finite position/duration window.");
             mpv.Seek(902);
             await Until(() => ((string?)Call(mpv, "ReadUpscalingProperty", "sub-text"))?.Contains("LATE_CUE") == true);
             mpv.Seek(12);
             await Until(() => ((string?)Call(mpv, "ReadUpscalingProperty", "sub-text"))?.Contains("EARLY_CUE") == true);
-            Call(service, "SelectSubtitleTrack", track);
+            if (!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", track.Index, false)!)
+                throw new InvalidOperationException("Loaded sidecar selection did not execute.");
             if (reads != 1) throw new InvalidOperationException("Selecting a loaded sidecar fetched it again.");
             Call(service, "LoadSubtitles");
             if (((System.Collections.IDictionary)Field(service, "_loadedExternalSubtitleSids")!).Count != 0)

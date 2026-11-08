@@ -48,6 +48,53 @@ public class VideoPlaybackRatePreferencesTests
         Assert.Empty(f.Handler.Writes);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoreDoesNotApplyDefaultBeforeOptionalReadSucceeds(bool failRead)
+    {
+        using var f = new Fixture(); f.Handler.HoldRead = true; f.Handler.FailRead = failRead;
+        f.Session.Restore(); Assert.Empty(f.Applied);
+        var loading = f.Session.LoadAsync(); await f.Handler.ReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        f.Session.Restore(); Assert.Empty(f.Applied);
+        f.Editable = false;
+        f.Handler.ReadRelease.TrySetResult(); await loading;
+        Assert.Empty(f.Applied);
+        f.Editable = true; f.Session.Restore();
+        if (failRead)
+        {
+            Assert.Empty(f.Applied); Assert.Contains("retry", f.Session.Error!);
+            await f.Session.SetAsync(1.5); f.Applied.Clear(); f.Session.Restore();
+            Assert.Equal(new[] { 1.5 }, f.Applied);
+        }
+        else Assert.Equal(new[] { 1.35 }, f.Applied);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoreKeepsAcceptedManualDesireWhileReadAndSaveAreHeld(bool failRead)
+    {
+        using var f = new Fixture();
+        f.Handler.HoldRead = true; f.Handler.FailRead = failRead; f.Handler.HoldFirstWrite = true;
+        var loading = f.Session.LoadAsync(); await f.Handler.ReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var saving = f.Session.SetAsync(1.5); await f.Handler.WriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        try
+        {
+            f.Editable = false; f.Session.Restore();
+            Assert.Equal(new[] { 1.5 }, f.Applied);
+            f.Editable = true; f.Session.Restore();
+            Assert.Equal(new[] { 1.5, 1.5 }, f.Applied);
+            Assert.True(f.Session.IsSavePending);
+            f.Handler.ReadRelease.TrySetResult(); await loading;
+            Assert.Equal(1.5, f.Session.DesiredRate); Assert.Null(f.Session.Error);
+            Assert.Equal(new[] { 1.5, 1.5 }, f.Applied);
+        }
+        finally { f.Handler.ReadRelease.TrySetResult(); f.Handler.WriteRelease.TrySetResult(); await saving; }
+        Assert.False(f.Session.IsSavePending);
+        Assert.Equal(1.5, Assert.Single(f.Handler.Writes).Rate);
+    }
+
     [Fact]
     public async Task ManualSelectionAppliesImmediatelyAndBeatsHeldRead()
     {
@@ -121,14 +168,49 @@ public class VideoPlaybackRatePreferencesTests
     [Theory]
     [InlineData("file")]
     [InlineData("profile")]
+    [InlineData("server")]
     [InlineData("device")]
-    public async Task QueuedWriteAndOldFailureCannotReachReplacementOwner(string replacement)
+    [InlineData("retired")]
+    public async Task QueuedWritePreservesPreferenceScopeWithoutPublishingToReplacementOwner(string replacement)
     {
         using var f = new Fixture(); f.Handler.HoldFirstWrite = true; f.Handler.FailFirstWrite = true;
         var first = f.Session.SetAsync(1.5); await f.Handler.WriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
         var second = f.Session.SetAsync(2); f.Replace(replacement);
+        var changes = f.Changes;
         f.Handler.WriteRelease.TrySetResult(); await Task.WhenAll(first, second);
-        Assert.Single(f.Handler.Writes); Assert.Null(f.Session.Error);
+        if (replacement is "file" or "retired")
+            Assert.Equal(new[] { 1.5, 2.0 }, f.Handler.Writes.Select(write => write.Rate));
+        else Assert.Single(f.Handler.Writes);
+        Assert.Equal(new[] { 1.5, 2.0 }, f.Applied);
+        Assert.Equal(changes, f.Changes);
+        Assert.Null(f.Session.Error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplacementReadWaitsForLatestAcceptedSaveAfterRetirement(bool failOld)
+    {
+        using var f = new Fixture(); f.Handler.HoldFirstWrite = true; f.Handler.FailFirstWrite = failOld;
+        var first = f.Session.SetAsync(1.25); await f.Handler.WriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var second = f.Session.SetAsync(2);
+        f.Session.Retire();
+        var applied = new List<double>();
+        var replacement = f.Preferences.CreateSession(() => true, () => true, applied.Add, () => { });
+        var loading = replacement.LoadAsync();
+        try
+        {
+            Assert.False(loading.IsCompleted);
+            Assert.Empty(applied);
+        }
+        finally { f.Handler.WriteRelease.TrySetResult(); }
+        await Task.WhenAll(first, second, loading).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(new[] { 1.25, 2.0 }, f.Handler.Writes.Select(write => write.Rate));
+        Assert.Equal(2, replacement.DesiredRate);
+        Assert.Equal(new[] { 2.0 }, applied);
+        Assert.Equal(new[] { 1.25, 2.0 }, f.Applied);
+        Assert.Null(replacement.Error);
+        Assert.False(replacement.IsSavePending);
     }
 
     [Fact]
@@ -153,21 +235,42 @@ public class VideoPlaybackRatePreferencesTests
         await f.Session.SetAsync(1.35); Assert.Null(f.Session.Error); Assert.Equal(1.35, f.Session.DesiredRate);
     }
 
+    [Fact]
+    public async Task AccessRefreshKeepsTheOwnerAndPersistsHeldAndQueuedSaves()
+    {
+        using var f = new Fixture(); f.Handler.HoldRead = true; f.Handler.HoldFirstWrite = true;
+        var loading = f.Session.LoadAsync(); await f.Handler.ReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var first = f.Session.SetAsync(1.5); await f.Handler.WriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        f.Client.InvalidateAccessContext();
+        Assert.True(f.Session.CanChange); Assert.True(f.Session.IsSavePending);
+        Assert.Equal(1.5, f.Session.DesiredRate);
+        var second = f.Session.SetAsync(2);
+        f.Handler.ReadRelease.TrySetResult(); f.Handler.WriteRelease.TrySetResult();
+        await Task.WhenAll(loading, first, second).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(1.5, f.Handler.Writes.First().Rate); Assert.Equal(2, f.Handler.Writes.Last().Rate);
+        Assert.True(f.Session.CanChange); Assert.False(f.Session.IsSavePending); Assert.Null(f.Session.Error);
+        Assert.Equal(2, f.Session.DesiredRate);
+        f.Client.InvalidateAccessContext(); f.Session.Restore(); Assert.Equal(2, f.Applied.Last());
+    }
+
     private sealed class Fixture : IDisposable
     {
         public Handler Handler { get; } = new();
         private readonly HttpClient _http;
         public SiloApiClient Client { get; }
+        public VideoPlaybackRatePreferences Preferences { get; }
         public VideoPlaybackRateSession Session { get; }
         public List<double> Applied { get; } = [];
+        public int Changes { get; private set; }
         public bool Current = true, Editable = true;
         public Fixture()
         {
             _http = new(Handler); Client = new(_http);
             Client.SetBaseUrl("https://speed.invalid"); Client.SetProfile("viewer");
             Client.SetDeviceMetadata("desktop-test", "Synthetic", "Windows");
-            Session = new VideoPlaybackRatePreferences(new SettingsApi(Client)).CreateSession(
-                () => Current, () => Editable, Applied.Add, () => { });
+            Preferences = new VideoPlaybackRatePreferences(new SettingsApi(Client));
+            Session = Preferences.CreateSession(
+                () => Current, () => Editable, Applied.Add, () => Changes++);
         }
         public void Replace(string kind)
         {
@@ -195,15 +298,19 @@ public class VideoPlaybackRatePreferencesTests
             if (request.Method == HttpMethod.Get)
             {
                 ReadUri = request.RequestUri;
+                var readValue = Value;
                 if (HoldRead) { ReadEntered.TrySetResult(); await ReadRelease.Task; }
                 return Json(FailRead ? HttpStatusCode.InternalServerError : HttpStatusCode.OK,
-                    "{\"items\":[{\"key\":\"player.playback_speed\",\"value\":" + Value + "}]}");
+                    "{\"items\":[{\"key\":\"player.playback_speed\",\"value\":" + readValue + "}]}");
             }
             var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
-            Writes.Add((request.RequestUri!, body.RootElement.GetProperty("value").GetDouble()));
+            var value = body.RootElement.GetProperty("value");
+            Writes.Add((request.RequestUri!, value.GetDouble()));
             var first = Writes.Count == 1;
             if (first && HoldFirstWrite) { WriteEntered.TrySetResult(); await WriteRelease.Task; }
-            return Json(first && FailFirstWrite ? HttpStatusCode.InternalServerError : HttpStatusCode.OK, "{}");
+            var failed = first && FailFirstWrite;
+            if (!failed) Value = value.GetRawText();
+            return Json(failed ? HttpStatusCode.InternalServerError : HttpStatusCode.OK, "{}");
         }
         private static HttpResponseMessage Json(HttpStatusCode status, string value)
             => new(status) { Content = new StringContent(value) };

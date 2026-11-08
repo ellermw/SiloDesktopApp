@@ -73,17 +73,22 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             await manager.StartReplacementSessionAsync(44, 12);
             Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!,
                 "The outgoing menu was interpreted against the newly adopted file.");
-            await Load(0, 12);
-            Require(Get(service, "_pendingInitialServerSubtitleIndex") == null && wire.PreferenceWrites == preferencesBeforeSwitch,
+            await Load(0, 12); // Rebind the unique Spanish row across file-local IDs.
+            Require(manager.CaptureLocalSubtitleIntent().Track?.TrackId == "sub:42:1" &&
+                Get(service, "_pendingInitialServerSubtitleIndex") == null && wire.PreferenceWrites == preferencesBeforeSwitch,
                 "A foreign pending index survived the load or persisted a different-language preference.");
             await manager.StartReplacementSessionAsync(42, 12); await Load(1, 12);
             await manager.StartReplacementSessionAsync(43, 13); await Load(-1, 13);
             await manager.StartReplacementSessionAsync(42, 14); await Load(1, 14);
             await manager.StartReplacementSessionAsync(44, 15); await Load(0, 15);
+            var replansBeforeOff = wire.Replans.Count;
             await service.SetSubtitleTrackAndPersistAsync(0, null, null);
             await manager.ReplanQualityAsync("360p", 16); await Load(-1, 16);
-            Require(wire.Replans.Any(p => p.GetProperty("operation").GetString() == "track_change" &&
-                !p.GetProperty("selected_tracks").TryGetProperty("subtitle", out _)), "Explicit Off never reached the server.");
+            Require(wire.Replans.Count == replansBeforeOff + 2 &&
+                wire.Replans[replansBeforeOff].GetProperty("operation").GetString() == "track_change" &&
+                !wire.Replans[replansBeforeOff].GetProperty("selected_tracks").TryGetProperty("subtitle", out _) &&
+                wire.Replans[^1].GetProperty("operation").GetString() == "quality_change" &&
+                manager.CurrentSession!.SubtitleMode == "off", "Explicit Off never reached the server before quality change.");
             Require(subtitles.Requests > 0, "Native player never fetched the served subtitle bytes.");
             Require(wire.PreferenceWrites == 2, "Automatic version fallback/adoption saved a viewer preference.");
 
@@ -137,8 +142,40 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     wire.PreferenceWrites == writes + 1 && Get(service, "_pendingSubtitlePreferenceIndex") == null,
                     "The replacement did not execute Off and save its preference exactly once.");
             }
-            // A local CC cycle is not a saved preference change. Startup Auto
-            // -> loaded English -> cycle Off must let the next version run Auto.
+            // New downloads first arrive without a plan TrackId. Then a later
+            // subtitle_ready refresh must preserve the accepted row's identity.
+            await manager.StartSessionAsync(42); await Load(-1, 0);
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+            wire.DownloadedAvailable = true;
+            await service.RefreshSubtitlesAfterAiAsync(42);
+            var downloaded = manager.CurrentSession!.SubtitleUrls.Single(t => t.Source == "downloaded");
+            Require(downloaded.Id == 77 && downloaded.TrackId == null && downloaded.SyncKey == "stored-77",
+                "The download fixture did not establish an ID-less stored subtitle.");
+            downloaded.Url = subtitles.Origin + "/ita.srt"; // Serve refresh bytes without external networking.
+            await service.SetSubtitleTrackAndPersistAsync(downloaded.Index + 1, downloaded.Language, downloaded);
+            var downloadedIntent = manager.CaptureLocalSubtitleIntent();
+            await manager.ReplanQualityAsync("720p", 12); await Load(2, 12);
+            Require(manager.CurrentSession!.SelectedSubtitleTrackId == "downloaded:77" &&
+                manager.SubtitleSelectionForLoad == 2 && manager.CaptureLocalSubtitleIntent() == downloadedIntent &&
+                service.IsPaused && Math.Abs(mpv.Position - 12) < 2,
+                "A quality replan lost the newly downloaded subtitle across the TrackId boundary.");
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+            var plannedDownload = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == 2);
+            await service.SetSubtitleTrackAndPersistAsync(3, plannedDownload.Language, plannedDownload);
+            downloadedIntent = manager.CaptureLocalSubtitleIntent();
+            await service.RefreshSubtitlesAfterAiAsync(42);
+            downloaded = manager.CurrentSession.SubtitleUrls.Single(t => t.Source == "downloaded");
+            Require(downloaded.TrackId == "downloaded:77" && downloaded.SyncKey == "stored-77" && downloaded.Id == 77,
+                "A subtitle_ready refresh discarded the plan's stored subtitle identity.");
+            await manager.ReplanAudioAsync(1, 13); await Load(2, 13);
+            Require(wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("id").GetString() == "downloaded:77" &&
+                manager.SubtitleSelectionForLoad == 2 && manager.CaptureLocalSubtitleIntent() == downloadedIntent &&
+                service.IsPaused && Math.Abs(mpv.Position - 13) < 2,
+                "An audio replan lost the selected downloaded subtitle after refresh.");
+            wire.DownloadedAvailable = false;
+
+            // A local CC cycle is explicit viewer intent, but not a saved
+            // preference change. Cycled Off must survive the next Auto grant.
             await manager.StartSessionAsync(42, subtitleTrackIndex: 0);
             var automaticWatch = new WatchDetailResponse { EffectiveSubtitleMode = "always", EffectiveSubtitleLanguage = "eng" };
             Call(service, "ResolveInitialSubtitleSelection", automaticWatch, Version(42), manager.CurrentSession, null, null, null);
@@ -149,17 +186,21 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             Require(manager.IsSubtitleSelectionAutomatic, "Cycle fixture did not establish startup Auto.");
             Call(service, "CycleSubtitleBackward");
             Require(service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 &&
-                manager.IsSubtitleSelectionAutomatic && wire.PreferenceWrites == cycleWrites,
-                "The local caption cycle converted automatic Off into an explicit viewer preference.");
+                !manager.IsSubtitleSelectionAutomatic && !manager.CaptureLocalSubtitleIntent().IsAutomatic &&
+                manager.SubtitleSelectionForLoad == -1 && wire.PreferenceWrites == cycleWrites,
+                "The local caption cycle did not record explicit Off without saving a preference.");
             wire.AutomaticSubtitleSelection = 0;
             await manager.StartReplacementSessionAsync(44, 0);
-            Require(wire.Replans.Count == cycleReplans && manager.SubtitleSelectionForLoad == 0 &&
-                manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0).Language == "spa",
-                "A version switch forced cycled Off instead of accepting the new file's Auto grant.");
-            await Load(0, 0);
+            Require(wire.Replans.Count == cycleReplans + 1 && manager.SubtitleSelectionForLoad == -1 &&
+                !manager.IsSubtitleSelectionAutomatic &&
+                wire.Replans[^1].GetProperty("operation").GetString() == "track_change" &&
+                !wire.Replans[^1].GetProperty("selected_tracks").TryGetProperty("subtitle", out _) &&
+                manager.CurrentSession!.SubtitleMode == "off",
+                "A version switch lost cycled explicit Off to the new file's Auto grant.");
+            await Load(-1, 0);
             Require(wire.PreferenceWrites == cycleWrites && mpv.IsPaused,
-                "Automatic caption cycling/version adoption saved a preference or resumed playback.");
-            Program.Log("PASS: actual libmpv sid and PlayerService adopt subtitle identity across quality/version changes, refuse outgoing next-item indices until publication, preserve Auto through local caption cycling and persist only executed viewer choices.");
+                "Local caption cycling/version adoption saved a preference or resumed playback.");
+            Program.Log("PASS: actual libmpv sid and PlayerService adopt subtitle identity across quality/version changes, refuse outgoing next-item indices until publication, retain explicit local caption cycling across Auto grants and persist only executed viewer choices.");
         }
         finally
         {
@@ -241,11 +282,15 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         public List<JsonElement> Replans = [];
         public int PreferenceWrites;
         public int? AutomaticSubtitleSelection;
+        public bool DownloadedAvailable;
+        private string SubtitleId => _subtitle == 2 ? "downloaded:77" : $"sub:{_file}:{_subtitle}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "oct24-adoption.invalid") throw new InvalidOperationException("Native adoption fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
             if (path.Contains("-prefs/", StringComparison.Ordinal)) { PreferenceWrites++; return Json("{}"); }
+            if (path == "/api/v2/subtitles/42" && DownloadedAvailable)
+                return Json("""{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}""");
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
@@ -269,8 +314,13 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 {
                     plan_id = $"plan-{_file}-{Replans.Count}", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = origin + "/media.wav" }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = $"sub:{_file}:{_subtitle}", index = _subtitle } },
-                    subtitle = new { mode = _subtitle < 0 ? "off" : "sidecar", track_id = _subtitle < 0 ? null : $"sub:{_file}:{_subtitle}", inventory = Version(_file).SubtitleTracks!.Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, source = "external", url = origin + $"/{t.Language}.srt", label = t.Language }) },
+                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = SubtitleId, index = _subtitle } },
+                    subtitle = new { mode = _subtitle < 0 ? "off" : "sidecar", track_id = _subtitle < 0 ? null : SubtitleId,
+                        inventory = Version(_file).SubtitleTracks!.Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, source = "external", url = origin + $"/{t.Language}.srt", label = t.Language })
+                            .Cast<object>().Concat(DownloadedAvailable ? new object[]
+                            {
+                                new { track_id = "downloaded:77", sync_key = "stored-77", combined_index = 2, language = "ita", codec = "subrip", source = "downloaded", url = origin + "/ita.srt", label = "Italian downloaded" },
+                            } : []) },
                 },
             }));
         }

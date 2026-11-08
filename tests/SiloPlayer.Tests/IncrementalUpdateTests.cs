@@ -20,6 +20,7 @@ public sealed class IncrementalUpdateTests
     {
         var manifest = ValidManifest();
         UpdateManifestValidation.Validate(manifest);
+        UpdateManifestValidation.Validate(manifest with { BootstrapProtocol = 2 });
         UpdateManifestValidation.Validate(manifest with { Files = manifest.Files.Append(manifest.Files[0] with { Path = "copy.dll" }).ToArray() });
     }
 
@@ -63,7 +64,7 @@ public sealed class IncrementalUpdateTests
     public void RejectsIdentityBoundsCaseCollisionsAndOverlappingObjects()
     {
         var manifest = ValidManifest();
-        foreach (var bad in new[] { manifest with { Schema = 2 }, manifest with { BootstrapProtocol = 2 },
+        foreach (var bad in new[] { manifest with { Schema = 2 }, manifest with { BootstrapProtocol = 3 },
             manifest with { BackwardCompatibleData = false }, manifest with { Version = "1.2.465" },
             manifest with { PackSize = long.MaxValue }, manifest with { PackSha256 = "bad" },
             manifest with { Files = manifest.Files.Append(manifest.Files[0] with { Path = "siloplayer.EXE" }).ToArray() },
@@ -82,6 +83,14 @@ public sealed class IncrementalUpdateTests
         File.WriteAllText(tree.Path("source/SiloPlayer.dll"), "identical");
         var first = await UpdatePackBuilder.BuildAsync(tree.Path("source"), null, tree.Path("one"), new Version(1, 2, 465, 0));
         var second = await UpdatePackBuilder.BuildAsync(tree.Path("source"), null, tree.Path("two"), new Version(1, 2, 465, 0));
+        // The shipped .NET 8 clients only accept BootstrapProtocol=1. The new
+        // envelope must force their verified full-installer migration, even
+        // though the client inventory itself still uses schema 1.
+        Assert.Equal(1, first.Schema);
+        Assert.Equal(2, first.BootstrapProtocol);
+        var published = JsonSerializer.Deserialize<UpdateManifest>(File.ReadAllBytes(tree.Path("one/" + UpdateManifestValidation.ManifestName)))!;
+        Assert.Equal(2, published.BootstrapProtocol);
+        UpdateManifestValidation.Validate(published);
         Assert.Equal(first.Files[0].Offset, first.Files[1].Offset);
         Assert.Equal(first.Files[0].PackedSize, first.PackSize);
         Assert.Equal(File.ReadAllBytes(tree.Path("one/" + UpdateManifestValidation.ManifestName)), File.ReadAllBytes(tree.Path("two/" + UpdateManifestValidation.ManifestName)));

@@ -9,6 +9,7 @@ public partial class PlaybackManager
     private bool _subtitleSelectionIsAutomatic;
     private SubtitleTrackInfo? _viewerSubtitle;
     private int _viewerSubtitleFile;
+    private int? _unavailableSubtitleReportedFile;
     private long _subtitleRevision, _subtitleSentRevision;
     private AudioTrackInfo? _viewerAudio;
     private bool _hasViewerAudio;
@@ -33,13 +34,30 @@ public partial class PlaybackManager
             _viewerSubtitle = intent.Track;
             _viewerSubtitleFile = intent.MediaFileId;
             _subtitleSelectionIsAutomatic = intent.IsAutomatic;
+            _unavailableSubtitleReportedFile = null;
             ++_subtitleRevision;
         }
     }
 
+    /// <summary>Checks an executed row against the still-current intent, not an outgoing combined index.</summary>
+    public bool IsLocalSubtitleIntentSatisfied(SubtitleSelectionIntent intent, SubtitleTrackInfo? track)
+    {
+        lock (_trackIntentGate)
+            return intent == CaptureLocalSubtitleIntent() && _hasViewerSubtitle &&
+                (track == null ? _viewerSubtitle == null : ReferenceEquals(track, MatchCurrentSubtitle()));
+    }
+
+    /// <summary>Shared with inventory refresh/presentation; acquire after the service's subtitle locks.</summary>
+    public object SubtitleInventorySyncRoot => _trackIntentGate;
+
     public bool IsSubtitleSelectionAutomatic
     {
         get { lock (_trackIntentGate) return !_hasViewerSubtitle || _subtitleSelectionIsAutomatic; }
+    }
+
+    public bool IsRetainedSubtitleUnavailable
+    {
+        get { lock (_trackIntentGate) return _hasViewerSubtitle && _viewerSubtitle != null && MatchCurrentSubtitle() == null; }
     }
 
     /// <summary>Records a local choice, retaining whether startup policy or the viewer selected it.</summary>
@@ -54,7 +72,7 @@ public partial class PlaybackManager
         }
     }
 
-    /// <summary>Admits a resolved choice only while its exact session and row remain current.</summary>
+    /// <summary>Records a native gesture only while its exact session and row still own the inventory.</summary>
     public bool TryRecordLocalSubtitleSelection(PlaybackStartResponse session, SubtitleTrackInfo? track, bool isAutomatic = false)
     {
         lock (_trackIntentGate)
@@ -71,6 +89,7 @@ public partial class PlaybackManager
         _hasViewerSubtitle = true; _viewerSubtitle = track;
         _subtitleSelectionIsAutomatic = isAutomatic;
         _viewerSubtitleFile = CurrentSession?.MediaFileId ?? 0;
+        _unavailableSubtitleReportedFile = null;
         ++_subtitleRevision;
     }
 
@@ -102,10 +121,9 @@ public partial class PlaybackManager
                 if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
                 {
                     var desired = MatchCurrentSubtitle();
-                    if (desired != null || !_subtitleSelectionIsAutomatic || _viewerSubtitle == null)
+                    if (desired != null || !KeepGrantedSubtitleWhenUnmatched())
                         return desired?.Index ?? -1;
-                    // Seek replies cannot acknowledge an unsent revision, but
-                    // an unmatched Auto row still must not become explicit Off.
+                    // An unmatched retained choice is not explicit Off.
                 }
                 return GrantedSubtitleSelection()?.Index ?? -1;
             }
@@ -118,6 +136,7 @@ public partial class PlaybackManager
         {
             _hasViewerSubtitle = _hasViewerAudio = false; _viewerSubtitle = null; _viewerAudio = null;
             _subtitleSelectionIsAutomatic = false;
+            _unavailableSubtitleReportedFile = null;
             ++_subtitleRevision; _subtitleSentRevision = _subtitleRevision;
             ++_audioRevision; _audioSentRevision = _audioRevision;
         }
@@ -133,16 +152,24 @@ public partial class PlaybackManager
                 return;
             }
             var desired = MatchCurrentSubtitle();
-            // An automatic row that cannot uniquely rebind is not a viewer
-            // request for Off, even on a same-file replan. Accept the Auto grant,
-            // retaining the original row so a later inventory can rebind it.
-            // A same-file automatic Off still needs its own acknowledgement.
-            if (_subtitleSelectionIsAutomatic && desired == null &&
-                (_viewerSubtitle != null || CurrentSession?.MediaFileId != _viewerSubtitleFile))
+            // A missing choice is not Off, even on the same file. Keep the
+            // accepted grant and source intent, but report an unfulfilled manual choice.
+            // Automatic Off also needs reconsideration on a different file.
+            if (desired == null && (KeepGrantedSubtitleWhenUnmatched() ||
+                _subtitleSelectionIsAutomatic && CurrentSession?.MediaFileId != _viewerSubtitleFile))
             {
+                if (!_subtitleSelectionIsAutomatic && revision == _subtitleRevision && CurrentSession != null &&
+                    _unavailableSubtitleReportedFile != CurrentSession.MediaFileId)
+                {
+                    CurrentSession.SubtitleReconciliationFailed = true;
+                    _unavailableSubtitleReportedFile = CurrentSession.MediaFileId;
+                }
                 AcknowledgeSubtitleIntent(revision);
                 return;
             }
+            // A successful match (or a new viewer intent) permits feedback on
+            // a later switch, but same-file replans/restarts must stay quiet.
+            if (revision == _subtitleRevision) _unavailableSubtitleReportedFile = null;
             var granted = GrantedSubtitleSelection();
             if (ReferenceEquals(desired, granted) &&
                 (desired != null || string.Equals(CurrentSession?.SubtitleMode, "off", StringComparison.OrdinalIgnoreCase)))
@@ -170,7 +197,7 @@ public partial class PlaybackManager
             if (_hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision)
             {
                 var track = MatchCurrentSubtitle();
-                if (track != null || !_subtitleSelectionIsAutomatic || _viewerSubtitle == null)
+                if (track != null || !KeepGrantedSubtitleWhenUnmatched())
                     selected.Subtitle = track == null ? null : new() { Id = track.TrackId ?? "", Index = track.Index };
             }
             return _subtitleRevision;
@@ -199,6 +226,8 @@ public partial class PlaybackManager
         return matches.Length == 1 ? matches[0] : null;
     }
 
+    private bool KeepGrantedSubtitleWhenUnmatched() => _viewerSubtitle != null;
+
     private SubtitleTrackInfo? MatchCurrentSubtitle()
     {
         if (_viewerSubtitle == null) return null;
@@ -207,16 +236,20 @@ public partial class PlaybackManager
         var hasIdentity = !string.IsNullOrWhiteSpace(_viewerSubtitle.TrackId);
         if (hasIdentity)
         {
-            // Unavailable rows still attest identity. Filtering them first can
-            // turn a duplicate ID into a false unique match or pick a lookalike.
             var identities = inventory.Where(t => t.TrackId == _viewerSubtitle.TrackId).Take(2).ToArray();
+            // A present but unavailable/ambiguous identity must never rebind.
             if (identities.Length > 0)
                 return identities.Length == 1 && !identities[0].Unplayable ? identities[0] : null;
         }
         if (sameFile && Equal(_viewerSubtitle.Source, "downloaded"))
         {
-            // A stored subtitle can cross the ID-less refresh/plan boundary.
-            // Its stored key, never its current list position, links the rows.
+            // The exact accepted row needs no identity bridge. Legacy servers
+            // may omit both TrackId and the stored key until the next plan.
+            if (SubtitleStoredKey(_viewerSubtitle) == null && inventory.Contains(_viewerSubtitle))
+                return _viewerSubtitle.Unplayable ? null : _viewerSubtitle;
+            // Refreshed downloads and plan rows share a stored ID/sync key even
+            // when only one inventory supplies TrackId. Never use list position
+            // to bridge that identity boundary.
             var key = SubtitleStoredKey(_viewerSubtitle);
             if (key != null)
             {
@@ -224,17 +257,28 @@ public partial class PlaybackManager
                     SubtitleStoredKey(t) == key).Take(2).ToArray();
                 if (stored.Length > 0)
                     return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
-                return null;
             }
+            // Same-file downloads require their stored identity. Metadata (or
+            // a reused index) must not substitute a different subtitle file.
+            return null;
         }
-        var candidates = inventory.Where(t => !t.Unplayable && (!sameFile || !hasIdentity) &&
+        var candidates = inventory.Where(t => !t.Unplayable &&
+            (!sameFile || !hasIdentity) &&
             Equal(t.Source, _viewerSubtitle.Source) && SubtitleCodec(t.Codec) == SubtitleCodec(_viewerSubtitle.Codec) &&
             MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
             t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
-        // Only two identityless rows in the same file share a legacy index.
-        // Across versions equally good metadata remains ambiguous.
+        // Only two identityless rows on the same file can use a legacy index.
         if (sameFile && !hasIdentity && candidates.FirstOrDefault(t =>
             string.IsNullOrWhiteSpace(t.TrackId) && t.Index == _viewerSubtitle.Index) is { } legacy) return legacy;
+        // Another version can offer the same language in a different format or
+        // source. Prefer the strict metadata tier, but retain the viewer's
+        // language when only a unique best alternative exists. Never use this
+        // policy fallback for same-file identity or a stored download.
+        if (candidates.Length == 0 && !sameFile && !Equal(_viewerSubtitle.Source, "downloaded") &&
+            !UnknownSubtitleLanguage(_viewerSubtitle.Language))
+            candidates = inventory.Where(t => !t.Unplayable && !Equal(t.Source, "downloaded") &&
+                !UnknownSubtitleLanguage(t.Language) && CanonicalLanguage(t.Language) == CanonicalLanguage(_viewerSubtitle.Language) &&
+                t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
         var ranked = candidates.OrderByDescending(t => SubtitleScore(t.Language, t.Source, t.Codec, t.Label, _viewerSubtitle)).Take(2).ToArray();
         return ranked.Length == 1 || ranked.Length == 2 &&
             SubtitleScore(ranked[0].Language, ranked[0].Source, ranked[0].Codec, ranked[0].Label, _viewerSubtitle) >
@@ -252,7 +296,6 @@ public partial class PlaybackManager
         "vtt" => "webvtt",
         var value => value ?? "",
     };
-
     private void CaptureReplacementSubtitleIntent()
     {
         lock (_trackIntentGate)

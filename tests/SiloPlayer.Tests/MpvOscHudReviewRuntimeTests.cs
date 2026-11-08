@@ -2,6 +2,168 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData("audio", false, 1920)]
+    [InlineData("audio", true, 1920)]
+    [InlineData("chapters", false, 1920)]
+    [InlineData("chapters", true, 1920)]
+    [InlineData("quality", false, 1920)]
+    [InlineData("quality", true, 1920)]
+    [InlineData("audio", false, 460)]
+    [InlineData("audio", true, 460)]
+    [InlineData("chapters", false, 460)]
+    [InlineData("chapters", true, 460)]
+    public void HudMenuSelectionAndDismissalOwnTheCompleteNativeClick(string kind, bool dismiss, int width)
+    {
+        var expected = dismiss ? "" : kind == "audio" ? "silo-audio-select"
+            : kind == "chapters" ? "silo-seek-absolute" : "silo-quality-select";
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time = 10
+            local s = osc_test_state
+            s.osc_disabled = false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.audio_tracks = { {index=1,title='First'}, {index=2,title='Second'} }
+            s.chapters = { {index=0,start_seconds=20,end_seconds=40,title='Chapter'} }
+            s.quality_info = {qualities={ {id='original',label='Original'}, {id='720p',label='720p'} } }
+            local prefix = '{{kind}}' == 'chapters' and 'chapter' or '{{kind}}'
+            local button = '{{kind}}' == 'chapters' and 'btn_chapters' or 'btn_{{kind}}'
+            local function click(r)
+                local x, y = tostring(r.x + r.w / 2), tostring(r.y + r.h / 2)
+                handlers['osc-mouse-down'](x, y)
+                hud_time = hud_time + .1
+                handlers['osc-mouse-up'](x, y)
+                handlers['osc-video-click'](x, y)
+            end
+            for _, paused in ipairs({false, true}) do
+                for _, room in ipairs({false, true}) do
+                    s.pause = paused
+                    mp.set_property_bool('pause', paused)
+                    s.watch_party = room and {visible=true,is_host=false,guest_control_policy='host_only'} or nil
+                    osc_test_layout()
+                    local r = s.layout[button]
+                    if not r then
+                        click(assert(s.layout.btn_more))
+                        osc_test_render_hud()
+                        r = assert(s.layout['overflow_' .. button])
+                    end
+                    click(r)
+                    assert(s[prefix .. '_menu_visible'], 'Pointer must open the menu')
+                    r = assert(s[prefix .. '_menu_items'][1])
+                    -- Do not let the opening click's suppression mask a broken row/dismissal.
+                    hud_time = hud_time + .6
+                    intents = {}
+                    if {{dismiss.ToString().ToLowerInvariant()}} then r = {x=400,y=200,w=0,h=0} end
+                    assert(r.y + r.h / 2 < s.layout.bar_hit.y, 'Click must be above the transport rail')
+                    click(r)
+                    assert(not s[prefix .. '_menu_visible'], 'Click must close the menu')
+                    assert(table.concat(intents, ',') == '{{expected}}', table.concat(intents, ','))
+                    assert(mp.get_property_bool('pause') == paused, 'Menu click changed pause')
+                    hud_time = hud_time + .6
+                    intents = {}
+                    click({x=400,y=200,w=0,h=0})
+                    assert(table.concat(intents, ',') == 'silo-pause-toggle', 'Fresh video click must still work')
+                end
+            end
+            mp.set_property('user-data/hud-result', 'owned')
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe,
+            windowWidth: width, windowHeight: 1080);
+        Assert.Equal("owned", output);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void HudStatsCloseOwnsTheCompleteNativeClick(bool paused, bool hidden)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, {{paused.ToString().ToLowerInvariant()}}
+            mp.set_property_bool('pause', s.pause)
+            s.visible, s.current_alpha, s.target_alpha = {{(hidden ? "false, 0, 0" : "true, 1, 1")}}
+            handlers['osc-toggle-stats']()
+            assert(s.stats_visible)
+            local r = assert(s.stats_close_rect)
+            local x, y = tostring(r.x + r.w / 2), tostring(r.y + r.h / 2)
+            handlers['osc-mouse-down'](x, y)
+            hud_time = 10.1
+            handlers['osc-mouse-up'](x, y)
+            handlers['osc-video-click'](x, y)
+            mp.set_property('user-data/hud-result', tostring(s.stats_visible)..':'
+                ..tostring(mp.get_property_bool('pause'))..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe,
+            windowWidth: 1920, windowHeight: 1080);
+        Assert.Equal($"false:{paused.ToString().ToLowerInvariant()}:", output);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HudCompactToDesktopResizeRetiresTheSheetAndReleasesInputAndAutoHide(bool leave)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.mouse_in_bar = false
+            s.audio_tracks = { {index=1,title='First'}, {index=2,title='Second'} }
+            osc_test_layout()
+            local r = assert(s.layout.btn_more)
+            handlers['osc-mouse-down'](tostring(r.cx), tostring(r.cy))
+            handlers['osc-mouse-up'](tostring(r.cx), tostring(r.cy))
+            handlers['osc-video-click'](tostring(r.cx), tostring(r.cy))
+            osc_test_render_hud()
+            handlers['osc-controller-nav']('right')
+            assert(s.compact_menu_visible and #s.compact_menu_items > 0)
+            assert(s.controller_focus_name:sub(1, 9) == 'overflow_')
+            assert(s.layout.overflow_btn_audio)
+            dims = {w=1920,h=1080}
+            osc_test_layout()
+            assert(not s.compact_menu_visible and s.controller_focus_name == nil)
+            assert(#s.compact_menu_items == 0 and s.layout.btn_more == nil)
+            for name in pairs(s.layout) do assert(name:sub(1, 9) ~= 'overflow_', 'Stale sheet rectangle') end
+            -- The first video click after resizing must not dismiss an invisible sheet.
+            hud_time = 11
+            handlers['osc-mouse-down']('400', '200')
+            handlers['osc-mouse-up']('400', '200')
+            handlers['osc-video-click']('400', '200')
+            assert(table.concat(intents, ',') == 'silo-pause-toggle')
+            osc_test_render_hud()
+            local normal = s.osc_overlay.data
+            r = assert(s.layout.btn_fill)
+            handlers['osc-mouse-move'](tostring(r.cx), tostring(r.cy))
+            osc_test_render_hud()
+            assert(s.osc_overlay.data ~= normal, 'Desktop controls must regain hover feedback')
+            handlers['osc-mouse-move']('400', '200')
+            hud_time = 15
+            if {{leave.ToString().ToLowerInvariant()}} then handlers['osc-mouse-leave'](); assert(leave_check)()
+            else assert(hide_check)() end
+            assert(s.target_alpha == 0, 'Resized HUD must auto-hide')
+            -- Even a stale flag cannot retain a sheet with no drawable anchor.
+            s.compact_menu_visible = true
+            handlers['osc-show']()
+            assert(hide_check)()
+            mp.set_property('user-data/hud-result', tostring(s.target_alpha)..':'..tostring(s.compact_menu_visible))
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe + """
+
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'osd-dimensions' and dims then return dims end
+                return native(name, fallback)
+            end
+            local timeout = mp.add_timeout
+            mp.add_timeout = function(seconds, callback)
+                if seconds == .5 then leave_check = callback end
+                if seconds == 3 then hide_check = callback end
+                return timeout(seconds, callback)
+            end
+            """, windowWidth: 460, windowHeight: 700);
+        Assert.Equal("0:false", output);
+    }
+
     [Fact]
     public void HudControllerOnlyPauseResumeReleasesFocusAfterTheInputIdleTimeout()
     {
@@ -218,6 +380,177 @@ public sealed partial class MpvOscRuntimeTests
             mp.set_property('user-data/hud-result',tostring(focused)..':'..tostring(s.controller_focus_name == nil))
             """, rawAss:true,resultProperty:"user-data/hud-result",beforeScript:HudProbe);
         Assert.Equal("true:true",output);
+    }
+
+    [Theory]
+    [InlineData("focus", false)]
+    [InlineData("focus", true)]
+    [InlineData("fullscreen", false)]
+    [InlineData("fullscreen", true)]
+    [InlineData("subtitle-dialog", false)]
+    [InlineData("subtitle-dialog", true)]
+    public void HudZeroDeltaMouseMessagesPreserveControllerOwnership(string scenario, bool mpvFirst)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local function move(x, y)
+                pointer = {x=x, y=y}
+                if {{mpvFirst.ToString().ToLowerInvariant()}} then
+                    assert(mouse_move)()
+                    handlers['osc-mouse-move'](tostring(x), tostring(y))
+                else
+                    handlers['osc-mouse-move'](tostring(x), tostring(y))
+                    assert(mouse_move)()
+                end
+            end
+            move(400, 200)
+            handlers['osc-controller-nav']('right')
+            handlers['osc-controller-nav']('right')
+            assert(s.controller_focus_name == 'btn_skip_fwd')
+            if '{{scenario}}' == 'fullscreen' then
+                for i = 1, 30 do
+                    if s.controller_focus_name == 'btn_fullscreen' then break end
+                    handlers['osc-controller-nav']('right')
+                end
+                assert(s.controller_focus_name == 'btn_fullscreen')
+                handlers['osc-controller-activate']()
+                assert(table.concat(intents, ',') == 'silo-fullscreen-toggle')
+                handlers['osc-fullscreen-state']('true')
+                dims = {w=2560, h=1440}
+                osc_test_layout()
+            elseif '{{scenario}}' == 'subtitle-dialog' then
+                s.restore_subtitle_focus_after_dialog = true
+                handlers['osc-subtitle-dialog-closed']()
+                assert(s.controller_focus_name == 'btn_cc')
+            end
+            local focus, deadline, timer = s.controller_focus_name, s.controller_focus_deadline, s.hide_timer
+            osc_test_render_hud()
+            local focused = s.osc_overlay.data
+            -- Window changes may repeat WM_MOUSEMOVE, including the delayed fullscreen resize.
+            for _, time in ipairs({10.01, 10.2}) do
+                hud_time = time
+                move(400, 200)
+                assert(s.controller_focus_name == focus, 'Zero-delta message retired focus')
+                assert(s.controller_focus_deadline == deadline and s.hide_timer == timer,
+                    'Zero-delta message refreshed the input idle timeout')
+            end
+            osc_test_render_hud()
+            assert(s.osc_overlay.data == focused, 'Zero-delta message changed focus feedback')
+            handlers['osc-controller-nav']('right')
+            assert(s.controller_focus_name ~= focus and s.controller_focus_name ~= 'btn_play',
+                'Navigation must continue from the retained focus, not restart at Play')
+            move(401, 200)
+            assert(s.controller_focus_name == nil, 'Real movement must still retire focus')
+            mp.set_property('user-data/hud-result', 'preserved')
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe + """
+
+            local bind = mp.add_key_binding
+            mp.add_key_binding = function(key, name, callback, ...)
+                if name == 'silo-osc-mouse-move' then mouse_move = callback end
+                return bind(key, name, callback, ...)
+            end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' and pointer then return pointer end
+                if name == 'osd-dimensions' and dims then return dims end
+                return native(name, fallback)
+            end
+            """, windowWidth: 1920, windowHeight: 1080);
+        Assert.Equal("preserved", output);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public void HudFullscreenClientOriginChangesPreserveControllerOwnership(
+        bool exiting, bool outsideWindowedPopup, bool mpvFirst)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            hud_time, intents = 10, {}
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local exiting = {{exiting.ToString().ToLowerInvariant()}}
+            local outside = {{outsideWindowedPopup.ToString().ToLowerInvariant()}}
+            local screen_x, screen_y = outside and 80 or 500, 300
+            local previous_x, previous_y = screen_x, screen_y
+            local function move(origin_x, origin_y)
+                pointer = {x=screen_x-origin_x, y=screen_y-origin_y}
+                -- Match the host protocol: client position for hit testing,
+                -- screen-space delta for ownership, plus the duplicate mpv binding.
+                local moved = screen_x ~= previous_x or screen_y ~= previous_y
+                previous_x, previous_y = screen_x, screen_y
+                if {{mpvFirst.ToString().ToLowerInvariant()}} then
+                    assert(mouse_move)()
+                    handlers['osc-mouse-move'](tostring(pointer.x), tostring(pointer.y), tostring(moved))
+                else
+                    handlers['osc-mouse-move'](tostring(pointer.x), tostring(pointer.y), tostring(moved))
+                    assert(mouse_move)()
+                end
+            end
+            handlers['osc-fullscreen-state'](tostring(exiting))
+            if not outside then move(exiting and 0 or 100, exiting and 0 or 80) end
+            for i = 1, 30 do
+                if s.controller_focus_name == 'btn_fullscreen' then break end
+                handlers['osc-controller-nav']('right')
+            end
+            assert(s.controller_focus_name == 'btn_fullscreen')
+            handlers['osc-controller-activate']()
+            assert(table.concat(intents, ',') == 'silo-fullscreen-toggle')
+            local focus, deadline, timer = s.controller_focus_name, s.controller_focus_deadline, s.hide_timer
+            local old_x, old_y = s.mouse_x, s.mouse_y
+            -- ApplyWindowRect samples GetCursorPos before moving the popup,
+            -- even if the pointer was outside and no client move was received.
+            previous_x, previous_y = screen_x, screen_y
+            handlers['osc-fullscreen-state'](tostring(not exiting))
+            dims = exiting and {w=1920,h=1080} or {w=2560,h=1440}
+            osc_test_layout()
+            for _, time in ipairs({10.01, 10.2}) do
+                hud_time = time
+                move(exiting and 100 or 0, exiting and 80 or 0)
+                assert(s.controller_focus_name == focus, 'Window-origin delta retired controller focus')
+                assert(s.controller_focus_deadline == deadline and s.hide_timer == timer,
+                    'Synthetic movement refreshed the input idle timeout')
+            end
+            assert(s.mouse_x ~= old_x or s.mouse_y ~= old_y, 'Regression requires changed client coordinates')
+            assert(s.mouse_x == screen_x - (exiting and 100 or 0)
+                and s.mouse_y == screen_y - (exiting and 80 or 0), 'Hit testing must use the new client position')
+            handlers['osc-controller-nav']('right')
+            assert(s.controller_focus_name ~= focus and s.controller_focus_name ~= 'btn_play',
+                'Navigation restarted instead of continuing from Fullscreen')
+            screen_x = screen_x + 1
+            move(exiting and 100 or 0, exiting and 80 or 0)
+            assert(s.controller_focus_name == nil, 'Real screen-space movement must retire focus')
+            mp.set_property('user-data/hud-result', 'preserved')
+            """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe + """
+
+            local bind = mp.add_key_binding
+            mp.add_key_binding = function(key, name, callback, ...)
+                if name == 'silo-osc-mouse-move' then mouse_move = callback end
+                return bind(key, name, callback, ...)
+            end
+            local number = mp.get_property_number
+            mp.get_property_number = function(name, fallback)
+                if name == 'options/wid' then return 42 end -- Native embedded host.
+                return number(name, fallback)
+            end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' and pointer then return pointer end
+                if name == 'osd-dimensions' and dims then return dims end
+                return native(name, fallback)
+            end
+            """, windowWidth: exiting ? 2560 : 1920, windowHeight: exiting ? 1440 : 1080);
+        Assert.Equal("preserved", output);
     }
 
     [Theory]

@@ -21,7 +21,7 @@ using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
-internal static class BoxSetNativeFixture
+internal static partial class BoxSetNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent, bool invalidMemberChecks = true)
     {
@@ -36,9 +36,15 @@ internal static class BoxSetNativeFixture
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://boxsets-native.invalid"); api.SetProfile("fixture");
         var catalog = new CatalogApi(api); fixtureServices.Catalog = catalog; fixtureServices.Client = api;
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_BOXSET_CLOSEOUT_CASE") is { Length: > 0 } closeout)
+        {
+            await RunCloseoutAsync(parent, catalog, api, wire, navigation, closeout);
+            return;
+        }
+        await VerifyInitialSurfaceInvalidationsAsync(parent, catalog, api, wire);
         var page = new BoxSetPage(catalog, api) { Width = 960, Height = 700 };
         parent.Children.Add(page);
-        await page.ViewModel.LoadAsync("7", "2"); await Task.Delay(120); page.UpdateLayout();
+        await page.ViewModel.LoadAsync("7", "12"); await Task.Delay(120); page.UpdateLayout();
         Check(page.ViewModel.Detail?.Items.Select(x => x.ContentId).SequenceEqual(new[] { "first", "second", "third" }) == true, "server release order");
         var play = Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay");
         Check(((TextBlock)play.Content).Text == "Continue · Second" && play.IsEnabled, "partial-watched primary action");
@@ -131,7 +137,14 @@ internal static class BoxSetNativeFixture
         wire.Status = HttpStatusCode.OK; wire.Empty = true; await page.ViewModel.RefreshAsync();
         Check(!Descendants(page).OfType<Button>().Single(x => x.Name == "BoxSetPlay").IsEnabled, "empty set is not playable");
         parent.Children.Remove(page); await Task.Delay(30); var departedReads = wire.Reads; await page.ViewModel.RefreshAsync(); Check(wire.Reads == departedReads, "departure cannot restart queued refresh");
-        sent = ""; await page.ViewModel.PlayAsync((id, _, _, _) => { sent = id; return Task.CompletedTask; }); Check(sent == "", "departure retires primary action");
+        sent = "";
+        try
+        {
+            await page.ViewModel.PlayAsync((id, _, _, _) => { sent = id; return Task.CompletedTask; });
+            throw new InvalidOperationException("Box-set native: departure must report a declined primary action");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Reopen")) { }
+        Check(sent == "", "departure retires primary action");
 
         wire.CapabilityStatus = HttpStatusCode.ServiceUnavailable;
         var faultPage = new BoxSetPage(new CatalogApi(api), api) { Width = 540, Height = 600 }; parent.Children.Add(faultPage);
@@ -312,6 +325,7 @@ internal static class BoxSetNativeFixture
         Program.Log("PASS: box-set hero/primary action, response library, progress/fallback, keyboard/automation, compact/wide captures, failure/retry/unavailable/empty/departure, actual movie row/order/marker/member/View all destinations and recycled card.");
         }
         finally { parent.Children.Clear(); await Task.Delay(100); servicesField.SetValue(null, originalServices); }
+        await EpisodeQuickPlayNativeFixture.VerifyBoxSetAccessRefreshAsync();
     }
     private static async Task CheckMemberScrollAsync(BoxSetPage page, double width, double height)
     {
@@ -348,7 +362,8 @@ internal static class BoxSetNativeFixture
     private sealed class NavigationServices(IServiceProvider original, NavigationService navigation) : IServiceProvider
     {
         internal CatalogApi? Catalog; internal SiloApiClient? Client;
-        public object? GetService(Type type) => type == typeof(NavigationService) ? navigation : type == typeof(CatalogApi) && Catalog != null ? Catalog : type == typeof(SiloApiClient) && Client != null ? Client : original.GetService(type);
+        internal ItemDetailViewModel? ItemDetail;
+        public object? GetService(Type type) => type == typeof(ItemDetailViewModel) && ItemDetail != null ? ItemDetail : type == typeof(NavigationService) ? navigation : type == typeof(CatalogApi) && Catalog != null ? Catalog : type == typeof(SiloApiClient) && Client != null ? Client : original.GetService(type);
     }
     private sealed class Wire : HttpMessageHandler
     {
@@ -357,13 +372,26 @@ internal static class BoxSetNativeFixture
         internal int Reads;
         internal int Played=1; internal bool Empty; internal HttpStatusCode Status=HttpStatusCode.OK, CapabilityStatus=HttpStatusCode.OK;
         internal string Title="The Very Long Adventure Box Set";
+        internal string? ArtworkSignature;
+        private string? ArtworkUrl(string name) => ArtworkSignature is null ? null
+            : "https://boxsets-native.invalid/" + name + "?X-Amz-Signature=" + ArtworkSignature;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
-            var path=request.RequestUri!.AbsolutePath; if(path.Contains("box-sets/")) { Reads++; Started.TrySetResult(); if(Hold) await Release.Task; } object body;
+            var path=request.RequestUri!.AbsolutePath; object body;
             if(path.EndsWith("capabilities")) body=new { box_sets=true };
             else if(path.EndsWith("libraries")) body=new { items=new[] { new { id=2,box_sets_enabled=true }, new { id=12,box_sets_enabled=true } } };
-            else body=new { id="7",library_id="12",title=Title,overview="A synthetic release-ordered collection with missing artwork.",movie_count=Empty?0:3,played_count=Played,first_year=2001,last_year=2011,items=Empty?Array.Empty<object>():new object[] { new { content_id="first",type="movie",title="First",user_state=new { played=true } },new { content_id="second",type="movie",title="Second",user_state=new { played=Played==3 } },new { content_id="third",type="movie",title="Third",user_state=new { played=Played==3 } } } };
-            return new HttpResponseMessage(path.Contains("box-sets/")?Status:path.EndsWith("capabilities")?CapabilityStatus:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };
+            else body=new { id="7",library_id="12",title=Title,overview="A synthetic release-ordered collection with missing artwork.",
+                poster_url=ArtworkUrl("set-poster"),backdrop_url=ArtworkUrl("set-backdrop"),
+                movie_count=Empty?0:3,played_count=Played,first_year=2001,last_year=2011,
+                items=Empty?Array.Empty<object>():new object[] {
+                    new { content_id="first",type="movie",title="First",poster_url=ArtworkUrl("first-poster"),backdrop_url=ArtworkUrl("first-backdrop"),user_state=new { played=true } },
+                    new { content_id="second",type="movie",title="Second",poster_url=ArtworkUrl("second-poster"),backdrop_url=ArtworkUrl("second-backdrop"),user_state=new { played=Played==3 } },
+                    new { content_id="third",type="movie",title="Third",poster_url=ArtworkUrl("third-poster"),backdrop_url=ArtworkUrl("third-backdrop"),user_state=new { played=Played==3 } } } };
+            // Freeze the server snapshot before holding delivery, so a mutation
+            // during an initial read cannot magically update that old response.
+            var response = new HttpResponseMessage(path.Contains("box-sets/")?Status:path.EndsWith("capabilities")?CapabilityStatus:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };
+            if(path.Contains("box-sets/")) { Reads++; Started.TrySetResult(); if(Hold) await Release.Task; }
+            return response;
         }
     }
 }

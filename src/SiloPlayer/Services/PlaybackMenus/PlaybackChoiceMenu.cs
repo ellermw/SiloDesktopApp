@@ -31,9 +31,9 @@ internal class PlaybackChoiceMenu
     private IReadOnlyList<PlaybackMenuChoice> _choices;
     private readonly FrameworkElement? _footer;
     private readonly Func<PlaybackMenuChoice, FrameworkElement?>? _leadingContent;
-    private readonly bool _allowDisabledTraversal;
     private readonly Func<PlaybackMenuChoice, FrameworkElement>? _choiceContent;
     private readonly VirtualKey? _dismissKey;
+    private readonly bool _allowDisabledTraversal;
     private int _footerIndex = -1;
     private bool _keepSelectionVisible = true;
     private bool _layoutQueued;
@@ -162,7 +162,7 @@ internal class PlaybackChoiceMenu
                 content.Children.Add(leading); Grid.SetColumn(copy, 1); content.Children.Add(copy); row.Children.Add(content);
             }
             else row.Children.Add(copy);
-            var check = new TextBlock { Text = choice.IsPending ? "Pending" : choice.IsCurrent ? "\u2713" : "", VerticalAlignment = VerticalAlignment.Center };
+            var check = new TextBlock { Text = choice.IsPending ? "Pending" : choice.IsCurrent ? "✓" : "", VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(check, 1); row.Children.Add(check);
             var item = new ListViewItem { Content = row, Tag = choice.Id, IsEnabled = choice.IsEnabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(item, string.Join(", ", new[] { choice.Title, choice.Metadata, string.Join(", ", choice.Badges),
@@ -181,6 +181,10 @@ internal class PlaybackChoiceMenu
             a.CloseOnInvoke == b.CloseOnInvoke && a.IsPending == b.IsPending;
         if (_choices.Count == choices.Count && _choices.Zip(choices).All(pair => Same(pair.First, pair.Second))) return;
         var sameIds = _choices.Count == choices.Count && _choices.Zip(choices).All(pair => pair.First.Id == pair.Second.Id);
+        // A live refresh is not navigation. Leave scrollbar/touch offsets alone,
+        // including layout queued by updated row sizes; explicit navigation
+        // resumes selection-following in Input.
+        if (sameIds || _choiceContent != null) _keepSelectionVisible = false;
         var previous = _choices; _choices = choices;
         void UpdateContainer(ListViewItem row, PlaybackMenuChoice choice)
         {

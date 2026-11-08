@@ -38,6 +38,7 @@ public partial class HistoryViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        if (message.Identity is { } owner && !_catalogApi.IsCurrentIdentityContext(owner)) return;
         _pendingRefresh = true;
     }
 

@@ -27,7 +27,7 @@ internal static class PlaybackQualityMenuNativeFixture
         window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
         using var media = new PlaybackAudioMenuNativeFixture.MediaServer();
         var mediaPath = mode == "quality-load-retry" ? "/stream/direct/synthetic-quality.y4m" : "/video.y4m";
-        using var wire = new Wire(media.Origin, mediaPath);
+        using var wire = new Wire(media.Origin, mediaPath) { StartWithSubtitle = mode.StartsWith("quality-off-", StringComparison.Ordinal) };
         using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://native-quality.fixture.invalid"); api.SetProfile("synthetic");
         api.SetDeviceMetadata("quality-desktop", "Fixture", "Windows");
@@ -137,6 +137,122 @@ internal static class PlaybackQualityMenuNativeFixture
                 Program.Log($"PASS: actual native {mode} transfers its exact adopted response before the fallible follow-up; matched cleanup/recovery and successor isolation remain intact.");
                 return;
             }
+            if (mode.StartsWith("busy-", StringComparison.Ordinal))
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                var outgoingSession = manager.CurrentSession!;
+                var initialError = service.ErrorMessage;
+                var legacy = mode.StartsWith("busy-legacy-", StringComparison.Ordinal);
+                var audio = mode.StartsWith("busy-audio-", StringComparison.Ordinal);
+                var version = mode.StartsWith("busy-version-", StringComparison.Ordinal);
+                var fileLoaded = mode.EndsWith("file-loaded", StringComparison.Ordinal);
+                Task? selection = null;
+                Task? invalidation = null;
+                wire.HoldSuccessfulReplan = !version;
+                wire.HoldReplacementStart = version;
+                if (legacy)
+                {
+                    var transportGate = (SemaphoreSlim)Get(service, "_transportRestartGate")!;
+                    var drainGeneration = (long)Get(service, "_seekRestartGeneration")!;
+                    await transportGate.WaitAsync();
+                    try
+                    {
+                        mpv.SendScriptMessage("silo-quality-select", "720p");
+                        await Until(() => service.IsQualitySwitchActive &&
+                            (long)Get(service, "_seekRestartGeneration")! > drainGeneration,
+                            "Legacy quality did not claim its held transport drain.");
+                        if (fileLoaded) await DeliverOutgoingFileLoadedAsync();
+                        else
+                            await (Task)Call(service, "HandlePlanInvalidationAsync",
+                                new PlaybackPlanInvalidation("already-replaced-plan", "synthetic-invalidation"))!;
+                        Require(service.IsQualitySwitchActive && (bool)Get(service, "_switchingContent")!,
+                            "An outgoing load/no-op invalidation retired the pending legacy selection.");
+                    }
+                    finally { transportGate.Release(); }
+                }
+                else
+                {
+                    selection = version ? service.SwitchVersionAsync(versions[1]) : audio
+                        ? service.SwitchAudioTrackAsync(0) : service.SelectQualityAsync("720p");
+                }
+                await (version ? wire.ReplacementStarted.Task : wire.ReplanStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                if (!legacy)
+                {
+                    if (fileLoaded) await DeliverOutgoingFileLoadedAsync();
+                    else
+                    {
+                        invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
+                            new PlaybackPlanInvalidation(outgoingSession.PlanId!, "synthetic-invalidation"))!;
+                        Require(!invalidation.IsCompleted, "Invalidation did not wait behind the in-flight selection replan.");
+                    }
+                }
+                wire.ReleaseReplan.TrySetResult(); wire.ReleaseReplacement.TrySetResult();
+                if (selection != null) await selection.WaitAsync(TimeSpan.FromSeconds(8));
+                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(8));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! == initialFile + 1 &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                    "An observer stranded the accepted selection without loading it or clearing its busy state.");
+                Require(!ReferenceEquals(manager.CurrentSession, outgoingSession) &&
+                    (version ? manager.CurrentSession?.MediaFileId == 71 : wire.Qualities.Count == 1) &&
+                    (audio || version || service.SelectedQualityMenuId == "720p"),
+                    "The manager and loaded selection diverged after the observer completed.");
+                Require(mpv.IsPaused && service.IsPaused && service.ErrorMessage == initialError,
+                    "Observer overlap changed genuine pause intent or published a spurious error.");
+                Call(service, "SendQualityInfoToOsc");
+                var reopened = await Open(); Call(reopened, "Input", "cancel");
+                Require(Gate(service).CurrentCount == 1, "Completed selection left native menus busy or leaked their lease.");
+                Program.Log($"PASS: {mode}: an outgoing FILE_LOADED/no-op plan invalidation preserves accepted playback and legacy dispatch ownership, completes one load and releases busy state.");
+                return;
+            }
+            if (mode.StartsWith("quality-off-", StringComparison.Ordinal))
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial subtitle media publication did not settle.");
+                var originalSession = manager.CurrentSession;
+                var originalFile = (long)Get(service, "_playbackFileGeneration")!;
+                Require(originalSession?.SelectedSubtitleTrackId != null, "The dual-replan fixture must start with an accepted subtitle.");
+                manager.RecordLocalSubtitleSelection(null);
+                wire.QualityFailure = mode["quality-off-".Length..];
+                var selection = await Open(); Call(selection, "Input", "end");
+                if (((ListView)Get(selection, "_list")!).SelectedItem is ListViewItem { Tag: "speed" })
+                    Call(selection, "Input", "up");
+                Call(selection, "Input", "activate");
+                await Until(() => wire.Operations.Contains("quality_change"), "Pending local Off did not reach the second quality replan.");
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > originalFile &&
+                    !service.IsLoading && !service.IsQualitySwitchActive && !(bool)Get(service, "_switchingContent")!,
+                    "Failure after the Off plan was accepted stranded playback instead of loading a recovered plan.");
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Recovered media publication did not settle.");
+                Require(wire.Operations.Take(2).SequenceEqual(new[] { "track_change", "quality_change" }) &&
+                    wire.Operations.Contains("failure_recovery"), "The accepted intermediate plan did not enter playback recovery.");
+                Require(!ReferenceEquals(originalSession, manager.CurrentSession) && manager.CurrentSession?.SelectedSubtitleTrackId == null &&
+                    manager.SubtitleSelectionForLoad == -1 && service.SelectedQualityMenuId == "auto",
+                    "Recovery lost subtitle Off or presented the failed quality request as accepted.");
+                Require(mpv.IsPaused && service.IsPaused && !string.IsNullOrEmpty(service.ErrorMessage) &&
+                    Get(service, "_playbackTerminalState") == null && Gate(service).CurrentCount == 1,
+                    "Dual-replan failure lost genuine pause, error feedback or menu lease cleanup.");
+                Call(service, "StopPlaybackStallWatchdog");
+                var retry = await Open(); Call(retry, "Input", "cancel");
+                Program.Log($"PASS: actual native {mode} recovers the accepted subtitle-Off plan, clears busy state, preserves pause and reopens Quality.");
+                return;
+            }
+            if (mode == "subtitle-dialog-unavailable")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                Require(SiloPlayer.App.MainWindowInstance == null, "Unavailable-dialog fixture must have no application XamlRoot.");
+                var retained = await Open();
+                var owner = Get(service, "_nativeMenuOwner");
+                foreach (var method in new[] { "ShowSubtitleSearchDialogAsync", "ShowSubtitleAppearanceDialogAsync", "ShowSubtitleAiDialogAsync" })
+                {
+                    await (Task)Call(service, method, (object?)null)!;
+                    Require(ReferenceEquals(Menu(service), retained) && ReferenceEquals(Get(service, "_nativeMenuOwner"), owner) &&
+                        Gate(service).CurrentCount == 0 && (await Query()).GetProperty("pending").GetBoolean(),
+                        $"{method} retired native menu scopes despite being unable to show a dialog.");
+                }
+                Call(retained, "Input", "cancel");
+                var reopened = await Open(); Call(reopened, "Input", "cancel");
+                Program.Log("PASS: subtitle dialog precondition returns retain the native menu owner, scoped input and ability to reopen.");
+                return;
+            }
             if (mode == "quality-load-retry")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -153,7 +269,8 @@ internal static class PlaybackQualityMenuNativeFixture
                 try
                 {
                     Set(mpv, "_directOpen", null);
-                    var selection = await Open(); SelectLastQuality(selection); Call(selection, "Input", "activate");
+                    var selection = await Open(); SelectLastQuality(selection);
+                    Call(selection, "Input", "activate");
                     await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
                     await Until(() => !service.IsLoading && !service.IsQualitySwitchActive && !(bool)Get(service, "_switchingContent")!,
                         "Quality load failure stranded its own busy state.");
@@ -231,6 +348,40 @@ internal static class PlaybackQualityMenuNativeFixture
                 Require(mpv.IsPaused && service.IsPaused && !service.IsQualitySwitchActive,
                     "Legacy access-refresh selection lost pause or busy cleanup.");
                 Program.Log($"PASS: actual OSC {mode} survives stable-identity access refresh during its real transport drain, loads the chosen file/quality and retains pause.");
+
+                // A second legacy pick claims dispatch before the first switch
+                // adopts its reply. Only the second pick may load that playback.
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Legacy media publication did not settle.");
+                Call(service, "StopPlaybackStallWatchdog");
+                initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                var originalSession = manager.CurrentSession;
+                var qualityPick = mode == "legacy-access-quality";
+                var nextFile = originalSession?.MediaFileId == 71 ? "41" : "71";
+                wire.HoldSuccessfulReplan = true;
+                var predecessor = (Task)Call(service, "SwitchQualityTierAsync", "1080p", null, null)!;
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await gate.WaitAsync();
+                try
+                {
+                    drainGeneration = (long)Get(service, "_seekRestartGeneration")!;
+                    mpv.SendScriptMessage(qualityPick ? "silo-quality-select" : "silo-version-select", qualityPick ? "720p" : nextFile);
+                    await Until(() => (long)Get(service, "_seekRestartGeneration")! > drainGeneration,
+                        "The second legacy selection did not enter its held transport drain.");
+                    wire.ReleaseReplan.TrySetResult();
+                    await predecessor.WaitAsync(TimeSpan.FromSeconds(5));
+                    Require(!ReferenceEquals(originalSession, manager.CurrentSession) &&
+                        (long)Get(service, "_playbackFileGeneration")! == initialFile && (bool)Get(service, "_switchingContent")!,
+                        "The predecessor must adopt its plan without loading or releasing the second selection's claim.");
+                    wire.HoldSuccessfulReplan = false;
+                }
+                finally { gate.Release(); }
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialFile &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                    "Same-manager plan adoption stranded the second legacy selection's busy claim.");
+                Require(mpv.IsPaused && service.IsPaused && (qualityPick ? service.SelectedQualityMenuId == "720p" :
+                    manager.CurrentSession?.MediaFileId.ToString() == nextFile),
+                    "The second legacy selection lost its chosen quality/version or genuine pause.");
+                Program.Log($"PASS: actual OSC {mode} survives a predecessor's same-manager session adoption during dispatch/drain and completes its own load and busy lifecycle.");
                 return;
             }
             if (mode is "access-version" or "access-quality")
@@ -287,6 +438,50 @@ internal static class PlaybackQualityMenuNativeFixture
                 Program.Log($"PASS: actual native {mode} preserves the accepted session/stream/file, releases busy state and retains genuine pause.");
                 return;
             }
+            if (mode is "quality-access-refresh" or "version-access-refresh" or "quality-noop-invalidation" or "version-noop-invalidation")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
+                var versionSwitch = mode.StartsWith("version-", StringComparison.Ordinal);
+                var initialFile = (long)Get(service, "_playbackFileGeneration")!;
+                var originalPlan = manager.CurrentSession!.PlanId;
+                wire.HoldReplacementStart = versionSwitch;
+                wire.HoldSuccessfulReplan = !versionSwitch;
+                var heldMenu = await Open();
+                if (versionSwitch) { Call(heldMenu, "Input", "home"); Call(heldMenu, "Input", "down"); }
+                else
+                {
+                    Call(heldMenu, "Input", "end");
+                    if (((ListView)Get(heldMenu, "_list")!).SelectedItem is ListViewItem { Tag: "speed" })
+                        Call(heldMenu, "Input", "up");
+                }
+                Call(heldMenu, "Input", "activate");
+                await (versionSwitch ? wire.ReplacementStarted.Task : wire.ReplanStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                Task? invalidation = null;
+                if (mode.EndsWith("access-refresh", StringComparison.Ordinal)) api.InvalidateAccessContext();
+                else
+                {
+                    var revision = (long)Get(service, "_playbackBusyRevision")!;
+                    // Quality holds the manager's replan guard: its old plan's
+                    // invalidation becomes a no-op after adoption. A version
+                    // start does not hold that guard, so use a retired plan ID.
+                    invalidation = (Task)Call(service, "HandlePlanInvalidationAsync",
+                        new PlaybackPlanInvalidation(versionSwitch ? "already-retired-plan" : originalPlan!, "synthetic"))!;
+                    Require((long)Get(service, "_playbackBusyRevision")! == revision,
+                        "A pending/no-op invalidation stole the accepted switch's busy claim.");
+                    if (!versionSwitch) Require(!invalidation.IsCompleted, "Invalidation did not wait behind the held quality replan.");
+                }
+                wire.ReleaseReplacement.TrySetResult(); wire.ReleaseReplan.TrySetResult();
+                if (invalidation != null) await invalidation.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialFile &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                    "Access refresh/no-op invalidation abandoned an accepted switch or stranded its busy state.");
+                Require(versionSwitch ? manager.CurrentSession?.MediaFileId == 71 : service.SelectedQualityMenuId == "720p",
+                    "The switch did not retain its accepted version/quality.");
+                Require(mpv.IsPaused && service.IsPaused && Menu(service) == null && Gate(service).CurrentCount == 1,
+                    "The accepted switch changed genuine pause or leaked its native menu lease.");
+                Program.Log($"PASS: actual held native {mode} loads its accepted plan and completes its busy lifecycle without changing pause.");
+                return;
+            }
             if (mode == "version-room-race")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -308,6 +503,31 @@ internal static class PlaybackQualityMenuNativeFixture
                 Require(service.IsWatchTogetherPlayback && mpv.IsPaused && service.ErrorMessage == originalError,
                     "A retired solo version switch changed room pause intent or published a stale error.");
                 Program.Log("PASS: actual held native version replacement is canceled by same-file room attachment; late reply preserves the room session/file and pause.");
+
+                // Also cancel after StartSessionAsync has adopted the replacement,
+                // while its pending subtitle-Off refinement still holds the await.
+                service.SetWatchTogetherPlayback(false);
+                wire.HoldReplacementStart = false;
+                wire.StartWithSubtitle = true;
+                wire.HoldSuccessfulReplan = true;
+                manager.RecordLocalSubtitleSelection(null);
+                var replacement = service.SwitchVersionAsync(versions[1]);
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(wire.Operations.Contains("track_change") && !ReferenceEquals(manager.CurrentSession, originalSession) &&
+                    manager.CurrentSession?.MediaFileId == 71 && (bool)Get(service, "_subtitleVersionSwitchActive")!,
+                    "The version switch did not adopt its replacement before the held subtitle reconcile.");
+                var adoptedSession = manager.CurrentSession;
+                service.SetWatchTogetherPlayback(true);
+                wire.ReleaseReplan.TrySetResult();
+                await replacement.WaitAsync(TimeSpan.FromSeconds(5));
+                Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")! &&
+                    !(bool)Get(service, "_subtitleVersionSwitchActive")! && !service.IsQualitySwitchActive,
+                    "Room cancellation after replacement adoption stranded version busy ownership.");
+                Require(ReferenceEquals(manager.CurrentSession, adoptedSession) &&
+                    (long)Get(service, "_playbackFileGeneration")! == originalFile && service.IsWatchTogetherPlayback &&
+                    mpv.IsPaused && service.IsPaused && service.ErrorMessage == originalError,
+                    "Canceled subtitle reconciliation loaded stale media, replaced the adopted session or changed room pause/error state.");
+                Program.Log("PASS: room cancellation during an adopted version's track_change reconcile releases version/subtitle busy flags without a stale load or error.");
                 return;
             }
             if (mode.StartsWith("legacy-", StringComparison.Ordinal))
@@ -471,7 +691,20 @@ internal static class PlaybackQualityMenuNativeFixture
                 await queued.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 Require(executed == 1 && service.IsLoading, "Old queued UI cleanup ran after a successor loading assignment.");
                 Property(service, "IsLoading", false); Call(service, "SetSwitchingContent", false);
-                Program.Log("PASS: actual busy release receipt executes current queued cleanup and rejects a successor reusing the same playback identities.");
+                var idleRevision = (long)Get(service, "_playbackBusyRevision")!;
+                await ((Task)Call(service, "HandlePlanInvalidationAsync",
+                    new PlaybackPlanInvalidation("already-retired-plan", "synthetic"))!).WaitAsync(TimeSpan.FromSeconds(5));
+                Require(!service.IsLoading && !(bool)Get(service, "_switchingContent")! &&
+                    (long)Get(service, "_playbackBusyRevision")! == idleRevision,
+                    "An idle no-op invalidation changed busy ownership or failed to release its pending guard.");
+                var temporaryGuard = Call(service, "BeginTemporarySwitchingContent")!;
+                var successorClaim = Call(service, "BeginPlaybackBusy", true, (Action?)null)!;
+                Call(service, "RestoreTemporarySwitchingContent", temporaryGuard);
+                Require(service.IsLoading && (bool)Get(service, "_switchingContent")! &&
+                    (bool)Call(service, "OwnsPlaybackBusy", successorClaim)!,
+                    "Restoring a temporary guard cleared a successor's busy claim.");
+                Call(service, "ReleasePlaybackBusy", successorClaim, (Action?)null);
+                Program.Log("PASS: busy release receipts reject successor cleanup; no-op invalidation releases its pending guard without retiring claims or clearing successors.");
                 return;
 
                 async Task QueuedRelease(Action action)
@@ -516,9 +749,16 @@ internal static class PlaybackQualityMenuNativeFixture
             Require(list.SelectedItem is ListViewItem { Tag: "speed" }, "End did not reach the Speed navigation row.");
             Call(menu, "Input", "up");
             Require(list.SelectedItem is ListViewItem { Tag: "quality:720p" }, "End did not reach the last server quality.");
+            wire.HoldSuccessfulReplan = true;
+            var qualityLoad = (long)Get(service, "_playbackFileGeneration")!;
             Call(menu, "Input", "activate");
-            await Until(() => wire.Qualities.Contains("720p") && !service.IsLoading && !service.IsQualitySwitchActive,
-                "Native quality did not finish the existing replan.");
+            await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            api.InvalidateAccessContext();
+            wire.ReleaseReplan.TrySetResult();
+            await Until(() => wire.Qualities.Count == 1 && wire.Qualities.Contains("720p") &&
+                (long)Get(service, "_playbackFileGeneration")! == qualityLoad + 1 &&
+                !service.IsLoading && !service.IsQualitySwitchActive && !(bool)Get(service, "_switchingContent")!,
+                "Access invalidation stranded the accepted Quality plan or its busy state.");
             Require(mpv.IsPaused && service.IsPaused, "Quality replan resumed a genuinely paused viewer.");
             Require(service.SelectedQualityMenuId == "720p", "Accepted quality did not become current.");
             Require(Menu(service) == null && Gate(service).CurrentCount == 1, "Selection stranded the native lease.");
@@ -537,10 +777,15 @@ internal static class PlaybackQualityMenuNativeFixture
             service.SetPaused(false);
             await Until(() => !mpv.IsPaused && !service.IsPaused, "The viewer did not enter playing intent before selecting a version.");
             var versionLoad = (long)Get(service, "_playbackFileGeneration")!;
+            wire.HoldReplacementStart = true;
             Call(menu, "Input", "activate");
-            await Until(() => wire.Files.Contains(71) && manager.CurrentSession?.MediaFileId == 71 &&
-                (long)Get(service, "_playbackFileGeneration")! > versionLoad && !service.IsLoading,
-                "Version selection did not use the existing replacement-session workflow.");
+            await wire.ReplacementStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            api.InvalidateAccessContext();
+            wire.ReleaseReplacement.TrySetResult();
+            await Until(() => wire.Files.Count == 2 && wire.Files.Contains(71) && manager.CurrentSession?.MediaFileId == 71 &&
+                (long)Get(service, "_playbackFileGeneration")! == versionLoad + 1 && !service.IsLoading &&
+                !(bool)Get(service, "_switchingContent")! && !service.IsQualitySwitchActive,
+                "Access invalidation stranded the accepted version session or its busy state.");
             await Until(() => !mpv.IsPaused && !service.IsPaused, "Version selection paused a playing viewer.");
             Call(service, "StopPlaybackStallWatchdog");
 
@@ -568,6 +813,21 @@ internal static class PlaybackQualityMenuNativeFixture
             GC.KeepAlive(retainedDirectCallbacks);
         }
 
+        async Task DeliverOutgoingFileLoadedAsync()
+        {
+            // Deliver a real libmpv event for an already-submitted outgoing
+            // load, without beginning a successor PlayerService operation.
+            var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Loaded() => delivered.TrySetResult();
+            Set(service, "_restorePausedAfterLoad", true);
+            mpv.FileLoaded += Loaded;
+            try
+            {
+                mpv.LoadFile(media.Origin + "/video.y4m");
+                await delivered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            }
+            finally { mpv.FileLoaded -= Loaded; }
+        }
         async Task<JsonElement> Query()
         {
             var id = Guid.NewGuid().ToString("N"); var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -599,7 +859,10 @@ internal static class PlaybackQualityMenuNativeFixture
     internal sealed class Wire(string origin, string mediaPath = "/video.y4m") : HttpMessageHandler
     {
         internal readonly ConcurrentQueue<string> Qualities = new();
+        internal readonly ConcurrentQueue<string> Operations = new();
         internal readonly ConcurrentQueue<int> Files = new();
+        internal bool StartWithSubtitle;
+        internal string? QualityFailure;
         internal bool HoldFailedReplan;
         internal bool HoldSuccessfulReplan;
         internal bool HoldSuccessorReplan;
@@ -616,6 +879,7 @@ internal static class PlaybackQualityMenuNativeFixture
         internal readonly TaskCompletionSource ReplanReplied = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _file = 41;
+        private bool _subtitleSelected;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Require(request.RequestUri?.Host == "native-quality.fixture.invalid", "Quality fixture attempted external API networking.");
@@ -625,13 +889,22 @@ internal static class PlaybackQualityMenuNativeFixture
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
             using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); var body = json.RootElement;
             var quality = body.TryGetProperty("quality_preference", out var value) ? value.GetString() ?? "auto" : "auto";
+            var operation = body.TryGetProperty("operation", out var op) ? op.GetString() ?? "" : "";
+            if (path.EndsWith("/start")) _subtitleSelected = StartWithSubtitle;
             if (path.EndsWith("/start") && HoldReplacementStart)
             {
                 ReplacementStarted.TrySetResult(); await ReleaseReplacement.Task; ReplacementReplied.TrySetResult();
             }
             if (path.EndsWith("/replan"))
             {
+                Operations.Enqueue(operation);
                 Qualities.Enqueue(quality);
+                if (operation == "quality_change" && QualityFailure == "server-error")
+                    return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{\"error\":\"Synthetic second-step quality failure\"}") };
+                if (operation == "quality_change" && QualityFailure == "timeout")
+                    throw new TaskCanceledException("Synthetic second-step quality timeout.");
+                if (operation == "track_change" && !body.GetProperty("selected_tracks").TryGetProperty("subtitle", out _))
+                    _subtitleSelected = false;
                 if (HoldSuccessorReplan && Qualities.Count > 1)
                 {
                     SuccessorStarted.TrySetResult(); await ReleaseSuccessor.Task;
@@ -646,6 +919,8 @@ internal static class PlaybackQualityMenuNativeFixture
             if (body.TryGetProperty("file_id", out var file) && int.TryParse(file.GetString(), out var requestedFile))
             { _file = requestedFile; Files.Enqueue(_file); }
             var grantSubtitle = ReplacementGrantsSubtitle && path.EndsWith("/start");
+            var subtitleIdentity = grantSubtitle ? new { id = "replacement-auto", index = 8 }
+                : _subtitleSelected ? new { id = $"sub:{_file}:0", index = 0 } : null;
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "native-quality-fixture",
@@ -654,12 +929,13 @@ internal static class PlaybackQualityMenuNativeFixture
                 {
                     protocol_version = 3, plan_id = "quality-plan-" + Qualities.Count + "-" + Files.Count,
                     plan_attempt_key = "synthetic", session_id = "native-quality-fixture", effective_media_file_id = _file,
-                    delivery = "original_http", stream = new { url = InvalidDeliveryUrl ? "" : origin + mediaPath },
+                    delivery = "original_http", stream = new { url = InvalidDeliveryUrl || operation == "quality_change" && QualityFailure == "invalid-url" ? "" : origin + mediaPath },
                     timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = grantSubtitle ? (object)new { subtitle = new { id = "replacement-auto", index = 8 } } : new { },
-                    subtitle = new { mode = grantSubtitle ? "sidecar" : "off", inventory = grantSubtitle
-                        ? new object[] { new { track_id = "replacement-auto", combined_index = 8, language = "en", codec = "srt", source = "external", url = origin + "/replacement.srt" } }
-                        : Array.Empty<object>() },
+                    selected_tracks = new { subtitle = subtitleIdentity },
+                    subtitle = new { mode = grantSubtitle ? "sidecar" : _subtitleSelected ? "native" : "off", track_id = subtitleIdentity?.id,
+                        inventory = grantSubtitle
+                            ? new object[] { new { track_id = "replacement-auto", combined_index = 8, language = "en", codec = "srt", source = "external", url = origin + "/replacement.srt" } }
+                            : Array.Empty<object>() },
                     active_quality = quality == "auto" ? "original" : quality,
                     available_qualities = new[] { new { label = "1080p", display_name = "1080p", bitrate_kbps = 5000 }, new { label = "720p", display_name = "720p", bitrate_kbps = 2500 } },
                 },

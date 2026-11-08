@@ -1,5 +1,15 @@
 # Active OSC feedback and input ownership
 
+## Current integrated source identity — PR #94 merge
+
+Native Chapters source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta PR #90 input `2e359e6055440789dfc7e42b171519e5e9c58ee3`. These are historical input identities, not the final PR #94 merged head.
+
+Source version: `1.2.810-beta.1`; numeric version: `1.2.809.1`.
+
+The app, update host, launcher and installer defaults already carry these stamps; this merge changes none. PR #94's native Subtitles and composed OSC menu flows are combined with Beta's owned native Audio, Quality, Watch Party, Chapters, compact More, Playback info and Playback speed controls. These input identities are not a build, test or release receipt for the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify this merge.
+
+## Historical PR #86 scope
+
 This is the first focused PR of the owner's approved staged native-menu work. It changes the active Lua/ASS HUD, not the dormant XAML overlay. Native audio/subtitle/quality menus remain later deliveries. Renderer policy, startup/playback loading icons and Dashboard are unchanged.
 
 ## Behavior
@@ -12,13 +22,23 @@ This is the first focused PR of the owner's approved staged native-menu work. It
 - Audio with no alternative and empty Chapters remain disabled across appearance, navigation and desktop/compact activation. Compact Audio/Chapters anchor to the visible More control.
 - Invisible/covered Fit and More controls cannot activate underneath a menu or hidden HUD. Existing active indicators, quality pending text and authority/track-intent routes are retained.
 
-## Verification and provenance
+## Historical source identities — native Audio (PR #87) and Quality (PR #89)
 
-Base Beta: `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f` (`1.2.549-beta.1` / numeric `1.2.548.1`). Reviewed PR #86 head: `def1daef40c5cc30c63f843810fbd0e14e7d234b`.
+Integrated Audio source head (PR #87): `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.552-beta.1`; numeric version: `1.2.551.1`.
+Reviewed Quality source head (PR #89): `5f38c219a0b5f53b32446e0d936631ef6fa99642`.
 
-The reviewed head changes the app, updater, launcher and installer-default stamps relative to that base. This QA correction does not change those stamps. The historical receipts below predate this head and cannot establish verification of its stamped build inputs or these corrections. No builds or tests were run for this correction; the pipeline must verify it. Final pipeline stamping has not been confirmed; a subsequent stamp requires updated identity records and fresh verification, not reuse of the old receipt.
+Source version: `1.2.810-beta.1`; numeric version: `1.2.809.1`.
+
+These values record the existing app, updater, launcher and installer-default stamps without changing them. Neither source identity is a verification receipt for the combined merge. No builds or tests were run for this correction or merge; pipeline re-verification must record the final integrated head. The PR #86 identities, reviews and receipts below remain historical and do not verify either head or the combined merge.
+
+## Historical PR #86 source identity, verification and provenance
+
+Base Beta: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`. Reviewed PR #86 head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`.
+
+Source version: `1.2.634-beta.1`; numeric version: `1.2.633.1`.
+
+The app, updater, launcher and installer-default stamps above changed relative to the original OSC base `d37eae35a2e1b6c4f4c26dde6c22713aa12c478f` (`1.2.549-beta.1` / numeric `1.2.548.1`); the current PR diff against the Beta base above does not change stamps. This QA correction updates the identity records, not the stamps. The historical receipts below cover neither this head nor these stamps and cannot establish verification of its stamped build inputs or these corrections. No builds or tests were run for this correction; the pipeline must verify it. Final pipeline stamping has not been confirmed; a subsequent stamp requires updated identity records and fresh verification, not reuse of the old receipt.
 
 ## Historical local verification (not the current head)
 
@@ -40,4 +60,4 @@ Local evidence: `D:/SiloPlayer/.codex-tmp/osc-menus-nov03/hud-states`; isolated 
 
 - After final stamping, check the semantic/numeric mapping and agreement across the app, updater, launcher, installer defaults and both current source-identity records. `CurrentOscReceiptMatchesAllSourceVersionStamps` guards this source/document agreement automatically; `installer/build.ps1` retains its build-stamp preflight. If the pipeline chooses another version, update the identity records and rerun these checks rather than attributing older evidence to new inputs.
 - Record the exact final commit, tracked product/build-input hashes, bundled engine hash and fresh artifact hashes with the test/publish receipt; recheck inputs after verification. Verify published binary, installer and manifest identities against that receipt before release.
-- Run the OSC runtime regressions for controller-only pause/resume and idle expiry, file/disable focus/menu retirement, compact pointer clicks with both buffering pills, and Exit/Minimize presses during fade-out. Run the native file-replacement focus/auto-hide case and retain the existing gesture/pixel and pause/resume checks. These new cases are pending pipeline execution.
+- Run the OSC runtime regressions for controller-only pause/resume and idle expiry, zero-delta mouse messages after controller focus/fullscreen activation/subtitle-dialog closure (both host/mpv delivery orders), file/disable focus/menu retirement, compact pointer clicks with both buffering pills, and Exit/Minimize presses during fade-out. Run the native file-replacement focus/auto-hide case and retain the existing gesture/pixel and pause/resume checks. These new cases are pending pipeline execution.

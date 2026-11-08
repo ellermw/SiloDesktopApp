@@ -124,6 +124,8 @@ public sealed partial class ItemDetailPage
         bool Current() => revision == _overviewConfigurationRevision && navigation?.IsCancellationRequested != true && ReferenceEquals(navigation, _navigationCts) &&
             ReferenceEquals(item, ViewModel.Item) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library &&
             api.IsCurrentContext(context) && api.LocalizedReadGeneration == language;
+        ++_overviewTranslationStatusReads;
+        var configurationCompleted = false;
         try
         {
             // Series fallback is not an episode spoiler and must not wait for optional settings.
@@ -141,8 +143,11 @@ public sealed partial class ItemDetailPage
             }
             _overviewConfiguredOwner = owner;
             _overviewPendingOwner = null;
+            configurationCompleted = true;
             if (source == null || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) || IsOverviewHidden(item)) return;
+            configurationCompleted = false;
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
+            configurationCompleted = true;
             if (!Current() || !ReferenceEquals(source, ViewModel.OverviewSource) || !status.Enabled || IsOverviewHidden(item)) return;
             if (status.OnView.Equals("button", StringComparison.OrdinalIgnoreCase))
             {
@@ -161,6 +166,14 @@ public sealed partial class ItemDetailPage
                 TranslateOverviewButton.Visibility = Visibility.Collapsed;
                 ScheduleOverviewRetry(owner);
             }
+        }
+        finally
+        {
+            --_overviewTranslationStatusReads;
+            if (revision == _overviewConfigurationRevision && ReferenceEquals(navigation, _navigationCts) && ReferenceEquals(ViewModel.Item, item)
+                && ViewModel.LibraryId == library && (!configurationCompleted || !api.IsCurrentContext(context)
+                    || api.LocalizedReadGeneration != language))
+                _overviewTranslationInterrupted = true;
         }
     }
 
@@ -257,6 +270,7 @@ public sealed partial class ItemDetailPage
             var restoreControls = ControlsCurrent();
             if (restoreControls)
             {
+                if (!api.IsCurrentContext(context) || api.LocalizedReadGeneration != language) _overviewTranslationInterrupted = true;
                 OverviewText.Opacity = 1;
                 TranslateOverviewButton.Visibility = _translateButtonMode && !IsOverviewHidden(item) &&
                     !string.IsNullOrWhiteSpace(ViewModel.OverviewSource?.PendingTranslationLanguage)

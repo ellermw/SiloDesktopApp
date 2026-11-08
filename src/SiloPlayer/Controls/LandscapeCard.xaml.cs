@@ -12,9 +12,13 @@ namespace SiloPlayer.Controls;
 public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
 {
     private double _cardWidth = 315;
+    private ArtworkBindingOwner? _artworkOwner;
+    private IDisposable? _artworkActivity;
+    private bool _artworkSuspended;
     private EpisodeSpoilerPreferences? _spoilerPreferences;
     private bool? _spoilerArtworkHidden;
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _overlayLoadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
     private bool _isPointerOver;
     private bool _isKeyboardFocusWithin;
@@ -60,14 +64,25 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         BackdropImage.ImageFailed += (_, _) => { BackdropImage.Source = null; BackdropImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         this.Loaded += (_, _) =>
         {
+            // A bind can precede first attachment long enough to reach a stage gate.
+            // Loaded owns retrying that missing source with the original binding owner.
+            if (BackdropImage.Source == null)
+            {
+                _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+            }
+            ArtworkViewport.ObserveAncestors(this);
+            _artworkActivity?.Dispose();
+            _artworkActivity = ArtworkViewport.ObserveActivity(this, SetArtworkActive);
             _spoilerPreferences = App.Services.GetService<EpisodeSpoilerPreferences>();
             if (_spoilerPreferences != null) { _spoilerPreferences.Changed -= SpoilersChanged; _spoilerPreferences.Changed += SpoilersChanged; }
 
             ObserveArtwork(MediaItem);
+            if (MediaItem is { } overlayItem)
+                RefreshOverlayPreferences(overlayItem);
             // HomePage is navigation-cached. Unloaded releases decoded artwork,
             // but the existing card and its MediaItem are reused when Home is
             // revisited, so the dependency property does not change again.
-            if (_loadCts == null && BackdropImage.Source == null && MediaItem is { } item)
+            if (!_artworkSuspended && _loadCts == null && BackdropImage.Source == null && MediaItem is { } item)
             {
                 _loadCts = new CancellationTokenSource();
                 _ = LoadImageAsync(item, _loadCts.Token);
@@ -79,6 +94,9 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             // been reattached and received Loaded (detail-section reordering).
             // That stale event must not cancel the current artwork load.
             if (IsLoaded) return;
+            CancelOverlayLoad();
+            _artworkActivity?.Dispose(); _artworkActivity = null;
+            SetArtworkActive(false);
             if (_spoilerPreferences != null) _spoilerPreferences.Changed -= SpoilersChanged;
             _spoilerArtworkHidden = null;
             ObserveArtwork(null);
@@ -119,9 +137,11 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not LandscapeCard card) return;
+        card._artworkOwner = ArtworkBindingOwner.Capture();
         if (!ReferenceEquals(e.OldValue, e.NewValue)) card.MediaItemChanged?.Invoke();
         card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
         if (e.NewValue is MediaItem item) card.UpdateContent(item);
+        else card.CancelOverlayLoad();
     }
 
     private void ObserveArtwork(MediaItem? item)
@@ -153,6 +173,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
 
     private void UpdateContent(MediaItem item)
     {
+        CancelOverlayLoad();
         SetCardWidth(_cardWidth, _minimumCardWidth);
         _loadCts?.Cancel();
         _loadCts = new CancellationTokenSource();
@@ -278,10 +299,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SubtitleButton, $"Open {SubtitleText.Text}");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(TimeLeftButton, $"Open {TimeLeftText.Text}");
 
-        UpdateBadges(item);
-        var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
-        if (!overlayService.IsLoaded)
-            _ = EnsureBadgesLoadedAsync(item, ct);
+        RefreshOverlayPreferences(item);
 
         BackdropImage.Source = null;
         ArtworkFallback.Reset(item.Type, !UsePosterAspect && !string.IsNullOrEmpty(item.BackdropUrl) ? item.BackdropThumbhash : item.PosterThumbhash ?? item.BackdropThumbhash);
@@ -373,13 +391,32 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         ProgressContainer.Visibility = Visibility.Visible;
     }
 
+    private void CancelOverlayLoad()
+    {
+        _overlayLoadCts?.Cancel();
+        _overlayLoadCts?.Dispose();
+        _overlayLoadCts = null;
+    }
+
+    private void RefreshOverlayPreferences(MediaItem item)
+    {
+        if (_artworkOwner?.IsCurrent == false) return;
+        UpdateBadges(item);
+        var service = App.Services.GetRequiredService<Services.CardOverlayService>();
+        if (service.IsLoaded || _overlayLoadCts != null) return;
+        // Overlay waits belong to the bind, not artwork retries or activity changes.
+        _overlayLoadCts = new CancellationTokenSource();
+        _ = EnsureBadgesLoadedAsync(item, _overlayLoadCts.Token);
+    }
+
     private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
     {
         try
         {
             var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-            await service.EnsureLoadedAsync(ct);
-            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+            // Retiring one card must not cancel the shared service initialization.
+            await service.EnsureLoadedAsync().WaitAsync(ct);
+            if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item) && _artworkOwner?.IsCurrent != false)
                 UpdateBadges(item);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
@@ -438,8 +475,21 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         _ = LoadImageAsync(item, _loadCts.Token);
     }
 
+    private void SetArtworkActive(bool active)
+    {
+        if (_artworkSuspended == !active) return;
+        _artworkSuspended = !active;
+        _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+        if (active && IsLoaded && BackdropImage.Source == null && MediaItem is { } item)
+        {
+            _loadCts = new();
+            _ = LoadImageAsync(item, _loadCts.Token);
+        }
+    }
+
     private async Task LoadImageAsync(MediaItem item, CancellationToken ct)
     {
+        if (_artworkSuspended || _artworkOwner?.IsCurrent == false) return;
         // Current WebUI wide cards use backdrop_url first. Section episode
         // payloads now reserve poster_url for vertical series/season artwork
         // and backdrop_url for the episode still.
@@ -455,8 +505,11 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
+            var imageClient = App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>();
+            var identity = imageClient?.CaptureIdentityContext();
             _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+            if (identity is { } capturedIdentity && !imageClient!.IsCurrentIdentityContext(capturedIdentity)) return;
             var hidden = HideEpisodeArtwork(item);
             var decodeWidth = (int)Math.Ceiling(_cardWidth * 2);
             var key = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, decodeWidth, hidden);
@@ -468,7 +521,8 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
                 return;
             }
             await Task.Delay(300, ct);
-            if (ct.IsCancellationRequested) return;
+            await ArtworkViewport.WaitAsync(this, ct);
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
 
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
@@ -484,6 +538,8 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
                 item.ContentId, imageType, imageUrl, httpClient, ct);
 
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+            await ArtworkViewport.WaitAsync(this, ct);
+            if (!DecodedArtworkCache.IsCurrent(key)) return;
             if (string.IsNullOrEmpty(diskPath)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
 
             // Decode at 2x logical width so hi-DPI displays (and the 1.04× hover
@@ -494,7 +550,12 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
             var currentHidden = HideEpisodeArtwork(item);
-            var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, decodeWidth, currentHidden, ct);
+            await ArtworkViewport.WaitAsync(this, ct);
+            if (!DecodedArtworkCache.IsCurrent(key)) return;
+            var gate = new ArtworkDecodeGate(this,
+                () => IsLoaded && !_artworkSuspended && ReferenceEquals(item, MediaItem) && DecodedArtworkCache.IsCurrent(key));
+            var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, decodeWidth, currentHidden, ct, gate);
+            await ArtworkViewport.WaitAsync(this, ct);
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
             _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, decodeWidth, currentHidden);
             _spoilerArtworkHidden = currentHidden;

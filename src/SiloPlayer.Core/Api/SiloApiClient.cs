@@ -21,6 +21,8 @@ public readonly record struct ProfileVerificationContext(
     string? ProfileId);
 
 public readonly record struct ApiRequestContext(long AuthenticationGeneration, long RequestContextGeneration, string BaseUrl, string? ProfileId);
+public readonly record struct SettingsRequestContext(ApiRequestContext Request, string? DeviceId, long DeviceGeneration);
+public readonly record struct SettingsIdentityContext(ApiIdentityContext Identity, string? DeviceId, long DeviceGeneration);
 /// <summary>Account/profile ownership, stable across read-cache/access refreshes.</summary>
 public readonly record struct ApiIdentityContext(long AuthenticationGeneration, long IdentityGeneration, string BaseUrl, string? ProfileId);
 public sealed record ApiResponse<T>(T Body, string? ETag);
@@ -48,6 +50,7 @@ public partial class SiloApiClient
     private string? _profileId;
     private string? _profileToken;
     private string? _deviceId;
+    private long _settingsDeviceGeneration;
     private string? _deviceName;
     private string? _devicePlatform;
     private string _clientName = DefaultClientName;
@@ -68,6 +71,21 @@ public partial class SiloApiClient
     }
     public bool IsCurrentContext(ApiRequestContext context) => CaptureContext() == context;
     public string? DeviceId { get { lock (_authStateGate) return _deviceId; } }
+    public SettingsRequestContext CaptureSettingsContext()
+    {
+        lock (_authStateGate) return new(new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
+    }
+
+    public SettingsIdentityContext CaptureSettingsIdentityContext()
+    {
+        lock (_authStateGate) return new(new(_authenticationGeneration, _identityGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
+    }
+
+    /// <summary>Current request authority for an accepted settings identity, or null once that identity retires.</summary>
+    public SettingsRequestContext? CaptureSettingsContext(SettingsIdentityContext owner)
+    {
+        lock (_authStateGate) return CaptureSettingsIdentityContext() == owner ? CaptureSettingsContext() : null;
+    }
 
     public ApiIdentityContext CaptureIdentityContext()
     {
@@ -376,7 +394,10 @@ public partial class SiloApiClient
         lock (_authStateGate)
         {
             if (!string.Equals(_deviceId, deviceId, StringComparison.Ordinal))
+            {
                 _requestContextGeneration++;
+                _settingsDeviceGeneration++;
+            }
             _deviceId = deviceId;
             _deviceName = deviceName;
             _devicePlatform = devicePlatform;

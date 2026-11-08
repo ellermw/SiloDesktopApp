@@ -54,10 +54,23 @@ public partial class PlaybackManager : IDisposable
     public bool SessionRetirementPending { get; private set; }
     public WatchDetailResponse? WatchDetail { get; private set; }
     private PlaybackStartResponse? _currentSession;
+    private long _mediaFileLifetimeGeneration;
+    /// <summary>Changes when the accepted media file departs, including a later return to the same ID.</summary>
+    public long MediaFileLifetimeGeneration
+    {
+        get { lock (_trackIntentGate) return _mediaFileLifetimeGeneration; }
+    }
     public PlaybackStartResponse? CurrentSession
     {
         get { lock (_trackIntentGate) return _currentSession; }
-        private set { lock (_trackIntentGate) _currentSession = value; }
+        private set
+        {
+            lock (_trackIntentGate)
+            {
+                if (_currentSession?.MediaFileId != value?.MediaFileId) _mediaFileLifetimeGeneration++;
+                _currentSession = value;
+            }
+        }
     }
     public string? StreamUrl { get; private set; }
     public string QualityPreference => _qualityPreferenceV3;
@@ -460,6 +473,48 @@ public partial class PlaybackManager : IDisposable
             failure: null,
             ct);
 
+    /// <summary>Replans recorded subtitle identity against the accepted inventory, never an outgoing index.</summary>
+    public async Task<PlaybackStartResponse?> ReplanCurrentSubtitleAsync(
+        double positionSeconds,
+        CancellationToken ct = default)
+        => await ReplanCurrentSubtitleForOwnerCoreAsync(positionSeconds, ct, null, null).ConfigureAwait(false);
+
+    public Task<PlaybackStartResponse?> ReplanCurrentSubtitleForOwnerAsync(double positionSeconds,
+        Func<PlaybackStartResponse, bool> canUseSession,
+        Func<PlaybackStartResponse, PlaybackStartResponse, bool> tryAdoptSession, CancellationToken ct = default)
+        => ReplanCurrentSubtitleForOwnerCoreAsync(positionSeconds, ct, canUseSession, tryAdoptSession);
+
+    private async Task<PlaybackStartResponse?> ReplanCurrentSubtitleForOwnerCoreAsync(double positionSeconds,
+        CancellationToken ct, Func<PlaybackStartResponse, bool>? canUseSession,
+        Func<PlaybackStartResponse, PlaybackStartResponse, bool>? tryAdoptSession)
+    {
+        await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var ownerSession = CurrentSession;
+            if (canUseSession != null && (ownerSession == null || !canUseSession(ownerSession))) return null;
+            lock (_trackIntentGate)
+            {
+                // An unmatched row is a superseded pick, not an explicit Off
+                // request and not a failure of the healthy video transport.
+                if (!_hasViewerSubtitle || _viewerSubtitle != null && MatchCurrentSubtitle() == null)
+                    return null;
+                // Even an acknowledged local choice needs a track_change when
+                // the loaded video's composited subtitles differ from it.
+                ++_subtitleRevision;
+            }
+            EnsureBufferingReplanOwner();
+            return await ReplanCoreForOwnerAsync("track_change", positionSeconds, _qualityPreferenceV3,
+                selectedTracks => { }, failure: null, ct,
+                canUseSession == null ? null : () => ownerSession != null && canUseSession(ownerSession),
+                tryAdoptSession == null ? null : response => ownerSession != null && tryAdoptSession(ownerSession, response)).ConfigureAwait(false);
+        }
+        finally
+        {
+            _replanGuard.Release();
+        }
+    }
+
     public Task<PlaybackStartResponse> ReplanSeekAsync(
         double positionSeconds,
         CancellationToken ct = default)
@@ -606,7 +661,18 @@ public partial class PlaybackManager : IDisposable
         PlaybackFailureV3? failure,
         CancellationToken ct,
         (PlaybackStartResponse Session, ApiIdentityContext Identity)? expectedOwner = null)
+        => await ReplanCoreForOwnerAsync(operation, positionSeconds, qualityPreference, mutateSelectedTracks,
+            failure, ct, expectedOwner is { } owner
+                ? () => !ct.IsCancellationRequested && _apiClient.IsCurrentIdentityContext(owner.Identity) &&
+                    ReferenceEquals(CurrentSession, owner.Session)
+                : null, null).ConfigureAwait(false);
+
+    private async Task<PlaybackStartResponse> ReplanCoreForOwnerAsync(string operation, double positionSeconds,
+        string qualityPreference, Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
+        PlaybackFailureV3? failure, CancellationToken ct, Func<bool>? currentOwner,
+        Func<PlaybackStartResponse, bool>? tryAdopt)
     {
+        if (currentOwner?.Invoke() == false) throw new OperationCanceledException("Subtitle owner retired.", ct);
         var plan = _currentPlanV3
             ?? throw new InvalidOperationException("The active playback session does not have a protocol-v3 plan.");
         var sessionId = _sessionId
@@ -660,29 +726,50 @@ public partial class PlaybackManager : IDisposable
 
         ConfigureConnectionReplan(request);
         var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
-        if (expectedOwner is { } expected)
+        void CommitHistory()
         {
-            ct.ThrowIfCancellationRequested();
-            if (!_apiClient.IsCurrentIdentityContext(expected.Identity) || !ReferenceEquals(CurrentSession, expected.Session))
-                throw new OperationCanceledException("Playback owner changed.", ct);
+            if (recoveryAttempt != null) _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
+            else _recoveryAttemptHistory.Reset();
         }
-        // Validate delivery before publishing any accepted plan/session fields.
-        // On failure the caller still owns its original session and busy claim.
-        var response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
-        var streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
-        if (recoveryAttempt != null)
-            _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
-        else
-            _recoveryAttemptHistory.Reset();
-        _currentPlanV3 = decision.PlaybackPlan;
-        _planAttemptIdV3 = Guid.NewGuid().ToString();
-        _qualityPreferenceV3 = qualityPreference;
-        _sessionId = response.SessionId;
-        CurrentSession = response;
-        AcknowledgeGrantedSubtitleIntent(subtitleRevision);
-        AcknowledgeAudioIntent(audioRevision);
-        _lastReportedPosition = Math.Max(0, response.Position);
-        StreamUrl = streamUrl;
+        void Publish(PlaybackStartResponse accepted, string streamUrl)
+        {
+            _currentPlanV3 = decision.PlaybackPlan;
+            _planAttemptIdV3 = Guid.NewGuid().ToString();
+            _qualityPreferenceV3 = qualityPreference;
+            _sessionId = accepted.SessionId;
+            CurrentSession = accepted;
+            AcknowledgeGrantedSubtitleIntent(subtitleRevision);
+            AcknowledgeAudioIntent(audioRevision);
+            _lastReportedPosition = Math.Max(0, accepted.Position);
+            StreamUrl = streamUrl;
+        }
+        PlaybackStartResponse response;
+        if (currentOwner == null)
+        {
+            // Validate delivery before publishing any accepted plan/session fields
+            // or history. A failed decision leaves the original owner intact.
+            response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
+            var streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
+            CommitHistory();
+            Publish(response, streamUrl);
+        }
+        else lock (_trackIntentGate)
+        {
+            if (!currentOwner()) throw new OperationCanceledException("Subtitle owner retired.", ct);
+            response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
+            var streamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
+            var previousSession = CurrentSession;
+            CurrentSession = response;
+            if (tryAdopt?.Invoke(response) == false)
+            {
+                // CurrentSession readers share this gate. Roll back the private
+                // handoff before publishing any other plan/URL/intent metadata.
+                CurrentSession = previousSession;
+                throw new OperationCanceledException("Subtitle owner retired before publication.", ct);
+            }
+            CommitHistory();
+            Publish(response, streamUrl);
+        }
         _ = RecordRouteEventAsync(response, "plan_selected");
         LogToStateTrace(
             $"Replan v3: operation={operation}, requested_quality={qualityPreference}, active_quality={response.ActiveQuality}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
@@ -835,6 +922,7 @@ public partial class PlaybackManager : IDisposable
             }
             if (!ReferenceEquals(response, acceptedStart))
                 onSessionAdopted?.Invoke(response);
+
         }
 
         return response;
@@ -1039,23 +1127,27 @@ public partial class PlaybackManager : IDisposable
         return retired;
     }
 
-    public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls()
+    public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls(IEnumerable<SubtitleTrackInfo>? inventory = null)
     {
-        if (CurrentSession == null) return [];
-        var baseUrl = _apiClient.BaseUrl;
-        var token = _apiClient.AccessToken;
-        return CurrentSession.SubtitleUrls
-            .Where(s => !string.IsNullOrWhiteSpace(s.Url))
-            .Select(s =>
+        lock (_trackIntentGate)
         {
-            var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
-            // Integrated sidecars require account/viewer authentication even
-            // with a reconstruction reference (st). Worker/CDN URLs carry their
-            // own authority and must never receive the account credential.
-            if (RequiresSubtitleAccountAuthentication(baseUrl, s.Url))
-                url = UrlHelper.AppendToken(url, token);
-            return (s, url);
-        }).ToList();
+            inventory ??= CurrentSession?.SubtitleUrls;
+            if (inventory == null) return [];
+            var baseUrl = _apiClient.BaseUrl;
+            var token = _apiClient.AccessToken;
+            return inventory
+                .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+                .Select(s =>
+            {
+                var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
+                // Integrated sidecars require account/viewer authentication even
+                // with a reconstruction reference (st). Worker/CDN URLs carry their
+                // own authority and must never receive the account credential.
+                if (RequiresSubtitleAccountAuthentication(baseUrl, s.Url))
+                    url = UrlHelper.AppendToken(url, token);
+                return (s, url);
+            }).ToList();
+        }
     }
 
     private static bool RequiresSubtitleAccountAuthentication(string baseUrl, string resource)

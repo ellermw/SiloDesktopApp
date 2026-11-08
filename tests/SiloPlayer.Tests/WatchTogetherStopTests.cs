@@ -42,8 +42,17 @@ public sealed class WatchTogetherStopTests
         Assert.Single(wire.Requests);
     }
 
+    [Fact]
+    public async Task StopDoesNotRetryAuthenticationAsAnotherContext()
+    {
+        using var wire = new Wire { Status = HttpStatusCode.Unauthorized }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://party.invalid"); client.SetProfile("host");
+        var refreshes = 0; client.SetTokenRefresher(_ => { refreshes++; return Task.FromResult(true); });
+        await Assert.ThrowsAsync<ApiException>(() => new PlaybackApi(client).StopWatchTogetherRoomPlaybackAsync("room"));
+        Assert.Single(wire.Requests); Assert.Equal(0, refreshes);
+    }
+
     [Theory]
-    [InlineData("stop", "POST /api/v2/watch-together/rooms/room%2Fone/playback/stop", null)]
     [InlineData("policy", "PATCH /api/v2/watch-together/rooms/room%2Fone/policy", "{\"guest_control_policy\":\"guest_play_pause\"}")]
     [InlineData("end", "DELETE /api/v2/watch-together/rooms/room%2Fone", null)]
     public async Task CapturedRoomMutationRefreshesExpiredTokenAndReplaysSameIntent(string action, string route, string? body)
@@ -82,7 +91,7 @@ public sealed class WatchTogetherStopTests
         });
         var error = await Assert.ThrowsAsync<ApiException>(() => MutateAsync(new PlaybackApi(client), context, action));
         Assert.Equal(401, error.StatusCode);
-        Assert.Single(wire.Requests); Assert.Equal(1, refreshes);
+        Assert.Single(wire.Requests); Assert.Equal(action == "stop" ? 0 : 1, refreshes);
         Assert.Equal("host", Assert.Single(wire.Attempts).Profile);
     }
 
