@@ -16,7 +16,8 @@ public static class SubtitleSidecarReader
     private static readonly TimeSpan DefaultDelay = TimeSpan.FromMilliseconds(250);
     private const int MaxAttempts = 4;
 
-    public static async Task<SubtitleSidecarRead> ReadAsync(HttpClient http, Uri url, string? codec, CancellationToken ct)
+    public static async Task<SubtitleSidecarRead> ReadAsync(HttpClient http, Uri url, string? codec, CancellationToken ct,
+        TimeSpan? readTimeout = null)
     {
         if (!url.IsAbsoluteUri || url.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, url, codec) == null)
             return new(SubtitleSidecarReadOutcome.Fallback);
@@ -26,12 +27,15 @@ public static class SubtitleSidecarReader
         SubtitleSidecarRead Failure(SubtitleSidecarReadFailure reason = SubtitleSidecarReadFailure.None)
             => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: busy, Failure: reason);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        bounded.CancelAfter(Budget);
+        // Complete-track extraction may need a longer header/body deadline,
+        // without extending the short 503/Retry-After retry window.
+        bounded.CancelAfter(readTimeout ?? Budget);
         var clock = Stopwatch.StartNew();
         try
         {
             for (var attempt = 0; attempt < MaxAttempts; attempt++)
             {
+                if (busy && clock.Elapsed >= Budget) return Failure();
                 // Use the advertised URL verbatim. Account headers belong to
                 // API requests, never to a server-advertised CDN/worker URL.
                 using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token).ConfigureAwait(false);

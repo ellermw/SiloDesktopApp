@@ -6852,7 +6852,8 @@ public partial class PlayerService : IDisposable
             // to server-advertised CDN/worker sidecars.
             if (SubtitleSidecarFile.Extension(null, url, track.Codec) != null)
             {
-                var read = await SubtitleSidecarReader.ReadAsync(SubtitleSidecarDownloadClient, url, track.Codec, bounded.Token);
+                var read = await SubtitleSidecarReader.ReadAsync(SubtitleSidecarDownloadClient, url, track.Codec, bounded.Token,
+                    readTimeout: TimeSpan.FromMinutes(10));
                 if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
                 if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;
                 if (read.Outcome == SubtitleSidecarReadOutcome.Error)
