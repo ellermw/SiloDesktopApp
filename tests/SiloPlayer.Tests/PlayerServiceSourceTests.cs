@@ -1649,19 +1649,27 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("bounded.CancelAfter(TimeSpan.FromMinutes(10));", prefetch, StringComparison.Ordinal);
         Assert.DoesNotContain("CreateAuthenticatedRequest", prefetch, StringComparison.Ordinal);
         Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;", prefetch, StringComparison.Ordinal);
-        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Error) return SubtitlePrefetchOutcome.Error;", prefetch, StringComparison.Ordinal);
+        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Error)", prefetch, StringComparison.Ordinal);
+        Assert.Contains("return read.Failure switch", prefetch, StringComparison.Ordinal);
+        Assert.Contains("SubtitleSidecarReadFailure.DownloadLimit => SubtitlePrefetchOutcome.DownloadLimit", prefetch, StringComparison.Ordinal);
+        Assert.Contains("SubtitleSidecarReadFailure.Timeout => SubtitlePrefetchOutcome.Timeout", prefetch, StringComparison.Ordinal);
+        Assert.Contains("_ => SubtitlePrefetchOutcome.Error", prefetch, StringComparison.Ordinal);
         Assert.Contains("authority.ApiClient.IsCurrentContext(context)", prefetch, StringComparison.Ordinal);
         Assert.Contains("generation != _subtitleSidecarGeneration", prefetch, StringComparison.Ordinal);
         Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch, StringComparison.Ordinal);
         // The size cap applies while reading, not after buffering the body.
         Assert.DoesNotContain("ReadAsByteArrayAsync", prefetch, StringComparison.Ordinal);
         var reader = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Core", "Services", "SubtitleSidecarReader.cs"));
-        Assert.Contains("if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return Failure();", reader, StringComparison.Ordinal);
+        var textSizeCheck = reader.IndexOf("if (buffer.Length + read > SubtitleSidecarFile.MaxBytes)", StringComparison.Ordinal);
+        var textLimitFailure = reader.IndexOf("return Failure(SubtitleSidecarReadFailure.DownloadLimit);", textSizeCheck, StringComparison.Ordinal);
+        var textWrite = reader.IndexOf("buffer.Write(chunk, 0, read);", StringComparison.Ordinal);
+        Assert.True(textSizeCheck >= 0 && textLimitFailure > textSizeCheck && textWrite > textLimitFailure,
+            "Chunked text sidecars must reject oversized content before buffering each chunk.");
         Assert.Contains("http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token)", reader, StringComparison.Ordinal);
         Assert.DoesNotContain("CreateAuthenticatedRequest", reader, StringComparison.Ordinal);
         Assert.Contains("var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);", prefetch, StringComparison.Ordinal);
-        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.Error;", prefetch, StringComparison.Ordinal);
-        var sizeCheck = prefetch.IndexOf("if (total + read > maxBytes) return SubtitlePrefetchOutcome.Error;", StringComparison.Ordinal);
+        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return limitOutcome;", prefetch, StringComparison.Ordinal);
+        var sizeCheck = prefetch.IndexOf("if (total + read > maxBytes) return limitOutcome;", StringComparison.Ordinal);
         var write = prefetch.IndexOf("await file.WriteAsync(chunk.AsMemory(0, read), bounded.Token);", StringComparison.Ordinal);
         Assert.True(sizeCheck >= 0 && write > sizeCheck,
             "Chunked sidecars must enforce the format-specific cap before writing each chunk.");

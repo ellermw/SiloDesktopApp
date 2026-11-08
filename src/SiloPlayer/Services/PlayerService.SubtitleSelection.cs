@@ -69,16 +69,27 @@ public partial class PlayerService
     }
     private void CancelSubtitleSelectionRead() => Volatile.Read(ref _subtitleReadOperation)?.Cancel();
 
-    private enum SubtitlePrefetchOutcome { Ready, Fallback, Busy, Error, Retired }
+    private enum SubtitlePrefetchOutcome { Ready, Fallback, Busy, Error, DownloadLimit, BitmapDownloadLimit, Timeout, Retired }
+
+    private static bool IsSubtitleReadFailure(SubtitlePrefetchOutcome outcome)
+        => outcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.DownloadLimit
+            or SubtitlePrefetchOutcome.BitmapDownloadLimit or SubtitlePrefetchOutcome.Timeout;
 
     private void ShowSubtitleReadFailure(SubtitlePrefetchOutcome outcome)
     {
         if (outcome == SubtitlePrefetchOutcome.Busy)
             ShowSubtitleReadBusy();
-        else if (outcome == SubtitlePrefetchOutcome.Error)
+        else if (IsSubtitleReadFailure(outcome))
         {
+            var downloadError = outcome switch
+            {
+                SubtitlePrefetchOutcome.DownloadLimit => "This subtitle exceeds the 16 MiB download limit. Choose another subtitle or turn subtitles off.",
+                SubtitlePrefetchOutcome.BitmapDownloadLimit => "This subtitle exceeds the 256 MiB download limit. Choose another subtitle or turn subtitles off.",
+                SubtitlePrefetchOutcome.Timeout => "Subtitle download timed out. The server may still be extracting the track. Try again or choose another subtitle.",
+                _ => "The subtitle could not be downloaded. Try again or choose another subtitle after checking your connection and available disk space.",
+            };
             _mpv?.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            ShowNotice("Subtitle could not be loaded", "This subtitle could not be loaded. Choose another subtitle or try again after checking your connection and available disk space.", "warning");
+            ShowNotice("Subtitle could not be loaded", downloadError, "warning");
         }
     }
 

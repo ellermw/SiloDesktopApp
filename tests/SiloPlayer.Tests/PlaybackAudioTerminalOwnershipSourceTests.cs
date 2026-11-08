@@ -26,7 +26,11 @@ public sealed class PlaybackAudioTerminalOwnershipSourceTests
         Assert.Contains("_playbackTerminalState == null", predicate);
         var failure = method[method.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
         Assert.Contains("if (!CurrentSwitch()) return;", failure);
-        Assert.Contains("if (released != null && CurrentSwitch())", failure);
+        var release = failure[failure.IndexOf("ReleasePlaybackBusy(busyOwner, () =>", StringComparison.Ordinal)..];
+        var guard = release.IndexOf("if (!CurrentSwitch()) return;", StringComparison.Ordinal);
+        var publish = release.IndexOf("ErrorMessage = detail;", StringComparison.Ordinal);
+        Assert.True(guard >= 0 && publish > guard);
+        Assert.Contains("if (reconcileSubtitles && CurrentSwitch())", failure);
         Assert.Contains("if (!CurrentSwitch()) ReleasePlaybackBusy(busyOwner);", failure);
     }
 }

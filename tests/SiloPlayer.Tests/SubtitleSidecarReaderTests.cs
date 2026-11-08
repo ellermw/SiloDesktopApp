@@ -83,6 +83,7 @@ public sealed class SubtitleSidecarReaderTests
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
         Assert.Equal(priorBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.Equal(SubtitleSidecarReadFailure.None, result.Failure);
         Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
     }
 
@@ -95,6 +96,7 @@ public sealed class SubtitleSidecarReaderTests
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
         Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.Equal(SubtitleSidecarReadFailure.DownloadLimit, result.Failure);
         Assert.Null(result.Bytes); Assert.Equal(1, wire.Requests);
     }
 
@@ -106,6 +108,7 @@ public sealed class SubtitleSidecarReaderTests
         Assert.False(pending.IsCompleted);
         var result = await pending.WaitAsync(TimeSpan.FromSeconds(12));
         Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.Equal(SubtitleSidecarReadFailure.Timeout, result.Failure);
         Assert.Null(result.Bytes); Assert.Equal(1, wire.Requests);
     }
 

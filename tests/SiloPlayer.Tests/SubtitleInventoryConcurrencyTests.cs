@@ -66,15 +66,23 @@ public sealed class SubtitleInventoryConcurrencyTests
         var service = Read("SiloPlayer", "PlayerService.cs");
         var intent = Read("SiloPlayer.Core", "PlaybackManager.TrackIntent.cs");
         Assert.Contains("SubtitleInventorySyncRoot => _trackIntentGate;", intent);
-        var refresh = Between(service, "public async Task RefreshSubtitlesAfterAiAsync(", "private void WriteLiveSubtitleFileLocked()");
-        var gate = refresh.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
-        Assert.True(gate >= 0 && gate < refresh.IndexOf("var previousInventory =", StringComparison.Ordinal));
-        Assert.True(gate < refresh.IndexOf("retained.Index =", StringComparison.Ordinal));
+        // The native entry point now lives in its own partial; the AI-owner
+        // entry point must retain the same transaction boundary as well.
+        var refresh = Read("SiloPlayer", "PlayerService.SubtitleRefresh.cs");
+        var captureGate = refresh.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        Assert.True(captureGate >= 0 && captureGate < refresh.IndexOf("previousInventory = session.SubtitleUrls;", StringComparison.Ordinal));
+        var gate = refresh.IndexOf("lock (manager.SubtitleInventorySyncRoot)", captureGate + 1, StringComparison.Ordinal);
+        Assert.True(gate > captureGate && gate < refresh.IndexOf("retained.Index =", StringComparison.Ordinal));
         Assert.True(gate < refresh.IndexOf("session.SubtitleUrls =", StringComparison.Ordinal));
+        var ownedRefresh = Between(service, "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(", "public Func<bool> BeginSubtitleActivationIntent()");
+        var ownedGate = ownedRefresh.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        Assert.True(ownedGate >= 0 && ownedGate < ownedRefresh.IndexOf("var previousInventory =", StringComparison.Ordinal));
+        Assert.True(ownedGate < ownedRefresh.IndexOf("retained.Index =", StringComparison.Ordinal));
+        Assert.True(ownedGate < ownedRefresh.IndexOf("session.SubtitleUrls =", StringComparison.Ordinal));
         var capture = Between(Read("SiloPlayer", "PlayerService.SiloCast.cs"),
             "public JsonObject CaptureSiloCastState()", "public async Task ApplySiloCastControlAsync(");
-        var captureGate = capture.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
-        Assert.True(captureGate >= 0 && captureGate < capture.IndexOf("var subtitleInventory =", StringComparison.Ordinal));
+        var presentationGate = capture.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        Assert.True(presentationGate >= 0 && presentationGate < capture.IndexOf("var subtitleInventory =", StringComparison.Ordinal));
         var urls = Between(Read("SiloPlayer.Core", "PlaybackManager.cs"),
             "public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls(", "private static bool RequiresSubtitleAccountAuthentication(");
         Assert.Contains("lock (_trackIntentGate)", urls);
@@ -86,18 +94,27 @@ public sealed class SubtitleInventoryConcurrencyTests
         var selection = Between(Read("SiloPlayer", "PlayerService.cs"),
             "private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", "private bool MatchesSubtitlePreference(");
         var locked = selection[selection.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal)..];
-        var record = locked.IndexOf("if (!manager.TryRecordLocalSubtitleSelection(selectionSession, track))", StringComparison.Ordinal);
-        Assert.True(record >= 0);
-        var validate = locked[..record];
+        var draft = locked.IndexOf("retiredRead = Interlocked.Exchange(ref _subtitleReadOperation, null);", StringComparison.Ordinal);
+        Assert.True(draft >= 0);
+        var validate = locked[..draft];
+        Assert.Contains("lock (manager?.SubtitleInventorySyncRoot ?? _subtitleTrackStateLock)", validate);
         Assert.Contains("!ReferenceEquals(selectionSession, manager?.CurrentSession)", validate);
         Assert.Contains("selectionSession?.SubtitleUrls.Contains(track) != true", validate);
         Assert.Contains("selectedSubtitleIndex = track?.Index ?? -1;", validate);
-        var refuse = locked[record..locked.IndexOf("_pendingExplicitInitialSubtitleOwner = null;", StringComparison.Ordinal)];
-        Assert.Contains("return false;", refuse);
+        Assert.Contains("return false;", validate);
         foreach (var mutation in new[] { "_pendingExplicitInitialSubtitleOwner = null;", "_pendingAutomaticSubtitleSelection = null;",
             "_activeSubtitleServerIndex = selectedSubtitleIndex;", "_pendingSubtitlePreferenceIndex = selectedSubtitleIndex;",
             "_pendingSubtitlePreferenceOwner = preferenceOwner;" })
-            Assert.True(locked.IndexOf(mutation, StringComparison.Ordinal) > record, $"State changed before row validation: {mutation}");
+            Assert.True(locked.IndexOf(mutation, StringComparison.Ordinal) > draft, $"State changed before row validation: {mutation}");
+        // Busy text must remain a draft, not displace the applied manager
+        // intent. Revalidate under the inventory gate when bytes are ready.
+        var prefetch = locked.IndexOf("await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentReadChoice)", StringComparison.Ordinal);
+        var commitGate = locked.IndexOf("lock (manager?.SubtitleInventorySyncRoot ?? _subtitleTrackStateLock)", draft, StringComparison.Ordinal);
+        var resolve = locked.IndexOf("track = ResolveCurrentSubtitleChoice(track, selectionFileId);", commitGate, StringComparison.Ordinal);
+        var record = locked.IndexOf("if (!manager!.TryRecordLocalSubtitleSelection(selectionSession, track))", StringComparison.Ordinal);
+        var active = locked.IndexOf("_activeSubtitleServerIndex = selectedSubtitleIndex;", StringComparison.Ordinal);
+        Assert.True(prefetch > draft && commitGate > prefetch && resolve > commitGate && record > resolve && active > record);
+        Assert.Contains("RetireReadChoice(); ShowSubtitleSelectionUnavailable(); return false;", locked[record..active]);
         Assert.DoesNotContain("manager.RecordLocalSubtitleSelection(", selection);
     }
 

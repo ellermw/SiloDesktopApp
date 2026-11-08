@@ -1244,6 +1244,7 @@ public partial class PlayerService : IDisposable
         var deferLocalSelection = _switchingContent || IsLoading || _subtitleVersionSwitchActive;
         SubtitleReadOperation? retiredRead;
         lock (_subtitleTrackStateLock)
+        lock (manager?.SubtitleInventorySyncRoot ?? _subtitleTrackStateLock)
         {
             if (acceptActivation?.Invoke() == false) return false;
             if (currentOwner?.IsCurrent == false || currentOwner?.HasCurrentSubtitleChoice == false) return false;
@@ -1253,6 +1254,8 @@ public partial class PlayerService : IDisposable
                 ShowSubtitleSelectionUnavailable();
                 return false;
             }
+            // A refresh can reindex this exact row while admission waits.
+            selectedSubtitleIndex = track?.Index ?? -1;
             retiredRead = Interlocked.Exchange(ref _subtitleReadOperation, null);
             _pendingLegacySubtitleSelection = null;
             Interlocked.Increment(ref _legacySubtitleChoiceVersion);
@@ -1331,7 +1334,7 @@ public partial class PlayerService : IDisposable
                     }
                     return false;
                 }
-                if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
+                if (IsSubtitleReadFailure(readOutcome))
                 {
                     lock (_subtitleTrackStateLock)
                     {
@@ -1345,6 +1348,7 @@ public partial class PlayerService : IDisposable
         }
         if (!CurrentReadChoice()) { RetireReadChoice(); return false; }
         lock (_subtitleTrackStateLock)
+        lock (manager?.SubtitleInventorySyncRoot ?? _subtitleTrackStateLock)
         {
             if (!CurrentReadChoice()) { RetireReadChoice(); return false; }
             selectionSession = manager?.CurrentSession;
@@ -1450,7 +1454,7 @@ public partial class PlayerService : IDisposable
                 else
                 {
                     if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
-                    if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
+                    if (IsSubtitleReadFailure(readOutcome))
                     {
                         lock (_subtitleTrackStateLock)
                         {
@@ -5788,7 +5792,7 @@ public partial class PlayerService : IDisposable
                 if (!CurrentSwitch()) ReleasePlaybackBusy(busyOwner);
                 if (ownsAudioTransport) Interlocked.Decrement(ref _audioSwitchOperations);
             }
-            if (reconcileSubtitles)
+            if (reconcileSubtitles && CurrentSwitch())
                 await ReconcileDeferredSubtitleSelectionAsync(manager, survivingSession);
             return;
         }
@@ -6330,7 +6334,7 @@ public partial class PlayerService : IDisposable
                 // A newer choice or replacement file owns its own completion.
                 if (!CurrentSelection()) return false;
                 if (readOutcome == SubtitlePrefetchOutcome.Retired) return false;
-                if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error)
+                if (IsSubtitleReadFailure(readOutcome))
                 {
                     RestoreExecutedSubtitleSelection(reapply: true, failedTrack: track, currentSelection: CurrentSelection);
                     ShowSubtitleReadFailure(readOutcome);
@@ -6851,7 +6855,13 @@ public partial class PlayerService : IDisposable
                 var read = await SubtitleSidecarReader.ReadAsync(SubtitleSidecarDownloadClient, url, track.Codec, bounded.Token);
                 if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
                 if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;
-                if (read.Outcome == SubtitleSidecarReadOutcome.Error) return SubtitlePrefetchOutcome.Error;
+                if (read.Outcome == SubtitleSidecarReadOutcome.Error)
+                    return read.Failure switch
+                    {
+                        SubtitleSidecarReadFailure.DownloadLimit => SubtitlePrefetchOutcome.DownloadLimit,
+                        SubtitleSidecarReadFailure.Timeout => SubtitlePrefetchOutcome.Timeout,
+                        _ => SubtitlePrefetchOutcome.Error,
+                    };
                 if (read.Outcome != SubtitleSidecarReadOutcome.Fallback)
                 {
                     path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + read.Extension);
@@ -6868,7 +6878,9 @@ public partial class PlayerService : IDisposable
                 response.EnsureSuccessStatusCode();
                 var extension = SubtitleSidecarFile.DownloadExtension(response.Content.Headers.ContentType?.MediaType, url, track.Codec);
                 var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);
-                if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.Error;
+                var limitOutcome = maxBytes == SubtitleSidecarFile.MaxBitmapBytes
+                    ? SubtitlePrefetchOutcome.BitmapDownloadLimit : SubtitlePrefetchOutcome.DownloadLimit;
+                if (response.Content.Headers.ContentLength > maxBytes) return limitOutcome;
                 path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + extension);
                 long total = 0;
                 await using (var body = await response.Content.ReadAsStreamAsync(bounded.Token))
@@ -6879,7 +6891,7 @@ public partial class PlayerService : IDisposable
                     int read;
                     while ((read = await body.ReadAsync(chunk, bounded.Token)) > 0)
                     {
-                        if (total + read > maxBytes) return SubtitlePrefetchOutcome.Error;
+                        if (total + read > maxBytes) return limitOutcome;
                         await file.WriteAsync(chunk.AsMemory(0, read), bounded.Token);
                         total += read;
                     }
@@ -6899,7 +6911,7 @@ public partial class PlayerService : IDisposable
         }
         catch (OperationCanceledException)
         {
-            return CurrentOwner() ? SubtitlePrefetchOutcome.Error : SubtitlePrefetchOutcome.Retired;
+            return CurrentOwner() ? SubtitlePrefetchOutcome.Timeout : SubtitlePrefetchOutcome.Retired;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException)
         {

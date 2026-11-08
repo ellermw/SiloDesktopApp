@@ -19,7 +19,12 @@ public partial class PlayerService
         var nativeFile = Volatile.Read(ref _fileLoadGeneration);
         var content = ContentId;
         var liveJob = Volatile.Read(ref _liveSubtitleJobId);
-        var previousInventory = session.SubtitleUrls;
+        List<SubtitleTrackInfo> previousInventory;
+        lock (manager.SubtitleInventorySyncRoot)
+        {
+            if (!ReferenceEquals(session, manager.CurrentSession)) return;
+            previousInventory = session.SubtitleUrls;
+        }
         var acceptedInventory = previousInventory;
         var activation = mayActivate ?? CaptureSubtitleActivationIntent();
         bool Current() => !_closing && !token.IsCancellationRequested && (isCurrent?.Invoke() ?? true) &&
@@ -68,6 +73,7 @@ public partial class PlayerService
             }).ToList();
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
+            lock (manager.SubtitleInventorySyncRoot)
             {
                 if (!Current()) return;
 

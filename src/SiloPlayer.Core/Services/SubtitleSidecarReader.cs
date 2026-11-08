@@ -4,7 +4,9 @@ using System.Net;
 namespace SiloPlayer.Core.Services;
 
 public enum SubtitleSidecarReadOutcome { Ready, Fallback, Busy, Error }
-public sealed record SubtitleSidecarRead(SubtitleSidecarReadOutcome Outcome, byte[]? Bytes = null, string? Extension = null, bool WasBusy = false);
+public enum SubtitleSidecarReadFailure { None, DownloadLimit, Timeout }
+public sealed record SubtitleSidecarRead(SubtitleSidecarReadOutcome Outcome, byte[]? Bytes = null, string? Extension = null,
+    bool WasBusy = false, SubtitleSidecarReadFailure Failure = SubtitleSidecarReadFailure.None);
 
 /// <summary>Bounded text-sidecar reads. Only a subtitle read's 503 is retried.</summary>
 public static class SubtitleSidecarReader
@@ -21,7 +23,8 @@ public static class SubtitleSidecarReader
         var busy = false;
         // Fallback is only for formats outside this reader. A failed text
         // read must never retry the same URL through synchronous mpv sub-add.
-        SubtitleSidecarRead Failure() => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: busy);
+        SubtitleSidecarRead Failure(SubtitleSidecarReadFailure reason = SubtitleSidecarReadFailure.None)
+            => new(busy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, WasBusy: busy, Failure: reason);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(Budget);
         var clock = Stopwatch.StartNew();
@@ -46,7 +49,9 @@ public static class SubtitleSidecarReader
                     await Task.Delay(delay, bounded.Token).ConfigureAwait(false);
                     continue;
                 }
-                if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes) return Failure();
+                if (!response.IsSuccessStatusCode) return Failure();
+                if (response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes)
+                    return Failure(SubtitleSidecarReadFailure.DownloadLimit);
                 var extension = SubtitleSidecarFile.Extension(response.Content.Headers.ContentType?.MediaType, url, codec);
                 if (extension == null) return Failure();
                 using var buffer = new MemoryStream();
@@ -55,14 +60,15 @@ public static class SubtitleSidecarReader
                 int read;
                 while ((read = await body.ReadAsync(chunk, bounded.Token).ConfigureAwait(false)) > 0)
                 {
-                    if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return Failure();
+                    if (buffer.Length + read > SubtitleSidecarFile.MaxBytes)
+                        return Failure(SubtitleSidecarReadFailure.DownloadLimit);
                     buffer.Write(chunk, 0, read);
                 }
                 if (buffer.Length == 0) return Failure();
                 return new(SubtitleSidecarReadOutcome.Ready, buffer.ToArray(), extension, busy);
             }
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return Failure(); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return Failure(SubtitleSidecarReadFailure.Timeout); }
         catch (Exception ex) when (ex is HttpRequestException or IOException) { return Failure(); }
         ct.ThrowIfCancellationRequested();
         return Failure();
