@@ -1,15 +1,18 @@
-using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 using Windows.Foundation;
 using Windows.UI;
 
 namespace SiloPlayer.Controls;
 
-/// <summary>Decorative, vector-only fallback; thumbhash decoding runs only on a failed image.</summary>
+/// <summary>
+/// Decorative, vector-only fallback. Its thumbhash blur shows for a failed image and, through
+/// <see cref="ShowLoadingThumbhash"/>, while a card's artwork loads; the blur bitmaps are shared
+/// and bounded by <see cref="ThumbhashBitmaps"/>.
+/// </summary>
 public sealed class DefaultArtwork : Grid
 {
     private readonly Grid _glow = new();
@@ -73,13 +76,7 @@ public sealed class DefaultArtwork : Grid
         Resize();
     }
 
-    private Color Tint(byte alpha, byte r, byte g, byte b)
-    {
-        if (!Dim) return Color.FromArgb(alpha, r, g, b);
-        var gray = .213 * r + .715 * g + .072 * b;
-        byte Channel(byte channel) => (byte)Math.Round((.8 * channel + .2 * gray) * .85);
-        return Color.FromArgb(alpha, Channel(r), Channel(g), Channel(b));
-    }
+    private Color Tint(byte alpha, byte r, byte g, byte b) => ThumbhashBitmaps.Tint(Dim, alpha, r, g, b);
 
     private void Resize()
     {
@@ -110,26 +107,29 @@ public sealed class DefaultArtwork : Grid
         else { image.Source = null; await ShowThumbhashAsync(); }
     }
 
+    /// <summary>
+    /// The blurred artwork while the real artwork loads. Without a thumbhash nothing shows, so loading
+    /// cards don't flash the type mark; false then, and the caller keeps the fallback hidden.
+    /// </summary>
+    public bool ShowLoadingThumbhash()
+    {
+        if (string.IsNullOrWhiteSpace(Thumbhash)) return false;
+        Visibility = Visibility.Visible;
+        _glow.Visibility = Visibility.Collapsed;
+        _ = ShowThumbhashAsync();
+        return true;
+    }
+
     public async Task ShowThumbhashAsync()
     {
         Visibility = Visibility.Visible;
-        if (string.IsNullOrWhiteSpace(Thumbhash) || _thumbhash.Source != null) return;
+        if (_thumbhash.Source != null) return;
+        if (string.IsNullOrWhiteSpace(Thumbhash)) { _glow.Visibility = Visibility.Visible; return; }
         var generation = _generation; var hash = Thumbhash;
-        try
-        {
-            var decoded = await Task.Run(() => ThumbhashDecoder.Decode(hash));
-            if (generation != _generation) return;
-            var bitmap = new WriteableBitmap(decoded.Width, decoded.Height);
-            var pixels = decoded.Rgba;
-            for (var i = 0; i < pixels.Length; i += 4)
-            {
-                var color = Tint(pixels[i + 3], pixels[i], pixels[i + 1], pixels[i + 2]);
-                pixels[i] = (byte)(color.B * color.A / 255); pixels[i + 1] = (byte)(color.G * color.A / 255);
-                pixels[i + 2] = (byte)(color.R * color.A / 255);
-            }
-            using var stream = bitmap.PixelBuffer.AsStream(); stream.Write(pixels);
-            bitmap.Invalidate(); _thumbhash.Source = bitmap; _thumbhash.Visibility = Visibility.Visible; _glow.Visibility = Visibility.Collapsed;
-        }
-        catch { /* Invalid hashes keep the type-mark fallback. */ }
+        // A picture already made (a recycled card) shows in this frame, without awaiting.
+        var picture = ThumbhashBitmaps.TryGet(hash, Dim, out var cached) ? cached : await ThumbhashBitmaps.GetAsync(hash, Dim);
+        if (generation != _generation) return;
+        if (picture is null) { _glow.Visibility = Visibility.Visible; return; } // An invalid hash keeps the type mark.
+        _thumbhash.Source = picture; _thumbhash.Visibility = Visibility.Visible; _glow.Visibility = Visibility.Collapsed;
     }
 }

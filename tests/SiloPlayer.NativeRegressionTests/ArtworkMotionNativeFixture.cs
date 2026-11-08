@@ -173,6 +173,7 @@ internal static partial class ArtworkMotionNativeFixture
             frame.Navigate(typeof(Page)); parent.Children.Remove(frame); frame = null; await Task.Delay(300);
             foreach (var kind in new[] { "library", "poster", "landscape" })
                 await CardCasesAsync(parent, wire, client, kind);
+            await LibraryPlaceholderCasesAsync(parent, wire);
             await BlurStageCasesAsync(parent, client, spoilers);
             await FirstMountCasesAsync(parent, wire, client, spoilers);
             if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
