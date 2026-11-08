@@ -775,9 +775,14 @@
                         <TextBlock x:Name="PlayingNextFinishedDescription" Text="There are no more episodes available. Pick something else from On Deck below."
                                    TextAlignment="Center" TextWrapping="Wrap" FontSize="14"
                                    Foreground="#80FFFFFF" />
-                        <Button Content="Back" Click="PlayingNextCancel_Click"
+                        <Button x:Name="PlayingNextFinishedBackButton" Content="Back" Click="PlayingNextCancel_Click"
+                                AutomationProperties.HelpText="This screen closes by itself after 10 seconds unless you use it."
                                 Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center"
                                 Padding="24,11" Margin="0,10,0,0" CornerRadius="22" />
+                        <!-- After the last episode the screen closes by itself, as Back does, unless the viewer engages with it. -->
+                        <TextBlock x:Name="PlayingNextFinishedCountdownText" Visibility="Collapsed"
+                                   TextAlignment="Center" FontSize="12" Foreground="#59FFFFFF"
+                                   AutomationProperties.AccessibilityView="Raw" />
                     </StackPanel>
                     <StackPanel x:Name="PlayingNextShuffleActions" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Visibility="Collapsed">
                         <Button x:Name="PlayingNextPickAnother" Content="Pick Another" Click="PlayingNextPickAnother_Click" Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999" />
@@ -787,6 +792,7 @@
             </ScrollViewer>
 
             <StackPanel x:Name="PlayingNextOnDeckSection" Grid.Row="1" Visibility="Collapsed"
+                        PointerMoved="PlayingNextFinishedEngaged"
                         Spacing="9" Margin="24,0,24,18">
                 <Grid>
                     <TextBlock Text="ON DECK" FontSize="11" FontWeight="SemiBold"
@@ -822,7 +828,8 @@
                                         <Grid Height="107">
                                             <Border CornerRadius="8" Background="#14FFFFFF"
                                                     BorderBrush="#10FFFFFF" BorderThickness="1">
-                                                <Image Source="{Binding ThumbnailSource}" Stretch="UniformToFill" />
+                                                <!-- x:Bind: ItemsRepeater gives a template that uses x:Bind no DataContext, so {Binding} left this blank. -->
+                                                <Image Source="{x:Bind ThumbnailSource}" Stretch="UniformToFill" />
                                             </Border>
                                             <ProgressBar Value="{x:Bind ProgressPercent}" Maximum="100"
                                                          Height="3" VerticalAlignment="Bottom"

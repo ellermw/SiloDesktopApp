@@ -77,6 +77,11 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
+        // Engaging with the finished screen keeps it open: a click, wheel or key anywhere on it, even
+        // one a button handled, cancels its automatic close.
+        PlayingNextOverlay.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlayingNextFinishedEngaged), true);
+        PlayingNextOverlay.AddHandler(UIElement.PointerWheelChangedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlayingNextFinishedEngaged), true);
+        PlayingNextOverlay.AddHandler(UIElement.KeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler((_, _) => CancelFinishedAutoClose()), true);
         _profileFlyoutBaseStyle = ProfileFooterFlyout.FlyoutPresenterStyle;
         RootGrid.SizeChanged += (_, _) => ReflowProfileFlyout();
         foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>())
@@ -509,6 +514,9 @@ public sealed partial class MainWindow : Window
     private bool _playingNextAutoPlay = true;
     private long _playingNextPresentationGeneration;
     private const int PlayingNextCountdownSeconds = 10;
+    private bool _playingNextFinishedCountdown;
+    // The viewer engaged with this presentation (even during early post-roll, before the countdown).
+    private bool _playingNextEngaged;
     private const string AutoPlayNextSettingKey = "playback.auto_play_next";
 
     private void OnShowPlayingNextRequested(bool videoEnded)
@@ -539,11 +547,16 @@ public sealed partial class MainWindow : Window
                 {
                     StartPlayingNextCountdown();
                 }
+                else if (!_playerService.HasNextEpisodeForCurrentPlayback)
+                {
+                    StartFinishedAutoClose();
+                }
                 return;
             }
 
             var hasNextEpisode = _playerService.HasNextEpisodeForCurrentPlayback;
             var presentationGeneration = Interlocked.Increment(ref _playingNextPresentationGeneration);
+            _playingNextEngaged = false;
             var title = _playerService.NextEpisodeTitle ?? "Next episode";
             var series = _playerService.NextEpisodeSeriesTitle;
             var overview = _playerService.NextEpisodeOverview ?? "";
@@ -599,6 +612,8 @@ public sealed partial class MainWindow : Window
             // autoplay while the episode is still visibly playing.
             if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)
                 StartPlayingNextCountdown();
+            else if (playbackHasEnded && !hasNextEpisode)
+                StartFinishedAutoClose();
 
             // Never request focus from the background. Windows can translate a
             // focus request on an inactive app into a flashing taskbar button,
@@ -638,8 +653,38 @@ public sealed partial class MainWindow : Window
         _playingNextTimer.Start();
     }
 
+    // Nothing plays next: count down, then close exactly as Back does. Shuffle keeps its own choices.
+    private void StartFinishedAutoClose()
+    {
+        if (_playerService.IsShufflePlayback || _playingNextEngaged || PlayingNextOverlay.Visibility != Visibility.Visible) return;
+        StartPlayingNextCountdown();
+        _playingNextFinishedCountdown = true;
+        _playingNextRemaining = PlayingNextCountdownSeconds;
+        UpdateFinishedCountdownText();
+    }
+
+    private void UpdateFinishedCountdownText()
+    {
+        PlayingNextFinishedCountdownText.Text = $"Closing in {_playingNextRemaining}s";
+        PlayingNextFinishedCountdownText.Visibility = Visibility.Visible;
+    }
+
+    private void PlayingNextFinishedEngaged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        => CancelFinishedAutoClose();
+
+    private void CancelFinishedAutoClose()
+    {
+        if (PlayingNextOverlay.Visibility == Visibility.Visible) _playingNextEngaged = true;
+        if (_playingNextFinishedCountdown) StopPlayingNextCountdown();
+    }
+
     private void StopPlayingNextCountdown()
     {
+        if (_playingNextFinishedCountdown)
+        {
+            _playingNextFinishedCountdown = false;
+            PlayingNextFinishedCountdownText.Visibility = Visibility.Collapsed;
+        }
         if (_playingNextTimer != null)
         {
             _playingNextTimer.Stop();
@@ -650,6 +695,13 @@ public sealed partial class MainWindow : Window
 
     private async void PlayingNextTimer_Tick(object? sender, object e)
     {
+        if (_playingNextFinishedCountdown)
+        {
+            _playingNextRemaining--;
+            if (_playingNextRemaining <= 0) DismissPlayingNext();
+            else UpdateFinishedCountdownText();
+            return;
+        }
         _playingNextRemaining--;
         if (_playingNextRemaining <= 0)
         {
@@ -695,7 +747,8 @@ public sealed partial class MainWindow : Window
         }
 
         _playingNextAutoPlay = autoPlay;
-        if (!autoPlay)
+        // Auto-play governs the next episode only, never the finished screen's own close.
+        if (!autoPlay && !_playingNextFinishedCountdown)
         {
             StopPlayingNextCountdown();
             _playingNextRemaining = PlayingNextCountdownSeconds;
