@@ -54,7 +54,15 @@ public partial class PlayerService
             _subtitleSyncEntries.Clear();
             // Prefetched sidecars are deleted below with the other files; a pending
             // prefetch must not register a file after this cleanup.
-            lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _preparedSubtitleReload = null; _subtitleSidecarGeneration++; }
+            lock (_subtitleTrackStateLock)
+            {
+                _prefetchedSubtitleFiles.Clear();
+                foreach (var ready in _prefetchedSubtitleSids.Values)
+                    if (ready.FileGeneration == Volatile.Read(ref _fileLoadGeneration)) _mpv?.RemoveSubtitle(ready.Sid);
+                _prefetchedSubtitleSids.Clear();
+                _preparedSubtitleReload = null;
+                _subtitleSidecarGeneration++;
+            }
             foreach (var file in _subtitleSyncFiles) { try { File.Delete(file); } catch { } }
             _subtitleSyncFiles.Clear();
             _mpv?.SendScriptMessage("osc-subtitle-sync-notice", "{}");
@@ -281,6 +289,8 @@ public partial class PlayerService
                     _subtitleSyncFiles.Remove(path);
                     try { File.Delete(path); } catch { }
                 }
+                if (_prefetchedSubtitleSids.Remove(index, out var ready) &&
+                    ready.FileGeneration == Volatile.Read(ref _fileLoadGeneration)) _mpv?.RemoveSubtitle(ready.Sid);
                 if (_loadedExternalSubtitleSids.ContainsKey(index)) _staleExternalSubtitleIndices.Add(index);
                 if (index != _activeSubtitleServerIndex && _loadedExternalSubtitleSids.Remove(index, out var sid) &&
                     _mpv != null && (int)Math.Round(_mpv.GetPropertyDouble("sid")) != sid)

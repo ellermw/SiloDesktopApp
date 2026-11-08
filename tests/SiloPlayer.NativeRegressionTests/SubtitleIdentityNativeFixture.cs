@@ -244,8 +244,9 @@ internal static partial class SubtitleIdentityNativeFixture
                             if (retirement == "positive")
                                 Require(cached && sid > 2 && mpv.GetPropertyDouble("sid") == sid && service.ActiveSubtitleServerIndex == track.Index &&
                                     wire.PreferenceWrites == beforeFallbackWrites + 1 && mpv.IsPaused &&
-                                    subtitles.Requests == beforeReads + 2 && subtitles.NativeRequests == beforeNativeReads,
-                                    "Supported managed format fallback did not execute/persist its actual native SID under current service ownership.");
+                                    subtitles.Requests == beforeReads + 2 && subtitles.NativeRequests == beforeNativeReads + 1 &&
+                                    !((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(track.Index),
+                                    "Supported async native URL fallback did not execute/persist its actual SID under current service ownership, or downloaded a managed fallback file.");
                             else
                                 Require(!cached && mpv.GetPropertyDouble("sid") <= 0 && service.ActiveSubtitleServerIndex == -1 &&
                                     wire.PreferenceWrites == beforeFallbackWrites && mpv.IsPaused &&

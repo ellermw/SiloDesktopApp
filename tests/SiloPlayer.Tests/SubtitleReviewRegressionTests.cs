@@ -195,7 +195,7 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
-    public void KnownPgsUsesOneBoundedDiskDownloadInsteadOfTheTextProbe()
+    public void KnownPgsUsesOneOwnedNativeUrlReadInsteadOfTheTextProbe()
     {
         var prefetch = Between(Read("PlayerService.cs"), "private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForOwnerAsync(",
             "private int ResolveNativeEmbeddedSid(");
@@ -203,11 +203,14 @@ public sealed class SubtitleReviewRegressionTests
         var download = prefetch.IndexOf("return await ReadUrlFallbackAsync();", bitmap, StringComparison.Ordinal);
         var text = prefetch.IndexOf("var read = await SubtitleSidecarReader.ReadAsync(", StringComparison.Ordinal);
         Assert.True(bitmap >= 0 && download > bitmap && text > download);
-        Assert.Contains("var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);", prefetch);
-        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
-        Assert.Contains("if (total + read > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
-        Assert.Contains("fallbackBudget.Token", prefetch);
-        Assert.DoesNotContain("mpv.AddSubtitle", prefetch);
+        var fallback = Between(prefetch, "async Task<SubtitlePrefetchOutcome> ReadUrlFallbackAsync()", "        try\n        {");
+        Assert.Contains("await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, label, track.Language, fallbackBudget.Token)", fallback);
+        Assert.DoesNotContain("GetAsync(", fallback);
+        Assert.DoesNotContain("DownloadMaxBytes", fallback);
+        Assert.DoesNotContain("FileStream", fallback);
+        Assert.Contains("new CancellationTokenSource(SubtitleUrlFallbackTimeout, _subtitleUrlFallbackTimeProvider)", fallback);
+        Assert.Contains("CreateLinkedTokenSource(bounded.Token, fallbackDeadline.Token)", fallback);
+        Assert.DoesNotContain("mpv.SetSubtitleTrack", fallback);
     }
 
     [Fact]
@@ -257,16 +260,24 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("source = local;", add);
         Assert.Contains("mpv.AddSubtitle(source, label, track.Language, select: false)", add);
         Assert.DoesNotContain("FullUrl", add);
-        // Busy text reads and native-probed formats now share typed outcomes;
-        // the fallback must still download to bounded disk, never remote sub-add.
+        // Busy text reads stay bounded; only the non-busy fallback may use
+        // mpv's uncapped URL reader, asynchronously and without selection.
         var prefetch = Between(service, "private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
         Assert.DoesNotContain("lock (_subtitleAddGate)", prefetch);
-        Assert.DoesNotContain("mpv.AddSubtitle", prefetch);
+        Assert.DoesNotContain("mpv.AddSubtitle(", prefetch);
         Assert.Contains("SubtitleSidecarFile.DownloadExtension(", prefetch);
-        Assert.Contains("var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);", prefetch);
-        Assert.Contains("response.Content.Headers.ContentLength > maxBytes", prefetch);
-        Assert.Contains("total + read > maxBytes", prefetch);
-        Assert.Contains("await file.WriteAsync(chunk.AsMemory(0, read), fallbackBudget.Token)", prefetch);
+        var fallback = Between(prefetch, "async Task<SubtitlePrefetchOutcome> ReadUrlFallbackAsync()", "        try\n        {");
+        var nativeAdd = fallback.IndexOf("await mpv.AddSubtitleUnselectedAsync(url.AbsoluteUri, label, track.Language, fallbackBudget.Token)", StringComparison.Ordinal);
+        var verify = fallback.IndexOf("if (!current || fallbackBudget.IsCancellationRequested ||", StringComparison.Ordinal);
+        var cache = fallback.IndexOf("_prefetchedSubtitleSids[track.Index] = (sid, fileLoadGeneration);", StringComparison.Ordinal);
+        Assert.True(nativeAdd >= 0 && verify > nativeAdd && cache > verify);
+        Assert.Contains("externalFilename: url.AbsoluteUri).Contains(sid)", fallback);
+        Assert.Contains("fileLoadGeneration == Volatile.Read(ref _fileLoadGeneration)", fallback);
+        Assert.Contains("mpv.RemoveSubtitle(sid);", fallback);
+        Assert.DoesNotContain("_loadedExternalSubtitleSids[track.Index] =", fallback);
+        Assert.DoesNotContain("mpv.SetSubtitleTrack", fallback);
+        Assert.DoesNotContain("SubtitleSidecarFile.MaxBytes", fallback);
+        Assert.DoesNotContain("DownloadMaxBytes", fallback);
         Assert.DoesNotContain("new MemoryStream", prefetch);
         Assert.Contains("loadedMediaGeneration == Volatile.Read(ref _loadedMediaInitGeneration)", prefetch);
         Assert.Contains("choiceVersion == Volatile.Read(ref _legacySubtitleChoiceVersion)", prefetch);
@@ -276,7 +287,9 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("var watch = WatchOwnerAsync();", prefetch);
         Assert.Contains("await watch;", prefetch);
         Assert.Contains("bounded.CancelAfter(TimeSpan.FromMinutes(10))", prefetch);
-        Assert.Contains("SubtitleSidecarDownloadClient.GetAsync", prefetch);
+        Assert.DoesNotContain("SubtitleSidecarDownloadClient.GetAsync", prefetch);
+        Assert.Contains("allowUrlFallback = !read.WasBusy;", prefetch);
+        Assert.Equal(2, prefetch.Split("read.CanUseUrlFallback ? await ReadUrlFallbackAsync()", StringSplitOptions.None).Length - 1);
         Assert.Contains("SubtitleSidecarReader.ReadAsync(SubtitleSidecarDownloadClient", prefetch);
         Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;", prefetch);
         Assert.DoesNotContain("SubtitleSyncDownloadClient", prefetch);
@@ -286,12 +299,47 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void NativePrefetchPreservesTheAppliedMappingUntilVerifiedSelectionAndRetiresWithItsFile()
+    {
+        var service = Read("PlayerService.cs");
+        var add = Between(service, "private bool SelectSubtitleSidecar(", "private long CurrentSubtitleSidecarGeneration()");
+        var ready = Between(add, "if (_prefetchedSubtitleSids.Remove(track.Index, out var ready))",
+            "// A failed, oversized or unsupported download");
+        var owner = add.IndexOf("if (!currentSelection()) return false;", StringComparison.Ordinal);
+        var consume = add.IndexOf("_prefetchedSubtitleSids.Remove", StringComparison.Ordinal);
+        Assert.True(owner >= 0 && consume > owner);
+        var epoch = ready.IndexOf("ready.FileGeneration != Volatile.Read(ref _fileLoadGeneration)", StringComparison.Ordinal);
+        var select = ready.IndexOf("mpv.SetSubtitleTrack(ready.Sid);", StringComparison.Ordinal);
+        var verify = ready.IndexOf("if ((int)Math.Round(mpv.GetPropertyDouble(\"sid\")) != ready.Sid)", StringComparison.Ordinal);
+        var commit = ready.IndexOf("_loadedExternalSubtitleSids[track.Index] = ready.Sid;", StringComparison.Ordinal);
+        var retire = ready.IndexOf("mpv.RemoveSubtitle(retainedSid);", StringComparison.Ordinal);
+        Assert.True(epoch >= 0 && select > epoch && verify > select && commit > verify && retire > commit);
+        Assert.Contains("GetSubtitleTrackIds(externalOnly: true).Contains(ready.Sid)", ready);
+        Assert.Contains("_staleExternalSubtitleIndices.Remove(track.Index);", ready);
+        Assert.Contains("mpv.RemoveSubtitle(ready.Sid);", ready);
+        Assert.Contains("_prefetchedSubtitleSids.Clear();", Between(service, "private void LoadSubtitles()", "private static bool IsBurnedInSubtitle("));
+
+        var sync = Read("PlayerService.SubtitleSync.cs");
+        var stop = Between(sync, "private void StopSubtitleSync()", "private void EnsureSubtitleSync()");
+        Assert.Contains("ready.FileGeneration == Volatile.Read(ref _fileLoadGeneration)", stop);
+        Assert.Contains("_mpv?.RemoveSubtitle(ready.Sid);", stop);
+        Assert.Contains("_prefetchedSubtitleSids.Clear();", stop);
+        var invalidate = Between(sync, "private void InvalidateSubtitleTimingCache(", "private bool IsActiveSyncKey(");
+        Assert.Contains("_prefetchedSubtitleSids.Remove(index, out var ready)", invalidate);
+        Assert.Contains("ready.FileGeneration == Volatile.Read(ref _fileLoadGeneration)", invalidate);
+        Assert.Contains("_mpv?.RemoveSubtitle(ready.Sid);", invalidate);
+    }
+
+    [Fact]
     public void SidecarFailuresDistinguishDownloadLimitsAndNotifyAutomaticSelections()
     {
         var service = Read("PlayerService.cs");
         var prefetch = Between(service, "private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
-        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
-        Assert.Contains("if (total + read > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
+        var reader = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer.Core", "Services", "SubtitleSidecarReader.cs"));
+        Assert.Contains("response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes", reader);
+        Assert.Contains("buffer.Length + read > SubtitleSidecarFile.MaxBytes", reader);
+        Assert.Contains("CanUseUrlFallback", reader);
+        Assert.Contains("SubtitlePrefetchOutcome.TimedOut : SubtitlePrefetchOutcome.Error", prefetch);
         Assert.Contains("return CurrentOwner() ? SubtitlePrefetchOutcome.TimedOut : SubtitlePrefetchOutcome.Retired;", prefetch);
         Assert.Contains("fallbackError is OperationCanceledException ? SubtitlePrefetchOutcome.TimedOut : SubtitlePrefetchOutcome.Error", prefetch);
         var manual = Between(service, "private async Task<bool> TrySetSubtitleTrackAndPersistForOwnerAsync(", "private bool MatchesSubtitlePreference(");
