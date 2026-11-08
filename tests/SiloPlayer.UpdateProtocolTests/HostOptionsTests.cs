@@ -25,6 +25,21 @@ public sealed class HostOptionsTests
         Assert.True(worker.Worker);
     }
 
+    [Fact]
+    public void Window_waits_for_the_client_download_only_when_asked_and_never_in_the_worker()
+    {
+        Assert.False(HostOptions.Parse(Arguments("v1.2.518-beta.1")).AwaitDownload);
+        var broker = HostOptions.Parse([.. Arguments("v1.2.518-beta.1"), "--await-download", "yes"]);
+        Assert.True(broker.AwaitDownload);
+        // The elevated worker starts only after the download; its arguments never carry the flag.
+        var worker = broker.Arguments(true, 789, 101112).ToArray();
+        Assert.DoesNotContain("--await-download", worker);
+        Assert.False(HostOptions.Parse(worker).AwaitDownload);
+        Assert.False(HostOptions.Parse([.. Arguments("v1.2.518-beta.1"), "--await-download", "no"]).AwaitDownload);
+        Assert.Throws<InvalidDataException>(() => HostOptions.Parse([.. Arguments("v1.2.518-beta.1"), "--await-download", "maybe"]));
+        Assert.Throws<InvalidDataException>(() => HostOptions.Parse([.. worker, "--await-download", "yes"]));
+    }
+
     [Theory]
     [InlineData("v1.2.517.1")]
     [InlineData("v1.2.517.12")]

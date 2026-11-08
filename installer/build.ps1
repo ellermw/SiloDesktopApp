@@ -460,7 +460,8 @@ Copy-Item -LiteralPath $IconDest -Destination (Join-Path $BootstrapAssets 'app.i
 
 # Build the manifest/pack after signing and all content copies, from the exact
 # version-local bytes used by the full installer. The builder emits bootstrap
-# protocol 2 so .NET 8 / protocol 1 clients take the verified full-installer fallback.
+# protocol 1 with client files only, so every shipped client keeps its in-app
+# side-by-side update (see docs/update-release-contract.md).
 dotnet run --project "$RepoRoot\tools\SiloUpdatePack\SiloUpdatePack.csproj" -c $Configuration -- `
     --client $PublishDir --output $UpdateAssetDir --version $FourPartVersion --release-version $AppVersion
 if ($LASTEXITCODE -ne 0) { throw 'The incremental update assets could not be built.' }
@@ -499,6 +500,16 @@ if ($LASTEXITCODE -ne 0) {
 # Read only this invocation's expected file, never an older successful build.
 $SetupExe = Get-Item -LiteralPath $ExpectedSetup -ErrorAction SilentlyContinue
 if ($SetupExe) {
+    # Clients up to 1.2.709 compare the installer's ProductVersion text exactly and
+    # reject Inno's space padding, which blocks their in-app update. Repair it in
+    # place before verification, signing and hashing (a changed signature is
+    # re-applied below).
+    & (Join-Path $InstallerDir 'Repair-InstallerVersionText.ps1') -Path $SetupExe.FullName -ProductVersion $AppVersion
+    if (-not $?) { throw 'The installer version text could not be repaired.' }
+    $SetupExe = Get-Item -LiteralPath $ExpectedSetup
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($SetupExe.FullName).ProductVersion -cne $AppVersion) {
+        throw 'The installer ProductVersion text must equal the semantic release version.'
+    }
     # Verify the compiled /D identity, not just the source-script defaults, before
     # creating the public installer alias or recording a successful build.
     $ManifestPath=Join-Path $UpdateAssetDir 'SiloUpdate-Windows-x64.manifest.json'

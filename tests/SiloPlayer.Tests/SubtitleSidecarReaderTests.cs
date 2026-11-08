@@ -9,6 +9,37 @@ public sealed class SubtitleSidecarReaderTests
     private static readonly Uri Url = new("https://sidecar.invalid/eng.srt?synthetic=1");
 
     [Theory]
+    [InlineData("application/x-subrip", ".srt")]
+    [InlineData("text/vtt", ".vtt")]
+    [InlineData("text/x-ass", ".ass")]
+    public async Task ExtensionlessMissingCodecUsesResponseTypeAfterBusyRetries(string type, string extension)
+    {
+        using var wire = new Wire((n, _) =>
+        {
+            if (n < 3) return Busy("0");
+            var response = Ok(); response.Content.Headers.ContentType = new(type); return response;
+        });
+        using var http = new HttpClient(wire);
+        var result = await SubtitleSidecarReader.ReadAsync(http, new("https://sidecar.invalid/captions"), null, default);
+        Assert.Equal(SubtitleSidecarReadOutcome.Ready, result.Outcome);
+        Assert.Equal(extension, result.Extension);
+        Assert.Equal(3, wire.Requests);
+        Assert.True(result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
+        Assert.Equal("subtitle", System.Text.Encoding.UTF8.GetString(result.Bytes!));
+    }
+
+    [Fact]
+    public async Task ExtensionlessMissingCodecStillHonorsExhaustedBusyBudget()
+    {
+        using var wire = new Wire((_, _) => Busy("0")); using var http = new HttpClient(wire);
+        var result = await SubtitleSidecarReader.ReadAsync(http, new("https://sidecar.invalid/captions"), null, default);
+        Assert.Equal(SubtitleSidecarReadOutcome.Busy, result.Outcome);
+        Assert.Equal(4, wire.Requests);
+        Assert.False(result.CanUseUrlFallback);
+    }
+
+    [Theory]
     [InlineData("0")]
     [InlineData("date")]
     [InlineData("invalid")]
@@ -21,6 +52,8 @@ public sealed class SubtitleSidecarReaderTests
         Assert.False(pending.IsCompleted);
         var result = await pending;
         Assert.Equal(SubtitleSidecarReadOutcome.Ready, result.Outcome);
+        Assert.True(result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
         Assert.Equal(".srt", result.Extension);
         Assert.Equal("subtitle", System.Text.Encoding.UTF8.GetString(result.Bytes!));
         Assert.Equal(3, wire.Requests);
@@ -31,7 +64,29 @@ public sealed class SubtitleSidecarReaderTests
     public async Task RepeatedBusyStopsAtFourAttemptsAndNeverOffersFallback()
     {
         using var wire = new Wire((_, _) => Busy("0")); using var http = new HttpClient(wire);
-        Assert.Equal(SubtitleSidecarReadOutcome.Busy, (await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default)).Outcome);
+        var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
+        Assert.Equal(SubtitleSidecarReadOutcome.Busy, result.Outcome);
+        Assert.True(result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
+        Assert.Equal(4, wire.Requests);
+    }
+
+    [Theory]
+    [InlineData("mov_text")]
+    [InlineData("ttml")]
+    [InlineData("subviewer")]
+    [InlineData("pjs")]
+    [InlineData("mpl2")]
+    [InlineData("jacosub")]
+    [InlineData("realtext")]
+    [InlineData("text")]
+    public async Task ExtensionlessTextCodecsUseBoundedBusyReads(string codec)
+    {
+        using var wire = new Wire((_, _) => Busy("0")); using var http = new HttpClient(wire);
+        var result = await SubtitleSidecarReader.ReadAsync(http, new("https://sidecar.invalid/captions/1"), codec, default);
+        Assert.Equal(SubtitleSidecarReadOutcome.Busy, result.Outcome);
+        Assert.True(result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
         Assert.Equal(4, wire.Requests);
     }
 
@@ -75,33 +130,38 @@ public sealed class SubtitleSidecarReaderTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task BusyHistoryPreventsFallbackEvenWhenTheNextReadIsNotFound(bool priorBusy)
+    [InlineData(false, HttpStatusCode.NotFound)]
+    [InlineData(true, HttpStatusCode.NotFound)]
+    [InlineData(false, HttpStatusCode.InternalServerError)]
+    [InlineData(true, HttpStatusCode.InternalServerError)]
+    public async Task NonBusyResponseAllowsUrlFallbackOnlyWithoutBusyHistory(bool priorBusy, HttpStatusCode status)
     {
-        using var wire = new Wire((n, _) => priorBusy && n == 1 ? Busy("0") : new(HttpStatusCode.NotFound));
+        using var wire = new Wire((n, _) => priorBusy && n == 1 ? Busy("0") : new(status));
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
         Assert.Equal(priorBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, result.Outcome);
         Assert.Equal(SubtitleSidecarReadFailure.None, result.Failure);
+        Assert.Equal(priorBusy, result.WasBusy);
+        Assert.Equal(!priorBusy, result.CanUseUrlFallback);
         Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task OversizedSidecarIsRejectedWithoutRetry(bool chunked)
+    public async Task OversizedSidecarIsNotBufferedButAllowsAsyncUrlFallback(bool chunked)
     {
         using var wire = new Wire((_, _) => new(HttpStatusCode.OK) { Content = new OversizeContent(chunked) });
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
         Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
         Assert.Equal(SubtitleSidecarReadFailure.DownloadLimit, result.Failure);
+        Assert.True(result.CanUseUrlFallback);
         Assert.Null(result.Bytes); Assert.Equal(1, wire.Requests);
     }
 
     [Fact]
-    public async Task StalledTextReadExhaustsBudgetWithoutOfferingRemoteFallback()
+    public async Task StalledTextReadExhaustsPrefetchBudgetButAllowsAsyncUrlFallback()
     {
         using var wire = new HangingWire(); using var http = new HttpClient(wire);
         var pending = SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
@@ -109,6 +169,7 @@ public sealed class SubtitleSidecarReaderTests
         var result = await pending.WaitAsync(TimeSpan.FromSeconds(12));
         Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
         Assert.Equal(SubtitleSidecarReadFailure.Timeout, result.Failure);
+        Assert.True(result.CanUseUrlFallback);
         Assert.Null(result.Bytes); Assert.Equal(1, wire.Requests);
     }
 
@@ -125,6 +186,7 @@ public sealed class SubtitleSidecarReaderTests
         Assert.Equal(SubtitleSidecarReadFailure.None, result.Failure);
         Assert.Equal("subtitle", System.Text.Encoding.UTF8.GetString(result.Bytes!));
         Assert.Equal(priorBusy, result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
         Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
     }
 
@@ -141,12 +203,44 @@ public sealed class SubtitleSidecarReaderTests
     }
 
     [Fact]
-    public async Task UnsupportedFormatStillOffersFallbackWithoutRequestingIt()
+    public async Task OpaqueFormatStillOffersFallbackAfterItsBoundedHeaderProbe()
     {
-        using var wire = new Wire((_, _) => Ok()); using var http = new HttpClient(wire);
+        using var wire = new Wire((_, _) => new(HttpStatusCode.OK) { Content = new UnreadOpaqueContent() });
+        using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, new("https://sidecar.invalid/captions.sup"), "pgs", default);
         Assert.Equal(SubtitleSidecarReadOutcome.Fallback, result.Outcome);
-        Assert.Equal(0, wire.Requests);
+        Assert.Equal(1, wire.Requests);
+        Assert.Null(result.Bytes);
+    }
+
+    [Fact]
+    public async Task OpaqueFormatAfterBusyNeverEscapesThroughTheNativeReader()
+    {
+        using var wire = new Wire((n, _) => n == 1 ? Busy("0") : new(HttpStatusCode.OK) { Content = new UnreadOpaqueContent() });
+        using var http = new HttpClient(wire);
+        var result = await SubtitleSidecarReader.ReadAsync(http, new("https://sidecar.invalid/captions.sup"), "pgs", default);
+        Assert.Equal(SubtitleSidecarReadOutcome.Busy, result.Outcome);
+        Assert.Equal(2, wire.Requests);
+        Assert.True(result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
+        Assert.Null(result.Bytes);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task TransportFailureAllowsUrlFallbackOnlyWithoutBusyHistory(bool priorBusy, bool ioFailure)
+    {
+        using var wire = new Wire((n, _) => priorBusy && n == 1 ? Busy("0") :
+            throw (ioFailure ? (Exception)new IOException("Interrupted body") : new HttpRequestException("Connection reset")));
+        using var http = new HttpClient(wire);
+        var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
+        Assert.Equal(priorBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.Equal(priorBusy, result.WasBusy);
+        Assert.Equal(!priorBusy, result.CanUseUrlFallback);
+        Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
     }
 
     [Fact]
@@ -200,6 +294,13 @@ public sealed class SubtitleSidecarReaderTests
             await Task.Delay(TimeSpan.FromSeconds(9), ct);
             return Ok();
         }
+    }
+    private sealed class UnreadOpaqueContent : HttpContent
+    {
+        public UnreadOpaqueContent() => Headers.ContentType = new("application/octet-stream");
+        protected override bool TryComputeLength(out long length) { length = 7; return true; }
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
+            => throw new InvalidOperationException("An opaque format's header probe must not consume its body.");
     }
     private sealed class OversizeContent(bool chunked) : HttpContent
     {

@@ -46,7 +46,8 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
     private async Task RunAsync()
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-        deadline.CancelAfter(TimeSpan.FromMinutes(20));var ct=deadline.Token;
+        // The client's own download has a 15-minute limit; installation keeps its 20 minutes after it.
+        deadline.CancelAfter(TimeSpan.FromMinutes(options.AwaitDownload ? 40 : 20));var ct=deadline.Token;
         using var app=new NamedPipeClientStream(".",options.AppPipe,PipeDirection.InOut,PipeOptions.Asynchronous);
         NamedPipeServerStream? worker=null;
         try
@@ -60,6 +61,20 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
             await app.ConnectAsync(ct);
             UpdatePipeIdentity.Authenticate(app,false,options.ParentPid,options.ParentStart,oldImage);
             await UpdateHostProtocol.WriteAsync(app,new("visible"),ct);
+            if(options.AwaitDownload)
+            {
+                // Show the client's download here, then request elevation only for a complete package.
+                while(true)
+                {
+                    var frame=await UpdateHostProtocol.ReadAsync(app,ct);
+                    if(frame.Kind=="download"){Render(frame);continue;}
+                    if(frame.Kind=="downloaded")break;
+                    if(frame.Kind=="cancel"){closeAllowed=true;window!.Close();return;}
+                    throw new UpdateClientFailure(frame.Kind=="failed" ? frame.Text : null);
+                }
+                deadline.CancelAfter(TimeSpan.FromMinutes(20));
+                view!.Apply(new("progress",Text:"Preparing your update…"));
+            }
             worker=UpdatePipeIdentity.CreateServer(options.WorkerPipe,allowElevation:true);
             using var current=Process.GetCurrentProcess();
             var start=new ProcessStartInfo(hostImage){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden,WorkingDirectory=Path.GetDirectoryName(hostImage)!};
@@ -108,7 +123,10 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
         catch(Exception ex)
         {
             try{if(app.IsConnected)await UpdateHostProtocol.WriteAsync(app,new("failed",Text:ex is System.ComponentModel.Win32Exception{NativeErrorCode:1223}?"Administrator approval was canceled. Silo remains open.":"The update could not finish. Silo's previous version is preserved."),CancellationToken.None);}catch{}
-            status.Text=committed ? "Silo has not confirmed startup yet. Your previous version is preserved; launch Silo again to recover if the new version exited. No running app will be closed." : "The update was canceled or could not finish. You can continue using Silo and try again.";
+            status.Text=committed ? "Silo has not confirmed startup yet. Your previous version is preserved; launch Silo again to recover if the new version exited. No running app will be closed."
+                : ex is UpdateClientFailure{Message.Length:>0} client ? client.Message
+                : "The update was canceled or could not finish. You can continue using Silo and try again.";
+            view?.Apply(new("progress",Text:status.Text,Total:1));
             progress.IsIndeterminate=false;progress.Value=0;closeAllowed=true;cancel.Content="Close";cancel.IsEnabled=true;
         }
         finally{worker?.Dispose();}
@@ -117,11 +135,13 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
     {
         view!.Apply(message);
     }
+    // The client reported that its download failed; show its text instead of the generic failure.
+    private sealed class UpdateClientFailure(string? text) : IOException(text ?? "");
     internal static void CenterWindow(Window target,long owner)
     {
         if(IsIconic((IntPtr)owner))return;
         var dpi=GetDpiForWindow((IntPtr)owner);if(dpi==0)dpi=96;
-        var width=(int)(500*dpi/96);var height=(int)(360*dpi/96);
+        var width=(int)(500*dpi/96);var height=(int)(440*dpi/96);
         if(GetClientRect((IntPtr)owner,out var rect))
         {
             var origin=new Point{X=rect.Left,Y=rect.Top};if(!ClientToScreen((IntPtr)owner,ref origin))return;

@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained><PublishTrimmed>false</PublishTrimmed><PublishReadyToRun>false</PublishReadyToRun>
-    <Version>1.2.810-beta.1</Version><FileVersion>1.2.809.1</FileVersion><AssemblyVersion>1.2.809.1</AssemblyVersion>
+    <Version>1.2.814-beta.1</Version><FileVersion>1.2.813.1</FileVersion><AssemblyVersion>1.2.813.1</AssemblyVersion>
     <AssemblyName>SiloPlayer.Launcher</AssemblyName>
     <AssemblyTitle>Silo Desktop Player launcher; FullUpdateGate=1</AssemblyTitle>
     <Description>Silo Desktop Player stable launcher</Description>

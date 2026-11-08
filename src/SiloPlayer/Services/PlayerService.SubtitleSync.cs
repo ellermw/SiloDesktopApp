@@ -11,6 +11,7 @@ public partial class PlayerService
     {
         public SubtitleSyncState State = new();
         public long Revision;
+        public bool TimingObserved;
         public bool Busy, Forbidden, Unsupported, PollStopped, Reading, ReadAgain, WatchOnRead;
         public string? Error, WatchedJobId, AnnouncedJobId;
         public DateTimeOffset Started, LastReload;
@@ -29,7 +30,12 @@ public partial class PlayerService
     private bool _subtitleSyncInventoryError;
     private string? _subtitleSyncApplyingKey, _subtitleSyncApplyingJob;
     private readonly List<string> _subtitleSyncFiles = [];
-    private static readonly HttpClient SubtitleSyncDownloadClient = new() { Timeout = TimeSpan.FromSeconds(8) };
+    // Worker/CDN reads never carry account headers, including on redirect hops.
+    private static readonly HttpClient SubtitleSyncDownloadClient = new(new HttpClientHandler { MaxAutomaticRedirections = 5 })
+        { Timeout = TimeSpan.FromSeconds(8) };
+    // Integrated requests carry profile proof and must never follow redirects.
+    private static readonly HttpClient AuthenticatedSubtitleSyncDownloadClient = new(new HttpClientHandler { AllowAutoRedirect = false })
+        { Timeout = TimeSpan.FromSeconds(8) };
 
     private bool SyncCurrent(CancellationToken ct) => !ct.IsCancellationRequested && !_closing &&
         _subtitleSyncOwner is { } owner && ReferenceEquals(owner, _activeAuthority) &&
@@ -48,7 +54,15 @@ public partial class PlayerService
             _subtitleSyncEntries.Clear();
             // Prefetched sidecars are deleted below with the other files; a pending
             // prefetch must not register a file after this cleanup.
-            lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _preparedSubtitleReload = null; _subtitleSidecarGeneration++; }
+            lock (_subtitleTrackStateLock)
+            {
+                _prefetchedSubtitleFiles.Clear();
+                foreach (var ready in _prefetchedSubtitleSids.Values)
+                    if (ready.FileGeneration == Volatile.Read(ref _fileLoadGeneration)) _mpv?.RemoveSubtitle(ready.Sid);
+                _prefetchedSubtitleSids.Clear();
+                _preparedSubtitleReload = null;
+                _subtitleSidecarGeneration++;
+            }
             foreach (var file in _subtitleSyncFiles) { try { File.Delete(file); } catch { } }
             _subtitleSyncFiles.Clear();
             _mpv?.SendScriptMessage("osc-subtitle-sync-notice", "{}");
@@ -226,10 +240,13 @@ public partial class PlayerService
         var existed = _subtitleSyncEntries.TryGetValue(state.Key, out var entry);
         entry ??= new();
         if (state.Sync != null && !SubtitleSyncPolicy.AcceptJob(entry.State.Sync, state.Sync)) return;
-        var changed = existed && entry.State.Timing != state.Timing;
+        // Per-key reads create placeholders before inventory arrives. Their
+        // default timing is not an observation of the already applied cues.
+        var changed = entry.TimingObserved && entry.State.Timing != state.Timing;
         if (!existed || entry.State.Sync?.Id != state.Sync?.Id) { entry.Started = DateTimeOffset.UtcNow; entry.PollStopped = false; }
-        entry.State = state; entry.Revision++;
+        entry.State = state; entry.TimingObserved = true; entry.Revision++;
         _subtitleSyncEntries[state.Key] = entry;
+        if (changed) InvalidateSubtitleTimingCache(state.Key);
         var job = state.Sync;
         var watched = job != null && job.Id == entry.WatchedJobId;
         if (watched && SubtitleSyncPolicy.InProgress(job))
@@ -250,6 +267,38 @@ public partial class PlayerService
         if (changed && IsActiveSyncKey(state.Key) && !(watched && job?.Status == "synced"))
             _ = ReloadCorrectedSubtitleAsync(entry, ct, own: false);
         SendSubtitleSyncState();
+    }
+
+    // Called under the sync gate, before a changed timing can be carried into
+    // another load. Keep the active SID visible until its replacement is
+    // ready, but mark it stale so switching back cannot reuse its old timing.
+    // Retire inactive SIDs immediately.
+    private void InvalidateSubtitleTimingCache(string key)
+    {
+        lock (_subtitleTrackStateLock)
+        {
+            var indices = (_playbackManager?.CurrentSession?.SubtitleUrls ?? [])
+                .Where(track => SubtitleSyncPolicy.Key(track) == key).Select(track => track.Index).ToHashSet();
+            if (_preparedSubtitleReload is { } prepared &&
+                (prepared.SyncKey == key || indices.Contains(prepared.Index)))
+                _preparedSubtitleReload = null;
+            foreach (var index in indices)
+            {
+                if (_prefetchedSubtitleFiles.Remove(index, out var path))
+                {
+                    _subtitleSyncFiles.Remove(path);
+                    try { File.Delete(path); } catch { }
+                }
+                if (_prefetchedSubtitleSids.Remove(index, out var ready) &&
+                    ready.FileGeneration == Volatile.Read(ref _fileLoadGeneration)) _mpv?.RemoveSubtitle(ready.Sid);
+                if (_loadedExternalSubtitleSids.ContainsKey(index)) _staleExternalSubtitleIndices.Add(index);
+                if (index != _activeSubtitleServerIndex && _loadedExternalSubtitleSids.Remove(index, out var sid) &&
+                    _mpv != null && (int)Math.Round(_mpv.GetPropertyDouble("sid")) != sid)
+                    _mpv.RemoveSubtitle(sid);
+            }
+            // A pre-change read must not register old bytes after invalidation.
+            _subtitleSidecarGeneration++;
+        }
     }
 
     private bool IsActiveSyncKey(string key) => _playbackManager?.CurrentSession?.SubtitleUrls?
@@ -379,10 +428,16 @@ public partial class PlayerService
             if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl)) return;
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
             bounded.CancelAfter(TimeSpan.FromSeconds(8));
-            using var request = scope.ApiClient.CreateAuthenticatedRequest(HttpMethod.Get, pair.Value.FullUrl);
+            // Share the selection path's URL authority rule: never add account
+            // headers to an advertised worker/CDN URL, even on a cue reload.
+            var authenticated = PlaybackManager.RequiresSubtitleAccountAuthentication(authority.BaseUrl, pair.Value.FullUrl);
+            using var request = authenticated
+                ? scope.ApiClient.CreateAuthenticatedRequest(authority, HttpMethod.Get, pair.Value.FullUrl)
+                : new HttpRequestMessage(HttpMethod.Get, pair.Value.FullUrl);
             if (!SyncCurrent(ct) || !scope.ApiClient.IsCurrentContext(authority)) return;
             request.Headers.CacheControl = new() { NoCache = true, NoStore = true };
-            using var response = await SubtitleSyncDownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
+            var downloadClient = authenticated ? AuthenticatedSubtitleSyncDownloadClient : SubtitleSyncDownloadClient;
+            using var response = await downloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes)
                 throw new InvalidDataException("Subtitle cues exceed the size limit.");
@@ -449,6 +504,9 @@ public partial class PlayerService
                 }
                 _loadedExternalSubtitleSids[index] = newSid;
                 if (oldSid > 0 && oldSid != newSid && previousIds.Contains(oldSid)) _mpv.RemoveSubtitle(oldSid);
+                InvalidateSubtitleTimingCache(state.Key);
+                _staleExternalSubtitleIndices.Remove(index);
+                _prefetchedSubtitleFiles[index] = path;
                 _subtitleSyncFiles.Add(path); path = null;
                 entry.LastAppliedTiming = timing;
                 if (IsApplyingOwnedTiming(entry, timing)) SendSubtitleSyncOutcome(entry.State);

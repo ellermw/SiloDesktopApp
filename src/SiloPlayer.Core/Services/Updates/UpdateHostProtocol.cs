@@ -1,16 +1,30 @@
 using System.Buffers.Binary;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Services.Updates;
 
+// Files/FileCount and FileBytes/FileTotal are only set on "download" frames: the number of
+// objects actually fetched and the object being fetched now. Older peers ignore them.
+[method: JsonConstructor]
 public sealed record UpdateHostMessage(string Kind, string? TransactionId = null, string? Text = null,
-    long Completed = 0, long Total = 0, int ProcessId = 0, long StartUtcTicks = 0, DateTimeOffset? CooldownUntil = null);
+    long Completed = 0, long Total = 0, int ProcessId = 0, long StartUtcTicks = 0, DateTimeOffset? CooldownUntil = null,
+    int Files = 0, int FileCount = 0, long FileBytes = 0, long FileTotal = 0)
+{
+    // Optional parameters do not preserve the original constructor for reflection or compiled callers.
+    public UpdateHostMessage(string Kind, string? TransactionId, string? Text, long Completed, long Total,
+        int ProcessId, long StartUtcTicks, DateTimeOffset? CooldownUntil)
+        : this(Kind, TransactionId, Text, Completed, Total, ProcessId, StartUtcTicks, CooldownUntil, 0, 0, 0, 0) { }
+}
 
 /// <summary>Length-bounded frames; pipe endpoints separately authenticate process identity.</summary>
 public static class UpdateHostProtocol
 {
     private const int MaximumFrame = 65536;
-    private static readonly HashSet<string> Kinds = ["visible", "progress", "staged", "close", "cancel", "activated", "ready", "confirmed", "failed"];
+    // "download" and "downloaded" travel from the client to its own update window while the
+    // client downloads the package that the window then installs.
+    private static readonly HashSet<string> Kinds = ["visible", "progress", "staged", "close", "cancel", "activated", "ready", "confirmed", "failed",
+        "download", "downloaded"];
     public static async Task WriteAsync(Stream stream, UpdateHostMessage message, CancellationToken ct)
     {
         Validate(message);
@@ -33,7 +47,8 @@ public static class UpdateHostProtocol
     private static void Validate(UpdateHostMessage message)
     {
         if (!Kinds.Contains(message.Kind) || message.Text?.Length > 2048 || message.TransactionId?.Length > 64
-            || message.Completed < 0 || message.Total < 0)
+            || message.Completed < 0 || message.Total < 0 || message.Files < 0 || message.FileCount < 0
+            || message.FileBytes < 0 || message.FileTotal < 0)
             throw new InvalidDataException("Invalid update message.");
     }
 }

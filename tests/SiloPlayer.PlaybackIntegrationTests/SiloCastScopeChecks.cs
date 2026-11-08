@@ -128,9 +128,9 @@ internal static class SiloCastScopeChecks
             SubtitleUrls =
             [
                 new() { Index = 2, Label = "Unavailable", Codec = "srt", Unplayable = true, Url = "https://remote.fixture.invalid/subtitles/2.srt" },
-                new() { Index = 4, Label = "English", Language = "en", Codec = "srt", Url = "https://remote.fixture.invalid/subtitles/4.srt" },
+                new() { Index = 4, Label = "English", Language = "en", Codec = "srt", Url = "https://sidecar.fixture.invalid/english.srt" },
                 new() { Index = 6, Label = "No route", Codec = "srt", Source = "external" },
-                new() { Index = 8, Label = "French", Language = "fr", Codec = "vtt", Url = "https://remote.fixture.invalid/subtitles/8.vtt" },
+                new() { Index = 8, Label = "French", Language = "fr", Codec = "vtt", Url = "https://sidecar.fixture.invalid/french.vtt" },
                 new() { Index = 12, Label = "Unavailable", Language = "de", Codec = "srt", Unplayable = true },
             ],
             AvailableQualities = [new() { Label = "original", PreservesSource = true }, new() { Label = "1080p-high" }],

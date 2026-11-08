@@ -1021,7 +1021,12 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                         {
                             await entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                             newer = service.SetSubtitleTrackAndPersistAsync(latest + 1, latestTrack.Language, latestTrack);
-                            Require(manager.CaptureLocalSubtitleIntent().Track?.TrackId == latestTrack.TrackId,
+                            // Text admission now awaits sidecar readiness. Keep the
+                            // old reply held until that asynchronous admission, not
+                            // merely until the picker returns its pending Task.
+                            await Until(() => manager.CaptureLocalSubtitleIntent().Track?.TrackId == latestTrack.TrackId);
+                            Require(!off.IsCompleted && wire.PreferenceWrites == writes &&
+                                manager.CaptureLocalSubtitleIntent().Track?.TrackId == latestTrack.TrackId,
                                 "The held burn-in replan did not record the newer pick before adoption.");
                             wire.ReindexSpanish = wire.ReindexDvd = true;
                         }

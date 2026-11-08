@@ -6,6 +6,98 @@ namespace SiloPlayer.Tests;
 
 public sealed class SubtitleIdentityTests
 {
+    [Theory]
+    [InlineData(42, true)]
+    [InlineData(43, true)]
+    [InlineData(42, false)]
+    [InlineData(43, false)]
+    public void ExecutedChoiceRestorationSurvivesInventoryReplacementWithoutReusingAnIndex(int fileId, bool available)
+    {
+        WithManager(manager =>
+        {
+            var applied = new SubtitleTrackInfo { Index = 2, TrackId = "applied", Language = "eng" };
+            var original = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [applied, new() { Index = 3, TrackId = "pending", Language = "spa" }] };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, original);
+            manager.RecordLocalSubtitleSelection(3);
+            var replacement = new PlaybackStartResponse { MediaFileId = fileId, SubtitleUrls = [new() { Index = available ? 2 : 9, TrackId = "different", Language = "jpn" }] };
+            if (available) replacement.SubtitleUrls.Add(new() { Index = 8, TrackId = "applied", Language = "eng" });
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, replacement);
+
+            manager.RecordExecutedSubtitleSelection(applied, original.MediaFileId);
+
+            Assert.Equal(available ? 8 : -1, manager.SubtitleSelectionForLoad);
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, original);
+            Assert.Equal(2, manager.SubtitleSelectionForLoad);
+        });
+    }
+
+    [Fact]
+    public void ExecutedOffRestorationOverridesAnUnappliedChoice()
+    {
+        WithManager(manager =>
+        {
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager,
+                new PlaybackStartResponse { MediaFileId = 43, SelectedSubtitleTrackId = "pending", SubtitleUrls = [new() { Index = 3, TrackId = "pending" }] });
+            manager.RecordLocalSubtitleSelection(3);
+            manager.RecordExecutedSubtitleSelection(null, 42);
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+        });
+    }
+
+    [Fact]
+    public void RefusalRestorationRetiresOnlyItsPendingChoiceAndPreservesPriorIntent()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private bool RestoreExecutedSubtitleSelection(bool reapply,", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = source.IndexOf("private void ShowSubtitleSelectionUnavailable(", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var method = source[start..end];
+        var ownerCheck = method.IndexOf("if (!restoreOwner()) return false;", StringComparison.Ordinal);
+        var retirement = method.IndexOf("refused.Accepted = false;", StringComparison.Ordinal);
+        var clearPending = method.IndexOf("_pendingInitialServerSubtitleIndex = null;", StringComparison.Ordinal);
+        Assert.True(ownerCheck >= 0 && retirement > ownerCheck && clearPending > retirement);
+        Assert.Contains("currentSelection?.Invoke() != false", method);
+        Assert.Contains("ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner)", method);
+        Assert.Contains("previousIntent = preferenceOwner?.PreviousIntent", method);
+        Assert.Contains("_playbackManager!.RestoreLocalSubtitleIntent(previousIntent);", method);
+        Assert.DoesNotContain("RecordLocalSubtitleSelection(", method);
+        Assert.Contains("CommitExecutedSubtitleSelection(retained);", method);
+        Assert.Contains("SelectSubtitleTrackForOwner(retained, restoreOwner)", method);
+    }
+
+    [Fact]
+    public void LegacyFlyoutKeepsUrllessUnavailableRowsAndAttachesTheirOnlyBadge()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
+        var start = source.IndexOf("private void PopulateSubtitleFlyout()", StringComparison.Ordinal);
+        var end = source.IndexOf("// Match the compact WebUI delay control", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+        Assert.Contains("_playerService.CaptureSubtitleMenuSnapshot()", method, StringComparison.Ordinal);
+        Assert.Contains("menu?.Entries", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetSubtitleUrls()", method, StringComparison.Ordinal);
+        var badge = method.IndexOf("if (track.Unplayable) badges.Children.Add(CreatePlayerMenuBadge(\"Unavailable\"))", StringComparison.Ordinal);
+        var attach = method.IndexOf("if (badges.Children.Count > 0) descriptor.Children.Add(badges)", StringComparison.Ordinal);
+        Assert.True(badge >= 0 && attach > badge);
+        Assert.Contains("item.IsEnabled = false;", method, StringComparison.Ordinal);
+        Assert.Contains("SetHelpText(item, \"Subtitle unavailable\")", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LegacyFlyoutSearchUsesRetainedInventoryLanguage()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
+        var start = source.IndexOf("private void PopulateSubtitleFlyout()", StringComparison.Ordinal);
+        var end = source.IndexOf("private void SubtitleFlyout_Opening(", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+        Assert.Contains("var menu = _playerService.CaptureSubtitleMenuSnapshot();", method, StringComparison.Ordinal);
+        Assert.Contains("new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId,", method, StringComparison.Ordinal);
+        Assert.Contains("menu?.Entries.FirstOrDefault(entry => entry.Track.Index == activeSubtitleIndex).Track?.Language", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("subtitleUrls", method, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RejectedSubtitleReplanResumesOnlyTheUnchangedUnpreparedTransport()
     {
@@ -105,7 +197,7 @@ public sealed class SubtitleIdentityTests
         Assert.Contains("session.SelectedSubtitleTrackIndex is int index && track.Index == index", helper);
         foreach (var (startSignature, endSignature) in new[]
         {
-            ("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", "private async Task SaveExecutedSubtitlePreferenceAsync("),
+            ("private async Task<bool> TrySetSubtitleTrackAndPersistAsync(", "private async Task<bool> SaveExecutedSubtitlePreferenceAsync("),
             ("private async Task<bool> SelectSubtitleByServerIndexAsync(", "public int ActiveSubtitleServerIndex"),
             ("private bool SelectSubtitleTrackForOwner(", "private bool SelectSubtitleSidecar("),
         })
