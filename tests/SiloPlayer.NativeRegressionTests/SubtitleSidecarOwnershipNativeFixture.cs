@@ -2047,9 +2047,12 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (scenario == "loaded-bitmap-newer-track")
             {
                 await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!;
+                var appliedSid = mpv.GetPropertyDouble("sid");
+                Require(appliedSid > 0, "Fixture did not apply the prior Spanish subtitle.");
                 await Until(() => seen.Contains("1")); seen.Clear();
                 var bitmap = new SubtitleTrackInfo { Index = 2, Language = "eng", Codec = "dvdsub", Source = "embedded" };
                 manager.CurrentSession.SubtitleUrls.Add(bitmap);
+                wire.SupportBurnInReplan = true;
                 var gate = (SemaphoreSlim)Get(service, "_transportRestartGate")!;
                 await gate.WaitAsync();
                 var gateHeld = true;
@@ -2062,7 +2065,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     var english = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == 0);
                     latest = Task.Run(() => service.SetSubtitleTrackAndPersistAsync(1, english.Language, english));
                     await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                    Require(!latest.IsCompleted && service.ActiveSubtitleServerIndex == 0,
+                    // Manual preflight reserves an owner, not an accepted
+                    // index/preference. The old automatic row is still tentative;
+                    // Spanish must remain actually applied while English reads.
+                    var latestOwner = Get(service, "_subtitleSelectionOperation")!;
+                    Require(!latest.IsCompleted && !subtitles.Release.Task.IsCompleted &&
+                        service.ActiveSubtitleServerIndex == 2 && mpv.GetPropertyDouble("sid") == appliedSid &&
+                        ReferenceEquals(latestOwner.GetType().GetProperty("RequestedTrack")!.GetValue(latestOwner), english) &&
+                        !(bool)latestOwner.GetType().GetProperty("Accepted")!.GetValue(latestOwner)!,
                         "Fixture did not hold the newer viewer choice in prefetch.");
                     gate.Release(); gateHeld = false;
                     await stale.WaitAsync(TimeSpan.FromSeconds(4));
@@ -2070,10 +2080,14 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     typeof(MpvPlayer).GetMethod("Command", BindingFlags.NonPublic | BindingFlags.Instance)!
                         .Invoke(mpv, [new[] { "script-message", "silo-sidecar-probe-drain" }]);
                     await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                    Require(service.ActiveSubtitleServerIndex == 0 && manager.SubtitleSelectionForLoad == 0 &&
-                        (int?)Get(service, "_pendingSubtitlePreferenceIndex") == 0 && wire.PreferenceWrites == 1 &&
+                    Require(service.ActiveSubtitleServerIndex == 2 && manager.SubtitleSelectionForLoad == 1 &&
+                        mpv.GetPropertyDouble("sid") == appliedSid &&
+                        Get(service, "_pendingSubtitlePreferenceIndex") == null && wire.PreferenceWrites == 1 &&
+                        ReferenceEquals(latestOwner, Get(service, "_subtitleSelectionOperation")) &&
+                        !(bool)latestOwner.GetType().GetProperty("Accepted")!.GetValue(latestOwner)! &&
+                        !latest.IsCompleted && wire.Replans == 0 &&
                         seen.IsEmpty && notices.IsEmpty && subtitles.EnglishRequests == 1,
-                        "A superseded persist:false bitmap worker rolled back or published over the newer pending choice.");
+                        "A superseded persist:false bitmap worker replanned, rolled back or published over the newer preflight choice.");
                     subtitles.Release.TrySetResult();
                     await latest.WaitAsync(TimeSpan.FromSeconds(5));
                     var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;

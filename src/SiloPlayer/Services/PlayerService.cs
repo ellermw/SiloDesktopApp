@@ -5893,6 +5893,7 @@ public partial class PlayerService : IDisposable
         // while the canceled seek is still releasing the restart gate.
         var selectionIntent = manager.CaptureLocalSubtitleIntent();
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
+        var manualChoice = Volatile.Read(ref _subtitleSelectionOperation);
         await CancelAndDrainTransportRestartsAsync(ct);
         if (!CurrentOwner()) return SubtitleTransportResult.Superseded;
         // This index only identifies the local owner. ReplanCurrentSubtitleAsync
@@ -5982,7 +5983,10 @@ public partial class PlayerService : IDisposable
         }
         try
         {
-            if (!CurrentOwner() || manager.CurrentSession != session || _mpv == null)
+            // A newer manual pick owns the choice before its prefetch accepts
+            // an index or manager intent. Do not start an older queued replan.
+            if (!CurrentOwner() || !ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) ||
+                manager.CurrentSession != session || _mpv == null)
                 return SubtitleTransportResult.Superseded;
             if (_activeSubtitleServerIndex != (requestedIndex ?? -1) ||
                 track != null && !session.SubtitleUrls.Contains(track))
