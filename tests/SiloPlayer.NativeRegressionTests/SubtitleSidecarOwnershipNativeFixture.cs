@@ -258,11 +258,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         var priorSid = mpv.GetPropertyDouble("sid");
         Require(priorSid > 0 && wire.RequestedPreferences.SequenceEqual(new[] { 1 }), "Prior choice was not applied and saved.");
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var drained = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var notices = new ConcurrentQueue<string>();
         void Observe(string[] message)
         {
             if (message.FirstOrDefault() == "silo-switch-race-ready") ready.TrySetResult();
+            if (message.FirstOrDefault() == "silo-switch-race-active" && message.ElementAtOrDefault(1) == "0") applied.TrySetResult();
             if (message.FirstOrDefault() == "silo-switch-race-drained" && message.Length > 1) drained.TrySetResult(message[1]);
             if (message.FirstOrDefault() == "silo-switch-race-notice" && message.Length > 1) notices.Enqueue(message[1]);
         }
@@ -271,7 +273,10 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         await File.WriteAllTextAsync(probe, """
             local mp = require 'mp'
             local active = '0' -- optimistic pending choice
-            mp.register_script_message('osc-set-active-subtitle', function(index) active = index end)
+            mp.register_script_message('osc-set-active-subtitle', function(index)
+                active = index
+                mp.commandv('script-message', 'silo-switch-race-active', index)
+            end)
             mp.register_script_message('osc-show-notice', function(payload)
                 mp.commandv('script-message', 'silo-switch-race-notice', payload)
             end)
@@ -353,12 +358,45 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 }
                 Require(service.IsSwitchingContent, "The fixture missed the transport switch window.");
                 await ((Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!).WaitAsync(TimeSpan.FromSeconds(1));
-                Require(Get(service, "_pendingInitialServerSubtitleIndex") is 0 && wire.PreferenceWrites == 1,
-                    "The pick was not queued without saving during the switch.");
+                // v3 queues the manager's identity and preference owner, not
+                // an outgoing raw index that could outrank a replacement grant.
+                Require(Get(service, "_pendingSubtitlePreferenceIndex") is 0 &&
+                    manager.SubtitleSelectionForLoad == 0 && wire.PreferenceWrites == 1 &&
+                    mpv.GetPropertyDouble("sid") == priorSid,
+                    "The pick was not queued without execution or saving during the switch.");
                 if (gateHeld) { gate.Release(); gateHeld = false; }
-                wire.ReplanRelease.TrySetResult(); await switching.WaitAsync(TimeSpan.FromSeconds(5));
+                wire.ReplanRelease.TrySetResult();
+                // A rejected/no-op transport change leaves a usable file. Its
+                // rescue executor must finish the latest pick on that file,
+                // but only after the held subtitle is actually ready.
+                await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") == priorSid &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
+                    "The deferred pick changed native captions or saved before its read completed.");
+                subtitles.Release.TrySetResult();
+                await switching.WaitAsync(TimeSpan.FromSeconds(5));
                 if (scenario == "seek-failed-pick")
                     await Until(() => Get(service, "_seekRestartCts") == null);
+                await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Until(() => wire.CommittedPreferences.SequenceEqual(new[] { 1, 0 }));
+                mpv.SendScriptMessage("silo-switch-race-barrier");
+                Require(await drained.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "0" &&
+                    !notices.Any(n => n.Contains("Subtitle unavailable", StringComparison.Ordinal)),
+                    "The executed deferred pick did not publish its actual choice or showed a false refusal.");
+                var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                var sid = map.GetValueOrDefault(0);
+                Require(!service.IsSwitchingContent && !service.IsLoading && mpv.IsPaused &&
+                    sid > 0 && mpv.GetPropertyDouble("sid") == sid &&
+                    manager.SubtitleSelectionForLoad == 0 && Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                    Get(service, "_pendingSubtitlePreferenceIndex") == null && Get(service, "_pendingSubtitlePreferenceOwner") == null &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }) &&
+                    wire.CommittedPreferences.SequenceEqual(new[] { 1, 0 }),
+                    "A rejected/no-op switch stranded the pick or failed to apply and save it exactly once.");
+                await (Task)Call(service, "SelectSubtitleByServerIndexAsync", manager.SubtitleSelectionForLoad, false)!;
+                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") == sid &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }),
+                    "Repeated automatic execution changed captions or saved the deferred preference twice.");
+                return;
             }
             mpv.SendScriptMessage("silo-switch-race-barrier");
             Require(await drained.Task.WaitAsync(TimeSpan.FromSeconds(4)) == "1" && notices.Any(n => n.Contains("Subtitle unavailable", StringComparison.Ordinal)),
