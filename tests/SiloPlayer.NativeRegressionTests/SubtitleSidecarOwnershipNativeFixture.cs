@@ -2415,10 +2415,11 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         Exception? admissionFailure = null;
         long admissionInitializer = -1, admissionSidecar = -1;
         var admitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        // This real sync-status HTTP request is made synchronously by the new
-        // FILE_LOADED initializer before LoadSubtitles. Admit a viewer choice
-        // at that existing boundary; no product hooks or private load-state
-        // mutations manufacture the ordering under test.
+        var sidecarBeforeLoad = (long)Get(service, "_subtitleSidecarGeneration")!;
+        // SendSubtitleListToOsc starts this real sync-status HTTP request after
+        // LoadSubtitles has cleaned up the replacement file. Admit a viewer
+        // choice while the FILE_LOADED initializer is still running; no product
+        // hooks or private load-state mutations manufacture the ordering.
         wire.BeforeSyncStatus = () =>
         {
             try
@@ -2452,7 +2453,16 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             await admitted.Task.WaitAsync(TimeSpan.FromSeconds(4));
             if (admissionFailure != null) throw new InvalidOperationException("Initializer-gap fixture admission failed.", admissionFailure);
             Require(manual != null, "The initializer did not admit the synthetic viewer choice.");
-            await Until(() => (long)Get(service, "_subtitleSidecarGeneration")! > admissionSidecar);
+            Require(admissionSidecar > sidecarBeforeLoad,
+                "The initializer did not clean up the outgoing sidecars before sync-status admission.");
+            // Cleanup has already run: waiting for another sidecar epoch here
+            // would strand the held response until the reader's timeout. The
+            // initializer must finish without retiring or consuming this draft.
+            await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
+            Require((long)Get(service, "_subtitleSidecarGeneration")! == admissionSidecar &&
+                !manual!.IsCompleted && service.ActiveSubtitleServerIndex == -1 &&
+                mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
+                "The initializer retired, applied or consumed the held manual subtitle draft.");
             subtitles.Release.TrySetResult();
             await Task.WhenAll(manual!, Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null))
                 .WaitAsync(TimeSpan.FromSeconds(5));
