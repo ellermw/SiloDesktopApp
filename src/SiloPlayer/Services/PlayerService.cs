@@ -3443,6 +3443,18 @@ public partial class PlayerService : IDisposable
                         (_playbackManager is { } loadManager &&
                             (loadManager.CurrentSession?.ProtocolVersion >= 3 || loadManager.CaptureLocalSubtitleIntent().HasSelection)
                             ? loadManager.SubtitleSelectionForLoad : (int?)null);
+                    // Legacy immediate/native picks need not create manager
+                    // intent. Re-resolve their executed identity after a direct
+                    // reopen cleared sid, but never across file/session/profile
+                    // boundaries or ahead of a newer pending choice.
+                    if (!resolvedSubtitleIndex.HasValue &&
+                        _playbackManager?.CurrentSession is { ProtocolVersion: < 3 } legacySession &&
+                        legacySession.MediaFileId == _executedSubtitleFileId &&
+                        legacySession.SessionId == _executedSubtitleSessionId &&
+                        _executedSubtitleContext is { } executedContext &&
+                        _activeAuthority.ApiClient.IsCurrentContext(executedContext) &&
+                        _executedSubtitleTrack is { } executedTrack)
+                        resolvedSubtitleIndex = ResolveReloadSubtitleChoice(executedTrack, _executedSubtitleFileId)?.Index;
                     var manualChoice = Volatile.Read(ref _subtitleSelectionOperation);
                     if (manualChoice is { Accepted: true } && IsCurrentSubtitleChoice(manualChoice) &&
                         Volatile.Read(ref manualChoice.PreferenceClaimed) == 0)
