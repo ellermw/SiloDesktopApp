@@ -96,7 +96,12 @@ public sealed class PlayerServiceSourceTests
         var method = source[start..end];
         var loop = method.IndexOf("while (true)", StringComparison.Ordinal);
         Assert.Contains("manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic)", method[..loop]);
-        Assert.Contains("manager.ReplanRecordedSubtitleSelectionAsync(position, ct)", method[loop..]);
+        // The guarded API submits retained identity too, but refuses an
+        // unmatched choice instead of reloading the previous burn-in grant.
+        Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", method[loop..]);
+        Assert.Contains("manager.ReplanCurrentSubtitleForOwnerAsync(position, currentOwner.CanUseSession,", method[loop..]);
+        Assert.DoesNotContain("manager.ReplanRecordedSubtitleSelectionAsync(", method[loop..]);
+        Assert.DoesNotContain("manager.TryRecordLocalSubtitleSelection(", method[loop..]);
         Assert.DoesNotContain("manager.ReplanSubtitleAsync(", method[loop..]);
         Assert.Contains("manager.CaptureLocalSubtitleIntent() != selectionIntent", method[loop..]);
         Assert.Contains("pendingOwner.MediaFileId == selectionIntent.MediaFileId", method[loop..]);

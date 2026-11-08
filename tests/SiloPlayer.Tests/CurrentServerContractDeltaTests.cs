@@ -35,7 +35,7 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);
         Assert.Contains("int? requestedIndex = track?.Index ?? postLoadSubtitleIndex", player);
         Assert.Contains("manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic)", player);
-        Assert.Contains("manager.ReplanRecordedSubtitleSelectionAsync(position, ct)", player);
+        Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", player);
         Assert.Contains("manager.ReplanCurrentSubtitleForOwnerAsync(position, currentOwner.CanUseSession,", player);
         var manager = Read("src", "SiloPlayer.Core", "Services", "PlaybackManager.cs");
         var start = manager.IndexOf("public async Task<PlaybackStartResponse?> ReplanCurrentSubtitleAsync(", StringComparison.Ordinal);

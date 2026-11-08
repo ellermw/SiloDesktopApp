@@ -88,7 +88,8 @@ public sealed class SubtitleIdentityTests
         var adopted = method.IndexOf("replanned = replacement;", superseded, StringComparison.Ordinal);
         Assert.True(superseded > rollbackEnd && adopted > superseded);
         Assert.Contains("return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);", method[superseded..adopted]);
-        Assert.Contains("manager.ReplanRecordedSubtitleSelectionAsync(position, ct)", method);
+        Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", method);
+        Assert.DoesNotContain("manager.ReplanRecordedSubtitleSelectionAsync(", method);
         Assert.DoesNotContain("manager.ReplanSubtitleAsync(requestedIndex", method);
     }
 
