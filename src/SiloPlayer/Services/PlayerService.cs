@@ -7156,11 +7156,12 @@ public partial class PlayerService : IDisposable
         _mpv.SendScriptMessage("osc-set-subtitles", json,
             session.MediaFileId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _subtitleMenuPending = false;
+        // A pending initial choice may still be downloading. Only execution
+        // may publish it as active; inventory publication retains the applied choice.
         _mpv.SendScriptMessage(
             "osc-set-active-subtitle",
-            (_pendingInitialServerSubtitleIndex ??
-                (_executedSubtitleFileId == session.MediaFileId && _executedSubtitleTrack is { } executed &&
-                    tracks.Contains(executed) ? executed.Index : -1))
+            (_executedSubtitleFileId == session.MediaFileId && _executedSubtitleTrack is { } executed &&
+                tracks.Contains(executed) ? executed.Index : -1)
                 .ToString(System.Globalization.CultureInfo.InvariantCulture));
         EnsureSubtitleSync();
         SendSubtitleSyncState();

@@ -508,7 +508,7 @@ public sealed class SubtitleIdentityTests
         var publish = source[start..end];
         Assert.Contains("_executedSubtitleFileId == session.MediaFileId && _executedSubtitleTrack is { } executed &&", publish);
         Assert.Contains("tracks.Contains(executed) ? executed.Index : -1", publish); // Unbound rows cannot highlight a reused index.
-        Assert.DoesNotContain("(_pendingInitialServerSubtitleIndex ?? -1)", publish);
+        Assert.DoesNotContain("_pendingInitialServerSubtitleIndex", publish); // Pending reads must never outrank executed identity.
     }
 
     [Fact]
