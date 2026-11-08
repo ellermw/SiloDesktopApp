@@ -1628,7 +1628,17 @@ public sealed class PlayerServiceSourceTests
         var byIndexPrefetch = byIndex.IndexOf("await PrefetchSubtitleSidecarForOwnerAsync(track, CurrentSelection);", StringComparison.Ordinal);
         Assert.True(byIndexPrefetch >= 0, "Load-time selection must download for its current owner before native selection.");
         var byIndexSelect = byIndex.IndexOf("SelectSubtitleTrackForOwner(track, CurrentSelection)", byIndexPrefetch, StringComparison.Ordinal);
-        Assert.InRange(byIndex.IndexOf("if (!CurrentSelection()) return false;", byIndexPrefetch, StringComparison.Ordinal), byIndexPrefetch, byIndexSelect);
+        // The stale-owner guard now also reconciles timing-only retirement.
+        // It must still return before any native selection, not fall through.
+        var byIndexCurrentCheck = byIndex.IndexOf("if (!CurrentSelection())", byIndexPrefetch, StringComparison.Ordinal);
+        var byIndexReadFailure = byIndex.IndexOf("if (readOutcome is SubtitlePrefetchOutcome.Busy", byIndexPrefetch, StringComparison.Ordinal);
+        Assert.InRange(byIndexCurrentCheck, byIndexPrefetch, byIndexSelect);
+        Assert.InRange(byIndexReadFailure, byIndexCurrentCheck, byIndexSelect);
+        var retiredSelection = byIndex[byIndexCurrentCheck..byIndexReadFailure].Replace("\r", "");
+        Assert.Contains("if (CurrentSelectionOwner() &&", retiredSelection);
+        Assert.Contains("RestoreExecutedSubtitleSelection(reapply: false, currentSelection: CurrentSelectionOwner)", retiredSelection);
+        Assert.Contains("ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);", retiredSelection);
+        Assert.EndsWith("return false;\n                }", retiredSelection.TrimEnd());
         Assert.Contains("CurrentSubtitleSidecarGeneration() == sidecarGeneration", byIndex);
         Assert.Contains("Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration", byIndex);
     }
