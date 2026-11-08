@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Home;
@@ -31,6 +32,40 @@ internal static partial class ArtworkMotionNativeFixture
                 PosterUrl = "https://artwork-motion.invalid/art/" + id,
             }, "title");
 
+            // Hold the shared blur result so unloading always happens before it is available.
+            var cache = typeof(LibraryGridCard).Assembly.GetType("SiloPlayer.Helpers.ThumbhashBitmaps")!;
+            var pending = (Dictionary<(string Hash, bool Dim), Task<ImageSource?>>)cache.GetField("Pending", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+            const string reloadHash = "2QcSHQRnh493V4dIh4eXh1h4kJUI";
+            var blurReady = new TaskCompletionSource<ImageSource?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            pending.Add((reloadHash, false), blurReady.Task);
+            try
+            {
+                wire.Gates["/art/placeholder-reload"] = heldGate;
+                card.Bind(new MediaItem
+                {
+                    ContentId = "placeholder-reload", Title = "placeholder-reload", Type = "movie", PosterThumbhash = reloadHash,
+                    PosterUrl = "https://artwork-motion.invalid/art/placeholder-reload",
+                }, "title");
+                Check(blur.Source == null && glow.Visibility == Visibility.Collapsed,
+                    "library blur is still pending before unloading");
+                var generation = typeof(DefaultArtwork).GetField("_generation", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                var beforeUnload = (int)generation.GetValue(fallback)!;
+                parent.Children.Remove(card);
+                await Until(() => !card.IsLoaded && (int)generation.GetValue(fallback)! != beforeUnload);
+                parent.Children.Add(card);
+                await Until(() => card.IsLoaded);
+                var picture = new WriteableBitmap(1, 1);
+                blurReady.TrySetResult(picture);
+                await Until(() => ReferenceEquals(blur.Source, picture));
+                Check(fallback.Visibility == Visibility.Visible && blur.Visibility == Visibility.Visible && image.Source == null,
+                    "reloaded library card restores a pending blur without waiting for its poster");
+            }
+            finally
+            {
+                pending.Remove((reloadHash, false));
+                blurReady.TrySetResult(null);
+            }
+
             wire.Gates["/art/placeholder-held"] = heldGate;
             BindHashed("placeholder-held");
             Check(glow.Visibility == Visibility.Collapsed, "library loading card hides the type mark behind its blur");
@@ -51,7 +86,6 @@ internal static partial class ArtworkMotionNativeFixture
                 "a recycled card clears the previous poster at once, without fading it out");
             Check(blur.Source != null && fallback.Visibility == Visibility.Visible,
                 "a recycled card shows a cached blur in the same frame as the bind");
-            var cache = typeof(LibraryGridCard).Assembly.GetType("SiloPlayer.Helpers.ThumbhashBitmaps")!;
             var cached = (int)cache.GetProperty("Count", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
             var capacity = (int)cache.GetField("Capacity", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
             Check(cached > 0 && cached <= capacity, "the shared blur cache holds the blur and stays bounded");

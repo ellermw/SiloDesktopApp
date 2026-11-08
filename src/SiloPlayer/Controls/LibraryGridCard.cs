@@ -476,7 +476,9 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         if (_artworkOwner?.IsCurrent == false) { CancelPosterLoad(clearImage: true); return; }
         if (_artworkSuspended || MediaItem is not { } item || _posterImage.Source != null || _posterLoadCts != null) return;
         var url = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        if (string.IsNullOrWhiteSpace(url)) return;
+        if (string.IsNullOrWhiteSpace(url)) { _ = _artworkFallback.ShowThumbhashAsync(); return; }
+        // Unloading invalidates an unfinished blur; request it again for the current generation.
+        _artworkFallback.ShowLoadingThumbhash();
         _posterLoadCts = new CancellationTokenSource();
         _ = LoadPosterAsync(item, url, ++_posterLoadVersion, _posterLoadCts.Token);
     }
