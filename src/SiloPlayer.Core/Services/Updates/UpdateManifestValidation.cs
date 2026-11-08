@@ -7,9 +7,13 @@ namespace SiloPlayer.Core.Services.Updates;
 
 public static class UpdateManifestValidation
 {
-    // Protocol 2 requires the .NET 10 bootstrap. Protocol 1 clients reject this
-    // envelope and use the full installer instead of retaining their .NET 8 root.
+    // Highest protocol this client accepts. Protocol 2 marks a .NET 10 root bootstrap.
     public const int CurrentBootstrapProtocol = 2;
+    // Protocol every published release declares. Shipped clients up to 1.2.709 accept
+    // only 1; anything higher sends them to the windowless full installer instead of
+    // their in-app side-by-side update. Manifests carry client files only (never the
+    // root bootstrap), so protocol 1 stays correct for .NET 10 client packages.
+    public const int PublishedBootstrapProtocol = 1;
     public const string ManifestName = "SiloUpdate-Windows-x64.manifest.json";
     public const string PackName = "SiloUpdate-Windows-x64.pack";
     public const int MaximumManifestBytes = 2 * 1024 * 1024;

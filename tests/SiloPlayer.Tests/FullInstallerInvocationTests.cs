@@ -145,6 +145,41 @@ public sealed class FullInstallerInvocationTests
         finally { Directory.Delete(sandbox, true); }
     }
 
+    [Fact]
+    public async Task BuildRepairsPaddedProductVersionSoShippedClientsAcceptTheInstaller()
+    {
+        var sandbox = Path.Combine(Path.GetTempPath(), "silo-version-text-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(sandbox);
+        var setup = Path.Combine(sandbox, "setup.exe");
+        try
+        {
+            var output = await RunAsync(sandbox, $$"""
+                $ErrorActionPreference='Stop'
+                # Inno pads ProductVersion with spaces to its fixed resource width.
+                $padded='1.2.811-beta.1'.PadRight(50)
+                Add-Type -TypeDefinition ('[assembly: System.Reflection.AssemblyFileVersion("1.2.810.1")] [assembly: System.Reflection.AssemblyInformationalVersion("'+$padded+'")] public static class SyntheticSetup { public static void Main() {} }') -OutputAssembly {{Quote(setup)}} -OutputType ConsoleApplication
+                $before=[Diagnostics.FileVersionInfo]::GetVersionInfo({{Quote(setup)}})
+                if($before.ProductVersion -cne $padded){throw ('Synthetic padding missing: ['+$before.ProductVersion+']')}
+                $size=(Get-Item -LiteralPath {{Quote(setup)}}).Length
+                & {{Quote(Repair)}} -Path {{Quote(setup)}} -ProductVersion '1.2.811-beta.1'
+                & {{Quote(Repair)}} -Path {{Quote(setup)}} -ProductVersion '1.2.811-beta.1'
+                $after=[Diagnostics.FileVersionInfo]::GetVersionInfo({{Quote(setup)}})
+                $wrong=$false;try{& {{Quote(Repair)}} -Path {{Quote(setup)}} -ProductVersion '1.2.812-beta.1'}catch{$wrong=$true}
+                # Clients up to 1.2.709 compare the text exactly (no trimming).
+                @{product=$after.ProductVersion;legacyAccepts=($after.ProductVersion -ceq '1.2.811-beta.1');
+                  sameSize=((Get-Item -LiteralPath {{Quote(setup)}}).Length -eq $size);wrongRejected=$wrong;file=$after.FileVersion}|ConvertTo-Json -Compress
+                """, 0);
+            using var result = JsonDocument.Parse(output);
+            Assert.Equal("1.2.811-beta.1", result.RootElement.GetProperty("product").GetString());
+            Assert.True(result.RootElement.GetProperty("legacyAccepts").GetBoolean());
+            Assert.True(result.RootElement.GetProperty("sameSize").GetBoolean());
+            Assert.True(result.RootElement.GetProperty("wrongRejected").GetBoolean());
+            Assert.Equal("1.2.810.1", result.RootElement.GetProperty("file").GetString());
+        }
+        finally { Directory.Delete(sandbox, true); }
+    }
+
+    private static string Repair => Path.Combine(TestRepository.Root, "installer", "Repair-InstallerVersionText.ps1");
     private static string Helper => Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Updates", "UpdateOnExit.ps1");
     private static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
 
