@@ -38,6 +38,15 @@ public partial class LibraryViewModel : ObservableObject
     private string? _catalogLibraryScope;
     private Task<bool>? _groupingTask;
     public bool IsGroupedCatalog => _catalogGroup == "box_set";
+    // A box set has no single file, so file properties cannot order aggregates; the server answers
+    // group=box_set with these sorts with 422 validation_failed (beta 1.2.812, Bitrate). Any other
+    // shape the server refuses is caught at load time and browsed ungrouped (_refusedGroupingKeys).
+    internal static readonly IReadOnlySet<string> UngroupableSorts = new HashSet<string>(StringComparer.Ordinal)
+        { "bitrate", "resolution", "runtime" };
+    internal static bool SupportsGroupedSort(string? sort) => string.IsNullOrEmpty(sort) || !UngroupableSorts.Contains(sort.TrimStart('-'));
+    // Query shapes the server refused to group. They browse ungrouped instead of failing.
+    private readonly HashSet<string> _refusedGroupingKeys = new(StringComparer.Ordinal);
+    private string GroupingRefusalKey() => $"{Library?.Id}|{SelectedType}|{SelectedSort}";
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
@@ -526,7 +535,8 @@ public partial class LibraryViewModel : ObservableObject
         try
         {
             var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" }
-                && SelectedType is null or "" or "movie" or "video";
+                && SelectedType is null or "" or "movie" or "video"
+                && SupportsGroupedSort(SelectedSort) && !_refusedGroupingKeys.Contains(GroupingRefusalKey());
             supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || version != _queryVersion) { return false; }
@@ -866,6 +876,30 @@ public partial class LibraryViewModel : ObservableObject
             await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
             // Only restore the optional rail after fresh cards succeed. A
             // failed cursor recovery must not trigger another capability read.
+            if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
+                _ = EnsureLetterIndexAsync();
+        }
+        catch (ApiException ex) when (ex.StatusCode == 422 && _catalogGroup == "box_set" && queryVersion == _queryVersion
+            && windowVersion == _windowLoadVersion && _catalogContext == _catalogApi.CaptureContext())
+        {
+            // The server refused to group this query shape (a sort or filter box sets cannot carry).
+            // Never leave the library empty: remember the refusal and browse this shape ungrouped.
+            _refusedGroupingKeys.Add(GroupingRefusalKey());
+            if (letterLoad is { IsCurrent: true }) letterLoad.Failed = true;
+            var estimatedTotal = TotalCount;
+            StartNewCatalogQuery();
+            _estimatedTotalItems = estimatedTotal;
+            TotalCount = estimatedTotal;
+            DisplayTotalCount = estimatedTotal;
+            Items.Reset(estimatedTotal);
+            SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_errors.txt",
+                $"catalog_grouping_refused start={startIndex} count={itemCount} sort={SelectedSort} type={SelectedType} code={ex.ErrorCode} query_version={_queryVersion} retry_ungrouped=true");
+            _pendingWindowStart = startIndex;
+            _pendingWindowEnd = startIndex + itemCount - 1;
+            var recoveryQueryVersion = _queryVersion;
+            IsLoading = false;
+            if (!await EnsureGroupingAsync() || recoveryQueryVersion != _queryVersion || IsGroupedCatalog) return;
+            await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
             if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
                 _ = EnsureLetterIndexAsync();
         }
