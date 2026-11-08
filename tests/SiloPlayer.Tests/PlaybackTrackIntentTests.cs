@@ -710,7 +710,7 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Fact]
-    public async Task SubmittingRecordedChoicePreservesItsOriginalVariantAcrossAReorderedGrant()
+    public async Task RecordedSubtitleVariantSurvivesRoundTripThroughAReorderedGrant()
     {
         using var scope = new Fixture(); scope.Wire.SubtitleVariants = true;
         var source = scope.Manager.WatchDetail!.Versions.Single(v => v.FileId == 42).SubtitleTracks!;
@@ -731,7 +731,7 @@ public sealed class PlaybackTrackIntentTests
     [InlineData(null, "")]
     [InlineData("", "und")]
     [InlineData(null, "und")]
-    public async Task SameFileReloadPreservesIdentitylessUnknownLanguageChoice(string? trackId, string language)
+    public async Task SameFileReloadPreservesIdentitylessUnknownLanguageChoiceWithIdentitylessInventory(string? trackId, string language)
     {
         using var scope = new Fixture();
         SetUnknownLanguageInventory(scope, language);
@@ -750,7 +750,7 @@ public sealed class PlaybackTrackIntentTests
     [Theory]
     [InlineData("")]
     [InlineData("und")]
-    public async Task QualityReplanSendsIdentitylessUnknownLanguageChoiceInsteadOfOff(string language)
+    public async Task QualityReplanSendsIdentitylessUnknownLanguageChoiceWithIdentitylessInventoryInsteadOfOff(string language)
     {
         using var scope = new Fixture();
         SetUnknownLanguageInventory(scope, language);
@@ -764,7 +764,7 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Fact]
-    public async Task UnknownLanguageMetadataFallbackRequiresUniqueOrRecordedSameFileRowAndRejectsUnavailable()
+    public async Task UnknownLanguageMetadataFallbackRejectsAmbiguousAndUnavailableRowsBeforeSameFileReload()
     {
         using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
         var session = scope.Manager.CurrentSession!;

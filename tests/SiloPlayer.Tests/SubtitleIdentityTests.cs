@@ -85,7 +85,7 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
-    public void LegacyFlyoutSearchUsesRetainedInventoryLanguage()
+    public void LegacyFlyoutSearchPassesRetainedInventoryLanguageToCapturedAuthority()
     {
         var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
         var start = source.IndexOf("private void PopulateSubtitleFlyout()", StringComparison.Ordinal);
@@ -93,7 +93,8 @@ public sealed class SubtitleIdentityTests
         Assert.True(start >= 0 && end > start);
         var method = source[start..end];
         Assert.Contains("var menu = _playerService.CaptureSubtitleMenuSnapshot();", method, StringComparison.Ordinal);
-        Assert.Contains("new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId,", method, StringComparison.Ordinal);
+        Assert.Contains("var searchAuthority = _playerService.ActiveAuthority;", method, StringComparison.Ordinal);
+        Assert.Contains("new SubtitleSearchDialog(searchAuthority, session.MediaFileId,", method, StringComparison.Ordinal);
         Assert.Contains("menu?.Entries.FirstOrDefault(entry => entry.Track.Index == activeSubtitleIndex).Track?.Language", method, StringComparison.Ordinal);
         Assert.DoesNotContain("subtitleUrls", method, StringComparison.Ordinal);
     }
