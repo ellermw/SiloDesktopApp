@@ -2108,7 +2108,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (scenario == "manual-reload-finished")
             {
                 subtitles.HoldOnlyFirstSubtitle = true;
-                var stale = (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+                var selection = (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
                 try
                 {
                     await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
@@ -2126,20 +2126,30 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     await replacementLoaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
                     await Until(() => (long)Get(service, "_subtitleSidecarGeneration")! > generationBeforeLoad &&
                         Get(service, "_loadedMediaInitCts") == null);
-                    Require(!stale.IsCompleted && wire.PreferenceWrites == 1,
-                        "Fixture did not finish the owning load before the original prefetch completed.");
-                    subtitles.Release.TrySetResult();
-                    await stale.WaitAsync(TimeSpan.FromSeconds(5));
+                    // BeginMpvLoad cancels the outgoing HTTP read, not the
+                    // manual choice. Its caller may finish after the new file
+                    // initializes; it must not need the canceled server reply.
+                    Require(await selection.WaitAsync(TimeSpan.FromSeconds(5)) &&
+                        !subtitles.Release.Task.IsCompleted && subtitles.EnglishRequests == 2,
+                        "The retained manual choice did not execute through a fresh read while the outgoing response stayed held.");
                     var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
+                    var sid = map.GetValueOrDefault(0);
                     Require(Get(service, "_pendingInitialServerSubtitleIndex") == null &&
-                        Get(service, "_pendingSubtitlePreferenceIndex") == null && wire.PreferenceWrites == 1 &&
-                        service.ActiveSubtitleServerIndex == 0 && map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid,
-                        "A late prefetch refilled an already-consumed selection or preference slot.");
+                        Get(service, "_pendingSubtitlePreferenceIndex") == null && Get(service, "_pendingSubtitlePreferenceOwner") == null &&
+                        wire.RequestedPreferences.SequenceEqual(new[] { 0 }) && service.ActiveSubtitleServerIndex == 0 &&
+                        sid > 0 && mpv.GetPropertyDouble("sid") == sid,
+                        "The retained manual choice was not applied and persisted exactly once after the replacement load.");
+                    subtitles.Release.TrySetResult();
+                    Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, false)! &&
+                        subtitles.EnglishRequests == 2 && wire.RequestedPreferences.SequenceEqual(new[] { 0 }) &&
+                        mpv.GetPropertyDouble("sid") == sid && Get(service, "_pendingSubtitlePreferenceIndex") == null &&
+                        Get(service, "_pendingSubtitlePreferenceOwner") == null,
+                        "A late response or repeated completion refilled the consumed selection/preference or replaced its current SID.");
                 }
                 finally
                 {
                     subtitles.Release.TrySetResult();
-                    await stale.WaitAsync(TimeSpan.FromSeconds(5));
+                    await selection.WaitAsync(TimeSpan.FromSeconds(5));
                 }
                 return;
             }

@@ -172,6 +172,29 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void SupersededBitmapAfterSeekDrainRescuesOnlyTheLatestAcceptedDeferredChoice()
+    {
+        var burn = Between(Read("PlayerService.cs"), "private async Task<SubtitleTransportResult> SetBitmapSubtitleBurnInForOwnerAsync(",
+            "private void MarkSubtitleSelectionDeferred(");
+        var superseded = Between(burn, "if (!ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)))",
+            "if (_activeSubtitleServerIndex != (requestedIndex ?? -1)");
+        Assert.Contains("lock (_subtitleTrackStateLock)", superseded);
+        Assert.Contains("Volatile.Read(ref _subtitleSelectionOperation) is { Accepted: true } latest", superseded);
+        Assert.Contains("IsCurrentSubtitleChoice(latest)", superseded);
+        Assert.Contains("_pendingSubtitlePreferenceOwner is { NeedsDeferredExecution: true } deferred", superseded);
+        Assert.Contains("ReferenceEquals(latest.PreferenceOwner, deferred) && !ReferenceEquals(deferred, preferenceOwner)", superseded);
+        Assert.Contains("if (hasDeferredChoice)", superseded);
+        Assert.Contains("return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);", superseded);
+        Assert.Contains("return SubtitleTransportResult.Superseded;", superseded);
+        var refusal = Between(burn, "void RefuseTentativeSubtitleSelection(", "SubtitleTransportResult RefuseOrRecoverSubtitleSelection(");
+        Assert.Contains("!loadStarted && HasOtherTransportOwner()", refusal);
+        Assert.Contains("SetSwitchingContent(false);", refusal);
+        Assert.Contains("IsLoading = false;", refusal);
+        Assert.Contains("reconcileDeferredSelection = true;", refusal);
+        Assert.Contains("await ReconcileDeferredSubtitleSelectionAsync(manager, session);", burn);
+    }
+
+    [Fact]
     public void KnownPgsUsesOneBoundedDiskDownloadInsteadOfTheTextProbe()
     {
         var prefetch = Between(Read("PlayerService.cs"), "private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForOwnerAsync(",

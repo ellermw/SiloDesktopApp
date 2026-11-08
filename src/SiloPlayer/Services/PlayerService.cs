@@ -5985,9 +5985,23 @@ public partial class PlayerService : IDisposable
         {
             // A newer manual pick owns the choice before its prefetch accepts
             // an index or manager intent. Do not start an older queued replan.
-            if (!CurrentOwner() || !ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) ||
-                manager.CurrentSession != session || _mpv == null)
+            if (!CurrentOwner() || manager.CurrentSession != session || _mpv == null)
                 return SubtitleTransportResult.Superseded;
+            if (!ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)))
+            {
+                // Draining a seek can leave loading flags without a successor
+                // FILE_LOADED. Give a newer accepted deferred pick its executor,
+                // but never roll back or publish over a still-reading preflight.
+                bool hasDeferredChoice;
+                lock (_subtitleTrackStateLock)
+                    hasDeferredChoice = Volatile.Read(ref _subtitleSelectionOperation) is { Accepted: true } latest &&
+                        IsCurrentSubtitleChoice(latest) &&
+                        _pendingSubtitlePreferenceOwner is { NeedsDeferredExecution: true } deferred &&
+                        ReferenceEquals(latest.PreferenceOwner, deferred) && !ReferenceEquals(deferred, preferenceOwner);
+                if (hasDeferredChoice)
+                    return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);
+                return SubtitleTransportResult.Superseded;
+            }
             if (_activeSubtitleServerIndex != (requestedIndex ?? -1) ||
                 track != null && !session.SubtitleUrls.Contains(track))
                 return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);
