@@ -85,7 +85,7 @@ public sealed class SubtitleIdentityTests
     }
 
     [Fact]
-    public void LegacyFlyoutSearchUsesRetainedInventoryLanguage()
+    public void LegacyFlyoutSearchPassesRetainedInventoryLanguageToCapturedAuthority()
     {
         var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
         var start = source.IndexOf("private void PopulateSubtitleFlyout()", StringComparison.Ordinal);
@@ -93,7 +93,8 @@ public sealed class SubtitleIdentityTests
         Assert.True(start >= 0 && end > start);
         var method = source[start..end];
         Assert.Contains("var menu = _playerService.CaptureSubtitleMenuSnapshot();", method, StringComparison.Ordinal);
-        Assert.Contains("new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId,", method, StringComparison.Ordinal);
+        Assert.Contains("var searchAuthority = _playerService.ActiveAuthority;", method, StringComparison.Ordinal);
+        Assert.Contains("new SubtitleSearchDialog(searchAuthority, session.MediaFileId,", method, StringComparison.Ordinal);
         Assert.Contains("menu?.Entries.FirstOrDefault(entry => entry.Track.Index == activeSubtitleIndex).Track?.Language", method, StringComparison.Ordinal);
         Assert.DoesNotContain("subtitleUrls", method, StringComparison.Ordinal);
     }
@@ -152,10 +153,11 @@ public sealed class SubtitleIdentityTests
         var capturePreference = method.IndexOf("var preferenceOwner = _pendingSubtitlePreferenceOwner;", StringComparison.Ordinal);
         Assert.True(captureIntent >= 0 && captureIntent < drain);
         Assert.True(capturePreference >= 0 && capturePreference < drain);
-        var supersededBeforeMutation = method.IndexOf("if (_activeSubtitleServerIndex != (requestedIndex ?? -1)", StringComparison.Ordinal);
+        var supersededBeforeMutation = method.IndexOf("_activeSubtitleServerIndex != (requestedIndex ?? -1)", StringComparison.Ordinal);
         var mutation = method.IndexOf("transportMutationAttempted = true;", StringComparison.Ordinal);
         Assert.True(supersededBeforeMutation >= 0 && mutation > supersededBeforeMutation);
         Assert.Contains("return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);", method[supersededBeforeMutation..mutation]);
+        Assert.Contains("manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic)", method[..mutation]);
         Assert.DoesNotContain("var inheritedPendingLoad =", method);
         Assert.DoesNotContain("_restorePausedAfterLoad.HasValue", rollback);
         var ownLoadingState = rollback.IndexOf("if (!preserveTransportState)", StringComparison.Ordinal);
@@ -180,8 +182,8 @@ public sealed class SubtitleIdentityTests
         Assert.True(superseded > rollbackEnd && adopted > superseded);
         Assert.Contains("return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);", method[superseded..adopted]);
         Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", method);
+        Assert.DoesNotContain("manager.ReplanRecordedSubtitleSelectionAsync(", method);
         Assert.DoesNotContain("manager.ReplanSubtitleAsync(requestedIndex", method);
-        Assert.Contains("track != null && !session.SubtitleUrls.Contains(track)", method);
     }
 
     [Fact]
@@ -599,7 +601,41 @@ public sealed class SubtitleIdentityTests
         var publish = source[start..end];
         Assert.Contains("_executedSubtitleFileId == session.MediaFileId && _executedSubtitleTrack is { } executed &&", publish);
         Assert.Contains("tracks.Contains(executed) ? executed.Index : -1", publish); // Unbound rows cannot highlight a reused index.
-        Assert.DoesNotContain("(_pendingInitialServerSubtitleIndex ?? -1)", publish);
+        Assert.DoesNotContain("_pendingInitialServerSubtitleIndex", publish); // Pending reads must never outrank executed identity.
+    }
+
+    [Fact]
+    public void KnownUnavailableIdentityDoesNotBecomeAnotherAvailableTrack()
+    {
+        WithManager(manager =>
+        {
+            var original = new SubtitleTrackInfo { Index = 2, TrackId = "old", Language = "eng", Codec = "ass" };
+            var session = new PlaybackStartResponse { MediaFileId = 42, SubtitleUrls = [original] };
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, session);
+            manager.RecordLocalSubtitleSelection(2);
+            var intent = manager.CaptureLocalSubtitleIntent();
+            session.SubtitleUrls = [new() { Index = 2, TrackId = "old", Language = "eng", Codec = "ass", Unplayable = true }, new() { Index = 8, Language = "eng", Codec = "ass" }];
+            Assert.Equal(-1, manager.SubtitleSelectionForLoad);
+            Assert.Equal(intent, manager.CaptureLocalSubtitleIntent());
+            session.SubtitleUrls = [new() { Index = 8, TrackId = "old", Language = "eng", Codec = "ass" }];
+            Assert.Equal(8, manager.SubtitleSelectionForLoad);
+            Assert.Equal(intent, manager.CaptureLocalSubtitleIntent());
+        });
+    }
+
+    [Fact]
+    public void LegacyFlyoutSearchUsesRetainedInventoryLanguage()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs"));
+        var start = source.IndexOf("private void PopulateSubtitleFlyout()", StringComparison.Ordinal);
+        var end = source.IndexOf("private void SubtitleFlyout_Opening(", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+        Assert.Contains("var menu = _playerService.CaptureSubtitleMenuSnapshot();", method, StringComparison.Ordinal);
+        Assert.Contains("var searchAuthority = _playerService.ActiveAuthority;", method, StringComparison.Ordinal);
+        Assert.Contains("new SubtitleSearchDialog(searchAuthority, session.MediaFileId,", method, StringComparison.Ordinal);
+        Assert.Contains("menu?.Entries.FirstOrDefault(entry => entry.Track.Index == activeSubtitleIndex).Track?.Language", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("subtitleUrls", method, StringComparison.Ordinal);
     }
 
     [Fact]

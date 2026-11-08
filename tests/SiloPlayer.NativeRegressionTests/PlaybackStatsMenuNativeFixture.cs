@@ -88,7 +88,7 @@ internal static class PlaybackStatsMenuNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_STATS_CASE") == "busy")
             {
                 wire.HoldFailedReplan = true;
-                busyOperation = (Task)Call(service, "SwitchQualityTierAsync", "720p", null, null, null)!;
+                busyOperation = (Task)Call(service, "SwitchQualityTierAsync", "720p", null, null)!;
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 Require(service.IsLoading && service.IsQualitySwitchActive, "The real held replan did not own busy state.");
                 var busyRevision = (long)Get(service, "_playbackBusyRevision")!;

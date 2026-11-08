@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string] $AppDirectory,
-    [ValidateSet('video-speed', 'native-speed-menu', 'native-speed-all', 'native-more-menu', 'native-chapters-menu', 'native-quality-delivery', 'native-quality-review', 'native-quality-terminal-legacy', 'native-stats-menu', 'native-party-actions', 'native-party-menu', 'native-party-direct', 'native-party-end', 'native-party-stale', 'native-party-refreshed', 'native-quality-all', 'native-quality-retired', 'native-quality-release', 'native-quality-successors', 'native-menu-geometry', 'native-menu-resize', 'native-quality-menu', 'native-audio-menu', 'oct20-playback', 'request-interactions', 'conditional-dialogs', 'media-parity', 'account-parity', 'account-coverage', 'account-latest', 'browse-parity', 'browse-acceptance', 'request-detail-parity', 'shared-controls', 'personal-lists', 'upstream-shell', 'shared-appearance', 'settings-visual-regressions', 'library-cursor', 'library-letters', 'server-favicon', 'osc-hud-states')][string] $Only
+    # Program.cs owns selector validation; do not maintain a second list here.
+    [string] $Only
 )
 
 $ErrorActionPreference = 'Stop'

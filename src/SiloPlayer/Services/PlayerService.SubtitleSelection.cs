@@ -23,7 +23,6 @@ public partial class PlayerService
         public void Dispose() => source.Dispose();
     }
     private SubtitleSelectionOperation? _subtitleSelectionOperation;
-    private SubtitleSelectionOperation? _subtitleReadOperation;
     private sealed record PreparedSubtitleReload(SubtitleSelectionOperation? Owner, string SessionId, int MediaFileId, int Index,
         string? TrackId, string? SyncKey, long? Id, string Path, long PlayRequest, string? Content,
         SiloPlayer.Core.Api.ApiRequestContext Context);
@@ -103,10 +102,28 @@ public partial class PlayerService
         CancelSubtitleSelectionRead();
         return next;
     }
-    private SubtitleSelectionOperation BeginSubtitleRead()
+    private sealed class SubtitleReadOperation : IDisposable
     {
-        var next = new SubtitleSelectionOperation();
-        Interlocked.Exchange(ref _subtitleReadOperation, next)?.Cancel();
+        private readonly CancellationTokenSource source = new();
+        public CancellationToken Token { get; }
+        public SubtitleReadOperation() => Token = source.Token;
+        public void Cancel() { try { source.Cancel(); } catch (ObjectDisposedException) { } }
+        public void Dispose() => source.Dispose();
+    }
+    private SubtitleReadOperation? _subtitleReadOperation;
+    private SubtitleReadOperation? BeginSubtitleRead(Func<bool>? current = null)
+    {
+        SubtitleReadOperation next;
+        SubtitleReadOperation? previous;
+        lock (_subtitleTrackStateLock)
+        {
+            if (current?.Invoke() == false) return null;
+            next = new SubtitleReadOperation();
+            previous = Interlocked.Exchange(ref _subtitleReadOperation, next);
+        }
+        // Cancellation can run callbacks synchronously. Neither callbacks nor
+        // prefetch I/O may run while owning the subtitle state lock.
+        previous?.Cancel();
         return next;
     }
     private void CancelSubtitleSelectionRead() => Volatile.Read(ref _subtitleReadOperation)?.Cancel();
@@ -186,19 +203,26 @@ public partial class PlayerService
         return tracks.FirstOrDefault(t => t.Index == index);
     }
 
-    private enum SubtitlePrefetchOutcome { Ready, Fallback, Busy, Error, TooLarge, TimedOut, Retired }
+    private enum SubtitlePrefetchOutcome { Ready, Fallback, Busy, Error, DownloadLimit, BitmapDownloadLimit, Timeout, TooLarge, TimedOut, Retired }
+
+    private static bool IsSubtitleReadFailure(SubtitlePrefetchOutcome outcome)
+        => outcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.DownloadLimit
+            or SubtitlePrefetchOutcome.BitmapDownloadLimit or SubtitlePrefetchOutcome.Timeout
+            or SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut;
 
     private void ShowSubtitleReadFailure(SubtitlePrefetchOutcome outcome)
     {
         if (outcome == SubtitlePrefetchOutcome.Busy)
             ShowSubtitleReadBusy();
-        else if (outcome is SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut)
+        else if (IsSubtitleReadFailure(outcome))
         {
             _mpv?.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
             var detail = outcome switch
             {
+                SubtitlePrefetchOutcome.DownloadLimit => "This subtitle exceeds the 16 MiB download limit. Choose another subtitle or turn subtitles off.",
+                SubtitlePrefetchOutcome.BitmapDownloadLimit => "This subtitle exceeds the 256 MiB download limit. Choose another subtitle or turn subtitles off.",
                 SubtitlePrefetchOutcome.TooLarge => "This subtitle exceeds its download limit. Choose another subtitle or turn subtitles off.",
-                SubtitlePrefetchOutcome.TimedOut => "Subtitle download timed out. The server may still be extracting the track. Try again or choose another subtitle.",
+                SubtitlePrefetchOutcome.Timeout or SubtitlePrefetchOutcome.TimedOut => "Subtitle download timed out. The server may still be extracting the track. Try again or choose another subtitle.",
                 _ => "This subtitle could not be loaded. Choose another subtitle or try again after checking your connection and available disk space.",
             };
             ShowNotice("Subtitle could not be loaded", detail, "warning");

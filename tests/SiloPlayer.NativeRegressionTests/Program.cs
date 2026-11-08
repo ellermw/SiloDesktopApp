@@ -81,7 +81,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
         "live-successor-success-seek", "late-preference", "retired-presentation", "own-load-failure", "access-refresh", "noop-invalidation",
         "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor",
         "access-refresh-replan", "accepted-version", "quality-second-step-failure", "quality-second-step-cancellation",
-        "audio-plan-invalidation", "quality-plan-invalidation"];
+        "audio-plan-invalidation", "quality-plan-invalidation", "terminal-held-failure", "alternate-file"];
     public IXamlType GetXamlType(Type type) => _provider.GetXamlType(type);
     public IXamlType GetXamlType(string name) => _provider.GetXamlType(name);
     public XmlnsDefinition[] GetXmlnsDefinitions() => _provider.GetXmlnsDefinitions();
@@ -285,6 +285,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PlaybackChapterMenuNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-subtitle-dialogs")
+            {
+                await PlaybackAudioMenuNativeFixture.RunSubtitleDialogsAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-subtitle-menu" or "native-subtitle-failure" or "subtitle-exact-failed-sidecar")
+            {
+                await PlaybackAudioMenuNativeFixture.RunSubtitleAsync(_window, Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-subtitle-failure");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-menu-geometry" or "native-menu-resize")
             {
                 var previous = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
@@ -318,76 +328,9 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                     await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-quality-review" or "native-quality-terminal-legacy")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-stats-menu")
             {
-                var failures = new List<Exception>();
-                var modes = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-terminal-legacy"
-                    ? new[] { "terminal-legacy-version", "terminal-legacy-quality" }
-                    : NativeQualityReviewCases;
-                foreach (var mode in modes)
-                {
-                    try { await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode); }
-                    catch (Exception error) { Program.Log($"FAIL [{mode}]: {error.Message}"); failures.Add(error); }
-                }
-                if (failures.Count > 0) throw new AggregateException("Native Quality review regressions failed.", failures);
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-menu")
-            {
-                await PlaybackQualityMenuNativeFixture.RunAsync(_window);
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-retired")
-            {
-                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "retired");
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-release")
-            {
-                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "release");
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-successors")
-            {
-                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "successor-failure");
-                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "successor-success");
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            var mergedAudioCases = NativeAudioCases.Concat(new[] {
-                "earlier-file-loaded", "earlier-file-loaded-failure", "quality-audio-successor",
-                "access-refresh-replan", "accepted-version", "quality-second-step-failure", "quality-second-step-cancellation",
-                "audio-plan-invalidation", "quality-plan-invalidation" }).ToArray();
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-menu-geometry" or "native-menu-resize")
-            {
-                var previous = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
-                try
-                {
-                    Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-menu-geometry" ? "geometry" : "resize");
-                    await PlaybackAudioMenuNativeFixture.RunAsync(_window);
-                }
-                finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", previous); }
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-delivery")
-            {
-                foreach (var mode in NativeQualityBaseCases.Concat(NativeQualityReviewCases))
-                    await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
-                var originalAudioCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
-                try
-                {
-                    foreach (var audioCase in mergedAudioCases.Concat(new[] { "geometry", "resize" }))
-                    {
-                        Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", audioCase);
-                        await PlaybackAudioMenuNativeFixture.RunAsync(_window);
-                    }
-                }
-                finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", originalAudioCase); }
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-all")
-            {
-                foreach (var mode in NativeQualityBaseCases)
-                    await PlaybackQualityMenuNativeFixture.RunAsync(_window, mode);
+                await PlaybackStatsMenuNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "native-quality-review" or "native-quality-terminal-legacy")
@@ -440,7 +383,6 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                     }
                 }
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", selectedAudioCase); }
-
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")
@@ -449,11 +391,6 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 if (string.IsNullOrEmpty(reviewCase))
                     await OscHudStatesNativeFixture.RunAsync(_window);
                 await OscHudStatesNativeFixture.RunAsync(_window, reviewCase ?? "all");
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-stats-menu")
-            {
-                await PlaybackStatsMenuNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
@@ -659,32 +596,6 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await SubtitleIdentityNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-compatibility")
-            {
-                await SubtitleIdentityNativeFixture.RunAsync(parent);
-                await SubtitleIdentityNativeFixture.RunAsync(parent, unresolvedOnly: true);
-                await SubtitleIdentityNativeFixture.RunAsync(parent, regionalOnly: true);
-                await Oct24SubtitleAdoptionNativeFixture.RunAsync(parent);
-                await BurnedInSubtitleSwitchNativeFixture.RunAsync(parent);
-                await WatchPartyNativeFixture.RunAsync();
-                await WatchPartyTimingNativeFixture.RunAsync();
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-regional")
-            {
-                await SubtitleIdentityNativeFixture.RunAsync(parent, regionalOnly: true);
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-unresolved")
-            {
-                await SubtitleIdentityNativeFixture.RunAsync(parent, unresolvedOnly: true);
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-identity")
-            {
-                await SubtitleIdentityNativeFixture.RunAsync(parent);
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-cue-authority")
             {
                 await SubtitleCueAuthorityNativeFixture.RunAsync(parent);
@@ -713,6 +624,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-accepted-reload")
             {
                 await SubtitleSidecarOwnershipNativeFixture.RunAcceptedReloadAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-bitmap-ownership")
+            {
+                await SubtitleSidecarOwnershipNativeFixture.RunBitmapOwnershipAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-ai-refresh-ownership")
+            {
+                await SubtitleSidecarOwnershipNativeFixture.RunAiRefreshOwnershipAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-sidecar-busy")

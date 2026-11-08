@@ -1,12 +1,12 @@
 # Active OSC feedback and input ownership
 
-## Current integrated source identity — PR #91
+## Current integrated source identity — PR #94 merge
 
-Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta PR #90 input `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
+Native Chapters source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta PR #90 input `2e359e6055440789dfc7e42b171519e5e9c58ee3`. These are historical input identities, not the final PR #94 merged head.
 
 Source version: `1.2.814-beta.1`; numeric version: `1.2.813.1`.
 
-The app, update host, launcher and installer defaults already carry these stamps; this merge changes none. Native Chapters and compact More are combined with Beta's owned native Audio, Quality and Watch Party controls. These input identities are not a build, test or release receipt for the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify this merge.
+The app, update host, launcher and installer defaults already carry these stamps; this merge changes none. PR #94's native Subtitles and composed OSC menu flows are combined with Beta's owned native Audio, Quality, Watch Party, Chapters, compact More, Playback info and Playback speed controls. These input identities are not a build, test or release receipt for the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify this merge.
 
 ## Historical PR #86 scope
 

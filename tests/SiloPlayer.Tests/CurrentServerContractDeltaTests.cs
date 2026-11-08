@@ -33,8 +33,10 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("MediaFileId", response);
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);
-        Assert.Contains("int? requestedIndex = track?.Index;", player);
+        Assert.Contains("int? requestedIndex = track?.Index ?? postLoadSubtitleIndex", player);
+        Assert.Contains("manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic)", player);
         Assert.Contains("manager.ReplanCurrentSubtitleAsync(position, ct)", player);
+        Assert.Contains("manager.ReplanCurrentSubtitleForOwnerAsync(position, currentOwner.CanUseSession,", player);
         var manager = Read("src", "SiloPlayer.Core", "Services", "PlaybackManager.cs");
         var start = manager.IndexOf("public async Task<PlaybackStartResponse?> ReplanCurrentSubtitleAsync(", StringComparison.Ordinal);
         var end = manager.IndexOf("public Task<PlaybackStartResponse> ReplanSeekAsync(", start, StringComparison.Ordinal);
@@ -50,9 +52,8 @@ public sealed class CurrentServerContractDeltaTests
     public void TextSubtitleSelectionClearsActiveBitmapBurnInFirst()
     {
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
-        Assert.Matches(@"if \(manager\?\.CurrentSession\?\.IsSubtitleBurnedIn == true\)\s*\{\s*var result = await SetBitmapSubtitleBurnInForOwnerAsync\(track, currentOwner\);", player);
-        Assert.Contains("=> await SetBitmapSubtitleBurnInForOwnerAsync(track, null);", player);
-        Assert.Contains("var resolvedIndex = manager.SubtitleSelectionForLoad;", player);
+        Assert.Matches(@"if \(manager\?\.CurrentSession\?\.IsSubtitleBurnedIn == true\)\s*\{\s*var result = await SetBitmapSubtitleBurnInAsync\(null, postLoadSubtitleIndex: track.Index,\s*expectedSession: admittedSession, postLoadTrack: track, currentOwner: currentOwner\);", player);
+        Assert.Contains("resolvedIndex = manager.SubtitleSelectionForLoad;", player);
         Assert.Contains("_pendingInitialServerSubtitleIndex = resolvedIndex;", player);
         Assert.Contains("candidate.Index == resolvedIndex", player);
         Assert.DoesNotContain("_pendingInitialServerSubtitleIndex = postLoadSubtitleIndex", player);

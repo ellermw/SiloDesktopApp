@@ -4,6 +4,64 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    // Match the application's P/Invoke library lifetime. Keep the module loaded
+    // while still creating and destroying a fresh mpv context for every case.
+    private static readonly Lazy<IntPtr> SharedLibrary = new(() =>
+        NativeLibrary.Load(Path.Combine(FindRepositoryRoot(), "libs", "mpv", "libmpv-2.dll")));
+
+    [Theory]
+    [InlineData(960, 550)]
+    [InlineData(1920, 1080)]
+    public void CaptionsSkipRouteDisabledRowsUntilTheHostRepublishesAnAvailableRoute(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","unplayable":true},{"index":12,"language":"ja","unplayable":false}]', '42')
+            handlers['osc-set-active-subtitle']('-1')
+            state.subtitle_menu_visible = true
+            state.keyboard_menu_kind, state.keyboard_menu_index = 'subtitles', 2
+            osc_test_layout(); osc_test_render_subtitles()
+            local row
+            for _, item in ipairs(state.subtitle_menu_items) do if item.index == 7 then row = item end end
+            assert(row and row.disabled and state.subtitle_menu_overlay.data:find('Unavailable', 1, true), 'Route-disabled row was hidden or actionable')
+            osc_test_menu_activate()
+            state.mouse_x, state.mouse_y = row.x + 5, row.y + 5
+            osc_test_mouse_down()
+            assert(#intents == 0, 'Route-disabled pointer/keyboard selection dispatched')
+            keys['silo-captions-toggle']()
+            assert(table.concat(intents, ',') == '12', 'CC selected the route-disabled row before a playable row')
+            handlers['osc-set-active-subtitle']('-1')
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","unplayable":true}]', '42')
+            keys['silo-captions-toggle']()
+            assert(#intents == 1 and state.active_subtitle == -1, 'CC selected the only route-disabled row')
+            -- FILE_LOADED/host inventory publication can establish a route;
+            -- the row must become selectable without mutating the saved choice.
+            handlers['osc-set-subtitles']('[{"index":7,"language":"en","unplayable":false}]', '42')
+            keys['silo-captions-toggle']()
+            mp.set_property('user-data/subtitle-route-refresh', table.concat(intents, ','))
+            """, rawAss: true, windowWidth: width, windowHeight: height,
+            resultProperty: "user-data/subtitle-route-refresh", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'mouse-pos' then return {x=-1, y=-1} end
+                return native(name, fallback)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-select' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("12,7", output);
+    }
+
     [Theory]
     [InlineData("track_id")]
     [InlineData("sync_key")]
@@ -1221,7 +1279,7 @@ public sealed partial class MpvOscRuntimeTests
                 mp.commandv('script-message', 'osc-toggle-stats')
             end)
             """);
-        var library = NativeLibrary.Load(Path.Combine(root, "libs", "mpv", "libmpv-2.dll"));
+        var library = SharedLibrary.Value;
         var handle = LoadDelegate<MpvCreate>(library, "mpv_create")();
         try
         {
@@ -1250,7 +1308,6 @@ public sealed partial class MpvOscRuntimeTests
         finally
         {
             LoadDelegate<MpvTerminateDestroy>(library, "mpv_terminate_destroy")(handle);
-            NativeLibrary.Free(library);
             File.Delete(probe);
         }
     }
@@ -1277,7 +1334,7 @@ public sealed partial class MpvOscRuntimeTests
 
         try
         {
-            library = NativeLibrary.Load(libraryPath);
+            library = SharedLibrary.Value;
             var create = LoadDelegate<MpvCreate>(library, "mpv_create");
             var setOption = LoadDelegate<MpvSetOptionString>(library, "mpv_set_option_string");
             var initialize = LoadDelegate<MpvInitialize>(library, "mpv_initialize");
@@ -1314,8 +1371,6 @@ public sealed partial class MpvOscRuntimeTests
         {
             if (handle != IntPtr.Zero)
                 terminate?.Invoke(handle);
-            if (library != IntPtr.Zero)
-                NativeLibrary.Free(library);
         }
 
         try

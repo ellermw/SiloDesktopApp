@@ -286,7 +286,8 @@ public sealed partial class MpvOscRuntimeTests
                 and tonumber(request[4]) > 0 and tonumber(request[7]) > 0 and tonumber(request[8]) > 0
             mp.set_property('user-data/native-audio-result', tostring(#native_requests)..':'..tostring(s.audio_menu_visible)..':'..tostring(scoped))
             """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
-            windowWidth: width, windowHeight: height);
+            windowWidth: width, windowHeight: height,
+            scriptOverride: Environment.GetEnvironmentVariable("SILO_OSC_AUDIO_CURRENT_SOURCE_OVERRIDE"));
         Assert.Equal("1:false:true", output);
     }
 
@@ -512,7 +513,8 @@ public sealed partial class MpvOscRuntimeTests
             osc_test_activate()
             mp.set_property('user-data/native-audio-result', tostring(s.native_audio_capable)..':'..tostring(#native_requests)..':'..tostring(s.audio_menu_visible))
             """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
-            windowWidth: width, windowHeight: height);
+            windowWidth: width, windowHeight: height,
+            scriptOverride: Environment.GetEnvironmentVariable("SILO_OSC_AUDIO_CURRENT_SOURCE_OVERRIDE"));
         Assert.Equal("true:0:false", output);
     }
 
@@ -560,7 +562,8 @@ public sealed partial class MpvOscRuntimeTests
             assert(s.chapter_menu_overlay.data:find('CHAPTERS', 1, true))
             mp.set_property('user-data/native-audio-result', 'available-without-crash')
             """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe,
-            windowWidth: width, windowHeight: height);
+            windowWidth: width, windowHeight: height,
+            scriptOverride: Environment.GetEnvironmentVariable("SILO_OSC_AUDIO_CURRENT_SOURCE_OVERRIDE"));
         Assert.Equal("available-without-crash", output);
     }
 

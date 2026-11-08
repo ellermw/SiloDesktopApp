@@ -725,7 +725,7 @@ internal static class PlaybackCommonMenuNativeFixture
         {
             Title = i == 71 ? "A deliberately long multilingual audio label — 日本語 — " + new string('x', 180) : i == 1 ? "" : i == 2 ? "Duplicate title" : $"Audio source {i}",
             Language = i == 1 ? "" : i == 37 ? "ja" : "en", Codec = "aac", Channels = 2, Layout = "stereo", Default = i == 0,
-            Bitrate = i == 0 ? 640 : null, SampleRate = i == 0 ? 48000 : null,
+            Bitrate = i is 0 or 37 ? 640 : null, SampleRate = i is 0 or 37 ? 48000 : null,
         }).ToList(),
     };
 
@@ -1098,7 +1098,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
             new SettingsService(Path.Combine(Program.ResultDirectory, "native-audio-settings")), new SettingsApi(api));
         using var manager = new PlaybackManager(playback, catalog, auth, api);
         var version = Version();
-        manager.UseWatchDetail(new() { ContentId = "synthetic-video", Type = "movie", Versions = [version] });
+        var versions = new List<FileVersion> { version };
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "alternate-file")
+            versions.Add(new() { FileId = 43, Duration = 60, AudioTracks = version.AudioTracks!.AsEnumerable().Reverse().ToList() });
+        manager.UseWatchDetail(new() { ContentId = "synthetic-video", Type = "movie", Versions = versions });
         await manager.StartSessionAsync(42, audioTrackIndex: 37);
         using var video = new MpvVideoWindow();
         using var mpv = new MpvPlayer();
@@ -1156,9 +1159,11 @@ internal static partial class PlaybackAudioMenuNativeFixture
                         x=r.cx or 0,y=r.cy or 0,w=r.w or 0,h=r.h or 0,
                         width=state.osd_width,height=state.osd_height,scope=state.native_audio_scope or '',
                         qualityScope=state.native_quality_scope or '',
+                        path=mp.get_property('path', ''),
                         sequence=pending.sequence or 0,legacy=state.audio_menu_visible or false,
                         legacyAvailable=state.native_audio_legacy or false,directAudio=state.layout.btn_audio ~= nil,
                         notice=state.notice_visible or false,noticeTitle=state.notice_title or '',
+                        failure=state.playback_failure_visible or false,failureMessage=state.playback_failure_message or '',
                         closeConsume=fixture_close_consume,
                         compactX=(compactAudio.x or 0)+(compactAudio.w or 0)/2,
                         compactY=(compactAudio.y or 0)+(compactAudio.h or 0)/2}))
@@ -1181,6 +1186,39 @@ internal static partial class PlaybackAudioMenuNativeFixture
             var menu = await OpenFromOsc();
             var hwnd = MenuHwnd(menu);
             var list = (ListView)Get(menu, "_list")!;
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "alternate-file")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial Audio media publication did not settle.");
+                var originalScope = (await Query()).GetProperty("scope").GetString();
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                wire.AlternateAudioFile = true;
+                Call(menu, "Input", "end"); Call(menu, "Input", "activate");
+                await Until(() => (long)Get(service, "_playbackFileGeneration")! > initialLoad &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")!,
+                    "Native Audio abandoned an accepted replan to another file without loading it.");
+                var state = await Query();
+                var publication = Stopwatch.StartNew();
+                while ((string.IsNullOrEmpty(state.GetProperty("scope").GetString()) ||
+                    state.GetProperty("scope").GetString() == originalScope) && publication.Elapsed < TimeSpan.FromSeconds(8))
+                {
+                    await Task.Delay(20);
+                    state = await Query();
+                }
+                Require(wire.AudioPicks.Single() == 71 && manager.CurrentSession?.MediaFileId == 43 &&
+                    manager.CurrentSession.AudioTrackIndex == 0 && service.ActiveMediaFileId == 43 &&
+                    state.GetProperty("path").GetString() == media.Origin + "/replacement-video.y4m",
+                    "Cross-file Audio did not load the accepted replacement URL and remapped source index.");
+                Require(!string.IsNullOrEmpty(state.GetProperty("scope").GetString()) &&
+                    state.GetProperty("scope").GetString() != originalScope && mpv.IsPaused && service.IsPaused &&
+                    Menu(service) == null && Gate(service).CurrentCount == 1,
+                    "Cross-file Audio failed to republish its scope or preserve genuine pause and lease cleanup.");
+                menu = await OpenFromOsc();
+                Require(((ListView)Get(menu, "_list")!).SelectedIndex == 0,
+                    "Republished native Audio scope did not open against the replacement inventory.");
+                Call(menu, "Input", "cancel");
+                Program.Log("PASS: actual native Audio source71 replan adopts file43/index0, loads its replacement URL, republishes a usable scope and preserves genuine pause and dialog cleanup.");
+                return;
+            }
             if (compactClickCase || Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "keyboard-click")
             {
                 Call(menu, "Input", "cancel");
@@ -1662,6 +1700,51 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 return;
             }
             var overlapCase = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
+            if (overlapCase == "terminal-held-failure")
+            {
+                wire.HoldFailedReplan = true;
+                var initialLoad = (long)Get(service, "_playbackFileGeneration")!;
+                var audio = service.SwitchAudioTrackAsync(71);
+                await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                // Give the real loaded y4m one synthetic audio track. The
+                // predecessor FILE_LOADED cannot apply the retained ordinal
+                // 37/71 to that one-track inventory and must enter terminal.
+                var silence = Path.Combine(Program.ResultDirectory, "terminal-audio-silence.wav");
+                using (var writer = new BinaryWriter(File.Create(silence)))
+                {
+                    const int bytes = 16000;
+                    writer.Write("RIFF"u8); writer.Write(36 + bytes); writer.Write("WAVEfmt "u8); writer.Write(16);
+                    writer.Write((short)1); writer.Write((short)1); writer.Write(8000); writer.Write(16000);
+                    writer.Write((short)2); writer.Write((short)16); writer.Write("data"u8); writer.Write(bytes); writer.Write(new byte[bytes]);
+                }
+                Command(mpv, "audio-add", silence, "auto");
+                await Until(() => mpv.GetAudioTrackIds().Count == 1, "Synthetic terminal audio inventory was not loaded.");
+                Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan(manager.CurrentSession!));
+                Set(service, "_transportHasFirstOutput", true);
+                ((Action)Get(service, "_mpvFileLoadedHandler")!)();
+                var terminal = Get(service, "_playbackTerminalState");
+                Require(terminal != null && (string?)terminal.GetType().GetProperty("Trigger")!.GetValue(terminal) == "audio-selection-failed",
+                    "The actual FILE_LOADED audio selection did not enter its terminal route.");
+                var terminalError = service.ErrorMessage;
+                var before = await Query();
+                Require(before.GetProperty("failure").GetBoolean() && before.GetProperty("failureMessage").GetString() == terminalError,
+                    "The actual terminal Retry/Exit surface did not receive its audio-selection error.");
+                wire.ReleaseReplan.TrySetResult();
+                await audio.WaitAsync(TimeSpan.FromSeconds(8));
+                var after = await Query();
+                Require(ReferenceEquals(terminal, Get(service, "_playbackTerminalState")) && service.ErrorMessage == terminalError &&
+                    after.GetProperty("failure").GetBoolean() && after.GetProperty("failureMessage").GetString() == terminalError &&
+                    after.GetProperty("notice").GetBoolean() == before.GetProperty("notice").GetBoolean() &&
+                    after.GetProperty("noticeTitle").GetString() == before.GetProperty("noticeTitle").GetString(),
+                    "A late Audio HTTP failure overwrote the terminal error/notice or dismissed Retry/Exit.");
+                await service.SwitchAudioTrackAsync(0);
+                Require(wire.AudioPicks.Count == 1 && (long)Get(service, "_playbackFileGeneration")! == initialLoad &&
+                    !service.IsLoading && !(bool)Get(service, "_switchingContent")! && mpv.IsPaused &&
+                    Menu(service) == null && Gate(service).CurrentCount == 1,
+                    "Terminal Audio admitted another replan/load, resumed playback or stranded busy/menu ownership.");
+                Program.Log("PASS: held Audio HTTP failure after real FILE_LOADED audio-selection-failed preserves terminal error, Retry/Exit and pause; matching busy cleanup is silent and later Audio admission is inert.");
+                return;
+            }
             if (overlapCase is "earlier-file-loaded" or "earlier-file-loaded-failure")
             {
                 var failure = overlapCase == "earlier-file-loaded-failure";
@@ -1704,7 +1787,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 menu = await OpenFromOsc();
                 var initialError = service.ErrorMessage;
                 var quality = (Task)Call(service, "SwitchQualityTierAsync", "auto",
-                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession)!;
+                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession, null)!;
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => Menu(service) == null, "Buffering quality replacement left Audio live.");
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
@@ -2059,8 +2142,15 @@ internal static partial class PlaybackAudioMenuNativeFixture
     };
     private sealed class Wire(string origin, string mediaPath) : HttpMessageHandler
     {
+        internal bool EnableSubtitleSync;
+        internal readonly ConcurrentQueue<int> SubtitleSavedIndices = new();
+        internal int SubtitleSyncStarts, SubtitleTimingResets;
+        internal readonly TaskCompletionSource SubtitleSyncStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseSubtitleSync = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _subtitleTiming = 250;
         internal readonly ConcurrentQueue<int> AudioPicks = new();
         internal readonly ConcurrentQueue<string> ReplanOperations = new();
+        internal bool AlternateAudioFile;
         internal int ReplanFileId = 42;
         internal bool FailQualityReplan;
         internal bool HoldQualityReplan;
@@ -2088,6 +2178,30 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 await ReleasePreference.Task;
                 return new(FailHeldPreference ? HttpStatusCode.InternalServerError : HttpStatusCode.OK)
                     { Content = new StringContent("{}") };
+            }
+            if (request.Method == HttpMethod.Put && path.Contains("subtitle", StringComparison.Ordinal) && request.Content != null)
+            {
+                using var preference = JsonDocument.Parse(await request.Content.ReadAsStringAsync(ct));
+                if (preference.RootElement.TryGetProperty("subtitle_track_index", out var index)) SubtitleSavedIndices.Enqueue(index.GetInt32());
+            }
+            if (EnableSubtitleSync && path == "/api/v2/subtitles/sync/status") return Json("""{"state":"available","external":true}""");
+            if (EnableSubtitleSync && path.StartsWith("/api/v2/subtitles/42/sync", StringComparison.Ordinal))
+            {
+                if (request.Method == HttpMethod.Post)
+                {
+                    SubtitleSyncStarts++; SubtitleSyncStarted.TrySetResult();
+                    await ReleaseSubtitleSync.Task.WaitAsync(ct);
+                }
+                if (request.Method == HttpMethod.Put)
+                {
+                    Require(request.Headers.IfMatch.Count > 0, "Subtitle timing reset lost its ETag.");
+                    SubtitleTimingResets++; _subtitleTiming = 0;
+                }
+                var subtitle = new { key = "stored-1036", media_file_id = 42, source = "downloaded", language = "ja", format = "vtt",
+                    timing = new { offset_ms = _subtitleTiming, scale = 1 },
+                    sync = request.Method == HttpMethod.Post ? new { id = "1", status = "already_synced", trigger = "manual" } : null };
+                var response = Json(JsonSerializer.Serialize(path.EndsWith("/sync") ? (object)new { subtitles = new[] { subtitle } } : new { subtitle }));
+                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"subtitle-v1\""); return response;
             }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
@@ -2123,15 +2237,17 @@ internal static partial class PlaybackAudioMenuNativeFixture
                             { Content = new StringContent("{\"error\":\"Synthetic late audio replan failure\"}", Encoding.UTF8, "application/json") };
                 }
             }
-            var fileId = path.EndsWith("/replan") ? ReplanFileId : 42;
+            var fileId = path.EndsWith("/replan") ? AlternateAudioFile ? 43 : ReplanFileId : 42;
+            var audioIndex = AlternateAudioFile && fileId == 43 ? 71 - _audio : _audio;
+            var streamPath = AlternateAudioFile && fileId == 43 ? "/replacement-video.y4m" : mediaPath;
             return Json(JsonSerializer.Serialize(new
             {
                 protocol_version = 3, outcome = "playable", session_id = "native-audio-fixture",
                 playback_plan = new
                 {
                     plan_id = $"audio-plan-{AudioPicks.Count}", plan_attempt_key = "synthetic", session_id = "native-audio-fixture", effective_media_file_id = fileId,
-                    delivery = "original_http", stream = new { url = origin + mediaPath }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = $"file:{fileId}:audio:{_audio}", index = _audio }, subtitle = (object?)null },
+                    delivery = "original_http", stream = new { url = origin + streamPath }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
+                    selected_tracks = new { audio = new { id = $"file:{fileId}:audio:{audioIndex}", index = audioIndex }, subtitle = (object?)null },
                     subtitle = new { mode = "off", inventory = Array.Empty<object>() },
                 },
             }));
@@ -2140,6 +2256,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
     }
     internal sealed class MediaServer : IDisposable
     {
+        internal readonly TaskCompletionSource SubtitleReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseSubtitleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly HttpListener _listener = new();
         internal string Origin { get; }
         internal MediaServer()
@@ -2160,12 +2278,21 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 {
                     HttpListenerContext context;
                     try { context = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
-                    if (context.Request.Url?.AbsolutePath == "/fixture-subtitle.vtt")
+                    if (context.Request.Url?.AbsolutePath is "/fixture-subtitle.vtt" or "/held-subtitle.vtt")
                     {
+                        if (context.Request.Url.AbsolutePath == "/held-subtitle.vtt")
+                        {
+                            SubtitleReadStarted.TrySetResult();
+                            await ReleaseSubtitleRead.Task;
+                        }
                         var subtitle = Encoding.UTF8.GetBytes("WEBVTT\n\n00:00.000 --> 01:00.000\nSynthetic subtitle\n");
                         context.Response.ContentType = "text/vtt"; context.Response.ContentLength64 = subtitle.Length;
                         try { await context.Response.OutputStream.WriteAsync(subtitle); context.Response.Close(); } catch (HttpListenerException) { }
                         continue;
+                    }
+                    if (context.Request.Url?.AbsolutePath == "/missing-subtitle.vtt")
+                    {
+                        context.Response.StatusCode = 404; context.Response.ContentLength64 = 0; context.Response.Close(); continue;
                     }
                     var from = 0; var through = bytes.Length - 1;
                     context.Response.ContentType = "application/octet-stream";
@@ -2194,7 +2321,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 }
             });
         }
-        public void Dispose() => _listener.Close();
+        public void Dispose() { ReleaseSubtitleRead.TrySetResult(); _listener.Close(); }
     }
 
     /// <summary>Own-process foreground events only; no external window titles/content or control.</summary>

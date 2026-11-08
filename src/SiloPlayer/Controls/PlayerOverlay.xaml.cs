@@ -1366,18 +1366,27 @@ public sealed partial class PlayerOverlay : UserControl
             var addItem = CreatePlayerMenuButton(CreateIconLabel("\uE721", "Search Online…"));
             addItem.Click += async (_, _) =>
             {
-                var session = _playerService.Manager?.CurrentSession;
+                var manager = _playerService.Manager;
+                var session = manager?.CurrentSession;
                 if (session == null) return;
+                var searchAuthority = _playerService.ActiveAuthority;
+                var searchContext = searchAuthority.ApiClient.CaptureContext();
+                bool CurrentSearch() => ReferenceEquals(searchAuthority, _playerService.ActiveAuthority) &&
+                    searchAuthority.ApiClient.IsCurrentContext(searchContext) && ReferenceEquals(manager, _playerService.Manager) &&
+                    ReferenceEquals(session, manager?.CurrentSession);
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId,
+                var dialog = new SubtitleSearchDialog(searchAuthority, session.MediaFileId,
                     menu?.Entries.FirstOrDefault(entry => entry.Track.Index == activeSubtitleIndex).Track?.Language)
                 {
                     XamlRoot = XamlRoot
                 };
+                Func<bool>? searchActivation = null;
+                dialog.SubtitleDownloadStarted += () => searchActivation = _playerService.BeginSubtitleActivationIntent();
                 dialog.SubtitleDownloaded += async subtitleId =>
                 {
-                    await _playerService.RefreshSubtitlesAfterAiAsync(session.MediaFileId, subtitleId);
-                    PopulateSubtitleFlyout();
+                    if (!CurrentSearch()) return;
+                    await _playerService.RefreshSubtitlesAfterAiAsync(session.MediaFileId, subtitleId, CurrentSearch, searchActivation);
+                    if (CurrentSearch()) PopulateSubtitleFlyout();
                 };
                 await dialog.ShowAsync();
                 SubtitleButton.Focus(FocusState.Programmatic);
@@ -1503,23 +1512,29 @@ public sealed partial class PlayerOverlay : UserControl
     private void OnSubtitlePreferencesChanged() => DispatcherQueue?.TryEnqueue(() => { if (_isActive) PopulateSubtitleFlyout(); });
     private void SetSubtitleDelay(int milliseconds) => _ = _playerService.SetSubtitleOffsetAsync(milliseconds);
 
-    public async Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
+    public async Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null, Func<bool>? isCurrent = null, bool activate = true, Func<ContentDialog, Task>? showDialog = null)
     {
         var activeXamlRoot = dialogXamlRoot ?? XamlRoot;
         var session = _playerService.Manager?.CurrentSession;
         if (session == null) return;
         var authority = _playerService.ActiveAuthority;
+        var context = authority.ApiClient.CaptureContext();
+        var manager = _playerService.Manager;
+        bool CurrentDialog() => (isCurrent?.Invoke() ?? true) && ReferenceEquals(authority, _playerService.ActiveAuthority) &&
+            authority.ApiClient.IsCurrentContext(context) && ReferenceEquals(manager, _playerService.Manager) &&
+            ReferenceEquals(session, manager?.CurrentSession) && _playerService.State != PlayerState.Idle;
+        if (!CurrentDialog()) return;
         var api = authority.PlaybackApi;
         var operationOwner = _playerService.CaptureSubtitleOperationOwner(session);
         if (operationOwner == null) return;
-        bool Current() => operationOwner.IsCurrent;
+        bool Current() => CurrentDialog() && operationOwner.IsCurrent;
         SubtitleAiStatus capability;
         try { capability = await api.GetSubtitleAiStatusAsync(); }
-        catch (Exception ex) { if (Current()) await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot); return; }
+        catch (Exception ex) { if (Current()) await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot, activate, showDialog); return; }
         if (!Current()) return;
         if (!capability.Enabled && !capability.TranscribeEnabled)
         {
-            await ShowPlayerDialogAsync("AI subtitles unavailable", "This Silo server has not enabled subtitle translation or transcription.", activeXamlRoot);
+            await ShowPlayerDialogAsync("AI subtitles unavailable", "This Silo server has not enabled subtitle translation or transcription.", activeXamlRoot, activate, showDialog);
             return;
         }
 
@@ -1538,7 +1553,7 @@ public sealed partial class PlayerOverlay : UserControl
             await ShowPlayerDialogAsync(
                 "No compatible source",
                 "Add a text subtitle track first, or ask the server administrator to enable audio transcription.",
-                activeXamlRoot);
+                activeXamlRoot, activate, showDialog);
             return;
         }
 
@@ -1584,7 +1599,7 @@ public sealed partial class PlayerOverlay : UserControl
                 SubtitleAiStartResponse started;
                 try { started = await api.StartSubtitleAiAsync(request); }
                 catch when (!Current()) { return; }
-                if (!Current()) return;
+                if (!operationOwner.IsCurrentForAi) return;
                 var liveLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage)
                     ? request.SourceLanguage
                     : request.TargetLanguage;
@@ -1593,7 +1608,7 @@ public sealed partial class PlayerOverlay : UserControl
                     App.Services.GetService<ToastService>()?.Info(
                         "A job for this track is already in progress — it'll appear when it's ready.");
                 }
-                else
+                else if (operationOwner.HasCurrentSubtitleChoice)
                 {
                     _playerService.PrepareLiveSubtitleTranslationForOwner(
                         started.Job.Id,
@@ -1611,8 +1626,13 @@ public sealed partial class PlayerOverlay : UserControl
             })
         {
             XamlRoot = activeXamlRoot,
+            FocusOnOpen = activate,
         };
-        await dialog.ShowAsync();
+        if (Current())
+        {
+            if (showDialog != null) await showDialog(dialog);
+            else await PlaybackDialogHost.ShowContentDialogAsync(dialog, activate);
+        }
     }
 
     private async Task MonitorSubtitleAiJobAsync(PlaybackApi api, long jobId, int mediaFileId, PlayerService.SubtitleOperationOwner operationOwner)
@@ -1653,10 +1673,11 @@ public sealed partial class PlayerOverlay : UserControl
         }
     }
 
-    private async Task ShowPlayerDialogAsync(string title, string message, XamlRoot? dialogXamlRoot = null)
+    private async Task ShowPlayerDialogAsync(string title, string message, XamlRoot? dialogXamlRoot = null, bool activate = true, Func<ContentDialog, Task>? showDialog = null)
     {
         var dialog = new ContentDialog { XamlRoot = dialogXamlRoot ?? XamlRoot, Title = title, Content = message, CloseButtonText = "Close" };
-        await dialog.ShowAsync();
+        if (showDialog != null) await showDialog(dialog);
+        else await PlaybackDialogHost.ShowContentDialogAsync(dialog, activate);
     }
 
     private static int SourceSortKey(string? source) => (source?.ToLowerInvariant()) switch

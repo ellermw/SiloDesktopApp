@@ -51,7 +51,12 @@ internal static class RoomNavigationOwnershipNativeFixture
                 frame.Navigate(typeof(Page));
                 if (mode == "clear") coordinator.ClearActiveRoom();
                 if (mode == "authority") auth.ConfigureServer("https://room-other.invalid");
-                if (mode == "end-join") await oldPage.ViewModel.CloseRoomCommand.ExecuteAsync(null);
+                if (mode == "end-join")
+                {
+                    await oldPage.ViewModel.CloseRoomCommand.ExecuteAsync(null);
+                    if (oldPage.ViewModel.ClosedReason != "host_left")
+                        throw new InvalidOperationException("End did not close the room while its initial snapshot was pending.");
+                }
             }
             else
             {

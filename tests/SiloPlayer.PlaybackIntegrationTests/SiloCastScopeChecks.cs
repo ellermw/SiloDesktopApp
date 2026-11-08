@@ -122,9 +122,14 @@ internal static class SiloCastScopeChecks
         {
             ProtocolVersion = 3, SessionId = "remote-session", MediaFileId = 42,
             AudioTrackIndex = 1, DurationSeconds = 1200,
+            // Cast advertises only executable choices. Give the sparse choices
+            // real sidecar routes and keep unavailable rows between them so the
+            // unchanged wire-ID assertion also checks filtering without reindexing.
             SubtitleUrls =
             [
+                new() { Index = 2, Label = "Unavailable", Codec = "srt", Unplayable = true, Url = "https://remote.fixture.invalid/subtitles/2.srt" },
                 new() { Index = 4, Label = "English", Language = "en", Codec = "srt", Url = "https://sidecar.fixture.invalid/english.srt" },
+                new() { Index = 6, Label = "No route", Codec = "srt", Source = "external" },
                 new() { Index = 8, Label = "French", Language = "fr", Codec = "vtt", Url = "https://sidecar.fixture.invalid/french.vtt" },
                 new() { Index = 12, Label = "Unavailable", Language = "de", Codec = "srt", Unplayable = true },
             ],

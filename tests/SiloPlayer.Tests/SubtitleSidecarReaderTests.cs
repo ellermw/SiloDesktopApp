@@ -140,6 +140,7 @@ public sealed class SubtitleSidecarReaderTests
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
         Assert.Equal(priorBusy ? SubtitleSidecarReadOutcome.Busy : SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.Equal(SubtitleSidecarReadFailure.None, result.Failure);
         Assert.Equal(priorBusy, result.WasBusy);
         Assert.Equal(!priorBusy, result.CanUseUrlFallback);
         Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
@@ -154,6 +155,7 @@ public sealed class SubtitleSidecarReaderTests
         using var http = new HttpClient(wire);
         var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default);
         Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.Equal(SubtitleSidecarReadFailure.DownloadLimit, result.Failure);
         Assert.True(result.CanUseUrlFallback);
         Assert.Null(result.Bytes); Assert.Equal(1, wire.Requests);
     }
@@ -166,8 +168,38 @@ public sealed class SubtitleSidecarReaderTests
         Assert.False(pending.IsCompleted);
         var result = await pending.WaitAsync(TimeSpan.FromSeconds(12));
         Assert.Equal(SubtitleSidecarReadOutcome.Error, result.Outcome);
+        Assert.Equal(SubtitleSidecarReadFailure.Timeout, result.Failure);
         Assert.True(result.CanUseUrlFallback);
         Assert.Null(result.Bytes); Assert.Equal(1, wire.Requests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompleteTrackExtractionCanWaitForHeadersBeyondTheBusyRetryBudget(bool priorBusy)
+    {
+        using var wire = new SlowExtractionWire(priorBusy);
+        using var http = new HttpClient(wire) { Timeout = Timeout.InfiniteTimeSpan };
+        var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default,
+            readTimeout: TimeSpan.FromMinutes(10)).WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(SubtitleSidecarReadOutcome.Ready, result.Outcome);
+        Assert.Equal(SubtitleSidecarReadFailure.None, result.Failure);
+        Assert.Equal("subtitle", System.Text.Encoding.UTF8.GetString(result.Bytes!));
+        Assert.Equal(priorBusy, result.WasBusy);
+        Assert.False(result.CanUseUrlFallback);
+        Assert.Equal(priorBusy ? 2 : 1, wire.Requests);
+    }
+
+    [Fact]
+    public async Task CompleteTrackReadTimeoutDoesNotExtendTheBusyRetryBudget()
+    {
+        using var wire = new Wire((_, _) => Busy("60"));
+        using var http = new HttpClient(wire);
+        var result = await SubtitleSidecarReader.ReadAsync(http, Url, "srt", default,
+            readTimeout: TimeSpan.FromMinutes(10)).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(SubtitleSidecarReadOutcome.Busy, result.Outcome);
+        Assert.Null(result.Bytes);
+        Assert.Equal(1, wire.Requests);
     }
 
     [Fact]
@@ -251,6 +283,16 @@ public sealed class SubtitleSidecarReaderTests
             Requests++;
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             throw new InvalidOperationException("The stalled read must be cancelled by its budget.");
+        }
+    }
+    private sealed class SlowExtractionWire(bool priorBusy) : HttpMessageHandler
+    {
+        public int Requests;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (++Requests == 1 && priorBusy) return Busy("0");
+            await Task.Delay(TimeSpan.FromSeconds(9), ct);
+            return Ok();
         }
     }
     private sealed class UnreadOpaqueContent : HttpContent

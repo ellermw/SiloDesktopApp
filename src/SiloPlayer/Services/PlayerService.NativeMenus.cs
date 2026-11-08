@@ -34,6 +34,7 @@ public partial class PlayerService
         var version = ActiveVersion;
         var versions = Versions.ToArray();
         var audio = version?.AudioTracks?.ToArray() ?? [];
+        var subtitles = session?.SubtitleUrls?.Select(CaptureNativeSubtitleIdentity).ToArray() ?? [];
         var chapters = version?.Chapters?.ToArray() ?? [];
         var qualities = session?.AvailableQualities?.ToArray() ?? [];
         var roomPlayback = IsWatchTogetherPlayback;
@@ -47,6 +48,7 @@ public partial class PlayerService
             roomPlayback == IsWatchTogetherPlayback && versions.SequenceEqual(Versions) &&
             (legacyAudio ? ReferenceEquals(transport, _activeTransportPlan) :
                 (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0)) &&
+            (session?.SubtitleUrls?.Select(CaptureNativeSubtitleIdentity).SequenceEqual(subtitles) ?? subtitles.Length == 0) &&
             (version?.Chapters?.SequenceEqual(chapters) ?? chapters.Length == 0) &&
             (session?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
             State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
@@ -56,8 +58,9 @@ public partial class PlayerService
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
+        // Busy state gates actions, not the read-only Playback info surface.
         if (mpv == null || video == null || (!legacyAudio && session == null) ||
-            _closing || _postRollActive || _switchingContent || IsLoading || _playbackTerminalState != null)
+            _closing || _postRollActive || _playbackTerminalState != null)
         { RetireNativeMenus(); return; }
         var owner = new NativeMenuOwner(Guid.NewGuid().ToString("N"), mpv, video, Current);
         var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
@@ -70,6 +73,7 @@ public partial class PlayerService
                 _nativeMenu?.Close(PlaybackMenuCloseReason.OwnerRetired);
                 _nativeMenuOwner = owner; _nativeMenuGate.ResetOwner(owner.Token);
             }
+            mpv.SendScriptMessage("osc-native-subtitle-scope", session != null ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-audio-scope", legacyAudio ? "legacy" : version?.AudioTracks?.Count > 1 ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-quality-scope", session != null && (CanPresentNativeSpeed || (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-speed-scope", session != null && CanPresentNativeSpeed ? owner.Token : "");
@@ -81,6 +85,18 @@ public partial class PlayerService
             mpv.SendScriptMessage("osc-native-more-scope", legacyAudio ? "" : owner.Token);
         }
         if (dispatcher?.HasThreadAccess == true) Publish(); else dispatcher?.TryEnqueue(Publish);
+    }
+
+    private void CloseNativeActionMenuForPlaybackSwitch()
+    {
+        if (_nativeMenuRequest?.Kind == "stats") return;
+        var menu = _nativeMenu;
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
+        void Close()
+        {
+            if (ReferenceEquals(menu, _nativeMenu)) menu?.Close(PlaybackMenuCloseReason.OwnerRetired);
+        }
+        if (dispatcher?.HasThreadAccess == true) Close(); else dispatcher?.TryEnqueue(Close);
     }
 
     private void RetireNativeMenus()
@@ -97,6 +113,7 @@ public partial class PlayerService
             _nativeMenuOwner = null; _nativeMenuGate.ResetOwner("");
             // Empty scopes advertise host capability without allowing legacy
             // fallback while the playback surface is unavailable.
+            mpv?.SendScriptMessage("osc-native-subtitle-scope", "");
             mpv?.SendScriptMessage("osc-native-audio-scope", "");
             mpv?.SendScriptMessage("osc-native-quality-scope", "");
             mpv?.SendScriptMessage("osc-native-speed-scope", "");
@@ -153,6 +170,7 @@ public partial class PlayerService
             menu = request.Kind switch
             {
                 "audio" => CreateNativeAudioMenu(owner, request, Finish),
+                "subtitle" => CreateNativeSubtitleMenu(owner, request, Finish),
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
                 "speed" => CreateNativeSpeedMenu(owner, request, Finish),
                 "party" => CreateNativePartyMenu(owner, request, Finish),
