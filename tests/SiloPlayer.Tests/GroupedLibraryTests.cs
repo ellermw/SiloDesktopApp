@@ -131,6 +131,101 @@ public sealed class GroupedLibraryTests
     }
 
     [Theory]
+    [InlineData("genre")]
+    [InlineData("watch-status")]
+    [InlineData("advanced")]
+    public async Task ClearingARefusedFilterRestoresGrouping(string filter)
+    {
+        using var wire = new Wire { RefuseGroupedFilters = true }; var model = wire.Create();
+        if (filter == "genre") model.SelectedGenre = "Drama";
+        if (filter == "watch-status") model.SelectedWatchStatus = "watched";
+        if (filter == "advanced")
+        {
+            model.UseAdvancedRules = true;
+            model.AdvancedRules.Add(new QueryRule { Field = "title", Op = "contains", Value = "test" });
+        }
+        await model.ApplyFilterCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage); Assert.False(model.IsGroupedCatalog);
+        Assert.Equal("box_set", wire.Catalog[0].Group); Assert.Null(wire.Catalog[^1].Group);
+        var before = wire.Catalog.Count;
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage);
+        Assert.All(wire.Catalog.Skip(before), request => Assert.Null(request.Group));
+
+        model.SelectedGenre = null; model.SelectedWatchStatus = null;
+        model.AdvancedRules.Clear();
+        before = wire.Catalog.Count;
+        await model.ApplyFilterCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage); Assert.True(model.IsGroupedCatalog);
+        Assert.NotNull(model.GetWindowItem(0)!.BoxSet);
+        Assert.All(wire.Catalog.Skip(before), request => Assert.Equal("box_set", request.Group));
+        model.CancelCatalogLoads();
+    }
+
+    [Fact]
+    public async Task ChangingOrderDoesNotReuseAGroupingRefusal()
+    {
+        using var wire = new Wire { RefuseAllGrouped = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage); Assert.False(model.IsGroupedCatalog);
+        wire.RefuseAllGrouped = false; model.SelectedOrder = "desc";
+        var before = wire.Catalog.Count;
+        await model.ApplyFilterCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage); Assert.True(model.IsGroupedCatalog);
+        Assert.All(wire.Catalog.Skip(before), request => Assert.Equal("box_set", request.Group));
+        model.CancelCatalogLoads();
+    }
+
+    [Theory]
+    [InlineData("profile")]
+    [InlineData("server")]
+    public async Task ChangingApiContextDoesNotReuseAGroupingRefusal(string change)
+    {
+        using var wire = new Wire { RefuseAllGrouped = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage); Assert.False(model.IsGroupedCatalog);
+        wire.RefuseAllGrouped = false;
+        if (change == "profile") wire.Client!.SetProfile("replacement");
+        else wire.Client!.SetBaseUrl("https://replacement.invalid");
+        var before = wire.Catalog.Count;
+        await model.LoadWindowAsync(0, 60);
+        Assert.Null(model.ErrorMessage); Assert.True(model.IsGroupedCatalog);
+        Assert.NotNull(model.GetWindowItem(0)!.BoxSet);
+        Assert.All(wire.Catalog.Skip(before), request => Assert.Equal("box_set", request.Group));
+        model.CancelCatalogLoads();
+    }
+
+    [Theory]
+    [InlineData("unrelated_error", null, false)]
+    [InlineData("validation_failed", "groups.0.rules.0.op", false)]
+    [InlineData("validation_failed", null, true)]
+    public async Task UnrelatedValidationFailuresDoNotCacheAGroupingRefusal(string code, string? location, bool retriesUngrouped)
+    {
+        using var wire = new Wire
+        {
+            CatalogStatus = HttpStatusCode.UnprocessableEntity,
+            CatalogProblem = JsonSerializer.Serialize(new
+            {
+                code, detail = "Invalid rule", errors = new[] { new { location } },
+            }),
+        };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Contains("Failed to load catalog", model.ErrorMessage);
+        Assert.Equal(retriesUngrouped ? 2 : 1, wire.Catalog.Count);
+        Assert.Equal("box_set", wire.Catalog[0].Group);
+        if (retriesUngrouped) Assert.Null(wire.Catalog[^1].Group);
+
+        wire.CatalogStatus = HttpStatusCode.OK;
+        var before = wire.Catalog.Count;
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage); Assert.True(model.IsGroupedCatalog);
+        Assert.NotNull(model.GetWindowItem(0)!.BoxSet);
+        Assert.All(wire.Catalog.Skip(before), request => Assert.Equal("box_set", request.Group));
+        model.CancelCatalogLoads();
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ChangingBrowseTypeRetiresGroupedCardsCursorsAndLetters(bool applyFilter)
@@ -699,7 +794,8 @@ public sealed class GroupedLibraryTests
     {
         public bool Supported = true, LetterSupport = true, HoldCatalog, OmitWindowTotals;
         // Like the real server: group=box_set with a sort aggregates cannot carry is a 422 validation_failed.
-        public bool RefuseAllGrouped;
+        public bool RefuseAllGrouped, RefuseGroupedFilters;
+        public string? CatalogProblem;
         public readonly HashSet<string> RefusedGroupedSorts = ["bitrate", "resolution", "runtime"];
         public int PlayedCount = 1;
         public int CatalogTotal = 1000;
@@ -755,10 +851,12 @@ public sealed class GroupedLibraryTests
                 if (BeforeCatalogResponse is not null) await BeforeCatalogResponse(start, includeTotal, ct);
                 if (HoldCatalog) { Started.TrySetResult(); await Release.Task; }
                 var sort = Value("sort")?.TrimStart('-');
-                if (Value("group") == "box_set" && (RefuseAllGrouped || (sort is not null && RefusedGroupedSorts.Contains(sort))))
+                if (Value("group") == "box_set" && (RefuseAllGrouped
+                    || (RefuseGroupedFilters && (Value("genre") is not null || Value("groups") is not null))
+                    || (sort is not null && RefusedGroupedSorts.Contains(sort))))
                     return new((HttpStatusCode)422) { Content = new StringContent("""{"type":"https://fixture.invalid/docs/api/v2/problems/validation_failed","status":422,"detail":"The request did not pass validation; see errors.","errors":{"sort":["unsupported for group"]}}""", Encoding.UTF8, "application/problem+json") };
                 if (CatalogStatus != HttpStatusCode.OK && start >= FailWindowFromStart)
-                    return new(CatalogStatus) { Content = new StringContent("{}") };
+                    return new(CatalogStatus) { Content = new StringContent(CatalogProblem ?? "{}", Encoding.UTF8, "application/problem+json") };
                 var items = Enumerable.Range(start, Math.Min(limit, Math.Max(0, CatalogTotal - start))).Select(index => CatalogIndex?.Invoke(index) ?? index).Select(i => new { content_id = Value("group") == "box_set" ? "box_set:9:" + i : "movie-" + i, type = Value("group") == "box_set" ? "box_set" : "movie", title = "Set " + i, box_set = Value("group") == "box_set" ? new { id = i.ToString(), library_id = "9", title = "Set " + i, movie_count = 3, played_count = PlayedCount } : null });
                 var response = Json(JsonSerializer.Serialize(new { items, total = OmitWindowTotals && !includeTotal ? 0 : CatalogTotal, total_exact = includeTotal, window_cursor = "root", page = new { has_more = start + limit < CatalogTotal, next_cursor = "next-" + (start + limit) } }));
                 if (AfterCatalogSnapshot is not null) await AfterCatalogSnapshot(start, includeTotal, response);

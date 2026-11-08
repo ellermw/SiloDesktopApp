@@ -44,9 +44,9 @@ public partial class LibraryViewModel : ObservableObject
     internal static readonly IReadOnlySet<string> UngroupableSorts = new HashSet<string>(StringComparer.Ordinal)
         { "bitrate", "resolution", "runtime" };
     internal static bool SupportsGroupedSort(string? sort) => string.IsNullOrEmpty(sort) || !UngroupableSorts.Contains(sort.TrimStart('-'));
-    // Query shapes the server refused to group. They browse ungrouped instead of failing.
-    private readonly HashSet<string> _refusedGroupingKeys = new(StringComparer.Ordinal);
-    private string GroupingRefusalKey() => $"{Library?.Id}|{SelectedType}|{SelectedSort}";
+    // Only remember refusals confirmed by a successful ungrouped read of the same query and API context.
+    private readonly HashSet<(ApiRequestContext? Context, string Query)> _refusedGroupingKeys = [];
+    private (ApiRequestContext? Context, string Query) GroupingRefusalKey() => (_catalogContext, BuildCatalogQueryScopeKey(null));
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
@@ -814,6 +814,7 @@ public partial class LibraryViewModel : ObservableObject
         var ct = linkedCts.Token;
         var windowVersion = ++_windowLoadVersion;
         var queryVersion = _queryVersion;
+        var groupingRefusalKey = GroupingRefusalKey();
         var read = _windowRead = BeginCatalogRangeRead(startIndex,
             ((long)itemCount + CatalogWindowPageSize - 1) / CatalogWindowPageSize * CatalogWindowPageSize);
 
@@ -879,15 +880,18 @@ public partial class LibraryViewModel : ObservableObject
             if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
                 _ = EnsureLetterIndexAsync();
         }
-        catch (ApiException ex) when (ex.StatusCode == 422 && _catalogGroup == "box_set" && queryVersion == _queryVersion
-            && windowVersion == _windowLoadVersion && _catalogContext == _catalogApi.CaptureContext())
+        catch (ApiException ex) when (ex.StatusCode == 422 && ex.ErrorCode == "validation_failed"
+            && ex.ErrorLocation is null or "sort" or "group"
+            && _catalogGroup == "box_set" && queryVersion == _queryVersion
+            && windowVersion == _windowLoadVersion && _catalogContext == _catalogApi.CaptureContext()
+            && groupingRefusalKey == GroupingRefusalKey())
         {
-            // The server refused to group this query shape (a sort or filter box sets cannot carry).
-            // Never leave the library empty: remember the refusal and browse this shape ungrouped.
-            _refusedGroupingKeys.Add(GroupingRefusalKey());
+            // Validation can also reject an invalid filter, so try this shape ungrouped once
+            // and remember the refusal only if that read succeeds.
             if (letterLoad is { IsCurrent: true }) letterLoad.Failed = true;
             var estimatedTotal = TotalCount;
             StartNewCatalogQuery();
+            _groupingTask = Task.FromResult(true); // Keep just this retry ungrouped until it is confirmed.
             _estimatedTotalItems = estimatedTotal;
             TotalCount = estimatedTotal;
             DisplayTotalCount = estimatedTotal;
@@ -900,8 +904,12 @@ public partial class LibraryViewModel : ObservableObject
             IsLoading = false;
             if (!await EnsureGroupingAsync() || recoveryQueryVersion != _queryVersion || IsGroupedCatalog) return;
             await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
-            if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
+            if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0
+                && _catalogContext == _catalogApi.CaptureContext() && groupingRefusalKey == GroupingRefusalKey())
+            {
+                _refusedGroupingKeys.Add(groupingRefusalKey);
                 _ = EnsureLetterIndexAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -1172,9 +1180,11 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    internal string CatalogQueryScopeKey() => System.Text.Json.JsonSerializer.Serialize(new
+    internal string CatalogQueryScopeKey() => BuildCatalogQueryScopeKey(_catalogGroup);
+
+    private string BuildCatalogQueryScopeKey(string? group) => System.Text.Json.JsonSerializer.Serialize(new
     {
-        library = Library?.Id, group = _catalogGroup, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
+        library = Library?.Id, group, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
         SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution, SelectedAudioLanguage,
         SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
         groups = BuildAdvancedGroups(), AdvancedRulesMatch,
