@@ -263,6 +263,11 @@ public sealed class IncrementalUpdateTests
         var download = Assert.Single(progress.Where(p => p.Stage == "Downloading changed files"));
         Assert.Equal(fixture.Manifest.Files[1].PackedSize, download.TotalBytes);
         Assert.Equal(download.TotalBytes, download.CompletedBytes);
+        // The window counts only what is fetched: one changed file, not the whole inventory.
+        Assert.Equal((0, 1), (download.DownloadedFiles, download.DownloadFiles));
+        Assert.Equal((fixture.Manifest.Files[1].PackedSize, fixture.Manifest.Files[1].PackedSize), (download.CurrentFileBytes, download.CurrentFileTotal));
+        Assert.Equal((1, 1), (progress[^1].DownloadedFiles, progress[^1].DownloadFiles));
+        Assert.Equal(fixture.Manifest.Files.Count, progress[^1].TotalFiles);
         using (var file = File.OpenWrite(result.ManifestPath)) file.SetLength(UpdateManifestValidation.MaximumManifestBytes + 1);
         Assert.False(await client.VerifyPreparedAsync(result, default));
     }

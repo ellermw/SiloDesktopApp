@@ -9,6 +9,14 @@ namespace SiloPlayer.Core.Services.Updates;
 
 public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirectory, string installedDirectory, Action<string>? log = null)
 {
+    /// <summary>Where PrepareAsync places this release's verified files; known before downloading.</summary>
+    public static string PreparedDirectory(string cacheDirectory, AppRelease release)
+    {
+        var identity = release.Incremental?.ManifestSha256.ToLowerInvariant() ?? throw new InvalidDataException("The release has no incremental update.");
+        if (!UpdateManifestValidation.IsHash(identity)) throw new InvalidDataException("The incremental manifest identity is invalid.");
+        return Path.Combine(Path.GetFullPath(cacheDirectory), "incremental-" + identity, "prepared");
+    }
+
     public async Task<PreparedUpdatePackage> PrepareAsync(AppRelease release, Action<IncrementalUpdateProgress> progress, CancellationToken ct)
     {
         var bytes = await IncrementalUpdateTransport.FetchManifestAsync(http, release, ct).ConfigureAwait(false);
@@ -41,6 +49,7 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
                 requiredObjects.Add((file.Offset, file.PackedSize, file.PackedSha256));
         }
         var total = requiredObjects.Sum(f => f.PackedSize);
+        var downloadFiles = requiredObjects.Count; var downloadedFiles = 0;
         foreach (var file in manifest.Files)
         {
             ct.ThrowIfCancellationRequested();
@@ -59,16 +68,21 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
                         if (!fullVerified)
                         {
                             var fetched = await FetchObjectAsync(release, file, compressed, transferred, total,
-                                completed, manifest.Files.Count, progress, ct).ConfigureAwait(false);
+                                completed, manifest.Files.Count, downloadedFiles, downloadFiles, progress, ct).ConfigureAwait(false);
                             networkBytes += fetched.NetworkBytes;
-                            if (fetched.Ranged) transferred += file.PackedSize;
+                            if (fetched.Ranged) { transferred += file.PackedSize; downloadedFiles++; }
                             else
                             {
+                                // Ranges are unavailable: the rest arrives as one complete package.
                                 total = transferred + manifest.PackSize;
-                                progress(new("Downloading complete package", transferred, total, completed, manifest.Files.Count));
-                                await FetchFullAsync(release, fullPack, p => progress(new("Downloading complete package", transferred + p, total, completed, manifest.Files.Count)), ct).ConfigureAwait(false);
+                                downloadFiles = downloadedFiles + 1;
+                                progress(new("Downloading complete package", transferred, total, completed, manifest.Files.Count,
+                                    downloadedFiles, downloadFiles, 0, manifest.PackSize));
+                                await FetchFullAsync(release, fullPack, p => progress(new("Downloading complete package", transferred + p, total, completed,
+                                    manifest.Files.Count, downloadedFiles, downloadFiles, p, manifest.PackSize)), ct).ConfigureAwait(false);
                                 networkBytes += manifest.PackSize;
                                 transferred = total;
+                                downloadedFiles = downloadFiles;
                                 fullVerified = true;
                             }
                         }
@@ -78,10 +92,10 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
                 }
             }
             completed++;
-            progress(new("Preparing files", transferred, total, completed, manifest.Files.Count));
+            progress(new("Preparing files", transferred, total, completed, manifest.Files.Count, downloadedFiles, downloadFiles));
         }
         var package = new PreparedUpdatePackage(prepared, manifestPath, identity, manifest);
-        progress(new("Verifying", transferred, total, completed, manifest.Files.Count));
+        progress(new("Verifying", transferred, total, completed, manifest.Files.Count, downloadedFiles, downloadFiles));
         if (!await VerifyPreparedAsync(package, ct).ConfigureAwait(false)) throw new InvalidDataException("The prepared update could not be verified.");
         log?.Invoke($"incremental_verified version={manifest.Version} downloaded_bytes={networkBytes} files={completed}");
         return package;
@@ -186,7 +200,8 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
     }
 
     private async Task<(bool Ranged, long NetworkBytes)> FetchObjectAsync(AppRelease release, UpdateFileEntry entry, string destination,
-        long transferred, long total, int completed, int count, Action<IncrementalUpdateProgress> progress, CancellationToken ct)
+        long transferred, long total, int completed, int count, int downloadedFiles, int downloadFiles,
+        Action<IncrementalUpdateProgress> progress, CancellationToken ct)
     {
         var partial = destination + ".part"; UpdateManifestValidation.EnsureOrdinaryPath(partial);
         var offset = File.Exists(partial) ? new FileInfo(partial).Length : 0;
@@ -204,7 +219,8 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
             await using var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             await using var output = new FileStream(partial, offset == 0 ? FileMode.Create : FileMode.Append, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous);
             await CopyBoundedAsync(body, output, entry.PackedSize - offset,
-                p => progress(new("Downloading changed files", transferred + offset + p, total, completed, count)), ct).ConfigureAwait(false);
+                p => progress(new("Downloading changed files", transferred + offset + p, total, completed, count,
+                    downloadedFiles, downloadFiles, offset + p, entry.PackedSize)), ct).ConfigureAwait(false);
         }
         if (!await UpdateManifestValidation.VerifyFileAsync(partial, entry.PackedSize, entry.PackedSha256, ct).ConfigureAwait(false))
         { File.Delete(partial); throw new InvalidDataException("Update object checksum mismatch."); }

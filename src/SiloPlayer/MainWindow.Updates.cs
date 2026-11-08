@@ -29,6 +29,7 @@ public sealed partial class MainWindow
     private bool _updateSessionEnding;
     private bool _updateCloseGuardAvailable;
     private bool _updateDialogBusy;
+    private bool _updateWindowOwnsUpdate;
     private CancellationTokenSource? _manualUpdateConsent;
     private string? _announcedUpdate;
     private long _updatePaneToken, _updatePaneVisibleToken;
@@ -202,7 +203,8 @@ public sealed partial class MainWindow
         dialog.Resources["ContentDialogMaxWidth"]=720d;
         _appUpdateDialog = dialog;
         dialog.PrimaryButtonClick += InstallAppUpdate_Click;
-        dialog.Closing += (_, _) => { if (!_manualUpdateRequested) _manualUpdateConsent?.Cancel(); };
+        // Closing the dialog cancels an update it owns, never one the update window took over.
+        dialog.Closing += (_, _) => { if (!_manualUpdateRequested && !_updateWindowOwnsUpdate) _manualUpdateConsent?.Cancel(); };
         // Reserve space for the dialog title, action footer and outer margins.
         // A finite body viewport keeps long notes/preferences scrollable while
         // Check for updates stays outside the scroller and above the footer.
@@ -220,7 +222,7 @@ public sealed partial class MainWindow
         finally
         {
             RootGrid.SizeChanged -= resized;
-            if (!_manualUpdateRequested) _manualUpdateConsent?.Cancel();
+            if (!_manualUpdateRequested && !_updateWindowOwnsUpdate) _manualUpdateConsent?.Cancel();
             _appUpdateDialog = null; _updateBodyPanel = null; _updateModeCombo = null; _updateStatusText = null; _updateProgress = null;
             _updateChannelCombo = null; _updateBetaWarning = null; _updateFullInstallerNote = null; _updateKeepOpenNote = null;
         }
@@ -299,6 +301,13 @@ public sealed partial class MainWindow
         _manualUpdateConsent = consent;
         try
         {
+            if (App.Services.GetService<IAppUpdateInstaller>() is IWindowedAppUpdateInstaller windowed
+                && _appUpdates.PreferIncrementalUpdates && !_appUpdates.State.RequiresFullInstaller
+                && _appUpdates.State.Release is { Incremental: not null } windowedRelease)
+            {
+                await RunWindowedUpdateAsync(sender, windowed, windowedRelease, consent.Token);
+                return;
+            }
             await _appUpdates.DownloadAsync(ct: consent.Token).WaitAsync(consent.Token);
             if (RequiresManualFullInstaller(_appUpdates.State))
             {
@@ -325,6 +334,41 @@ public sealed partial class MainWindow
         catch (OperationCanceledException) when (consent.IsCancellationRequested) { await _appUpdates.StopAsync(); }
         catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "manual_update"); }
         finally { _manualUpdateConsent = null; _updateDialogBusy = false; RefreshUpdateDialog(); }
+    }
+
+    // From Update now on, the small update window owns the update: this dialog closes, the
+    // window shows the download (only the files actually fetched), then installs and restarts.
+    private async Task RunWindowedUpdateAsync(ContentDialog dialog, IWindowedAppUpdateInstaller windowed, AppRelease release, CancellationToken ct)
+    {
+        _updateWindowOwnsUpdate = true;
+        try
+        {
+            dialog.Hide();
+            var updates = _appUpdates!;
+            var packageDirectory = IncrementalUpdateClient.PreparedDirectory(updates.CacheDirectory, release);
+            var ready = await windowed.PrepareWithDownloadAsync(release, packageDirectory, true, _updateHwnd.ToInt64(), async (report, token) =>
+            {
+                void Forward(AppUpdateState state) { if (state.PreparationProgress is { } progress) report(progress); }
+                updates.Changed += Forward;
+                try { await updates.DownloadAsync(ct: token).WaitAsync(token); }
+                finally { updates.Changed -= Forward; }
+                if (updates.State.RequiresFullInstaller) return new(null, null);
+                if (updates.State.PreparedPackage is null || !await updates.ReverifyReadyAsync(token))
+                    return new(null, updates.State.Error ?? "The update could not be downloaded. You can keep using Silo and try again.");
+                return new(updates.State.PreparedPackage, null);
+            }, ct);
+            if (!ready)
+            {
+                updates.ApplyAuthorityCooldown((windowed as IStagedAppUpdateInstaller)?.AuthorityCooldownUntil);
+                // A verified migration still needs the full installer and its own consent in the dialog.
+                if (updates.State.RequiresFullInstaller && !ct.IsCancellationRequested)
+                    DispatcherQueue.TryEnqueue(() => _ = ShowAppUpdateDialogAsync());
+                return;
+            }
+            _manualUpdateRequested = true;
+            await CloseWithAppUpdatesAsync();
+        }
+        finally { _updateWindowOwnsUpdate = false; }
     }
 
     private async Task<bool> PrepareAppUpdateExitAsync()

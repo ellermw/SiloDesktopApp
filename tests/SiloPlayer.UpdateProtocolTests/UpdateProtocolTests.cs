@@ -64,6 +64,31 @@ public sealed class UpdateProtocolTests
         Assert.Equal("staged",message.Kind); Assert.Equal("abc",message.TransactionId);
     }
 
+    [Fact]
+    public async Task Download_frames_carry_counts_for_the_window_and_reject_negative_values()
+    {
+        using var stream = new MemoryStream();
+        await UpdateHostProtocol.WriteAsync(stream,new UpdateHostMessage("download",Completed:5,Total:10,Files:1,FileCount:3,FileBytes:2,FileTotal:4),default);
+        await UpdateHostProtocol.WriteAsync(stream,new UpdateHostMessage("downloaded"),default);
+        stream.Position=0;
+        var frame=await UpdateHostProtocol.ReadAsync(stream,default);
+        Assert.Equal(("download",5L,10L,1,3,2L,4L),(frame.Kind,frame.Completed,frame.Total,frame.Files,frame.FileCount,frame.FileBytes,frame.FileTotal));
+        Assert.Equal("downloaded",(await UpdateHostProtocol.ReadAsync(stream,default)).Kind);
+        foreach(var bad in new[]{new UpdateHostMessage("download",Files:-1),new UpdateHostMessage("download",FileCount:-1),
+            new UpdateHostMessage("download",FileBytes:-1),new UpdateHostMessage("download",FileTotal:-1)})
+            await Assert.ThrowsAsync<InvalidDataException>(()=>UpdateHostProtocol.WriteAsync(new MemoryStream(),bad,default));
+    }
+
+    [Fact]
+    public async Task Frames_from_peers_without_download_fields_still_parse()
+    {
+        // The ready/confirmed exchange crosses versions: the old window talks to the new client.
+        var payload=System.Text.Encoding.UTF8.GetBytes("""{"Kind":"ready","TransactionId":"abc","ProcessId":7,"StartUtcTicks":9}""");
+        using var stream=new MemoryStream([.. BitConverter.GetBytes(payload.Length), .. payload]);
+        var message=await UpdateHostProtocol.ReadAsync(stream,default);
+        Assert.Equal(("ready",7,0),(message.Kind,message.ProcessId,message.FileCount));
+    }
+
     [Theory]
     [InlineData(-1)] [InlineData(0)] [InlineData(65537)] [InlineData(int.MaxValue)]
     public async Task Framed_protocol_rejects_unbounded_lengths_before_allocation(int length)
