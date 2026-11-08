@@ -520,9 +520,11 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
                 if (!IsCurrentPosterLoad(item, version, ct) || !DecodedArtworkCache.IsCurrent(identity))
                     return;
 
+                var decode = LibraryPosterBinding.DecodeSize(Width, _posterHeight, imageType == "backdrop");
                 var bitmapImage = new BitmapImage
                 {
-                    DecodePixelWidth = Math.Clamp((int)Math.Ceiling(Width * 1.25), 200, 640),
+                    DecodePixelWidth = decode.Width,
+                    DecodePixelHeight = decode.Height,
                     DecodePixelType = DecodePixelType.Logical,
                     UriSource = new Uri(diskPath),
                 };

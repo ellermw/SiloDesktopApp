@@ -43,4 +43,16 @@ public class LibraryPosterBindingTests
         var updated = new MediaItem { ContentId = id, PosterUrl = poster, BackdropUrl = backdrop };
         Assert.True(LibraryPosterBinding.RequiresReload(old, updated));
     }
+
+    [Theory]
+    [InlineData(180, 270, false, 225, 0)]   // a poster fills the frame across its width
+    [InlineData(180, 270, true, 0, 338)]    // a backdrop fills it top to bottom: decoded by height
+    [InlineData(180, 180, true, 0, 225)]    // square audiobook frame
+    [InlineData(100, 150, false, 200, 0)]   // the small-card floor is unchanged
+    [InlineData(600, 900, false, 640, 0)]
+    [InlineData(600, 900, true, 0, 960)]
+    public void ArtworkDecodesToFillItsFrame(double width, double height, bool backdrop, int decodeWidth, int decodeHeight)
+    {
+        Assert.Equal((decodeWidth, decodeHeight), LibraryPosterBinding.DecodeSize(width, height, backdrop));
+    }
 }
