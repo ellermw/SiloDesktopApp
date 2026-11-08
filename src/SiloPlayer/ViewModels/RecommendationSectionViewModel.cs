@@ -14,17 +14,27 @@ public partial class RecommendationSectionViewModel : ObservableObject
     private readonly RecommendationsApi _recommendationsApi;
     private CancellationTokenSource? _loadCts;
     private RecommendationSectionNavigationArgs? _currentArgs;
+    // The section and access context whose items are held, set once a load has applied them.
+    private RecommendationSectionNavigationArgs? _loadedArgs;
+    private ApiRequestContext? _loadedContext;
 
     public RecommendationSectionViewModel(RecommendationsApi recommendationsApi)
     {
         _recommendationsApi = recommendationsApi;
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
         {
-            if (!_recommendationsApi.IsCurrentContext(change.Context) || _currentArgs == null) return;
+            if (!_recommendationsApi.IsCurrentContext(change.Context)) return;
+            // A section kept for Back drops the title too, without a reload while it is away.
             if (change.Marked == true)
                 for (var index = Items.Count - 1; index >= 0; index--)
                     if (Items[index].ContentId == change.ItemId) Items.RemoveAt(index);
-            _ = LoadAsync(_currentArgs);
+            if (change.Marked != true)
+            {
+                // Invalidate before refreshing: cancellation or failure must not keep a stale section for Back.
+                _loadedArgs = null;
+                _loadedContext = null;
+            }
+            if (_currentArgs != null) _ = LoadAsync(_currentArgs);
         });
     }
 
@@ -56,6 +66,8 @@ public partial class RecommendationSectionViewModel : ObservableObject
                 Title = response.Label;
 
             MediaItemCollectionReconciler.Apply(Items, response.Items.Where(item => item.UserState?.NotInterested != true).ToArray());
+            _loadedArgs = args;
+            _loadedContext = context;
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested)
         {
@@ -73,6 +85,31 @@ public partial class RecommendationSectionViewModel : ObservableObject
                 IsLoading = false;
             owner.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Whether the items held are <paramref name="args"/>'s complete section under the current
+    /// access context, so Back can show them as they were instead of loading them again.
+    /// </summary>
+    public bool Holds(RecommendationSectionNavigationArgs args) =>
+        args == _loadedArgs && _loadedContext is { } context && _recommendationsApi.IsCurrentContext(context);
+
+    /// <summary>Resumes a held section without loading, so later changes refresh it while visible.</summary>
+    public bool TryResume(RecommendationSectionNavigationArgs args)
+    {
+        if (!Holds(args)) return false;
+        _currentArgs = args;
+        return true;
+    }
+
+    /// <summary>Drops the held section before another one (or a fresh copy) loads.</summary>
+    public void Reset()
+    {
+        CancelLoad();
+        _loadedArgs = null;
+        _loadedContext = null;
+        Items.Clear();
+        ErrorMessage = null;
     }
 
     public void CancelLoad()

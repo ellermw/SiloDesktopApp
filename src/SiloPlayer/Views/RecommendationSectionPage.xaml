@@ -12,7 +12,7 @@
     Loaded="Page_Loaded"
     SizeChanged="Page_SizeChanged">
 
-    <ScrollViewer IsScrollInertiaEnabled="True">
+    <ScrollViewer x:Name="PageScroller" IsScrollInertiaEnabled="True">
         <StackPanel x:Name="PageContent" Padding="40,24,40,48" Spacing="24">
             <Button
                 Style="{StaticResource GhostButtonStyle}"
