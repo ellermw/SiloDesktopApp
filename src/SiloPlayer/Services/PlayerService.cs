@@ -6179,7 +6179,7 @@ public partial class PlayerService : IDisposable
         var sidecarGeneration = CurrentSubtitleSidecarGeneration();
         var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
         var choiceVersion = Volatile.Read(ref _legacySubtitleChoiceVersion);
-        bool CurrentSelection()
+        bool CurrentSelectionOwner()
         {
             lock (_subtitleTrackStateLock)
                 return !_closing && !_switchingContent && !IsLoading && !ownerToken.IsCancellationRequested &&
@@ -6189,9 +6189,13 @@ public partial class PlayerService : IDisposable
                     ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
                     ReferenceEquals(manualChoice, Volatile.Read(ref _subtitleSelectionOperation)) &&
                     _activeSubtitleServerIndex == (track?.Index ?? serverTrackIndex) &&
-                    CurrentSubtitleSidecarGeneration() == sidecarGeneration &&
                     Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration &&
                     (persist || choiceVersion == Volatile.Read(ref _legacySubtitleChoiceVersion));
+        }
+        bool CurrentSelection()
+        {
+            lock (_subtitleTrackStateLock)
+                return CurrentSelectionOwner() && CurrentSubtitleSidecarGeneration() == sidecarGeneration;
         }
         if (!persist)
         {
@@ -6252,8 +6256,17 @@ public partial class PlayerService : IDisposable
             if (track != null)
             {
                 var readOutcome = await PrefetchSubtitleSidecarForOwnerAsync(track, CurrentSelection);
-                // A newer choice or replacement file owns its own completion.
-                if (!CurrentSelection()) return false;
+                if (!CurrentSelection())
+                {
+                    // Timing invalidation retires the bytes, not this choice's
+                    // executor. If only that cache generation changed, reconcile
+                    // the tentative row with actual captions and offer a retry.
+                    // A newer choice/file/authority owns its own completion.
+                    if (CurrentSelectionOwner() &&
+                        RestoreExecutedSubtitleSelection(reapply: false, currentSelection: CurrentSelectionOwner))
+                        ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);
+                    return false;
+                }
                 if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut or SubtitlePrefetchOutcome.Retired)
                 {
                     if (!RestoreExecutedSubtitleSelection(reapply: false, currentSelection: CurrentSelection)) return false;
