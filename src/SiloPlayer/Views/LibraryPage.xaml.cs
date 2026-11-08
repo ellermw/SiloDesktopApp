@@ -496,6 +496,7 @@ public sealed partial class LibraryPage : Page,
             _stateSnapshot = snapshot;
             _stateEntryParameter = e.Parameter;
             _libraryStateApplied = true;
+            _stateAppliedVisit = visit;
             IsEnabled = true;
             // Only newly restored input establishes a baseline; retaining visible
             // input must not mark an unsaved edit as already persisted.
@@ -2942,6 +2943,9 @@ public sealed partial class LibraryPage : Page,
         {
             if (tag == "Library")
             {
+                // A deliberate retry is separate from opening the saved tab,
+                // which must not repeat a failed policy read in this visit.
+                if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
             }
@@ -2977,7 +2981,9 @@ public sealed partial class LibraryPage : Page,
     {
         using var timing = LibraryPerformanceTrace.Measure("library-open");
         // Revalidate pending policy changes, even while this visit's catalog is cached.
-        if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();
+        // A read this visit already reported as failed is not repeated here.
+        if (_libraryFlagsDirty && _libraryFlagsAttemptedVisit != _groupedLibraryVisit)
+            await RefreshLibraryFlagsAsync();
         if (!_isNavigated || ViewModel.Library is null) return;
         if (_libraryCatalogLoaded)
         {

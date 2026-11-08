@@ -13,6 +13,7 @@ public sealed partial class LibraryPage
     private CancellationTokenSource? _groupedRefreshCts;
     private long _groupedLibraryVisit;
     private long _libraryFlagsRead;
+    private long _libraryFlagsAttemptedVisit = -1;
     private bool _groupedCatalogDirty;
     private long _groupedStructureRequested, _groupedStructureApplied;
     private bool _libraryFlagsDirty;
@@ -178,10 +179,14 @@ public sealed partial class LibraryPage
         catch (Exception ex)
         {
             if (!_isNavigated || visit != _groupedLibraryVisit || read != _libraryFlagsRead || !catalog.IsCurrentContext(context)) return;
-            _libraryFlagsDirty = false;
+            // Only a reported failure counts as this visit's attempt; a canceled or
+            // superseded read leaves the dirty policy for the Library tab to read.
+            _libraryFlagsDirty = true;
+            _libraryFlagsAttemptedVisit = visit;
             LocalLog.AppendException("catalog_errors.txt", ex, "library_flags_refresh");
-            // Retain the previous window without retrying and toasting twice
-            // in this visit. The next visit or policy invalidation retries.
+            // Retain the previous window. Opening the Library tab must not repeat
+            // this visit's failed read and toast; the next visit, a policy
+            // invalidation or a deliberate current-tab retry reads again.
             App.Services.GetRequiredService<ToastService>().Error(ex);
         }
     }

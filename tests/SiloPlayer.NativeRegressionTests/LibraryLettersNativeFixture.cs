@@ -166,7 +166,8 @@ internal static class LibraryLettersNativeFixture
                             throw new InvalidOperationException("The completed post-save callback lost retained grouped refresh ownership after an access-only revision.");
                         ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("LibraryTab")).GetPattern(PatternInterface.Invoke)).Invoke();
                     }
-                    await Until(() => page.ViewModel.GetWindowItem(600)?.BoxSet?.PlayedCount == 3);
+                    // This refresh can wait behind the page's 5 s grouped-read cooldown.
+                    await Until(() => page.ViewModel.GetWindowItem(600)?.BoxSet?.PlayedCount == 3, attempts: 500);
                     Program.Log("PASS: actual grouped post-save refresh survives access-only retirement and updates the current aggregate count.");
                     if (postSaveOnly) return;
                     page.ViewModel.SelectedGenre = "Drama";
@@ -310,7 +311,7 @@ internal static class LibraryLettersNativeFixture
                     await VerifyStructuralGroupedRefreshAsync(page, wire, client);
                     await VerifyCachedGroupedReturnAsync(frame, page, wire);
                     await VerifyFailedLibraryFlagsReadAsync(page, wire, catalog);
-                    if (type == "mixed") await VerifyRestoredBrowseTypeAsync(frame, page, wire);
+                    if (type == "mixed") await VerifyRestoredBrowseTypeAsync(frame, page, wire, settings);
                     wire.Grouped = false; catalog.InvalidateLibraryCache();
                     await Until(() => page.ViewModel.Library is { BoxSetsEnabled: false } && page.ViewModel.GetWindowItem(0)?.Type == "movie");
                     await Until(() => !Descendants(page).OfType<SiloPlayer.Controls.BoxSetCard>().Any());
@@ -893,9 +894,10 @@ internal static class LibraryLettersNativeFixture
             wire.CatalogIndexShift = 1; // Removal while no Library subscriptions are attached.
             var reads = wire.CatalogScopes.Count;
             frame.GoBack();
+            // The return refresh can wait behind the page's 5 s grouped-read cooldown.
             await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded &&
                 (long)typeof(LibraryPage).GetField("_groupedStructureApplied", flags)!.GetValue(page)! > applied &&
-                typeof(LibraryPage).GetField("_groupedRefreshCts", flags)!.GetValue(page) == null);
+                typeof(LibraryPage).GetField("_groupedRefreshCts", flags)!.GetValue(page) == null, attempts: 500);
             if (!wire.CatalogScopes.Skip(reads).Any(scope => scope.Cursor is null))
                 throw new InvalidOperationException("Cached grouped return refreshed only under the old cursor.");
             reads = wire.CatalogScopes.Count;
@@ -1014,7 +1016,9 @@ internal static class LibraryLettersNativeFixture
         try
         {
             page.Receive(new SiloPlayer.Messaging.MediaSurfaceChanged(SiloPlayer.Messaging.MediaSurfaceChangeKind.WatchedMarked, "member", context: client.CaptureContext()));
-            await wire.CatalogWindowStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            // The page bounds grouped reads to one per 5 s cooldown; the earlier
+            // post-save refresh in this run can leave up to that long to wait.
+            await wire.CatalogWindowStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Task.Delay(150); // Let the reset's queued native render run while the response is held.
             if (model.TotalCount != 1000 || model.DisplayTotalCount != 1000 || Math.Abs(scroll.VerticalOffset - savedOffset) >= 1 ||
                 indices.Any(index => !ReferenceEquals(cards[index], oldCards[index]) ||
@@ -1035,23 +1039,37 @@ internal static class LibraryLettersNativeFixture
         }
     }
 
-    private static async Task VerifyRestoredBrowseTypeAsync(Frame frame, LibraryPage page, Wire wire)
+    private static async Task VerifyRestoredBrowseTypeAsync(Frame frame, LibraryPage page, Wire wire, SettingsApi settings)
     {
         page.ViewModel.SelectedSort = "year"; page.ViewModel.SelectedType = "movie";
         var scroll = (ScrollViewer)page.FindName("LibraryScroller");
         scroll.ChangeView(null, 0, null, true);
         await page.ViewModel.LoadCommand.ExecuteAsync(null);
         await Until(() => page.ViewModel.TotalCount > 0 && !page.ViewModel.IsLoading && scroll.VerticalOffset < 1);
+        int PendingSaves() => ((System.Collections.ICollection)typeof(LibraryPage)
+            .GetProperty("_pendingStateSaves", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).Count;
+        async Task<int> ReturnAfterRemoteChangeAsync(string search)
+        {
+            frame.Navigate(typeof(Page));
+            // This visit's own departure save lands first. A still-pending local
+            // save rightly outranks any server snapshot on return.
+            await Until(() => !page.IsLoaded && PendingSaves() == 0);
+            // Another client then changes the saved browse scope while this exact
+            // LibraryPage and its completed catalog are cached. Its realtime
+            // settings change retires the confirmed state document.
+            wire.SavedSearch = search;
+            settings.LibraryPageState.Invalidate();
+            var before = wire.CatalogScopes.Count;
+            frame.GoBack();
+            return before;
+        }
+        // The server accepts this visit's departure save of its current scope.
+        wire.SavedSearch = "?tab=library&sort=year&type=movie";
         try
         {
             foreach (var restoredType in new string?[] { "episode", "movie", null })
             {
-                frame.Navigate(typeof(Page)); await Until(() => !page.IsLoaded);
-                // Simulate another client's saved browse scope changing while
-                // this exact LibraryPage and its completed catalog are cached.
-                wire.SavedSearch = "?tab=library&sort=year" + (restoredType == null ? "" : "&type=" + restoredType);
-                var reads = wire.CatalogScopes.Count;
-                frame.GoBack();
+                var reads = await ReturnAfterRemoteChangeAsync("?tab=library&sort=year" + (restoredType == null ? "" : "&type=" + restoredType));
                 await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && page.ViewModel.SelectedType == restoredType &&
                     wire.CatalogScopes.Count > reads && page.ViewModel.GetWindowItem(0) != null && !page.ViewModel.IsLoading);
                 var expectedGroup = restoredType == "episode" ? null : "box_set";
@@ -1070,10 +1088,7 @@ internal static class LibraryLettersNativeFixture
             })
             {
                 var oldItem = page.ViewModel.GetWindowItem(0);
-                frame.Navigate(typeof(Page)); await Until(() => !page.IsLoaded);
-                wire.SavedSearch = $"?tab=library&sort={sort}&order={order}" + (genre is null ? "" : "&genre=" + genre);
-                var reads = wire.CatalogScopes.Count;
-                frame.GoBack();
+                var reads = await ReturnAfterRemoteChangeAsync($"?tab=library&sort={sort}&order={order}" + (genre is null ? "" : "&genre=" + genre));
                 await Until(() => ReferenceEquals(frame.Content, page) && page.IsLoaded &&
                     page.ViewModel.SelectedSort == sort && page.ViewModel.SelectedOrder == order && page.ViewModel.SelectedGenre == genre &&
                     wire.CatalogScopes.Count > reads && page.ViewModel.GetWindowItem(0) is not null && !page.ViewModel.IsLoading);
@@ -1105,8 +1120,8 @@ internal static class LibraryLettersNativeFixture
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     { for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++) { var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i); yield return child; foreach (var next in Descendants(child)) yield return next; } }
-    private static async Task Until(Func<bool> ready)
-    { for (var i = 0; i < 300; i++) { if (ready()) return; await Task.Delay(20); } throw new TimeoutException("Library letter native state did not settle."); }
+    private static async Task Until(Func<bool> ready, int attempts = 300)
+    { for (var i = 0; i < attempts; i++) { if (ready()) return; await Task.Delay(20); } throw new TimeoutException("Library letter native state did not settle."); }
     private sealed class Services(IServiceProvider fallback, Dictionary<Type, object> values, Func<LibraryViewModel> model) : IServiceProvider
     { public object? GetService(Type type) => type == typeof(LibraryViewModel) ? model() : values.TryGetValue(type, out var value) ? value : fallback.GetService(type); }
     private sealed class Wire : HttpMessageHandler

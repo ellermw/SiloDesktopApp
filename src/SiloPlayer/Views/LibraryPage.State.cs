@@ -17,6 +17,8 @@ public sealed partial class LibraryPage
     private object? _stateEntryParameter;
     private LibraryPageStateSnapshot? _stateSnapshot;
     private long _stateVisit, _stateEdit, _stateLanguage;
+    // The navigation visit whose restored view is applied (read by native fixtures).
+    internal long _stateAppliedVisit;
     private string? _retainedSearch;
     private bool _libraryStateApplied;
     // An explicit genre may temporarily replace an unrepresentable outer OR
