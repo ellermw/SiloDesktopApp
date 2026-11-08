@@ -175,7 +175,7 @@ public sealed class SubtitleInventoryConcurrencyTests
     }
 
     [Fact]
-    public void AcceptedLegacyDownloadNeedsNoBridgeButAReplacementStillRequiresIdentity()
+    public void AcceptedLegacyDownloadCanRebindButCannotBridgeToAnIdentifiedReplacement()
     {
         using var http = new HttpClient();
         var api = new SiloApiClient(http);
@@ -189,6 +189,12 @@ public sealed class SubtitleInventoryConcurrencyTests
         lock (manager.SubtitleInventorySyncRoot) track.Index = 8;
         Assert.Equal(8, manager.SubtitleSelectionForLoad);
         session.SubtitleUrls = [new() { Index = 8, Source = track.Source, Language = track.Language, Codec = track.Codec }];
+        // Fully identityless legacy rows retain the PR's strict metadata/index
+        // fallback. Acquiring an identity is the boundary that needs a bridge.
+        Assert.Equal(8, manager.SubtitleSelectionForLoad);
+        Assert.False(manager.IsRetainedSubtitleUnavailable);
+        Assert.Same(track, manager.CaptureLocalSubtitleIntent().Track);
+        session.SubtitleUrls[0].TrackId = "downloaded:77";
         Assert.Equal(-1, manager.SubtitleSelectionForLoad);
         Assert.True(manager.IsRetainedSubtitleUnavailable);
         Assert.Same(track, manager.CaptureLocalSubtitleIntent().Track);
