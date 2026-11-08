@@ -77,7 +77,12 @@ public sealed class UpdateProgressWindow : Window
         explanation=new TextBlock{Text=restart ? "Silo stays open while the new version is installed. It will restart when everything is ready." : "Silo stays open until installation finishes, then closes. It won't reopen automatically.",
             FontSize=12,TextWrapping=TextWrapping.Wrap,Foreground=muted};panel.Children.Add(explanation);
         Cancel=new Button{Content="Cancel",HorizontalAlignment=HorizontalAlignment.Right};panel.Children.Add(Cancel);Content=panel;
-        if(AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter){presenter.IsResizable=false;presenter.IsMaximizable=false;}
+        if(AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+        {
+            presenter.IsResizable=false;presenter.IsMaximizable=false;
+            // Keep progress and Cancel accessible while Silo remains interactive, including during elevation.
+            presenter.IsAlwaysOnTop=true;
+        }
         AppWindow.TitleBar.BackgroundColor=ColorHelper.FromArgb(255,24,27,32);AppWindow.TitleBar.ForegroundColor=Colors.White;
         UpdateApplication.CenterWindow(this,owner);
         ownerTracking.Tick+=(_,_)=>UpdateApplication.CenterWindow(this,owner);

@@ -343,9 +343,9 @@ public sealed partial class MainWindow
         _updateWindowOwnsUpdate = true;
         try
         {
-            dialog.Hide();
             var updates = _appUpdates!;
             var packageDirectory = IncrementalUpdateClient.PreparedDirectory(updates.CacheDirectory, release);
+            dialog.Hide();
             var ready = await windowed.PrepareWithDownloadAsync(release, packageDirectory, true, _updateHwnd.ToInt64(), async (report, token) =>
             {
                 void Forward(AppUpdateState state) { if (state.PreparationProgress is { } progress) report(progress); }
@@ -359,10 +359,14 @@ public sealed partial class MainWindow
             }, ct);
             if (!ready)
             {
+                // A promoted automatic transfer is not owned by the window's cancellation token.
+                await updates.StopAsync();
                 updates.ApplyAuthorityCooldown((windowed as IStagedAppUpdateInstaller)?.AuthorityCooldownUntil);
                 // A verified migration still needs the full installer and its own consent in the dialog.
                 if (updates.State.RequiresFullInstaller && !ct.IsCancellationRequested)
                     DispatcherQueue.TryEnqueue(() => _ = ShowAppUpdateDialogAsync());
+                else if (!ct.IsCancellationRequested)
+                    App.Services.GetRequiredService<ToastService>().Error(updates.State.Error ?? "The update could not start. You can retry or use the full installer from the release page.");
                 return;
             }
             _manualUpdateRequested = true;
