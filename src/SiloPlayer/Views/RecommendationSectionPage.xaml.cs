@@ -40,7 +40,7 @@ public sealed partial class RecommendationSectionPage : Page
         var args = e.Parameter as RecommendationSectionNavigationArgs;
         // The frame reuses this instance for any section. Only Back to the section it still holds
         // completely, under the same profile, keeps its items and scroll position.
-        var keep = e.NavigationMode == NavigationMode.Back && args != null && ViewModel.Holds(args);
+        var keep = e.NavigationMode == NavigationMode.Back && args != null && ViewModel.TryResume(args);
         _args = args;
         _loaded = keep;
         if (keep) return;

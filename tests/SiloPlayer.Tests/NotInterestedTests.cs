@@ -91,6 +91,79 @@ public sealed class NotInterestedTests
         finally { CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(section); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task SectionHeldForBackIsInvalidatedWhenATitleMayBeRestoredWhileAway(bool? marked)
+    {
+        var reads = 0;
+        using var http = new HttpClient(new Wire(_ =>
+        {
+            reads++;
+            return Json("""{"items":[{"content_id":"one","type":"movie","title":"One"}]}""");
+        }));
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://not-interested.invalid"); client.SetProfile("one");
+        var section = new SiloPlayer.ViewModels.RecommendationSectionViewModel(new RecommendationsApi(client));
+        try
+        {
+            var drama = new SiloPlayer.ViewModels.RecommendationSectionNavigationArgs("genre", "drama", "Drama");
+            await section.LoadAsync(drama);
+            section.CancelLoad();
+            WeakReferenceMessenger.Default.Send(new NotInterestedChange(client.CaptureContext(), "one", true));
+            Assert.Empty(section.Items);
+            Assert.True(section.Holds(drama));
+            WeakReferenceMessenger.Default.Send(new NotInterestedChange(client.CaptureContext(), "one", marked));
+            Assert.False(section.Holds(drama));
+            Assert.False(section.TryResume(drama));
+            Assert.Equal(1, reads); // No requests while the section is away.
+            await section.LoadAsync(drama);
+            Assert.Equal("one", Assert.Single(section.Items).ContentId);
+            Assert.True(section.Holds(drama));
+            Assert.Equal(2, reads);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(section); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task ResumedSectionRefreshesNotInterestedChangesWithoutReloadingOnBack(bool? restoredMark)
+    {
+        var marked = false; var reads = 0;
+        using var http = new HttpClient(new Wire(_ =>
+        {
+            reads++;
+            return Json(marked ? """{"items":[{"content_id":"keep","type":"movie"}]}""" : """{"items":[{"content_id":"one","type":"movie"},{"content_id":"keep","type":"movie"}]}""");
+        }));
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://not-interested.invalid"); client.SetProfile("one");
+        var section = new SiloPlayer.ViewModels.RecommendationSectionViewModel(new RecommendationsApi(client));
+        try
+        {
+            var drama = new SiloPlayer.ViewModels.RecommendationSectionNavigationArgs("genre", "drama", "Drama");
+            await section.LoadAsync(drama);
+            var keep = section.Items[1];
+            section.CancelLoad();
+            Assert.False(section.TryResume(new("genre", "comedy", "Comedy")));
+            Assert.True(section.TryResume(drama));
+            Assert.Equal(1, reads);
+            Assert.Equal(2, section.Items.Count);
+            Assert.Same(keep, section.Items[1]);
+            marked = true;
+            WeakReferenceMessenger.Default.Send(new NotInterestedChange(client.CaptureContext(), "one", true));
+            for (var i = 0; i < 100 && reads < 2; i++) await Task.Delay(10);
+            Assert.Equal(2, reads);
+            Assert.Same(keep, Assert.Single(section.Items));
+            marked = false;
+            WeakReferenceMessenger.Default.Send(new NotInterestedChange(client.CaptureContext(), "one", restoredMark));
+            for (var i = 0; i < 100 && section.Items.Count < 2; i++) await Task.Delay(10);
+            Assert.Equal(2, section.Items.Count);
+            Assert.Equal("one", section.Items[0].ContentId);
+            Assert.Same(keep, section.Items[1]);
+            Assert.Equal(3, reads);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(section); }
+    }
+
     [Fact]
     public async Task CurrentNotInterestedEventRefreshesMountedSimilarRowAndPreservesUnchangedObjects()
     {

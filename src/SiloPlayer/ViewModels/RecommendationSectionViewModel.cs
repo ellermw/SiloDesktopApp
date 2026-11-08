@@ -29,6 +29,12 @@ public partial class RecommendationSectionViewModel : ObservableObject
                 for (var index = Items.Count - 1; index >= 0; index--)
                     if (Items[index].ContentId == change.ItemId) Items.RemoveAt(index);
             if (_currentArgs != null) _ = LoadAsync(_currentArgs);
+            else if (change.Marked != true)
+            {
+                // Restoring a title (or an unknown change) needs a fresh section on Back.
+                _loadedArgs = null;
+                _loadedContext = null;
+            }
         });
     }
 
@@ -87,6 +93,14 @@ public partial class RecommendationSectionViewModel : ObservableObject
     /// </summary>
     public bool Holds(RecommendationSectionNavigationArgs args) =>
         args == _loadedArgs && _loadedContext is { } context && _recommendationsApi.IsCurrentContext(context);
+
+    /// <summary>Resumes a held section without loading, so later changes refresh it while visible.</summary>
+    public bool TryResume(RecommendationSectionNavigationArgs args)
+    {
+        if (!Holds(args)) return false;
+        _currentArgs = args;
+        return true;
+    }
 
     /// <summary>Drops the held section before another one (or a fresh copy) loads.</summary>
     public void Reset()
