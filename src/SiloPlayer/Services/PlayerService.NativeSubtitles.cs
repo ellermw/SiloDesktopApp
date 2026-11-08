@@ -56,10 +56,10 @@ public partial class PlayerService
 
     private Action<string>? _nativeSubtitleAction;
     private sealed record NativeSubtitleAiCapability(PlaybackAuthorityScope Authority,
-        SiloPlayer.Core.Api.ApiRequestContext Context, PlaybackStartResponse? Session, long FileGeneration, bool Available);
+        SiloPlayer.Core.Api.ApiIdentityContext Context, PlaybackStartResponse? Session, long FileGeneration, bool Available);
     private NativeSubtitleAiCapability? _nativeSubtitleAiCapability;
     private bool NativeSubtitleAiAvailable => _nativeSubtitleAiCapability is { Available: true } capability &&
-        ReferenceEquals(capability.Authority, _activeAuthority) && capability.Authority.ApiClient.IsCurrentContext(capability.Context) &&
+        ReferenceEquals(capability.Authority, _activeAuthority) && capability.Authority.ApiClient.IsCurrentIdentityContext(capability.Context) &&
         ReferenceEquals(capability.Session, _playbackManager?.CurrentSession) &&
         capability.FileGeneration == Volatile.Read(ref _playbackFileGeneration);
 

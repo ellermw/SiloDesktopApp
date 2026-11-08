@@ -8106,7 +8106,8 @@ public partial class PlayerService : IDisposable
     private async Task SendSubtitleAiAvailabilityToOscAsync(CancellationToken ct)
     {
         var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
+        // Capability belongs to the playback identity, not a refreshable read context.
+        var context = authority.ApiClient.CaptureIdentityContext();
         var manager = _playbackManager;
         var capabilitySession = manager?.CurrentSession;
         var generation = Volatile.Read(ref _playRequestGeneration);
@@ -8134,7 +8135,7 @@ public partial class PlayerService : IDisposable
             LogToFile("state_trace.txt", $"Subtitle AI capability check failed: {ex.Message}");
         }
         if (ct.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority) ||
-            !authority.ApiClient.IsCurrentContext(context) || !ReferenceEquals(manager, _playbackManager) ||
+            !authority.ApiClient.IsCurrentIdentityContext(context) || !ReferenceEquals(manager, _playbackManager) ||
             !ReferenceEquals(capabilitySession, manager?.CurrentSession) || generation != Volatile.Read(ref _playRequestGeneration) ||
             fileGeneration != Volatile.Read(ref _playbackFileGeneration)) return;
         _nativeSubtitleAiCapability = new(authority, context, capabilitySession, fileGeneration, available);

@@ -173,9 +173,37 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Program.Log("PASS: context retirement inside native menu close still completes the exact dialog handoff and releases input without stale focus.");
                 return;
             }
+            var aiAvailable = typeof(PlayerService).GetProperty("NativeSubtitleAiAvailable", Private)!;
+            Require((bool)aiAvailable.GetValue(service)!, "Synthetic subtitle AI capability was not available.");
+            var readContext = api.CaptureContext();
+            api.InvalidateAccessContext();
+            Require(!api.IsCurrentContext(readContext) && (bool)aiAvailable.GetValue(service)!,
+                "Retiring reads for the same playback identity hid the cached subtitle AI action.");
+            var previousCapability = Get(service, "_nativeSubtitleAiCapability");
+            var statusEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            aiStatusRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var statusRelease = aiStatusRelease;
+            Set(wire, "SubtitleAiStatusBoundary", (Func<CancellationToken, Task>)(ct =>
+            {
+                statusEntered.TrySetResult();
+                return statusRelease.Task.WaitAsync(ct);
+            }));
+            var statusProbe = (Task)Call(service, "SendSubtitleAiAvailabilityToOscAsync", CancellationToken.None)!;
+            await statusEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            api.InvalidateAccessContext();
+            statusRelease.TrySetResult();
+            await statusProbe.WaitAsync(TimeSpan.FromSeconds(4));
+            Set(wire, "SubtitleAiStatusBoundary", null);
+            Require(!ReferenceEquals(previousCapability, Get(service, "_nativeSubtitleAiCapability")) &&
+                (bool)aiAvailable.GetValue(service)!,
+                "Read-context retirement during the AI status probe discarded the current playback capability.");
             foreach (var action in new[] { "add", "appearance", "ai" })
             {
                 await Open();
+                if (action == "ai")
+                    Require(Descendants<Button>((Grid)Get(Menu(service)!, "_root")!).Single(button =>
+                        button.Content?.ToString() == "Translate with AI…").Visibility == Visibility.Visible,
+                        "Read-context retirement hid Translate with AI in the actual native Subtitle menu.");
                 Call(service, "InvokeNativeSubtitleAction", action);
                 await Until(() => Get(service, "_nativeSubtitleDialog") is ContentDialog,
                     "Subtitle " + action + " did not reach its actual authorized dialog.");
