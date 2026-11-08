@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 
 internal static partial class ArtworkMotionNativeFixture
 {
@@ -120,6 +121,147 @@ internal static partial class ArtworkMotionNativeFixture
         finally
         {
             heldGate.TrySetResult(); recycledGate.TrySetResult();
+            parent.Children.Remove(card);
+        }
+    }
+
+    // Home and Search cards show the same blur while loading, fade a late poster in over it, and clear
+    // a recycled card at once.
+    private static async Task CardPlaceholderCasesAsync(StackPanel parent, Wire wire, string kind)
+    {
+        var card = NewCard(kind); parent.Children.Add(card);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recycledGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await Until(() => card.IsLoaded);
+            var image = CardImage(card);
+            var fallback = (DefaultArtwork)card.FindName("ArtworkFallback");
+            var reveal = (Grid)card.FindName(kind == "poster" ? "PosterReveal" : "BackdropReveal");
+            var blur = (Image)typeof(DefaultArtwork).GetField("_thumbhash", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(fallback)!;
+            void BindHashed(string id, string hash = SampleThumbhash)
+            {
+                var item = new MediaItem
+                {
+                    ContentId = id, Title = id, Type = "movie", PosterThumbhash = hash, BackdropThumbhash = hash,
+                    PosterUrl = "https://artwork-motion.invalid/art/" + id, BackdropUrl = "https://artwork-motion.invalid/art/" + id,
+                };
+                switch (card) { case PosterCard poster: poster.MediaItem = item; break; case LandscapeCard landscape: landscape.MediaItem = item; break; }
+            }
+
+            // Detaching invalidates DefaultArtwork's pending generation. The retained binding must
+            // request the blur again on attachment, before its real artwork is allowed through.
+            var cache = typeof(LibraryGridCard).Assembly.GetType("SiloPlayer.Helpers.ThumbhashBitmaps")!;
+            var pending = (Dictionary<(string Hash, bool Dim), Task<ImageSource?>>)cache.GetField("Pending", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+            var reloadHash = kind == "poster" ? "3QcSHQRnh493V4dIh4eXh1h4kJUI" : "4QcSHQRnh493V4dIh4eXh1h4kJUI";
+            var blurReady = new TaskCompletionSource<ImageSource?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            pending.Add((reloadHash, false), blurReady.Task);
+            try
+            {
+                var reload = kind + "-placeholder-reload-" + Guid.NewGuid().ToString("N");
+                wire.Gates["/art/" + reload] = gate;
+                BindHashed(reload, reloadHash);
+                Check(blur.Source == null && fallback.Visibility == Visibility.Visible,
+                    kind + " blur is still pending before unloading");
+                var generation = typeof(DefaultArtwork).GetField("_generation", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                var beforeUnload = (int)generation.GetValue(fallback)!;
+                parent.Children.Remove(card);
+                await Until(() => !card.IsLoaded && (int)generation.GetValue(fallback)! != beforeUnload);
+                parent.Children.Add(card);
+                await Until(() => card.IsLoaded);
+                var picture = new WriteableBitmap(1, 1);
+                blurReady.TrySetResult(picture);
+                await Until(() => ReferenceEquals(blur.Source, picture));
+                Check(fallback.Visibility == Visibility.Visible && blur.Visibility == Visibility.Visible && image.Source == null,
+                    kind + " reloaded card restores a pending blur without waiting for its artwork");
+            }
+            finally
+            {
+                pending.Remove((reloadHash, false));
+                blurReady.TrySetResult(null);
+            }
+
+            var held = kind + "-placeholder-held-" + Guid.NewGuid().ToString("N");
+            wire.Gates["/art/" + held] = gate;
+            BindHashed(held);
+            await Until(() => blur.Source != null);
+            Check(fallback.Visibility == Visibility.Visible && image.Opacity == 0 && reveal.Opacity == 0,
+                kind + " loading card shows its thumbhash blur instead of an empty frame");
+            await Until(() => wire.Requests.ContainsKey("/art/" + held));
+            await Task.Delay(150); gate.TrySetResult();
+            await Until(() => image.Source is BitmapImage { PixelWidth: > 0 } && image.Opacity >= 1 && reveal.Opacity >= 1);
+            var animations = new Windows.UI.ViewManagement.UISettings().AnimationsEnabled;
+            Check(animations ? reveal.OpacityTransition is not null : reveal.OpacityTransition is null,
+                kind + " late artwork fades in over its blur only when system animations are on");
+            await Until(() => fallback.Visibility == Visibility.Collapsed);
+
+            var recycled = kind + "-placeholder-recycled-" + Guid.NewGuid().ToString("N");
+            wire.Gates["/art/" + recycled] = recycledGate;
+            BindHashed(recycled);
+            Check(image.Source == null && image.Opacity == 0 && reveal.Opacity == 0 && reveal.OpacityTransition is null,
+                kind + " recycled card clears the previous artwork at once, without fading it out");
+            Check(fallback.Visibility == Visibility.Visible, kind + " recycled card shows its blur while the new artwork loads");
+            recycledGate.TrySetResult();
+            await Until(() => image.Source is BitmapImage { PixelWidth: > 0 } && image.Opacity >= 1 && reveal.Opacity >= 1);
+            // A disk hit still goes through the native decoder, but neither the intentional grace
+            // delay nor the initial viewport wait should force this quick artwork to fade.
+            var fast = kind + "-placeholder-fast-" + Guid.NewGuid().ToString("N");
+            var services = SiloPlayer.App.Services;
+            var images = (ImageService)services.GetService(typeof(ImageService))!;
+            var http = (HttpClient)services.GetService(typeof(HttpClient))!;
+            await images.GetImageDiskPathAsync(fast, kind == "poster" ? "poster" : "backdrop",
+                "https://artwork-motion.invalid/art/" + fast, http, CancellationToken.None);
+            var fastOpened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            RoutedEventHandler onFastOpened = (_, _) => fastOpened.TrySetResult();
+            image.ImageOpened += onFastOpened;
+            try
+            {
+                BindHashed(fast);
+                await fastOpened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally { image.ImageOpened -= onFastOpened; }
+            Check(reveal.OpacityTransition is null && fallback.Visibility == Visibility.Collapsed &&
+                image.Opacity >= 1 && reveal.Opacity >= 1,
+                kind + " fast disk-cached artwork reveals at once and immediately removes its blur");
+            Check(wire.Requests.GetValueOrDefault("/art/" + fast) == 1,
+                kind + " instant reveal used the disk cache rather than another download");
+
+            // Drive ImageOpened explicitly with an undecoded source: no native decode timing can
+            // accidentally hide a fade that started (and finished) before the image could draw.
+            var controller = card.GetType().GetField("_reveal", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(card)!;
+            void InvokeReveal(string method, params object[] args)
+                => controller.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(controller, args);
+            InvokeReveal("Hide");
+            image.Source = new BitmapImage();
+            fallback.Visibility = Visibility.Visible;
+            InvokeReveal("Begin");
+            await Task.Delay(150);
+            InvokeReveal("Reveal", false);
+            await Task.Delay(300);
+            Check(image.Opacity == 0 && reveal.Opacity == 0 && reveal.OpacityTransition is null &&
+                fallback.Visibility == Visibility.Visible,
+                kind + " pending native decode cannot consume the reveal fade");
+            InvokeReveal("Opened");
+            Check(image.Opacity >= 1 && reveal.Opacity >= 1 &&
+                (animations ? reveal.OpacityTransition is not null && fallback.Visibility == Visibility.Visible
+                    : reveal.OpacityTransition is null && fallback.Visibility == Visibility.Collapsed),
+                kind + " late reveal starts only when ImageOpened makes artwork drawable");
+            await Until(() => fallback.Visibility == Visibility.Collapsed);
+
+            // Already-decoded sources may open synchronously during Source assignment, before Reveal.
+            InvokeReveal("Hide");
+            image.Source = new BitmapImage();
+            fallback.Visibility = Visibility.Visible;
+            InvokeReveal("Begin");
+            InvokeReveal("Opened");
+            InvokeReveal("Reveal", false);
+            Check(reveal.OpacityTransition is null && fallback.Visibility == Visibility.Collapsed && reveal.Opacity >= 1,
+                kind + " quick synchronous ImageOpened also reveals immediately");
+            Program.Log("PASS " + kind + " placeholder: pending blur restored on reload, fade after decode when late, instant reveal when quick, instant clear on recycle.");
+        }
+        finally
+        {
+            gate.TrySetResult(); recycledGate.TrySetResult();
             parent.Children.Remove(card);
         }
     }

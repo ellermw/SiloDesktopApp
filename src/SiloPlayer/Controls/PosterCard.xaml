@@ -68,19 +68,23 @@
                  (not on the parent Grid) so the image zooms INSIDE the
                  rounded clip frame, matching webui's overflow:hidden +
                  group-hover:scale-105 pattern. -->
-            <Image
-                x:Name="PosterImage"
-                Stretch="UniformToFill"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Opacity="0"
-                RenderTransformOrigin="0.5,0.5">
-                <Image.RenderTransform>
-                    <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
-                </Image.RenderTransform>
-            </Image>
-
+            <!-- Below the poster: the blurred thumbhash while it loads, which a late poster fades in over. -->
             <controls:DefaultArtwork x:Name="ArtworkFallback" Visibility="Collapsed" />
+
+            <!-- PosterReveal carries the fade (ArtworkReveal); the image's RenderTransform rules it out there. -->
+            <Grid x:Name="PosterReveal" Opacity="0">
+                <Image
+                    x:Name="PosterImage"
+                    Stretch="UniformToFill"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Opacity="0"
+                    RenderTransformOrigin="0.5,0.5">
+                    <Image.RenderTransform>
+                        <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
+                    </Image.RenderTransform>
+                </Image>
+            </Grid>
 
             <!-- Bottom gradient overlay (from-black/55) -->
             <Border VerticalAlignment="Bottom" Height="96" IsHitTestVisible="False">

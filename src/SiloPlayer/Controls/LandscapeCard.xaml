@@ -41,17 +41,20 @@
 
             <!-- Actual backdrop image — hover zoom on image only (not the
                  whole card) so the rounded clip frame stays still. -->
-            <Image
-                x:Name="BackdropImage"
-                Stretch="UniformToFill"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Opacity="0"
-                RenderTransformOrigin="0.5,0.5">
-                <Image.RenderTransform>
-                    <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
-                </Image.RenderTransform>
-            </Image>
+            <!-- BackdropReveal carries the fade (ArtworkReveal); the image's RenderTransform rules it out there. -->
+            <Grid x:Name="BackdropReveal" Opacity="0">
+                <Image
+                    x:Name="BackdropImage"
+                    Stretch="UniformToFill"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Opacity="0"
+                    RenderTransformOrigin="0.5,0.5">
+                    <Image.RenderTransform>
+                        <CompositeTransform x:Name="HoverTransform" ScaleX="1" ScaleY="1" />
+                    </Image.RenderTransform>
+                </Image>
+            </Grid>
 
             <!-- Progress bar at bottom -->
             <Grid

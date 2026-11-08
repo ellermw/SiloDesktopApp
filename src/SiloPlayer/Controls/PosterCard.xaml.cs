@@ -149,17 +149,19 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     public bool DeferOverlayLoading { get; set; }
     public bool SuppressImageLoading { get; set; }
     private DecodedArtworkCache.Key? _decodedArtworkKey;
+    private readonly ArtworkReveal _reveal;
 
     public PosterCard()
     {
         this.InitializeComponent();
+        _reveal = new ArtworkReveal(PosterReveal, PosterImage, ArtworkFallback);
         PosterImage.ImageOpened += (_, _) =>
         {
-            ArtworkFallback.Visibility = Visibility.Collapsed;
+            _reveal.Opened();
             if (PosterImage.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage bitmap)
                 DecodedArtworkCache.Remember(_decodedArtworkKey, bitmap, this);
         };
-        PosterImage.ImageFailed += (_, _) => { PosterImage.Source = null; PosterImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
+        PosterImage.ImageFailed += (_, _) => { PosterImage.Source = null; _reveal.Hide(); ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         ApplyOverlayGeometry();
         ApplyActionGeometry();
@@ -171,6 +173,10 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             if (PosterImage.Source == null)
             {
                 _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+                // Unloading invalidates an unfinished blur; restore it before activity can restart loading.
+                if (!SuppressImageLoading && !DeferImageLoading && MediaItem is { } loadingItem &&
+                    (!string.IsNullOrEmpty(loadingItem.PosterUrl) || !string.IsNullOrEmpty(loadingItem.BackdropUrl)))
+                    ArtworkFallback.ShowLoadingThumbhash();
             }
             ArtworkViewport.ObserveAncestors(this);
             _artworkActivity?.Dispose();
@@ -225,6 +231,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             _loadCts = null;
             CancelPlaybackPrefetch();
             PosterImage.Source = null;
+            _reveal.Hide();
             ThumbhashImage.Source = null;
             ArtworkFallback.Visibility = MediaItem == null ? Visibility.Collapsed : Visibility.Visible;
         };
@@ -329,7 +336,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         ArtworkFallback.Reset(null);
         ArtworkFallback.Visibility = Visibility.Collapsed;
         PosterImage.Source = null;
-        PosterImage.Opacity = 0;
+        _reveal.Hide();
         ThumbhashImage.Source = null;
         RevealCardActions(false);
         QuickWatchedButton.Visibility = Visibility.Collapsed;
@@ -414,12 +421,13 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
         if (!_preserveArtworkOnUpdate)
         {
-            PosterImage.Opacity = 0;
-            // Skip thumbhash -- go straight to loading the real image.
+            _reveal.Hide();
             ThumbhashImage.Source = null;
             PosterImage.Source = null;
             ArtworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
-            ArtworkFallback.Visibility = SuppressImageLoading || string.IsNullOrEmpty(imageUrl) ? Visibility.Visible : Visibility.Collapsed;
+            if (SuppressImageLoading || string.IsNullOrEmpty(imageUrl)) ArtworkFallback.Visibility = Visibility.Visible;
+            // While the poster loads, its blurred thumbhash shows; without one, the empty frame does.
+            else if (!ArtworkFallback.ShowLoadingThumbhash()) ArtworkFallback.Visibility = Visibility.Collapsed;
             if (string.IsNullOrEmpty(imageUrl)) _ = ArtworkFallback.ShowThumbhashAsync();
         }
 
@@ -838,7 +846,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             if (DecodedArtworkCache.TryGet(key, out var cached))
             {
                 _decodedArtworkKey = key; _spoilerArtworkHidden = hidden;
-                PosterImage.Source = cached; PosterImage.Opacity = 1; ArtworkFallback.Visibility = Visibility.Collapsed;
+                PosterImage.Source = cached; _reveal.Reveal(decoded: true);
                 return;
             }
             // Short grace window: skip transient recycle churn without making
@@ -855,6 +863,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             try
             {
                 if (!DecodedArtworkCache.IsCurrent(key)) return;
+                // Measure artwork work, not the grace period, viewport wait or fetch queue.
+                _reveal.Begin();
                 diskPath = await imageService.GetImageDiskPathAsync(
                     item.ContentId, imageType, imageUrl, httpClient, ct);
             }
@@ -889,7 +899,9 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
                     _spoilerArtworkHidden = currentHidden;
                     PosterImage.Source = bitmapImage;
                     DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-                    PosterImage.Opacity = 1;
+                    // Blurred stills finished SetSourceAsync before assignment; ImageOpened may not fire.
+                    // Other artwork reveals at once when quick, or fades in when the card waited for it.
+                    _reveal.Reveal(decoded: currentHidden);
                     return;
                 }
                 catch (ArtworkDecodeGate.MotionDeferredException)
