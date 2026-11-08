@@ -131,7 +131,9 @@ public sealed partial class LibraryPage : Page,
     private double _collectionCardWidth;
     private DispatcherTimer? _visibleRangeDebounceTimer;
     private CancellationTokenSource? _libraryReadAheadCts;
-    private static readonly AsyncWorkThrottle s_artworkWarmupThrottle = new(2);
+    // Downloads posters around the viewport in its own lane of 4, beside the visible cards' 8.
+    private readonly ArtworkPrefetchQueue<LibraryArtworkReadAhead> _artworkReadAhead;
+    private sealed record LibraryArtworkReadAhead(MediaItem Item, int QueryVersion, SiloPlayer.Core.Api.ApiRequestContext Context);
     private bool _forceVisibleRangeLoad;
     private int _lastRequestedStartIndex = -1;
     private int _lastRequestedEndIndex = -1;
@@ -170,6 +172,7 @@ public sealed partial class LibraryPage : Page,
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
         _artworkMotion = ArtworkViewport.For(LibraryScroller);
+        _artworkReadAhead = new(workers: 4, capacity: 500, ReadAheadArtworkAsync);
         // Observe input even when the ScrollViewer or its scrollbar handles it.
         // ViewChanged also reports inertia and extent clamps, not just new intent.
         LibraryScroller.AddHandler(UIElement.PointerWheelChangedEvent,
@@ -685,6 +688,7 @@ public sealed partial class LibraryPage : Page,
         _libraryReadAheadCts?.Cancel();
         _libraryReadAheadCts?.Dispose();
         _libraryReadAheadCts = null;
+        _artworkReadAhead.Clear();
         ArtworkViewport.SetActive(RecommendedPanel, false);
         foreach (var card in _libraryCardSlots) card.SuspendArtwork();
         _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
@@ -1736,6 +1740,7 @@ public sealed partial class LibraryPage : Page,
             _libraryReadAheadCts?.Cancel();
             _libraryReadAheadCts?.Dispose();
             _libraryReadAheadCts = null;
+            _artworkReadAhead.Clear();
         }
         foreach (var card in _libraryCardSlots)
         {
@@ -2622,43 +2627,39 @@ public sealed partial class LibraryPage : Page,
     {
         try
         {
+            // Posters around the range for items already held start downloading at once, even while
+            // scrolling; the queue keeps what it has started, so steady scrolling never restarts it.
+            QueueArtworkReadAhead(ViewModel.CachedNeighborhood(start, end, forward), context);
             // Visible cards are bound first. The buffer then fills even if the
             // user stops touching the wheel, without adding off-screen XAML.
             await Task.Delay(150, ct);
-            var items = await ViewModel.PrefetchAroundAsync(start, end, forward, ct);
+            await ViewModel.PrefetchAroundAsync(start, end, forward, ct);
             ct.ThrowIfCancellationRequested();
             if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
-            var images = App.Services.GetRequiredService<ImageService>();
-            var http = App.Services.GetRequiredService<HttpClient>();
-            await Parallel.ForEachAsync(items,
-                new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct },
-                async (item, token) =>
-                {
-                    var poster = !string.IsNullOrWhiteSpace(item.PosterUrl);
-                    var url = poster ? item.PosterUrl : item.BackdropUrl;
-                    if (string.IsNullOrWhiteSpace(url)) return;
-                    while (true)
-                    {
-                        await _artworkMotion.WaitAsync(token);
-                        token.ThrowIfCancellationRequested();
-                        if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return;
-                        var started = await s_artworkWarmupThrottle.RunAsync(async workToken =>
-                        {
-                            workToken.ThrowIfCancellationRequested();
-                            if (!_isNavigated || !_stateSettings.IsCurrentContext(context)) return true;
-                            if (_artworkMotion.IsDeferred) return false;
-                            // Cancel work that has not started, but keep this slot
-                            // until an already-started shared download completes.
-                            await images.GetImageDiskPathAsync(item.ContentId,
-                                poster ? "poster" : "backdrop", url, http, workToken, waitForSharedDownload: true);
-                            return true;
-                        }, token);
-                        if (started) break;
-                    }
-                });
+            QueueArtworkReadAhead(ViewModel.CachedNeighborhood(start, end, forward), context);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { App.SetPerfBreadcrumb($"library read-ahead failed: {ex.GetType().Name}"); }
+    }
+
+    private void QueueArtworkReadAhead(IReadOnlyList<MediaItem> items, SiloPlayer.Core.Api.ApiRequestContext context)
+    {
+        var version = ViewModel.QueryVersion;
+        _artworkReadAhead.Replace(items
+            .Where(item => !string.IsNullOrWhiteSpace(item.PosterUrl) || !string.IsNullOrWhiteSpace(item.BackdropUrl))
+            .Select(item => new LibraryArtworkReadAhead(item, version, context)));
+    }
+
+    // Runs off the UI thread: reads only plain fields and thread-safe state, never a XAML control.
+    // Downloads only; decoding stays with the visible cards, which wait for the scroll to slow.
+    private async Task ReadAheadArtworkAsync(LibraryArtworkReadAhead work, CancellationToken ct)
+    {
+        if (!_isNavigated || work.QueryVersion != ViewModel.QueryVersion || !_stateSettings.IsCurrentContext(work.Context)) return;
+        var poster = !string.IsNullOrWhiteSpace(work.Item.PosterUrl);
+        var url = poster ? work.Item.PosterUrl! : work.Item.BackdropUrl!;
+        // Keep this worker until a started shared download completes, so the lane stays bounded.
+        await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(work.Item.ContentId,
+            poster ? "poster" : "backdrop", url, App.Services.GetRequiredService<HttpClient>(), ct, waitForSharedDownload: true);
     }
 
     private (int StartIndex, int EndIndex) GetVisibleItemRange(GridLayoutInfo layout)

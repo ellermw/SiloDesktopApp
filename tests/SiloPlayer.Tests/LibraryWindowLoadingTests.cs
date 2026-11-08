@@ -268,6 +268,24 @@ public class LibraryWindowLoadingTests
         Assert.All(handler.Limits, limit => Assert.InRange(limit, 1, 100));
     }
 
+    [Theory]
+    [InlineData(true, 440, 360, 559)]
+    [InlineData(false, 399, 280, 479)]
+    public async Task CachedNeighborhoodListsHeldItemsOutsideTheRangeNearestFirstWithoutRequests(bool forward, int nearest, int first, int last)
+    {
+        var (vm, handler) = Create();
+        await vm.EnsureRangeLoadedAsync(400, 439);
+        await vm.PrefetchAroundAsync(400, 439, forward);
+        var requests = handler.Requests;
+        var items = vm.CachedNeighborhood(400, 439, forward);
+        Assert.Equal(requests, handler.Requests);
+        Assert.Equal(nearest.ToString(), items[0].ContentId);
+        Assert.All(items, item => Assert.False(int.Parse(item.ContentId) is >= 400 and <= 439));
+        Assert.All(items, item => Assert.InRange(int.Parse(item.ContentId), first, last));
+        Assert.Equal(last - first + 1 - 40, items.Count);
+        Assert.Empty(vm.CachedNeighborhood(440, 439, forward));
+    }
+
     [Fact]
     public async Task ReadAheadAtEndOfLibraryNeverRequestsBeyondTheCatalog()
     {
