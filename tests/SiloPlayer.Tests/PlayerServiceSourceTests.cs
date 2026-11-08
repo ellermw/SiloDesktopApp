@@ -19,7 +19,7 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void LocalCaptionCycleRetiresOldActivationWithoutChangingPreferenceProvenance()
+    public void LocalCaptionCycleRecordsExplicitIntentWithoutSavingPreferences()
     {
         var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
         var start = source.IndexOf("private void CycleSubtitleBackward()", StringComparison.Ordinal);
@@ -29,7 +29,7 @@ public sealed class PlayerServiceSourceTests
         var retire = cycle.IndexOf("Interlocked.Exchange(ref _subtitleActivationIntent, new object());", StringComparison.Ordinal);
         var intent = cycle.IndexOf("manager!.TryRecordLocalSubtitleSelection(session, selected.Track,", StringComparison.Ordinal);
         Assert.True(executed >= 0 && intent > executed && retire > intent);
-        Assert.Contains("isAutomatic: manager.IsSubtitleSelectionAutomatic", cycle[intent..]);
+        Assert.Contains("isAutomatic: false", cycle[intent..retire]);
         Assert.Contains("mpv.SetSubtitleTrack(previousSid > 0", cycle[intent..retire]);
         Assert.DoesNotContain("SaveExecutedSubtitlePreferenceAsync", cycle);
         Assert.DoesNotContain("SaveSubtitlePrefsAsync", cycle);

@@ -6032,10 +6032,15 @@ public partial class PlayerService : IDisposable
         }
         try
         {
+            lock (_playbackBusyLock)
             lock (_subtitleTrackStateLock)
             {
-                if (!CurrentOwner() || manager.CurrentSession != session || _mpv == null ||
-                    _activeSubtitleServerIndex != (requestedIndex ?? -1)) return SubtitleTransportResult.Superseded;
+                if (!CurrentOwner() || manager.CurrentSession != session || _mpv == null)
+                    return SubtitleTransportResult.Superseded;
+                // The drained seek may have left loading/pause state without
+                // a load to consume the newer deferred subtitle choice.
+                if (_activeSubtitleServerIndex != (requestedIndex ?? -1))
+                    return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);
                 // Admit the initial file-local choice exactly once. Subsequent
                 // grants can change files and must reuse this retained identity.
                 if (requestedIndex.HasValue && requestedTrack == null ||
@@ -6434,7 +6439,7 @@ public partial class PlayerService : IDisposable
             if (selected.Sid == 0 ? actualSid > 0 : (int)Math.Round(actualSid) != selected.Sid) return;
             if ((session.ProtocolVersion >= 3 || manager!.CaptureLocalSubtitleIntent().HasSelection) &&
                 !manager!.TryRecordLocalSubtitleSelection(session, selected.Track,
-                isAutomatic: manager.IsSubtitleSelectionAutomatic))
+                isAutomatic: false))
             {
                 // The service lock still owns this native file. A newly
                 // published grant cannot lend this gesture its reused index.

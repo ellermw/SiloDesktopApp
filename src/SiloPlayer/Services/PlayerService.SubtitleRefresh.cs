@@ -145,6 +145,8 @@ public partial class PlayerService
                     try { File.Delete(path); } catch { }
                 }
                 var activeRetired = _activeSubtitleServerIndex >= 0 && !RebindIndex(_activeSubtitleServerIndex).HasValue;
+                var pendingRetired = _pendingSubtitlePreferenceOwner?.MediaFileId == mediaFileId &&
+                    _pendingSubtitlePreferenceIndex is >= 0 && !RebindIndex(_pendingSubtitlePreferenceIndex).HasValue;
                 _activeSubtitleServerIndex = RebindIndex(_activeSubtitleServerIndex) ?? -1;
                 if (_executedSubtitleFileId == mediaFileId)
                 {
@@ -178,10 +180,10 @@ public partial class PlayerService
                     session.SelectedSubtitleTrackIndex = rebound?.Index;
                 }
                 session.SubtitleUrls = acceptedInventory = [.. existing, .. downloaded];
-                if (activeRetired)
+                if (activeRetired || pendingRetired)
                 {
-                    // Removal retires the executable row, not the viewer's
-                    // retained identity or automatic/explicit provenance.
+                    // Removal retires an executable or pending row, not the
+                    // viewer's retained identity or automatic/explicit provenance.
                     ShowSubtitleSelectionUnavailable();
                 }
             }

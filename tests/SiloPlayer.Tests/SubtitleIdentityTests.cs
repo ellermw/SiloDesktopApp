@@ -63,7 +63,7 @@ public sealed class SubtitleIdentityTests
         var supersededBeforeMutation = method.IndexOf("_activeSubtitleServerIndex != (requestedIndex ?? -1)", StringComparison.Ordinal);
         var mutation = method.IndexOf("transportMutationAttempted = true;", StringComparison.Ordinal);
         Assert.True(supersededBeforeMutation >= 0 && mutation > supersededBeforeMutation);
-        Assert.Contains("return SubtitleTransportResult.Superseded;", method[supersededBeforeMutation..mutation]);
+        Assert.Contains("return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);", method[supersededBeforeMutation..mutation]);
         Assert.Contains("manager.TryRecordLocalSubtitleSelection(session, requestedTrack, manager.IsSubtitleSelectionAutomatic)", method[..mutation]);
         Assert.DoesNotContain("var inheritedPendingLoad =", method);
         Assert.DoesNotContain("_restorePausedAfterLoad.HasValue", rollback);
