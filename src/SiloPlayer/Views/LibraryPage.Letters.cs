@@ -38,8 +38,10 @@ public sealed partial class LibraryPage
 
     // The rail stays in place, greyed, while its index loads or after a failed read (with
     // Retry), so it neither pops in late nor vanishes silently. An unsupported or empty
-    // index, or a catalog that failed to load, still releases the gutter.
-    private bool ShowLibraryLetterRail => IsLibraryLetterGrid && ViewModel.ErrorMessage is null &&
+    // index, or an initial catalog failure with no loaded window, still releases the gutter.
+    // Later window failures keep the rail and gutter beside the retained cards.
+    private bool ShowLibraryLetterRail => IsLibraryLetterGrid &&
+        (ViewModel.ErrorMessage is null || ViewModel.WindowStartIndex >= 0) &&
         (CanShowLibraryLetters || ViewModel.IsLetterIndexLoading || ViewModel.LetterIndexFailed);
     private readonly SolidColorBrush _clearLetterBrush = new(Microsoft.UI.Colors.Transparent);
 
@@ -133,9 +135,9 @@ public sealed partial class LibraryPage
 
     private void UpdateLibraryLetterLayout()
     {
-        // Keep the same width from pending to loaded, but release the gutter
-        // for unsupported, failed or empty indexes so ordinary browsing uses
-        // the full viewport.
+        // Keep the same width from pending to loaded or failed indexes. Release
+        // the gutter only for unsupported/empty indexes or an initial catalog
+        // failure with no loaded window.
         var available = Math.Max(14, LibraryContentArea.ActualHeight - 88);
         var columns = available < 540 ? 2 : 1;
         var reserveRail = ShowLibraryLetterRail;

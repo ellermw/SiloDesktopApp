@@ -86,6 +86,7 @@ internal static class LibraryLettersNativeFixture
                     throw new InvalidOperationException("Letter availability or single tab stop is incorrect.");
                 if (Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(Letter("Z")) != "Z, 1 title")
                     throw new InvalidOperationException("Letter title count is missing from its accessible name.");
+                await VerifyFailedViewportWindowRailAsync(page, scroll, rail, railColumn, wire);
                 if (grouped)
                 {
                     wire.RejectNextCursor = true;
@@ -350,6 +351,48 @@ internal static class LibraryLettersNativeFixture
             await Task.Delay(150); navigation.Frame = null; field.SetValue(null, previous);
         }
     }
+    private static async Task VerifyFailedViewportWindowRailAsync(LibraryPage page, ScrollViewer scroll, Border rail,
+        ColumnDefinition railColumn, Wire wire)
+    {
+        page.UpdateLayout();
+        var viewportWidth = scroll.ViewportWidth;
+        var reservedWidth = railColumn.Width.Value;
+        var index = page.ViewModel.LetterIndex;
+        var firstCard = page.ViewModel.GetWindowItem(0);
+        if (index is null || firstCard is null || rail.Visibility != Visibility.Visible || reservedWidth <= 0)
+            throw new InvalidOperationException("The viewport failure fixture requires loaded cards and a loaded letter rail.");
+        void VerifyLayout()
+        {
+            page.UpdateLayout();
+            if (rail.Visibility != Visibility.Visible || Math.Abs(railColumn.Width.Value - reservedWidth) > .1 ||
+                Math.Abs(scroll.ViewportWidth - viewportWidth) > .1 ||
+                !ReferenceEquals(index, page.ViewModel.LetterIndex) || !ReferenceEquals(firstCard, page.ViewModel.GetWindowItem(0)))
+                throw new InvalidOperationException("A later viewport window failure or retry moved the rail gutter or retained cards.");
+        }
+        // The uncached range fails twice: each attempt clears ErrorMessage before
+        // fetching, then sets it again without replacing the currently loaded cards.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var held = wire.HoldNextWindow(fail: true);
+            var load = page.ViewModel.LoadWindowAsync(300, 60);
+            try
+            {
+                await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.Delay(100);
+                if (!page.ViewModel.IsLoading || page.ViewModel.ErrorMessage is not null)
+                    throw new InvalidOperationException("The held viewport retry did not clear the previous catalog error.");
+                VerifyLayout();
+                held.Release.TrySetResult();
+                await load;
+                await Until(() => page.ViewModel.ErrorMessage is not null);
+                await Task.Delay(100);
+                VerifyLayout();
+            }
+            finally { held.Release.TrySetResult(); await load; }
+        }
+        Program.Log("PASS: later viewport failures and retries keep the loaded letter rail, gutter and retained cards in place.");
+    }
+
     private static async Task VerifyCursorRecoveryAsync(LibraryPage page, Frame frame, ScrollViewer scroll, Wire wire,
         Func<string, Button> letter, string outcome, int columns, double rowHeight)
     {
