@@ -4,7 +4,7 @@
 
 Native Chapters source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta PR #90 input `2e359e6055440789dfc7e42b171519e5e9c58ee3`. These are historical input identities, not the final PR #94 merged head.
 
-Source version: `1.2.945-beta.1`; numeric version: `1.2.944.1`.
+Source version: `1.2.947-beta.1`; numeric version: `1.2.946.1`.
 
 The app, update host, launcher and installer defaults already carry these stamps; this merge changes none. PR #94's native Subtitles and composed OSC menu flows are combined with Beta's owned native Audio, Quality, Watch Party, Chapters, compact More, Playback info and Playback speed controls. These input identities are not a build, test or release receipt for the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required. The remaining PR #86 scope, identities, counts and hashes below are historical and do not verify this merge.
 
@@ -28,7 +28,7 @@ Integrated Audio source head (PR #87): `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e
 
 Reviewed Quality source head (PR #89): `5f38c219a0b5f53b32446e0d936631ef6fa99642`.
 
-Source version: `1.2.945-beta.1`; numeric version: `1.2.944.1`.
+Source version: `1.2.947-beta.1`; numeric version: `1.2.946.1`.
 
 These values record the existing app, updater, launcher and installer-default stamps without changing them. Neither source identity is a verification receipt for the combined merge. No builds or tests were run for this correction or merge; pipeline re-verification must record the final integrated head. The PR #86 identities, reviews and receipts below remain historical and do not verify either head or the combined merge.
 
