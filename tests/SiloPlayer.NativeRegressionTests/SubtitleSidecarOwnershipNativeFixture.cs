@@ -2879,7 +2879,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 manager.RecordLocalSubtitleSelection(0, isAutomatic: true);
                 pending = (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
             }
-            else if (scenario == "oversized-chunked") pending = (Task)Call(service, "PrefetchSubtitleSidecarAsync", manager.CurrentSession!.SubtitleUrls![0], null)!;
+            else if (scenario == "oversized-chunked") pending = (Task)Call(service, "PrefetchSubtitleSidecarAsync", manager.CurrentSession!.SubtitleUrls![0])!;
             else if (blockingAdd) pending = blockedSelection = Task.Run(() => (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, persist)!);
             else pending = (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, persist)!;
             await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
