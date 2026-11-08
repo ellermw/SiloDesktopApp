@@ -346,7 +346,24 @@
                     Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                     CornerRadius="18" AutomationProperties.Name="Jump to letter">
-                <Grid x:Name="LibraryLetterButtons" KeyDown="LibraryLetterButtons_KeyDown" />
+                <!-- Shown greyed while the index loads; a failed index keeps the rail with a Retry. -->
+                <Grid RowSpacing="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid x:Name="LibraryLetterButtons" KeyDown="LibraryLetterButtons_KeyDown" />
+                    <Button x:Name="LibraryLetterIndexRetry" Grid.Row="1" Visibility="Collapsed"
+                            Width="24" Height="24" MinWidth="0" MinHeight="0" Padding="0"
+                            HorizontalAlignment="Center" CornerRadius="12"
+                            Background="Transparent" BorderThickness="0"
+                            Command="{x:Bind ViewModel.RetryLetterIndexCommand}"
+                            ToolTipService.ToolTip="Letters couldn't load. Retry"
+                            AutomationProperties.Name="Retry loading letters"
+                            AutomationProperties.AutomationId="LibraryLetterIndexRetry">
+                        <FontIcon Glyph="&#xE72C;" FontSize="12" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
+                    </Button>
+                </Grid>
             </Border>
 
             <StackPanel x:Name="LibraryLetterFeedback" Orientation="Horizontal" Spacing="10"
@@ -385,8 +402,13 @@
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     Visibility="Collapsed"
-                    Click="ScrollToTop_Click">
-                <FontIcon Glyph="&#xE74A;" FontSize="14" />
+                    Click="ScrollToTop_Click"
+                    ToolTipService.ToolTip="Back to top"
+                    AutomationProperties.Name="Back to top">
+                <!-- Geometry, not a font glyph: this button inherits the text font, which has no E74A,
+                     and rendered half an arrow. PathIcon keeps the button's hover/pressed/disabled colours. -->
+                <PathIcon Width="16" Height="16"
+                          Data="M8,2 L13.6,7.6 L12.4,8.8 L8.9,5.3 L8.9,14 L7.1,14 L7.1,5.3 L3.6,8.8 L2.4,7.6 Z" />
             </Button>
 
             <!-- Error message overlaid at bottom of viewport -->

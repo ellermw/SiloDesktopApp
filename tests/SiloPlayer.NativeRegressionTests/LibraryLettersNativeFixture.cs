@@ -70,9 +70,9 @@ internal static class LibraryLettersNativeFixture
                 await Task.Delay(150);
                 var pendingIndexWidth = scroll.ViewportWidth;
                 var railColumn = (ColumnDefinition)page.FindName("LibraryLetterColumn");
-                if (!page.ViewModel.IsLetterIndexLoading || railColumn.Width.Value <= 0 ||
+                if (!page.ViewModel.IsLetterIndexLoading || railColumn.Width.Value <= 0 || rail.Visibility != Visibility.Visible ||
                     page.ViewModel.LetterIndex is not null || letters.Children.Cast<Button>().Any(button => button.IsEnabled))
-                    throw new InvalidOperationException("The pending index must reserve space without enabling guessed letters.");
+                    throw new InvalidOperationException("The pending index must show the greyed rail without enabling guessed letters.");
                 wire.LetterIndexGate.TrySetResult();
                 await page.ViewModel.EnsureLetterIndexAsync();
                 await Until(() => rail.Visibility == Visibility.Visible && letters.Children.Count == 27);
@@ -86,6 +86,7 @@ internal static class LibraryLettersNativeFixture
                     throw new InvalidOperationException("Letter availability or single tab stop is incorrect.");
                 if (Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(Letter("Z")) != "Z, 1 title")
                     throw new InvalidOperationException("Letter title count is missing from its accessible name.");
+                await VerifyFailedViewportWindowRailAsync(page, scroll, rail, railColumn, wire);
                 if (grouped)
                 {
                     wire.RejectNextCursor = true;
@@ -284,12 +285,24 @@ internal static class LibraryLettersNativeFixture
                 await Until(() => page.ViewModel.IsLetterIndexLoading && railColumn.Width.Value > 0);
                 wire.LetterIndexGate.TrySetResult();
                 await failedIndex;
-                await Until(() => !page.ViewModel.IsLetterIndexLoading && railColumn.Width.Value == 0 &&
-                    rail.Visibility == Visibility.Collapsed);
+                // A failed index keeps the greyed rail in place with a Retry: it neither vanishes
+                // silently nor shifts the cards sideways.
+                var indexRetry = (Button)page.FindName("LibraryLetterIndexRetry");
+                await Until(() => !page.ViewModel.IsLetterIndexLoading && page.ViewModel.LetterIndexFailed &&
+                    rail.Visibility == Visibility.Visible && indexRetry.Visibility == Visibility.Visible);
                 page.UpdateLayout(); await Task.Delay(100);
-                if (Math.Abs(scroll.ViewportWidth - beforeFailureWidth - reservedWidth) > .1)
-                    throw new InvalidOperationException("A failed index left an empty gutter instead of restoring the full viewport.");
+                if (Math.Abs(railColumn.Width.Value - reservedWidth) > .1 || Math.Abs(scroll.ViewportWidth - beforeFailureWidth) > .1)
+                    throw new InvalidOperationException("A failed index moved the rail gutter or the cards.");
+                if (letters.Children.Cast<Button>().Any(button => button.IsEnabled || button.IsTabStop))
+                    throw new InvalidOperationException("A failed index left guessed letters enabled.");
                 wire.FailIndex = false;
+                ((IInvokeProvider)new ButtonAutomationPeer(indexRetry).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Until(() => !page.ViewModel.LetterIndexFailed && page.ViewModel.LetterIndex is not null &&
+                    indexRetry.Visibility == Visibility.Collapsed && letters.Children.Cast<Button>().Any(button => button.IsEnabled));
+                page.UpdateLayout(); await Task.Delay(100);
+                if (Math.Abs(scroll.ViewportWidth - beforeFailureWidth) > .1)
+                    throw new InvalidOperationException("Retrying the index moved the cards.");
+                Program.Log("PASS: a failed letter index keeps the greyed rail and its gutter, offers Retry, and Retry restores the letters.");
                 if (grouped)
                 {
                     await VerifyStructuralRefreshLetterRailAsync(page, wire);
@@ -338,6 +351,48 @@ internal static class LibraryLettersNativeFixture
             await Task.Delay(150); navigation.Frame = null; field.SetValue(null, previous);
         }
     }
+    private static async Task VerifyFailedViewportWindowRailAsync(LibraryPage page, ScrollViewer scroll, Border rail,
+        ColumnDefinition railColumn, Wire wire)
+    {
+        page.UpdateLayout();
+        var viewportWidth = scroll.ViewportWidth;
+        var reservedWidth = railColumn.Width.Value;
+        var index = page.ViewModel.LetterIndex;
+        var firstCard = page.ViewModel.GetWindowItem(0);
+        if (index is null || firstCard is null || rail.Visibility != Visibility.Visible || reservedWidth <= 0)
+            throw new InvalidOperationException("The viewport failure fixture requires loaded cards and a loaded letter rail.");
+        void VerifyLayout()
+        {
+            page.UpdateLayout();
+            if (rail.Visibility != Visibility.Visible || Math.Abs(railColumn.Width.Value - reservedWidth) > .1 ||
+                Math.Abs(scroll.ViewportWidth - viewportWidth) > .1 ||
+                !ReferenceEquals(index, page.ViewModel.LetterIndex) || !ReferenceEquals(firstCard, page.ViewModel.GetWindowItem(0)))
+                throw new InvalidOperationException("A later viewport window failure or retry moved the rail gutter or retained cards.");
+        }
+        // The uncached range fails twice: each attempt clears ErrorMessage before
+        // fetching, then sets it again without replacing the currently loaded cards.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var held = wire.HoldNextWindow(fail: true);
+            var load = page.ViewModel.LoadWindowAsync(300, 60);
+            try
+            {
+                await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.Delay(100);
+                if (!page.ViewModel.IsLoading || page.ViewModel.ErrorMessage is not null)
+                    throw new InvalidOperationException("The held viewport retry did not clear the previous catalog error.");
+                VerifyLayout();
+                held.Release.TrySetResult();
+                await load;
+                await Until(() => page.ViewModel.ErrorMessage is not null);
+                await Task.Delay(100);
+                VerifyLayout();
+            }
+            finally { held.Release.TrySetResult(); await load; }
+        }
+        Program.Log("PASS: later viewport failures and retries keep the loaded letter rail, gutter and retained cards in place.");
+    }
+
     private static async Task VerifyCursorRecoveryAsync(LibraryPage page, Frame frame, ScrollViewer scroll, Wire wire,
         Func<string, Button> letter, string outcome, int columns, double rowHeight)
     {

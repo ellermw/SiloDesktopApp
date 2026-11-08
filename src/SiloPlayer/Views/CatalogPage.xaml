@@ -227,7 +227,10 @@
                 Click="CatalogScrollToTop_Click"
                 ToolTipService.ToolTip="Back to top"
                 AutomationProperties.Name="Back to top">
-            <FontIcon Glyph="&#xE74A;" FontSize="14" />
+            <!-- Geometry, not a font glyph: this button inherits the text font, which has no E74A,
+                 and rendered half an arrow. PathIcon keeps the button's hover/pressed/disabled colours. -->
+            <PathIcon Width="16" Height="16"
+                      Data="M8,2 L13.6,7.6 L12.4,8.8 L8.9,5.3 L8.9,14 L7.1,14 L7.1,5.3 L3.6,8.8 L2.4,7.6 Z" />
         </Button>
 
         <controls:SlideSheet x:Name="FiltersSheet" Title="Filters">
