@@ -205,11 +205,20 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             Require(service.IsSwitchingContent && manager.CurrentSession!.MediaFileId == 42,
                 "The fixture missed the outgoing version's switch window.");
             await ((Task)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!).WaitAsync(TimeSpan.FromSeconds(1));
-            Require(wire.PreferenceWrites == 0 && Get(service, "_pendingInitialServerSubtitleIndex") is 1,
-                "The outgoing Spanish pick did not queue without saving.");
+            var choice = Get(service, "_subtitleSelectionOperation");
+            var preferenceOwner = Get(service, "_pendingSubtitlePreferenceOwner");
+            // v3 queues the source identity, never an outgoing raw load index.
+            Require(wire.PreferenceWrites == 0 && Get(service, "_pendingSubtitlePreferenceIndex") is 1 &&
+                Get(service, "_pendingInitialServerSubtitleIndex") == null && manager.SubtitleSelectionForLoad == 1 &&
+                preferenceOwner != null && (int?)preferenceOwner.GetType().GetProperty("MediaFileId")!.GetValue(preferenceOwner) == 42,
+                "The outgoing Spanish pick did not queue its preference and identity without saving.");
             wire.ReplanRelease.TrySetResult();
             await subtitles.MediaEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Require(wire.PreferenceWrites == 0, "The queued pick saved before replacement execution.");
+            var reboundOwner = Get(service, "_pendingSubtitlePreferenceOwner");
+            Require(wire.PreferenceWrites == 0 && ReferenceEquals(choice, Get(service, "_subtitleSelectionOperation")) &&
+                reboundOwner != null && (int?)reboundOwner.GetType().GetProperty("MediaFileId")!.GetValue(reboundOwner) == 43 &&
+                Equals(reboundOwner.GetType().GetProperty("RequestedIntent")!.GetValue(reboundOwner), manager.CaptureLocalSubtitleIntent()),
+                "The queued preference lost its current intent or replacement-file owner before execution.");
             subtitles.MediaRelease.TrySetResult();
             await switching.WaitAsync(TimeSpan.FromSeconds(5));
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
@@ -219,11 +228,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
             Require(manager.CurrentSession.MediaFileId == 43 && mapped.Index == 0 && service.ActiveSubtitleServerIndex == mapped.Index &&
                 map.TryGetValue(mapped.Index, out var sid) && mpv.GetPropertyDouble("sid") == sid && mpv.IsPaused &&
-                wire.RequestedPreferences.SequenceEqual(new[] { mapped.Index }),
+                wire.RequestedPreferences.SequenceEqual(new[] { mapped.Index }) &&
+                wire.CommittedPreferences.SequenceEqual(new[] { mapped.Index }),
                 "A queued version-switch pick applied the outgoing ordinal or failed to save the mapped Spanish track exactly once.");
             Call(service, "StartLoadedMediaInitialization");
             await Until(() => Get(service, "_loadedMediaInitCts") == null);
-            Require(service.ActiveSubtitleServerIndex == mapped.Index && wire.RequestedPreferences.SequenceEqual(new[] { mapped.Index }),
+            Require(service.ActiveSubtitleServerIndex == mapped.Index && wire.RequestedPreferences.SequenceEqual(new[] { mapped.Index }) &&
+                wire.CommittedPreferences.SequenceEqual(new[] { mapped.Index }),
                 "Repeated initialization duplicated the queued preference or lost the mapped choice.");
         }
         finally

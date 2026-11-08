@@ -7091,13 +7091,15 @@ public partial class PlayerService : IDisposable
                 _pendingExplicitInitialSubtitleOwner = null;
             if (_pendingSubtitlePreferenceOwner?.MediaFileId != fileId)
             {
-                if (_subtitleVersionSwitchActive && _pendingSubtitlePreferenceIndex == -1 &&
-                    _pendingSubtitlePreferenceOwner is { FollowsVersionSwitch: true } owner &&
+                if (_subtitleVersionSwitchActive && _pendingSubtitlePreferenceOwner is { } owner &&
                     !owner.Token.IsCancellationRequested && ReferenceEquals(owner.Authority, _activeAuthority) &&
-                    ReferenceEquals(owner.Manager, _playbackManager))
+                    ReferenceEquals(owner.Manager, _playbackManager) && owner.Authority.ApiClient.IsCurrentContext(owner.Context) &&
+                    (owner.RequestedIntent is { } requested
+                        ? owner.Manager?.CaptureLocalSubtitleIntent() == requested
+                        : owner.FollowsVersionSwitch && _pendingSubtitlePreferenceIndex == -1))
                 {
-                    // Off is file-independent, but its preference must be saved
-                    // only by the replacement file that actually executes it.
+                    // A current manual intent can map to the replacement inventory.
+                    // Save its preference only after that file executes the choice.
                     _pendingSubtitlePreferenceOwner = owner with { MediaFileId = fileId };
                 }
                 else
