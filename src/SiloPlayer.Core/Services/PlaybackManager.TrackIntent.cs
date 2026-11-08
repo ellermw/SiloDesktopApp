@@ -258,15 +258,12 @@ public partial class PlaybackManager
                 if (stored.Length > 0)
                     return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
             }
-            // An identified download cannot fall back to metadata or a reused
-            // index. Fully identityless legacy rows may still rebind below,
-            // but only to other fully identityless rows on the same file.
-            if (hasIdentity || key != null) return null;
+            // Same-file downloads require their stored identity. Metadata (or
+            // a reused index) must not substitute a different subtitle file.
+            return null;
         }
         var candidates = inventory.Where(t => !t.Unplayable &&
             (!sameFile || !hasIdentity) &&
-            (!sameFile || !Equal(t.Source, "downloaded") ||
-                string.IsNullOrWhiteSpace(t.TrackId) && SubtitleStoredKey(t) == null) &&
             Equal(t.Source, _viewerSubtitle.Source) && SubtitleCodec(t.Codec) == SubtitleCodec(_viewerSubtitle.Codec) &&
             MatchesSubtitleLanguage(t.Language, t.Source, t.Codec, SubtitleIdentityLabel(t), _viewerSubtitle) &&
             t.Forced == _viewerSubtitle.Forced && t.HearingImpaired == _viewerSubtitle.HearingImpaired).ToArray();
