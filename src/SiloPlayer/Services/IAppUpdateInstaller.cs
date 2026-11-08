@@ -18,3 +18,13 @@ public interface IStagedAppUpdateInstaller
     void CancelPreparedHandoff();
     DateTimeOffset? AuthorityCooldownUntil=>null;
 }
+
+/// <summary>Package is set when the download is ready; otherwise Error explains a failure, and neither means the update needs another path.</summary>
+public sealed record WindowedUpdateDownload(PreparedUpdatePackage? Package, string? Error);
+
+/// <summary>Opens the update window first; it shows the client's download, then installs the result.</summary>
+public interface IWindowedAppUpdateInstaller
+{
+    Task<bool> PrepareWithDownloadAsync(AppRelease release, string packageDirectory, bool restart, long ownerWindow,
+        Func<Action<IncrementalUpdateProgress>, CancellationToken, Task<WindowedUpdateDownload>> download, CancellationToken ct);
+}
