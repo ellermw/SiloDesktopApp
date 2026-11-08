@@ -57,15 +57,27 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             await Load(1, 12);
             Require(service.IsPaused && mpv.GetPropertyFlag("pause") && Math.Abs(mpv.Position - 12) < 2, "Quality reload changed pause or canonical position.");
 
-            // The old menu's English row is index 0, but the replacement's
-            // index 0 is Spanish. Refuse it both before and after adoption.
+            // The published outgoing menu can queue intent before adoption,
+            // but cannot execute or save it yet. English -> Spanish must leave
+            // only the latest owner to rebind to the replacement's index 0.
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
             var preferencesBeforeSwitch = wire.PreferenceWrites;
+            var spanishSid = mpv.GetPropertyDouble("sid");
             Set(service, "_switchingContent", true);
             Set(service, "_subtitleVersionSwitchActive", true);
-            Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!,
-                "The outgoing menu was accepted while a version switch was preparing.");
-            Require(manager.SubtitleSelectionForLoad == 1 && wire.PreferenceWrites == preferencesBeforeSwitch,
-                "A refused outgoing-menu choice changed subtitle intent or preferences.");
+            Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!,
+                "The published outgoing menu could not queue a choice while a version switch was preparing.");
+            var supersededChoice = Get(service, "_subtitleSelectionOperation");
+            Require(manager.SubtitleSelectionForLoad == 0 && Get(service, "_pendingSubtitlePreferenceIndex") is 0 &&
+                wire.PreferenceWrites == preferencesBeforeSwitch && mpv.GetPropertyDouble("sid") == spanishSid,
+                "A queued outgoing-menu choice executed or saved before adoption.");
+            Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!,
+                "A newer Spanish choice could not supersede the queued English choice.");
+            var latestChoice = Get(service, "_subtitleSelectionOperation");
+            Require(latestChoice != null && !ReferenceEquals(latestChoice, supersededChoice) &&
+                manager.SubtitleSelectionForLoad == 1 && Get(service, "_pendingSubtitlePreferenceIndex") is 1 &&
+                wire.PreferenceWrites == preferencesBeforeSwitch && mpv.GetPropertyDouble("sid") == spanishSid,
+                "The latest queued choice lost ownership or changed native captions/preferences prematurely.");
             // A previously reserved raw index must not outrank rebinding by
             // identity: index 1 means English on version 44, not Spanish.
             Set(service, "_pendingInitialServerSubtitleIndex", 1);
@@ -73,10 +85,17 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             await manager.StartReplacementSessionAsync(44, 12);
             Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)!,
                 "The outgoing menu was interpreted against the newly adopted file.");
+            Require(ReferenceEquals(latestChoice, Get(service, "_subtitleSelectionOperation")) &&
+                manager.SubtitleSelectionForLoad == 0 && wire.PreferenceWrites == preferencesBeforeSwitch &&
+                mpv.GetPropertyDouble("sid") == spanishSid,
+                "A stale menu row replaced the queued Spanish owner after adoption.");
             await Load(0, 12); // Rebind the unique Spanish row across file-local IDs.
+            await Until(() => Get(service, "_loadedMediaInitCts") == null);
             Require(manager.CaptureLocalSubtitleIntent().Track?.TrackId == "sub:42:1" &&
-                Get(service, "_pendingInitialServerSubtitleIndex") == null && wire.PreferenceWrites == preferencesBeforeSwitch,
-                "A foreign pending index survived the load or persisted a different-language preference.");
+                Get(service, "_pendingInitialServerSubtitleIndex") == null &&
+                Get(service, "_pendingSubtitlePreferenceIndex") == null &&
+                wire.PreferenceWrites == preferencesBeforeSwitch + 1,
+                "The replacement did not execute and save only the latest mapped Spanish choice exactly once.");
             await manager.StartReplacementSessionAsync(42, 12); await Load(1, 12);
             await manager.StartReplacementSessionAsync(43, 13); await Load(-1, 13);
             await manager.StartReplacementSessionAsync(42, 14); await Load(1, 14);
@@ -90,7 +109,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 wire.Replans[^1].GetProperty("operation").GetString() == "quality_change" &&
                 manager.CurrentSession!.SubtitleMode == "off", "Explicit Off never reached the server before quality change.");
             Require(subtitles.Requests > 0, "Native player never fetched the served subtitle bytes.");
-            Require(wire.PreferenceWrites == 2, "Automatic version fallback/adoption saved a viewer preference.");
+            Require(wire.PreferenceWrites == 3, "Automatic version fallback/adoption saved a viewer preference.");
 
             // Model the next-item boundary: PlayCoreAsync invalidates the old
             // menu, and StartSessionAsync (not replacement) resets track intent.
@@ -107,13 +126,13 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             await manager.StartSessionAsync(44);
             Call(service, "ResolveInitialSubtitleSelection", manager.WatchDetail, Version(44), manager.CurrentSession, null, -1, null);
             Require(!await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 1, true)! &&
-                manager.SubtitleSelectionForLoad == -1 && Get(service, "_pendingSubtitlePreferenceIndex") == null && wire.PreferenceWrites == 2,
+                manager.SubtitleSelectionForLoad == -1 && Get(service, "_pendingSubtitlePreferenceIndex") == null && wire.PreferenceWrites == 3,
                 "A next-item load interpreted the outgoing episode's menu index against the new inventory.");
             await Load(-1, 0);
             await Until(() => Get(service, "_loadedMediaInitCts") == null && !(bool)Get(service, "_subtitleMenuPending")!);
             Require(!(bool)Get(service, "_subtitleMenuPending")!, "Publishing the next episode's inventory did not enable its menu.");
             Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)! &&
-                service.ActiveSubtitleServerIndex == 0 && wire.PreferenceWrites == 3 &&
+                service.ActiveSubtitleServerIndex == 0 && wire.PreferenceWrites == 4 &&
                 manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 0).Language == "spa",
                 "The newly published next-item menu did not select its own Spanish row.");
 

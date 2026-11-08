@@ -328,28 +328,53 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 var pending = (Task)Call(service, "InitializeLoadedMediaAsync", Get(service, "_loadedMediaInitGeneration"), owner)!;
                 await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 await gate.WaitAsync(); gateHeld = true;
+                var survivingSession = manager.CurrentSession;
+                var fileGeneration = (long)Get(service, "_playbackFileGeneration")!;
                 var invalidation = (Task)Call(service, "HandlePlanInvalidationAsync", new PlaybackPlanInvalidation("obsolete", "fixture"))!;
-                Require(service.IsSwitchingContent, "No-op invalidation did not cover the initializer read.");
+                Require(!invalidation.IsCompleted && (int)Get(service, "_pendingPlanInvalidations")! == 1 &&
+                    !service.IsSwitchingContent && !service.IsLoading,
+                    "A pending no-op invalidation must suppress EOF without claiming the initializer's transport.");
                 subtitles.Release.TrySetResult();
-                await Until(() => ((Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!).ContainsKey(0));
-                await Task.Delay(150);
-                Require(!pending.IsCompleted && wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
-                    "The initializer dropped or saved its choice inside the no-op switch window.");
+                await pending.WaitAsync(TimeSpan.FromSeconds(5));
+                var sid = ((Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!).GetValueOrDefault(0);
+                Require(!invalidation.IsCompleted && service.ActiveSubtitleServerIndex == 0 &&
+                    sid > 0 && mpv.GetPropertyDouble("sid") == sid && mpv.IsPaused &&
+                    wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }) &&
+                    wire.CommittedPreferences.SequenceEqual(new[] { 1, 0 }),
+                    "A pending no-op invalidation blocked the ready initializer choice or lost its preference.");
                 gate.Release(); gateHeld = false;
-                await invalidation.WaitAsync(TimeSpan.FromSeconds(4)); await pending.WaitAsync(TimeSpan.FromSeconds(5));
-                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") > 0 &&
-                    wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }), "No-op invalidation stranded the initializer choice.");
+                await invalidation.WaitAsync(TimeSpan.FromSeconds(4));
+                Require((int)Get(service, "_pendingPlanInvalidations")! == 0,
+                    "The completed no-op invalidation retained its EOF guard.");
+                Require(ReferenceEquals(survivingSession, manager.CurrentSession) &&
+                    fileGeneration == (long)Get(service, "_playbackFileGeneration")! &&
+                    !service.IsSwitchingContent && !service.IsLoading && service.ActiveSubtitleServerIndex == 0 &&
+                    mpv.GetPropertyDouble("sid") == sid && wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }),
+                    "No-op invalidation replaced the transport or stranded the initializer choice.");
                 await (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, false)!;
-                Require(wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }), "Initializer retry saved the choice twice.");
+                Require(mpv.GetPropertyDouble("sid") == sid && wire.RequestedPreferences.SequenceEqual(new[] { 1, 0 }),
+                    "Initializer retry changed native captions or saved the choice twice.");
                 return;
             }
             else
             {
                 Task switching;
+                Task<bool>? picking = null;
+                var survivingSession = manager.CurrentSession;
+                var fileGeneration = (long)Get(service, "_playbackFileGeneration")!;
                 if (scenario == "invalidation-noop-pick")
                 {
                     await gate.WaitAsync(); gateHeld = true;
                     switching = (Task)Call(service, "HandlePlanInvalidationAsync", new PlaybackPlanInvalidation("obsolete", "fixture"))!;
+                    Require(!switching.IsCompleted && (int)Get(service, "_pendingPlanInvalidations")! == 1 &&
+                        !service.IsSwitchingContent && !service.IsLoading,
+                        "A pending no-op invalidation claimed a transport switch instead of only guarding EOF.");
+                    picking = (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+                    await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(!picking.IsCompleted && service.ActiveSubtitleServerIndex == 1 &&
+                        manager.SubtitleSelectionForLoad == 1 && Get(service, "_pendingSubtitlePreferenceIndex") == null &&
+                        mpv.GetPropertyDouble("sid") == priorSid && wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
+                        "A pick during a no-op invalidation changed applied captions, intent, or preferences before readiness.");
                 }
                 else
                 {
@@ -366,26 +391,37 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                             scenario == "audio-failed-pick" ? service.SwitchAudioTrackAsync(0) : service.SwitchVersionAsync(Version());
                     }
                     await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(service.IsSwitchingContent, "The fixture missed the transport switch window.");
+                    await ((Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!).WaitAsync(TimeSpan.FromSeconds(1));
+                    // v3 queues the manager's identity and preference owner, not
+                    // an outgoing raw index that could outrank a replacement grant.
+                    Require(Get(service, "_pendingSubtitlePreferenceIndex") is 0 &&
+                        manager.SubtitleSelectionForLoad == 0 && wire.PreferenceWrites == 1 &&
+                        mpv.GetPropertyDouble("sid") == priorSid,
+                        "The pick was not queued without execution or saving during the switch.");
                 }
-                Require(service.IsSwitchingContent, "The fixture missed the transport switch window.");
-                await ((Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!).WaitAsync(TimeSpan.FromSeconds(1));
-                // v3 queues the manager's identity and preference owner, not
-                // an outgoing raw index that could outrank a replacement grant.
-                Require(Get(service, "_pendingSubtitlePreferenceIndex") is 0 &&
-                    manager.SubtitleSelectionForLoad == 0 && wire.PreferenceWrites == 1 &&
-                    mpv.GetPropertyDouble("sid") == priorSid,
-                    "The pick was not queued without execution or saving during the switch.");
-                if (gateHeld) { gate.Release(); gateHeld = false; }
                 wire.ReplanRelease.TrySetResult();
-                // A rejected/no-op transport change leaves a usable file. Its
-                // rescue executor must finish the latest pick on that file,
-                // but only after the held subtitle is actually ready.
+                // A rejected switch needs a rescue executor; a no-op invalidation
+                // leaves the ordinary preflight in charge. Neither may change
+                // native captions or save before the held subtitle is ready.
                 await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                Require(service.ActiveSubtitleServerIndex == 0 && mpv.GetPropertyDouble("sid") == priorSid &&
-                    wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
-                    "The deferred pick changed native captions or saved before its read completed.");
+                Require(service.ActiveSubtitleServerIndex == (picking == null ? 0 : 1) &&
+                    mpv.GetPropertyDouble("sid") == priorSid && wire.RequestedPreferences.SequenceEqual(new[] { 1 }),
+                    "The pending pick changed native captions or saved before its read completed.");
                 subtitles.Release.TrySetResult();
+                if (picking != null)
+                {
+                    Require(await picking.WaitAsync(TimeSpan.FromSeconds(5)), "The ready pick was blocked by a pending no-op invalidation.");
+                    Require(!switching.IsCompleted && (int)Get(service, "_pendingPlanInvalidations")! == 1,
+                        "The no-op invalidation was not held through actual subtitle execution.");
+                    gate.Release(); gateHeld = false;
+                }
                 await switching.WaitAsync(TimeSpan.FromSeconds(5));
+                if (picking != null)
+                    Require(ReferenceEquals(survivingSession, manager.CurrentSession) &&
+                        fileGeneration == (long)Get(service, "_playbackFileGeneration")! &&
+                        (int)Get(service, "_pendingPlanInvalidations")! == 0,
+                        "A no-op invalidation replaced the surviving transport or retained its EOF guard.");
                 if (scenario == "seek-failed-pick")
                     await Until(() => Get(service, "_seekRestartCts") == null);
                 await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
