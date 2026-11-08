@@ -22,6 +22,7 @@ public static class MpvInterop
     public const int MPV_EVENT_NONE            = 0;
     public const int MPV_EVENT_SHUTDOWN         = 1;
     public const int MPV_EVENT_LOG_MESSAGE      = 2;
+    public const int MPV_EVENT_COMMAND_REPLY    = 5;
     public const int MPV_EVENT_END_FILE         = 7;
     public const int MPV_EVENT_FILE_LOADED      = 8;
     public const int MPV_EVENT_CLIENT_MESSAGE    = 16;
@@ -100,6 +101,12 @@ public static class MpvInterop
     /// </summary>
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
     public static extern int mpv_command(IntPtr ctx, IntPtr[] args);
+
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int mpv_command_async(IntPtr ctx, ulong reply_userdata, IntPtr[] args);
+
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void mpv_abort_async_command(IntPtr ctx, ulong reply_userdata);
 
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
     public static extern int mpv_set_option_string(IntPtr ctx,

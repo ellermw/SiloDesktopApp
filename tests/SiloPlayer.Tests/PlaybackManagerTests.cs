@@ -8,6 +8,31 @@ namespace SiloPlayer.Tests;
 
 public sealed class PlaybackManagerTests
 {
+    [Theory]
+    [InlineData("file:///C:/captions.srt")]
+    [InlineData("\\\\attacker\\share\\captions.srt")]
+    [InlineData("//attacker/share/captions.srt")]
+    [InlineData("C:\\captions.srt")]
+    [InlineData("smb://attacker/share/captions.srt")]
+    [InlineData("ftp://attacker/captions.srt")]
+    public void SubtitleResourcesRejectServerLocalPathsAndNonHttpSchemes(string resource)
+    {
+        using var http = new HttpClient();
+        var api = new SiloApiClient(http); api.SetBaseUrl("https://example.test");
+        using var auth = new AuthService(api, new AuthApi(api));
+        using var manager = new PlaybackManager(new(api), new(api), auth, api);
+        typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, new PlaybackStartResponse
+        {
+            SubtitleUrls = [new() { Index = 0, Url = resource },
+                new() { Index = 1, Url = "/stream/session/subtitles/1.vtt" },
+                new() { Index = 2, Url = "https://cdn.fixture/2.srt?st=fixture%2fquery" }]
+        });
+        var urls = manager.GetSubtitleUrls();
+        Assert.Equal(new[] { 1, 2 }, urls.Select(pair => pair.Track.Index));
+        Assert.All(urls, pair => Assert.Equal("https", new Uri(pair.FullUrl).Scheme));
+        Assert.Equal("https://cdn.fixture/2.srt?st=fixture%2fquery", urls[1].FullUrl);
+    }
+
     [Fact]
     public async Task SubtitleResources_AuthenticateApiRelativePathsAndKeepDistributedBytes()
     {

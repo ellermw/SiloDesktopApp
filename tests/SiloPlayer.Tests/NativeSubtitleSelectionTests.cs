@@ -49,7 +49,26 @@ public sealed class NativeSubtitleSelectionTests
 
     [Fact]
     public void BuiltinDemuxerCannotAttestApproximateFfmpegIndex() =>
-        Assert.Equal(0, NativeSubtitleSelection.Resolve(Japanese with { ContainerTrackId = null }, [English, Japanese], false));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(Japanese with { ContainerTrackId = null },
+            [English, Japanese with { Language = "eng" }], false));
+
+    [Fact]
+    public void BuiltinContainerIdentityIgnoresApproximateFfmpegIndex() =>
+        Assert.Equal(9, NativeSubtitleSelection.Resolve(Japanese with { StreamIndex = 7 }, [English, Japanese], false));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UnattestedStreamIndexUsesUniqueMetadataNotApproximateIndex(bool trustworthyContainerTrackId)
+    {
+        var requested = Japanese with { Id = 1, StreamIndex = 7, ContainerTrackId = null };
+        Assert.Equal(9, NativeSubtitleSelection.Resolve(requested, [English, Japanese], false, trustworthyContainerTrackId));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested, [Japanese, Japanese with { Id = 17 }], false, trustworthyContainerTrackId));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Codec = null }, [Japanese], false, trustworthyContainerTrackId));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Language = "ja-JP" }, [Japanese], false, trustworthyContainerTrackId));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Forced = true }, [Japanese], false, trustworthyContainerTrackId));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { HearingImpaired = true }, [Japanese], false, trustworthyContainerTrackId));
+    }
 
     [Fact]
     public void AbsentAndDuplicateIdentityCannotSelectAnotherTrack()
@@ -76,9 +95,41 @@ public sealed class NativeSubtitleSelectionTests
             trustworthyStreamIndex: true, trustworthyContainerTrackId: false));
 
     [Fact]
-    public void UnknownDemuxerCannotAttestContainerNumber() =>
-        Assert.Equal(0, NativeSubtitleSelection.Resolve(Japanese, [Japanese],
+    public void UnknownDemuxerCannotAttestContainerNumber()
+    {
+        // Matching IDs cannot override mismatched or ambiguous metadata.
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(Japanese, [Japanese with { Language = "eng" }],
             trustworthyStreamIndex: false, trustworthyContainerTrackId: false));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(Japanese, [Japanese, Japanese with { Id = 17, ContainerTrackId = "99" }],
+            trustworthyStreamIndex: false, trustworthyContainerTrackId: false));
+        Assert.Equal(9, NativeSubtitleSelection.Resolve(Japanese with { ContainerTrackId = "999", StreamIndex = 7 }, [English, Japanese],
+            trustworthyStreamIndex: false, trustworthyContainerTrackId: false));
+    }
+
+    [Fact]
+    public void UnattestedContainerOnlyRowUsesUniqueMetadataNotSrcId()
+    {
+        var requested = English with { StreamIndex = null, ContainerTrackId = "999" };
+        Assert.Equal(4, NativeSubtitleSelection.Resolve(requested, [English, Japanese],
+            trustworthyStreamIndex: true, trustworthyContainerTrackId: false));
+    }
+
+    [Fact]
+    public void UnattestedContainerNumberCannotDisambiguateDuplicateMetadata()
+    {
+        var requested = English with { StreamIndex = null, Title = null };
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested, [English, English with { Id = 17, ContainerTrackId = "99" }],
+            trustworthyStreamIndex: true, trustworthyContainerTrackId: false));
+    }
+
+    [Fact]
+    public void UnattestedContainerOnlyRowStillRequiresCompleteMatchingMetadata()
+    {
+        var requested = English with { StreamIndex = null };
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Codec = null }, [English], true, false));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Language = "en-GB" }, [English], true, false));
+        Assert.Equal(0, NativeSubtitleSelection.Resolve(requested with { Forced = true }, [English], true, false));
+    }
 
     [Theory]
     [InlineData("en", "eng")]

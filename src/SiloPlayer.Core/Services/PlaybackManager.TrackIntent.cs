@@ -72,6 +72,19 @@ public partial class PlaybackManager
         }
     }
 
+    /// <summary>
+    /// Restores an already executed choice by its source identity. A concurrent
+    /// grant may have replaced the inventory since the player resolved it.
+    /// </summary>
+    public void RecordExecutedSubtitleSelection(SubtitleTrackInfo? track, int mediaFileId)
+    {
+        lock (_trackIntentGate)
+        {
+            RecordLocalSubtitleSelectionCore(track, isAutomatic: false);
+            _viewerSubtitleFile = mediaFileId;
+        }
+    }
+
     /// <summary>Records a native gesture only while its exact session and row still own the inventory.</summary>
     public bool TryRecordLocalSubtitleSelection(PlaybackStartResponse session, SubtitleTrackInfo? track, bool isAutomatic = false)
     {

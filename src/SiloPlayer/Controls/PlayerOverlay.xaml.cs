@@ -1235,6 +1235,8 @@ public sealed partial class PlayerOverlay : UserControl
             .OrderBy(entry => SourceSortKey(entry.Track.Source))
             .ToList();
 
+        // Selection resolves the server track to its actual native/sidecar SID;
+        // keep the complete inventory here, including URL-less unavailable rows.
         foreach (var (track, canSelect) in sortedSubs)
         {
             var langName = PlayerService.LanguageCodeToName(track.Language);
@@ -1272,13 +1274,14 @@ public sealed partial class PlayerOverlay : UserControl
             if (!string.IsNullOrWhiteSpace(source)) badges.Children.Add(CreatePlayerMenuBadge(source));
             if (track.Forced) badges.Children.Add(CreatePlayerMenuBadge("Forced", outline: true));
             if (track.HearingImpaired) badges.Children.Add(CreatePlayerMenuBadge("HI", outline: true));
+            if (track.Unplayable) badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
             if (badges.Children.Count > 0) descriptor.Children.Add(badges);
             Grid.SetColumn(descriptor, 1);
             row.Children.Add(descriptor);
             var item = CreatePlayerMenuButton(row, isActive);
             if (!canSelect)
             {
-                badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
+                if (!track.Unplayable) badges.Children.Add(CreatePlayerMenuBadge("Unavailable"));
                 item.IsEnabled = false;
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(item, "Subtitle unavailable");
             }
@@ -1366,7 +1369,8 @@ public sealed partial class PlayerOverlay : UserControl
                 var session = _playerService.Manager?.CurrentSession;
                 if (session == null) return;
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, menu?.SidecarTracks.FirstOrDefault()?.Language)
+                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId,
+                    menu?.Entries.FirstOrDefault(entry => entry.Track.Index == activeSubtitleIndex).Track?.Language)
                 {
                     XamlRoot = XamlRoot
                 };

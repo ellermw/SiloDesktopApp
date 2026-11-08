@@ -460,14 +460,21 @@ public partial class PlaybackManager : IDisposable
         bool isAutomatic = false)
     {
         RecordLocalSubtitleSelection(subtitleTrackIndex, isAutomatic);
-        return ReplanAsync(
+        return ReplanRecordedSubtitleSelectionAsync(positionSeconds, ct);
+    }
+
+    /// <summary>
+    /// Submits the already recorded viewer intent after another grant has
+    /// changed inventories, preserving its original file/track identity.
+    /// </summary>
+    public Task<PlaybackStartResponse> ReplanRecordedSubtitleSelectionAsync(double positionSeconds, CancellationToken ct = default)
+        => ReplanAsync(
             "track_change",
             positionSeconds,
             _qualityPreferenceV3,
             selectedTracks => { },
             failure: null,
             ct);
-    }
 
     /// <summary>Replans recorded subtitle identity against the accepted inventory, never an outgoing index.</summary>
     public async Task<PlaybackStartResponse?> ReplanCurrentSubtitleAsync(
@@ -1076,7 +1083,7 @@ public partial class PlaybackManager : IDisposable
             var baseUrl = _apiClient.BaseUrl;
             var token = _apiClient.AccessToken;
             return inventory
-                .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+                .Where(s => IsServerSubtitleResource(s.Url))
                 .Select(s =>
             {
                 var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
@@ -1090,7 +1097,17 @@ public partial class PlaybackManager : IDisposable
         }
     }
 
-    private static bool RequiresSubtitleAccountAuthentication(string baseUrl, string resource)
+    private static bool IsServerSubtitleResource(string resource)
+    {
+        if (string.IsNullOrWhiteSpace(resource)) return false;
+        var value = resource.Trim();
+        if (value.StartsWith('\\') || value.StartsWith("//", StringComparison.Ordinal)) return false;
+        return value.StartsWith('/') || !Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            uri.Scheme is "http" or "https";
+    }
+
+    /// <summary>Only integrated subtitle routes use account credentials; advertised worker/CDN URLs carry their own authority.</summary>
+    public static bool RequiresSubtitleAccountAuthentication(string baseUrl, string resource)
     {
         if (!Uri.TryCreate(resource, UriKind.Absolute, out var absolute) ||
             (absolute.Scheme != Uri.UriSchemeHttp && absolute.Scheme != Uri.UriSchemeHttps))

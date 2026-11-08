@@ -537,6 +537,11 @@ public sealed partial class MpvPlayer : IDisposable
     public void LoadFile(string url, string? authHeader = null, double startSeconds = 0)
     {
         ThrowIfNotInitialized();
+        SubmitSubtitleFileTransition(() => LoadFileAfterSubtitleRetirement(url, authHeader, startSeconds));
+    }
+
+    private void LoadFileAfterSubtitleRetirement(string url, string? authHeader, double startSeconds)
+    {
         ResetUpscalingForLoad();
 
         // Original files use a seekable HTTP reader directly through mpv's
@@ -580,7 +585,7 @@ public sealed partial class MpvPlayer : IDisposable
     {
         ThrowIfNotInitialized();
         _diagnostics?.Record("stop_requested", new { position = Position });
-        Command("stop");
+        SubmitSubtitleFileTransition(() => Command("stop"));
         // Keep the flight recorder through stop/reload recovery and episode changes.
         // Its bounded history and incident windows finish independently of playback.
     }
@@ -791,9 +796,9 @@ public sealed partial class MpvPlayer : IDisposable
         // Always supply flags, even without a title: mpv defaults to selecting
         // the new track. "auto" adds it without changing the selected SID.
         var args = new List<string> { "sub-add", url, select ? "select" : "auto" };
-        if (!string.IsNullOrEmpty(title))
+        if (!string.IsNullOrEmpty(title) || !string.IsNullOrEmpty(lang))
         {
-            args.Add(title);
+            args.Add(title ?? "");
             if (!string.IsNullOrEmpty(lang))
                 args.Add(lang);
         }
@@ -949,6 +954,10 @@ public sealed partial class MpvPlayer : IDisposable
 
                     case MPV_EVENT_PROPERTY_CHANGE:
                         HandlePropertyChange(ev);
+                        break;
+
+                    case MPV_EVENT_COMMAND_REPLY:
+                        CompleteAsyncSubtitleCommand(ev);
                         break;
 
                     case MPV_EVENT_FILE_LOADED:
@@ -1276,6 +1285,17 @@ public sealed partial class MpvPlayer : IDisposable
     /// <summary>Sets a string property; silently skipped once teardown has begun.</summary>
     private void SetNativeString(string name, string value)
     {
+        if (name == "sid")
+        {
+            lock (_asyncSubtitleGate)
+            {
+                _explicitSubtitleRevision++;
+                _explicitSubtitleSid = value;
+                using var subtitleLease = EnterNative();
+                if (subtitleLease.Active) mpv_set_property_string(_mpvHandle, name, value);
+            }
+            return;
+        }
         using var lease = EnterNative();
         if (lease.Active) mpv_set_property_string(_mpvHandle, name, value);
     }
@@ -1287,6 +1307,7 @@ public sealed partial class MpvPlayer : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        CancelAsyncSubtitleCommands();
         Interlocked.Or(ref _nativeLeases, NativeTeardownFlag);
         _diagnostics?.Dispose();
 

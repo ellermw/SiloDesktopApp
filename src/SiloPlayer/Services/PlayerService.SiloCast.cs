@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Player;
 
 namespace SiloPlayer.Services;
 
@@ -20,6 +22,7 @@ public partial class PlayerService
             audio.Add(new JsonObject { ["kind"] = "audio", ["trackId"] = index + 1,
                 ["title"] = t.Title ?? t.Language ?? $"Audio {index + 1}", ["detail"] = t.Codec });
         var subtitles = new JsonArray();
+        var mpv = _mpv;
         int? selectedSubtitleTrackId = null;
         var manager = _playbackManager;
         if (manager != null)
@@ -44,7 +47,6 @@ public partial class PlayerService
         var qualities = new JsonArray();
         foreach (var q in AvailableQualities)
             qualities.Add(new JsonObject { ["id"] = q.Label, ["label"] = q.DisplayName ?? q.Label });
-        var mpv = _mpv;
         var volume = mpv?.GetPropertyDouble("volume") ?? Volume;
         var speed = mpv?.GetPropertyDouble("speed") ?? 1;
         return new JsonObject
@@ -71,8 +73,9 @@ public partial class PlayerService
         };
     }
 
-    public async Task ApplySiloCastControlAsync(JsonObject command)
+    public async Task ApplySiloCastControlAsync(JsonObject command, CancellationToken ct = default, bool deferSubtitleSelection = false)
     {
+        ct.ThrowIfCancellationRequested();
         var name = command["name"]?.GetValue<string>() ?? throw new ArgumentException("Missing command name.");
         if (name == "stop") { await CloseAsync(); return; }
         if (_mpv == null || State == PlayerState.Idle) throw new InvalidOperationException("The player is not ready.");
@@ -97,11 +100,21 @@ public partial class PlayerService
                 await SwitchAudioTrackAsync(aid - 1);
                 break;
             case "select_subtitle_track":
-                var sid = command["trackId"]?.GetValue<int>();
+                // Optional track IDs encode Off as either an omitted key or JSON null.
+                if (command["trackId"] == null)
+                {
+                    if (deferSubtitleSelection) StartSiloCastSubtitleSelection(-1);
+                    else if (!await SelectSubtitleByServerIndexAsync(-1))
+                        throw new ArgumentException("Subtitles could not be turned off.");
+                    break;
+                }
+                if (command["trackId"] is not JsonValue subtitleId || !subtitleId.TryGetValue<int>(out var sid))
+                    throw new ArgumentException("Invalid subtitle track.");
                 var subtitleTrack = _playbackManager?.CurrentSession?.SubtitleUrls.FirstOrDefault(t => t.Index + 1 == sid);
-                if (sid.HasValue && (subtitleTrack == null || subtitleTrack.Unplayable || !HasSubtitleSelectionRoute(subtitleTrack)))
+                if (sid < 1 || subtitleTrack == null || subtitleTrack.Unplayable || !HasSubtitleSelectionRoute(subtitleTrack))
                     throw new ArgumentException("This subtitle track is unavailable.");
-                if (!await SelectSubtitleByServerIndexAsync(sid.HasValue ? sid.Value - 1 : -1))
+                if (deferSubtitleSelection) StartSiloCastSubtitleSelection(sid - 1);
+                else if (!await SelectSubtitleByServerIndexAsync(sid - 1))
                     throw new ArgumentException("This subtitle track is unavailable.");
                 break;
             case "set_playback_speed":
@@ -143,6 +156,30 @@ public partial class PlayerService
                 if (!HasNextEpisodeForCurrentPlayback) throw new InvalidOperationException("No next episode is available.");
                 await ContinuePlayingNextAsync(); break;
             default: throw new ArgumentException("This command is not supported.");
+        }
+    }
+
+    private void StartSiloCastSubtitleSelection(int index)
+    {
+        // Reserve the manual owner on the dispatcher, without keeping the
+        // receiver's serialized control lane occupied by the download.
+        // Once accepted, the desktop owns the pick: a controller disconnect
+        // must not cancel it. New choices and playback/authority retirement do.
+        var pending = SelectSubtitleByServerIndexAsync(index);
+        var owner = Volatile.Read(ref _subtitleSelectionOperation);
+        _ = ObserveSiloCastSubtitleSelectionAsync(pending, owner);
+    }
+
+    private async Task ObserveSiloCastSubtitleSelectionAsync(Task<bool> pending,
+        SubtitleSelectionOperation? owner)
+    {
+        try { await pending; } // Selection publishes applied state and read failures.
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            LogToFile("silocast.txt", $"subtitle_selection_failed | {ex.GetType().Name}");
+            if (owner != null && IsCurrentSubtitleChoice(owner))
+                ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);
         }
     }
 }

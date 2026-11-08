@@ -76,7 +76,7 @@ public sealed class SubtitleInventoryConcurrencyTests
         var captureGate = capture.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
         Assert.True(captureGate >= 0 && captureGate < capture.IndexOf("var subtitleInventory =", StringComparison.Ordinal));
         var urls = Between(Read("SiloPlayer.Core", "PlaybackManager.cs"),
-            "public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls(", "private static bool RequiresSubtitleAccountAuthentication(");
+            "public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls(", "public static bool RequiresSubtitleAccountAuthentication(");
         Assert.Contains("lock (_trackIntentGate)", urls);
     }
 

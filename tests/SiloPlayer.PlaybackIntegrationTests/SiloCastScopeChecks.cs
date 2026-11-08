@@ -124,8 +124,8 @@ internal static class SiloCastScopeChecks
             AudioTrackIndex = 1, DurationSeconds = 1200,
             SubtitleUrls =
             [
-                new() { Index = 4, Label = "English", Language = "en", Codec = "srt" },
-                new() { Index = 8, Label = "French", Language = "fr", Codec = "vtt" },
+                new() { Index = 4, Label = "English", Language = "en", Codec = "srt", Url = "https://sidecar.fixture.invalid/english.srt" },
+                new() { Index = 8, Label = "French", Language = "fr", Codec = "vtt", Url = "https://sidecar.fixture.invalid/french.vtt" },
                 new() { Index = 12, Label = "Unavailable", Language = "de", Codec = "srt", Unplayable = true },
             ],
             AvailableQualities = [new() { Label = "original", PreservesSource = true }, new() { Label = "1080p-high" }],
