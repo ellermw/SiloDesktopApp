@@ -70,6 +70,7 @@ public partial class PlayerService : IDisposable
     private int? _pendingInitialServerSubtitleIndex;
     private int? _pendingInitialSubtitleFileId;
     private int? _subtitleMenuFileId;
+    private PlaybackStartResponse? _subtitleMenuSession;
     private volatile bool _subtitleMenuPending;
     private volatile bool _subtitleVersionSwitchActive;
     private SubtitleAutoSelect.Options? _pendingAutomaticSubtitleSelection;
@@ -7066,7 +7067,12 @@ public partial class PlayerService : IDisposable
     }
 
     private bool IsSubtitleMenuCurrent()
-        => !_subtitleMenuPending && !_subtitleVersionSwitchActive &&
+        // Queue picks from the published outgoing grant while a version switch
+        // waits. After adoption, even a same-file replacement must republish
+        // its inventory before raw menu indices can address it.
+        => !_subtitleMenuPending &&
+           (!_subtitleVersionSwitchActive || _subtitleMenuSession != null &&
+               ReferenceEquals(_subtitleMenuSession, _playbackManager?.CurrentSession)) &&
            (_subtitleMenuFileId == null || _subtitleMenuFileId == _playbackManager?.CurrentSession?.MediaFileId);
 
     private void RetireForeignSubtitleSelections()
@@ -7109,6 +7115,7 @@ public partial class PlayerService : IDisposable
         var session = menu.Session;
 
         _subtitleMenuFileId = session.MediaFileId;
+        _subtitleMenuSession = session;
         if (!_switchingContent && !IsLoading) _subtitleVersionSwitchActive = false;
         var tracks = menu.Entries.Select(entry => entry.Track).ToArray();
         var jsonTracks = menu.Entries.Select(entry =>
