@@ -38,6 +38,15 @@ public partial class LibraryViewModel : ObservableObject
     private string? _catalogLibraryScope;
     private Task<bool>? _groupingTask;
     public bool IsGroupedCatalog => _catalogGroup == "box_set";
+    // A box set has no single file, so file properties cannot order aggregates; the server answers
+    // group=box_set with these sorts with 422 validation_failed (beta 1.2.812, Bitrate). Any other
+    // shape the server refuses is caught at load time and browsed ungrouped (_refusedGroupingKeys).
+    internal static readonly IReadOnlySet<string> UngroupableSorts = new HashSet<string>(StringComparer.Ordinal)
+        { "bitrate", "resolution", "runtime" };
+    internal static bool SupportsGroupedSort(string? sort) => string.IsNullOrEmpty(sort) || !UngroupableSorts.Contains(sort.TrimStart('-'));
+    // Only remember refusals confirmed by a successful ungrouped read of the same query and API context.
+    private readonly HashSet<(ApiRequestContext? Context, string Query)> _refusedGroupingKeys = [];
+    private (ApiRequestContext? Context, string Query) GroupingRefusalKey() => (_catalogContext, BuildCatalogQueryScopeKey(null));
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
@@ -526,7 +535,8 @@ public partial class LibraryViewModel : ObservableObject
         try
         {
             var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" }
-                && SelectedType is null or "" or "movie" or "video";
+                && SelectedType is null or "" or "movie" or "video"
+                && SupportsGroupedSort(SelectedSort) && !_refusedGroupingKeys.Contains(GroupingRefusalKey());
             supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || version != _queryVersion) { return false; }
@@ -804,6 +814,7 @@ public partial class LibraryViewModel : ObservableObject
         var ct = linkedCts.Token;
         var windowVersion = ++_windowLoadVersion;
         var queryVersion = _queryVersion;
+        var groupingRefusalKey = GroupingRefusalKey();
         var read = _windowRead = BeginCatalogRangeRead(startIndex,
             ((long)itemCount + CatalogWindowPageSize - 1) / CatalogWindowPageSize * CatalogWindowPageSize);
 
@@ -868,6 +879,37 @@ public partial class LibraryViewModel : ObservableObject
             // failed cursor recovery must not trigger another capability read.
             if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
                 _ = EnsureLetterIndexAsync();
+        }
+        catch (ApiException ex) when (ex.StatusCode == 422 && ex.ErrorCode == "validation_failed"
+            && ex.ErrorLocation is null or "sort" or "group"
+            && _catalogGroup == "box_set" && queryVersion == _queryVersion
+            && windowVersion == _windowLoadVersion && _catalogContext == _catalogApi.CaptureContext()
+            && groupingRefusalKey == GroupingRefusalKey())
+        {
+            // Validation can also reject an invalid filter, so try this shape ungrouped once
+            // and remember the refusal only if that read succeeds.
+            if (letterLoad is { IsCurrent: true }) letterLoad.Failed = true;
+            var estimatedTotal = TotalCount;
+            StartNewCatalogQuery();
+            _groupingTask = Task.FromResult(true); // Keep just this retry ungrouped until it is confirmed.
+            _estimatedTotalItems = estimatedTotal;
+            TotalCount = estimatedTotal;
+            DisplayTotalCount = estimatedTotal;
+            Items.Reset(estimatedTotal);
+            SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_errors.txt",
+                $"catalog_grouping_refused start={startIndex} count={itemCount} sort={SelectedSort} type={SelectedType} code={ex.ErrorCode} query_version={_queryVersion} retry_ungrouped=true");
+            _pendingWindowStart = startIndex;
+            _pendingWindowEnd = startIndex + itemCount - 1;
+            var recoveryQueryVersion = _queryVersion;
+            IsLoading = false;
+            if (!await EnsureGroupingAsync() || recoveryQueryVersion != _queryVersion || IsGroupedCatalog) return;
+            await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
+            if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0
+                && _catalogContext == _catalogApi.CaptureContext() && groupingRefusalKey == GroupingRefusalKey())
+            {
+                _refusedGroupingKeys.Add(groupingRefusalKey);
+                _ = EnsureLetterIndexAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -1138,9 +1180,11 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    internal string CatalogQueryScopeKey() => System.Text.Json.JsonSerializer.Serialize(new
+    internal string CatalogQueryScopeKey() => BuildCatalogQueryScopeKey(_catalogGroup);
+
+    private string BuildCatalogQueryScopeKey(string? group) => System.Text.Json.JsonSerializer.Serialize(new
     {
-        library = Library?.Id, group = _catalogGroup, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
+        library = Library?.Id, group, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
         SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution, SelectedAudioLanguage,
         SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
         groups = BuildAdvancedGroups(), AdvancedRulesMatch,
