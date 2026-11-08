@@ -186,16 +186,22 @@ public partial class PlayerService
         return tracks.FirstOrDefault(t => t.Index == index);
     }
 
-    private enum SubtitlePrefetchOutcome { Ready, Fallback, Busy, Error, Retired }
+    private enum SubtitlePrefetchOutcome { Ready, Fallback, Busy, Error, TooLarge, TimedOut, Retired }
 
     private void ShowSubtitleReadFailure(SubtitlePrefetchOutcome outcome)
     {
         if (outcome == SubtitlePrefetchOutcome.Busy)
             ShowSubtitleReadBusy();
-        else if (outcome == SubtitlePrefetchOutcome.Error)
+        else if (outcome is SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut)
         {
             _mpv?.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            ShowNotice("Subtitle could not be loaded", "This subtitle could not be loaded. Choose another subtitle or try again after checking your connection and available disk space.", "warning");
+            var detail = outcome switch
+            {
+                SubtitlePrefetchOutcome.TooLarge => "This subtitle exceeds its download limit. Choose another subtitle or turn subtitles off.",
+                SubtitlePrefetchOutcome.TimedOut => "Subtitle download timed out. The server may still be extracting the track. Try again or choose another subtitle.",
+                _ => "This subtitle could not be loaded. Choose another subtitle or try again after checking your connection and available disk space.",
+            };
+            ShowNotice("Subtitle could not be loaded", detail, "warning");
         }
     }
 

@@ -15,9 +15,11 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("if (currentOwner == null) Interlocked.Increment(ref _manualSubtitleChoiceVersion);", admission);
         Assert.Contains("bool CanActivate() => CurrentChoice() && currentOwner?.HasCurrentSubtitleChoice != false;", admission);
         Assert.Contains("PrefetchSubtitleSidecarForOwnerAsync(track, CanActivate)", admission);
-        var save = Between(service, "private async Task SaveExecutedSubtitlePreferenceAsync(", "private void RestorePlaybackStateAfterSubtitleChange(");
+        var save = Between(service, "private async Task<bool> SaveExecutedSubtitlePreferenceAsync(", "private void RestorePlaybackStateAfterSubtitleChange(");
         Assert.DoesNotContain("HasCurrentSubtitleChoice", save);
-        Assert.Contains("if (!operationOwner.IsCurrent) return;", save);
+        Assert.Contains("if (!operationOwner.IsCurrent) return false;", save);
+        Assert.Contains("await _subtitlePreferenceSaveGate.WaitAsync(owner.Token)", save);
+        Assert.Contains("if (!CurrentOwner()) return false;", save);
         Assert.Contains("!IsLoading && _liveSubtitleOperationOwner?.HasCurrentSubtitleChoice != false", service);
     }
 
@@ -112,6 +114,24 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void NonReapplyingRestorationRequiresTheRetainedTracksActualCurrentSid()
+    {
+        var restore = Between(Read("PlayerService.cs"), "private bool RestoreExecutedSubtitleSelection(",
+            "private void ShowSubtitleSelectionUnavailable(");
+        var verify = Between(restore, "if (!reapply && retained != null", "if (retained == null) _mpv?.SetSubtitleTrack(0);");
+        Assert.Contains("!IsBurnedInSubtitle(session, retained)", verify);
+        Assert.Contains("GetPropertyDouble(\"sid\")", verify);
+        Assert.Contains("_loadedExternalSubtitleSids.TryGetValue(retained.Index, out var cached)", verify);
+        Assert.Contains("cached == sid && mpv!.GetSubtitleTrackIds(externalOnly: true).Contains(sid)", verify);
+        Assert.Contains("CanUseNativeEmbeddedSubtitleTrack() && ResolveNativeEmbeddedSid(retained) == sid", verify);
+        Assert.Contains("if (!appliedSidecar && !appliedNative) retained = null;", verify);
+        Assert.DoesNotContain("SetSubtitleTrack(", verify);
+        Assert.Contains("_activeSubtitleServerIndex = retained?.Index ?? -1;", restore);
+        Assert.True(restore.IndexOf("if (!restoreOwner()) return false;", StringComparison.Ordinal) <
+            restore.IndexOf("if (!reapply && retained != null", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FinalAiSelectionRetiresTheMatchingJobAndItsRestoreState()
     {
         var service = Read("PlayerService.cs");
@@ -158,46 +178,62 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("source = local;", add);
         Assert.Contains("mpv.AddSubtitle(source, label, track.Language, select: false)", add);
         Assert.DoesNotContain("FullUrl", add);
-        var prefetch = Between(service, "private async Task<string?> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
+        // Busy text reads and native-probed formats now share typed outcomes;
+        // the fallback must still download to bounded disk, never remote sub-add.
+        var prefetch = Between(service, "private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
         Assert.DoesNotContain("lock (_subtitleAddGate)", prefetch);
         Assert.DoesNotContain("mpv.AddSubtitle", prefetch);
         Assert.Contains("SubtitleSidecarFile.DownloadExtension(", prefetch);
         Assert.Contains("var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);", prefetch);
         Assert.Contains("response.Content.Headers.ContentLength > maxBytes", prefetch);
         Assert.Contains("total + read > maxBytes", prefetch);
-        Assert.Contains("await file.WriteAsync(chunk.AsMemory(0, read), bounded.Token)", prefetch);
+        Assert.Contains("await file.WriteAsync(chunk.AsMemory(0, read), fallbackBudget.Token)", prefetch);
         Assert.DoesNotContain("new MemoryStream", prefetch);
         Assert.Contains("loadedMediaGeneration == Volatile.Read(ref _loadedMediaInitGeneration)", prefetch);
         Assert.Contains("choiceVersion == Volatile.Read(ref _legacySubtitleChoiceVersion)", prefetch);
         Assert.Contains("playGeneration == Volatile.Read(ref _playRequestGeneration)", prefetch);
         Assert.Contains("authority.ApiClient.IsCurrentIdentityContext(identity)", prefetch);
-        Assert.Contains("CancelRetiredSubtitleDownloadAsync(DownloadCurrent, bounded)", prefetch);
+        Assert.Contains("if (!CurrentOwner()) { bounded.Cancel(); return; }", prefetch);
+        Assert.Contains("var watch = WatchOwnerAsync();", prefetch);
+        Assert.Contains("await watch;", prefetch);
         Assert.Contains("bounded.CancelAfter(TimeSpan.FromMinutes(10))", prefetch);
         Assert.Contains("SubtitleSidecarDownloadClient.GetAsync", prefetch);
+        Assert.Contains("SubtitleSidecarReader.ReadAsync(SubtitleSidecarDownloadClient", prefetch);
+        Assert.Contains("if (read.Outcome == SubtitleSidecarReadOutcome.Busy) return SubtitlePrefetchOutcome.Busy;", prefetch);
         Assert.DoesNotContain("SubtitleSyncDownloadClient", prefetch);
         Assert.Contains("SubtitleSidecarDownloadClient = new() { Timeout = Timeout.InfiniteTimeSpan }", service);
-        Assert.Contains("currentOwner?.Invoke() == false || generation != _subtitleSidecarGeneration", prefetch);
+        Assert.Contains("currentOwner?.Invoke() != false", prefetch);
+        Assert.Contains("generation != _subtitleSidecarGeneration || !CurrentOwner()", prefetch);
     }
 
     [Fact]
     public void SidecarFailuresDistinguishDownloadLimitsAndNotifyAutomaticSelections()
     {
         var service = Read("PlayerService.cs");
-        var prefetch = Between(service, "private async Task<string?> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
-        Assert.Contains("download limit. Choose another subtitle or turn subtitles off.", prefetch);
-        Assert.Contains("Subtitle download timed out. The server may still be extracting the track. Try again", prefetch);
-        Assert.Contains("The subtitle could not be downloaded. Try again", prefetch);
+        var prefetch = Between(service, "private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForOwnerAsync(", "private int ResolveNativeEmbeddedSid(");
+        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
+        Assert.Contains("if (total + read > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
+        Assert.Contains("return CurrentOwner() ? SubtitlePrefetchOutcome.TimedOut : SubtitlePrefetchOutcome.Retired;", prefetch);
+        Assert.Contains("fallbackError is OperationCanceledException ? SubtitlePrefetchOutcome.TimedOut : SubtitlePrefetchOutcome.Error", prefetch);
         var manual = Between(service, "private async Task<bool> TrySetSubtitleTrackAndPersistForOwnerAsync(", "private bool MatchesSubtitlePreference(");
-        Assert.Contains("sidecarError = await PrefetchSubtitleSidecarForOwnerAsync(track, CanActivate);", manual);
-        Assert.Contains("ShowSubtitleSidecarFailure(sidecarError);", manual);
+        Assert.Contains("var readOutcome = await PrefetchSubtitleSidecarForOwnerAsync(track, CanActivate);", manual);
         var loaded = Between(service, "private async Task<bool> SelectSubtitleByServerIndexAsync(", "public int ActiveSubtitleServerIndex");
-        Assert.Contains("var sidecarError = await PrefetchSubtitleSidecarForOwnerAsync(track, CurrentSelection);", loaded);
-        Assert.Contains("ShowSubtitleSidecarFailure(sidecarError, showUnavailable);", loaded);
-        var feedback = Between(service, "private void ShowSubtitleSidecarFailure(", "private bool SelectSubtitleTrack(");
-        Assert.Contains("if (downloadError == null)", feedback);
-        Assert.Contains("ShowSubtitleSelectionUnavailable(showNotice: false);", feedback);
-        Assert.Contains("ShowNotice(\"Subtitle could not load\", downloadError, \"warning\");", feedback);
-        Assert.DoesNotContain("if (showUnavailable)", feedback);
+        Assert.Contains("var readOutcome = await PrefetchSubtitleSidecarForOwnerAsync(track, CurrentSelection);", loaded);
+        foreach (var selection in new[] { manual, loaded })
+        {
+            Assert.Contains("SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut", selection);
+            Assert.Contains("ShowSubtitleReadFailure(readOutcome == SubtitlePrefetchOutcome.Retired ? SubtitlePrefetchOutcome.Error : readOutcome);", selection);
+        }
+        var feedback = Between(Read("PlayerService.SubtitleSelection.cs"), "private void ShowSubtitleReadFailure(", "private void ShowSubtitleReadBusy()");
+        Assert.Contains("ShowSubtitleReadBusy();", feedback);
+        Assert.Contains("SubtitlePrefetchOutcome.TooLarge =>", feedback);
+        Assert.Contains("download limit. Choose another subtitle or turn subtitles off.", feedback);
+        Assert.Contains("SubtitlePrefetchOutcome.TimedOut =>", feedback);
+        Assert.Contains("Subtitle download timed out. The server may still be extracting the track. Try again", feedback);
+        Assert.Contains("checking your connection and available disk space.", feedback);
+        Assert.Contains("osc-set-active-subtitle", feedback);
+        Assert.Contains("ShowNotice(\"Subtitle could not be loaded\", detail, \"warning\");", feedback);
+        Assert.DoesNotContain("showUnavailable", feedback);
     }
 
     [Fact]

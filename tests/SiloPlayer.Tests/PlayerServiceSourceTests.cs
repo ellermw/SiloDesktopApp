@@ -1510,7 +1510,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("choose another subtitle to cancel this download", fallback);
         Assert.Contains("await SubtitleSidecarDownloadClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, fallbackBudget.Token)", fallback);
         Assert.Contains("if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;", fallback);
-        Assert.Contains("if (total + read > maxBytes) return SubtitlePrefetchOutcome.Error;", fallback);
+        Assert.Contains("if (total + read > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", fallback);
         Assert.DoesNotContain("AddSubtitleUnselectedAsync", fallback);
 
         var native = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Player", "MpvPlayer.AsyncSubtitle.cs"));
@@ -1551,8 +1551,8 @@ public sealed class PlayerServiceSourceTests
         Assert.DoesNotContain("AddSubtitleUnselectedAsync", prefetch);
         Assert.DoesNotContain("ReadAsByteArrayAsync", prefetch);
         Assert.Contains("var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);", prefetch);
-        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.Error;", prefetch);
-        var sizeCheck = prefetch.IndexOf("if (total + read > maxBytes) return SubtitlePrefetchOutcome.Error;", StringComparison.Ordinal);
+        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
+        var sizeCheck = prefetch.IndexOf("if (total + read > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", StringComparison.Ordinal);
         var write = prefetch.IndexOf("await file.WriteAsync(chunk.AsMemory(0, read), fallbackBudget.Token);", StringComparison.Ordinal);
         Assert.True(sizeCheck >= 0 && write > sizeCheck,
             "Chunked sidecars must enforce the format-specific cap before writing each chunk.");
