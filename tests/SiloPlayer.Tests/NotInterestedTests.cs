@@ -62,6 +62,36 @@ public sealed class NotInterestedTests
     }
 
     [Fact]
+    public async Task SectionHeldForBackIsOnlyTheCompleteSectionUnderTheSameProfile()
+    {
+        using var http = new HttpClient(new Wire(_ => Json("""{"items":[{"content_id":"one","type":"movie","title":"One"}]}""")));
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://not-interested.invalid"); client.SetProfile("one");
+        var section = new SiloPlayer.ViewModels.RecommendationSectionViewModel(new RecommendationsApi(client));
+        try
+        {
+            var drama = new SiloPlayer.ViewModels.RecommendationSectionNavigationArgs("genre", "drama", "Drama");
+            Assert.False(section.Holds(drama));
+            await section.LoadAsync(drama);
+            Assert.True(section.Holds(drama));
+            Assert.True(section.Holds(drama with { }));
+            Assert.False(section.Holds(new("genre", "comedy", "Comedy")));
+            // A title marked not interested while the section is kept leaves it at once, without a reload.
+            section.CancelLoad();
+            CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.Send(new NotInterestedChange(client.CaptureContext(), "one", true));
+            Assert.Empty(section.Items);
+            Assert.True(section.Holds(drama));
+            client.SetProfile("two");
+            Assert.False(section.Holds(drama));
+            client.SetProfile("one");
+            await section.LoadAsync(drama);
+            section.Reset();
+            Assert.False(section.Holds(drama));
+            Assert.Empty(section.Items);
+        }
+        finally { CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(section); }
+    }
+
+    [Fact]
     public async Task CurrentNotInterestedEventRefreshesMountedSimilarRowAndPreservesUnchangedObjects()
     {
         var marked = false; var calls = 0;

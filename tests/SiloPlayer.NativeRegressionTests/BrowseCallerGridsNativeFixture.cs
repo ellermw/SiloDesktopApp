@@ -69,6 +69,26 @@ internal static class BrowseCallerGridsNativeFixture
                 }
                 var below=positions.FirstOrDefault(value=>value.Point.Y>first.Point.Y+first.Card.ActualHeight*.5&&Math.Abs(value.Point.X-first.Point.X)<.5);
                 if(adjacent.Card==null||below.Card==null)throw new InvalidOperationException($"Mounted{kind}/{size} did not realize two actual rows/columns for its bounded gap proof.");
+                if(kind=="Recommendation"&&size=="standard"&&!episodeCaptions)
+                {
+                    // Back from a title shows the same section where it was left, with no reload.
+                    var section=(RecommendationSectionPage)page;var scroller=(ScrollViewer)page.FindName("PageScroller");
+                    scroller.ChangeView(null,300,null,true);await Until(()=>Math.Abs(scroller.VerticalOffset-300)<1);
+                    var reads=wire.SectionReads;
+                    frame.Navigate(typeof(Page));await Task.Delay(150);
+                    frame.GoBack();await Until(()=>frame.Content is RecommendationSectionPage{IsLoaded:true});await Task.Delay(150);
+                    if(!ReferenceEquals(frame.Content,section)||wire.SectionReads!=reads||section.ViewModel.Items.Count!=30||section.ViewModel.IsLoading||Math.Abs(scroller.VerticalOffset-300)>1)
+                        throw new InvalidOperationException($"Back to a recommendation section must keep it as it was: same={ReferenceEquals(frame.Content,section)}, reads={wire.SectionReads-reads}, items={section.ViewModel.Items.Count}, offset={scroller.VerticalOffset}.");
+                    // Another section reuses the kept page but loads fresh from the top.
+                    frame.Navigate(typeof(RecommendationSectionPage),new RecommendationSectionNavigationArgs("genre","drama","Other grid"));
+                    await Until(()=>section.ViewModel.Items.Count==30&&!section.ViewModel.IsLoading&&wire.SectionReads==reads+1);
+                    if(!ReferenceEquals(frame.Content,section))throw new InvalidOperationException("A different section reuses the kept page.");
+                    // ChangeView settles asynchronously even without animation.
+                    try{await Until(()=>scroller.VerticalOffset<1);}catch{throw new InvalidOperationException($"A different section must load from the top: offset={scroller.VerticalOffset}.");}
+                    frame.GoBack();await Until(()=>frame.Content is RecommendationSectionPage{IsLoaded:true});
+                    await Until(()=>section.ViewModel.Items.Count==30&&!section.ViewModel.IsLoading&&wire.SectionReads==reads+2);
+                    Program.Log("PASS: Back to a recommendation section keeps its items and scroll position without a reload; another section loads fresh.");
+                }
                 if(kind=="Recommendation")
                 {
                     var grid=(ItemsRepeater)page.FindName("ItemsGrid"); var layout=(UniformGridLayout)page.FindName("ItemsLayout");
@@ -154,6 +174,7 @@ internal static class BrowseCallerGridsNativeFixture
     private sealed class Services(IServiceProvider fallback,Dictionary<Type,Func<object>> values):IServiceProvider{public object? GetService(Type type)=>values.TryGetValue(type,out var factory)?factory():fallback.GetService(type);}
     private sealed class Wire:HttpMessageHandler
     {
+        internal int SectionReads;
         private object[] Items()=>Enumerable.Range(0,30).Select(n =>
         {
             var episode = Environment.GetEnvironmentVariable("SILO_NATIVE_EPISODE_GRIDS") == "1" && n % 3 == 1;
@@ -167,7 +188,7 @@ internal static class BrowseCallerGridsNativeFixture
             else if(path.EndsWith("/settings/values/effective"))body=new{items=new object[]{new{key="ui.remember_library_page_state",value=(object)true},new{key="ui.library_page_state",value=(object)new{version=1,libraries=new Dictionary<string,object>{["22"]=new{search="?tab=library"}}}}}};
             else if(path.StartsWith("/api/v2/settings/"))body=new{key="search.media_scope",value="video",items=Array.Empty<object>()};
             else if(path=="/api/v2/catalog")body=new{items=Items(),total=30,window_cursor="grid-window",page=new{has_more=false}};
-            else if(path.StartsWith("/api/v2/recommendations/section/"))body=new{items=Items(),label="Grid recommendations"};
+            else if(path.StartsWith("/api/v2/recommendations/section/")){Interlocked.Increment(ref SectionReads);body=new{items=Items(),label="Grid recommendations"};}
             else if(path=="/api/v2/catalog/filters")body=new{genres=Array.Empty<string>()};
             else if(path=="/api/v2/requests/status")body=new{requests_enabled=false};
             else if(path=="/api/v2/catalog/search/capabilities")body=new{people_media_scope=true};

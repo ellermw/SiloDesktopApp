@@ -21,6 +21,8 @@ public sealed partial class RecommendationSectionPage : Page
         ViewModel = App.Services.GetRequiredService<RecommendationSectionViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        // Kept for Back: returning from a title shows the section where it was left, without a reload.
+        NavigationCacheMode = NavigationCacheMode.Enabled;
         LoadingSkeleton.ItemsSource = Enumerable.Range(0, 24).ToArray();
         ViewModel.Items.CollectionChanged += (_, _) => { Bindings.Update(); UpdatePageState(); };
         ViewModel.PropertyChanged += (_, args) =>
@@ -35,7 +37,19 @@ public sealed partial class RecommendationSectionPage : Page
     {
         base.OnNavigatedTo(e);
         _uiCustomizationService.Changed += UICustomization_Changed;
-        _args = e.Parameter as RecommendationSectionNavigationArgs;
+        var args = e.Parameter as RecommendationSectionNavigationArgs;
+        // The frame reuses this instance for any section. Only Back to the section it still holds
+        // completely, under the same profile, keeps its items and scroll position.
+        var keep = e.NavigationMode == NavigationMode.Back && args != null && ViewModel.Holds(args);
+        _args = args;
+        _loaded = keep;
+        if (keep) return;
+        ViewModel.Reset();
+        ScrollToTop();
+        UpdatePageState();
+        // Navigating from this section straight to another keeps the page in the tree, so Loaded
+        // does not fire again: load here instead.
+        if (IsLoaded) { _loaded = true; _ = LoadSectionAsync(); }
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -55,11 +69,21 @@ public sealed partial class RecommendationSectionPage : Page
     private async Task LoadSectionAsync()
     {
         if (_args == null) return;
+        var fresh = ViewModel.Items.Count == 0;
         var loadTask = ViewModel.LoadAsync(_args);
         UpdatePageState();
         await loadTask;
         Bindings.Update();
         UpdatePageState();
+        if (fresh) ScrollToTop();
+    }
+
+    // A section opened in this kept page starts at the top. The viewer keeps its offset while the
+    // grid is replaced, so set it now and again once the new rows are arranged.
+    private void ScrollToTop()
+    {
+        PageScroller.ChangeView(null, 0, null, disableAnimation: true);
+        DispatcherQueue.TryEnqueue(() => PageScroller.ChangeView(null, 0, null, disableAnimation: true));
     }
 
     private async void Retry_Click(object sender, RoutedEventArgs e)
