@@ -3453,9 +3453,11 @@ public partial class PlayerService : IDisposable
                         {
                             RestoreExecutedSubtitleSelection(reapply: true);
                             ShowSubtitleSelectionUnavailable();
-                            return;
+                            // The pick is handled; finish the loaded file's initialization.
+                            resolvedSubtitleIndex = null;
                         }
-                        resolvedSubtitleIndex = mapped?.Index ?? -1;
+                        else
+                            resolvedSubtitleIndex = mapped?.Index ?? -1;
                     }
                     if (resolvedSubtitleIndex is int initialSubtitleIndex)
                     {

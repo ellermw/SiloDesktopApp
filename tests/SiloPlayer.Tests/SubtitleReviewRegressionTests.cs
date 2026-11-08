@@ -114,6 +114,32 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void UnmappableDeferredPickStillCompletesLoadedFileReconciliationAndAiPublication()
+    {
+        var initialize = Between(Read("PlayerService.cs"), "private async Task InitializeLoadedMediaAsync(",
+            "private bool IsLoadedMediaInitializationCurrent(");
+        var manual = Between(initialize, "if (manualChoice is { Accepted: true }",
+            "if (resolvedSubtitleIndex is int initialSubtitleIndex)");
+        var refusal = Between(manual, "if (manualChoice.RequestedTrack != null && mapped == null)",
+            "else");
+        Assert.Contains("RestoreExecutedSubtitleSelection(reapply: true);", refusal);
+        Assert.Contains("ShowSubtitleSelectionUnavailable();", refusal);
+        // Null skips execution, unlike -1, which would apply and potentially save Off.
+        Assert.Contains("resolvedSubtitleIndex = null;", refusal);
+        Assert.DoesNotContain("return;", refusal);
+        Assert.Matches(@"}\s*else\s+resolvedSubtitleIndex = mapped\?\.Index \?\? -1;", manual);
+
+        var remaining = initialize[initialize.IndexOf("if (resolvedSubtitleIndex is int initialSubtitleIndex)", StringComparison.Ordinal)..];
+        var reset = remaining.IndexOf("subtitleFailureSession.SubtitleReconciliationFailed = false;", StringComparison.Ordinal);
+        var settings = remaining.IndexOf("await settingsTask;", StringComparison.Ordinal);
+        var availability = remaining.IndexOf("await SendSubtitleAiAvailabilityToOscAsync(ct);", StringComparison.Ordinal);
+        Assert.True(reset >= 0 && settings > reset && availability > settings);
+        // After refusing the pick, only retirement may bypass the per-file publication.
+        foreach (var line in remaining[..availability].Split('\n').Where(line => line.Contains("return;", StringComparison.Ordinal)))
+            Assert.Equal("if (!IsLoadedMediaInitializationCurrent(generation, ownerCts)) return;", line.Trim());
+    }
+
+    [Fact]
     public void NonReapplyingRestorationRequiresTheRetainedTracksActualCurrentSid()
     {
         var restore = Between(Read("PlayerService.cs"), "private bool RestoreExecutedSubtitleSelection(",
