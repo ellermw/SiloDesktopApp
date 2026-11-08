@@ -120,6 +120,7 @@ public sealed class SubtitleReviewRegressionTests
             "private void ShowSubtitleSelectionUnavailable(");
         var verify = Between(restore, "if (!reapply && retained != null", "if (retained == null) _mpv?.SetSubtitleTrack(0);");
         Assert.Contains("!IsBurnedInSubtitle(session, retained)", verify);
+        Assert.Contains("Volatile.Read(ref _fileLoadTimeoutCts) == null", verify);
         Assert.Contains("GetPropertyDouble(\"sid\")", verify);
         Assert.Contains("_loadedExternalSubtitleSids.TryGetValue(retained.Index, out var cached)", verify);
         Assert.Contains("cached == sid && mpv!.GetSubtitleTrackIds(externalOnly: true).Contains(sid)", verify);
@@ -129,6 +130,35 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("_activeSubtitleServerIndex = retained?.Index ?? -1;", restore);
         Assert.True(restore.IndexOf("if (!restoreOwner()) return false;", StringComparison.Ordinal) <
             restore.IndexOf("if (!reapply && retained != null", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RefusedPreAcceptanceReadsReconcileOnlyTheCurrentPickBeforePublishingFailure()
+    {
+        var manual = Between(Read("PlayerService.cs"), "private async Task<bool> TrySetSubtitleTrackAndPersistForOwnerAsync(",
+            "private bool MatchesSubtitlePreference(");
+        var beforeAcceptance = manual[..manual.IndexOf("choice.Accepted = true;", StringComparison.Ordinal)];
+        var failure = Between(beforeAcceptance, "if (readOutcome is SubtitlePrefetchOutcome.Busy", "var selectionSession = manager?.CurrentSession;");
+        Assert.Contains("SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut or SubtitlePrefetchOutcome.Retired", failure);
+        var restore = failure.IndexOf("if (!RestoreExecutedSubtitleSelection(reapply: false, currentSelection: CurrentReadChoice)) return false;", StringComparison.Ordinal);
+        var feedback = failure.IndexOf("ShowSubtitleReadFailure(", StringComparison.Ordinal);
+        Assert.True(restore >= 0 && feedback > restore);
+    }
+
+    [Fact]
+    public void KnownPgsUsesOneBoundedDiskDownloadInsteadOfTheTextProbe()
+    {
+        var prefetch = Between(Read("PlayerService.cs"), "private async Task<SubtitlePrefetchOutcome> PrefetchSubtitleSidecarForOwnerAsync(",
+            "private int ResolveNativeEmbeddedSid(");
+        var bitmap = prefetch.IndexOf("if (SubtitleSidecarFile.DownloadExtension(null, url, track.Codec) == \".sup\")", StringComparison.Ordinal);
+        var download = prefetch.IndexOf("return await ReadUrlFallbackAsync();", bitmap, StringComparison.Ordinal);
+        var text = prefetch.IndexOf("var read = await SubtitleSidecarReader.ReadAsync(", StringComparison.Ordinal);
+        Assert.True(bitmap >= 0 && download > bitmap && text > download);
+        Assert.Contains("var maxBytes = SubtitleSidecarFile.DownloadMaxBytes(extension);", prefetch);
+        Assert.Contains("if (response.Content.Headers.ContentLength > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
+        Assert.Contains("if (total + read > maxBytes) return SubtitlePrefetchOutcome.TooLarge;", prefetch);
+        Assert.Contains("fallbackBudget.Token", prefetch);
+        Assert.DoesNotContain("mpv.AddSubtitle", prefetch);
     }
 
     [Fact]

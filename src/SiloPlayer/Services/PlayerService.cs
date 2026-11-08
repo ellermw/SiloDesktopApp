@@ -1260,16 +1260,13 @@ public partial class PlayerService : IDisposable
                     ShowSubtitleSelectionUnavailable();
                     return false;
                 }
-                if (readOutcome == SubtitlePrefetchOutcome.Retired)
+                if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut or SubtitlePrefetchOutcome.Retired)
                 {
-                    // Sync cleanup can retire the read without superseding the
-                    // manual choice or loading a replacement file.
-                    ShowSubtitleReadFailure(SubtitlePrefetchOutcome.Error);
-                    return false;
-                }
-                if (readOutcome is SubtitlePrefetchOutcome.Busy or SubtitlePrefetchOutcome.Error or SubtitlePrefetchOutcome.TooLarge or SubtitlePrefetchOutcome.TimedOut)
-                {
-                    ShowSubtitleReadFailure(readOutcome);
+                    // This pre-acceptance pick may have retired a reload's
+                    // unfinished selection. Reconcile its tentative highlight
+                    // with the SID actually applied, without touching a newer pick.
+                    if (!RestoreExecutedSubtitleSelection(reapply: false, currentSelection: CurrentReadChoice)) return false;
+                    ShowSubtitleReadFailure(readOutcome == SubtitlePrefetchOutcome.Retired ? SubtitlePrefetchOutcome.Error : readOutcome);
                     return false;
                 }
                 break;
@@ -6507,10 +6504,11 @@ public partial class PlayerService : IDisposable
         {
             if (!restoreOwner()) return false;
             if (Volatile.Read(ref _subtitleSelectionOperation) is { } refused) refused.Accepted = false;
-            if (!reapply && retained != null && !IsBurnedInSubtitle(session, retained))
+            if (!reapply && retained != null && Volatile.Read(ref _fileLoadTimeoutCts) == null && !IsBurnedInSubtitle(session, retained))
             {
-                // A route or an old executed row is not proof of execution in
-                // this load. Refusals must not revive captions cleared by reload.
+                // Once the file is loaded, a route or an old executed row is
+                // not proof of execution. Before FILE_LOADED, another load
+                // still owns the cleared SID and will reapply its retained choice.
                 var mpv = _mpv;
                 var sid = (int)Math.Round(mpv?.GetPropertyDouble("sid") ?? 0);
                 var appliedSidecar = sid > 0 && _loadedExternalSubtitleSids.TryGetValue(retained.Index, out var cached) &&
@@ -6839,6 +6837,11 @@ public partial class PlayerService : IDisposable
         try
         {
             if (!CurrentOwner()) return SubtitlePrefetchOutcome.Retired;
+            // Known bitmap sidecars use the existing bounded disk route, not
+            // a text probe that discards the response at 16 MiB and requests
+            // the same extraction again. Keep the larger PGS cap and deadline.
+            if (SubtitleSidecarFile.DownloadExtension(null, url, track.Codec) == ".sup")
+                return await ReadUrlFallbackAsync();
             // Same URL mpv would request; never attach account Authorization
             // to server-advertised CDN/worker sidecars.
             var read = await SubtitleSidecarReader.ReadAsync(SubtitleSidecarDownloadClient, url, track.Codec, bounded.Token);
