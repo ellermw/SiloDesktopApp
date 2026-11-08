@@ -1852,10 +1852,16 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             if (scenario == "manual-reload-finished")
             {
                 subtitles.HoldOnlyFirstSubtitle = true;
-                var stale = (Task)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
+                var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                var stale = (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, true)!;
                 try
                 {
                     await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    var read = Get(service, "_subtitleReadOperation")!;
+                    var readToken = (CancellationToken)read.GetType().GetProperty("Token")!.GetValue(read)!;
+                    Require(manager.CaptureLocalSubtitleIntent() == retainedIntent &&
+                        service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0 && wire.PreferenceWrites == 0,
+                        "The held manual preflight accepted or persisted unread subtitles.");
                     var generationBeforeLoad = (long)Get(service, "_subtitleSidecarGeneration")!;
                     subtitles.ReplacementMedia = await File.ReadAllBytesAsync(wave);
                     var prepare = (Task)Call(service, "PreparePlaybackTransportAsync", manager.CurrentSession!, Version(),
@@ -1870,15 +1876,25 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     await replacementLoaded.Task.WaitAsync(TimeSpan.FromSeconds(6));
                     await Until(() => (long)Get(service, "_subtitleSidecarGeneration")! > generationBeforeLoad &&
                         Get(service, "_loadedMediaInitCts") == null);
-                    Require(!stale.IsCompleted && wire.PreferenceWrites == 1,
-                        "Fixture did not finish the owning load before the original prefetch completed.");
+                    // Load start cancels the original HTTP read. The manual
+                    // draft retries after initialization instead of waiting for
+                    // that response or being accepted before its bytes are ready.
+                    Require(readToken.IsCancellationRequested && !subtitles.Release.Task.IsCompleted,
+                        "The replacement did not retire the original held sidecar read.");
+                    Require(await stale.WaitAsync(TimeSpan.FromSeconds(5)) && wire.PreferenceWrites == 1,
+                        "The manual choice did not retry and persist exactly once after the owning load finished.");
                     subtitles.Release.TrySetResult();
-                    await stale.WaitAsync(TimeSpan.FromSeconds(5));
                     var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
                     Require(Get(service, "_pendingInitialServerSubtitleIndex") == null &&
-                        Get(service, "_pendingSubtitlePreferenceIndex") == null && wire.PreferenceWrites == 1 &&
-                        service.ActiveSubtitleServerIndex == 0 && map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid,
+                        Get(service, "_pendingSubtitlePreferenceIndex") == null && Get(service, "_pendingSubtitlePreferenceOwner") == null &&
+                        wire.PreferenceWrites == 1 && wire.RequestedPreferences.SequenceEqual(new[] { 0 }) &&
+                        manager.SubtitleSelectionForLoad == 0 && service.ActiveSubtitleServerIndex == 0 &&
+                        map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid,
                         "A late prefetch refilled an already-consumed selection or preference slot.");
+                    Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 0, false)! &&
+                        wire.PreferenceWrites == 1 && Get(service, "_pendingSubtitlePreferenceIndex") == null &&
+                        Get(service, "_pendingSubtitlePreferenceOwner") == null,
+                        "Repeated loaded-file selection revived the consumed manual preference.");
                 }
                 finally
                 {
