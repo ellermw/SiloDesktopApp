@@ -422,19 +422,10 @@ public partial class LibraryViewModel : ObservableObject
             || !await EnsureGroupingAsync() || _catalogContext != _catalogApi.CaptureContext())
             return [];
 
-        var screen = Math.Clamp(endIndex - startIndex + 1, 1, 100);
-        var first = Math.Max(0, startIndex - screen * (forward ? 1 : 3));
-        var last = Math.Min(TotalCount - 1, endIndex + screen * (forward ? 3 : 1));
+        var (first, indices) = Neighborhood(startIndex, endIndex, forward);
         var version = _queryVersion;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
         var token = linked.Token;
-        // Work nearest-first in the direction of travel, then behind. Never
-        // launch one request per wheel tick or fan out across the whole library.
-        var indices = forward
-            ? Enumerable.Range(startIndex, Math.Max(0, last - startIndex + 1))
-                .Concat(Enumerable.Range(first, startIndex - first).Reverse())
-            : Enumerable.Range(first, Math.Max(0, endIndex - first + 1)).Reverse()
-                .Concat(Enumerable.Range(endIndex + 1, Math.Max(0, last - endIndex)));
         try
         {
             foreach (var index in indices)
@@ -458,6 +449,37 @@ public partial class LibraryViewModel : ObservableObject
         catch (OperationCanceledException) { return []; }
         // Speculative loading must not replace the visible catalog with an error.
         catch { return []; }
+    }
+
+    /// <summary>
+    /// The current query's items already held around a range but outside it, in
+    /// <see cref="PrefetchAroundAsync"/>'s order, without any request. Artwork read-ahead works from
+    /// them; the range's own cards load theirs.
+    /// </summary>
+    public IReadOnlyList<MediaItem> CachedNeighborhood(int startIndex, int endIndex, bool forward)
+    {
+        if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex) return [];
+        return Neighborhood(startIndex, endIndex, forward).Indices
+            .Where(index => index < startIndex || index > endIndex)
+            .Select(GetWindowItem).OfType<MediaItem>().ToArray();
+    }
+
+    /// <summary>Changes with every new query, so read-ahead queued for an earlier one can be skipped.</summary>
+    internal int QueryVersion => _queryVersion;
+
+    // A bounded neighborhood: one screen behind and three ahead in the direction of travel, worked
+    // nearest-first, then behind. Never one request per wheel tick or a fan-out across the library.
+    private (int First, IEnumerable<int> Indices) Neighborhood(int startIndex, int endIndex, bool forward)
+    {
+        var screen = Math.Clamp(endIndex - startIndex + 1, 1, 100);
+        var first = Math.Max(0, startIndex - screen * (forward ? 1 : 3));
+        var last = Math.Min(TotalCount - 1, endIndex + screen * (forward ? 3 : 1));
+        var indices = forward
+            ? Enumerable.Range(startIndex, Math.Max(0, last - startIndex + 1))
+                .Concat(Enumerable.Range(first, startIndex - first).Reverse())
+            : Enumerable.Range(first, Math.Max(0, endIndex - first + 1)).Reverse()
+                .Concat(Enumerable.Range(endIndex + 1, Math.Max(0, last - endIndex)));
+        return (first, indices);
     }
 
     private void RememberWindow(int startIndex, CatalogResponse response, bool includeTotal)

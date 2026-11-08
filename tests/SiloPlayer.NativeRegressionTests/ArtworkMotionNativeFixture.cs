@@ -85,7 +85,8 @@ internal static partial class ArtworkMotionNativeFixture
             }
             var during = wire.ImageRequests - before;
             Program.Log($"INFO artwork owned LibraryPage ChangeView fast request count={during}; new sources={sources}; ImageOpened={decoded}; offset={scroll.VerticalOffset}");
-            Check(during == 0 && sources == 0 && decoded == 0, $"Fast LibraryPage work: requests={during}, sources={sources}, openedEvents={decoded}; expected zero.");
+            // Downloads may run during a fast scroll; decoding and presenting wait for it to settle.
+            Check(sources == 0 && decoded == 0, $"Fast LibraryPage work: sources={sources}, openedEvents={decoded}; expected no decode while moving.");
             await Until(() => wire.ImageRequests > before);
             await Until(() => slots.Any(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
             Program.Log("PASS artwork current library requests and decoded presentation resume after settling.");
@@ -235,7 +236,11 @@ internal static partial class ArtworkMotionNativeFixture
             await Move();
             Bind(card, kind + "-fast"); Bind(other, kind + "-independent");
             await Burst(10);
-            Check(!wire.Requests.ContainsKey("/art/" + kind + "-fast") && sources == 0 && openedEvents == 0, kind + " fast motion suppresses requests/source assignments/ImageOpened");
+            if (kind == "library")
+                // A library card still bound after the dwell downloads during the scroll; only the decode waits.
+                Check(wire.Requests.GetValueOrDefault("/art/library-fast") == 1 && sources == 0 && openedEvents == 0, "library fast motion downloads a bound card but suppresses source assignments/ImageOpened");
+            else
+                Check(!wire.Requests.ContainsKey("/art/" + kind + "-fast") && sources == 0 && openedEvents == 0, kind + " fast motion suppresses requests/source assignments/ImageOpened");
             Check(otherImage.Source is BitmapImage { PixelWidth: > 0 }, kind + " stationary viewport loads during another viewport motion");
             await Until(() => image.Source is BitmapImage { PixelWidth: > 0 });
             Check(sources == 1 && openedEvents == 1, kind + " settles into exactly one decoded presentation");
@@ -293,7 +298,7 @@ internal static partial class ArtworkMotionNativeFixture
             await Move(); sources = 0; openedEvents = 0;
             Bind(card, kind + "-old"); await Task.Delay(20); Bind(card, kind + "-new");
             await Burst();
-            Check(!wire.Requests.ContainsKey("/art/" + kind + "-old") && !wire.Requests.ContainsKey("/art/" + kind + "-new") && sources == 0, kind + " rebinding retires pending URL work");
+            Check(!wire.Requests.ContainsKey("/art/" + kind + "-old") && (kind == "library" || !wire.Requests.ContainsKey("/art/" + kind + "-new")) && sources == 0, kind + " rebinding retires pending URL work");
             await Until(() => image.Source is BitmapImage { PixelWidth: > 0 });
             Check(wire.Requests.GetValueOrDefault("/art/" + kind + "-new") == 1 && sources == 1, kind + " only latest rebind presents");
 
@@ -313,6 +318,47 @@ internal static partial class ArtworkMotionNativeFixture
             {
                 await Move(); Bind(card, kind + "-hidden-slot"); reset.Reset(); await Burst(); await Task.Delay(180);
                 Check(!wire.Requests.ContainsKey("/art/" + kind + "-hidden-slot") && image.Source == null, "Hidden/unbound library slot retires pending work");
+            }
+            if (kind == "library")
+            {
+                // A row bound for 150 ms exceeds the download dwell even at ordinary fast-scroll
+                // speeds (~2 px/ms). Hold replies while recycling through many rows: cancellation
+                // must not free a slot while its shared HTTP download is still running.
+                var paths = Enumerable.Range(0, 24).Select(i => "/art/library-medium-row-" + i).ToArray();
+                foreach (var path in paths)
+                    wire.Gates[path] = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                try
+                {
+                    await Move();
+                    foreach (var path in paths)
+                    {
+                        Bind(card, path["/art/".Length..]);
+                        for (var tick = 0; tick < 6; tick++)
+                        {
+                            offset += 50; if (offset > 16000) offset = 300;
+                            scroll.ChangeView(offset, null, null, true);
+                            await Task.Delay(25);
+                        }
+                    }
+                    var started = paths.Where(wire.Requests.ContainsKey).ToArray();
+                    Check(started.Length is > 0 and <= 8,
+                        $"Medium library scroll leaves at most 8 shared requests outstanding, actual={started.Length}");
+                    Bind(card, "library-medium-landing");
+                    await Task.Delay(200); // Let motion settle and the landing bind enter the throttle.
+                    var landingWait = System.Diagnostics.Stopwatch.StartNew();
+                    // Release only the single bounded wave. Requests for every skipped row remain
+                    // gated, so a stale backlog would prevent the landing poster arriving in time.
+                    foreach (var path in started) wire.Gates[path].TrySetResult();
+                    await Until(() => image.Source is BitmapImage { PixelWidth: > 0 });
+                    Check(landingWait.Elapsed < TimeSpan.FromSeconds(5)
+                        && paths.Count(wire.Requests.ContainsKey) <= 8
+                        && wire.Requests.GetValueOrDefault("/art/library-medium-landing") == 1,
+                        "Landing library poster arrives within 5 seconds of one completion wave, without queued passed-row downloads");
+                }
+                finally
+                {
+                    foreach (var path in paths) wire.Gates[path].TrySetResult();
+                }
             }
             // A retained DTO cannot acquire a successor profile's identity merely by loading again.
             await Move(); Bind(card, kind + "-retained-owner");

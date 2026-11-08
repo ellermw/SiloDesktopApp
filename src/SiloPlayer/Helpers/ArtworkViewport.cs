@@ -55,7 +55,8 @@ internal static class ArtworkViewport
 
     internal static void ObserveAncestors(FrameworkElement card) => GetPolicies(card, null);
 
-    internal static bool IsDeferred(FrameworkElement card) => GetPolicies(card, null).Any(policy => policy.IsDeferred);
+    internal static bool IsDeferred(FrameworkElement card, ArtworkMotionPolicy? owner = null) =>
+        GetPolicies(card, owner).Any(policy => policy.IsDeferred);
 
     private static List<ArtworkMotionPolicy> GetPolicies(FrameworkElement card, ArtworkMotionPolicy? explicitOwner)
     {
