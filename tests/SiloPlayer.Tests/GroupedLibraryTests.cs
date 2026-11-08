@@ -196,6 +196,86 @@ public sealed class GroupedLibraryTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ServerThatRejectsTheGroupParameterStillBrowsesTitleSortWithLetters(bool withRules)
+    {
+        // Beta 1.2.814: Movies on Title sort showed "Failed to load catalog" and no A-Z rail.
+        using var wire = new Wire { RefuseGroupParameter = true }; var model = wire.Create();
+        model.SelectedSort = "title";
+        if (withRules) model.SelectedGenre = "Drama";
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        Assert.Null(model.ErrorMessage);
+        Assert.False(model.IsGroupedCatalog);
+        Assert.NotNull(model.GetWindowItem(0));
+        Assert.Equal("box_set", wire.Catalog[0].Group);
+        Assert.Null(wire.Catalog[^1].Group);
+        Assert.NotNull(model.LetterIndex);
+        Assert.False(wire.Letters.Last().TryGetProperty("group", out _));
+        model.CancelCatalogLoads();
+    }
+
+    [Theory]
+    [InlineData("title")]
+    [InlineData("added_at")]
+    [InlineData("release_date")]
+    [InlineData("year")]
+    [InlineData("rating_imdb")]
+    [InlineData("rating_tmdb")]
+    [InlineData("progress")]
+    [InlineData("plays")]
+    public async Task EveryGroupableSortBrowsesWhenTheServerRejectsGrouping(string sort)
+    {
+        // Owner report on 1.2.814: only Duration, Resolution and Bitrate (never grouped) loaded.
+        using var wire = new Wire { RefuseGroupParameter = true }; var model = wire.Create();
+        model.SelectedSort = sort;
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage);
+        Assert.False(model.IsGroupedCatalog);
+        Assert.NotNull(model.GetWindowItem(0));
+        Assert.Null(wire.Catalog[^1].Group);
+        model.CancelCatalogLoads();
+    }
+
+    [Fact]
+    public async Task OneGroupParameterRefusalCoversEveryLaterQueryOnThatServer()
+    {
+        using var wire = new Wire { RefuseGroupParameter = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Null(model.ErrorMessage); Assert.False(model.IsGroupedCatalog);
+        var before = wire.Catalog.Count;
+        model.SelectedOrder = "desc";
+        await model.ApplyFilterCommand.ExecuteAsync(null);
+        model.SelectedSort = "added_at";
+        await model.ApplyFilterCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        Assert.Null(model.ErrorMessage); Assert.False(model.IsGroupedCatalog);
+        Assert.All(wire.Catalog.Skip(before), request => Assert.Null(request.Group));
+
+        // Another server is asked again.
+        wire.RefuseGroupParameter = false;
+        wire.Client!.SetBaseUrl("https://replacement.invalid");
+        before = wire.Catalog.Count;
+        await model.LoadWindowAsync(0, 60);
+        Assert.True(model.IsGroupedCatalog);
+        Assert.All(wire.Catalog.Skip(before), request => Assert.Equal("box_set", request.Group));
+        model.CancelCatalogLoads();
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("group", "group")]
+    [InlineData("query.group", "group")]
+    [InlineData("body.group", "group")]
+    [InlineData("query.sort", "sort")]
+    [InlineData("body.groups[0].rules[0].op", "groups[0].rules[0].op")]
+    [InlineData("header.x-profile-id", "header.x-profile-id")]
+    public void GroupingRefusalFieldReadsTheServersLocationGrammar(string? location, string? expected)
+        => Assert.Equal(expected, LibraryViewModel.GroupingRefusalField(location));
+
+    [Theory]
     [InlineData("unrelated_error", null, false)]
     [InlineData("validation_failed", "groups.0.rules.0.op", false)]
     [InlineData("validation_failed", null, true)]
@@ -795,7 +875,17 @@ public sealed class GroupedLibraryTests
         public bool Supported = true, LetterSupport = true, HoldCatalog, OmitWindowTotals;
         // Like the real server: group=box_set with a sort aggregates cannot carry is a 422 validation_failed.
         public bool RefuseAllGrouped, RefuseGroupedFilters;
+        // The official server (silo-server internal/apiv2/catalog_items.go): group is enum "work",
+        // so group=box_set is a 422 at query.group (GET) or body.group (POST query, letters).
+        public bool RefuseGroupParameter;
+        public int LetterRefusals;
         public string? CatalogProblem;
+        public static string GroupParameterProblem(string location) => JsonSerializer.Serialize(new
+        {
+            type = "https://fixture.invalid/docs/api/v2/problems/validation_failed", status = 422, code = "validation_failed",
+            detail = "The request did not pass validation; see errors.",
+            errors = new[] { new { location, code = "invalid", detail = "expected value to be one of \"work\"" } },
+        });
         public readonly HashSet<string> RefusedGroupedSorts = ["bitrate", "resolution", "runtime"];
         public int PlayedCount = 1;
         public int CatalogTotal = 1000;
@@ -835,6 +925,11 @@ public sealed class GroupedLibraryTests
             {
                 var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement.Clone(); Letters.Add(body);
                 if (BeforeLettersResponse is not null) await BeforeLettersResponse(ct);
+                if (RefuseGroupParameter && body.TryGetProperty("group", out _))
+                {
+                    LetterRefusals++;
+                    return new((HttpStatusCode)422) { Content = new StringContent(GroupParameterProblem("body.group"), Encoding.UTF8, "application/problem+json") };
+                }
                 return Json("""{"total":1000,"letters":[{"letter":"A","count":742,"position":0},{"letter":"M","count":258,"position":742}],"runs":[{"letter":"A","count":742,"position":0},{"letter":"M","count":258,"position":742}]}""");
             }
             if (path is "/api/v2/catalog" or "/api/v2/catalog/query")
@@ -851,6 +946,8 @@ public sealed class GroupedLibraryTests
                 if (BeforeCatalogResponse is not null) await BeforeCatalogResponse(start, includeTotal, ct);
                 if (HoldCatalog) { Started.TrySetResult(); await Release.Task; }
                 var sort = Value("sort")?.TrimStart('-');
+                if (Value("group") == "box_set" && RefuseGroupParameter)
+                    return new((HttpStatusCode)422) { Content = new StringContent(GroupParameterProblem(path.EndsWith("query") ? "body.group" : "query.group"), Encoding.UTF8, "application/problem+json") };
                 if (Value("group") == "box_set" && (RefuseAllGrouped
                     || (RefuseGroupedFilters && (Value("genre") is not null || Value("groups") is not null))
                     || (sort is not null && RefusedGroupedSorts.Contains(sort))))

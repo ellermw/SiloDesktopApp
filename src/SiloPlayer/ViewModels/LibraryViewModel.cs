@@ -47,6 +47,21 @@ public partial class LibraryViewModel : ObservableObject
     // Only remember refusals confirmed by a successful ungrouped read of the same query and API context.
     private readonly HashSet<(ApiRequestContext? Context, string Query)> _refusedGroupingKeys = [];
     private (ApiRequestContext? Context, string Query) GroupingRefusalKey() => (_catalogContext, BuildCatalogQueryScopeKey(null));
+    // Servers that rejected the group parameter itself (query.group / body.group). The
+    // official server's catalog accepts only group=work, so box-set grouping is refused
+    // for every sort and filter there; one refusal covers the whole server.
+    private readonly HashSet<string> _groupingRefusedServers = new(StringComparer.OrdinalIgnoreCase);
+    private string? GroupingServerKey() => _catalogContext?.BaseUrl;
+
+    // The server reports validation locations as query.<name>, body.<name> or header.<name>
+    // (RFC 9457 problem errors). Compare the field name alone.
+    internal static string? GroupingRefusalField(string? location)
+    {
+        if (string.IsNullOrEmpty(location)) return null;
+        foreach (var prefix in new[] { "query.", "body." })
+            if (location.StartsWith(prefix, StringComparison.Ordinal)) return location[prefix.Length..];
+        return location;
+    }
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
@@ -536,7 +551,8 @@ public partial class LibraryViewModel : ObservableObject
         {
             var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" }
                 && SelectedType is null or "" or "movie" or "video"
-                && SupportsGroupedSort(SelectedSort) && !_refusedGroupingKeys.Contains(GroupingRefusalKey());
+                && SupportsGroupedSort(SelectedSort) && !_refusedGroupingKeys.Contains(GroupingRefusalKey())
+                && (GroupingServerKey() is not { } server || !_groupingRefusedServers.Contains(server));
             supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || version != _queryVersion) { return false; }
@@ -881,7 +897,7 @@ public partial class LibraryViewModel : ObservableObject
                 _ = EnsureLetterIndexAsync();
         }
         catch (ApiException ex) when (ex.StatusCode == 422 && ex.ErrorCode == "validation_failed"
-            && ex.ErrorLocation is null or "sort" or "group"
+            && GroupingRefusalField(ex.ErrorLocation) is null or "sort" or "group"
             && _catalogGroup == "box_set" && queryVersion == _queryVersion
             && windowVersion == _windowLoadVersion && _catalogContext == _catalogApi.CaptureContext()
             && groupingRefusalKey == GroupingRefusalKey())
@@ -897,7 +913,8 @@ public partial class LibraryViewModel : ObservableObject
             DisplayTotalCount = estimatedTotal;
             Items.Reset(estimatedTotal);
             SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_errors.txt",
-                $"catalog_grouping_refused start={startIndex} count={itemCount} sort={SelectedSort} type={SelectedType} code={ex.ErrorCode} query_version={_queryVersion} retry_ungrouped=true");
+                $"catalog_grouping_refused start={startIndex} count={itemCount} sort={SelectedSort} type={SelectedType} code={ex.ErrorCode} location={ex.ErrorLocation ?? "none"} query_version={_queryVersion} retry_ungrouped=true");
+            var refusedServer = GroupingRefusalField(ex.ErrorLocation) == "group" ? groupingRefusalKey.Context?.BaseUrl : null;
             _pendingWindowStart = startIndex;
             _pendingWindowEnd = startIndex + itemCount - 1;
             var recoveryQueryVersion = _queryVersion;
@@ -908,6 +925,9 @@ public partial class LibraryViewModel : ObservableObject
                 && _catalogContext == _catalogApi.CaptureContext() && groupingRefusalKey == GroupingRefusalKey())
             {
                 _refusedGroupingKeys.Add(groupingRefusalKey);
+                // The server rejected the group parameter itself, not this sort or filter: it
+                // cannot group any browse, so stop asking it on every later query.
+                if (refusedServer is not null) _groupingRefusedServers.Add(refusedServer);
                 _ = EnsureLetterIndexAsync();
             }
         }
