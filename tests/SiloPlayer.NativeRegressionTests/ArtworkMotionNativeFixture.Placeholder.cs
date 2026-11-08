@@ -104,6 +104,18 @@ internal static partial class ArtworkMotionNativeFixture
             invalidGate.TrySetResult();
             await Until(() => image.Source is BitmapImage { PixelWidth: > 0 } && image.Opacity >= 1);
             Program.Log("PASS library poster placeholder: blur while loading, fade when late, instant clear on recycle, type mark for an invalid hash.");
+
+            // An item with only a backdrop fills the tall frame top to bottom: decode it by height, not width.
+            card.Bind(new MediaItem
+            {
+                ContentId = "backdrop-only", Title = "backdrop-only", Type = "movie",
+                BackdropUrl = "https://artwork-motion.invalid/art/backdrop-only",
+            }, "title");
+            await Until(() => image.Source is BitmapImage { PixelWidth: > 0 });
+            var backdrop = (BitmapImage)image.Source;
+            Check(backdrop.DecodePixelWidth == 0 && backdrop.DecodePixelHeight >= image.Height,
+                $"a backdrop-only library card decodes by its frame height (width={backdrop.DecodePixelWidth}, height={backdrop.DecodePixelHeight}, frame={image.Height})");
+            Program.Log("PASS library backdrop-only card decodes by frame height.");
         }
         finally
         {
