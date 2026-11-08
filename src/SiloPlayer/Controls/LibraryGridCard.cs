@@ -63,7 +63,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _placeholderHideTimer;
 
     private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 8);
-    // About as long as a fast scroll keeps a row of cards in view.
+    // Avoid starting downloads for the briefest binds during a fast scroll.
     internal const int FastScrollDownloadDwellMs = 100;
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
     internal static AsyncWorkThrottle ImageLoadThrottle => s_imageLoadThrottle;
@@ -494,9 +494,9 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             var imageService = App.Services.GetRequiredService<ImageService>();
             var identity = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, false);
             await Task.Delay(25, ct);
-            // Only the decode waits for a fast scroll to slow, never the download. A card the
-            // scroll passes over is rebound within the dwell and never downloads; one still bound
-            // after it downloads at once, so its poster is on disk when the scroll settles.
+            // Only the decode waits for a fast scroll to slow. The dwell skips brief binds;
+            // longer binds can download during motion, but keep their throttle slot until the
+            // shared download finishes even if rebound, so passed cards cannot build a backlog.
             if (ArtworkViewport.IsDeferred(this, ArtworkMotion)) await Task.Delay(FastScrollDownloadDwellMs, ct);
             if (!IsCurrentPosterLoad(item, version, ct) || !DecodedArtworkCache.IsCurrent(identity))
                 return;
@@ -505,7 +505,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             var imageType = !string.IsNullOrWhiteSpace(item.PosterUrl) ? "poster" : "backdrop";
             // The throttle invokes queued work off the UI thread: no XAML control here.
             var diskPath = await s_imageLoadThrottle.RunAsync(token => DecodedArtworkCache.IsCurrent(identity)
-                ? imageService.GetImageDiskPathAsync(item.ContentId, imageType, imageUrl, httpClient, token)
+                ? imageService.GetImageDiskPathAsync(item.ContentId, imageType, imageUrl, httpClient, token, waitForSharedDownload: true)
                 : Task.FromResult<string?>(null), ct);
 
             if (!IsCurrentPosterLoad(item, version, ct))

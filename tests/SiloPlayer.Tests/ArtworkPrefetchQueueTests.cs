@@ -126,6 +126,109 @@ public class ArtworkPrefetchQueueTests
     }
 
     [Fact]
+    public async Task Replace_skips_running_completed_and_duplicate_items_so_workers_reach_new_work()
+    {
+        var probe = new Probe();
+        var queue = new ArtworkPrefetchQueue<int>(workers: 4, capacity: 20, probe.Work);
+        queue.Replace([1, 2, 3, 4]);
+        await Until(() => probe.Started.Count == 4);
+        for (var tick = 0; tick < 10; tick++)
+            queue.Replace([1, 2, 3, 4, 5, 5, 6]);
+        Assert.Equal(2, queue.PendingCount);
+
+        probe.Gate(1).TrySetResult();
+        await Until(() => probe.Started.Contains(5));
+        // Completed 1 and running 2..5 must not park the freed worker on a shared download.
+        queue.Replace([1, 2, 3, 4, 5, 6]);
+        Assert.Equal(1, queue.PendingCount);
+        probe.Gate(5).TrySetResult();
+        await Until(() => probe.Started.Contains(6));
+        Assert.Equal([1, 2, 3, 4, 5, 6], probe.Started.Order());
+        foreach (var item in Enumerable.Range(1, 6)) probe.Gate(item).TrySetResult();
+        await Until(() => queue.RunningCount == 0);
+        queue.Replace(Enumerable.Range(1, 6));
+        Assert.Equal(0, queue.PendingCount);
+        Assert.Equal(0, queue.RunningCount);
+        Assert.Equal(4, probe.Peak);
+    }
+
+    [Fact]
+    public async Task Replace_refills_an_idle_worker_even_when_only_one_unseen_item_remains()
+    {
+        var probe = new Probe();
+        var queue = new ArtworkPrefetchQueue<int>(workers: 4, capacity: 10, probe.Work);
+        queue.Replace([1, 2, 3, 4]);
+        await Until(() => probe.Started.Count == 4);
+        probe.Gate(1).TrySetResult();
+        await Until(() => queue.RunningCount == 3);
+        queue.Replace([1, 2, 3, 4, 5]);
+        await Until(() => probe.Started.Contains(5));
+        Assert.Equal(4, queue.RunningCount);
+        Assert.Equal([1, 2, 3, 4, 5], probe.Started.Order());
+        foreach (var item in Enumerable.Range(2, 4)) probe.Gate(item).TrySetResult();
+        await Until(() => queue.RunningCount == 0);
+    }
+
+    [Fact]
+    public async Task Completion_history_is_bounded_and_Clear_allows_the_same_item_again()
+    {
+        var probe = new Probe();
+        var queue = new ArtworkPrefetchQueue<int>(workers: 1, capacity: 2, probe.Work);
+        foreach (var item in Enumerable.Range(1, 3))
+        {
+            probe.Gate(item).TrySetResult();
+            queue.Replace([item]);
+            await Until(() => probe.Finished.Count == item && queue.RunningCount == 0);
+        }
+        queue.Replace([2, 3]);
+        Assert.Equal(0, queue.RunningCount);
+        Assert.Equal(0, queue.PendingCount);
+        queue.Replace([1]); // The oldest completion no longer occupies history.
+        await Until(() => probe.Finished.Count == 4 && queue.RunningCount == 0);
+        queue.Clear();
+        queue.Replace([1]);
+        await Until(() => probe.Finished.Count == 5 && queue.RunningCount == 0);
+        Assert.Equal([1, 1, 1, 2, 3], probe.Finished.Order());
+    }
+
+    [Fact]
+    public async Task Clear_does_not_let_an_old_completion_suppress_the_new_owners_same_item()
+    {
+        var oldGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var queue = new ArtworkPrefetchQueue<int>(workers: 1, capacity: 2, async (_, _) =>
+        {
+            if (Interlocked.Increment(ref calls) == 1) await oldGate.Task;
+        });
+        queue.Replace([1]);
+        await Until(() => Volatile.Read(ref calls) == 1);
+        queue.Clear();
+        oldGate.TrySetResult();
+        await Until(() => queue.RunningCount == 0);
+        queue.Replace([1]);
+        await Until(() => Volatile.Read(ref calls) == 2 && queue.RunningCount == 0);
+    }
+
+    [Fact]
+    public async Task Value_identity_deduplicates_new_instances_but_not_new_urls_queries_or_contexts()
+    {
+        var worked = new ConcurrentQueue<Artwork>();
+        var queue = new ArtworkPrefetchQueue<Artwork>(workers: 1, capacity: 10, (item, _) =>
+        {
+            worked.Enqueue(item);
+            return Task.CompletedTask;
+        });
+        queue.Replace([new("item", "url", 1, "profile")]);
+        await Until(() => queue.RunningCount == 0 && worked.Count == 1);
+        queue.Replace([new("item", "url", 1, "profile"), new("item", "replacement", 1, "profile"),
+            new("item", "url", 2, "profile"), new("item", "url", 1, "successor")]);
+        await Until(() => queue.RunningCount == 0 && worked.Count == 4);
+        Assert.Equal(4, worked.Distinct().Count());
+    }
+
+    private sealed record Artwork(string ContentId, string Url, int QueryVersion, string Context);
+
+    [Fact]
     public void Rejects_an_empty_lane()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new ArtworkPrefetchQueue<int>(0, 1, (_, _) => Task.CompletedTask));

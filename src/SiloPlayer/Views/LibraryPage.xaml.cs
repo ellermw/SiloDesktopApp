@@ -133,7 +133,9 @@ public sealed partial class LibraryPage : Page,
     private CancellationTokenSource? _libraryReadAheadCts;
     // Downloads posters around the viewport in its own lane of 4, beside the visible cards' 8.
     private readonly ArtworkPrefetchQueue<LibraryArtworkReadAhead> _artworkReadAhead;
-    private sealed record LibraryArtworkReadAhead(MediaItem Item, int QueryVersion, SiloPlayer.Core.Api.ApiRequestContext Context);
+    // Value identity survives new DTO instances and changes with the image, query or profile context.
+    private sealed record LibraryArtworkReadAhead(string ContentId, string ImageType, string Url,
+        int QueryVersion, SiloPlayer.Core.Api.ApiRequestContext Context);
     private bool _forceVisibleRangeLoad;
     private int _lastRequestedStartIndex = -1;
     private int _lastRequestedEndIndex = -1;
@@ -2647,7 +2649,9 @@ public sealed partial class LibraryPage : Page,
         var version = ViewModel.QueryVersion;
         _artworkReadAhead.Replace(items
             .Where(item => !string.IsNullOrWhiteSpace(item.PosterUrl) || !string.IsNullOrWhiteSpace(item.BackdropUrl))
-            .Select(item => new LibraryArtworkReadAhead(item, version, context)));
+            .Select(item => !string.IsNullOrWhiteSpace(item.PosterUrl)
+                ? new LibraryArtworkReadAhead(item.ContentId, "poster", item.PosterUrl!, version, context)
+                : new LibraryArtworkReadAhead(item.ContentId, "backdrop", item.BackdropUrl!, version, context)));
     }
 
     // Runs off the UI thread: reads only plain fields and thread-safe state, never a XAML control.
@@ -2655,11 +2659,9 @@ public sealed partial class LibraryPage : Page,
     private async Task ReadAheadArtworkAsync(LibraryArtworkReadAhead work, CancellationToken ct)
     {
         if (!_isNavigated || work.QueryVersion != ViewModel.QueryVersion || !_stateSettings.IsCurrentContext(work.Context)) return;
-        var poster = !string.IsNullOrWhiteSpace(work.Item.PosterUrl);
-        var url = poster ? work.Item.PosterUrl! : work.Item.BackdropUrl!;
         // Keep this worker until a started shared download completes, so the lane stays bounded.
-        await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(work.Item.ContentId,
-            poster ? "poster" : "backdrop", url, App.Services.GetRequiredService<HttpClient>(), ct, waitForSharedDownload: true);
+        await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(work.ContentId,
+            work.ImageType, work.Url, App.Services.GetRequiredService<HttpClient>(), ct, waitForSharedDownload: true);
     }
 
     private (int StartIndex, int EndIndex) GetVisibleItemRange(GridLayoutInfo layout)

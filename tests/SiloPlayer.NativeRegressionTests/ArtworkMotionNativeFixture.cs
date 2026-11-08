@@ -319,6 +319,47 @@ internal static partial class ArtworkMotionNativeFixture
                 await Move(); Bind(card, kind + "-hidden-slot"); reset.Reset(); await Burst(); await Task.Delay(180);
                 Check(!wire.Requests.ContainsKey("/art/" + kind + "-hidden-slot") && image.Source == null, "Hidden/unbound library slot retires pending work");
             }
+            if (kind == "library")
+            {
+                // A row bound for 150 ms exceeds the download dwell even at ordinary fast-scroll
+                // speeds (~2 px/ms). Hold replies while recycling through many rows: cancellation
+                // must not free a slot while its shared HTTP download is still running.
+                var paths = Enumerable.Range(0, 24).Select(i => "/art/library-medium-row-" + i).ToArray();
+                foreach (var path in paths)
+                    wire.Gates[path] = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                try
+                {
+                    await Move();
+                    foreach (var path in paths)
+                    {
+                        Bind(card, path["/art/".Length..]);
+                        for (var tick = 0; tick < 6; tick++)
+                        {
+                            offset += 50; if (offset > 16000) offset = 300;
+                            scroll.ChangeView(offset, null, null, true);
+                            await Task.Delay(25);
+                        }
+                    }
+                    var started = paths.Where(wire.Requests.ContainsKey).ToArray();
+                    Check(started.Length is > 0 and <= 8,
+                        $"Medium library scroll leaves at most 8 shared requests outstanding, actual={started.Length}");
+                    Bind(card, "library-medium-landing");
+                    await Task.Delay(200); // Let motion settle and the landing bind enter the throttle.
+                    var landingWait = System.Diagnostics.Stopwatch.StartNew();
+                    // Release only the single bounded wave. Requests for every skipped row remain
+                    // gated, so a stale backlog would prevent the landing poster arriving in time.
+                    foreach (var path in started) wire.Gates[path].TrySetResult();
+                    await Until(() => image.Source is BitmapImage { PixelWidth: > 0 });
+                    Check(landingWait.Elapsed < TimeSpan.FromSeconds(5)
+                        && paths.Count(wire.Requests.ContainsKey) <= 8
+                        && wire.Requests.GetValueOrDefault("/art/library-medium-landing") == 1,
+                        "Landing library poster arrives within 5 seconds of one completion wave, without queued passed-row downloads");
+                }
+                finally
+                {
+                    foreach (var path in paths) wire.Gates[path].TrySetResult();
+                }
+            }
             // A retained DTO cannot acquire a successor profile's identity merely by loading again.
             await Move(); Bind(card, kind + "-retained-owner");
             row.Children.Remove(card); await Until(() => !card.IsLoaded);
