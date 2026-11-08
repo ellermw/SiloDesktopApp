@@ -37,6 +37,8 @@ public sealed partial class RecommendationSectionPage : Page
     {
         base.OnNavigatedTo(e);
         _uiCustomizationService.Changed += UICustomization_Changed;
+        // A cached page can miss poster-size changes while it is away.
+        ApplyCardLayout(ActualWidth);
         var args = e.Parameter as RecommendationSectionNavigationArgs;
         // The frame reuses this instance for any section. Only Back to the section it still holds
         // completely, under the same profile, keeps its items and scroll position.

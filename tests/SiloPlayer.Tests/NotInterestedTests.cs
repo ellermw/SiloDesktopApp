@@ -127,6 +127,54 @@ public sealed class NotInterestedTests
     [Theory]
     [InlineData(false)]
     [InlineData(null)]
+    public async Task ResumedSectionDoesNotHoldAStaleSnapshotWhenARestoreRefreshIsCancelled(bool? marked)
+    {
+        var reads = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var http = new HttpClient(new AsyncWire(async _ =>
+        {
+            if (Interlocked.Increment(ref reads) == 2)
+            {
+                started.SetResult();
+                await finish.Task;
+            }
+            return Json("""{"items":[{"content_id":"one","type":"movie"},{"content_id":"keep","type":"movie"}]}""");
+        }));
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://not-interested.invalid"); client.SetProfile("one");
+        var section = new SiloPlayer.ViewModels.RecommendationSectionViewModel(new RecommendationsApi(client));
+        try
+        {
+            var drama = new SiloPlayer.ViewModels.RecommendationSectionNavigationArgs("genre", "drama", "Drama");
+            await section.LoadAsync(drama);
+            section.CancelLoad();
+            WeakReferenceMessenger.Default.Send(new NotInterestedChange(client.CaptureContext(), "one", true));
+            Assert.Equal("keep", Assert.Single(section.Items).ContentId);
+            Assert.True(section.TryResume(drama));
+            WeakReferenceMessenger.Default.Send(new NotInterestedChange(client.CaptureContext(), "one", marked));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(section.Holds(drama));
+            section.CancelLoad();
+            Assert.False(section.Holds(drama));
+            Assert.False(section.TryResume(drama));
+            Assert.Equal("keep", Assert.Single(section.Items).ContentId);
+            finish.SetResult();
+            await section.LoadAsync(drama);
+            Assert.Equal(3, reads);
+            Assert.Equal(new[] { "one", "keep" }, section.Items.Select(item => item.ContentId));
+            Assert.True(section.Holds(drama));
+        }
+        finally
+        {
+            section.CancelLoad();
+            finish.TrySetResult();
+            WeakReferenceMessenger.Default.UnregisterAll(section);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
     public async Task ResumedSectionRefreshesNotInterestedChangesWithoutReloadingOnBack(bool? restoredMark)
     {
         var marked = false; var reads = 0;

@@ -112,6 +112,23 @@ internal static class BrowseCallerGridsNativeFixture
                     if (size == "standard") await MediaParityNativeFixture.CaptureAsync(page, $"episode-grid-{kind}-{viewportWidth}.png");
                     Program.Log($"PASS: mounted mixed episode/movie {kind} grid at{viewportWidth}/{size} keeps all caption lines inside the card and preserves the next-row gap.");
                 }
+                if(kind=="Recommendation"&&size=="standard"&&!episodeCaptions)
+                {
+                    var section=(RecommendationSectionPage)page;var reads=wire.SectionReads;
+                    frame.Navigate(typeof(Page));await Task.Delay(150);
+                    await presentation.SaveCardPresentationAsync(new(){PosterSize="large",Caption="title_metadata"});
+                    frame.GoBack();await Until(()=>frame.Content is RecommendationSectionPage{IsLoaded:true});
+                    await AssertRecommendationLayoutAsync(section,presentation,16);
+                    if(!ReferenceEquals(frame.Content,section)||wire.SectionReads!=reads)
+                        throw new InvalidOperationException("Back after a poster-size change must relayout the kept section without reloading it.");
+                    frame.Navigate(typeof(Page));await Task.Delay(150);
+                    await presentation.SaveCardPresentationAsync(new(){PosterSize="standard",Caption="title_metadata"});
+                    frame.Navigate(typeof(RecommendationSectionPage),new RecommendationSectionNavigationArgs("genre","comedy","Resized grid"));
+                    await Until(()=>section.IsLoaded&&section.ViewModel.Items.Count==30&&!section.ViewModel.IsLoading&&wire.SectionReads==reads+1);
+                    if(!ReferenceEquals(frame.Content,section))throw new InvalidOperationException("A new section must reuse the cached page after a poster-size change.");
+                    await AssertRecommendationLayoutAsync(section,presentation,12);
+                    Program.Log("PASS: cached recommendation sections reapply poster size, columns and gaps after changes while away, on Back and new navigation.");
+                }
                 if(kind=="Library"&&size=="standard")
                 {
                     var factory=typeof(LibraryPage).GetMethod("CreateCollectionCard",BindingFlags.Instance|BindingFlags.NonPublic)!;
@@ -150,6 +167,27 @@ internal static class BrowseCallerGridsNativeFixture
             Program.Log("PASS: actual mounted Library/Search/recommendation compact/standard/large12/12/16 grid gaps and missing-art user collection fallback.");
         }
         finally{frame?.Navigate(typeof(Page));serviceField.SetValue(null,previous);await Task.Delay(250);navigation.Frame=null;owner.Children.Clear();window.Close();}
+    }
+    private static async Task AssertRecommendationLayoutAsync(RecommendationSectionPage section,UICustomizationService presentation,double gap)
+    {
+        var content=(StackPanel)section.FindName("PageContent");
+        var width=section.ActualWidth-content.Padding.Left-content.Padding.Right;
+        var columns=presentation.GetPosterColumnCount(Math.Max(280,width));
+        var cardWidth=Math.Max(96,Math.Floor((width-(columns-1)*gap)/columns));
+        var layout=(UniformGridLayout)section.FindName("ItemsLayout");
+        var loading=(UniformGridLayout)section.FindName("LoadingLayout");
+        await Until(()=>
+        {
+            if(layout.MaximumRowsOrColumns!=columns||loading.MaximumRowsOrColumns!=columns||
+                layout.MinColumnSpacing!=gap||layout.MinRowSpacing!=gap||loading.MinColumnSpacing!=gap||loading.MinRowSpacing!=gap||
+                layout.MinItemWidth!=cardWidth||loading.MinItemWidth!=cardWidth)return false;
+            var cards=Descendants<PosterCard>(section).Where(card=>card.ActualWidth>0&&card.ActualHeight>0)
+                .Select(card=>(Card:card,Point:card.TransformToVisual(section).TransformPoint(new()))).OrderBy(value=>value.Point.Y).ThenBy(value=>value.Point.X).ToArray();
+            if(cards.Length<columns)return false;
+            var row=cards.Where(value=>Math.Abs(value.Point.Y-cards[0].Point.Y)<.5).ToArray();
+            return row.Length==columns&&row.All(value=>Math.Abs(value.Card.ActualWidth-cardWidth)<.6)&&
+                row.Zip(row.Skip(1),(left,right)=>Math.Abs(right.Point.X-left.Point.X-left.Card.ActualWidth-gap)<.6).All(matches=>matches);
+        });
     }
     private static async Task Until(Func<bool> ready){for(var n=0;n<160&&!ready();n++)await Task.Delay(25);if(!ready())throw new InvalidOperationException("Actual mounted caller grid did not settle.");}
     private static int AssertCaptionBounds(FrameworkElement card)

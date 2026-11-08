@@ -28,13 +28,13 @@ public partial class RecommendationSectionViewModel : ObservableObject
             if (change.Marked == true)
                 for (var index = Items.Count - 1; index >= 0; index--)
                     if (Items[index].ContentId == change.ItemId) Items.RemoveAt(index);
-            if (_currentArgs != null) _ = LoadAsync(_currentArgs);
-            else if (change.Marked != true)
+            if (change.Marked != true)
             {
-                // Restoring a title (or an unknown change) needs a fresh section on Back.
+                // Invalidate before refreshing: cancellation or failure must not keep a stale section for Back.
                 _loadedArgs = null;
                 _loadedContext = null;
             }
+            if (_currentArgs != null) _ = LoadAsync(_currentArgs);
         });
     }
 
