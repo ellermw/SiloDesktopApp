@@ -1805,26 +1805,39 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     stale = Task.Run(() => (Task)Call(service, "SelectSubtitleByServerIndexAsync", 2, false)!);
                     await Until(() => (long)Get(service, "_seekRestartGeneration")! > restartGeneration);
                     var english = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == 0);
+                    var retainedIntent = manager.CaptureLocalSubtitleIntent();
+                    var retainedSid = mpv.GetPropertyDouble("sid");
+                    var activeBeforeRead = service.ActiveSubtitleServerIndex;
+                    var replansBeforeRead = wire.Replans;
                     latest = Task.Run(() => service.SetSubtitleTrackAndPersistAsync(1, english.Language, english));
                     await subtitles.Entered.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                    Require(!latest.IsCompleted && service.ActiveSubtitleServerIndex == 0,
-                        "Fixture did not hold the newer viewer choice in prefetch.");
+                    // Readiness precedes acceptance: the newer draft owns the
+                    // pending slot, not the active index or manager intent yet.
+                    var pendingOwner = Get(service, "_pendingSubtitlePreferenceOwner");
+                    Require(!latest.IsCompleted && pendingOwner != null &&
+                        (int?)Get(service, "_pendingSubtitlePreferenceIndex") == 0 &&
+                        service.ActiveSubtitleServerIndex == activeBeforeRead &&
+                        manager.CaptureLocalSubtitleIntent() == retainedIntent && mpv.GetPropertyDouble("sid") == retainedSid,
+                        "Fixture did not hold the newer viewer draft in prefetch without accepting it early.");
                     gate.Release(); gateHeld = false;
                     await stale.WaitAsync(TimeSpan.FromSeconds(4));
                     ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     typeof(MpvPlayer).GetMethod("Command", BindingFlags.NonPublic | BindingFlags.Instance)!
                         .Invoke(mpv, [new[] { "script-message", "silo-sidecar-probe-drain" }]);
                     await ready.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                    Require(service.ActiveSubtitleServerIndex == 0 && manager.SubtitleSelectionForLoad == 0 &&
+                    Require(service.ActiveSubtitleServerIndex == activeBeforeRead &&
+                        manager.CaptureLocalSubtitleIntent() == retainedIntent && mpv.GetPropertyDouble("sid") == retainedSid &&
+                        ReferenceEquals(pendingOwner, Get(service, "_pendingSubtitlePreferenceOwner")) &&
                         (int?)Get(service, "_pendingSubtitlePreferenceIndex") == 0 && wire.PreferenceWrites == 1 &&
-                        seen.IsEmpty && notices.IsEmpty && subtitles.EnglishRequests == 1,
-                        "A superseded persist:false bitmap worker rolled back or published over the newer pending choice.");
+                        wire.Replans == replansBeforeRead && seen.IsEmpty && notices.IsEmpty && subtitles.EnglishRequests == 1,
+                        "A superseded persist:false bitmap worker changed the retained selection or the newer pending choice.");
                     subtitles.Release.TrySetResult();
                     await latest.WaitAsync(TimeSpan.FromSeconds(5));
                     var map = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;
                     Require(service.ActiveSubtitleServerIndex == 0 && manager.SubtitleSelectionForLoad == 0 &&
                         map.TryGetValue(0, out var sid) && mpv.GetPropertyDouble("sid") == sid &&
-                        wire.PreferenceWrites == 2 && wire.RequestedPreferences.LastOrDefault() == 0,
+                        wire.PreferenceWrites == 2 && wire.RequestedPreferences.LastOrDefault() == 0 &&
+                        Get(service, "_pendingSubtitlePreferenceOwner") == null && Get(service, "_pendingSubtitlePreferenceIndex") == null,
                         "The newer choice did not execute and persist after the stale load-time bitmap worker retired.");
                 }
                 finally

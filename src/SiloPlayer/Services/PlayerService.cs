@@ -5943,6 +5943,7 @@ public partial class PlayerService : IDisposable
         // while the canceled seek is still releasing the restart gate.
         var selectionIntent = manager.CaptureLocalSubtitleIntent();
         var preferenceOwner = _pendingSubtitlePreferenceOwner;
+        var choiceVersion = Volatile.Read(ref _legacySubtitleChoiceVersion);
         await CancelAndDrainTransportRestartsAsync(ct);
         if (!CurrentOwner()) return SubtitleTransportResult.Superseded;
         int? requestedIndex = track?.Index ?? postLoadSubtitleIndex;
@@ -6039,7 +6040,10 @@ public partial class PlayerService : IDisposable
                     return SubtitleTransportResult.Superseded;
                 // The drained seek may have left loading/pause state without
                 // a load to consume the newer deferred subtitle choice.
-                if (_activeSubtitleServerIndex != (requestedIndex ?? -1))
+                // A newer text draft retires this worker before it has readable
+                // bytes, so the active index alone cannot attest ownership.
+                if (choiceVersion != Volatile.Read(ref _legacySubtitleChoiceVersion) ||
+                    _activeSubtitleServerIndex != (requestedIndex ?? -1))
                     return RefuseOrRecoverSubtitleSelection(SubtitleTransportResult.Superseded);
                 // Admit the initial file-local choice exactly once. Subsequent
                 // grants can change files and must reuse this retained identity.
@@ -6077,8 +6081,10 @@ public partial class PlayerService : IDisposable
             {
                 selectionIntent = manager.CaptureLocalSubtitleIntent();
                 preferenceOwner = _pendingSubtitlePreferenceOwner;
+                // An unmatched newer choice must refuse/recover, not reload
+                // the previously granted (but still unloaded) burn-in plan.
                 var replacement = currentOwner == null
-                    ? await manager.ReplanRecordedSubtitleSelectionAsync(position, ct).ConfigureAwait(false)
+                    ? await manager.ReplanCurrentSubtitleAsync(position, ct).ConfigureAwait(false)
                     : await manager.ReplanCurrentSubtitleForOwnerAsync(position, currentOwner.CanUseSession,
                         currentOwner.TryAdoptSession, ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
