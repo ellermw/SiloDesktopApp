@@ -36,6 +36,13 @@ public sealed partial class LibraryPage
     private bool CanShowLibraryLetters => IsLibraryLetterGrid &&
         ViewModel.LetterIndex is { Total: > 0, Letters.Count: > 0 };
 
+    // The rail stays in place, greyed, while its index loads or after a failed read (with
+    // Retry), so it neither pops in late nor vanishes silently. An unsupported or empty
+    // index, or a catalog that failed to load, still releases the gutter.
+    private bool ShowLibraryLetterRail => IsLibraryLetterGrid && ViewModel.ErrorMessage is null &&
+        (CanShowLibraryLetters || ViewModel.IsLetterIndexLoading || ViewModel.LetterIndexFailed);
+    private readonly SolidColorBrush _clearLetterBrush = new(Microsoft.UI.Colors.Transparent);
+
     private void InitializeLibraryLetters()
     {
         foreach (var character in LibraryLetters)
@@ -68,7 +75,7 @@ public sealed partial class LibraryPage
     {
         if (e.PropertyName is nameof(ViewModel.LetterIndex) or nameof(ViewModel.IsLetterIndexLoading) or nameof(ViewModel.SelectedSort) or
             nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount) or
-            nameof(ViewModel.PendingLetter) or nameof(ViewModel.LetterJumpError))
+            nameof(ViewModel.PendingLetter) or nameof(ViewModel.LetterJumpError) or nameof(ViewModel.LetterIndexFailed) or nameof(ViewModel.ErrorMessage))
             DispatcherQueue.TryEnqueue(() =>
             {
                 UpdateLibraryLetters();
@@ -92,7 +99,9 @@ public sealed partial class LibraryPage
             _displayedLetterIndex = ViewModel.LetterIndex;
             _chosenLibraryEndLetter = null;
         }
-        LibraryLetterRail.Visibility = CanShowLibraryLetters ? Visibility.Visible : Visibility.Collapsed;
+        LibraryLetterRail.Visibility = ShowLibraryLetterRail ? Visibility.Visible : Visibility.Collapsed;
+        LibraryLetterIndexRetry.Visibility = ShowLibraryLetterRail && ViewModel.LetterIndexFailed && !ViewModel.IsLetterIndexLoading
+            ? Visibility.Visible : Visibility.Collapsed;
         var pending = ViewModel.PendingLetter;
         var error = ViewModel.LetterJumpError;
         LibraryLetterStatus.Text = error ?? (pending is null ? "" : $"Loading {pending}…");
@@ -106,6 +115,13 @@ public sealed partial class LibraryPage
             var spoken = letter == "#" ? "Numbers and symbols" : letter;
             var count = entry?.Count ?? 0;
             AutomationProperties.SetName(button, $"{spoken}, {(count == 0 ? "no titles" : count == 1 ? "1 title" : $"{count:N0} titles")}");
+            if (!CanShowLibraryLetters)
+            {
+                // A pending or failed index has no current letter: grey every entry.
+                button.Background = _clearLetterBrush;
+                button.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+                button.Opacity = .35;
+            }
         }
         if (_chosenLibraryEndLetter is not null && !_libraryLetterButtons[_chosenLibraryEndLetter].IsEnabled)
             _chosenLibraryEndLetter = null;
@@ -122,7 +138,7 @@ public sealed partial class LibraryPage
         // the full viewport.
         var available = Math.Max(14, LibraryContentArea.ActualHeight - 88);
         var columns = available < 540 ? 2 : 1;
-        var reserveRail = IsLibraryLetterGrid && (ViewModel.IsLetterIndexLoading || CanShowLibraryLetters);
+        var reserveRail = ShowLibraryLetterRail;
         LibraryLetterColumn.Width = new GridLength(reserveRail ? columns * 24 + 18 : 0);
         if (LibraryLetterRail.Visibility != Visibility.Visible) return;
         // Keep all 27 targets inside the space below the toolbar, including on

@@ -70,9 +70,9 @@ internal static class LibraryLettersNativeFixture
                 await Task.Delay(150);
                 var pendingIndexWidth = scroll.ViewportWidth;
                 var railColumn = (ColumnDefinition)page.FindName("LibraryLetterColumn");
-                if (!page.ViewModel.IsLetterIndexLoading || railColumn.Width.Value <= 0 ||
+                if (!page.ViewModel.IsLetterIndexLoading || railColumn.Width.Value <= 0 || rail.Visibility != Visibility.Visible ||
                     page.ViewModel.LetterIndex is not null || letters.Children.Cast<Button>().Any(button => button.IsEnabled))
-                    throw new InvalidOperationException("The pending index must reserve space without enabling guessed letters.");
+                    throw new InvalidOperationException("The pending index must show the greyed rail without enabling guessed letters.");
                 wire.LetterIndexGate.TrySetResult();
                 await page.ViewModel.EnsureLetterIndexAsync();
                 await Until(() => rail.Visibility == Visibility.Visible && letters.Children.Count == 27);
@@ -284,12 +284,24 @@ internal static class LibraryLettersNativeFixture
                 await Until(() => page.ViewModel.IsLetterIndexLoading && railColumn.Width.Value > 0);
                 wire.LetterIndexGate.TrySetResult();
                 await failedIndex;
-                await Until(() => !page.ViewModel.IsLetterIndexLoading && railColumn.Width.Value == 0 &&
-                    rail.Visibility == Visibility.Collapsed);
+                // A failed index keeps the greyed rail in place with a Retry: it neither vanishes
+                // silently nor shifts the cards sideways.
+                var indexRetry = (Button)page.FindName("LibraryLetterIndexRetry");
+                await Until(() => !page.ViewModel.IsLetterIndexLoading && page.ViewModel.LetterIndexFailed &&
+                    rail.Visibility == Visibility.Visible && indexRetry.Visibility == Visibility.Visible);
                 page.UpdateLayout(); await Task.Delay(100);
-                if (Math.Abs(scroll.ViewportWidth - beforeFailureWidth - reservedWidth) > .1)
-                    throw new InvalidOperationException("A failed index left an empty gutter instead of restoring the full viewport.");
+                if (Math.Abs(railColumn.Width.Value - reservedWidth) > .1 || Math.Abs(scroll.ViewportWidth - beforeFailureWidth) > .1)
+                    throw new InvalidOperationException("A failed index moved the rail gutter or the cards.");
+                if (letters.Children.Cast<Button>().Any(button => button.IsEnabled || button.IsTabStop))
+                    throw new InvalidOperationException("A failed index left guessed letters enabled.");
                 wire.FailIndex = false;
+                ((IInvokeProvider)new ButtonAutomationPeer(indexRetry).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Until(() => !page.ViewModel.LetterIndexFailed && page.ViewModel.LetterIndex is not null &&
+                    indexRetry.Visibility == Visibility.Collapsed && letters.Children.Cast<Button>().Any(button => button.IsEnabled));
+                page.UpdateLayout(); await Task.Delay(100);
+                if (Math.Abs(scroll.ViewportWidth - beforeFailureWidth) > .1)
+                    throw new InvalidOperationException("Retrying the index moved the cards.");
+                Program.Log("PASS: a failed letter index keeps the greyed rail and its gutter, offers Retry, and Retry restores the letters.");
                 if (grouped)
                 {
                     await VerifyStructuralRefreshLetterRailAsync(page, wire);

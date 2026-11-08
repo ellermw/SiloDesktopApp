@@ -72,8 +72,61 @@ public sealed class LibraryLetterNavigationTests
         }
         finally { wire.ReleaseIndex.TrySetResult(); await model.EnsureLetterIndexAsync(); }
         Assert.False(model.IsLetterIndexLoading);
+        // Only a failed read offers Retry; an empty index is an answer, not a failure.
+        Assert.Equal(outcome == "failed", model.LetterIndexFailed);
         if (outcome == "failed") Assert.Null(model.LetterIndex);
         else Assert.Equal(outcome == "empty" ? 0 : 1000, model.LetterIndex!.Total);
+    }
+
+    [Fact]
+    public async Task RetryAfterAFailedIndexLoadsItAndClearsTheFailure()
+    {
+        using var wire = new Wire { FailIndex = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        Assert.True(model.LetterIndexFailed); Assert.Null(model.LetterIndex);
+
+        wire.FailIndex = false;
+        await model.RetryLetterIndexCommand.ExecuteAsync(null);
+        Assert.False(model.LetterIndexFailed); Assert.False(model.IsLetterIndexLoading);
+        Assert.NotNull(model.LetterIndex);
+    }
+
+    [Fact]
+    public async Task ATimedOutIndexIsAFailureThatOffersRetry()
+    {
+        using var wire = new Wire { TimeOutIndex = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        Assert.True(model.LetterIndexFailed); Assert.False(model.IsLetterIndexLoading); Assert.Null(model.LetterIndex);
+        wire.TimeOutIndex = false;
+        await model.RetryLetterIndexCommand.ExecuteAsync(null);
+        Assert.False(model.LetterIndexFailed); Assert.NotNull(model.LetterIndex);
+    }
+
+    [Fact]
+    public async Task RetryDoesNothingUnlessTheIndexFailed()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        var index = model.LetterIndex;
+        var reads = wire.IndexRequests;
+        await model.RetryLetterIndexCommand.ExecuteAsync(null);
+        Assert.Same(index, model.LetterIndex); Assert.Equal(reads, wire.IndexRequests);
+    }
+
+    [Fact]
+    public async Task LeavingTitleSortClearsAFailedIndex()
+    {
+        using var wire = new Wire { FailIndex = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        Assert.True(model.LetterIndexFailed);
+        model.SelectedSort = "added_at";
+        await model.ApplyFilterCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        Assert.False(model.LetterIndexFailed);
     }
 
     [Fact]
@@ -1189,7 +1242,7 @@ public sealed class LibraryLetterNavigationTests
         internal bool Supported = true;
         internal int IndexRequests, ProbeRequests, CapabilityRequests;
         internal string? IndexBody, CatalogGroups, CatalogMatch;
-        internal bool HoldIndex, FailIndex, FailCapabilities, MissingTail;
+        internal bool HoldIndex, FailIndex, FailCapabilities, MissingTail, TimeOutIndex;
         internal int CatalogTotal = 1000;
         internal int IndexTotal = 1000;
         internal int TailPosition = 749;
@@ -1235,6 +1288,8 @@ public sealed class LibraryLetterNavigationTests
                 IndexStarted.TrySetResult();
                 if (HoldIndex) await ReleaseIndex.Task; // Deliberately ignore cancellation to model a late transport.
                 if (FailIndex) return Reply(new { detail = "Synthetic unavailable index" }, HttpStatusCode.ServiceUnavailable);
+                // HttpClient's own timeout: a TaskCanceledException the caller did not request.
+                if (TimeOutIndex) throw new TaskCanceledException("Synthetic letter index timeout.");
                 if (IndexTotal == 0) return Reply(new { total = 0, letters = Array.Empty<object>(), runs = Array.Empty<object>() });
                 if (MissingTail) return Reply(new { total = IndexTotal,
                     letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = IndexTotal - 742, position = 742 } },

@@ -12,6 +12,10 @@ public partial class LibraryViewModel
     private CatalogLettersResponse? _letterIndex;
     [ObservableProperty]
     private bool _isLetterIndexLoading;
+    // The current query's index read failed (not unsupported, not cancelled). The page keeps
+    // its rail visible and greyed with a Retry instead of silently dropping it.
+    [ObservableProperty]
+    private bool _letterIndexFailed;
     [ObservableProperty]
     private string? _pendingLetter;
     private string? _letterJumpError;
@@ -75,6 +79,7 @@ public partial class LibraryViewModel
         if (!force && _letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
         if (!preserveExisting) LetterIndex = null;
         _letterIndexKey = key;
+        LetterIndexFailed = false;
         IsLetterIndexLoading = true;
         await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting));
     }
@@ -110,12 +115,14 @@ public partial class LibraryViewModel
                 WindowLoaded?.Invoke();
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             if (_letterIndexKey == key && loadVersion == _letterIndexLoadVersion) _letterIndexKey = null;
         }
         catch (Exception ex)
         {
+            // Includes a transport timeout (TaskCanceledException without caller
+            // cancellation): a failed read the rail offers to retry, not a cancel.
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex,
                 $"catalog_letters library={libraryId} order={order} type={type ?? "all"} group_count={groups?.Count ?? 0} query_fingerprint={queryFingerprint}");
             // Keep browsing usable. Only explicit query/return/jump requests
@@ -125,6 +132,7 @@ public partial class LibraryViewModel
                 _letterIndexKey = null;
                 _letterIndexTask = null;
                 if (!preserveExisting) LetterIndex = null;
+                LetterIndexFailed = LetterIndex is null;
             }
         }
         finally
@@ -325,8 +333,14 @@ public partial class LibraryViewModel
         _letterIndexTask = null;
         _letterIndexLoadVersion++;
         IsLetterIndexLoading = false;
+        LetterIndexFailed = false;
         LetterIndex = null;
     }
+
+    // The explicit request the failed-index rail offers; reads stay optional otherwise.
+    [RelayCommand]
+    private Task RetryLetterIndexAsync() =>
+        LetterIndexFailed ? EnsureLetterIndexCoreAsync(preserveExisting: false, force: true) : Task.CompletedTask;
 
     private void ApplyLetterIndexTotal(int total)
     {
