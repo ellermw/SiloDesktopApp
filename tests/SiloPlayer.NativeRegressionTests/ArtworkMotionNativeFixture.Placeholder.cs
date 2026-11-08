@@ -111,4 +111,59 @@ internal static partial class ArtworkMotionNativeFixture
             parent.Children.Remove(card);
         }
     }
+
+    // Home and Search cards show the same blur while loading, fade a late poster in over it, and clear
+    // a recycled card at once.
+    private static async Task CardPlaceholderCasesAsync(StackPanel parent, Wire wire, string kind)
+    {
+        var card = NewCard(kind); parent.Children.Add(card);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recycledGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await Until(() => card.IsLoaded);
+            var image = CardImage(card);
+            var fallback = (DefaultArtwork)card.FindName("ArtworkFallback");
+            var reveal = (Grid)card.FindName(kind == "poster" ? "PosterReveal" : "BackdropReveal");
+            var blur = (Image)typeof(DefaultArtwork).GetField("_thumbhash", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(fallback)!;
+            void BindHashed(string id)
+            {
+                var item = new MediaItem
+                {
+                    ContentId = id, Title = id, Type = "movie", PosterThumbhash = SampleThumbhash, BackdropThumbhash = SampleThumbhash,
+                    PosterUrl = "https://artwork-motion.invalid/art/" + id, BackdropUrl = "https://artwork-motion.invalid/art/" + id,
+                };
+                switch (card) { case PosterCard poster: poster.MediaItem = item; break; case LandscapeCard landscape: landscape.MediaItem = item; break; }
+            }
+
+            var held = kind + "-placeholder-held-" + Guid.NewGuid().ToString("N");
+            wire.Gates["/art/" + held] = gate;
+            BindHashed(held);
+            await Until(() => blur.Source != null);
+            Check(fallback.Visibility == Visibility.Visible && image.Opacity == 0 && reveal.Opacity == 0,
+                kind + " loading card shows its thumbhash blur instead of an empty frame");
+            await Until(() => wire.Requests.ContainsKey("/art/" + held));
+            await Task.Delay(150); gate.TrySetResult();
+            await Until(() => image.Source is BitmapImage { PixelWidth: > 0 } && image.Opacity >= 1 && reveal.Opacity >= 1);
+            var animations = new Windows.UI.ViewManagement.UISettings().AnimationsEnabled;
+            Check(animations ? reveal.OpacityTransition is not null : reveal.OpacityTransition is null,
+                kind + " late artwork fades in over its blur only when system animations are on");
+            await Until(() => fallback.Visibility == Visibility.Collapsed);
+
+            var recycled = kind + "-placeholder-recycled-" + Guid.NewGuid().ToString("N");
+            wire.Gates["/art/" + recycled] = recycledGate;
+            BindHashed(recycled);
+            Check(image.Source == null && image.Opacity == 0 && reveal.Opacity == 0 && reveal.OpacityTransition is null,
+                kind + " recycled card clears the previous artwork at once, without fading it out");
+            Check(fallback.Visibility == Visibility.Visible, kind + " recycled card shows its blur while the new artwork loads");
+            recycledGate.TrySetResult();
+            await Until(() => image.Source is BitmapImage { PixelWidth: > 0 } && image.Opacity >= 1 && reveal.Opacity >= 1);
+            Program.Log("PASS " + kind + " placeholder: blur while loading, fade when late, instant clear on recycle.");
+        }
+        finally
+        {
+            gate.TrySetResult(); recycledGate.TrySetResult();
+            parent.Children.Remove(card);
+        }
+    }
 }

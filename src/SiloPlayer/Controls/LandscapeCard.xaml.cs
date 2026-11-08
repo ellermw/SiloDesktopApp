@@ -53,15 +53,18 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         set => SetValue(UsePosterAspectProperty, value);
     }
 
+    private readonly ArtworkReveal _reveal;
+
     public LandscapeCard()
     {
         this.InitializeComponent();
+        _reveal = new ArtworkReveal(BackdropReveal, BackdropImage, ArtworkFallback);
         BackdropImage.ImageOpened += (_, _) =>
         {
-            ArtworkFallback.Visibility = Visibility.Collapsed;
+            _reveal.Opened();
             if (BackdropImage.Source is BitmapImage bitmap) DecodedArtworkCache.Remember(_decodedArtworkKey, bitmap, this);
         };
-        BackdropImage.ImageFailed += (_, _) => { BackdropImage.Source = null; BackdropImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
+        BackdropImage.ImageFailed += (_, _) => { BackdropImage.Source = null; _reveal.Hide(); ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         this.Loaded += (_, _) =>
         {
             // A bind can precede first attachment long enough to reach a stage gate.
@@ -302,9 +305,11 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         RefreshOverlayPreferences(item);
 
         BackdropImage.Source = null;
+        _reveal.Hide();
         ArtworkFallback.Reset(item.Type, !UsePosterAspect && !string.IsNullOrEmpty(item.BackdropUrl) ? item.BackdropThumbhash : item.PosterThumbhash ?? item.BackdropThumbhash);
-        ArtworkFallback.Visibility = string.IsNullOrWhiteSpace(item.PosterUrl) && string.IsNullOrWhiteSpace(item.BackdropUrl) ? Visibility.Visible : Visibility.Collapsed;
-        BackdropImage.Opacity = 0;
+        if (string.IsNullOrWhiteSpace(item.PosterUrl) && string.IsNullOrWhiteSpace(item.BackdropUrl)) ArtworkFallback.Visibility = Visibility.Visible;
+        // While the artwork loads, its blurred thumbhash shows; without one, the empty frame does.
+        else if (!ArtworkFallback.ShowLoadingThumbhash()) ArtworkFallback.Visibility = Visibility.Collapsed;
 
         _ = LoadImageAsync(item, ct);
     }
@@ -517,9 +522,10 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             if (DecodedArtworkCache.TryGet(key, out var cached))
             {
                 _decodedArtworkKey = key; _spoilerArtworkHidden = hidden;
-                BackdropImage.Source = cached; BackdropImage.Opacity = 1; ArtworkFallback.Visibility = Visibility.Collapsed;
+                BackdropImage.Source = cached; _reveal.Reveal(decoded: true);
                 return;
             }
+            _reveal.Begin();
             await Task.Delay(300, ct);
             await ArtworkViewport.WaitAsync(this, ct);
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
@@ -561,21 +567,9 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             _spoilerArtworkHidden = currentHidden;
             BackdropImage.Source = bitmapImage;
             DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-            // Smooth fade-in matching webui transition-opacity duration-300
-            var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-            {
-                To = 1,
-                Duration = new Duration(TimeSpan.FromMilliseconds(250)),
-                EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
-                {
-                    EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut
-                },
-            };
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fadeIn, BackdropImage);
-            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fadeIn, "Opacity");
-            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-            sb.Children.Add(fadeIn);
-            sb.Begin();
+            // Over its blur: at once when quick, faded in (250 ms, with animation effects on) when the
+            // card waited for it, matching the library grid and the webui opacity transition.
+            _reveal.Reveal();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)

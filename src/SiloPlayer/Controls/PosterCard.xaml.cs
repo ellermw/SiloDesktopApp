@@ -149,17 +149,19 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     public bool DeferOverlayLoading { get; set; }
     public bool SuppressImageLoading { get; set; }
     private DecodedArtworkCache.Key? _decodedArtworkKey;
+    private readonly ArtworkReveal _reveal;
 
     public PosterCard()
     {
         this.InitializeComponent();
+        _reveal = new ArtworkReveal(PosterReveal, PosterImage, ArtworkFallback);
         PosterImage.ImageOpened += (_, _) =>
         {
-            ArtworkFallback.Visibility = Visibility.Collapsed;
+            _reveal.Opened();
             if (PosterImage.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage bitmap)
                 DecodedArtworkCache.Remember(_decodedArtworkKey, bitmap, this);
         };
-        PosterImage.ImageFailed += (_, _) => { PosterImage.Source = null; PosterImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
+        PosterImage.ImageFailed += (_, _) => { PosterImage.Source = null; _reveal.Hide(); ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         ApplyOverlayGeometry();
         ApplyActionGeometry();
@@ -329,7 +331,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         ArtworkFallback.Reset(null);
         ArtworkFallback.Visibility = Visibility.Collapsed;
         PosterImage.Source = null;
-        PosterImage.Opacity = 0;
+        _reveal.Hide();
         ThumbhashImage.Source = null;
         RevealCardActions(false);
         QuickWatchedButton.Visibility = Visibility.Collapsed;
@@ -414,12 +416,13 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
         if (!_preserveArtworkOnUpdate)
         {
-            PosterImage.Opacity = 0;
-            // Skip thumbhash -- go straight to loading the real image.
+            _reveal.Hide();
             ThumbhashImage.Source = null;
             PosterImage.Source = null;
             ArtworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
-            ArtworkFallback.Visibility = SuppressImageLoading || string.IsNullOrEmpty(imageUrl) ? Visibility.Visible : Visibility.Collapsed;
+            if (SuppressImageLoading || string.IsNullOrEmpty(imageUrl)) ArtworkFallback.Visibility = Visibility.Visible;
+            // While the poster loads, its blurred thumbhash shows; without one, the empty frame does.
+            else if (!ArtworkFallback.ShowLoadingThumbhash()) ArtworkFallback.Visibility = Visibility.Collapsed;
             if (string.IsNullOrEmpty(imageUrl)) _ = ArtworkFallback.ShowThumbhashAsync();
         }
 
@@ -838,9 +841,10 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             if (DecodedArtworkCache.TryGet(key, out var cached))
             {
                 _decodedArtworkKey = key; _spoilerArtworkHidden = hidden;
-                PosterImage.Source = cached; PosterImage.Opacity = 1; ArtworkFallback.Visibility = Visibility.Collapsed;
+                PosterImage.Source = cached; _reveal.Reveal(decoded: true);
                 return;
             }
+            _reveal.Begin();
             // Short grace window: skip transient recycle churn without making
             // the visible page wait noticeably before poster fetches begin.
             await Task.Delay(60, ct);
@@ -889,7 +893,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
                     _spoilerArtworkHidden = currentHidden;
                     PosterImage.Source = bitmapImage;
                     DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-                    PosterImage.Opacity = 1;
+                    // Over its blur: at once when quick, faded in when the card waited for it.
+                    _reveal.Reveal();
                     return;
                 }
                 catch (ArtworkDecodeGate.MotionDeferredException)
