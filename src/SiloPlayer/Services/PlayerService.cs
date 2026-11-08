@@ -6336,9 +6336,11 @@ public partial class PlayerService : IDisposable
                         CommitExecutedSubtitleSelection(track);
                         preferenceOwner = ConsumeExecutedSubtitlePreference(track);
                     }
-                    if (preferenceOwner != null && manualChoice is { Accepted: true } && IsCurrentSubtitleChoice(manualChoice))
+                    if (manualChoice is { Accepted: true } && IsCurrentSubtitleChoice(manualChoice))
                     {
-                        manualChoice.PreferenceOwner = preferenceOwner;
+                        // Execution consumes the pending slot, but a failed save
+                        // retains its retry authority on the manual choice.
+                        if (preferenceOwner != null) manualChoice.PreferenceOwner = preferenceOwner;
                         await CompleteExecutedSubtitleSelectionAsync(manualChoice, track);
                     }
                     else await SaveExecutedSubtitlePreferenceAsync(preferenceOwner, track);
@@ -6358,9 +6360,9 @@ public partial class PlayerService : IDisposable
                 CommitExecutedSubtitleSelection(null);
                 offPreferenceOwner = ConsumeExecutedSubtitlePreference(null);
             }
-            if (offPreferenceOwner != null && manualChoice is { Accepted: true } && IsCurrentSubtitleChoice(manualChoice))
+            if (manualChoice is { Accepted: true } && IsCurrentSubtitleChoice(manualChoice))
             {
-                manualChoice.PreferenceOwner = offPreferenceOwner;
+                if (offPreferenceOwner != null) manualChoice.PreferenceOwner = offPreferenceOwner;
                 await CompleteExecutedSubtitleSelectionAsync(manualChoice, null);
             }
             else await SaveExecutedSubtitlePreferenceAsync(offPreferenceOwner, null);
