@@ -1642,7 +1642,9 @@ public sealed class PlayerServiceSourceTests
         Assert.True(prefetchEnd > prefetchStart, "Subtitle prefetch method boundary was not found.");
         var prefetch = source[prefetchStart..prefetchEnd];
         // Same request mpv makes: no account header for worker/CDN sidecars.
-        Assert.Contains("SubtitleSidecarReader.ReadAsync(SubtitleSidecarDownloadClient, url, track.Codec, bounded.Token)", prefetch, StringComparison.Ordinal);
+        // Text extraction shares the complete-track ten-minute deadline; the
+        // reader's default short budget is reserved for busy retries/sync reads.
+        Assert.Matches(@"SubtitleSidecarReader\.ReadAsync\(SubtitleSidecarDownloadClient,\s*url,\s*track\.Codec,\s*bounded\.Token,\s*readTimeout:\s*TimeSpan\.FromMinutes\(10\)\)", prefetch);
         // Complete tracks use their own bounded budget, not the short sync client.
         Assert.Contains("SubtitleSidecarDownloadClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token)", prefetch, StringComparison.Ordinal);
         Assert.Contains("HttpClient SubtitleSidecarDownloadClient = new() { Timeout = Timeout.InfiniteTimeSpan }", source, StringComparison.Ordinal);

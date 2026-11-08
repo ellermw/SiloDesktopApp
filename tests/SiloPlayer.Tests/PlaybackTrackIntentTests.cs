@@ -872,6 +872,20 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(7, scope.Manager.SubtitleSelectionForLoad);
         session.SubtitleUrls.Add(Copy(8));
         Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        // Legacy rebinding must not cross into a newly identified download,
+        // even when the index and all display metadata still match.
+        var refreshed = Copy(1);
+        session.SubtitleUrls = [refreshed];
+        refreshed.TrackId = "downloaded:77";
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        refreshed.TrackId = null; refreshed.Id = 77;
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        refreshed.Id = null; refreshed.SyncKey = "stored-77";
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        refreshed.SyncKey = null; refreshed.Unplayable = true;
+        Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
+        refreshed.Unplayable = false;
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
         Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
         Assert.Equal(automatic, scope.Manager.IsSubtitleSelectionAutomatic);
     }
