@@ -5932,12 +5932,12 @@ public partial class PlayerService : IDisposable
         var roomGeneration = Volatile.Read(ref _roomPlaybackGeneration);
         var loadingOwner = _playbackCts;
         var ct = loadingOwner?.Token ?? CancellationToken.None;
-        bool CurrentOwner() => currentOwner?.IsCurrent != false && !_closing && !ct.IsCancellationRequested && !authorityToken.IsCancellationRequested &&
+        bool CurrentOwner(bool matchFileGeneration = true) => currentOwner?.IsCurrent != false && !_closing && !ct.IsCancellationRequested && !authorityToken.IsCancellationRequested &&
             ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(identity) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) &&
             content == ContentId && playGeneration == Volatile.Read(ref _playRequestGeneration) &&
-            fileGeneration == Volatile.Read(ref _playbackFileGeneration) && roomGeneration == Volatile.Read(ref _roomPlaybackGeneration) &&
-            _playbackTerminalState == null;
+            (!matchFileGeneration || fileGeneration == Volatile.Read(ref _playbackFileGeneration)) &&
+            roomGeneration == Volatile.Read(ref _roomPlaybackGeneration) && _playbackTerminalState == null;
         if (!CurrentOwner()) return SubtitleTransportResult.Superseded;
         // Capture this pick before draining: a newer deferred choice can arrive
         // while the canceled seek is still releasing the restart gate.
@@ -6167,7 +6167,23 @@ public partial class PlayerService : IDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return SubtitleTransportResult.Superseded; }
         catch (Exception ex)
         {
-            if (!CurrentOwner()) return SubtitleTransportResult.Superseded;
+            if (!CurrentOwner())
+            {
+                // A quality/audio load can start while this pick waits at the
+                // manager's gate. Rejection still retires our tentative choice,
+                // but never the successor load's flags, pause or watchdog.
+                lock (_playbackBusyLock)
+                lock (_subtitleTrackStateLock)
+                {
+                    if (CurrentOwner(matchFileGeneration: false) && transportMutationAttempted &&
+                        !transportPreparationAttempted && !subtitlePlanAdopted && !loadStarted &&
+                        manager.CurrentSession?.MediaFileId == session.MediaFileId &&
+                        ReferenceEquals(preferenceOwner, _pendingSubtitlePreferenceOwner) &&
+                        manager.CaptureLocalSubtitleIntent() == selectionIntent)
+                        RefuseTentativeSubtitleSelection(preserveTransportForRecovery: true);
+                }
+                return SubtitleTransportResult.Superseded;
+            }
             LogToFile("player_subtitle_error.txt", ex.ToString());
             if (transportMutationAttempted && !_closing && ReferenceEquals(_playbackManager, manager))
             {

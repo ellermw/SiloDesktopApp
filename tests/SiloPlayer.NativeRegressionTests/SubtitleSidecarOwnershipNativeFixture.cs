@@ -1908,9 +1908,15 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                 await ((Task)Call(service, "SelectSubtitleByServerIndexAsync", selected, true)!).WaitAsync(TimeSpan.FromSeconds(4));
                 await Until(() => seen.Contains(selected.ToString()));
                 if (blockingAdd)
-                    Require(!pending.IsCompleted && service.ActiveSubtitleServerIndex == selected &&
+                {
+                    // Unknown formats now use cancellable managed prefetch,
+                    // not a synchronous remote sub-add. Supersession must finish
+                    // without waiting for the held server response to release.
+                    await pending.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(!subtitles.Release.Task.IsCompleted && service.ActiveSubtitleServerIndex == selected &&
                         (selected < 0 ? mpv.GetPropertyDouble("sid") <= 0 : mpv.GetPropertyDouble("sid") == 2),
-                        "Fixture did not establish a newer Off/native choice while the synchronous sub-add was blocked.");
+                        "Retired unknown-format prefetch did not finish with the newer Off/native choice while the server response remained held.");
+                }
             }
             else if (scenario is "reload-gap" or "manual-reload-gap")
             {
@@ -1981,7 +1987,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "Superseded A changed the latest intent or persisted a stale subtitle preference.");
                 if (blockingAdd)
                     Require(!map.ContainsKey(0) && mpv.GetSubtitleTrackIds(externalOnly: true).Count == 0,
-                        "A retired blocking sub-add left its automatically selected sidecar in the native inventory.");
+                        "A retired unknown-format prefetch attached a stale sidecar to the native inventory.");
             }
             else if (scenario == "manual-reload-gap")
             {
