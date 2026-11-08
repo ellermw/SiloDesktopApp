@@ -72,6 +72,10 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             if (BackdropImage.Source == null)
             {
                 _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+                // Unloading invalidates an unfinished blur; restore it before activity can restart loading.
+                if (MediaItem is { } loadingItem &&
+                    (!string.IsNullOrEmpty(loadingItem.PosterUrl) || !string.IsNullOrEmpty(loadingItem.BackdropUrl)))
+                    ArtworkFallback.ShowLoadingThumbhash();
             }
             ArtworkViewport.ObserveAncestors(this);
             _artworkActivity?.Dispose();
@@ -111,6 +115,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             _playbackPrefetchCts?.Dispose();
             _playbackPrefetchCts = null;
             BackdropImage.Source = null;
+            _reveal.Hide();
             ArtworkFallback.Visibility = MediaItem == null ? Visibility.Collapsed : Visibility.Visible;
         };
     }
@@ -525,10 +530,11 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
                 BackdropImage.Source = cached; _reveal.Reveal(decoded: true);
                 return;
             }
-            _reveal.Begin();
             await Task.Delay(300, ct);
             await ArtworkViewport.WaitAsync(this, ct);
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
+            // Measure artwork work, not the intentional grace period or initial viewport wait.
+            _reveal.Begin();
 
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 

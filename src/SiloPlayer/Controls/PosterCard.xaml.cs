@@ -173,6 +173,10 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             if (PosterImage.Source == null)
             {
                 _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+                // Unloading invalidates an unfinished blur; restore it before activity can restart loading.
+                if (!SuppressImageLoading && !DeferImageLoading && MediaItem is { } loadingItem &&
+                    (!string.IsNullOrEmpty(loadingItem.PosterUrl) || !string.IsNullOrEmpty(loadingItem.BackdropUrl)))
+                    ArtworkFallback.ShowLoadingThumbhash();
             }
             ArtworkViewport.ObserveAncestors(this);
             _artworkActivity?.Dispose();
@@ -227,6 +231,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             _loadCts = null;
             CancelPlaybackPrefetch();
             PosterImage.Source = null;
+            _reveal.Hide();
             ThumbhashImage.Source = null;
             ArtworkFallback.Visibility = MediaItem == null ? Visibility.Collapsed : Visibility.Visible;
         };
@@ -844,7 +849,6 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
                 PosterImage.Source = cached; _reveal.Reveal(decoded: true);
                 return;
             }
-            _reveal.Begin();
             // Short grace window: skip transient recycle churn without making
             // the visible page wait noticeably before poster fetches begin.
             await Task.Delay(60, ct);
@@ -859,6 +863,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             try
             {
                 if (!DecodedArtworkCache.IsCurrent(key)) return;
+                // Measure artwork work, not the grace period, viewport wait or fetch queue.
+                _reveal.Begin();
                 diskPath = await imageService.GetImageDiskPathAsync(
                     item.ContentId, imageType, imageUrl, httpClient, ct);
             }

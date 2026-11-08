@@ -18,6 +18,7 @@ internal sealed class ArtworkReveal(UIElement wrapper, Image image, UIElement pl
 
     private long _requested;
     private bool _opened;
+    private bool _pending;
     private ScalarTransition? _transition;
     private DispatcherQueueTimer? _placeholderTimer;
 
@@ -39,13 +40,16 @@ internal sealed class ArtworkReveal(UIElement wrapper, Image image, UIElement pl
     {
         _requested = Stopwatch.GetTimestamp();
         _opened = false;
+        _pending = false;
     }
 
     /// <summary>Clears at once: a recycled card never fades the previous artwork out.</summary>
     internal void Hide()
     {
         _placeholderTimer?.Stop();
+        _requested = 0;
         _opened = false;
+        _pending = false;
         wrapper.OpacityTransition = null;
         wrapper.Opacity = 0;
         image.Opacity = 0;
@@ -54,18 +58,22 @@ internal sealed class ArtworkReveal(UIElement wrapper, Image image, UIElement pl
     /// <summary>
     /// Shows the artwork just set on the image. A <paramref name="decoded"/> bitmap (reused from
     /// <see cref="DecodedArtworkCache"/>) is already on screen material: it shows at once and the
-    /// placeholder leaves now. Otherwise the placeholder leaves once the image has opened.
+    /// placeholder leaves now. Otherwise revealing waits for ImageOpened, so decoding cannot consume
+    /// the fade before the artwork can draw.
     /// </summary>
     internal void Reveal(bool decoded = false)
     {
         if (image.Source is null) return;
+        if (!decoded && !_opened) { _pending = true; return; }
+        _pending = false;
+        _placeholderTimer?.Stop();
         var fade = !decoded && _requested != 0 &&
             Stopwatch.GetElapsedTime(_requested) > InstantReveal && AnimationsEnabled;
         image.Opacity = 1;
         wrapper.OpacityTransition = fade ? _transition ??= new ScalarTransition { Duration = RevealDuration } : null;
         wrapper.Opacity = 1;
-        if (decoded) { _opened = true; placeholder.Visibility = Visibility.Collapsed; return; }
-        if (!fade) { if (_opened) placeholder.Visibility = Visibility.Collapsed; return; }
+        if (decoded) _opened = true;
+        if (!fade) { placeholder.Visibility = Visibility.Collapsed; return; }
         // Keep the blur under the artwork until the fade ends, then drop it from the tree.
         if (_placeholderTimer is null)
         {
@@ -82,7 +90,8 @@ internal sealed class ArtworkReveal(UIElement wrapper, Image image, UIElement pl
     internal void Opened()
     {
         _opened = true;
-        if (!IsFading) DropPlaceholderIfCovered();
+        // ImageOpened can also arrive synchronously while Source is assigned, before Reveal().
+        if (_pending) Reveal();
     }
 
     // Only while revealed artwork still covers it: a rebind meanwhile owns the placeholder.
