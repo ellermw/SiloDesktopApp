@@ -14,6 +14,17 @@ using SiloPlayer.Views;
 
 internal static class UpstreamShellNativeFixture
 {
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            if (FindDescendant<T>(child) is { } nested) return nested;
+        }
+        return null;
+    }
+
     internal static async Task RunAsync()
     {
         const BindingFlags instance = BindingFlags.NonPublic | BindingFlags.Instance;
@@ -103,6 +114,39 @@ internal static class UpstreamShellNativeFixture
             await (Task)typeof(MainWindow).GetMethod("UpdatePlayingNextOverviewAsync", instance)!.Invoke(window, [7L])!;
             Check(Named<TextBlock>("PlayingNextOverviewText").Text == "Secret description", "Playing Next kept a watched description hidden");
             Named<FrameworkElement>("PlayingNextOverlay").Visibility = Visibility.Collapsed;
+
+            // Finished series: On Deck artwork binds inside the ItemsRepeater, and the screen closes by itself
+            // as Back does unless the viewer engages with it.
+            var overlay = Named<FrameworkElement>("PlayingNextOverlay");
+            overlay.Visibility = Visibility.Visible;
+            Named<FrameworkElement>("PlayingNextOnDeckSection").Visibility = Visibility.Visible;
+            var art = new Microsoft.UI.Xaml.Media.Imaging.WriteableBitmap(2, 2);
+            Named<ItemsRepeater>("PlayingNextOnDeckRepeater").ItemsSource = new[]
+            {
+                new PlayingNextOnDeckItem { ContentId = "deck-1", Title = "Deck", ThumbnailSource = art },
+            };
+            Named<FrameworkElement>("PlayingNextOnDeckRepeater").UpdateLayout(); await Task.Delay(80);
+            var deckImage = FindDescendant<Image>(Named<ItemsRepeater>("PlayingNextOnDeckRepeater"));
+            Check(deckImage is not null && ReferenceEquals(deckImage.Source, art), "On Deck card left its artwork unbound");
+            var countdown = Named<TextBlock>("PlayingNextFinishedCountdownText");
+            var startClose = typeof(MainWindow).GetMethod("StartFinishedAutoClose", instance)!;
+            var tick = typeof(MainWindow).GetMethod("PlayingNextTimer_Tick", instance)!;
+            var engaged = typeof(MainWindow).GetField("_playingNextEngaged", instance)!;
+            void Tick() => tick.Invoke(window, [null, null]);
+            engaged.SetValue(window, false);
+            startClose.Invoke(window, null);
+            Check(countdown.Visibility == Visibility.Visible && countdown.Text == "Closing in 10s", "Finished screen did not show its close countdown");
+            typeof(MainWindow).GetMethod("CancelFinishedAutoClose", instance)!.Invoke(window, null);
+            Check(countdown.Visibility == Visibility.Collapsed && overlay.Visibility == Visibility.Visible, "Engaging did not keep the finished screen open");
+            startClose.Invoke(window, null);
+            Check(countdown.Visibility == Visibility.Collapsed, "A later end-of-file restarted the countdown after the viewer engaged");
+            engaged.SetValue(window, false);
+            startClose.Invoke(window, null);
+            for (var i = 0; i < 9; i++) Tick();
+            Check(overlay.Visibility == Visibility.Visible && countdown.Text == "Closing in 1s", "Finished countdown did not count down");
+            Tick();
+            Check(overlay.Visibility == Visibility.Collapsed && countdown.Visibility == Visibility.Collapsed, "Finished screen did not close when its countdown ended");
+            Program.Log("PASS: finished-series screen binds On Deck artwork, counts down, stays open on engagement and closes as Back.");
             Program.Log("PASS: actual MainWindow Settings sidebar/default/keywords/1080/narrow/Back row preservation and Playing Next spoiler/watched visibility.");
             navigation.Frame.Content = null;
             await Task.Delay(120);

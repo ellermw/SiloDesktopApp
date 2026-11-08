@@ -88,6 +88,13 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PlayingNextOnDeckPrev", xaml);
         Assert.Contains("PlayingNextOnDeckNext", xaml);
         Assert.Contains("PlayingNextFinishedPanel", xaml);
+        // ItemsRepeater sets no DataContext on an x:Bind template: On Deck art must use x:Bind.
+        Assert.Contains("<Image Source=\"{x:Bind ThumbnailSource}\"", xaml);
+        Assert.DoesNotContain("{Binding ThumbnailSource}", xaml);
+        Assert.Contains("PlayingNextFinishedCountdownText", xaml);
+        Assert.Contains("else if (playbackHasEnded && !hasNextEpisode)", code);
+        Assert.Contains("StartFinishedAutoClose();", code);
+        Assert.Contains("if (!autoPlay && !_playingNextFinishedCountdown)", code);
         Assert.Contains("There are no more episodes available", xaml);
         Assert.Contains("LoadPlayingNextOnDeckAsync", code);
         Assert.Contains("section.SectionType, \"continue_watching\"", code);
