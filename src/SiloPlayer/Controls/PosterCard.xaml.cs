@@ -899,8 +899,9 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
                     _spoilerArtworkHidden = currentHidden;
                     PosterImage.Source = bitmapImage;
                     DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-                    // Over its blur: at once when quick, faded in when the card waited for it.
-                    _reveal.Reveal();
+                    // Blurred stills finished SetSourceAsync before assignment; ImageOpened may not fire.
+                    // Other artwork reveals at once when quick, or fades in when the card waited for it.
+                    _reveal.Reveal(decoded: currentHidden);
                     return;
                 }
                 catch (ArtworkDecodeGate.MotionDeferredException)

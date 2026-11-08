@@ -165,6 +165,13 @@ internal static partial class ArtworkMotionNativeFixture
             if (cached != null) Check(ReferenceEquals(CardImage(card).Source, cached), id + " cheap decoded reuse remains immediate");
             parent.Children.Insert(0, card); await Until(() => card.IsLoaded); await Task.Delay(800);
             Check(CardImage(card).Source is BitmapImage { PixelWidth: > 0 }, id + " valid current bind presents after delayed first mount");
+            if (variant == "blur")
+            {
+                var reveal = (Grid)card.FindName(kind == "poster" ? "PosterReveal" : "BackdropReveal");
+                var fallback = (DefaultArtwork)card.FindName("ArtworkFallback");
+                Check(CardImage(card).Opacity >= 1 && reveal.Opacity >= 1 && fallback.Visibility == Visibility.Collapsed,
+                    id + " predecoded spoiler-blurred still is visible and replaces its placeholder");
+            }
             parent.Children.Remove(card); await Until(() => !card.IsLoaded);
         }
         var stale = new PosterCard(); Bind(stale, "first-mount-old-profile"); await Task.Delay(650);

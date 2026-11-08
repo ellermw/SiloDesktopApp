@@ -573,9 +573,9 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             _spoilerArtworkHidden = currentHidden;
             BackdropImage.Source = bitmapImage;
             DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-            // Over its blur: at once when quick, faded in (250 ms, with animation effects on) when the
-            // card waited for it, matching the library grid and the webui opacity transition.
-            _reveal.Reveal();
+            // Blurred stills finished SetSourceAsync before assignment; ImageOpened may not fire.
+            // Other artwork reveals at once when quick, or fades in when the card waited for it.
+            _reveal.Reveal(decoded: currentHidden);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
