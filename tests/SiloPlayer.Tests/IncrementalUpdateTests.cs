@@ -83,13 +83,14 @@ public sealed class IncrementalUpdateTests
         File.WriteAllText(tree.Path("source/SiloPlayer.dll"), "identical");
         var first = await UpdatePackBuilder.BuildAsync(tree.Path("source"), null, tree.Path("one"), new Version(1, 2, 465, 0));
         var second = await UpdatePackBuilder.BuildAsync(tree.Path("source"), null, tree.Path("two"), new Version(1, 2, 465, 0));
-        // The shipped .NET 8 clients only accept BootstrapProtocol=1. The new
-        // envelope must force their verified full-installer migration, even
-        // though the client inventory itself still uses schema 1.
+        // Shipped clients up to 1.2.709 accept only BootstrapProtocol=1. Any other
+        // published value drops them out of their in-app side-by-side update.
         Assert.Equal(1, first.Schema);
-        Assert.Equal(2, first.BootstrapProtocol);
+        Assert.Equal(1, first.BootstrapProtocol);
+        Assert.Equal(1, UpdateManifestValidation.PublishedBootstrapProtocol);
         var published = JsonSerializer.Deserialize<UpdateManifest>(File.ReadAllBytes(tree.Path("one/" + UpdateManifestValidation.ManifestName)))!;
-        Assert.Equal(2, published.BootstrapProtocol);
+        Assert.Equal(1, published.BootstrapProtocol);
+        Assert.DoesNotContain(published.Files, f => f.Area != "client");
         UpdateManifestValidation.Validate(published);
         Assert.Equal(first.Files[0].Offset, first.Files[1].Offset);
         Assert.Equal(first.Files[0].PackedSize, first.PackSize);
