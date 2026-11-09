@@ -364,6 +364,17 @@ public partial class HomeViewModel : ObservableObject,
     public async Task CatchUpAfterReconnectAsync(ApiRequestContext context)
     {
         if (!_homeApi.IsCurrentContext(context)) return;
+        AdoptReconnectContext(context);
+        await LoadAsync();
+    }
+
+    /// <summary>
+    /// Moves retained same-owner content to a reconnect's request context without
+    /// fetching, so later refreshes patch rows instead of resetting the surface.
+    /// </summary>
+    public void AdoptReconnectContext(ApiRequestContext context)
+    {
+        if (!_homeApi.IsCurrentContext(context)) return;
         // Only transport recovery for the same owner may keep mounted content.
         // Explicit permission changes still use the ordinary route retirement.
         if (_loadedIdentityContext is { } identity && _homeApi.IsCurrentIdentityContext(identity))
@@ -376,7 +387,6 @@ public partial class HomeViewModel : ObservableObject,
             InvalidateCache();
             LocalLog.AppendLine("home_refresh.txt", $"transport_catchup | readGeneration={context.RequestContextGeneration} | retainedRows={Sections.Count}");
         }
-        await LoadAsync();
     }
 
     [RelayCommand]
