@@ -20,7 +20,16 @@ public sealed partial class LibraryPage
     private bool _catalogCardsAwaitingConfirmation;
     private bool _recommendedCardsAwaitingConfirmation;
     private SiloPlayer.Core.Api.ApiRequestContext? _recommendedUnconfirmedContext;
+    // The request context whose reads last authorized the Recommended rows,
+    // tracked apart from the catalog grid, which may never have been loaded.
+    private SiloPlayer.Core.Api.ApiRequestContext? _recommendedRowsContext;
+    // Events that arrived during a confirming reread; they get one follow-up read.
+    private bool _recommendedRefreshAgain;
     private double _unconfirmedRecommendedOffset;
+
+    /// <summary>A cached page may have missed a reconnect while another route was mounted.</summary>
+    private bool RecommendedRowsRequireConfirmation =>
+        _recommendedLoaded && _recommendedRowsContext != _stateSettings.CaptureContext();
 
     private void HideUnconfirmedRecommendedRows()
     {

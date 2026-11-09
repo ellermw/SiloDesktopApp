@@ -328,6 +328,7 @@ public sealed partial class LibraryPage : Page,
         RegisterMediaMessages();
         AttachRecommendedRealtimeEvents();
         if (ViewModel.RequiresCatalogRefresh) HideUnconfirmedCatalogRows();
+        else if (RecommendedRowsRequireConfirmation) HideUnconfirmedRecommendedRows();
 
         var navigationArgs = e.Parameter as NavigationArgs;
         var library = navigationArgs?.Library ?? e.Parameter as Library;
@@ -810,6 +811,14 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
+        // Restarting a confirming reread on every event would keep the quarantined
+        // surface hidden while events keep arriving. Coalesce into one follow-up.
+        if (_recommendedCardsAwaitingConfirmation && _recommendationsRefreshCts is not null)
+        {
+            _recommendedRefreshAgain = true;
+            return;
+        }
+
         var owner = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _recommendationsRefreshCts, owner);
         previous?.Cancel();
@@ -846,12 +855,18 @@ public sealed partial class LibraryPage : Page,
                 if (_recommendedCardsAwaitingConfirmation)
                     _recommendedRefreshGate.Complete(false);
                 owner.Dispose();
+                if (_recommendedRefreshAgain)
+                {
+                    _recommendedRefreshAgain = false;
+                    QueueRecommendedRefresh();
+                }
             }
         }
     }
 
     private void CancelRecommendedRefresh()
     {
+        _recommendedRefreshAgain = false;
         var pending = Interlocked.Exchange(ref _recommendationsRefreshCts, null);
         pending?.Cancel();
         pending?.Dispose();
@@ -3070,6 +3085,7 @@ public sealed partial class LibraryPage : Page,
         _recommendedHeroRestRow = null;
         _recommendedRefreshGate.Reset();
 
+        _recommendedRowsContext = null;
         _recommendedLoaded = false;
     }
 
@@ -3091,6 +3107,7 @@ public sealed partial class LibraryPage : Page,
         var cancellationToken = loadCts.Token;
         _recommendationsLoading = true;
         _recommendedLoaded = true;
+        _recommendedRowsContext = _stateSettings.CaptureContext();
         // Current WebUI leaves this region empty while the layout request is
         // pending, then renders per-slot skeletons once the layout arrives.
         RecommendedLoading.IsActive = false;
@@ -3313,6 +3330,7 @@ public sealed partial class LibraryPage : Page,
                 if (version != _recommendationsVersion || !_stateSettings.IsCurrentContext(context) ||
                     cancellationToken.IsCancellationRequested || !_isNavigated || _currentTab != "Recommended")
                     return false;
+                _recommendedRowsContext = context;
                 ConfirmRecommendedRows();
             }
             _ = LoadRecommendedRecipeTypesAsync(version, libraryId, cancellationToken);
