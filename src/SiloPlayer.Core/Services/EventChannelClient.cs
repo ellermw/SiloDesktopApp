@@ -28,6 +28,9 @@ public sealed class EventChannelClient : IDisposable
     private ApiRequestContext? _activeSocketContext;
     private int _immediateReconnectRequested;
     private bool _hasConnected;
+    // A transport loss not yet caught up. Kept outside RunLoop so a loop replaced
+    // during backoff (e.g. by a channel-set change) still publishes it once.
+    private bool _transportCatchUpPending;
     // Socket whose hello has been answered with a subscribe frame. Channel-set
     // changes on that socket are sent as a new subscribe frame (the server
     // replaces the set and snapshots it) instead of tearing the socket down.
@@ -275,6 +278,7 @@ public sealed class EventChannelClient : IDisposable
         lock (_lock)
         {
             _hasConnected = false;
+            _transportCatchUpPending = false;
             _reconnectSuppressed = true;
             StopInternal_NoLock();
         }
@@ -393,7 +397,7 @@ public sealed class EventChannelClient : IDisposable
             catch (OperationCanceledException)
             {
                 if (!ct.IsCancellationRequested && Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
-                { catchUp = false; backoffMs = 1000; continue; }
+                { catchUp = false; lock (_lock) _transportCatchUpPending = false; backoffMs = 1000; continue; }
                 return;
             }
             catch (Exception ex)
@@ -405,7 +409,7 @@ public sealed class EventChannelClient : IDisposable
 
             if (ct.IsCancellationRequested) return;
             if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
-            { catchUp = false; backoffMs = 1000; continue; }
+            { catchUp = false; lock (_lock) _transportCatchUpPending = false; backoffMs = 1000; continue; }
 
             // A transport loss may have missed permission changes. A deliberate
             // channel/profile rebind starts a new loop and must not rebuild pages again.
@@ -463,9 +467,10 @@ public sealed class EventChannelClient : IDisposable
                 ct.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(_ws, ws) || !_apiClient.IsCurrentContext(context))
                     throw new OperationCanceledException("Event authority changed.", ct);
-                reconnect = _hasConnected && catchUp;
+                reconnect = _hasConnected && (catchUp || _transportCatchUpPending);
                 if (reconnect && !PublishAccessInvalidation(context, out context, transportCatchUp: true))
                     throw new OperationCanceledException("Event authority changed.", ct);
+                _transportCatchUpPending = false;
                 _activeSocketContext = context;
                 _hasConnected = true;
             }
@@ -500,6 +505,12 @@ public sealed class EventChannelClient : IDisposable
                     _ws = null;
                 if (ReferenceEquals(_subscribedSocket, ws))
                     _subscribedSocket = null;
+                // Record the loss before anyone can observe the closed socket and
+                // replace this loop; a deliberate cancel, access close or authority
+                // change is not one (its owner already refreshes the routes).
+                if (!ct.IsCancellationRequested && !ReferenceEquals(_accessHandledSocket, ws) &&
+                    _apiClient.IsCurrentContext(context))
+                    _transportCatchUpPending = true;
             }
             StateChanged?.Invoke(WebSocketState.Closed);
         }

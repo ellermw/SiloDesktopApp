@@ -158,6 +158,32 @@ public sealed class EventAccessTransportTests
         Assert.Equal(1, fixture.AccountReads);
     }
 
+    [Fact]
+    public async Task ChannelChangeDuringTransportBackoffStillCatchesUpOnce()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var first = await fixture.NextAsync();
+        var prior = fixture.Api.CaptureContext();
+        var invalidations = 0;
+        var catchUps = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Events.StateChanged += state => { if (state == WebSocketState.Closed) closed.TrySetResult(); };
+        await first.CloseOutputAsync(WebSocketCloseStatus.EndpointUnavailable, "fixture transport restart", CancellationToken.None);
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // No socket to rebind during backoff: this replaces the run loop.
+        using var extra = fixture.Events.Subscribe("history_import");
+        await fixture.NextAsync();
+        await Until(() => catchUps == 1 && fixture.AccountReads == 1);
+        await Task.Delay(100);
+        Assert.Equal(1, catchUps);
+        Assert.Equal(0, invalidations);
+        Assert.False(fixture.Api.IsCurrentContext(prior));
+        Assert.Equal(prior.AccessGeneration, fixture.Api.CaptureContext().AccessGeneration);
+    }
+
     private static Task Send(WebSocket socket, string json) => socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(json)), WebSocketMessageType.Text, true, CancellationToken.None);
 
     [Theory]

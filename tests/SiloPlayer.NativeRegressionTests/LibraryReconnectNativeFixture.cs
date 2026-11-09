@@ -196,6 +196,42 @@ internal static class LibraryReconnectNativeFixture
                 Check(raw.Values.All(section => section.Items.Count == 0), $"Recommended {failure} reread does not retain old raw sections");
             }
             Program.Log("PASS: Recommended reconnect quarantines hero/rows and never restores revoked titles after empty, failed or null section/layout reads.");
+
+            // One failed section of N keeps the rest of the confirmed surface, as the initial load does.
+            var errorPanel = (FrameworkElement)page.FindName("RecommendedErrorPanel");
+            wire.RecommendedFailure = "none";
+            wire.RecommendedRevoked = false;
+            await page.RefreshLocalizedContentAsync();
+            await Until(() => hero.Visibility == Visibility.Visible && sections.Children.OfType<SectionRow>().Any(row => row.Section?.Items.Count > 0));
+            wire.RecommendedFailure = "row";
+            Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "partial-failure reconnect");
+            page.HideUnconfirmedCatalogRows();
+            await page.CatchUpAfterReconnectAsync();
+            await Until(() => !(bool)awaiting.GetValue(page)!);
+            Check(recommended.Visibility == Visibility.Visible && recommended.IsHitTestVisible && errorPanel.Visibility == Visibility.Collapsed,
+                "one failed section does not replace the confirmed Recommended surface with the error panel");
+            Check(hero.Visibility == Visibility.Visible && hero.ItemsSource is not null,
+                "the freshly confirmed hero stays visible when another section fails");
+            Check(sections.Children.OfType<SectionRow>().Any(row => row.Section is { } section && section.Id == "row" && section.LoadFailed && section.Items.Count == 0),
+                "only the failed section shows its failed state, without its old cards");
+            Program.Log("PASS: a single failed section during Recommended reconnect confirmation keeps the other confirmed rows and hero.");
+
+            // A later successful refresh of a hero-less layout clears an earlier layout failure.
+            wire.RecommendedFailure = "layout";
+            await (Task)typeof(LibraryPage).GetMethod("LoadRecommendationsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
+            Check(errorPanel.Visibility == Visibility.Visible, "the initial layout failure shows the error panel");
+            wire.RecommendedFailure = "none";
+            wire.RecommendedNoHero = true;
+            try
+            {
+                Check(!(bool)awaiting.GetValue(page)!, "the follow-up refresh is an ordinary, non-confirming refresh");
+                await page.RefreshLocalizedContentAsync();
+                await Until(() => sections.Children.OfType<SectionRow>().Any(row => row.Section?.Items.Count > 0));
+                Check(errorPanel.Visibility == Visibility.Collapsed,
+                    "a successful hero-less refresh clears the stale 'Failed to load recommendations' panel");
+            }
+            finally { wire.RecommendedNoHero = false; }
+            Program.Log("PASS: a successful non-confirming Recommended refresh clears an earlier load failure.");
         }
         finally
         {
@@ -222,7 +258,7 @@ internal static class LibraryReconnectNativeFixture
     {
         private const int BaseTotal = 3000;
         internal int Inserted = -1;
-        internal bool RecommendedEnabled, RecommendedRevoked;
+        internal bool RecommendedEnabled, RecommendedRevoked, RecommendedNoHero;
         internal string RecommendedFailure = "none";
         internal readonly List<int> WindowSeeks = [];
         internal int RecommendedLayoutReads;
@@ -252,14 +288,16 @@ internal static class LibraryReconnectNativeFixture
             {
                 RecommendedLayoutReads++;
                 if (RecommendedFailure == "layout") return Reply(new { detail = "Synthetic layout failure" }, HttpStatusCode.ServiceUnavailable);
-                return ReplyRecommendedLayoutAsync(new { sections = new[] {
+                var layoutSections = new[] {
                     new { id = "hero", section_type = "recently_added", title = "Featured", featured = true, item_limit = 1 },
                     new { id = "row", section_type = "recently_added", title = "Titles", featured = false, item_limit = 1 },
-                } }, ct);
+                };
+                return ReplyRecommendedLayoutAsync(new { sections = RecommendedNoHero ? layoutSections[1..] : layoutSections }, ct);
             }
             if (path.Contains("/sections/", StringComparison.Ordinal) && path.EndsWith("/items") && RecommendedEnabled)
             {
-                if (RecommendedFailure == "section") return Reply(new { detail = "Synthetic section failure" }, HttpStatusCode.ServiceUnavailable);
+                if (RecommendedFailure == "section" || (RecommendedFailure == "row" && !path.Contains("/hero/", StringComparison.Ordinal)))
+                    return Reply(new { detail = "Synthetic section failure" }, HttpStatusCode.ServiceUnavailable);
                 if (RecommendedFailure == "null")
                     return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("null", System.Text.Encoding.UTF8, "application/json") });
                 var id = path.Contains("/hero/", StringComparison.Ordinal) ? "hero" : "row";

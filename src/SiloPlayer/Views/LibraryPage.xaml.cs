@@ -3289,11 +3289,8 @@ public sealed partial class LibraryPage : Page,
                 return true;
             }
 
-            if (confirming && results.Any(result => result.Failed || result.Section is null))
-            {
-                FailUnconfirmedRecommendedRows();
-                return false;
-            }
+            var heroLayout = layoutResponse.Sections.FirstOrDefault(section => section.Featured);
+            var heroFailed = heroLayout != null && results.Any(result => result.Failed && ReferenceEquals(result.Layout, heroLayout));
             if (confirming)
             {
                 // Pinned rows are outside the layout/raw-section map. Retire those
@@ -3301,7 +3298,11 @@ public sealed partial class LibraryPage : Page,
                 foreach (var row in RecommendedSectionsPanel.Children.OfType<SectionRow>()
                     .Where(row => !_recommendedRows.ContainsValue(row) && !ReferenceEquals(row, _recommendedHeroRestRow)).ToList())
                     RecommendedSectionsPanel.Children.Remove(row);
+                // A failed section becomes a failed placeholder below, as on the
+                // initial load; only its old cards are dropped, not the whole surface.
                 _rawRecommendedSections.Clear();
+                // A failed hero keeps its mounted cards in the projection, so retire them here.
+                if (heroFailed) ApplyRefreshedRecommendedHero(null, null, false, libraryId);
             }
             _recommendedLayoutOrder = layoutResponse.Sections;
             var activeIds = _recommendedLayoutOrder.Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
@@ -3332,6 +3333,18 @@ public sealed partial class LibraryPage : Page,
                     return false;
                 _recommendedRowsContext = context;
                 ConfirmRecommendedRows();
+            }
+            // This read replaced the layout, so an earlier load failure no longer applies.
+            if (heroFailed && _recommendedHeroSection is null)
+            {
+                RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
+                RecommendedError.Text = "The featured section could not be loaded right now.";
+                RecommendedErrorPanel.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                RecommendedError.Text = "";
+                RecommendedErrorPanel.Visibility = Visibility.Collapsed;
             }
             _ = LoadRecommendedRecipeTypesAsync(version, libraryId, cancellationToken);
             return true;

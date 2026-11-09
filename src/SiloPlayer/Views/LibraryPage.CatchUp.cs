@@ -51,7 +51,7 @@ public sealed partial class LibraryPage
     {
         if (!_recommendedCardsAwaitingConfirmation) return;
         _recommendedCardsAwaitingConfirmation = false;
-        // Every section of this reread succeeded, so an earlier load failure no longer applies.
+        // This reread replaced the layout, so an earlier load failure no longer applies.
         RecommendedError.Text = "";
         RecommendedErrorPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
         RecommendedPanel.IsHitTestVisible = true;
