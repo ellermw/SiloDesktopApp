@@ -58,7 +58,7 @@ public partial class PlayerService
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
-        // Busy state gates actions, not the read-only Playback info surface.
+        // Busy state gates each menu action, not menu ownership.
         if (mpv == null || video == null || (!legacyAudio && session == null) ||
             _closing || _postRollActive || _playbackTerminalState != null)
         { RetireNativeMenus(); return; }
@@ -78,7 +78,6 @@ public partial class PlayerService
             mpv.SendScriptMessage("osc-native-quality-scope", session != null && (CanPresentNativeSpeed || (!IsWatchTogetherPlayback && Versions.Count > 1) || AvailableQualities.Count > 1) ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-speed-scope", session != null && CanPresentNativeSpeed ? owner.Token : "");
             mpv.SendScriptMessage("osc-native-party-scope", App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom != null ? owner.Token : "");
-            mpv.SendScriptMessage("osc-native-stats-scope", owner.Token);
             mpv.SendScriptMessage("osc-native-chapters-scope", version?.Chapters?.Count > 0 ? owner.Token : "");
             // Sessionless direct playback keeps its inventory only in Lua.
             // Keep compact Audio and Chapters on that same legacy path.
@@ -89,7 +88,6 @@ public partial class PlayerService
 
     private void CloseNativeActionMenuForPlaybackSwitch()
     {
-        if (_nativeMenuRequest?.Kind == "stats") return;
         var menu = _nativeMenu;
         var dispatcher = App.MainWindowInstance?.DispatcherQueue ?? _nativeMenuDispatcher;
         void Close()
@@ -118,7 +116,6 @@ public partial class PlayerService
             mpv?.SendScriptMessage("osc-native-quality-scope", "");
             mpv?.SendScriptMessage("osc-native-speed-scope", "");
             mpv?.SendScriptMessage("osc-native-party-scope", "");
-            mpv?.SendScriptMessage("osc-native-stats-scope", "");
             mpv?.SendScriptMessage("osc-native-chapters-scope", "");
             mpv?.SendScriptMessage("osc-native-more-scope", "");
         }
@@ -133,7 +130,7 @@ public partial class PlayerService
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
         // A late request or temporary busy state must not retire a current owner.
-        var busyAction = request.Kind != "stats" && (IsLoading || _switchingContent);
+        var busyAction = IsLoading || _switchingContent;
         if (owner == null || owner.Token != request.OwnerToken)
         { Ack(); return; }
         if (!owner.IsCurrent())
@@ -174,7 +171,6 @@ public partial class PlayerService
                 "quality" => CreateNativeQualityMenu(owner, request, Finish),
                 "speed" => CreateNativeSpeedMenu(owner, request, Finish),
                 "party" => CreateNativePartyMenu(owner, request, Finish),
-                "stats" => CreateNativeStatsMenu(owner, request, Finish),
                 "chapters" => CreateNativeChaptersMenu(owner, request, Finish),
                 "more" => CreateNativeMoreMenu(owner, request, Finish),
                 _ => null,

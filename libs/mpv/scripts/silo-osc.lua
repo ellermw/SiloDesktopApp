@@ -2008,7 +2008,7 @@ local function render_osc()
     end
     local bst = L.btn_stats
     if bst then
-    local stats_active = state.stats_visible or native_menu_active("stats")
+    local stats_active = state.stats_visible
     draw_utility_state("btn_stats", bst, stats_active)
     draw_info_icon(ass, bst.cx, bst.cy, math.floor(20 * sc),
         config.text_color, stats_active and "00" or "38", ma)
@@ -2312,9 +2312,7 @@ local function stats_text_lines(value, capacity)
 end
 
 local function render_stats()
-    local native_request = state.native_menu_request
-    local native_stats = native_request and native_request.kind == "stats"
-    if not state.stats_visible and not native_stats then
+    if not state.stats_visible then
         state.stats_panel_rect = nil
         state.stats_scroll_max = 0
         if state.stats_overlay then
@@ -2337,7 +2335,6 @@ local function render_stats()
     local section_gap = 12
     local header_h = line_h + 4
     local box_x = math.floor(16 * sc)
-    local box_w = math.min(math.floor(380 * sc), W - box_x * 2)
     local box_y = math.floor(48 * sc)
 
     local fallback = "\xe2\x80\x94"
@@ -2485,46 +2482,67 @@ local function render_stats()
     end
     table.insert(sections, s4)
 
-    if native_stats then
-        -- Reuse the existing diagnostic collector. Only its explicit displayed
-        -- fields cross the scoped native boundary; no URL/header/property dump.
-        state.stats_visible = false
-        state.stats_panel_rect = nil
-        if state.stats_overlay then
-            state.stats_overlay.data = ""
-            state.stats_overlay:update()
-        end
-        mp.commandv("script-message", "silo-native-stats-data", native_request.owner,
-            tostring(native_request.sequence), require("mp.utils").format_json(sections))
-        return
-    end
-
-    local content_width = math.max(1, box_w - padding * 2)
+    -- Wrap rows to a column's width and return each section's height,
+    -- including its gap and header.
     local glyph_width = fs * 0.62 -- Consolas fixed-pitch cell, with a small safety margin
-    local capacity = math.max(1, math.floor(content_width / glyph_width))
-    local column_gap = math.ceil(16 * sc / glyph_width)
-    for _, sec in ipairs(sections) do
-        for _, row in ipairs(sec.rows) do
-            row.label_lines = stats_text_lines(row.label, capacity)
-            row.value_lines = stats_text_lines(row.value, capacity)
-            row.stacked = #row.label + #row.value + column_gap > capacity
-            row.height = line_h * (row.stacked and (#row.label_lines + #row.value_lines) or 1)
+    local function measure_sections(content_width)
+        local capacity = math.max(1, math.floor(content_width / glyph_width))
+        local label_gap = math.ceil(16 * sc / glyph_width)
+        local heights = {}
+        for index, sec in ipairs(sections) do
+            local height = section_gap + header_h
+            for _, row in ipairs(sec.rows) do
+                row.label_lines = stats_text_lines(row.label, capacity)
+                row.value_lines = stats_text_lines(row.value, capacity)
+                row.stacked = #row.label + #row.value + label_gap > capacity
+                row.height = line_h * (row.stacked and (#row.label_lines + #row.value_lines) or 1)
+                height = height + row.height
+            end
+            heights[index] = height
         end
+        return heights
     end
-
-    -- Calculate total height including wrapped diagnostics.
-    local total_h = padding  -- top padding
-    total_h = total_h + line_h + 8  -- header row ("Playback Info" + close X)
-    for _, sec in ipairs(sections) do
-        total_h = total_h + section_gap + header_h  -- section header
-        for _, row in ipairs(sec.rows) do total_h = total_h + row.height end
+    local function height_of(heights, first, last)
+        local total = 0
+        for index = first, last do total = total + heights[index] end
+        return total
     end
-    total_h = total_h + padding  -- bottom padding
 
     -- Match the WebUI's max-h-[calc(100%-6rem)] behavior. ASS overlays do not
     -- provide a native scroll view, so render a bounded viewport and let the
     -- mouse wheel move its content instead of drawing beyond a short window.
     local max_box_h = math.max(math.floor(180 * sc), H - math.floor(96 * sc))
+    -- Top padding, header row ("Playback Info" + close X), bottom padding.
+    local chrome_h = padding + line_h + 8 + padding
+
+    -- The original single 380px column stays in the top-left corner. When it
+    -- would need scrolling, the same panel grows a second column to the right
+    -- so common window sizes show every row at once. Scrolling remains only
+    -- for windows too small for both columns.
+    local column_w = math.max(1, math.min(math.floor(380 * sc), W - box_x * 2) - padding * 2)
+    local column_gap = math.floor(24 * sc)
+    local heights = measure_sections(column_w)
+    local columns = { { first = 1, last = #sections } }
+    local two_column_w = math.floor(348 * sc)
+    if chrome_h + height_of(heights, 1, #sections) > max_box_h and #sections > 1 and
+        padding * 2 + two_column_w * 2 + column_gap <= W - box_x * 2 then
+        column_w = two_column_w
+        heights = measure_sections(column_w)
+        local best_split, best_h
+        for split = 1, #sections - 1 do
+            local tallest = math.max(height_of(heights, 1, split), height_of(heights, split + 1, #sections))
+            if not best_h or tallest < best_h then best_split, best_h = split, tallest end
+        end
+        columns = { { first = 1, last = best_split }, { first = best_split + 1, last = #sections } }
+    end
+    local box_w = padding * 2 + column_w * #columns + column_gap * (#columns - 1)
+    local total_h = chrome_h
+    for index, column in ipairs(columns) do
+        column.left = box_x + padding + (index - 1) * (column_w + column_gap)
+        column.right = column.left + column_w
+        total_h = math.max(total_h, chrome_h + height_of(heights, column.first, column.last))
+    end
+
     local box_h = math.min(total_h, max_box_h)
     state.stats_scroll_max = math.max(0, total_h - box_h)
     state.stats_scroll_offset = clamp(state.stats_scroll_offset or 0, 0, state.stats_scroll_max)
@@ -2551,47 +2569,49 @@ local function render_stats()
         y = cy,
         w = 40, h = line_h
     }
-    cy = cy + line_h + 8 - state.stats_scroll_offset
-
     local content_top = box_y + padding + line_h + 8
     local content_bottom = box_y + box_h - padding
     local function row_is_visible(center_y, height)
         local half = height / 2
         return center_y + half >= content_top and center_y - half <= content_bottom
     end
-    local function draw_stats_text(x, y, text, color, alignment)
-        if not row_is_visible(y, line_h) then return end
-        local clipped = string.format("{\\clip(%d,%d,%d,%d)\\q2}%s",
-            box_x + padding, content_top, box_x + box_w - padding, content_bottom,
-            ass_escape_text(text))
-        draw_text(ass, x, y, clipped, fs, color, "00", 1.0, alignment, "Consolas")
-    end
 
-    -- Draw sections
-    for _, sec in ipairs(sections) do
-        cy = cy + section_gap
-        -- Section header (uppercase, small, dim)
-        if row_is_visible(cy + header_h / 2, header_h) then
-            draw_text(ass, box_x + padding, cy + header_h / 2, sec.header,
-                fs_small, config.dim_text_color, "40", 1.0, 4, nil, true)
+    -- Draw sections, column by column; both columns scroll together.
+    for _, column in ipairs(columns) do
+        local function draw_stats_text(x, y, text, color, alignment)
+            if not row_is_visible(y, line_h) then return end
+            local clipped = string.format("{\\clip(%d,%d,%d,%d)\\q2}%s",
+                column.left, content_top, column.right, content_bottom,
+                ass_escape_text(text))
+            draw_text(ass, x, y, clipped, fs, color, "00", 1.0, alignment, "Consolas")
         end
-        cy = cy + header_h
+        cy = content_top - state.stats_scroll_offset
+        for index = column.first, column.last do
+            local sec = sections[index]
+            cy = cy + section_gap
+            -- Section header (uppercase, small, dim)
+            if row_is_visible(cy + header_h / 2, header_h) then
+                draw_text(ass, column.left, cy + header_h / 2, sec.header,
+                    fs_small, config.dim_text_color, "40", 1.0, 4, nil, true)
+            end
+            cy = cy + header_h
 
-        -- Rows
-        for _, row in ipairs(sec.rows) do
-            if row.stacked then
-                for _, label in ipairs(row.label_lines) do
-                    draw_stats_text(box_x + padding, cy + line_h / 2, label, config.dim_text_color, 4)
+            -- Rows
+            for _, row in ipairs(sec.rows) do
+                if row.stacked then
+                    for _, label in ipairs(row.label_lines) do
+                        draw_stats_text(column.left, cy + line_h / 2, label, config.dim_text_color, 4)
+                        cy = cy + line_h
+                    end
+                    for _, value in ipairs(row.value_lines) do
+                        draw_stats_text(column.left, cy + line_h / 2, value, config.text_color, 4)
+                        cy = cy + line_h
+                    end
+                else
+                    draw_stats_text(column.left, cy + line_h / 2, row.label, config.dim_text_color, 4)
+                    draw_stats_text(column.right, cy + line_h / 2, row.value, config.text_color, 6)
                     cy = cy + line_h
                 end
-                for _, value in ipairs(row.value_lines) do
-                    draw_stats_text(box_x + padding, cy + line_h / 2, value, config.text_color, 4)
-                    cy = cy + line_h
-                end
-            else
-                draw_stats_text(box_x + padding, cy + line_h / 2, row.label, config.dim_text_color, 4)
-                draw_stats_text(box_x + box_w - padding, cy + line_h / 2, row.value, config.text_color, 6)
-                cy = cy + line_h
             end
         end
     end
@@ -2754,7 +2774,7 @@ local function tick()
     render_osc()
 
     -- Refresh stats overlay ~1/sec (live bitrate, dropped frames, etc.)
-    if state.stats_visible or (state.native_menu_request and state.native_menu_request.kind == "stats") then
+    if state.stats_visible then
         state.stats_last_refresh = state.stats_last_refresh or 0
         if now - state.stats_last_refresh >= 1.0 then
             state.stats_last_refresh = now
@@ -4806,7 +4826,7 @@ local function open_native_menu(kind, keyboard)
         or state.playback_loading or state.post_roll_active or state.playback_failure_visible
         or state.native_menu_sequence >= 9007199254740991 then return true end
     compute_layout()
-    local opener = ({audio='btn_audio', subtitle='btn_cc', quality='btn_quality', chapters='btn_chapters', stats='btn_stats', speed='btn_quality', more='btn_more', party='btn_party'})[kind]
+    local opener = ({audio='btn_audio', subtitle='btn_cc', quality='btn_quality', chapters='btn_chapters', speed='btn_quality', more='btn_more', party='btn_party'})[kind]
     local anchor = state.layout[opener] or state.layout.btn_more
     if not anchor then return true end
     close_transport_menus(nil)
@@ -4834,27 +4854,14 @@ local function open_native_menu(kind, keyboard)
     mp.commandv("script-message", "silo-native-" .. kind .. "-open", request.owner, tostring(request.sequence),
         tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
         tostring(state.osd_width), tostring(state.osd_height))
-    if kind == "stats" then
-        state.stats_last_refresh = mp.get_time()
-        render_stats()
-    end
     request_tick()
     return true
 end
 
-local function toggle_stats(keyboard)
-    if state.native_menu_request then
-        if state.native_menu_request.kind == "stats" then native_menu_input("cancel") end
-        return
-    end
-    if state.stats_visible then
-        state.stats_visible = false
-        render_stats()
-        return
-    end
-    -- Diagnostics stay available during states that suppress action menus.
-    -- Retain their existing read-only overlay until native presentation is eligible.
-    if not state.playback_loading and not state.post_roll_active and open_native_menu("stats", keyboard) then return end
+-- Playback Info is the OSC's own top-left panel in every playback state. It
+-- never opens a native menu anchored to the utility rail.
+local function toggle_stats()
+    if state.native_menu_request then return end
     state.stats_visible = not state.stats_visible
     if state.stats_visible then state.stats_scroll_offset = 0 end
     render_stats()
@@ -5029,7 +5036,7 @@ local function activate_utility_control(name, keyboard)
     elseif name == "btn_chapters" then
         open_transport_menu_from_controller("chapters", keyboard)
     elseif name == "btn_stats" then
-        toggle_stats(keyboard)
+        toggle_stats()
     elseif name == "btn_pip" then
         mp.commandv("script-message", "silo-pip-toggle")
     else
@@ -5450,7 +5457,7 @@ local function handle_mouse_down()
 
     -- Check stats toggle
     if L.btn_stats and point_in_rect(mx, my, L.btn_stats) then
-        toggle_stats(false)
+        toggle_stats()
         return
     end
 
@@ -6388,10 +6395,10 @@ local function setup_key_bindings()
 
     -- Stats toggle
     mp.add_key_binding("i", "silo-osc-toggle-stats", function()
-        if not state.playback_failure_visible and not native_dialog_active() then toggle_stats(true) end
+        if not state.playback_failure_visible and not native_dialog_active() then toggle_stats() end
     end)
     mp.add_key_binding("I", "silo-osc-toggle-stats-shift", function()
-        if not state.playback_failure_visible and not native_dialog_active() then toggle_stats(true) end
+        if not state.playback_failure_visible and not native_dialog_active() then toggle_stats() end
     end)
 
     -- Subtitle delay nudge routes through host-owned timing preferences rather
@@ -6598,7 +6605,7 @@ local function setup_script_messages()
             state.controller_focus_name = request.focus_name; show_osc(); request_tick()
         end
     end)
-    for _, menu_kind in ipairs({'audio','subtitle','quality','chapters','speed','stats','more','party'}) do
+    for _, menu_kind in ipairs({'audio','subtitle','quality','chapters','speed','more','party'}) do
         local kind = menu_kind
         mp.register_script_message('osc-native-' .. kind .. '-scope', function(token)
             if kind == 'audio' then
@@ -6767,7 +6774,7 @@ local function setup_script_messages()
     -- Host can toggle stats
     mp.register_script_message("osc-toggle-stats", function()
         if native_dialog_active() then return end
-        toggle_stats(true)
+        toggle_stats()
     end)
 
     -- Host can query if mouse is over OSC (to decide whether to pass clicks to video)
