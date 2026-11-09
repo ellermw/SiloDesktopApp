@@ -409,6 +409,51 @@ public sealed class LibraryBackgroundRefreshTests
     }
 
     [Fact]
+    public async Task ScrollingToAnUnheldRangeDuringCatchUpRendersItBeforeDistantHeldRows()
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await wire.Idle();
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            wire.HoldWindowAt = 560;       // the nearest held chunk, read right after the viewport
+            wire.HoldSecondWindowAt = 400; // a farther held chunk
+            var requests = wire.Requests.Count;
+            Reconnect(wire);
+            var refresh = model.RefreshInPlaceAsync(500, 60);
+            Task? viewport = null;
+            try
+            {
+                await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                // The user scrolls to a range outside the held set before the catch-up finishes.
+                viewport = model.LoadWindowAsync(800, 60);
+                Assert.Null(model.GetRenderableWindowItem(800));
+            }
+            finally { wire.ReleaseChunk.TrySetResult(); }
+            try
+            {
+                await wire.SecondChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.False(refresh.IsCompleted);
+                Assert.False(viewport!.IsCompleted);
+                Assert.True(model.RequiresCatalogRefresh);
+                Assert.All(Enumerable.Range(800, 60), index =>
+                    Assert.Equal(wire.Titles[index].Id, model.GetRenderableWindowItem(index)?.ContentId));
+                var reads = wire.Requests.Skip(requests).Where(read => read.ContainsKey("skip_total")).ToList();
+                Assert.Equal(new[] { "500", "560", "800", "400" }, reads.Select(read => read["seek"]));
+                Assert.False(reads[0].ContainsKey("cursor"));
+                Assert.All(reads.Skip(1), read => Assert.Equal(wire.SnapshotOf(reads[0]), wire.SnapshotOf(read)));
+            }
+            finally { wire.ReleaseSecondChunk.TrySetResult(); }
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await refresh.WaitAsync(TimeSpan.FromSeconds(3)));
+            await viewport!.WaitAsync(TimeSpan.FromSeconds(3));
+            await wire.Idle();
+            Assert.Equal("item-799", model.GetWindowItem(800)?.ContentId);
+            Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            Assert.False(model.RequiresCatalogRefresh);
+        }
+    }
+
+    [Fact]
     public async Task CancelledArtworkReadAheadCannotAbortCatchUpForAJoinedVisibleRange()
     {
         var (wire, model, _) = Scrolled();
@@ -691,10 +736,12 @@ public sealed class LibraryBackgroundRefreshTests
         internal bool Fail, OmitWindowTotals, ZeroWindowTotal, HoldCount, TimeoutWindow;
         internal readonly TaskCompletionSource CountStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal int? FailWindowAt, HoldWindowAt, ChangeSnapshotAt;
+        internal int? FailWindowAt, HoldWindowAt, HoldSecondWindowAt, ChangeSnapshotAt;
         internal int SnapshotChangesRemaining;
         internal readonly TaskCompletionSource ChunkStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseChunk = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource SecondChunkStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseSecondChunk = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Catalog() { Client = new SiloApiClient(new HttpClient(this)); Client.SetBaseUrl("https://background-refresh.invalid"); }
 
         internal string? SnapshotOf(Dictionary<string, string> request) => request.GetValueOrDefault("window");
@@ -760,6 +807,11 @@ public sealed class LibraryBackgroundRefreshTests
                 {
                     ChunkStarted.TrySetResult();
                     await ReleaseChunk.Task;
+                }
+                if (query.ContainsKey("skip_total") && offset == HoldSecondWindowAt)
+                {
+                    SecondChunkStarted.TrySetResult();
+                    await ReleaseSecondChunk.Task;
                 }
                 if (query.ContainsKey("skip_total") && offset == FailWindowAt)
                 {

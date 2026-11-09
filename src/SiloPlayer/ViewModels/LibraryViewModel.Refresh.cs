@@ -16,6 +16,9 @@ public partial class LibraryViewModel
     private int _catalogRefreshVersion = -1;
     private (int Start, CatalogResponse Response)? _confirmedRefreshViewport;
     private int _confirmedRefreshViewportVersion = -1;
+    // The range the running catch-up publishes, and a newer one a joining caller scrolled to.
+    private (int Start, int Count)? _refreshViewportTarget;
+    private (int Start, int Count)? _refreshRequestedViewport;
 
     /// <summary>Only newly authorized rows may be rendered while held windows catch up.</summary>
     public MediaItem? GetRenderableWindowItem(int index)
@@ -87,10 +90,43 @@ public partial class LibraryViewModel
         if (task is null || task.IsCompleted || _catalogRefreshVersion != _queryVersion ||
             _catalogContext != _catalogApi.CaptureContext())
             task = _catalogRefreshTask = RefreshInPlaceCoreAsync(visibleStart, visibleCount);
+        else RequestRefreshViewport(visibleStart, visibleCount);
         // Cancellation retires only this waiter. A speculative artwork caller must
         // not cancel the query-owned catch-up that foreground loaders have joined.
         try { return await task.WaitAsync(ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return CatalogRefreshResult.Deferred; }
+    }
+
+    /// <summary>
+    /// A caller that scrolled elsewhere joins the running catch-up. Its range is read
+    /// next, under the same snapshot, instead of after every distant held window.
+    /// </summary>
+    private void RequestRefreshViewport(int start, int count)
+    {
+        count = Math.Max(1, count);
+        if (_refreshViewportTarget is { } target && start >= target.Start && start + count <= target.Start + target.Count)
+            return;
+        _refreshRequestedViewport = (start, count);
+    }
+
+    /// <summary>Publishes fresh viewport rows, joining a confirmed range they touch or replacing one the viewport left.</summary>
+    private void PublishConfirmedRows(int start, List<MediaItem> rows, string snapshot, int version)
+    {
+        var end = start + rows.Count;
+        if (_confirmedRefreshViewport is { } confirmed && start <= confirmed.Start + confirmed.Response.Items.Count &&
+            end >= confirmed.Start)
+        {
+            var first = Math.Min(start, confirmed.Start);
+            var last = Math.Max(end, confirmed.Start + confirmed.Response.Items.Count);
+            var items = new List<MediaItem>(last - first);
+            for (var index = first; index < last; index++)
+                items.Add(index >= start && index < end ? rows[index - start] : confirmed.Response.Items[index - confirmed.Start]);
+            _confirmedRefreshViewport = (first, new CatalogResponse { Items = items, Snapshot = snapshot });
+        }
+        else
+            _confirmedRefreshViewport = (start, new CatalogResponse { Items = rows, Snapshot = snapshot });
+        _confirmedRefreshViewportVersion = version;
+        WindowLoaded?.Invoke();
     }
 
     private async Task<CatalogRefreshResult> RefreshInPlaceCoreAsync(int visibleStart, int visibleCount)
@@ -103,10 +139,13 @@ public partial class LibraryViewModel
         }
         if (IsLetterJumpInProgress) return CatalogRefreshResult.Deferred;
         var chunks = PlanRefreshChunks(visibleStart, Math.Max(1, visibleCount));
-        var viewportEnd = (long)chunks[0].Start + Math.Max(1, visibleCount);
+        var original = (Start: chunks[0].Start,
+            Count: Math.Clamp(Math.Max(1, visibleCount), 1, Math.Max(1, TotalCount - chunks[0].Start)));
         // Never turn an unexpectedly oversized held set into an unbounded catch-up.
         if (chunks.Sum(chunk => chunk.Count) > MaxRefreshedItems) return CatalogRefreshResult.Deferred;
         RebaseCatalogQuery();
+        _refreshViewportTarget = original;
+        _refreshRequestedViewport = null;
         var version = _catalogRefreshVersion = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
         // Only a real seek owns the catalog; rail upkeep (e.g. a non-title sort
@@ -118,7 +157,23 @@ public partial class LibraryViewModel
             jump == _letterJumpStartVersion && !IsLetterJumpInProgress;
         string? snapshot = null;
         var replacements = new List<(int Start, int Count, CatalogResponse Response)>();
+        var pending = new List<(int Start, int Count, bool Viewport)>();
         var refreshed = 0;
+        void TakeRequestedViewport()
+        {
+            if (_refreshRequestedViewport is not { } requested) return;
+            _refreshRequestedViewport = null;
+            var start = Math.Clamp(requested.Start, 0, Math.Max(0, TotalCount - 1));
+            var count = Math.Clamp(requested.Count, 1, Math.Max(1, TotalCount - start));
+            _refreshViewportTarget = (start, count);
+            // Earlier viewports are still read and merged, but no longer published.
+            for (var index = 0; index < pending.Count; index++)
+                pending[index] = (pending[index].Start, pending[index].Count, false);
+            var reads = new List<(int Start, int Count, bool Viewport)>();
+            for (var chunk = start; chunk < start + count; chunk += CatalogWindowPageSize)
+                reads.Add((chunk, Math.Min(CatalogWindowPageSize, start + count - chunk), true));
+            pending.InsertRange(0, reads);
+        }
         CatalogRefreshResult FailRefresh(string message)
         {
             if (!Current()) return CatalogRefreshResult.Deferred;
@@ -150,12 +205,32 @@ public partial class LibraryViewModel
                 replacements.Clear();
                 _confirmedRefreshViewport = null;
                 WindowLoaded?.Invoke();
+                pending.Clear();
+                pending.AddRange(chunks.Select(chunk => (chunk.Start, chunk.Count,
+                    chunk.Start >= original.Start && chunk.Start < original.Start + original.Count)));
+                // A retry starts from the newest viewport a joining caller asked for.
+                if (_refreshViewportTarget is { } latest && latest != original) _refreshRequestedViewport ??= latest;
+                _refreshViewportTarget = original;
                 var snapshotChanged = false;
                 try
                 {
-                    foreach (var (start, count) in chunks)
+                    while (pending.Count > 0)
                     {
                         if (!Current()) return CatalogRefreshResult.Deferred;
+                        TakeRequestedViewport();
+                        var (start, count, viewportChunk) = pending[0];
+                        pending.RemoveAt(0);
+                        var covering = replacements.FindIndex(read => read.Start <= start && start + count <= read.Start + read.Count);
+                        if (covering >= 0)
+                        {
+                            // Already read in this snapshot: a returning viewport needs no second request.
+                            if (viewportChunk)
+                            {
+                                var earlier = replacements[covering];
+                                PublishConfirmedRows(start, earlier.Response.Items.Skip(start - earlier.Start).Take(count).ToList(), snapshot!, version);
+                            }
+                            continue;
+                        }
                         CatalogResponse? replacement = null;
                         await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, ct,
                             publishState: false);
@@ -170,22 +245,10 @@ public partial class LibraryViewModel
                         }
                         replacements.Add((start, count, replacement));
                         refreshed++;
-                        var viewport = _confirmedRefreshViewport;
-                        if (start < viewportEnd && (viewport is null ||
-                            start == viewport.Value.Start + viewport.Value.Response.Items.Count))
-                        {
-                            // Publish each contiguous viewport chunk as it arrives, before
-                            // the all-or-nothing merge of the other held windows.
-                            if (viewport is { } confirmed)
-                                confirmed.Response.Items.AddRange(replacement.Items.Take(count));
-                            else
-                                _confirmedRefreshViewport = (start, new CatalogResponse
-                                {
-                                    Items = replacement.Items.Take(count).ToList(), Snapshot = snapshot,
-                                });
-                            _confirmedRefreshViewportVersion = version;
-                            WindowLoaded?.Invoke();
-                        }
+                        // Publish each viewport chunk as it arrives, before the
+                        // all-or-nothing merge of the other held windows.
+                        if (viewportChunk)
+                            PublishConfirmedRows(start, replacement.Items.Take(count).ToList(), snapshot!, version);
                     }
                 }
                 catch (ApiException ex) when (ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor" && Current())
