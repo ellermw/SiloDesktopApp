@@ -32,6 +32,8 @@ public sealed partial class MainWindow
         PlayingNextMetaText.Visibility = string.IsNullOrWhiteSpace(PlayingNextMetaText.Text) ? Visibility.Collapsed : Visibility.Visible;
         PlayingNextPlayNowButton.IsEnabled = PlayingNextPickAnother.IsEnabled = hasNext && !_shufflePickPending;
         PlayingNextStopShuffle.IsEnabled = !_shufflePickPending;
+        // A new pick never shows under the previous pick's poster.
+        DropStalePlayingNextArt();
         if (hasNext) _ = LoadPlayingNextPosterAsync();
         else StopPlayingNextCountdown();
         UpdatePlayingNextAutoPlayVisuals();

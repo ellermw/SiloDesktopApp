@@ -183,6 +183,19 @@ public sealed partial class MainWindow
         catch { /* Poster is cosmetic */ }
     }
 
+    /// <summary>
+    /// When the next item changes under an open overlay, the previous item's picture leaves the
+    /// hero at once: it falls back to its own background until the new picture, if any, arrives.
+    /// </summary>
+    private void DropStalePlayingNextArt()
+    {
+        var contentId = _playerService.NextEpisodeContentId;
+        var url = _playerService.NextEpisodePosterUrl;
+        bool IsForNextItem(PlayingNextArt art) => !string.IsNullOrEmpty(url) && art.ContentId == (contentId ?? url) && art.Url == url;
+        if (_preparedPlayingNextArt is { } prepared && !IsForNextItem(prepared)) _preparedPlayingNextArt = null;
+        if (_playingNextShownArt is { } shown ? !IsForNextItem(shown) : PlayingNextPoster.Source is not null) ClearPlayingNextArt();
+    }
+
     private void ClearPlayingNextArt()
     {
         _playingNextShownArt = null;
