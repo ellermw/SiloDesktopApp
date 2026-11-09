@@ -37,8 +37,8 @@ public sealed class EventChannelClient : IDisposable
     // - the connection lasted its announced lifetime, allowing the measured upgrade duration
     //   plus PlannedEndEarly for a close frame (only the upgrade duration for a receive error),
     //   and at most PlannedEndLate after, so an early reset or a slept laptop still catches up;
-    // - it ended without a close handshake, with no close status, or with a normal close;
-    //   explicit failure codes catch up, and 4001/access_changed keep their own handling;
+    // - it ended without a close handshake, with no close status, or with a normal (1000) or
+    //   going-away (1001) close; other explicit codes catch up, and 4001/access_changed keep their own handling;
     // - the next connection opened within QuickReconnectWindow of that end. Failed attempts
     //   keep the old end, so the gap only grows and a long outage still catches up. After a
     //   planned end the loop reconnects without its own backoff, so that delay does not spend
@@ -76,8 +76,10 @@ public sealed class EventChannelClient : IDisposable
         if (connection is not { EndedAt: { } ended }) return false;
         if (connection.LifetimeSeconds is not int lifetimeSeconds) { why = "the ticket announced no lifetime"; return false; }
         if (!connection.Abrupt && !connection.CloseReceived) { why = "no peer end observed"; return false; }
+        // 1001 is RFC 6455's "going away" (.NET names it EndpointUnavailable), a common code for
+        // an orderly scheduled end; the lifetime bounds below still reject it when early or late.
         if (connection.CloseCode is int code && code != (int)WebSocketCloseStatus.NormalClosure &&
-            code != (int)WebSocketCloseStatus.Empty)
+            code != (int)WebSocketCloseStatus.EndpointUnavailable && code != (int)WebSocketCloseStatus.Empty)
         { why = $"closed with code {code}"; return false; }
         var held = ended - connection.ConnectedAt;
         var lifetime = TimeSpan.FromSeconds(lifetimeSeconds);
@@ -873,7 +875,12 @@ public sealed class EventChannelClient : IDisposable
             throw new InvalidDataException("Invalid event socket ticket response.");
         // How long the server keeps this connection (300 s today). Absent or implausible means
         // no end can be proven planned, so every reconnect catches up as before.
-        return (response.Ticket, response.MaxConnectionSeconds is >= 1 and <= 3600 ? response.MaxConnectionSeconds : null);
+        if (response.MaxConnectionSeconds is >= 1 and <= 3600)
+            return (response.Ticket, response.MaxConnectionSeconds);
+        Log(response.MaxConnectionSeconds is int announced
+            ? $"Ticket announced an implausible max_connection_seconds ({announced}); every reconnect will catch up"
+            : "Ticket announced no max_connection_seconds; every reconnect will catch up");
+        return (response.Ticket, null);
     }
 
     private sealed class EventsWsTicketResponse
@@ -881,6 +888,7 @@ public sealed class EventChannelClient : IDisposable
         public string Ticket { get; set; } = "";
         public string Protocol { get; set; } = "";
         [System.Text.Json.Serialization.JsonPropertyName("max_connection_seconds")]
+        [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString)]
         public int? MaxConnectionSeconds { get; set; }
     }
 

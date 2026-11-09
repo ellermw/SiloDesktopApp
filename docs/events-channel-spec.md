@@ -168,6 +168,15 @@ All under `/api/v1` (authenticated, same Bearer token as everything else):
 - **Plex OAuth:** `{profile_id, source:"plex", plex_session_id, plex_server_id}`
 - **Plex Saved:** `{profile_id, source:"plex", plex_base_url, plex_token}` (or via `source_id`)
 
+## v2 connection lifetime (client assumptions — NOT yet verified against server source)
+
+The desktop client now connects to `/api/v2/events/ws` with a ticket rather than `?token=`. The v2 server handler is not in the reference set, so the points below are what `EventChannelClient` assumes. Confirm them against the server and replace this heading once verified.
+
+- **Ticket:** `POST /api/v2/events/ws-ticket` returns `{"ticket": "...", "protocol": "silo.events.v2", "max_connection_seconds": 300}`. The client offers the subprotocols `silo.events.v2` and `silo.ticket.{ticket}`.
+- **`max_connection_seconds`:** the number of seconds the server keeps the connection open before ending it (300 today). The client accepts an integer, or a numeric string, from 1 to 3600. If the field is missing or out of range, the client logs it to `events_channel.txt` and treats every reconnect as a transport loss.
+- **Planned end:** the server ends the socket once the lifetime is up. The client counts that as planned when the socket closes without a close frame, with no close status (1005), with 1000 (normal), or with 1001 (going away), within the lifetime's timing bounds. Any other close code is treated as a transport loss.
+- **Catch-up rule:** after a planned end, a reconnect within five seconds does not trigger a catch-up (no read invalidation). Anything else catches up once.
+
 ## Client implementation notes (for the desktop C# `EventChannelClient`)
 
 1. Use `System.Net.WebSockets.ClientWebSocket` (already in the trimmer roots per `csproj`).

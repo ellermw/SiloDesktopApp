@@ -229,6 +229,8 @@ public sealed class EventAccessTransportTests
     [InlineData(false, true, null, 300, true)]
     [InlineData(false, true, 1005, 300, true)]
     [InlineData(false, true, 1000, 300, true)]
+    [InlineData(false, true, 1001, 300, true)]
+    [InlineData(false, true, 1001, 306, false)]
     [InlineData(false, true, 1012, 300, false)]
     [InlineData(false, true, 1013, 300, false)]
     [InlineData(false, true, 4001, 300, false)]
