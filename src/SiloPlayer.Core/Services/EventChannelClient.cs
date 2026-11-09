@@ -33,9 +33,9 @@ public sealed class EventChannelClient : IDisposable
     // the server contract: catch up only after more than five seconds without a connection);
     // treating it as a loss retired every page's reads and reloaded the app every five minutes.
     // Only a provable planned end counts. Times are wall-clock, so sleep counts as time away:
-    // - the connection lasted its announced lifetime (at most PlannedEndEarly before for a close
-    //   frame, never early for a receive error, and at most PlannedEndLate after), so an early
-    //   reset, a silent drop noticed late or a slept laptop still catches up;
+    // - the connection lasted its announced lifetime, allowing the measured upgrade duration
+    //   plus PlannedEndEarly for a close frame (only the upgrade duration for a receive error),
+    //   and at most PlannedEndLate after, so an early reset or a slept laptop still catches up;
     // - it ended without a close handshake, with no close status, or with a normal close;
     //   explicit failure codes catch up, and 4001/access_changed keep their own handling;
     // - the next connection opened within QuickReconnectWindow of that end. Failed attempts
@@ -49,6 +49,7 @@ public sealed class EventChannelClient : IDisposable
     private sealed class ConnectionRecord(DateTimeOffset connectedAt, int? lifetimeSeconds)
     {
         internal DateTimeOffset ConnectedAt { get; } = connectedAt;
+        internal DateTimeOffset ConnectStartedAt { get; init; } = connectedAt;
         internal int? LifetimeSeconds { get; } = lifetimeSeconds;
         internal DateTimeOffset? EndedAt { get; set; }
         internal bool Abrupt { get; set; }
@@ -68,12 +69,15 @@ public sealed class EventChannelClient : IDisposable
         { why = $"closed with code {code}"; return false; }
         var held = ended - connection.ConnectedAt;
         var lifetime = TimeSpan.FromSeconds(lifetimeSeconds);
-        // A receive error has no server-supplied close status. In particular, an unexplained
-        // reset shortly BEFORE the lifetime must not borrow the close-frame timing tolerance.
-        var early = connection.Abrupt ? TimeSpan.Zero : PlannedEndEarly;
+        // The server can start its timer before the upgrade response reaches us. Count from
+        // before the request for the lower bound, but keep the late bound and reconnect gap
+        // relative to the open socket. Receive errors borrow only this measured upgrade time,
+        // never the additional close-frame tolerance that could hide an early reset.
+        var upgrade = connection.ConnectedAt - connection.ConnectStartedAt;
+        var early = upgrade + (connection.Abrupt ? TimeSpan.Zero : PlannedEndEarly);
         if (held < lifetime - early || held > lifetime + PlannedEndLate)
-        { why = $"held {held.TotalSeconds:0}s of a {lifetimeSeconds}s lifetime"; return false; }
-        why = $"planned end after {held.TotalSeconds:0}s";
+        { why = $"held {held.TotalSeconds:0.000}s of a {lifetimeSeconds}s lifetime (upgrade {upgrade.TotalSeconds:0.000}s)"; return false; }
+        why = $"planned end after {held.TotalSeconds:0.000}s (upgrade {upgrade.TotalSeconds:0.000}s)";
         return true;
     }
 
@@ -514,10 +518,11 @@ public sealed class EventChannelClient : IDisposable
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to {logUrl} (channels: {string.Join(",", channelsSnapshot)})");
+            var connectStartedAt = DateTimeOffset.UtcNow;
             await ws.ConnectAsync(new Uri(wsUrl), ct);
             if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
             onConnected?.Invoke();
-            connection = new ConnectionRecord(DateTimeOffset.UtcNow, lifetimeSeconds);
+            connection = new ConnectionRecord(DateTimeOffset.UtcNow, lifetimeSeconds) { ConnectStartedAt = connectStartedAt };
             var reconnect = false;
             lock (_lock)
             {
