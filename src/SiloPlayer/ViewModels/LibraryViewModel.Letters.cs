@@ -41,6 +41,9 @@ public partial class LibraryViewModel
     private Task? _letterIndexTask;
     private long _letterIndexLoadVersion;
     private long _letterJumpVersion;
+    // Bumped only when a real seek starts. Routine rail upkeep retires feedback
+    // through _letterJumpVersion and must not abort a reconnect catch-up.
+    private long _letterJumpStartVersion;
     private long _activeLetterJumpVersion;
     public bool IsLetterJumpInProgress => _activeLetterJumpVersion != 0;
     public long LetterJumpVersion => _letterJumpVersion;
@@ -156,6 +159,7 @@ public partial class LibraryViewModel
             RetireLetterJump();
             return;
         }
+        _letterJumpStartVersion++;
         // Reset an unobserved API-context change before capturing this jump's
         // owner; the window loader must not retire the seek it is about to read.
         var contextChanged = _catalogRefreshPending ||

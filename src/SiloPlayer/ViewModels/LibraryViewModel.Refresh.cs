@@ -109,11 +109,13 @@ public partial class LibraryViewModel
         RebaseCatalogQuery();
         var version = _catalogRefreshVersion = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
-        var jump = _letterJumpVersion;
+        // Only a real seek owns the catalog; rail upkeep (e.g. a non-title sort
+        // retiring jump feedback on every WindowLoaded) must not defer this refresh.
+        var jump = _letterJumpStartVersion;
         var ct = _catalogQueryCts.Token;
         bool Current() => !ct.IsCancellationRequested && version == _queryVersion &&
             _catalogContext == _catalogApi.CaptureContext() && queryKey == CatalogQueryScopeKey() &&
-            jump == _letterJumpVersion && !IsLetterJumpInProgress;
+            jump == _letterJumpStartVersion && !IsLetterJumpInProgress;
         string? snapshot = null;
         var replacements = new List<(int Start, int Count, CatalogResponse Response)>();
         var refreshed = 0;
