@@ -29,6 +29,8 @@ internal static class HomeReconcileNativeFixture
         await DuringLayoutAsync(parent, reloaded: false);
         // A reloaded row re-subscribes to its items after the guard did.
         await DuringLayoutAsync(parent, reloaded: true);
+        // A response that shrinks a full row leaves realized indices past the new snapshot.
+        await DuringLayoutAsync(parent, reloaded: false, shrink: true);
         Program.Log("PASS: a Home response applied during the row's layout pass completes and the row resyncs.");
         // Let removed cards run their Unloaded cleanup while app services exist.
         for (var turn = 0; turn < 6; turn++) { await Task.Delay(50); await DrainAsync(); }
@@ -233,12 +235,12 @@ internal static class HomeReconcileNativeFixture
         finally { parent.Children.Remove(row); }
     }
 
-    private static async Task DuringLayoutAsync(StackPanel parent, bool reloaded)
+    private static async Task DuringLayoutAsync(StackPanel parent, bool reloaded, bool shrink = false)
     {
         // The field failure: a Home response reaches the row while its
         // ItemsRepeater is measuring. ElementPrepared runs inside that pass.
-        var scenario = reloaded ? "during-layout-reloaded" : "during-layout";
-        var mounted = Movies(Enumerable.Range(0, 3));
+        var scenario = (reloaded ? "during-layout-reloaded" : "during-layout") + (shrink ? "-shrink" : "");
+        var mounted = Movies(Enumerable.Range(0, shrink ? 20 : 3));
         var row = await MountAsync(parent, mounted);
         if (reloaded)
         {
@@ -251,7 +253,9 @@ internal static class HomeReconcileNativeFixture
             row.UpdateLayout();
         }
         var repeater = Repeater(row);
-        var response = Movies(new[] { 9, 2, 0, 7, 8, 1, 6 }, versionOf: id => id == 0 ? 1 : 0);
+        var response = shrink
+            ? Movies(new[] { 2, 0, 1 }, versionOf: id => id == 0 ? 1 : 0)
+            : Movies(new[] { 9, 2, 0, 7, 8, 1, 6 }, versionOf: id => id == 0 ? 1 : 0);
         var applied = false;
         Exception? thrown = null;
         void Prepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
@@ -265,10 +269,14 @@ internal static class HomeReconcileNativeFixture
         {
             // m2 survives the response as the same object; the recovery Reset
             // recycles its card and must hand keyboard focus back to it.
-            var focusedItem = FocusCard(repeater, 2, scenario);
+            // The runner shows the window first, so a host that cannot take
+            // focus is a failure rather than a skipped check.
+            var focusedItem = FocusCard(repeater, 2, scenario)
+                ?? throw new InvalidOperationException($"{scenario}: the host could not take keyboard focus, so focus restore cannot be checked.");
             repeater.ElementPrepared += Prepared;
-            // Growing the row realizes a new card, which raises ElementPrepared mid-measure.
-            Apply(mounted, Movies(Enumerable.Range(0, 8)));
+            // Growing the row, or inserting at its front, realizes a new card,
+            // which raises ElementPrepared mid-measure.
+            Apply(mounted, shrink ? Movies(new[] { 99 }.Concat(Enumerable.Range(0, 20))) : Movies(Enumerable.Range(0, 8)));
             row.UpdateLayout();
             repeater.ElementPrepared -= Prepared;
             if (!applied)
@@ -280,11 +288,13 @@ internal static class HomeReconcileNativeFixture
                 throw new InvalidOperationException($"{scenario}: ItemsRepeater accepted a mid-layout change; the fixture no longer reaches the rejection.");
             if (!mounted.Items.Select(Key).SequenceEqual(response.Items.Select(Key)))
                 throw new InvalidOperationException($"{scenario}: the rejected update did not finish applying the response.");
-            // The recovery Reset is still queued. Whether WinUI's cached count
-            // matches the guard depends on its internal ordering, so record it
-            // rather than gate on it; the Reset's outcome is asserted below.
+            // The recovery Reset is still queued. Whatever Count WinUI cached,
+            // every index the repeater can ask for must resolve through the guard.
             if (repeater.ItemsSourceView.Count != guard.Count)
                 Program.Log($"home-reconcile {scenario}: repeater count {repeater.ItemsSourceView.Count} differs from the guard snapshot {guard.Count} after the rejection.");
+            for (var index = 0; index < repeater.ItemsSourceView.Count; index++)
+                if (repeater.ItemsSourceView.GetAt(index) is not MediaItem)
+                    throw new InvalidOperationException($"{scenario}: repeater index {index} of {repeater.ItemsSourceView.Count} did not resolve through the guard ({guard.Count}) after the rejection.");
             // A model change in this window must not move the snapshot under
             // the stale repeater; the Reset delivers it instead.
             var held = guard.Cast<MediaItem>().ToArray();
@@ -294,9 +304,9 @@ internal static class HomeReconcileNativeFixture
             await RequireCardsMatchAsync(row, mounted, scenario, allowRejection: true);
             if (!mounted.Items.SequenceEqual(guard.Cast<MediaItem>()))
                 throw new InvalidOperationException($"{scenario}: the recovery Reset did not publish the model as it is now.");
-            if (focusedItem == null)
-                Program.Log($"home-reconcile {scenario}: host could not take keyboard focus; focus restore not checked.");
-            else if (!ReferenceEquals(FocusedCardItem(repeater), focusedItem))
+            if (repeater.ItemsSourceView.Count != guard.Count)
+                throw new InvalidOperationException($"{scenario}: repeater count {repeater.ItemsSourceView.Count} still differs from the guard {guard.Count} after the recovery Reset.");
+            if (!ReferenceEquals(FocusedCardItem(repeater), focusedItem))
                 throw new InvalidOperationException($"{scenario}: keyboard focus did not return to {Key(focusedItem)} after the recovery Reset.");
             Program.Log($"home-reconcile {scenario}: {Guard(row).RejectedChanges} rejected change(s) resynced.");
         }

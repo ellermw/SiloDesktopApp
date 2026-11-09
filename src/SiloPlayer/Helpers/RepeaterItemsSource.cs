@@ -15,8 +15,13 @@ namespace SiloPlayer.Helpers;
 /// whoever changed the model (the Home reconciler), aborts the rest of the
 /// update, and leaves the repeater out of step with its data. This view takes
 /// the rejection instead: the model change completes for every other listener,
-/// the repeater reads a snapshot that stays fixed while it is stale, and one
-/// Reset on a later dispatcher turn resynchronizes it. Later model changes in
+/// and one Reset on a later dispatcher turn resynchronizes the repeater. While
+/// it is stale the view serves the snapshot taken for the rejected change and
+/// holds it fixed; its realized cards still show the items it last accepted.
+/// Whether WinUI's ItemsSourceView cached the new Count before the rejection
+/// is not relied on: an index past the held snapshot is served from the last
+/// accepted one, so a row that shrank cannot be indexed past its end in
+/// either case. Every rejection is logged with both counts. Later model changes in
 /// that window are not lost: they are coalesced into the Reset, which publishes
 /// the collection as it is then. A rejected Reset is retried a few times with
 /// a growing delay; after that the view stays stale until the next model
@@ -38,6 +43,10 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     // The items as the repeater knows them. Home rows hold at most a few
     // hundred cards, so a copy per change is cheaper than replaying deltas.
     private List<T> _items;
+    // The snapshot the repeater last accepted. Until the next accepted change
+    // its cached Count may still describe this list instead of _items.
+    private List<T> _accepted;
+    private bool _loggedFallback;
     private bool _resyncQueued;
     // Rejected recovery Resets since the last accepted delivery.
     private int _failedResyncs;
@@ -50,6 +59,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         Source = source ?? throw new ArgumentNullException(nameof(source));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _items = [.. source];
+        _accepted = _items;
         Source.CollectionChanged += OnSourceChanged;
     }
 
@@ -108,16 +118,17 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         try
         {
             CollectionChanged?.Invoke(this, e);
+            _accepted = _items;
+            _loggedFallback = false;
             return true;
         }
         catch (Exception ex) when (IsRepeaterRejection(ex))
         {
-            // WinUI's ItemsSourceView refreshes its cached Count before the
-            // repeater's handler rejects the change, so keep the snapshot that
-            // matches that Count and hold it until the Reset; restoring the
-            // pre-change list here would let the repeater index past it.
+            // Hold the new snapshot until the Reset. The indexer falls back to
+            // the accepted one past its end, so the repeater stays in range
+            // whichever Count its ItemsSourceView cached before rejecting.
             RejectedChanges++;
-            var detail = $"RepeaterItemsSource rejected action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8} count={Source.Count}";
+            var detail = $"RepeaterItemsSource rejected action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8} count={Source.Count} snapshot={_items.Count} accepted={_accepted.Count}";
             App.RecordUiDiagnostic(detail);
             LocalLog.AppendException(LogFile, ex, detail);
             return false;
@@ -184,7 +195,18 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     public object? this[int index]
     {
-        get => _items[index];
+        get
+        {
+            if (index < _items.Count) return _items[index];
+            if (!_loggedFallback)
+            {
+                _loggedFallback = true;
+                var detail = $"RepeaterItemsSource read index={index} past snapshot={_items.Count}; serving accepted={_accepted.Count} until the Reset";
+                App.RecordUiDiagnostic(detail);
+                LocalLog.AppendLine(LogFile, detail);
+            }
+            return _accepted[index];
+        }
         set => throw new NotSupportedException();
     }
 
