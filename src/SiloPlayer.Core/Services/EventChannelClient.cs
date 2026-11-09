@@ -28,6 +28,16 @@ public sealed class EventChannelClient : IDisposable
     private ApiRequestContext? _activeSocketContext;
     private int _immediateReconnectRequested;
     private bool _hasConnected;
+    /// <summary>A connection back this soon after one that held missed nothing worth reloading for (Granary and the
+    /// server contract: catch up only after more than five seconds without a connection).</summary>
+    internal static readonly TimeSpan DefaultQuickReconnectWindow = TimeSpan.FromSeconds(5);
+    /// <summary>Tests about catch-up itself set it to zero, so every transport loss catches up regardless of timing.</summary>
+    internal TimeSpan QuickReconnectWindow { get; set; } = DefaultQuickReconnectWindow;
+    /// <summary>A connection that closed sooner than this may be a server refusing connections: it still catches up.</summary>
+    internal static readonly TimeSpan QuickReconnectHeld = TimeSpan.FromSeconds(1);
+    private long _quietReconnectUntil;
+    private bool IsQuickReconnect() =>
+        Volatile.Read(ref _quietReconnectUntil) is var until && until != 0 && System.Diagnostics.Stopwatch.GetTimestamp() <= until;
     // Socket whose hello has been answered with a subscribe frame. Channel-set
     // changes on that socket are sent as a new subscribe frame (the server
     // replaces the set and snapshots it) instead of tearing the socket down.
@@ -402,6 +412,16 @@ public sealed class EventChannelClient : IDisposable
             }
             backoffMs = ReconnectBackoff.AfterConnection(backoffMs, 1000,
                 connectedAt is { } openedAt ? System.Diagnostics.Stopwatch.GetElapsedTime(openedAt) : TimeSpan.Zero);
+            // The server ends every events connection after max_connection_seconds (300).
+            // Back within QuickReconnectWindow of a connection that held, nothing worth a
+            // catch-up was missed: retiring every page's reads then reloaded the whole app
+            // every five minutes. Only an attempt that connected moves the window, so a
+            // run of failed attempts still catches up once the gap has grown longer.
+            if (connectedAt is { } heldSince)
+                Volatile.Write(ref _quietReconnectUntil,
+                    System.Diagnostics.Stopwatch.GetElapsedTime(heldSince) >= QuickReconnectHeld && QuickReconnectWindow > TimeSpan.Zero
+                        ? System.Diagnostics.Stopwatch.GetTimestamp() + (long)(QuickReconnectWindow.TotalSeconds * System.Diagnostics.Stopwatch.Frequency)
+                        : 0);
 
             if (ct.IsCancellationRequested) return;
             if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
@@ -464,6 +484,11 @@ public sealed class EventChannelClient : IDisposable
                 if (!ReferenceEquals(_ws, ws) || !_apiClient.IsCurrentContext(context))
                     throw new OperationCanceledException("Event authority changed.", ct);
                 reconnect = _hasConnected && catchUp;
+                if (reconnect && IsQuickReconnect())
+                {
+                    reconnect = false;
+                    Log("Quick reconnect after a connection that held: no catch-up");
+                }
                 if (reconnect && !PublishAccessInvalidation(context, out context, transportCatchUp: true))
                     throw new OperationCanceledException("Event authority changed.", ct);
                 _activeSocketContext = context;
