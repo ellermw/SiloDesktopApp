@@ -174,12 +174,37 @@ public sealed class RelaunchWindowPlacementTests
         var bounds = placement[placement.IndexOf("private void RestoreRelaunchBounds", StringComparison.Ordinal)..];
         bounds = bounds[..bounds.IndexOf("private void MaximizeAfterRelaunch", StringComparison.Ordinal)];
         var move = bounds.IndexOf("AppWindow.MoveAndResize(rect);", StringComparison.Ordinal);
-        var observed = bounds.IndexOf("var observed = ScreenRect.FromSize(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);", StringComparison.Ordinal);
-        var retry = bounds.IndexOf("if (observed != bounds) AppWindow.MoveAndResize(rect);", StringComparison.Ordinal);
+        var observed = bounds.IndexOf("var frameRead = TryReadRelaunchWindowBounds(out var observed);", StringComparison.Ordinal);
+        var retry = bounds.IndexOf("if (!frameRead || observed != bounds) AppWindow.MoveAndResize(rect);", StringComparison.Ordinal);
         var track = bounds.IndexOf("TrackNormalWindowBounds();", StringComparison.Ordinal);
         Assert.True(move >= 0 && observed > move && retry > observed && track > retry);
         // TrackNormalWindowBounds reads the actual native frame, not the requested rectangle.
         Assert.DoesNotContain("_lastNormalWindowBounds = bounds;", placement);
-        Assert.Contains("_lastNormalWindowBounds = ScreenRect.FromSize(AppWindow.Position.X, AppWindow.Position.Y, size.Width, size.Height);", placement);
+        Assert.Contains("_lastNormalWindowBounds = normal;", placement);
+    }
+
+    [Fact]
+    public void CapturesAndChecksTheFrameInNativePhysicalPixelsLikeTheMonitorWorkArea()
+    {
+        var placement = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "MainWindow.RelaunchPlacement.cs"));
+        var tracking = placement[placement.IndexOf("private void TrackNormalWindowBounds()", StringComparison.Ordinal)..];
+        tracking = tracking[..tracking.IndexOf("private bool TryReadRelaunchWindowBounds", StringComparison.Ordinal)];
+        Assert.Contains("OverlappedPresenterState.Restored", tracking);
+        Assert.Contains("&& TryReadRelaunchWindowBounds(out var normal)", tracking);
+        Assert.Contains("_lastNormalWindowBounds = normal;", tracking);
+
+        var native = placement[placement.IndexOf("private bool TryReadRelaunchWindowBounds", StringComparison.Ordinal)..];
+        native = native[..native.IndexOf("private void SaveRelaunchPlacement()", StringComparison.Ordinal)];
+        Assert.Contains("WinRT.Interop.WindowNative.GetWindowHandle(this)", native);
+        Assert.Contains("if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect)) return false;", native);
+        Assert.Contains("bounds = new(rect.Left, rect.Top, rect.Right, rect.Bottom);", native);
+        Assert.Contains("return !bounds.IsEmpty;", native);
+        Assert.Contains("extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);", placement);
+        Assert.DoesNotContain("AppWindow.Position", placement);
+        Assert.DoesNotContain("AppWindow.Size", placement);
+
+        // GetWindowRect is not DPI-virtualized in the app's per-monitor-aware context.
+        var manifest = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "app.manifest"));
+        Assert.Contains(">PerMonitorV2</dpiAwareness>", manifest);
     }
 }

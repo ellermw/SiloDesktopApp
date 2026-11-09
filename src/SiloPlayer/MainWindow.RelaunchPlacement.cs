@@ -23,8 +23,19 @@ public sealed partial class MainWindow
     private void TrackNormalWindowBounds()
     {
         if (AppWindow?.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Restored }
-            && AppWindow.Size is { Width: > 0, Height: > 0 } size)
-            _lastNormalWindowBounds = ScreenRect.FromSize(AppWindow.Position.X, AppWindow.Position.Y, size.Width, size.Height);
+            && TryReadRelaunchWindowBounds(out var normal))
+            _lastNormalWindowBounds = normal;
+    }
+
+    private bool TryReadRelaunchWindowBounds(out ScreenRect bounds)
+    {
+        bounds = default;
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect)) return false;
+        // The app is PerMonitorV2-aware: GetWindowRect and GetMonitorInfo both return
+        // physical screen pixels, including the window's invisible resize borders.
+        bounds = new(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        return !bounds.IsEmpty;
     }
 
     /// <summary>Records the placement for the restart that follows an update handoff.</summary>
@@ -98,11 +109,12 @@ public sealed partial class MainWindow
 
     private void RestoreRelaunchBounds(ScreenRect bounds)
     {
+        // AppWindow.MoveAndResize takes physical screen pixels, not XAML DIPs.
         var rect = new RectInt32(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
         AppWindow.MoveAndResize(rect);
-        var observed = ScreenRect.FromSize(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
+        var frameRead = TryReadRelaunchWindowBounds(out var observed);
         // Moving between DPI scales can change the frame; retry once if the actual frame differs.
-        if (observed != bounds) AppWindow.MoveAndResize(rect);
+        if (!frameRead || observed != bounds) AppWindow.MoveAndResize(rect);
         TrackNormalWindowBounds();
     }
 
@@ -147,6 +159,7 @@ public sealed partial class MainWindow
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device;
     }
     private delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, IntPtr rect, IntPtr data);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
     [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)]
     private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfoEx info);
