@@ -2315,6 +2315,7 @@ local function render_stats()
     if not state.stats_visible then
         state.stats_panel_rect = nil
         state.stats_scroll_max = 0
+        state.stats_rows_announced = nil
         if state.stats_overlay then
             state.stats_overlay.data = ""
             state.stats_overlay:update()
@@ -2481,6 +2482,14 @@ local function render_stats()
         end
     end
     table.insert(sections, s4)
+
+    -- The ASS panel has no UI Automation peers. Hand the host its displayed
+    -- sections once per opening so screen readers can announce every row.
+    -- Only these explicit displayed fields cross; no URL/header/property dump.
+    if not state.stats_rows_announced then
+        state.stats_rows_announced = true
+        mp.commandv("script-message", "silo-stats-panel-rows", require("mp.utils").format_json(sections))
+    end
 
     -- Wrap rows to a column's width and return each section's height,
     -- including its gap and header.
@@ -4863,7 +4872,7 @@ end
 local function toggle_stats()
     if state.native_menu_request then return end
     state.stats_visible = not state.stats_visible
-    if state.stats_visible then state.stats_scroll_offset = 0 end
+    if state.stats_visible then state.stats_scroll_offset = 0; state.stats_rows_announced = nil end
     render_stats()
 end
 
