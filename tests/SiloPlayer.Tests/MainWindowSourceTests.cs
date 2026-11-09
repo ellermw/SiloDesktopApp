@@ -39,17 +39,28 @@ public sealed class MainWindowSourceTests
     }
 
     [Fact]
-    public void SharedNavigationSuppressesStockSlidesAndWholePageOpacityFlashes()
+    public void PageChangesEaseInWithoutWholePageOpacityFlashes()
     {
         var root = FindRepositoryRoot();
         var navigation = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "NavigationService.cs"));
         var shell = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
         var transition = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "PageTransitionHelper.cs"));
 
-        Assert.Contains("new SuppressNavigationTransitionInfo()", navigation);
+        // New routes and Back ease in (Granary-like), on the compositor as one visual.
+        Assert.Contains("return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());", navigation);
+        Assert.Contains("Frame.GoBack(PageTransitionHelper.ForPageChange());", navigation);
+        Assert.Contains("new EntranceNavigationTransitionInfo()", transition);
+        // Reduced motion and an in-place refresh of the current route stay instant.
+        Assert.Contains("ArtworkReveal.AnimationsEnabled", transition);
+        Assert.Contains("new SuppressNavigationTransitionInfo()", transition);
+        Assert.Contains("var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());", navigation);
         Assert.Contains("_currentPageType == pageType", navigation);
         Assert.Contains("OnNavigated_AnimatePageEntrance", shell);
         Assert.Contains("PageTransitionHelper.AnimateEntrance", shell);
+        // Only an instant swap is normalized; an easing entrance keeps its own opacity and offset.
+        Assert.Contains("transition is not Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo", shell);
+        Assert.True(shell.IndexOf("transition is not Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo", StringComparison.Ordinal)
+            < shell.IndexOf("PageTransitionHelper.AnimateEntrance(content)", StringComparison.Ordinal));
         Assert.Contains("content.Opacity = 1", transition);
         Assert.Contains("content.RenderTransform = null", transition);
         Assert.DoesNotContain("Storyboard", transition);

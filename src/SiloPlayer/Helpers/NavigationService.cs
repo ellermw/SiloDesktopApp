@@ -65,7 +65,7 @@ public class NavigationService
     public void GoBackImmediately()
     {
         if (Frame?.CanGoBack == true)
-            Frame.GoBack(new SuppressNavigationTransitionInfo());
+            Frame.GoBack(PageTransitionHelper.ForPageChange());
     }
 
     public bool Navigate(Type pageType, object? parameter = null)
@@ -91,11 +91,9 @@ public class NavigationService
         if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
             return false;
 
-        // Frame's stock directional animation makes top-level route changes
-        // look like a full control teardown. The shell swaps routes atomically
-        // and PageTransitionHelper normalizes the incoming root without
-        // applying a second whole-page animation.
-        return Frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
+        // The incoming page eases in (PageTransitionHelper); an in-place refresh
+        // of the current route below stays an instant swap.
+        return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());
     }
 
     public bool Navigate<TPage>(object? parameter = null) where TPage : Page
