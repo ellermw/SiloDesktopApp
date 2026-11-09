@@ -17,6 +17,21 @@ public class ArtworkMotionPolicyTests
     }
 
     [Fact]
+    public void A_higher_defer_speed_lets_ordinary_scrolling_load_and_still_defers_flings()
+    {
+        var clock = new Clock();
+        var policy = new ArtworkMotionPolicy(clock, deferSpeed: 4);
+        var standard = new ArtworkMotionPolicy(clock);
+        // 60 px in 20 ms (3 px/ms) defers by default but not at 4 px/ms.
+        clock.Advance(20); policy.Observe(0, 60); standard.Observe(0, 60);
+        Assert.False(policy.IsDeferred);
+        Assert.True(standard.IsDeferred);
+        // A fling (900 px in 20 ms) still waits for the grid to slow.
+        clock.Advance(20); policy.Observe(0, 960);
+        Assert.True(policy.IsDeferred);
+    }
+
+    [Fact]
     public async Task Slow_motion_releases_without_waiting_for_the_old_settle_timer()
     {
         var clock = new Clock(); var policy = new ArtworkMotionPolicy(clock);

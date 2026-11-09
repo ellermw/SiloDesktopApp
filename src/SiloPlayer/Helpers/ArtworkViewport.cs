@@ -43,9 +43,12 @@ internal static class ArtworkViewport
         }
     }
 
-    internal static ArtworkMotionPolicy For(ScrollViewer scroll) => Policies.GetValue(scroll, owner =>
+    internal static ArtworkMotionPolicy For(ScrollViewer scroll) => For(scroll, ArtworkMotionPolicy.DefaultDeferSpeed);
+
+    /// <summary>The scroller's policy; <paramref name="deferSpeed"/> applies only when this call creates it.</summary>
+    internal static ArtworkMotionPolicy For(ScrollViewer scroll, double deferSpeed) => Policies.GetValue(scroll, owner =>
     {
-        var policy = new ArtworkMotionPolicy();
+        var policy = new ArtworkMotionPolicy(deferSpeed: deferSpeed);
         policy.Reset(owner.HorizontalOffset, owner.VerticalOffset);
         owner.ViewChanged += (_, _) => policy.Observe(owner.HorizontalOffset, owner.VerticalOffset);
         owner.Loaded += (_, _) => policy.Reset(owner.HorizontalOffset, owner.VerticalOffset);
