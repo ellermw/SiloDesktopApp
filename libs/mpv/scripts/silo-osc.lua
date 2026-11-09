@@ -4877,9 +4877,12 @@ local function open_native_menu(kind, keyboard)
 end
 
 -- Playback Info is the OSC's own top-left panel in every playback state. It
--- never opens a native menu anchored to the utility rail.
+-- never opens a native menu anchored to the utility rail. It does not open
+-- while the host has disabled the OSC: the surface that owns input then
+-- (Playing Next, minimized) has no pointer route to the panel's close button.
 local function toggle_stats()
     if state.native_menu_request then return end
+    if state.osc_disabled and not state.stats_visible then return end
     state.stats_visible = not state.stats_visible
     if state.stats_visible then state.stats_scroll_offset = 0; state.stats_rows_sent = nil end
     render_stats()
