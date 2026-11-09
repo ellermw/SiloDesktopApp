@@ -130,6 +130,38 @@ public sealed class MainWindowSourceTests
     }
 
     [Fact]
+    public void ShufflePlayingNextOverviewFollowsEpisodeSpoilerPolicy()
+    {
+        var root = FindRepositoryRoot();
+        var shuffle = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.Shuffle.cs"));
+        var spoilers = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.EpisodeSpoilers.cs"));
+
+        // An unwatched shuffle episode must not republish the overview the policy hid.
+        Assert.DoesNotContain("PlayingNextOverviewText.Text = _playerService.NextEpisodeOverview", shuffle);
+        Assert.Contains("ShowPlayingNextOverview(spoilers.ShouldHideOverviews);", shuffle);
+        Assert.Contains("_playerService.ShuffleNext?.Type == \"episode\"", spoilers);
+        Assert.Contains("protectedEpisode && hideOverviews ? \"\" : _playerService.NextEpisodeOverview", spoilers);
+    }
+
+    [Fact]
+    public void PlayingNextPreloadBacksOffAndSharesTheArtworkDecoder()
+    {
+        var root = FindRepositoryRoot();
+        var artwork = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.PlayingNextArtwork.cs"));
+        var spoilers = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.EpisodeSpoilers.cs"));
+        var card = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "PosterCard.xaml.cs"));
+
+        // The latch is released when the preload finishes, and a failing picture waits before its next attempt.
+        Assert.Contains("DispatcherQueue.TryEnqueue(() => _ = PreloadPlayingNextArtAsync())", artwork);
+        Assert.Contains("finally { Interlocked.Exchange(ref _playingNextPreloadQueued, 0); }", artwork);
+        Assert.Contains("Environment.TickCount64 < _playingNextPreloadRetryAt", artwork);
+        Assert.Contains("if (NotePlayingNextPreloadFailure(key) == 1)", artwork);
+        // Playing Next bitmaps are created through the same decoder as library cards.
+        Assert.Contains("ArtworkDecodeGate.BitmapCreateLock)", spoilers);
+        Assert.Contains("s_bitmapCreateLock = ArtworkDecodeGate.BitmapCreateLock;", card);
+    }
+
+    [Fact]
     public void ApiClientSendsSiloDeviceHeadersForDeviceScopedSettings()
     {
         var root = FindRepositoryRoot();

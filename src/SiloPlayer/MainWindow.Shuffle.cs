@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer;
 
@@ -23,8 +24,10 @@ public sealed partial class MainWindow
         PlayingNextFinishedPanel.Visibility = hasNext ? Visibility.Collapsed : Visibility.Visible;
         PlayingNextTitleText.Text = _playerService.NextEpisodeTitle ?? "";
         PlayingNextSeriesText.Text = _playerService.NextEpisodeSeriesTitle ?? "";
-        PlayingNextOverviewText.Text = _playerService.NextEpisodeOverview ?? "";
-        PlayingNextOverviewText.Visibility = string.IsNullOrWhiteSpace(PlayingNextOverviewText.Text) ? Visibility.Collapsed : Visibility.Visible;
+        // The overview follows the same spoiler policy as regular Playing Next.
+        var spoilers = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+        ShowPlayingNextOverview(spoilers.ShouldHideOverviews);
+        if (!spoilers.IsLoadedForCurrentContext) _ = UpdatePlayingNextOverviewAsync(_playingNextPresentationGeneration);
         PlayingNextMetaText.Text = FormatPlayingNextMeta(_playerService.NextEpisodeAirDate, _playerService.NextEpisodeRuntime);
         PlayingNextMetaText.Visibility = string.IsNullOrWhiteSpace(PlayingNextMetaText.Text) ? Visibility.Collapsed : Visibility.Visible;
         PlayingNextPlayNowButton.IsEnabled = PlayingNextPickAnother.IsEnabled = hasNext && !_shufflePickPending;

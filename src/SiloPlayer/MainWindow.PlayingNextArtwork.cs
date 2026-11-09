@@ -21,9 +21,14 @@ public sealed partial class MainWindow
     private const double PlayingNextBackdropOpacity = 0.22;
     private const double PlayingNextPreloadRemainingSeconds = 300;
     private const long PlayingNextPreloadCheckMilliseconds = 2000;
+    private const long PlayingNextPreloadRetryMilliseconds = 15_000;
+    private const long PlayingNextPreloadMaxRetryMilliseconds = 300_000;
     private PlayingNextArt? _preparedPlayingNextArt;
     private long _playingNextPreloadCheckedAt;
     private int _playingNextPreloadQueued;
+    private string? _playingNextPreloadFailedKey;
+    private int _playingNextPreloadFailures;
+    private long _playingNextPreloadRetryAt;
     private long _playingNextArtRequested;
     private BitmapImage? _playingNextShownArt;
 
@@ -35,19 +40,49 @@ public sealed partial class MainWindow
         var now = Environment.TickCount64;
         if (now - Interlocked.Read(ref _playingNextPreloadCheckedAt) < PlayingNextPreloadCheckMilliseconds) return;
         Interlocked.Exchange(ref _playingNextPreloadCheckedAt, now);
+        // The latch stays set until the preload finishes, so attempts never overlap.
         if (Interlocked.Exchange(ref _playingNextPreloadQueued, 1) != 0) return;
-        if (!DispatcherQueue.TryEnqueue(() =>
-        {
-            Interlocked.Exchange(ref _playingNextPreloadQueued, 0);
-            _ = PreparePlayingNextArtSafelyAsync();
-        }))
+        if (!DispatcherQueue.TryEnqueue(() => _ = PreloadPlayingNextArtAsync()))
             Interlocked.Exchange(ref _playingNextPreloadQueued, 0);
     }
 
-    private async Task PreparePlayingNextArtSafelyAsync()
+    /// <summary>
+    /// One background attempt per next item; a failed picture is retried with growing gaps
+    /// and logged once. Opening Playing Next still makes its own final attempt.
+    /// </summary>
+    private async Task PreloadPlayingNextArtAsync()
     {
-        try { await PreparePlayingNextArtAsync(); }
-        catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "playing_next_artwork_preload"); }
+        var contentId = _playerService.NextEpisodeContentId;
+        var url = _playerService.NextEpisodePosterUrl;
+        var key = contentId + "\n" + url;
+        try
+        {
+            if (string.IsNullOrEmpty(url) ||
+                (key == _playingNextPreloadFailedKey && Environment.TickCount64 < _playingNextPreloadRetryAt))
+                return;
+            if (await PreparePlayingNextArtAsync() is not null)
+            {
+                if (key == _playingNextPreloadFailedKey) _playingNextPreloadFailedKey = null;
+            }
+            else if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
+                NotePlayingNextPreloadFailure(key);
+        }
+        catch (Exception ex)
+        {
+            if (NotePlayingNextPreloadFailure(key) == 1)
+                LocalLog.AppendException("catalog_errors.txt", ex, "playing_next_artwork_preload");
+        }
+        finally { Interlocked.Exchange(ref _playingNextPreloadQueued, 0); }
+    }
+
+    private int NotePlayingNextPreloadFailure(string key)
+    {
+        _playingNextPreloadFailures = key == _playingNextPreloadFailedKey ? _playingNextPreloadFailures + 1 : 1;
+        _playingNextPreloadFailedKey = key;
+        var delay = Math.Min(PlayingNextPreloadMaxRetryMilliseconds,
+            PlayingNextPreloadRetryMilliseconds << Math.Min(_playingNextPreloadFailures - 1, 10));
+        _playingNextPreloadRetryAt = Environment.TickCount64 + delay;
+        return _playingNextPreloadFailures;
     }
 
     private bool PlayingNextHidesArt(EpisodeSpoilerPreferences preferences) => EpisodeSpoilerPolicy.HideImage(
