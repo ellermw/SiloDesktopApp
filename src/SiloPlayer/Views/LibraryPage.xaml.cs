@@ -841,7 +841,12 @@ public sealed partial class LibraryPage : Page,
         finally
         {
             if (ReferenceEquals(Interlocked.CompareExchange(ref _recommendationsRefreshCts, null, owner), owner))
+            {
+                // Leaving during the debounce/read must not consume confirmation.
+                if (_recommendedCardsAwaitingConfirmation)
+                    _recommendedRefreshGate.Complete(false);
                 owner.Dispose();
+            }
         }
     }
 
@@ -2946,7 +2951,7 @@ public sealed partial class LibraryPage : Page,
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
             }
-            else if (tag == "Recommended" && _recommendedRefreshGate.Activate())
+            else if (tag == "Recommended" && (_recommendedCardsAwaitingConfirmation || _recommendedRefreshGate.Activate()))
             {
                 QueueRecommendedRefresh();
             }
@@ -2960,7 +2965,7 @@ public sealed partial class LibraryPage : Page,
         {
             if (!_recommendedLoaded)
                 await LoadRecommendationsAsync();
-            else if (_recommendedRefreshGate.Activate())
+            else if (_recommendedCardsAwaitingConfirmation || _recommendedRefreshGate.Activate())
                 QueueRecommendedRefresh();
         }
 

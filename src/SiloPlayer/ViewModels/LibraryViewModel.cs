@@ -313,8 +313,8 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (!HasMore || Library == null || TotalCount <= 0) return;
         EnsureCatalogScope();
-        if (_catalogRefreshPending && await RefreshInPlaceAsync(Math.Max(0, WindowStartIndex), PageSize) != CatalogRefreshResult.Completed)
-            return;
+        // Legacy sparse-page loading must not start catch-up ahead of the viewport.
+        if (_catalogRefreshPending) return;
 
         var pageCount = (TotalCount + PageSize - 1) / PageSize;
         for (int page = 0; page < pageCount; page++)
@@ -393,7 +393,7 @@ public partial class LibraryViewModel : ObservableObject
             return [];
         // A failed catch-up keeps only the extent. Let a foreground window
         // establish its fresh snapshot before speculative reads populate caches.
-        if (WindowStartIndex < 0) return [];
+        if (ct.IsCancellationRequested || WindowStartIndex < 0) return [];
 
         var (first, indices) = Neighborhood(startIndex, endIndex, forward);
         var version = _queryVersion;

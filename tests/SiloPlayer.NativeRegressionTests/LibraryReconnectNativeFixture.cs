@@ -101,6 +101,22 @@ internal static class LibraryReconnectNativeFixture
                 await Until(() => page.ViewModel.TotalCount == total + 1); // the count is read after the merge
                 Check(held.Length > 0 && held.All(row => page.ViewModel.GetWindowItem(row) is not null),
                     $"all {held.Length} rows loaded before the reconnect are still held (lost: {string.Join(",", held.Where(row => page.ViewModel.GetWindowItem(row) is null).Take(12))})");
+
+                // Returning from another tab asks for the letter rail before the viewport.
+                // A large active window must not make that optional read prioritize its start.
+                await page.ViewModel.LoadWindowAsync(0, 1200, force: true);
+                await Task.Delay(300);
+                var heldStart = page.ViewModel.WindowStartIndex;
+                var cards = (Dictionary<int, LibraryGridCard>)typeof(LibraryPage)
+                    .GetField("_visibleLibraryCards", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+                Check(cards.Keys.Min() > heldStart + 100, "the viewport is far below the retained active-window start");
+                ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("RecommendedTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+                Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect while another tab is active");
+                var reads = wire.WindowSeeks.Count;
+                ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("LibraryTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Until(() => wire.WindowSeeks.Count > reads && !page.ViewModel.RequiresCatalogRefresh);
+                Check(wire.WindowSeeks[reads] > heldStart + 100 && Math.Abs(scroll.VerticalOffset - offset) < 2,
+                    "Library tab activation confirms the visible range first, not the distant held-window start");
                 Program.Log("PASS: Library tab keeps its page, offset and loaded windows across event-channel reconnects and merges changes in place.");
             }
             finally { page.ViewModel.PropertyChanged -= Watch; }
@@ -113,6 +129,51 @@ internal static class LibraryReconnectNativeFixture
             var sections = (StackPanel)page.FindName("RecommendedSectionsPanel");
             var awaiting = typeof(LibraryPage).GetField("_recommendedCardsAwaitingConfirmation", BindingFlags.Instance | BindingFlags.NonPublic)!;
             var rawField = typeof(LibraryPage).GetField("_rawRecommendedSections", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var refreshField = typeof(LibraryPage).GetField("_recommendationsRefreshCts", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var refreshGate = (DeferredSurfaceRefreshGate)typeof(LibraryPage)
+                .GetField("_recommendedRefreshGate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+            foreach (var activation in new[] { "hidden", "debounce", "read" })
+            {
+                wire.RecommendedRevoked = false;
+                await page.RefreshLocalizedContentAsync();
+                await Until(() => hero.Visibility == Visibility.Visible && sections.Children.OfType<SectionRow>().Any(row => row.Section?.Items.Count > 0));
+                if (activation == "hidden")
+                    ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("LibraryTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+                if (activation == "read")
+                {
+                    wire.RecommendedLayoutGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.RecommendedLayoutStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+                wire.RecommendedRevoked = true;
+                Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "Recommended activation reconnect");
+                page.HideUnconfirmedCatalogRows();
+                await page.CatchUpAfterReconnectAsync();
+                if (activation != "hidden")
+                {
+                    try
+                    {
+                        if (activation == "read")
+                            await wire.RecommendedLayoutStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                        ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("LibraryTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+                    }
+                    finally
+                    {
+                        wire.RecommendedLayoutGate?.TrySetResult();
+                        wire.RecommendedLayoutGate = null;
+                    }
+                    await Until(() => refreshField.GetValue(page) is null);
+                    Check(refreshGate.HasPendingRefresh, $"leaving during the confirming {activation} keeps a pending refresh");
+                }
+                Check((bool)awaiting.GetValue(page)! && recommended.Visibility == Visibility.Collapsed,
+                    $"Recommended stays quarantined after the {activation} reconnect");
+                var layoutReads = wire.RecommendedLayoutReads;
+                ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("RecommendedTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Until(() => !(bool)awaiting.GetValue(page)! && recommended.Visibility == Visibility.Visible);
+                Check(wire.RecommendedLayoutReads > layoutReads && recommended.IsHitTestVisible,
+                    $"Recommended activation rereads and reveals the {activation} surface without another event");
+                Check(hero.ItemsSource is null && !sections.Children.OfType<SectionRow>().Any(row => row.Section?.Items.Count > 0),
+                    $"Recommended activation after {activation} cannot restore revoked cards");
+            }
             foreach (var failure in new[] { "none", "section", "null", "layout" })
             {
                 wire.RecommendedFailure = "none";
@@ -163,6 +224,10 @@ internal static class LibraryReconnectNativeFixture
         internal int Inserted = -1;
         internal bool RecommendedEnabled, RecommendedRevoked;
         internal string RecommendedFailure = "none";
+        internal readonly List<int> WindowSeeks = [];
+        internal int RecommendedLayoutReads;
+        internal TaskCompletionSource? RecommendedLayoutGate;
+        internal TaskCompletionSource RecommendedLayoutStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private string Id(int index) => Inserted < 0 || index < Inserted ? "item-" + index : index == Inserted ? "inserted" : "item-" + (index - 1);
         private int Total => BaseTotal + (Inserted < 0 ? 0 : 1);
 
@@ -176,6 +241,7 @@ internal static class LibraryReconnectNativeFixture
                 var limit = int.Parse(query["limit"]); var offset = query.TryGetValue("seek", out var seek) ? int.Parse(seek) : 0;
                 if (query.TryGetValue("cursor", out var cursor) && !query.ContainsKey("seek") && cursor.StartsWith("next:", StringComparison.Ordinal))
                     offset = int.Parse(cursor[5..]);
+                if (query.ContainsKey("skip_total")) WindowSeeks.Add(offset);
                 var total = Total;
                 var count = Math.Max(0, Math.Min(limit, total - offset));
                 return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = Id(index), title = "Fixture " + Id(index), type = "movie" }),
@@ -184,11 +250,12 @@ internal static class LibraryReconnectNativeFixture
             }
             if (path.EndsWith("/layout") && RecommendedEnabled)
             {
+                RecommendedLayoutReads++;
                 if (RecommendedFailure == "layout") return Reply(new { detail = "Synthetic layout failure" }, HttpStatusCode.ServiceUnavailable);
-                return Reply(new { sections = new[] {
+                return ReplyRecommendedLayoutAsync(new { sections = new[] {
                     new { id = "hero", section_type = "recently_added", title = "Featured", featured = true, item_limit = 1 },
                     new { id = "row", section_type = "recently_added", title = "Titles", featured = false, item_limit = 1 },
-                } });
+                } }, ct);
             }
             if (path.Contains("/sections/", StringComparison.Ordinal) && path.EndsWith("/items") && RecommendedEnabled)
             {
@@ -202,6 +269,16 @@ internal static class LibraryReconnectNativeFixture
             if (path.EndsWith("/layout") || path.EndsWith("/sections")) return Reply(new { sections = Array.Empty<object>() });
             if (path.EndsWith("/filters")) return Reply(new { genres = Array.Empty<string>() });
             return Reply(new { status = 404, detail = "No isolated fixture value" }, HttpStatusCode.NotFound);
+        }
+
+        private async Task<HttpResponseMessage> ReplyRecommendedLayoutAsync(object body, CancellationToken ct)
+        {
+            if (RecommendedLayoutGate is { } gate)
+            {
+                RecommendedLayoutStarted.TrySetResult();
+                await gate.Task.WaitAsync(ct);
+            }
+            return await Reply(body);
         }
 
         private static Task<HttpResponseMessage> Reply(object body, HttpStatusCode status = HttpStatusCode.OK)

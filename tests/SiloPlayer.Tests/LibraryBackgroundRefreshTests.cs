@@ -102,6 +102,44 @@ public sealed class LibraryBackgroundRefreshTests
     }
 
     [Fact]
+    public async Task OptionalLoadersLeaveCatchUpPriorityToTheActualViewport()
+    {
+        using var wire = new Catalog();
+        wire.Titles.AddRange(Enumerable.Range(1000, 1200).Select(index => ("item-" + index, "Item " + index)));
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.LoadWindowAsync(0, 1200);
+        await model.EnsureLetterIndexAsync();
+        await wire.Idle();
+        var letterIndex = model.LetterIndex;
+        var requests = wire.Requests.Count;
+        Reconnect(wire);
+
+        // Tab activation/return asks for the optional rail before filling the viewport.
+        await model.EnsureLetterIndexAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await model.LoadMoreCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(requests, wire.Requests.Count);
+        Assert.Same(letterIndex, model.LetterIndex);
+        Assert.True(model.RequiresCatalogRefresh);
+        Assert.Equal(0, model.WindowStartIndex);
+
+        wire.HoldWindowAt = 1160;
+        var viewport = model.LoadWindowAsync(1100, 60);
+        try
+        {
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal("1100", wire.Requests[requests]["seek"]);
+            Assert.False(viewport.IsCompleted);
+            Assert.NotNull(model.GetRenderableWindowItem(1100));
+            Assert.NotNull(model.GetRenderableWindowItem(1159));
+            Assert.Null(model.GetRenderableWindowItem(0));
+        }
+        finally { wire.ReleaseChunk.TrySetResult(); }
+        await viewport;
+        Assert.False(model.RequiresCatalogRefresh);
+    }
+
+    [Fact]
     public async Task RepeatedFiveMinuteReconnectsNeverRestartTheCatalog()
     {
         var (wire, model, totals) = Scrolled();
@@ -294,7 +332,7 @@ public sealed class LibraryBackgroundRefreshTests
     }
 
     [Fact]
-    public async Task CancelledLaterChunkKeepsOneOldSnapshotUntilARetryCompletes()
+    public async Task CancelledWaiterKeepsTheSharedRefreshAndJoinedViewportAlive()
     {
         var (wire, model, _) = Scrolled();
         using (wire)
@@ -310,16 +348,52 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.True(model.RequiresCatalogRefresh); // ordinary reads still await the atomic held-set merge
             Assert.Equal("item-499", model.GetRenderableWindowItem(500)?.ContentId);
             Assert.Null(model.GetRenderableWindowItem(0)); // unconfirmed held windows stay hidden
-            stop.Cancel();
-            wire.ReleaseChunk.TrySetResult();
-            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await refresh);
-            Assert.Same(item, model.GetWindowItem(500));
-            Assert.True(model.RequiresCatalogRefresh);
+            var viewport = model.LoadWindowAsync(700, 60);
+            try
+            {
+                stop.Cancel();
+                Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await refresh.WaitAsync(TimeSpan.FromSeconds(3)));
+                Assert.False(viewport.IsCompleted);
+                Assert.Same(item, model.GetWindowItem(500));
+                Assert.True(model.RequiresCatalogRefresh);
+            }
+            finally { wire.ReleaseChunk.TrySetResult(); }
 
-            wire.HoldWindowAt = null;
-            await model.LoadWindowAsync(700, 60);
+            await viewport;
             Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
             Assert.Equal("item-699", model.GetWindowItem(700)?.ContentId);
+            Assert.False(model.RequiresCatalogRefresh);
+        }
+    }
+
+    [Fact]
+    public async Task CancelledArtworkReadAheadCannotAbortCatchUpForAJoinedVisibleRange()
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        using (var stop = new CancellationTokenSource())
+        {
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            Reconnect(wire);
+            // A deferred catch-up leaves a pending rebase that read-ahead can resume.
+            wire.ChangeSnapshotAt = 560;
+            wire.SnapshotChangesRemaining = 2;
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await model.RefreshInPlaceAsync(500, 60));
+            wire.HoldWindowAt = 560;
+            var readAhead = model.PrefetchAroundAsync(500, 559, true, stop.Token);
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var viewport = model.LoadWindowAsync(700, 60);
+            try
+            {
+                stop.Cancel(); // the next scroll retires only the speculative caller
+                Assert.Empty(await readAhead.WaitAsync(TimeSpan.FromSeconds(3)));
+                Assert.False(viewport.IsCompleted);
+                Assert.True(model.RequiresCatalogRefresh);
+            }
+            finally { wire.ReleaseChunk.TrySetResult(); }
+            await viewport;
+            Assert.Equal("item-699", model.GetRenderableWindowItem(700)?.ContentId);
+            Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
             Assert.False(model.RequiresCatalogRefresh);
         }
     }

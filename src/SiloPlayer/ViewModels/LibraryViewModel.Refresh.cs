@@ -80,15 +80,20 @@ public partial class LibraryViewModel
     /// same positions, so new, removed and changed titles appear without resetting
     /// the scroll position, the loaded windows or the letter rail.
     /// </summary>
-    public Task<CatalogRefreshResult> RefreshInPlaceAsync(int visibleStart, int visibleCount, CancellationToken ct = default)
+    public async Task<CatalogRefreshResult> RefreshInPlaceAsync(int visibleStart, int visibleCount, CancellationToken ct = default)
     {
-        if (_catalogRefreshTask is { IsCompleted: false } && _catalogRefreshVersion == _queryVersion &&
-            _catalogContext == _catalogApi.CaptureContext())
-            return _catalogRefreshTask;
-        return _catalogRefreshTask = RefreshInPlaceCoreAsync(visibleStart, visibleCount, ct);
+        if (ct.IsCancellationRequested) return CatalogRefreshResult.Deferred;
+        var task = _catalogRefreshTask;
+        if (task is null || task.IsCompleted || _catalogRefreshVersion != _queryVersion ||
+            _catalogContext != _catalogApi.CaptureContext())
+            task = _catalogRefreshTask = RefreshInPlaceCoreAsync(visibleStart, visibleCount);
+        // Cancellation retires only this waiter. A speculative artwork caller must
+        // not cancel the query-owned catch-up that foreground loaders have joined.
+        try { return await task.WaitAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return CatalogRefreshResult.Deferred; }
     }
 
-    private async Task<CatalogRefreshResult> RefreshInPlaceCoreAsync(int visibleStart, int visibleCount, CancellationToken ct)
+    private async Task<CatalogRefreshResult> RefreshInPlaceCoreAsync(int visibleStart, int visibleCount)
     {
         if (!HasRetainableCatalog) return CatalogRefreshResult.NotLoaded;
         if (!IsSameCatalogIdentity(_catalogContext, _catalogApi.CaptureContext()))
@@ -104,8 +109,8 @@ public partial class LibraryViewModel
         var version = _catalogRefreshVersion = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
         var jump = _letterJumpVersion;
-        using var owner = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
-        bool Current() => !owner.IsCancellationRequested && version == _queryVersion &&
+        var ct = _catalogQueryCts.Token;
+        bool Current() => !ct.IsCancellationRequested && version == _queryVersion &&
             _catalogContext == _catalogApi.CaptureContext() && queryKey == CatalogQueryScopeKey() &&
             jump == _letterJumpVersion && !IsLetterJumpInProgress;
         string? snapshot = null;
@@ -149,7 +154,7 @@ public partial class LibraryViewModel
                     {
                         if (!Current()) return CatalogRefreshResult.Deferred;
                         CatalogResponse? replacement = null;
-                        await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, owner.Token,
+                        await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, ct,
                             publishState: false);
                         if (!Current()) return CatalogRefreshResult.Deferred;
                         if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot))
@@ -189,7 +194,7 @@ public partial class LibraryViewModel
         }
         catch (OperationCanceledException) when (!Current())
         {
-            // Caller cancellation or a newer query/reconnect/letter seek owns the catalog.
+            // A newer query/reconnect/letter seek owns the catalog.
             // A transport timeout without cancellation instead takes the failure path.
             return CatalogRefreshResult.Deferred;
         }

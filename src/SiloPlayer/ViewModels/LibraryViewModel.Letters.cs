@@ -70,8 +70,9 @@ public partial class LibraryViewModel
     private async Task EnsureLetterIndexCoreAsync(bool force = false)
     {
         if (Library is not null) EnsureCatalogScope();
-        if (_catalogRefreshPending && await RefreshInPlaceAsync(Math.Max(0, WindowStartIndex), PageSize) != CatalogRefreshResult.Completed)
-            return;
+        // The page's viewport owns catch-up priority, not the start of a held window.
+        // A successful catch-up will reread the retained rail in place.
+        if (_catalogRefreshPending) return;
         if (Library is null || SelectedSort != "title")
         {
             ResetLetterIndex();
