@@ -8,7 +8,7 @@ public partial class LibraryViewModel
 {
     public enum CatalogRefreshResult { Completed, Deferred, Failed, NotLoaded }
 
-    // Active window (1200), recent windows (1200), and at most one visible page.
+    // Bound catch-up work across the active window, recent windows and viewport.
     // Refresh the entire held set, not just a budgeted subset of its positions.
     internal const int MaxRefreshedItems = 2500;
     private bool _catalogRefreshPending;
@@ -103,6 +103,7 @@ public partial class LibraryViewModel
         }
         if (IsLetterJumpInProgress) return CatalogRefreshResult.Deferred;
         var chunks = PlanRefreshChunks(visibleStart, Math.Max(1, visibleCount));
+        var viewportEnd = (long)chunks[0].Start + Math.Max(1, visibleCount);
         // Never turn an unexpectedly oversized held set into an unbounded catch-up.
         if (chunks.Sum(chunk => chunk.Count) > MaxRefreshedItems) return CatalogRefreshResult.Deferred;
         RebaseCatalogQuery();
@@ -167,14 +168,19 @@ public partial class LibraryViewModel
                         }
                         replacements.Add((start, count, replacement));
                         refreshed++;
-                        if (replacements.Count == 1)
+                        var viewport = _confirmedRefreshViewport;
+                        if (start < viewportEnd && (viewport is null ||
+                            start == viewport.Value.Start + viewport.Value.Response.Items.Count))
                         {
-                            // Publish the viewport after one round trip, independently of
+                            // Publish each contiguous viewport chunk as it arrives, before
                             // the all-or-nothing merge of the other held windows.
-                            _confirmedRefreshViewport = (start, new CatalogResponse
-                            {
-                                Items = replacement.Items.Take(count).ToList(), Snapshot = snapshot,
-                            });
+                            if (viewport is { } confirmed)
+                                confirmed.Response.Items.AddRange(replacement.Items.Take(count));
+                            else
+                                _confirmedRefreshViewport = (start, new CatalogResponse
+                                {
+                                    Items = replacement.Items.Take(count).ToList(), Snapshot = snapshot,
+                                });
                             _confirmedRefreshViewportVersion = version;
                             WindowLoaded?.Invoke();
                         }
@@ -261,7 +267,7 @@ public partial class LibraryViewModel
         if (WindowStartIndex >= 0) Hold(WindowStartIndex, _windowItems.Count);
         foreach (var window in _recentWindows) Hold(window.Start, window.Response.Items.Count);
         visibleStart = Math.Clamp(visibleStart, 0, Math.Max(0, TotalCount - 1));
-        visibleCount = Math.Clamp(visibleCount, 1, Math.Min(CatalogWindowPageSize, Math.Max(1, TotalCount - visibleStart)));
+        visibleCount = Math.Clamp(visibleCount, 1, Math.Max(1, TotalCount - visibleStart));
 
         var chunks = new List<(int Start, int Count)>();
         for (var start = visibleStart; start < visibleStart + visibleCount; start += CatalogWindowPageSize)

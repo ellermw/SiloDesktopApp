@@ -139,6 +139,48 @@ public sealed class LibraryBackgroundRefreshTests
         Assert.False(model.RequiresCatalogRefresh);
     }
 
+    [Theory]
+    [InlineData(620, 100)]
+    [InlineData(720, 200)]
+    [InlineData(820, 300)]
+    [InlineData(500, 330)] // The nearest held range is read only after the whole viewport.
+    public async Task LargeViewportChunksBecomeRenderableBeforeDistantHeldRows(int heldRead, int confirmedCount)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await wire.Idle();
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            wire.HoldWindowAt = heldRead;
+            var requests = wire.Requests.Count;
+            Reconnect(wire);
+            var refresh = model.RefreshInPlaceAsync(520, 330);
+            try
+            {
+                await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.False(refresh.IsCompleted);
+                Assert.True(model.RequiresCatalogRefresh);
+                Assert.All(Enumerable.Range(520, confirmedCount), index =>
+                    Assert.Equal(wire.Titles[index].Id, model.GetRenderableWindowItem(index)?.ContentId));
+                Assert.All(Enumerable.Range(520 + confirmedCount, 330 - confirmedCount), index =>
+                    Assert.Null(model.GetRenderableWindowItem(index)));
+                Assert.Null(model.GetRenderableWindowItem(0));
+                Assert.Equal("item-520", model.GetWindowItem(520)?.ContentId); // Held rows are not committed yet.
+                var reads = wire.Requests.Skip(requests).ToList();
+                var confirmedChunks = (confirmedCount + 99) / 100;
+                Assert.Equal(Enumerable.Range(0, confirmedChunks).Select(page => (520 + page * 100).ToString()),
+                    reads.Take(confirmedChunks).Select(read => read["seek"]));
+                Assert.False(reads[0].ContainsKey("cursor"));
+                Assert.All(reads.Skip(1), read => Assert.Equal(wire.SnapshotOf(reads[0]), wire.SnapshotOf(read)));
+            }
+            finally { wire.ReleaseChunk.TrySetResult(); }
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await refresh.WaitAsync(TimeSpan.FromSeconds(3)));
+            Assert.All(Enumerable.Range(520, 330), index =>
+                Assert.Equal(wire.Titles[index].Id, model.GetRenderableWindowItem(index)?.ContentId));
+            Assert.False(model.RequiresCatalogRefresh);
+        }
+    }
+
     [Fact]
     public async Task RepeatedFiveMinuteReconnectsNeverRestartTheCatalog()
     {
@@ -554,6 +596,28 @@ public sealed class LibraryBackgroundRefreshTests
             var covered = chunks.SelectMany(chunk => Enumerable.Range(chunk.Start, chunk.Count)).ToList();
             Assert.Equal(covered.Count, covered.Distinct().Count());
             Assert.All(new[] { 0, 99, 400, 599 }, index => Assert.Contains(index, covered));
+        }
+    }
+
+    [Theory]
+    [InlineData(112)]
+    [InlineData(330)]
+    public void LargeViewportIsPlannedInFullBeforeOtherHeldRanges(int visibleCount)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            var held = Enumerable.Range(0, model.TotalCount).Where(index => model.GetWindowItem(index) is not null).ToArray();
+            var chunks = model.PlanRefreshChunks(520, visibleCount);
+            var viewportChunks = (visibleCount + 99) / 100;
+            Assert.Equal(Enumerable.Range(0, viewportChunks)
+                    .Select(page => (520 + page * 100, Math.Min(100, visibleCount - page * 100))),
+                chunks.Take(viewportChunks));
+            Assert.All(chunks, chunk => Assert.InRange(chunk.Count, 1, 100));
+            var covered = chunks.SelectMany(chunk => Enumerable.Range(chunk.Start, chunk.Count)).ToList();
+            Assert.Equal(covered.Count, covered.Distinct().Count());
+            Assert.All(held.Concat(Enumerable.Range(520, visibleCount)), index => Assert.Contains(index, covered));
+            Assert.InRange(covered.Count, held.Length, LibraryViewModel.MaxRefreshedItems);
         }
     }
 
