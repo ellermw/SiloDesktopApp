@@ -12,12 +12,6 @@ public partial class CatalogApi
         return response.BoxSets;
     }
     public long MetadataLanguageGeneration => client.LocalizedReads.Generation;
-    public async Task<bool> SupportsBoxSetsAsync(CancellationToken ct = default)
-    {
-        var context = client.CaptureContext();
-        try { return await ReadBoxSetPolicyAsync(context, ct); }
-        catch (ApiException ex) when (ex.StatusCode == 404) { return false; }
-    }
     public async Task<bool> BoxSetsEnabledAsync(int? libraryId, CancellationToken ct = default, bool throwOnCapabilityFailure = false)
     {
         if (libraryId is <= 0) return false;

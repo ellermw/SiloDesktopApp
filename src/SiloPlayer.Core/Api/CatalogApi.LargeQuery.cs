@@ -8,7 +8,7 @@ public partial class CatalogApi
     private async Task<CatalogResponse> GetLargeCatalogQueryAsync(List<QueryGroup> groups, string match,
         int? libraryId, string? sort, string? order, string? genre, string? contentRating, string? yearMin,
         string? yearMax, string? q, string? type, int limit, int offset, bool includeTotal, string? snapshot,
-        string? source, string? scope, string? sectionId, string? collectionId, int? queryLimit, CancellationToken ct, string? nextCursor, string? group)
+        string? source, string? scope, string? sectionId, string? collectionId, int? queryLimit, CancellationToken ct, string? nextCursor)
     {
         // Plain GET filters combine with the structured expression using AND.
         // Distribute them through OR groups so no original group is flattened
@@ -21,7 +21,7 @@ public partial class CatalogApi
             ["sort"] = sort?.TrimStart('-'), ["order"] = sort?.StartsWith('-') == true ? "desc" : order,
             ["q"] = q, ["type"] = type, ["source"] = source, ["scope"] = scope, ["section_id"] = sectionId,
             ["collection_id"] = collectionId, ["query_limit"] = queryLimit is > 0 ? queryLimit : null,
-            ["skip_total"] = !includeTotal, ["group"] = group == "box_set" ? group : null,
+            ["skip_total"] = !includeTotal,
         }.Where(pair => pair.Value != null).ToDictionary(pair => pair.Key, pair => pair.Value);
         var context = client.CaptureContext(); var result = new CatalogResponse();
         using var queryOwner = new HttpRequestMessage(HttpMethod.Post, client.BaseUrl.TrimEnd('/') + "/api/v2/catalog/query");

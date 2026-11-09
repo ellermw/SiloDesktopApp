@@ -28,32 +28,14 @@ public sealed class BoxSetFoundationTests
         Assert.Equal("9007199254740993", result.Id);
     }
     [Theory]
-    [InlineData("{}", false)] [InlineData("{\"box_sets\":false}", false)] [InlineData("{\"box_sets\":true}", true)]
-    public async Task CapabilityCompatibility(string json, bool expected)
-    {
-        using var wire = new Wire { Json = json }; using var http = new HttpClient(wire);
-        var client = Client(http); Assert.Equal(expected, await new CatalogApi(client).SupportsBoxSetsAsync());
-        Assert.EndsWith("/catalog/search/capabilities", wire.Last);
-    }
-    [Theory] [InlineData(404)] [InlineData(500)] [InlineData(503)]
-    public async Task OnlyMissingCapabilityIsUnsupportedWhileTransientFailuresRemainRetryable(int status)
-    {
-        using var wire = new Wire { Status = (HttpStatusCode)status }; using var http = new HttpClient(wire);
-        var api = new CatalogApi(Client(http));
-        if (status == 404) Assert.False(await api.SupportsBoxSetsAsync());
-        else Assert.Equal(status, (await Assert.ThrowsAsync<ApiException>(() => api.SupportsBoxSetsAsync())).StatusCode);
-        wire.Status = HttpStatusCode.OK; wire.Json = "{\"box_sets\":true}";
-        Assert.True(await api.SupportsBoxSetsAsync());
-    }
-    [Theory]
     [InlineData("7", "12")]
     [InlineData("18446744073709551615", "12")]
     [InlineData("\"set-7\"", "\"12\"")]
-    public async Task GroupedCatalogAcceptsNumericOrStringSummaryIdentifiers(string id, string library)
+    public async Task CatalogBoxSetSummaryAcceptsNumericOrStringIdentifiers(string id, string library)
     {
         using var wire = new Wire { Json = "{\"items\":[{\"type\":\"box_set\",\"box_set\":{\"id\":" + id + ",\"library_id\":" + library + "}}]}" };
         using var http = new HttpClient(wire);
-        var result = await new CatalogApi(Client(http)).GetCatalogAsync(12, group: "box_set");
+        var result = await new CatalogApi(Client(http)).GetCatalogAsync(12);
         Assert.Equal(id.Trim('"'), result.Items.Single().BoxSet!.Id);
         Assert.Equal("12", result.Items.Single().BoxSet!.LibraryId);
     }
