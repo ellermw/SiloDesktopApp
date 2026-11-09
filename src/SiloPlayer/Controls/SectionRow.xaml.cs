@@ -46,6 +46,8 @@ public sealed partial class SectionRow : UserControl
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
     private string? _lastRenderedSectionId;
     private long _activationGeneration;
+    private long _offsetRestoreGeneration;
+    private double? _pendingRestoreOffset;
     private const double DragThreshold = 7;
 
     /// <summary>The containing library. Home sections intentionally leave this null.</summary>
@@ -126,6 +128,7 @@ public sealed partial class SectionRow : UserControl
             ApplyResponsiveCardWidths(ActualWidth);
             RefreshPresentation();
         };
+        CardsScrollViewer.ViewChanging += CardsScrollViewer_ViewChanging;
         Unloaded += (_, _) =>
         {
             if (IsLoaded) return;
@@ -295,27 +298,50 @@ public sealed partial class SectionRow : UserControl
 
     private void RestoreScrollPositionAfterRebind(bool preserveOffset, double previousOffset)
     {
+        // A rebind before an earlier restore landed keeps that earlier target.
+        var pendingOffset = _pendingRestoreOffset;
+        CancelPendingOffsetRestore();
         if (!preserveOffset)
         {
             CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
             return;
         }
 
-        var targetOffset = Math.Max(0, previousOffset);
+        var targetOffset = Math.Max(0, pendingOffset ?? previousOffset);
         if (targetOffset <= 1)
             return;
 
         var activation = _activationGeneration;
+        var restore = _offsetRestoreGeneration;
         var section = Section;
+        _pendingRestoreOffset = targetOffset;
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (restore != _offsetRestoreGeneration) return;
+            _pendingRestoreOffset = null;
             if (!IsLoaded || activation != _activationGeneration || !ReferenceEquals(section, Section)) return;
+            // A rebind can only pull the offset back toward the start, so a
+            // forward move since then is the user's and must not be undone.
+            if (CardsScrollViewer.HorizontalOffset > targetOffset + 1) return;
             var clamped = Math.Clamp(targetOffset, 0, CardsScrollViewer.ScrollableWidth);
             // Restoring the mounted position is not new forward navigation.
             _lastHorizontalOffset = clamped;
             CardsScrollViewer.ChangeView(clamped, null, null, disableAnimation: true);
             UpdateScrollBounds();
         });
+    }
+
+    /// <summary>Retires a queued rebind restore once the user scrolls.</summary>
+    private void CancelPendingOffsetRestore()
+    {
+        ++_offsetRestoreGeneration;
+        _pendingRestoreOffset = null;
+    }
+
+    private void CancelPendingOffsetRestoreIfMovedForward(double offset)
+    {
+        if (_pendingRestoreOffset is { } target && offset > target + 1)
+            CancelPendingOffsetRestore();
     }
 
     private void UpdateSectionVisibility(HomeSectionWithItems section)
@@ -363,11 +389,15 @@ public sealed partial class SectionRow : UserControl
         // Initial layout can already be within one viewport of the tail on
         // wide displays. Wait for forward movement or explicit navigation.
         var offset = CardsScrollViewer.HorizontalOffset;
+        CancelPendingOffsetRestoreIfMovedForward(offset);
         // Custom drags arm once in PointerMoved, not on each scroll update.
         if (_dragPointerId == null && offset > _lastHorizontalOffset + 1) _completionDemandArmed = true;
         _lastHorizontalOffset = offset;
         UpdateScrollBounds();
     }
+
+    private void CardsScrollViewer_ViewChanging(object? sender, ScrollViewerViewChangingEventArgs e)
+        => CancelPendingOffsetRestoreIfMovedForward(e.FinalView.HorizontalOffset);
 
     private void CardsScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -399,10 +429,12 @@ public sealed partial class SectionRow : UserControl
                 e.Handled = true;
                 break;
             case VirtualKey.Home:
+                CancelPendingOffsetRestore();
                 CardsScrollViewer.ChangeView(0, null, null);
                 e.Handled = true;
                 break;
             case VirtualKey.End:
+                CancelPendingOffsetRestore();
                 _completionDemandArmed = true;
                 CardsScrollViewer.ChangeView(CardsScrollViewer.ScrollableWidth, null, null);
                 UpdateScrollBounds();
@@ -442,6 +474,7 @@ public sealed partial class SectionRow : UserControl
                 ResetDragState();
                 return;
             }
+            CancelPendingOffsetRestore();
         }
 
         var target = Math.Clamp(
@@ -713,6 +746,7 @@ public sealed partial class SectionRow : UserControl
 
     private void ScrollByPage(int direction)
     {
+        CancelPendingOffsetRestore();
         if (direction > 0) _completionDemandArmed = true;
         var page = Math.Max(240, CardsScrollViewer.ViewportWidth * 0.82);
         var target = Math.Clamp(
