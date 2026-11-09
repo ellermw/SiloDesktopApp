@@ -233,7 +233,7 @@ public sealed partial class MainWindow : Window
                     _shellHydrationCts?.Token ?? CancellationToken.None));
     }
 
-    private void ApplyResponsiveShellLayout()
+    private void ApplyResponsiveShellLayout(bool duringFrameNavigation = false)
     {
         var isNarrow = _currentWindowWidth < 1024;
         var wasNarrow = _isNarrowShell;
@@ -257,7 +257,15 @@ public sealed partial class MainWindow : Window
             : DesktopSidebarIsOpen
                 ? NavigationViewPaneDisplayMode.Left
                 : NavigationViewPaneDisplayMode.LeftCompact;
-        if (NavView.PaneDisplayMode != desiredPaneDisplayMode)
+        // Frame.Navigated runs while ContentFrame, inside NavView, is still
+        // committing. Switching the pane mode there re-templates that content and
+        // WinUI fails the navigation (0x80004005, NavigationFailed). A detail
+        // route changes the desktop mode, so reconcile it after the callback,
+        // as PaneOpening does.
+        var deferDesktopPane = duringFrameNavigation && !isNarrow && NavView.PaneDisplayMode != desiredPaneDisplayMode;
+        if (deferDesktopPane)
+            ScheduleDesktopPaneSynchronization();
+        else if (NavView.PaneDisplayMode != desiredPaneDisplayMode)
             NavView.PaneDisplayMode = desiredPaneDisplayMode;
 
         // Desktop sidebar state is controlled only by NavigationView's
@@ -285,8 +293,9 @@ public sealed partial class MainWindow : Window
             if (!wasNarrow && NavView.IsPaneOpen)
                 NavView.IsPaneOpen = false;
         }
-        else
+        else if (!deferDesktopPane)
         {
+            // The deferred reconcile sets mode and IsPaneOpen together.
             // LeftCompact is the WinUI mode designed for a persistent icon rail.
             // Reassigning IsPaneOpen on every page load restarts NavigationView's
             // pane transition, so only change it when the real state differs.
@@ -2293,7 +2302,7 @@ public sealed partial class MainWindow : Window
         // never leaves the user-controlled pane in a transient hidden state.
         if (!NavView.IsPaneVisible)
             NavView.IsPaneVisible = true;
-        ApplyResponsiveShellLayout();
+        ApplyResponsiveShellLayout(duringFrameNavigation: true);
         SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
         QueueSettingsSidebarSynchronization();
         if (e.SourcePageType != typeof(ProfileSelectPage) &&
@@ -2701,11 +2710,28 @@ public sealed partial class MainWindow : Window
             if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
                 NavView.IsPaneOpen = DesktopSidebarIsOpen;
             UpdateSidebarPanePresentation(DesktopSidebarIsOpen);
+            _desktopPaneSynchronizationFailures = 0;
+        }
+        catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x80004005))
+        {
+            // WinUI can refuse a mode switch while the previous pane change is
+            // still settling. This runs from the dispatcher, where an escaped
+            // exception ends the process, so log it and reconcile again shortly.
+            LocalLog.AppendException("navigation_errors.txt", ex, "desktop_pane_sync");
+            if (++_desktopPaneSynchronizationFailures <= 8)
+                _ = RetryDesktopPaneSynchronizationAsync();
         }
         finally
         {
             _synchronizingDesktopPaneState = false;
         }
+    }
+
+    private int _desktopPaneSynchronizationFailures;
+    private async Task RetryDesktopPaneSynchronizationAsync()
+    {
+        await Task.Delay(120);
+        if (!_windowClosed) ScheduleDesktopPaneSynchronization();
     }
 
     public void RestoreMainPane()
