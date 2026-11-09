@@ -215,6 +215,42 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:true:0:0:false", output);
     }
 
+    // Where the two-column panel covers part of the Watch Party opener, a
+    // click there (away from the close button) belongs to the panel and must
+    // not open the native Party menu beneath it.
+    [Theory]
+    [InlineData(960, 540)]
+    [InlineData(900, 700)]
+    public void PlaybackInfoPanelOwnsClicksOverTheCoveredWatchPartyOpener(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.watch_party = { visible=true, code='TEST1234', member_count=2, is_host=true, connection_state='connected' }
+            native_handlers['osc-native-party-scope']('11111111111111111111111111111111')
+            native_handlers['osc-toggle-stats']()
+            osc_test_layout(); osc_test_tick()
+            local panel = assert(s.stats_panel_rect, 'Playback info did not render')
+            local opener = assert(s.layout.btn_party, 'no Watch Party opener')
+            local close = assert(s.stats_close_rect)
+            local function inside(r, x, y) return x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h end
+            local x1, y1 = math.max(panel.x, opener.x), math.max(panel.y, opener.y)
+            local x2, y2 = math.min(panel.x + panel.w, opener.x + opener.w), math.min(panel.y + panel.h, opener.y + opener.h)
+            local px, py
+            for y = y1 + 1, y2 - 1, 2 do
+                for x = x1 + 1, x2 - 1, 2 do
+                    if not px and not inside(close, x, y) then px, py = x, y end
+                end
+            end
+            if px then native_handlers['osc-mouse-down'](tostring(px), tostring(py)) end
+            mp.set_property('user-data/playback-info-party-opener', tostring(px ~= nil) .. ':'
+                .. tostring(#party_requests) .. ':' .. tostring(s.native_menu_request == nil) .. ':' .. tostring(s.stats_visible))
+            """, rawAss: true, resultProperty: "user-data/playback-info-party-opener", beforeScript: PartyProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("true:0:true:true", output);
+    }
+
     // At the scroll edge the arrow keys fall through to their normal volume
     // command instead of being swallowed by a panel that cannot move further.
     [Fact]

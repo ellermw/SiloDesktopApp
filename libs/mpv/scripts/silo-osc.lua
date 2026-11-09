@@ -5239,10 +5239,11 @@ local function handle_mouse_down()
             end
             -- A panel clipped to its maximum height also reaches the transport
             -- row and utility rail. Those controls and the volume bar keep
-            -- their gestures through the normal control path below.
+            -- their gestures through the normal control path below. The Watch
+            -- Party opener (z=50) is drawn beneath the panel, so it does not.
             local on_control = false
             for name, rect in pairs(L) do
-                if name:sub(1, 4) == "btn_" and hud_interaction(name, rect) ~= "disabled"
+                if name:sub(1, 4) == "btn_" and name ~= "btn_party" and hud_interaction(name, rect) ~= "disabled"
                     and point_in_rect(mx, my, rect) then
                     on_control = true
                     break
