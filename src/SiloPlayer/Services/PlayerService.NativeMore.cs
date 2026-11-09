@@ -23,7 +23,9 @@ public partial class PlayerService
                 DisabledReason: audioAvailable ? "" : "No alternate audio tracks."),
             new("chapters", "Chapters", "", [], IsEnabled: chaptersAvailable,
                 DisabledReason: chaptersAvailable ? "" : "No chapters available."),
-            new("stats", "Playback info", "", []),
+            // Playback Info is the OSC's own drawn panel, not a native list, so
+            // say what this row does in its accessible name.
+            new("stats", "Playback info", "Shows or hides the on-screen panel", []),
             new("pip", "Picture in picture", "", []),
             new("fill", fill ? "Contain video" : "Fill screen", "", [], IsCurrent: fill),
             new("volume-down", "Volume -", $"{volume:0}%", [], IsEnabled: volume > 0,
