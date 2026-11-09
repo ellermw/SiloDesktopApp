@@ -64,6 +64,25 @@ internal static partial class ArtworkMotionNativeFixture
                 row.Children.Insert(0, retired);
                 await Until(() => retired.IsLoaded);
                 Check(BadgeText(retired) == expected, variant + " retained card refreshes overlays on reload without rebind");
+                if (variant == "custom")
+                {
+                    // Rebuilding identical badges on every refresh and re-realization created XAML churn
+                    // that forced the full GCs freezing a long-running session's UI.
+                    var shown = BadgeElements(poster);
+                    poster.RefreshState();
+                    row.Children.Remove(poster);
+                    await Until(() => !poster.IsLoaded);
+                    row.Children.Insert(0, poster);
+                    await Until(() => poster.IsLoaded);
+                    await Task.Delay(50);
+                    Check(shown.Count == 1 && BadgeElements(poster).SequenceEqual(shown),
+                        "PosterCard keeps unchanged badge elements through a state refresh and an unload/reload");
+                    var changed = Item("poster"); changed.Year = 2024;
+                    poster.MediaItem = changed;
+                    await Task.Delay(50);
+                    Check(BadgeText(poster) == "2024" && !BadgeElements(poster).SequenceEqual(shown),
+                        "PosterCard rebuilds badges when what they show changes");
+                }
             }
             finally
             {
@@ -81,6 +100,10 @@ internal static partial class ArtworkMotionNativeFixture
             .SelectMany(name => ((Panel)card.FindName(name)).Children.OfType<Border>())
             .SelectMany(badge => ((StackPanel)badge.Child).Children.OfType<TextBlock>())
             .Select(text => text.Text));
+
+    private static List<Border> BadgeElements(FrameworkElement card) =>
+        new[] { "OverlayTopLeft", "OverlayTopRight", "OverlayBottomLeft", "OverlayBottomRight" }
+            .SelectMany(name => ((Panel)card.FindName(name)).Children.OfType<Border>()).ToList();
 
     private sealed class OverlayServices(IServiceProvider fallback, CardOverlayService overlays) : IServiceProvider
     {

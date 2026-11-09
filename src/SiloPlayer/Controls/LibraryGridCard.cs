@@ -814,102 +814,20 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         _overlayBottomRight.Margin = new Thickness(edge);
     }
 
-    private void ClearOverlays()
-    {
-        _overlayTopLeft.Children.Clear();
-        _overlayTopRight.Children.Clear();
-        _overlayBottomLeft.Children.Clear();
-        _overlayBottomRight.Children.Clear();
-    }
+    private CardBadgeHosts? _badges;
+    private CardBadgeHosts Badges => _badges ??= new(_overlayTopLeft, _overlayTopRight, _overlayBottomLeft, _overlayBottomRight);
 
+    private void ClearOverlays() => Badges.Hide();
+
+    /// <summary>Shows the item's corner badges; unchanged badges are kept, so rebinding creates no XAML.</summary>
     private void UpdateOverlays(MediaItem item)
     {
-        ClearOverlays();
         var service = App.Services.GetRequiredService<CardOverlayService>();
         _overlayGeometry = CardOverlayGeometry.ForPoster(Width - 2, service.Preset);
         ApplyOverlayHostGeometry();
         if (!service.IsLoaded)
             _ = EnsureOverlaysLoadedAsync(item, service);
-
-        if (item.Status is "pending" or "unmatched" or "ambiguous")
-        {
-            var label = item.Status switch
-            {
-                "pending" => "SCANNING",
-                "unmatched" => "UNMATCHED",
-                _ => "AMBIGUOUS",
-            };
-            _overlayTopLeft.Children.Add(PosterCard.BuildBadge(
-                label,
-                "status",
-                new OverlayItemConfig(true, OverlayPosition.TopLeft),
-                "classic",
-                _overlayGeometry.Scale));
-            return;
-        }
-
-        if (item.Type == "manga")
-        {
-            if (!string.IsNullOrWhiteSpace(item.ShowStatus))
-            {
-                _overlayTopLeft.Children.Add(PosterCard.BuildBadge(
-                    item.ShowStatus,
-                    "show_status",
-                    new OverlayItemConfig(true, OverlayPosition.TopLeft),
-                    service.Preset,
-                    _overlayGeometry.Scale));
-            }
-
-            var counts = new List<string>();
-            if (item.MangaVolumeCount > 0) counts.Add($"{item.MangaVolumeCount} Vol");
-            if (item.MangaChapterCount > 0) counts.Add($"{item.MangaChapterCount} Ch");
-            if (counts.Count > 0)
-            {
-                _overlayTopRight.Children.Add(PosterCard.BuildBadge(
-                    string.Join(" · ", counts),
-                    "manga_counts",
-                    new OverlayItemConfig(true, OverlayPosition.TopRight),
-                    service.Preset,
-                    _overlayGeometry.Scale));
-            }
-            return;
-        }
-
-        var prefs = service.GetPrefs();
-        if (prefs == null)
-            return;
-
-        var data = OverlayData.FromMediaItem(item);
-        var cornerCounts = new Dictionary<OverlayPosition, int>();
-        foreach (var def in service.GetOrderedDefinitions())
-        {
-            if (!prefs.TryGetValue(def.Id, out var config) || !config.Enabled)
-                continue;
-            if (OverlayRegistry.SuppressesStandaloneOverlays(def.Id, prefs))
-                continue;
-
-            var value = def.GetValue(data);
-            if (string.IsNullOrWhiteSpace(value))
-                continue;
-            if (cornerCounts.GetValueOrDefault(config.Position) >= 3)
-                continue;
-
-            var host = config.Position switch
-            {
-                OverlayPosition.TopLeft => _overlayTopLeft,
-                OverlayPosition.TopRight => _overlayTopRight,
-                OverlayPosition.BottomLeft => _overlayBottomLeft,
-                OverlayPosition.BottomRight => _overlayBottomRight,
-                _ => _overlayTopLeft,
-            };
-            host.Children.Add(PosterCard.BuildBadge(
-                value,
-                def.Id,
-                config,
-                service.Preset,
-                _overlayGeometry.Scale));
-            cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
-        }
+        Badges.Show(CardBadgeHosts.For(item, service, _overlayGeometry.Scale, statusAndManga: true, upcoming: false));
     }
 
     private async Task EnsureOverlaysLoadedAsync(MediaItem item, CardOverlayService service)

@@ -38,6 +38,7 @@ public sealed class CurrentLibraryParitySourceTests
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
         var card = ReadRepoFile("src", "SiloPlayer", "Controls", "LibraryGridCard.cs");
+        var badges = ReadRepoFile("src", "SiloPlayer", "Controls", "CardBadges.cs");
         var display = ReadRepoFile("src", "SiloPlayer.Core", "Services", "MediaItemDisplayText.cs");
         var customization = ReadRepoFile("src", "SiloPlayer", "Services", "UICustomizationService.cs");
 
@@ -51,8 +52,9 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("string.Equals(item.Type, \"audiobook\"", card);
         Assert.Contains("SetLayout(Width, itemPosterHeight, Height)", card);
         Assert.Contains("MoreButton_Click", card);
-        Assert.Contains("GetOrderedDefinitions()", card);
-        Assert.Contains("PosterCard.BuildBadge", card);
+        Assert.Contains("CardBadgeHosts.For(item, service", card);
+        Assert.Contains("GetOrderedDefinitions()", badges);
+        Assert.Contains("PosterCard.BuildBadge", badges);
         Assert.Contains("case \"date_viewed\"", display);
         Assert.Contains("case \"narrator\"", display);
         Assert.Contains("\"series\" or \"tv\" when browseType == \"episode\" => \"episode\"", page);

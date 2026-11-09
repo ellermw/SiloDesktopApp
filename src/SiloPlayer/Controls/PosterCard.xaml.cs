@@ -344,13 +344,10 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         ClearOverlayPanels();
     }
 
-    private void ClearOverlayPanels()
-    {
-        OverlayTopLeft.Children.Clear();
-        OverlayTopRight.Children.Clear();
-        OverlayBottomLeft.Children.Clear();
-        OverlayBottomRight.Children.Clear();
-    }
+    private CardBadgeHosts? _badges;
+    private CardBadgeHosts Badges => _badges ??= new(OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight);
+
+    private void ClearOverlayPanels() => Badges.Hide();
 
     private UIElement? _ordinaryCardContent;
     private bool _preserveArtworkOnUpdate, _aggregateUnavailable;
@@ -509,115 +506,16 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     }
 
     /// <summary>
-    /// Rebuilds the 4 corner overlay panels for the given item, using prefs
-    /// from <see cref="Services.CardOverlayService"/>. All 9 overlay types
-    /// from the webui are supported; each one is shown only if:
-    ///   1. Admin kill switch (<c>overlays.enabled</c>) is on
-    ///   2. That overlay id is enabled in the resolved prefs
-    ///   3. The value extractor returns a non-null, non-empty string
-    /// Also kicks off a one-shot prefs fetch on the first card bind.
+    /// Shows the corner overlay badges for the given item, using prefs from
+    /// <see cref="Services.CardOverlayService"/> (see <see cref="CardBadgeHosts.For"/>).
+    /// Unchanged badges are kept, so re-realizing or refreshing a card creates no XAML.
     /// </summary>
     private void UpdateBadges(MediaItem item)
     {
-        OverlayTopLeft.Children.Clear();
-        OverlayTopRight.Children.Clear();
-        OverlayBottomLeft.Children.Clear();
-        OverlayBottomRight.Children.Clear();
-
         var service = App.Services.GetRequiredService<Services.CardOverlayService>();
         _overlayGeometry = CardOverlayGeometry.ForPoster(Width - 2, service.Preset);
         ApplyOverlayGeometry();
-        if (item.Status is "pending" or "unmatched" or "ambiguous")
-        {
-            var label = item.Status switch
-            {
-                "pending" => "SCANNING",
-                "unmatched" => "UNMATCHED",
-                _ => "AMBIGUOUS",
-            };
-            OverlayTopLeft.Children.Add(BuildBadge(
-                label,
-                "status",
-                new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
-                "classic",
-                _overlayGeometry.Scale));
-            return;
-        }
-
-        if (item.Type == "manga")
-        {
-            if (!string.IsNullOrWhiteSpace(item.ShowStatus))
-            {
-                OverlayTopLeft.Children.Add(BuildBadge(
-                    item.ShowStatus,
-                    "show_status",
-                    new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
-                    service.Preset,
-                    _overlayGeometry.Scale));
-            }
-
-            var counts = new List<string>();
-            if (item.MangaVolumeCount > 0) counts.Add($"{item.MangaVolumeCount} Vol");
-            if (item.MangaChapterCount > 0) counts.Add($"{item.MangaChapterCount} Ch");
-            if (counts.Count > 0)
-            {
-                OverlayTopRight.Children.Add(BuildBadge(
-                    string.Join(" \u00b7 ", counts),
-                    "manga_counts",
-                    new Services.OverlayItemConfig(true, Services.OverlayPosition.TopRight),
-                    service.Preset,
-                    _overlayGeometry.Scale));
-            }
-            return;
-        }
-
-        // Upcoming rows carry server-computed premiere/finale badges that are
-        // independent of the user's generic overlay preferences.
-        if (item.UpcomingEvent is { Badges.Count: > 0 } upcoming)
-        {
-            foreach (var badge in upcoming.Badges)
-            {
-                var label = badge switch
-                {
-                    "series_premiere" => "Premiere",
-                    "season_premiere" => "New Season",
-                    "finale" => "Finale",
-                    _ => badge,
-                };
-                OverlayTopLeft.Children.Add(BuildBadge(
-                    label,
-                    "upcoming_event",
-                    new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
-                    "classic",
-                    _overlayGeometry.Scale));
-            }
-        }
-
-        var prefs = service.GetPrefs();
-        if (prefs == null) return; // Admin kill switch engaged → no badges.
-
-        var data = Services.OverlayData.FromMediaItem(item);
-        var cornerCounts = new Dictionary<Services.OverlayPosition, int>();
-        foreach (var def in service.GetOrderedDefinitions())
-        {
-            if (!prefs.TryGetValue(def.Id, out var config) || !config.Enabled) continue;
-            if (Services.OverlayRegistry.SuppressesStandaloneOverlays(def.Id, prefs)) continue;
-            var value = def.GetValue(data);
-            if (string.IsNullOrEmpty(value)) continue;
-            if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
-
-            var badge = BuildBadge(value, def.Id, config, service.Preset, _overlayGeometry.Scale);
-            var host = config.Position switch
-            {
-                Services.OverlayPosition.TopLeft => OverlayTopLeft,
-                Services.OverlayPosition.TopRight => OverlayTopRight,
-                Services.OverlayPosition.BottomLeft => OverlayBottomLeft,
-                Services.OverlayPosition.BottomRight => OverlayBottomRight,
-                _ => OverlayTopLeft,
-            };
-            host.Children.Add(badge);
-            cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
-        }
+        Badges.Show(CardBadgeHosts.For(item, service, _overlayGeometry.Scale, statusAndManga: true, upcoming: true));
     }
 
     /// <summary>

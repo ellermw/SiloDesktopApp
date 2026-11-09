@@ -62,6 +62,25 @@ public sealed class PlaybackDiagnosticsTests
     }
 
     [Fact]
+    public async Task PeriodicFlushesDoNotRewriteAnOpenIncidentEverySecond()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "silo-flight-throttle-" + Guid.NewGuid().ToString("N"));
+        using var recorder = new PlaybackDiagnostics(directory: directory);
+        for (int i = 0; i < 3000; i++) recorder.Record("fixture", new { sequence = i });
+        recorder.Incident("fixture_stall");
+        await recorder.FlushPeriodicAsync(); // A new incident is written at once.
+        var path = Directory.GetFiles(directory, "stall-*.json").Single();
+        Assert.DoesNotContain("after_first_write", await File.ReadAllTextAsync(path));
+
+        recorder.Record("after_first_write");
+        await recorder.FlushPeriodicAsync(); // The one-second sampler must not rewrite megabytes again.
+        Assert.DoesNotContain("after_first_write", await File.ReadAllTextAsync(path));
+
+        await recorder.FlushAsync(); // An explicit flush still writes current evidence.
+        Assert.Contains("after_first_write", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
     public async Task FinalIncidentSurvivesTemporaryWriteFailureAndNonFiniteNativeValues()
     {
         var directory = Path.GetTempFileName();
