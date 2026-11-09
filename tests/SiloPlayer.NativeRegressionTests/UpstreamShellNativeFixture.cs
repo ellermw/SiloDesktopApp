@@ -72,6 +72,12 @@ internal static class UpstreamShellNativeFixture
             var originalRows = nav.MenuItems.ToArray();
             navigation.Navigate<SettingsPage>(); await Task.Delay(300);
             var page = (SettingsPage)navigation.Frame!.Content;
+            // Page changes ease in like Granary's; Windows animation effects off keeps the instant swap.
+            var pageTransition = PageTransitionHelper.ForPageChange().GetType();
+            var backStack = navigation.Frame.BackStack;
+            Check(backStack.Count > 0 && backStack[backStack.Count - 1].NavigationTransitionInfo?.GetType() == pageTransition,
+                $"Page change did not use the shared {pageTransition.Name}");
+            Program.Log($"PASS: shell page changes use {pageTransition.Name}.");
             Check(Named<FrameworkElement>("SettingsSidebarHeader").Visibility == Visibility.Visible, "Wide Settings did not replace app sidebar");
             Check(page.ActiveSettingsSection == "Playback", "Wide Settings did not default to Playback");
             var search = Named<TextBox>("SettingsSidebarSearch");

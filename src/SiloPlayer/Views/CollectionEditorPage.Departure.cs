@@ -30,9 +30,9 @@ public sealed partial class CollectionEditorPage
                 var dialog = CreateDepartureDialog(XamlRoot);
                 if (await dialog.ShowAsync() != ContentDialogResult.Primary || !ReferenceEquals(frame.Content, this) || ViewModel.IsSaving) return;
                 _allowDeparture = true;
-                if (mode == NavigationMode.Back && frame.CanGoBack) frame.GoBack(new SuppressNavigationTransitionInfo());
+                if (mode == NavigationMode.Back && frame.CanGoBack) frame.GoBack(PageTransitionHelper.ForPageChange());
                 else if (mode == NavigationMode.Forward && frame.CanGoForward) frame.GoForward();
-                else if (mode == NavigationMode.New) frame.Navigate(target, parameter, new SuppressNavigationTransitionInfo());
+                else if (mode == NavigationMode.New) frame.Navigate(target, parameter, PageTransitionHelper.ForPageChange());
             }
             finally { _allowDeparture = false; _confirmingDeparture = false; }
         });
