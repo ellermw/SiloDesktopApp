@@ -2315,7 +2315,7 @@ local function render_stats()
     if not state.stats_visible then
         state.stats_panel_rect = nil
         state.stats_scroll_max = 0
-        state.stats_rows_announced = nil
+        state.stats_rows_sent = nil
         if state.stats_overlay then
             state.stats_overlay.data = ""
             state.stats_overlay:update()
@@ -2484,11 +2484,15 @@ local function render_stats()
     table.insert(sections, s4)
 
     -- The ASS panel has no UI Automation peers. Hand the host its displayed
-    -- sections once per opening so screen readers can announce every row.
+    -- sections when the panel opens and again whenever a displayed value
+    -- changes, so the spoken text follows the live panel instead of freezing
+    -- at its first paint. The host decides which changes are worth speaking.
     -- Only these explicit displayed fields cross; no URL/header/property dump.
-    if not state.stats_rows_announced then
-        state.stats_rows_announced = true
-        mp.commandv("script-message", "silo-stats-panel-rows", require("mp.utils").format_json(sections))
+    local rows_json = require("mp.utils").format_json(sections)
+    if rows_json and rows_json ~= state.stats_rows_sent then
+        local reason = state.stats_rows_sent and "update" or "open"
+        state.stats_rows_sent = rows_json
+        mp.commandv("script-message", "silo-stats-panel-rows", reason, rows_json)
     end
 
     -- Wrap rows to a column's width and return each section's height,
@@ -4872,7 +4876,7 @@ end
 local function toggle_stats()
     if state.native_menu_request then return end
     state.stats_visible = not state.stats_visible
-    if state.stats_visible then state.stats_scroll_offset = 0; state.stats_rows_announced = nil end
+    if state.stats_visible then state.stats_scroll_offset = 0; state.stats_rows_sent = nil end
     render_stats()
 end
 

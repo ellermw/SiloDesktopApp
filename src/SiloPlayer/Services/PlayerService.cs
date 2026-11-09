@@ -7954,8 +7954,8 @@ public partial class PlayerService : IDisposable
                     dispatch.TryEnqueue(() => HandleNativeMenuInput(args[1], args[2], args[3]));
                 break;
             case "silo-stats-panel-rows":
-                if (args.Length == 2)
-                    dispatch.TryEnqueue(() => AnnouncePlaybackInfoRows(args[1]));
+                if (args.Length == 3)
+                    dispatch.TryEnqueue(() => AnnouncePlaybackInfoRows(args[1], args[2]));
                 break;
             case "silo-buffering-lower":
                 dispatch.TryEnqueue(() => _ = LowerBufferingQualityAsync());
