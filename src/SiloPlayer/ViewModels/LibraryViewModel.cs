@@ -387,6 +387,7 @@ public partial class LibraryViewModel : ObservableObject
         int startIndex, int endIndex, bool forward, CancellationToken ct = default)
     {
         if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex) return [];
+        // A changed library scope or access starts a new, empty query: nothing to prefetch.
         EnsureCatalogScope();
         if (TotalCount <= 0) return [];
         if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, endIndex - startIndex + 1, ct) != CatalogRefreshResult.Completed)
@@ -981,7 +982,7 @@ public partial class LibraryViewModel : ObservableObject
         var context = _catalogApi.CaptureContext();
         var version = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
-        var nextCursor = publishState && _completedBoundaries.TryGetValue(startIndex, out var boundary)
+        var nextCursor = _completedBoundaries.TryGetValue(startIndex, out var boundary)
             && boundary.QueryVersion == version && boundary.Context == context && boundary.QueryKey == queryKey
             && boundary.Snapshot == snapshot ? boundary.NextCursor : null;
         static string Fingerprint(string? text) => string.IsNullOrEmpty(text) ? "none"
@@ -990,9 +991,8 @@ public partial class LibraryViewModel : ObservableObject
         var cursorFingerprint = Fingerprint(nextCursor ?? snapshot);
         // A refetch retires the boundary supplied by that page immediately;
         // failed or canceled replacements cannot leave an older cursor usable.
-        if (publishState)
-            foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
-                _completedBoundaries.Remove(end);
+        foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
+            _completedBoundaries.Remove(end);
         CatalogResponse response;
         try
         {
@@ -1032,13 +1032,13 @@ public partial class LibraryViewModel : ObservableObject
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
         SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_queries.txt",
             $"action={SiloPlayer.Core.Services.LocalLog.CurrentOperationId} start={startIndex} limit={CatalogWindowPageSize} query_version={version} read_generation={context.RequestContextGeneration} query_fingerprint={queryFingerprint} input_cursor={cursorFingerprint} window_cursor={Fingerprint(response.Snapshot)} next_cursor={Fingerprint(response.Page?.NextCursor)} items={response.Items.Count} totals={includeTotal}");
-        if (publishState && response.Items.Count == CatalogWindowPageSize && response.HasMore
+        if (response.Items.Count == CatalogWindowPageSize && response.HasMore
             && !string.IsNullOrWhiteSpace(response.Snapshot) && !string.IsNullOrWhiteSpace(response.Page?.NextCursor))
         {
             _completedBoundaries[startIndex + CatalogWindowPageSize] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
             while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
         }
-        if (publishState && response.Items.Count > 0)
+        if (response.Items.Count > 0)
             _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + response.Items.Count);
         return response;
     }

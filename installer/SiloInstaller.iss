@@ -3,12 +3,12 @@
 
 #define MyAppName "Silo Desktop Player"
 #ifndef MyAppVersion
-#define MyAppVersion "1.2.953-beta.1"
+#define MyAppVersion "1.2.953"
 #endif
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
 #ifndef MyAppFourPartVersion
-#define MyAppFourPartVersion "1.2.952.1"
+#define MyAppFourPartVersion "1.2.953.0"
 #endif
 #ifndef SiloUninstallKey
 #define SiloUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1"

@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.2.953-beta.1</Version>
-    <FileVersion>1.2.952.1</FileVersion>
-    <AssemblyVersion>1.2.952.1</AssemblyVersion>
+    <Version>1.2.953</Version>
+    <FileVersion>1.2.953.0</FileVersion>
+    <AssemblyVersion>1.2.953.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -111,6 +111,12 @@
     -->
     <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
         <ProjectCapability Include="Msix" />
+    </ItemGroup>
+
+    <!-- Core sources are compiled into this assembly; PlaybackIntegrationTests links
+         EventAccessTransportTests.cs, which uses EventChannelClient's internal test hooks. -->
+    <ItemGroup>
+      <InternalsVisibleTo Include="SiloPlayer.PlaybackIntegrationTests" />
     </ItemGroup>
 
     <ItemGroup>

@@ -423,6 +423,7 @@ public sealed partial class MainWindow : Window
     {
         if (args.DidPresenterChange || args.DidSizeChange || args.DidPositionChange)
         {
+            TrackNormalWindowBounds();
             var p = AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
             if (p != null)
             {
@@ -1381,6 +1382,11 @@ public sealed partial class MainWindow : Window
         object? sender,
         Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
+        // A page change that eases in owns the incoming root's opacity and offset
+        // for its animation; normalizing it here would cut the entrance short.
+        if (e.NavigationTransitionInfo is { } transition
+            && transition is not Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo)
+            return;
         if (e.Content is FrameworkElement content)
             PageTransitionHelper.AnimateEntrance(content);
     }
