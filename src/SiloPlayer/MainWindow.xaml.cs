@@ -266,7 +266,24 @@ public sealed partial class MainWindow : Window
         if (deferDesktopPane)
             ScheduleDesktopPaneSynchronization();
         else if (NavView.PaneDisplayMode != desiredPaneDisplayMode)
-            NavView.PaneDisplayMode = desiredPaneDisplayMode;
+        {
+            try
+            {
+                NavView.PaneDisplayMode = desiredPaneDisplayMode;
+                _desktopPaneSynchronizationFailures = 0;
+            }
+            catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x80004005))
+            {
+                // A resize or shell action can land while the previous pane change
+                // is still settling; WinUI then refuses the switch. These callers
+                // run unguarded on the UI thread, so log it and reconcile shortly,
+                // leaving IsPaneOpen to the retry as the deferred path does.
+                LocalLog.AppendException("navigation_errors.txt", ex, "responsive_pane_mode");
+                deferDesktopPane = !isNarrow;
+                if (++_desktopPaneSynchronizationFailures <= 8)
+                    _ = isNarrow ? RetryResponsiveShellLayoutAsync() : RetryDesktopPaneSynchronizationAsync();
+            }
+        }
 
         // Desktop sidebar state is controlled only by NavigationView's
         // explicit toggle. The custom mobile header owns its own menu button.
@@ -2732,6 +2749,12 @@ public sealed partial class MainWindow : Window
     {
         await Task.Delay(120);
         if (!_windowClosed) ScheduleDesktopPaneSynchronization();
+    }
+
+    private async Task RetryResponsiveShellLayoutAsync()
+    {
+        await Task.Delay(120);
+        if (!_windowClosed) ApplyResponsiveShellLayout();
     }
 
     public void RestoreMainPane()
