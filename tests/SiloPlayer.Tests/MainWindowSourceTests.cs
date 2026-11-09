@@ -159,6 +159,9 @@ public sealed class MainWindowSourceTests
         // Playing Next bitmaps are created through the same decoder as library cards.
         Assert.Contains("ArtworkDecodeGate.BitmapCreateLock)", spoilers);
         Assert.Contains("s_bitmapCreateLock = ArtworkDecodeGate.BitmapCreateLock;", card);
+        // A blurred spoiler still is decoded before assignment, so it never waits for an ImageOpened that may not come.
+        Assert.Contains("contentId + \"\\n\" + url, Decoded: hide);", artwork);
+        Assert.Contains("if (art.Decoded || image.PixelWidth > 0) { RevealPlayingNextArt(); return; }", artwork);
     }
 
     [Fact]

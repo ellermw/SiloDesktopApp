@@ -15,8 +15,10 @@ namespace SiloPlayer;
 /// </summary>
 public sealed partial class MainWindow
 {
+    // Decoded: the bitmap finished SetSourceAsync before it was assigned (the blurred spoiler still),
+    // so ImageOpened may already have fired or never fire; it is shown without waiting for it.
     private sealed record PlayingNextArt(string ContentId, string Url, bool Hide, int DecodeWidth,
-        ApiIdentityContext Owner, BitmapImage Image, string FailureKey)
+        ApiIdentityContext Owner, BitmapImage Image, string FailureKey, bool Decoded)
     {
         /// <summary>Set once the picture failed, so the bitmap's and the Image's failure count once.</summary>
         public bool Failed { get; set; }
@@ -121,9 +123,10 @@ public sealed partial class MainWindow
         var owner = _apiClient.CaptureIdentityContext();
         var image = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide, width);
         if (image is null || !_apiClient.IsCurrentIdentityContext(owner)) return null;
-        // No pixels yet is not a failure: SetSourceAsync throws for an unreadable stream, a later
-        // decode failure raises ImageFailed, and ShowPlayingNextArt waits for ImageOpened.
-        var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image, contentId + "\n" + url);
+        // No pixels yet is not a failure: SetSourceAsync throws for an unreadable stream, so a hidden
+        // (blurred) still is already decoded; a later URI decode failure raises ImageFailed, and
+        // ShowPlayingNextArt waits for ImageOpened only for a URI-backed picture.
+        var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image, contentId + "\n" + url, Decoded: hide);
         image.ImageFailed += (_, e) => OnPlayingNextArtFailed(art, e.ErrorMessage);
         if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
             _preparedPlayingNextArt = art;
@@ -222,7 +225,8 @@ public sealed partial class MainWindow
         PlayingNextPoster.Source = image;
         PlayingNextBackdrop.Source = image;
         // An already decoded picture shows in this frame; a new one waits until it opens.
-        if (image.PixelWidth > 0) { RevealPlayingNextArt(); return; }
+        // Blurred stills finished SetSourceAsync before assignment; ImageOpened may not fire.
+        if (art.Decoded || image.PixelWidth > 0) { RevealPlayingNextArt(); return; }
         foreach (var element in new[] { PlayingNextPoster, PlayingNextBackdrop }) { element.OpacityTransition = null; element.Opacity = 0; }
         // Listen on the shared bitmap: with two Images on one source, only one of them raises ImageOpened.
         void Opened(object sender, RoutedEventArgs e)
