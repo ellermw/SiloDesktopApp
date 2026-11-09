@@ -482,6 +482,12 @@ public sealed class EventChannelClient : IDisposable
             {
                 await ConnectAndRunOnce(ct, catchUp, () => connectedAt = System.Diagnostics.Stopwatch.GetTimestamp());
             }
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && IsTimeout(ex))
+            {
+                // HttpClient.Timeout surfaces as a cancellation, but it is a lost connection:
+                // back off and retry (catching up) instead of ending the loop for good.
+                Log($"Connection timed out: {ex.Message}");
+            }
             catch (OperationCanceledException)
             {
                 if (!ct.IsCancellationRequested && Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
@@ -519,6 +525,13 @@ public sealed class EventChannelClient : IDisposable
             try { await Task.Delay(backoffMs, ct); } catch { return; }
             backoffMs = Math.Min(backoffMs * 2, 30_000);
         }
+    }
+
+    private static bool IsTimeout(Exception ex)
+    {
+        for (var inner = ex.InnerException; inner != null; inner = inner.InnerException)
+            if (inner is TimeoutException) return true;
+        return false;
     }
 
     private void SetPendingTransportCatchUp(CancellationToken ct, bool pending)

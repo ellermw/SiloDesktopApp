@@ -106,6 +106,38 @@ public sealed class EventAccessTransportTests
                 { Content = new StringContent("Synthetic ticket unavailable") });
     }
 
+    [Fact]
+    public async Task ATimedOutTicketMintBacksOffAndRetriesInsteadOfEndingTheLoop()
+    {
+        var handler = new HangingTicketHandler();
+        // HttpClient.Timeout throws a TaskCanceledException while the loop's own token is live.
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(200) };
+        var api = new SiloApiClient(http);
+        api.SetBaseUrl("https://ticket-timeout.fixture.invalid");
+        using var auth = new AuthService(api, new(api));
+        auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+        auth.SetCurrentUser(new() { Id = "account", Role = "admin" });
+        auth.SelectProfile("synthetic-profile", "synthetic-proof");
+        using var events = new EventChannelClient(api, auth);
+        using var subscription = events.Subscribe("notifications");
+        // First mint times out after 0.2 s; the 1 s backoff then mints again.
+        for (var i = 0; i < 1000 && Volatile.Read(ref handler.Tickets) < 2; i++) await Task.Delay(10);
+        Assert.True(Volatile.Read(ref handler.Tickets) >= 2, "A timed-out ticket mint ended the events run loop.");
+        var run = (Task?)typeof(EventChannelClient).GetField("_runTask", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(events);
+        Assert.False(run!.IsCompleted);
+    }
+
+    private sealed class HangingTicketHandler : HttpMessageHandler
+    {
+        internal int Tickets;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath == "/api/v2/events/ws-ticket") Interlocked.Increment(ref Tickets);
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
