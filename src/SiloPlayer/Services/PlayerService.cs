@@ -7944,7 +7944,6 @@ public partial class PlayerService : IDisposable
         {
             case "silo-native-subtitle-open":
             case "silo-native-audio-open":
-            case "silo-native-stats-open":
             case "silo-native-quality-open":
             case "silo-native-chapters-open":
             case "silo-native-more-open":
@@ -7953,13 +7952,13 @@ public partial class PlayerService : IDisposable
                 if (PlaybackMenuRequest.TryParse(args, out var menuRequest))
                     dispatch.TryEnqueue(() => _ = HandleNativeMenuOpenAsync(menuRequest));
                 break;
-            case "silo-native-stats-data":
-                if (args.Length == 4)
-                    dispatch.TryEnqueue(() => HandleNativeStatsData(args[1], args[2], args[3]));
-                break;
             case "silo-native-menu-input":
                 if (args.Length == 4)
                     dispatch.TryEnqueue(() => HandleNativeMenuInput(args[1], args[2], args[3]));
+                break;
+            case "silo-stats-panel-rows":
+                if (args.Length == 3)
+                    dispatch.TryEnqueue(() => AnnouncePlaybackInfoRows(args[1], args[2]));
                 break;
             case "silo-buffering-lower":
                 dispatch.TryEnqueue(() => _ = LowerBufferingQualityAsync());

@@ -31,8 +31,6 @@ internal class PlaybackChoiceMenu
     private IReadOnlyList<PlaybackMenuChoice> _choices;
     private readonly FrameworkElement? _footer;
     private readonly Func<PlaybackMenuChoice, FrameworkElement?>? _leadingContent;
-    private readonly Func<PlaybackMenuChoice, FrameworkElement>? _choiceContent;
-    private readonly VirtualKey? _dismissKey;
     private readonly bool _allowDisabledTraversal;
     private int _footerIndex = -1;
     private bool _keepSelectionVisible = true;
@@ -51,15 +49,14 @@ internal class PlaybackChoiceMenu
     internal PlaybackChoiceMenu(MpvVideoWindow owner, PlaybackMenuAnchor anchor, string title,
         IReadOnlyList<PlaybackMenuChoice> choices, Func<bool> isCurrent,
         Action<string> selected, Action<PlaybackMenuCloseReason> closed, Action<DependencyObject>? applyTypography = null, FrameworkElement? footer = null,
-        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null, bool allowDisabledTraversal = false,
-        Func<PlaybackMenuChoice, FrameworkElement>? choiceContent = null, VirtualKey? dismissKey = null)
+        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null, bool allowDisabledTraversal = false)
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(choices);
         if (choices.Count == 0) throw new ArgumentException("A menu requires a choice.", nameof(choices));
         _owner = owner; _anchor = anchor; _choices = choices;
         _isCurrent = isCurrent; _selected = selected; _closed = closed;
-        _applyTypography = applyTypography; _footer = footer; _leadingContent = leadingContent; _choiceContent = choiceContent; _dismissKey = dismissKey;
+        _applyTypography = applyTypography; _footer = footer; _leadingContent = leadingContent;
         _allowDisabledTraversal = allowDisabledTraversal;
         _dismiss = () => Close(PlaybackMenuCloseReason.OutsidePointer);
         _list = new ListView
@@ -150,7 +147,7 @@ internal class PlaybackChoiceMenu
 
     private ListViewItem BuildChoice(PlaybackMenuChoice choice)
     {
-            var copy = _choiceContent?.Invoke(choice) ?? BuildDefaultContent(choice);
+            var copy = BuildDefaultContent(choice);
             var row = new Grid { ColumnSpacing = 8, Opacity = choice.IsEnabled ? 1 : .55 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -184,7 +181,7 @@ internal class PlaybackChoiceMenu
         // A live refresh is not navigation. Leave scrollbar/touch offsets alone,
         // including layout queued by updated row sizes; explicit navigation
         // resumes selection-following in Input.
-        if (sameIds || _choiceContent != null) _keepSelectionVisible = false;
+        if (sameIds) _keepSelectionVisible = false;
         var previous = _choices; _choices = choices;
         void UpdateContainer(ListViewItem row, PlaybackMenuChoice choice)
         {
@@ -204,33 +201,6 @@ internal class PlaybackChoiceMenu
                 if (Same(previous[i], choices[i])) continue;
                 UpdateContainer((ListViewItem)_list.Items[i], choices[i]);
             }
-        }
-        else if (_choiceContent != null)
-        {
-            // A live diagnostic can gain or lose optional rows. Keep each surviving
-            // native container in the list so keyboard focus and wheel position survive.
-            var selected = (_list.SelectedItem as ListViewItem)?.Tag as string;
-            var next = choices.Select(choice => choice.Id).ToHashSet(StringComparer.Ordinal);
-            var prior = previous.ToDictionary(choice => choice.Id, StringComparer.Ordinal);
-            for (var i = _list.Items.Count - 1; i >= 0; i--)
-            {
-                var item = (ListViewItem)_list.Items[i];
-                if (next.Contains((string)item.Tag)) continue;
-                item.Loaded -= OnRowLoaded; _list.Items.RemoveAt(i);
-            }
-            for (var i = 0; i < choices.Count; i++)
-            {
-                var choice = choices[i];
-                if (!prior.TryGetValue(choice.Id, out var old)) { _list.Items.Insert(i, BuildChoice(choice)); continue; }
-                var item = (ListViewItem)_list.Items[i];
-                if ((string)item.Tag != choice.Id)
-                {
-                    item = _list.Items.OfType<ListViewItem>().First(row => (string)row.Tag == choice.Id);
-                    _list.Items.Remove(item); _list.Items.Insert(i, item);
-                }
-                if (!Same(old, choice)) UpdateContainer(item, choice);
-            }
-            _list.SelectedIndex = Math.Max(0, choices.ToList().FindIndex(choice => choice.Id == selected));
         }
         else
         {
@@ -383,7 +353,7 @@ internal class PlaybackChoiceMenu
     private bool HandleKeyboardInput(VirtualKey key)
     {
         var shift = key == VirtualKey.Tab && (GetKeyState((int)VirtualKey.Shift) & 0x8000) != 0;
-        var action = key == _dismissKey ? "cancel" : KeyboardAction(key, shift);
+        var action = KeyboardAction(key, shift);
         if (action == null) return false;
         Input(action);
         return true;

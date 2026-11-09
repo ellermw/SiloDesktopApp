@@ -146,33 +146,6 @@ public sealed partial class MpvOscRuntimeTests
     }
 
     [Theory]
-    [InlineData("key")]
-    [InlineData("host")]
-    public void NativeModalInteropSecondStatsToggleCancelsTheSameNativeRequest(string route)
-    {
-        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
-            native_probe_time=10
-            local s=osc_test_state
-            s.osc_disabled,s.playback_loading=false,false
-            s.visible,s.current_alpha,s.target_alpha=true,1,1
-            local token='11111111111111111111111111111111'
-            native_handlers['osc-native-stats-scope'](token)
-            local toggle='{{route}}'=='key' and native_keys['silo-osc-toggle-stats'] or native_handlers['osc-toggle-stats']
-            toggle()
-            local request=assert(native_requests[1],'native Stats did not open')
-            toggle()
-            local cancel=native_inputs[1]
-            local matching=#native_requests==1 and #native_inputs==1 and cancel[2]=='silo-native-menu-input'
-                and cancel[3]==token and tonumber(cancel[4])==tonumber(request[4]) and cancel[5]=='cancel'
-            native_handlers['osc-native-menu-closed'](request[3],request[4],'false')
-            mp.set_property('user-data/modal-interop',tostring(matching)..':'..tostring(not s.native_menu_request)..':'..tostring(not s.stats_visible))
-            """, rawAss: true, resultProperty: "user-data/modal-interop", beforeScript: ModalInteropProbe,
-            windowWidth: 1920, windowHeight: 1080, scriptOverride: ModalInteropSource);
-        Assert.Equal("true:true:true", output);
-    }
-
-    [Theory]
-    [InlineData("stats", "btn_stats")]
     [InlineData("speed", "btn_quality")]
     [InlineData("subtitle", "btn_cc")]
     public void NativeModalInteropActiveUtilityRenderingRetainsNativeMenuState(string kind, string control)
