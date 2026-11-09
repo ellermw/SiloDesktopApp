@@ -142,12 +142,44 @@ public sealed class RelaunchWindowPlacementTests
 
         var app = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "App.xaml.cs"));
         var apply = app.IndexOf("MainWindowInstance.ApplyRelaunchPlacement()", StringComparison.Ordinal);
+        var activateFromArgument = app.IndexOf("MainWindowInstance.ActivateFromArgument(e.Arguments)", StringComparison.Ordinal);
         var activate = app.IndexOf("_window.Activate();", StringComparison.Ordinal);
-        Assert.True(apply > 0 && apply < activate);
-        Assert.True(app.IndexOf("MainWindowInstance.MaximizeAfterRelaunch()", StringComparison.Ordinal) > activate);
+        // Non-empty updater arguments also activate the window, so placement must precede that path too.
+        Assert.True(apply > 0 && apply < activateFromArgument);
+        Assert.True(activateFromArgument < activate);
 
         var window = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
         var changed = window[window.IndexOf("private void OnAppWindowChanged", StringComparison.Ordinal)..];
         Assert.Contains("TrackNormalWindowBounds();", changed[..changed.IndexOf("private async void OnWindowClosing", StringComparison.Ordinal)]);
+    }
+
+    [Fact]
+    public void StartupReappliesAndChecksTheObservedFrameAfterFirstLayoutBeforeMaximizing()
+    {
+        var placement = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "MainWindow.RelaunchPlacement.cs"));
+        var apply = placement[placement.IndexOf("internal void ApplyRelaunchPlacement()", StringComparison.Ordinal)..];
+        apply = apply[..apply.IndexOf("private void OnRelaunchPlacementLoaded", StringComparison.Ordinal)];
+        Assert.Contains("RestoreRelaunchBounds(target.Bounds);", apply);
+        Assert.Contains("RootGrid.Loaded += OnRelaunchPlacementLoaded;", apply);
+
+        var loaded = placement[placement.IndexOf("private void OnRelaunchPlacementLoaded", StringComparison.Ordinal)..];
+        loaded = loaded[..loaded.IndexOf("private void RestoreRelaunchBounds", StringComparison.Ordinal)];
+        // A one-shot callback repairs first-layout changes, then maximizes the corrected restore frame.
+        var detach = loaded.IndexOf("RootGrid.Loaded -= OnRelaunchPlacementLoaded;", StringComparison.Ordinal);
+        var restore = loaded.IndexOf("RestoreRelaunchBounds(target.Bounds);", StringComparison.Ordinal);
+        var maximize = loaded.IndexOf("if (target.Maximized) MaximizeAfterRelaunch();", StringComparison.Ordinal);
+        Assert.True(detach >= 0 && restore > detach && maximize > restore);
+        Assert.Contains("_pendingRelaunchPlacement = null;", loaded);
+
+        var bounds = placement[placement.IndexOf("private void RestoreRelaunchBounds", StringComparison.Ordinal)..];
+        bounds = bounds[..bounds.IndexOf("private void MaximizeAfterRelaunch", StringComparison.Ordinal)];
+        var move = bounds.IndexOf("AppWindow.MoveAndResize(rect);", StringComparison.Ordinal);
+        var observed = bounds.IndexOf("var observed = ScreenRect.FromSize(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);", StringComparison.Ordinal);
+        var retry = bounds.IndexOf("if (observed != bounds) AppWindow.MoveAndResize(rect);", StringComparison.Ordinal);
+        var track = bounds.IndexOf("TrackNormalWindowBounds();", StringComparison.Ordinal);
+        Assert.True(move >= 0 && observed > move && retry > observed && track > retry);
+        // TrackNormalWindowBounds reads the actual native frame, not the requested rectangle.
+        Assert.DoesNotContain("_lastNormalWindowBounds = bounds;", placement);
+        Assert.Contains("_lastNormalWindowBounds = ScreenRect.FromSize(AppWindow.Position.X, AppWindow.Position.Y, size.Width, size.Height);", placement);
     }
 }

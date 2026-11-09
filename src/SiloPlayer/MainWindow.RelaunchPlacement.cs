@@ -11,6 +11,7 @@ namespace SiloPlayer;
 public sealed partial class MainWindow
 {
     private ScreenRect? _lastNormalWindowBounds;
+    private WindowPlacementTarget? _pendingRelaunchPlacement;
 
     private static string RelaunchPlacementDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer");
@@ -54,38 +55,58 @@ public sealed partial class MainWindow
 
     /// <summary>
     /// Applies a placement saved by the update that just restarted Silo. Call before the first
-    /// <c>Activate</c>; returns true when the window should be maximized once it is shown.
+    /// <c>Activate</c>; the first layout rechecks the frame before applying the maximized state.
     /// </summary>
-    internal bool ApplyRelaunchPlacement()
+    internal void ApplyRelaunchPlacement()
     {
-        if (RelaunchPlacementDisabled || AppWindow is null) return false;
+        if (RelaunchPlacementDisabled || AppWindow is null) return;
         try
         {
             var saved = RelaunchWindowPlacement.Take(RelaunchPlacementDirectory);
-            if (saved is null) return false;
+            if (saved is null) return;
             var target = RelaunchWindowPlacement.Resolve(saved, EnumerateMonitors(), DateTimeOffset.UtcNow);
             if (target is null)
             {
                 LocalLog.AppendLine("updates.txt", "relaunch_placement_default reason=monitor_or_record_unavailable");
-                return false;
+                return;
             }
-            var bounds = target.Bounds;
-            var rect = new RectInt32(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
-            // Moving onto a monitor with another scale rescales the window once; the second call sets the exact frame there.
-            AppWindow.MoveAndResize(rect);
-            AppWindow.MoveAndResize(rect);
-            _lastNormalWindowBounds = bounds;
-            LocalLog.AppendLine("updates.txt", $"relaunch_placement_restored maximized={target.Maximized}");
-            return target.Maximized;
+            RestoreRelaunchBounds(target.Bounds);
+            _pendingRelaunchPlacement = target;
+            RootGrid.Loaded += OnRelaunchPlacementLoaded;
         }
         catch (Exception ex)
         {
             LocalLog.AppendException("updates.txt", ex, "relaunch_placement_restore");
-            return false;
         }
     }
 
-    internal void MaximizeAfterRelaunch()
+    private void OnRelaunchPlacementLoaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs args)
+    {
+        RootGrid.Loaded -= OnRelaunchPlacementLoaded;
+        var target = _pendingRelaunchPlacement;
+        _pendingRelaunchPlacement = null;
+        if (target is null || AppWindow is null) return;
+        try
+        {
+            // Initial layout can replace the hidden window's frame. Reapply it once the root is loaded.
+            RestoreRelaunchBounds(target.Bounds);
+            if (target.Maximized) MaximizeAfterRelaunch();
+            LocalLog.AppendLine("updates.txt", $"relaunch_placement_restored maximized={target.Maximized}");
+        }
+        catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "relaunch_placement_verify"); }
+    }
+
+    private void RestoreRelaunchBounds(ScreenRect bounds)
+    {
+        var rect = new RectInt32(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+        AppWindow.MoveAndResize(rect);
+        var observed = ScreenRect.FromSize(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
+        // Moving between DPI scales can change the frame; retry once if the actual frame differs.
+        if (observed != bounds) AppWindow.MoveAndResize(rect);
+        TrackNormalWindowBounds();
+    }
+
+    private void MaximizeAfterRelaunch()
     {
         try { if (AppWindow?.Presenter is OverlappedPresenter presenter) presenter.Maximize(); }
         catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "relaunch_placement_maximize"); }

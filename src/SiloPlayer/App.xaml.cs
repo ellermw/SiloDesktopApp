@@ -102,11 +102,10 @@ public partial class App : Application
 
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
+        // Set the update restart frame before either activation path can show the window.
+        MainWindowInstance.ApplyRelaunchPlacement();
         MainWindowInstance.ActivateFromArgument(e.Arguments);
-        // After an update restart: same monitor, frame and maximized state as before it.
-        var maximizeAfterRelaunch = MainWindowInstance.ApplyRelaunchPlacement();
         _window.Activate();
-        if (maximizeAfterRelaunch) MainWindowInstance.MaximizeAfterRelaunch();
         StartActivationPipeListener();
         _window.Closed += (_, _) =>
         {
