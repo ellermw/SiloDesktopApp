@@ -73,7 +73,7 @@ internal static class LibraryReconnectNativeFixture
             try
             {
                 // 1. A reconnect, then the user keeps scrolling before any catch-up runs.
-                Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _), "fixture bumps the read generation like a reconnect");
+                Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "fixture bumps the read generation like a reconnect");
                 scroll.ChangeView(null, offset + 300, null, true);
                 await Task.Delay(300); await Until(() => !page.ViewModel.IsLoading);
                 Check(!totals.Contains(0) && page.ViewModel.TotalCount == total && Math.Abs(scroll.VerticalOffset - (offset + 300)) < 2 &&
@@ -86,7 +86,7 @@ internal static class LibraryReconnectNativeFixture
                 var index = first + 5;
                 var held = Enumerable.Range(0, total).Where(row => page.ViewModel.GetWindowItem(row) is not null).ToArray();
                 wire.Inserted = index;
-                Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _), "second reconnect");
+                Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "second reconnect");
                 Check(page.CanPreserveOnReconnect, "a scrolled, loaded Library tab can be kept across a reconnect");
                 await page.CatchUpAfterReconnectAsync();
                 await Task.Delay(300); await Until(() => !page.ViewModel.IsLoading);

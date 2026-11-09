@@ -40,8 +40,8 @@ public sealed partial class LibraryPage
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
             }
-            // Rows outside the reread range (or a deferred read) load on demand under
-            // the new context, beside the retained cards.
+            // An incomplete catch-up remains pending. The range loader retries it
+            // before admitting any new-snapshot rows beside the retained cards.
             _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
             ScheduleVisibleRangeLoad(force: true);
         }

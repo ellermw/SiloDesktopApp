@@ -70,6 +70,8 @@ public partial class LibraryViewModel
     private async Task EnsureLetterIndexCoreAsync(bool force = false)
     {
         if (Library is not null) EnsureCatalogScope();
+        if (_catalogRefreshPending && await RefreshInPlaceAsync(Math.Max(0, WindowStartIndex), PageSize) != CatalogRefreshResult.Completed)
+            return;
         if (Library is null || SelectedSort != "title")
         {
             ResetLetterIndex();
@@ -155,7 +157,8 @@ public partial class LibraryViewModel
         }
         // Reset an unobserved API-context change before capturing this jump's
         // owner; the window loader must not retire the seek it is about to read.
-        var contextChanged = _catalogContext is not null && _catalogContext != _catalogApi.CaptureContext();
+        var contextChanged = _catalogRefreshPending ||
+            (_catalogContext is not null && _catalogContext != _catalogApi.CaptureContext());
         if (contextChanged) StartNewCatalogQuery();
         var currentKey = LetterQueryKey();
         var knownIndex = (LetterIndex is not null && _letterIndexKey == currentKey) ||

@@ -30,7 +30,7 @@ public sealed class LibraryBackgroundRefreshTests
     }
 
     // The event channel's catch-up after every reconnect (EventChannelClient.PublishAccessInvalidation).
-    private static void Reconnect(Catalog wire) => Assert.True(wire.Client.TryInvalidateAccessContext(wire.Client.CaptureContext(), out _));
+    private static void Reconnect(Catalog wire) => Assert.True(wire.Client.TryInvalidateAccessContext(wire.Client.CaptureContext(), out _, transportCatchUp: true));
 
     [Fact]
     public async Task ReconnectCatchUpMergesAddedRemovedAndChangedTitlesWithoutResettingTheGrid()
@@ -78,16 +78,26 @@ public sealed class LibraryBackgroundRefreshTests
         var (wire, model, totals) = Scrolled();
         using (wire)
         {
+            await model.EnsureLetterIndexAsync();
+            var letterReads = wire.LetterReads;
+            wire.LetterPosition = 501;
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            var requests = wire.Requests.Count;
             Reconnect(wire);
+            // No shell catch-up has run (for example while playback covers the route).
+            // A scroll must refresh held rows before loading an uncached range.
             await model.LoadWindowAsync(700, 60);
+            await wire.Idle();
             Assert.DoesNotContain(0, totals);
-            Assert.Equal(1000, model.TotalCount);
-            Assert.Equal("item-500", model.GetWindowItem(500)?.ContentId);
-            Assert.Equal("item-700", model.GetWindowItem(700)?.ContentId);
-            // The old generation's snapshot and continuation are not reused.
-            var read = wire.Requests.Last(request => request.ContainsKey("skip_total"));
-            Assert.True(read.ContainsKey("seek"));
-            Assert.False(read.ContainsKey("cursor"));
+            Assert.Equal(1001, model.TotalCount);
+            Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            Assert.Equal("item-699", model.GetWindowItem(700)?.ContentId);
+            Assert.True(wire.LetterReads > letterReads);
+            Assert.Equal(501, model.LetterIndex!.Letters.Single(letter => letter.Letter == "M").Position);
+            var reads = wire.Requests.Skip(requests).Where(request => request.ContainsKey("skip_total")).ToList();
+            Assert.Equal("700", reads[0]["seek"]);
+            Assert.False(reads[0].ContainsKey("cursor"));
+            Assert.All(reads.Skip(1), read => Assert.Equal(wire.SnapshotOf(reads[0]), wire.SnapshotOf(read)));
         }
     }
 
@@ -153,6 +163,136 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.DoesNotContain(0, totals);
             Assert.Equal("item-500", model.GetWindowItem(500)?.ContentId);
             Assert.Null(model.ErrorMessage);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task AccessInvalidationRereadsHeldRowsEvenIfTransportReconnectsAfterward(bool conditional, bool reconnectAfterAccess)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await model.EnsureLetterIndexAsync();
+            Assert.NotNull(model.LetterIndex);
+            var requests = wire.Requests.Count;
+            wire.Titles.Clear(); // The profile no longer has access to any title.
+            if (conditional) Assert.True(wire.Client.TryInvalidateAccessContext(wire.Client.CaptureContext(), out _));
+            else wire.Client.InvalidateAccessContext();
+            if (reconnectAfterAccess) Reconnect(wire);
+
+            await model.LoadWindowAsync(500, 60);
+            await wire.Idle();
+
+            Assert.True(wire.Requests.Count > requests);
+            Assert.False(wire.Requests[requests].ContainsKey("cursor"));
+            Assert.Null(model.GetWindowItem(500));
+            Assert.Null(model.GetWindowItem(0));
+            Assert.Null(model.LetterIndex);
+            Assert.Equal(0, model.TotalCount);
+            Assert.Equal(0, model.DisplayTotalCount);
+        }
+    }
+
+    [Fact]
+    public async Task LaterChunkFailurePublishesNothingAndUncachedScrollingMustRetryTheWholeRefresh()
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            var held = Enumerable.Range(0, 1000).Where(index => model.GetWindowItem(index) is not null)
+                .ToDictionary(index => index, index => model.GetWindowItem(index));
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            wire.FailWindowAt = 560;
+            Reconnect(wire);
+
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Failed, await model.RefreshInPlaceAsync(500, 60));
+            Assert.All(held, pair => Assert.Same(pair.Value, model.GetWindowItem(pair.Key)));
+            wire.FailWindowAt = 500;
+            await model.LoadWindowAsync(700, 60);
+            Assert.Null(model.GetWindowItem(700));
+            Assert.All(held, pair => Assert.Same(pair.Value, model.GetWindowItem(pair.Key)));
+
+            wire.FailWindowAt = null;
+            await model.LoadWindowAsync(700, 60);
+            await wire.Idle();
+            Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            Assert.Equal("item-699", model.GetWindowItem(700)?.ContentId);
+            Assert.All(held.Keys, index => Assert.Equal(wire.Titles[index].Id, model.GetWindowItem(index)?.ContentId));
+            Assert.Equal(1001, model.TotalCount);
+        }
+    }
+
+    [Fact]
+    public async Task CancelledLaterChunkKeepsOneOldSnapshotUntilARetryCompletes()
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        using (var stop = new CancellationTokenSource())
+        {
+            var item = model.GetWindowItem(500);
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            wire.HoldWindowAt = 560;
+            Reconnect(wire);
+            var refresh = model.RefreshInPlaceAsync(500, 60, stop.Token);
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Same(item, model.GetWindowItem(500));
+            stop.Cancel();
+            wire.ReleaseChunk.TrySetResult();
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await refresh);
+            Assert.Same(item, model.GetWindowItem(500));
+
+            wire.HoldWindowAt = null;
+            await model.LoadWindowAsync(700, 60);
+            Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            Assert.Equal("item-699", model.GetWindowItem(700)?.ContentId);
+        }
+    }
+
+    [Fact]
+    public async Task CatchUpRefreshesTheEntireActiveAndReadAheadSetBeyondTheOldBudget()
+    {
+        using var wire = new Catalog();
+        wire.Titles.AddRange(Enumerable.Range(1000, 1200).Select(index => ("item-" + index, "Item " + index)));
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.LoadWindowAsync(0, 1200);
+        // Read-ahead caches distant windows without replacing the 1200-row active window.
+        await model.PrefetchAroundAsync(1600, 1659, true);
+        await model.PrefetchAroundAsync(1800, 1859, true);
+        var held = Enumerable.Range(0, 2200).Where(index => model.GetWindowItem(index) is not null).ToArray();
+        Assert.True(held.Length > 1200);
+        var chunks = model.PlanRefreshChunks(520, 60);
+        var covered = chunks.SelectMany(chunk => Enumerable.Range(chunk.Start, chunk.Count)).ToHashSet();
+        Assert.All(held, index => Assert.Contains(index, covered));
+        Assert.InRange(chunks.Sum(chunk => chunk.Count), held.Length, LibraryViewModel.MaxRefreshedItems);
+
+        wire.Titles.Insert(50, ("new-title", "Brand New"));
+        Reconnect(wire);
+        Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await model.RefreshInPlaceAsync(520, 60));
+        await wire.Idle();
+        Assert.All(held, index => Assert.Equal(wire.Titles[index].Id, model.GetWindowItem(index)?.ContentId));
+        Assert.Equal(held.Length, held.Select(index => model.GetWindowItem(index)!.ContentId).Distinct().Count());
+        Assert.Equal(2201, model.TotalCount);
+    }
+
+    [Fact]
+    public async Task CatchUpRetiresSparsePagesThatWereNotInTheHeldWindowPlan()
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await model.LoadMoreCommand.ExecuteAsync(null);
+            Assert.True(model.Items.IsPageLoaded(0));
+            wire.Titles.Insert(0, ("new-title", "Brand New"));
+            Reconnect(wire);
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await model.RefreshInPlaceAsync(500, 60));
+            Assert.False(model.Items.IsPageLoaded(0));
+            await model.LoadMoreCommand.ExecuteAsync(null);
+            Assert.Equal("new-title", model.Items[0]?.ContentId);
         }
     }
 
@@ -246,6 +386,9 @@ public sealed class LibraryBackgroundRefreshTests
         private int _inFlight;
         internal int LetterReads, LetterPosition = 500;
         internal bool Fail;
+        internal int? FailWindowAt, HoldWindowAt;
+        internal readonly TaskCompletionSource ChunkStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseChunk = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Catalog() { Client = new SiloApiClient(new HttpClient(this)); Client.SetBaseUrl("https://background-refresh.invalid"); }
 
         internal string? SnapshotOf(Dictionary<string, string> request) => request.GetValueOrDefault("window");
@@ -296,6 +439,13 @@ public sealed class LibraryBackgroundRefreshTests
                     query["window"] = snapshot;
                     lock (Requests) Requests.Add(query);
                 }
+                if (query.ContainsKey("skip_total") && offset == HoldWindowAt)
+                {
+                    ChunkStarted.TrySetResult();
+                    await ReleaseChunk.Task;
+                }
+                if (query.ContainsKey("skip_total") && offset == FailWindowAt)
+                    return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"fixture\",\"message\":\"retry\"}") };
                 var frozen = _snapshots[snapshot];
                 var page = frozen.Skip(offset).Take(limit).ToList();
                 var more = offset + page.Count < frozen.Count;

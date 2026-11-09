@@ -665,7 +665,7 @@ public sealed class EventChannelClient : IDisposable
 
     private bool PublishAccessInvalidation(ApiRequestContext expected, out ApiRequestContext context, bool transportCatchUp = false)
     {
-        if (!_apiClient.TryInvalidateAccessContext(expected, out context)) return false;
+        if (!_apiClient.TryInvalidateAccessContext(expected, out context, transportCatchUp: transportCatchUp)) return false;
         Log($"{(transportCatchUp ? "Transport catch-up" : "Access reads invalidated")}: readGeneration={context.RequestContextGeneration}; playbackIdentityGeneration={_apiClient.CaptureIdentityContext().IdentityGeneration}");
         lock (_snapshotLock) _latestSnapshots.Clear();
         foreach (var subscriber in (transportCatchUp ? ReadCatchUpRequested : AccessChanged)?.GetInvocationList() ?? [])

@@ -124,6 +124,7 @@ public sealed class EventAccessTransportTests
         Assert.Equal(1, fixture.AccountReads);
         Assert.Equal(1, invalidations);
         Assert.False(fixture.Api.IsCurrentContext(prior));
+        Assert.Equal(prior.AccessGeneration + 1, fixture.Api.CaptureContext().AccessGeneration);
         Assert.False(fixture.Events.TryGetLatestSnapshot("notifications", out _));
         Assert.Equal("profile", fixture.Auth.SelectedProfileId);
     }
@@ -134,6 +135,7 @@ public sealed class EventAccessTransportTests
         await using var fixture = await Fixture.StartAsync();
         using var subscription = fixture.Events.Subscribe("notifications");
         var first = await fixture.NextAsync();
+        var prior = fixture.Api.CaptureContext();
         var invalidations = 0;
         var catchUps = 0;
         typeof(EventChannelClient).GetEvent("ReadCatchUpRequested")?.AddEventHandler(fixture.Events,
@@ -144,6 +146,8 @@ public sealed class EventAccessTransportTests
         await Until(() => fixture.AccountReads == 1);
         Assert.Equal(0, invalidations);
         Assert.Equal(1, catchUps);
+        Assert.False(fixture.Api.IsCurrentContext(prior));
+        Assert.Equal(prior.AccessGeneration, fixture.Api.CaptureContext().AccessGeneration);
         // An intentional channel change rebinds the open socket in place: no new
         // socket, no catch-up and no app reload.
         using var extra = fixture.Events.Subscribe("history_import");

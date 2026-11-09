@@ -313,6 +313,8 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (!HasMore || Library == null || TotalCount <= 0) return;
         EnsureCatalogScope();
+        if (_catalogRefreshPending && await RefreshInPlaceAsync(Math.Max(0, WindowStartIndex), PageSize) != CatalogRefreshResult.Completed)
+            return;
 
         var pageCount = (TotalCount + PageSize - 1) / PageSize;
         for (int page = 0; page < pageCount; page++)
@@ -385,9 +387,10 @@ public partial class LibraryViewModel : ObservableObject
         int startIndex, int endIndex, bool forward, CancellationToken ct = default)
     {
         if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex) return [];
-        // A changed context or library scope starts a new, empty query: nothing to prefetch.
         EnsureCatalogScope();
         if (TotalCount <= 0) return [];
+        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, endIndex - startIndex + 1, ct) != CatalogRefreshResult.Completed)
+            return [];
 
         var (first, indices) = Neighborhood(startIndex, endIndex, forward);
         var version = _queryVersion;
@@ -525,8 +528,8 @@ public partial class LibraryViewModel : ObservableObject
             StartNewCatalogQuery();
         else if (_catalogContext != _catalogApi.CaptureContext())
         {
-            // Only the read generation moved (event-channel reconnect): keep the
-            // loaded grid and its position, retire just the old cursors and reads.
+            // Only a transport generation may keep the grid. An access-generation
+            // change retires every previously authorized row and alphabet position.
             if (HasRetainableCatalog && IsSameCatalogIdentity(_catalogContext, _catalogApi.CaptureContext())) RebaseCatalogQuery();
             else StartNewCatalogQuery();
         }
@@ -539,6 +542,8 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (Library is null) return;
         EnsureCatalogScope();
+        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, itemCount) != CatalogRefreshResult.Completed)
+            return;
         if (letterLoad is { IsCurrent: false }) return;
         await LoadPreparedWindowAsync(startIndex, itemCount, force, letterLoad);
     }
@@ -756,6 +761,7 @@ public partial class LibraryViewModel : ObservableObject
         _pageResponses.Clear();
         _recentWindows.Clear();
         _snapshot = null;
+        _catalogRefreshPending = false;
         _estimatedTotalItems = 0;
         _observedCatalogEnd = 0;
         _catalogEndTotal = null;
@@ -776,6 +782,7 @@ public partial class LibraryViewModel : ObservableObject
     public void CancelCatalogLoads()
     {
         _snapshot = null;
+        _catalogRefreshPending = false;
         ResetLetterIndex();
         _loadedFiltersLibraryId = null;
         CancelWindowLoad();
@@ -907,18 +914,18 @@ public partial class LibraryViewModel : ObservableObject
     }
 
     private async Task FetchWindowAsync(int startIndex, int itemCount, bool includeTotal,
-        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default)
+        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default, bool publishState = true)
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure(
             includeTotal ? "catalog-request-with-total" : "catalog-request-window");
-        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct);
+        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct, publishState);
         ct.ThrowIfCancellationRequested();
         publishPage(response);
         while (response.Items.Count < itemCount && response.HasMore)
         {
             ct.ThrowIfCancellationRequested();
             var next = await FetchWindowPageAsync(startIndex + response.Items.Count,
-                false, response.Snapshot ?? snapshot, ct);
+                false, response.Snapshot ?? snapshot, ct, publishState);
             ct.ThrowIfCancellationRequested();
             response.HasMore = next.HasMore;
             if (response.Page is not null) response.Page.HasMore = next.HasMore;
@@ -963,13 +970,13 @@ public partial class LibraryViewModel : ObservableObject
         groups = BuildAdvancedGroups(), AdvancedRulesMatch,
     });
 
-    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct)
+    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct, bool publishState = true)
     {
         using var operation = SiloPlayer.Core.Services.LocalLog.BeginOperation("catalog-" + Guid.NewGuid().ToString("N"));
         var context = _catalogApi.CaptureContext();
         var version = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
-        var nextCursor = _completedBoundaries.TryGetValue(startIndex, out var boundary)
+        var nextCursor = publishState && _completedBoundaries.TryGetValue(startIndex, out var boundary)
             && boundary.QueryVersion == version && boundary.Context == context && boundary.QueryKey == queryKey
             && boundary.Snapshot == snapshot ? boundary.NextCursor : null;
         static string Fingerprint(string? text) => string.IsNullOrEmpty(text) ? "none"
@@ -978,8 +985,9 @@ public partial class LibraryViewModel : ObservableObject
         var cursorFingerprint = Fingerprint(nextCursor ?? snapshot);
         // A refetch retires the boundary supplied by that page immediately;
         // failed or canceled replacements cannot leave an older cursor usable.
-        foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
-            _completedBoundaries.Remove(end);
+        if (publishState)
+            foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
+                _completedBoundaries.Remove(end);
         CatalogResponse response;
         try
         {
@@ -1019,13 +1027,13 @@ public partial class LibraryViewModel : ObservableObject
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
         SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_queries.txt",
             $"action={SiloPlayer.Core.Services.LocalLog.CurrentOperationId} start={startIndex} limit={CatalogWindowPageSize} query_version={version} read_generation={context.RequestContextGeneration} query_fingerprint={queryFingerprint} input_cursor={cursorFingerprint} window_cursor={Fingerprint(response.Snapshot)} next_cursor={Fingerprint(response.Page?.NextCursor)} items={response.Items.Count} totals={includeTotal}");
-        if (response.Items.Count == CatalogWindowPageSize && response.HasMore
+        if (publishState && response.Items.Count == CatalogWindowPageSize && response.HasMore
             && !string.IsNullOrWhiteSpace(response.Snapshot) && !string.IsNullOrWhiteSpace(response.Page?.NextCursor))
         {
             _completedBoundaries[startIndex + CatalogWindowPageSize] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
             while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
         }
-        if (response.Items.Count > 0)
+        if (publishState && response.Items.Count > 0)
             _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + response.Items.Count);
         return response;
     }

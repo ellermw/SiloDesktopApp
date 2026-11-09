@@ -8,16 +8,17 @@ public partial class LibraryViewModel
 {
     public enum CatalogRefreshResult { Completed, Deferred, Failed, NotLoaded }
 
-    // Bounded like the window cache itself: never a fan-out across the library.
-    internal const int MaxRefreshedItems = 1200;
+    // Active window (1200), recent windows (1200), and at most one visible page.
+    // Refresh the entire held set, not just a budgeted subset of its positions.
+    internal const int MaxRefreshedItems = 2500;
+    private bool _catalogRefreshPending;
+    private Task<CatalogRefreshResult>? _catalogRefreshTask;
+    private int _catalogRefreshVersion = -1;
 
-    /// <summary>
-    /// A same-user, same-server, same-profile context whose read generation moved on:
-    /// the event channel reconnected (the server drops it every few minutes) or
-    /// access was rechecked. The query itself is unchanged.
-    /// </summary>
+    /// <summary>Only transport recovery may retain rows; an access change retires them.</summary>
     private static bool IsSameCatalogIdentity(ApiRequestContext? previous, ApiRequestContext current) =>
         previous is { } before && before.AuthenticationGeneration == current.AuthenticationGeneration &&
+        before.AccessGeneration == current.AccessGeneration &&
         string.Equals(before.BaseUrl, current.BaseUrl, StringComparison.Ordinal) &&
         string.Equals(before.ProfileId, current.ProfileId, StringComparison.Ordinal);
 
@@ -27,9 +28,8 @@ public partial class LibraryViewModel
     /// <summary>
     /// Moves a loaded catalog onto the current request context without clearing it.
     /// Cursors, boundaries and in-flight reads of the old generation retire; the
-    /// extent, the loaded windows and the letter index stay as provisional content
-    /// until <see cref="RefreshInPlaceAsync"/> replaces them. Only a changed library,
-    /// sort or filter (<see cref="StartNewCatalogQuery"/>) empties the grid.
+    /// snapshot, extent and loaded windows stay together until an atomic refresh
+    /// succeeds. Ordinary reads must finish that refresh before loading new rows.
     /// </summary>
     private void RebaseCatalogQuery()
     {
@@ -41,12 +41,11 @@ public partial class LibraryViewModel
         _queryVersion++;
         _completedBoundaries.Clear();
         _loadingPages.Clear();
-        _snapshot = null;
-        // A retained letter index stays current for the rebased query (a background
-        // read replaces it only if positions changed). An index read still in flight
-        // belonged to the old generation; the next request reads it again.
-        if (IsLetterIndexLoading) { _letterIndexKey = null; _letterIndexTask = null; }
-        else if (_letterIndexKey is not null) { _letterIndexKey = LetterQueryKey(); _letterIndexTask = Task.CompletedTask; }
+        _catalogRefreshPending = true;
+        // Keep the displayed rail, but never label its old positions as current.
+        // A jump/index request must await a fresh index under this query.
+        _letterIndexKey = null;
+        _letterIndexTask = null;
         _letterIndexLoadVersion++;
         IsLetterIndexLoading = false;
         IsLoading = false;
@@ -58,20 +57,34 @@ public partial class LibraryViewModel
     /// same positions, so new, removed and changed titles appear without resetting
     /// the scroll position, the loaded windows or the letter rail.
     /// </summary>
-    public async Task<CatalogRefreshResult> RefreshInPlaceAsync(int visibleStart, int visibleCount, CancellationToken ct = default)
+    public Task<CatalogRefreshResult> RefreshInPlaceAsync(int visibleStart, int visibleCount, CancellationToken ct = default)
+    {
+        if (_catalogRefreshTask is { IsCompleted: false } && _catalogRefreshVersion == _queryVersion &&
+            _catalogContext == _catalogApi.CaptureContext())
+            return _catalogRefreshTask;
+        return _catalogRefreshTask = RefreshInPlaceCoreAsync(visibleStart, visibleCount, ct);
+    }
+
+    private async Task<CatalogRefreshResult> RefreshInPlaceCoreAsync(int visibleStart, int visibleCount, CancellationToken ct)
     {
         if (!HasRetainableCatalog) return CatalogRefreshResult.NotLoaded;
+        if (!IsSameCatalogIdentity(_catalogContext, _catalogApi.CaptureContext()))
+        {
+            EnsureCatalogScope();
+            return CatalogRefreshResult.NotLoaded;
+        }
         if (IsLetterJumpInProgress) return CatalogRefreshResult.Deferred;
-        if (!IsSameCatalogIdentity(_catalogContext, _catalogApi.CaptureContext())) return CatalogRefreshResult.NotLoaded;
         RebaseCatalogQuery();
-        var version = _queryVersion;
+        var version = _catalogRefreshVersion = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
         var jump = _letterJumpVersion;
         var chunks = PlanRefreshChunks(visibleStart, Math.Max(1, visibleCount));
         using var owner = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
         bool Current() => !owner.IsCancellationRequested && version == _queryVersion &&
-            queryKey == CatalogQueryScopeKey() && jump == _letterJumpVersion && !IsLetterJumpInProgress;
+            _catalogContext == _catalogApi.CaptureContext() && queryKey == CatalogQueryScopeKey() &&
+            jump == _letterJumpVersion && !IsLetterJumpInProgress;
         string? snapshot = null;
+        var replacements = new List<(int Start, int Count, CatalogResponse Response)>();
         var refreshed = 0;
         try
         {
@@ -79,18 +92,16 @@ public partial class LibraryViewModel
             {
                 if (!Current()) return CatalogRefreshResult.Deferred;
                 CatalogResponse? replacement = null;
-                await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, owner.Token);
+                await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, owner.Token,
+                    publishState: false);
                 if (!Current()) return CatalogRefreshResult.Deferred;
-                if (replacement is null) return CatalogRefreshResult.Failed;
-                // One snapshot for every held window and for later scrolling, so the
-                // merged rows line up with each other and with what loads next.
-                if (snapshot is null && !string.IsNullOrWhiteSpace(replacement.Snapshot))
-                    _snapshot = snapshot = replacement.Snapshot;
-                MergeHeldRange(start, replacement.Items.Take(count).ToList());
-                if (!replacement.HasMore && replacement.Items.Count < count)
-                    _catalogEndTotal = start + replacement.Items.Count;
+                if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot)) return CatalogRefreshResult.Failed;
+                // Stage all chunks without changing live rows, cursors, counts or the
+                // old snapshot. A failed/deferred read can then keep them as one unit.
+                snapshot ??= replacement.Snapshot;
+                if (replacement.Snapshot != snapshot) return CatalogRefreshResult.Failed;
+                replacements.Add((start, count, replacement));
                 refreshed++;
-                WindowLoaded?.Invoke();
             }
         }
         catch (OperationCanceledException)
@@ -100,7 +111,8 @@ public partial class LibraryViewModel
         }
         catch (Exception ex)
         {
-            // Keep the retained cards: a failed background read must not blank the grid.
+            // Nothing has been published. Retain the old snapshot and retry before
+            // any ordinary load can bring rows from a new snapshot alongside it.
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex,
                 $"catalog_refresh_in_place refreshed_windows={refreshed} query_version={version}");
             return CatalogRefreshResult.Failed;
@@ -111,10 +123,43 @@ public partial class LibraryViewModel
                 $"catalog_refresh_in_place visible_start={visibleStart} windows={chunks.Count} refreshed={refreshed} query_version={version} read_generation={_catalogContext?.RequestContextGeneration}");
         }
         if (!Current()) return CatalogRefreshResult.Deferred;
+        // Commit without yielding. Legacy sparse pages were not part of the held
+        // window plan, so retire them rather than retaining unrefreshed rows.
+        _pageResponses.Clear();
+        Items.Reset(TotalCount);
+        _snapshot = snapshot;
+        _hasExactTotal = false;
+        _observedCatalogEnd = 0;
+        _catalogEndTotal = null;
+        foreach (var (start, count, response) in replacements)
+        {
+            MergeHeldRange(start, response.Items.Take(count).ToList());
+            _observedCatalogEnd = Math.Max(_observedCatalogEnd, start + response.Items.Count);
+            if (!response.HasMore)
+                _catalogEndTotal = Math.Min(_catalogEndTotal ?? int.MaxValue, start + response.Items.Count);
+        }
+        // A shorter catalog must not leave the unfilled tail of an old window alive.
+        if (_catalogEndTotal is int end)
+        {
+            _windowItems = _windowItems.Take(Math.Max(0, end - WindowStartIndex)).ToArray();
+            if (_windowItems.Count == 0) WindowStartIndex = -1;
+            foreach (var window in _recentWindows)
+                window.Response.Items = window.Response.Items.Take(Math.Max(0, end - window.Start)).ToList();
+        }
+        foreach (var window in _recentWindows)
+        {
+            window.Response.Snapshot = snapshot;
+            window.Response.TotalExact = false;
+            window.Response.Total = 0;
+        }
+        _catalogRefreshPending = false;
         // Additions or removals change the extent; the count is read in the same snapshot.
+        var exact = replacements.Select(replacement => replacement.Response).FirstOrDefault(response => response.TotalExact);
+        if (exact is not null) ApplyExactCatalogTotal(exact.Total);
         _exactCountQueryVersion = _queryVersion;
         _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
         RefreshLetterIndexInPlace();
+        WindowLoaded?.Invoke();
         return CatalogRefreshResult.Completed;
     }
 
@@ -129,7 +174,7 @@ public partial class LibraryViewModel
         if (WindowStartIndex >= 0) Hold(WindowStartIndex, _windowItems.Count);
         foreach (var window in _recentWindows) Hold(window.Start, window.Response.Items.Count);
         visibleStart = Math.Clamp(visibleStart, 0, Math.Max(0, TotalCount - 1));
-        visibleCount = Math.Clamp(visibleCount, 1, Math.Max(1, TotalCount - visibleStart));
+        visibleCount = Math.Clamp(visibleCount, 1, Math.Min(CatalogWindowPageSize, Math.Max(1, TotalCount - visibleStart)));
 
         var chunks = new List<(int Start, int Count)>();
         for (var start = visibleStart; start < visibleStart + visibleCount; start += CatalogWindowPageSize)
@@ -156,15 +201,7 @@ public partial class LibraryViewModel
         if (segmentStart >= 0) Close();
         chunks.AddRange(rest.OrderBy(chunk => Math.Abs(chunk.Start - visibleStart)));
 
-        var budget = MaxRefreshedItems;
-        var bounded = new List<(int Start, int Count)>();
-        foreach (var chunk in chunks)
-        {
-            if (budget <= 0) break;
-            bounded.Add(chunk);
-            budget -= chunk.Count;
-        }
-        return bounded;
+        return chunks;
     }
 
     /// <summary>

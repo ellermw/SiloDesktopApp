@@ -20,7 +20,11 @@ public readonly record struct ProfileVerificationContext(
     long RequestContextGeneration,
     string? ProfileId);
 
-public readonly record struct ApiRequestContext(long AuthenticationGeneration, long RequestContextGeneration, string BaseUrl, string? ProfileId);
+public readonly record struct ApiRequestContext(long AuthenticationGeneration, long RequestContextGeneration, string BaseUrl, string? ProfileId)
+{
+    /// <summary>Permission changes only; transport catch-up leaves this authority intact.</summary>
+    public long AccessGeneration { get; init; }
+}
 public readonly record struct SettingsRequestContext(ApiRequestContext Request, string? DeviceId, long DeviceGeneration);
 public readonly record struct SettingsIdentityContext(ApiIdentityContext Identity, string? DeviceId, long DeviceGeneration);
 /// <summary>Account/profile ownership, stable across read-cache/access refreshes.</summary>
@@ -58,6 +62,7 @@ public partial class SiloApiClient
     private string _baseUrl = "";
     private long _authenticationGeneration;
     private long _requestContextGeneration;
+    private long _accessGeneration;
     private long _identityGeneration;
     private Func<CancellationToken, Task<bool>>? _tokenRefresher;
     private Action<ProfileVerificationContext>? _profileVerificationRequired;
@@ -67,13 +72,13 @@ public partial class SiloApiClient
 
     public ApiRequestContext CaptureContext()
     {
-        lock (_authStateGate) return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
+        lock (_authStateGate) return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId) { AccessGeneration = _accessGeneration };
     }
     public bool IsCurrentContext(ApiRequestContext context) => CaptureContext() == context;
     public string? DeviceId { get { lock (_authStateGate) return _deviceId; } }
     public SettingsRequestContext CaptureSettingsContext()
     {
-        lock (_authStateGate) return new(new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId), _deviceId, _settingsDeviceGeneration);
+        lock (_authStateGate) return new(CaptureContext(), _deviceId, _settingsDeviceGeneration);
     }
 
     public SettingsIdentityContext CaptureSettingsIdentityContext()
@@ -123,18 +128,21 @@ public partial class SiloApiClient
         lock (_authStateGate)
         {
             _requestContextGeneration++;
-            return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
+            _accessGeneration++;
+            return CaptureContext();
         }
     }
 
-    public bool TryInvalidateAccessContext(ApiRequestContext expected, out ApiRequestContext updated)
+    public bool TryInvalidateAccessContext(ApiRequestContext expected, out ApiRequestContext updated, bool transportCatchUp = false)
     {
         lock (_authStateGate)
         {
-            updated = new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
+            updated = CaptureContext();
             if (updated != expected) return false;
             _requestContextGeneration++;
-            updated = new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
+            // Reconnect catch-up retires requests, not the catalog's access authority.
+            if (!transportCatchUp) _accessGeneration++;
+            updated = CaptureContext();
             return true;
         }
     }
