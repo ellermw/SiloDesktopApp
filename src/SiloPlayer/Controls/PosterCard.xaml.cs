@@ -341,7 +341,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         RevealCardActions(false);
         QuickWatchedButton.Visibility = Visibility.Collapsed;
         QuickFavoriteButton.Visibility = Visibility.Collapsed;
-        ClearOverlayPanels();
+        Badges.Clear();
     }
 
     private CardBadgeHosts? _badges;

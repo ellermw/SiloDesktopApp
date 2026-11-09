@@ -817,7 +817,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private CardBadgeHosts? _badges;
     private CardBadgeHosts Badges => _badges ??= new(_overlayTopLeft, _overlayTopRight, _overlayBottomLeft, _overlayBottomRight);
 
-    private void ClearOverlays() => Badges.Hide();
+    private void ClearOverlays() => Badges.Clear();
 
     /// <summary>Shows the item's corner badges; unchanged badges are kept, so rebinding creates no XAML.</summary>
     private void UpdateOverlays(MediaItem item)

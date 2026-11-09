@@ -30,8 +30,18 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         _shown = [.. badges];
     }
 
-    /// <summary>Hides the badges of a card being reset or recycled; the next item often shows the same ones.</summary>
+    /// <summary>Hides the badges of a card whose overlays are deferred; the same item shows them again shortly.</summary>
     public void Hide() => SetVisible(false);
+
+    /// <summary>Releases the badges of a card being reset to a placeholder, so no previous item's badges outlive its binding.</summary>
+    public void Clear()
+    {
+        topLeft.Children.Clear();
+        topRight.Children.Clear();
+        bottomLeft.Children.Clear();
+        bottomRight.Children.Clear();
+        _shown = [];
+    }
 
     private void SetVisible(bool visible)
     {
