@@ -1027,6 +1027,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 throw new InvalidOperationException($"Unknown native test group: {unknownGroup}");
             await HomeRefreshPreservesCards(parent);
             Program.Log("PASS: Continue Watching refreshes preserve unchanged native cards.");
+            await HomeReconcileNativeFixture.RunAsync(parent);
             await RenewedArtworkRetriesOnlyMissingImages(parent);
             Program.Log("PASS: renewed artwork retries failed images and preserves loaded images across Home card types.");
             await CalendarNavigatorRemainsVisible(parent);

@@ -45,6 +45,8 @@ public sealed partial class SectionRow : UserControl
     private bool _dragCompletionDemandStarted;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
     private RepeaterItemsSource<MediaItem>? _cardsSource;
+    private MediaItem? _resyncFocusItem;
+    private FocusState _resyncFocusState;
     private string? _lastRenderedSectionId;
     private long _activationGeneration;
     private const double DragThreshold = 7;
@@ -302,8 +304,47 @@ public sealed partial class SectionRow : UserControl
         // throwing into the Home reconciler and aborting the section update.
         var previous = _cardsSource;
         _cardsSource = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue);
+        _cardsSource.Resyncing += CardsSource_Resyncing;
+        _cardsSource.Resynced += CardsSource_Resynced;
         CardsRepeater.ItemsSource = _cardsSource;
         previous?.Dispose();
+    }
+
+    private void CardsSource_Resyncing()
+    {
+        // The guard's recovery Reset recycles every card, the focused one
+        // included. Remember which item held keyboard focus so it gets it back.
+        _resyncFocusItem = null;
+        if (XamlRoot == null || FocusManager.GetFocusedElement(XamlRoot) is not UIElement focused) return;
+        for (DependencyObject? node = focused; node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+        {
+            if (!ReferenceEquals(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node), CardsRepeater)) continue;
+            // The templates use x:Bind, so the card's item is not its DataContext.
+            _resyncFocusItem = node switch
+            {
+                IMediaItemOwner owner => owner.MediaItem,
+                AudiobookSquareCard audiobook => audiobook.MediaItem,
+                _ => null,
+            };
+            _resyncFocusState = focused.FocusState == FocusState.Unfocused ? FocusState.Programmatic : focused.FocusState;
+            return;
+        }
+    }
+
+    private void CardsSource_Resynced()
+    {
+        var item = _resyncFocusItem;
+        _resyncFocusItem = null;
+        if (item == null || !IsLoaded || _cardsSource is not { } source) return;
+        var index = -1;
+        for (var i = 0; i < source.Count; i++)
+            if (ReferenceEquals(source[i], item)) { index = i; break; }
+        // A card whose item left the row has nothing to return focus to.
+        if (index < 0) return;
+        var element = CardsRepeater.GetOrCreateElement(index);
+        element.UpdateLayout();
+        var target = element is Control { IsTabStop: true } card ? card : FocusManager.FindFirstFocusableElement(element) as Control;
+        target?.Focus(_resyncFocusState);
     }
 
     private void RestoreScrollPositionAfterRebind(bool preserveOffset, double previousOffset)

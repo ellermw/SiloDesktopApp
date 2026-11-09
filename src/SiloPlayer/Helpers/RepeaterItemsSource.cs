@@ -14,7 +14,11 @@ namespace SiloPlayer.Helpers;
 /// update, and leaves the repeater out of step with its data. This view takes
 /// the rejection instead: the model change completes for every other listener,
 /// the repeater reads a snapshot that stays fixed while it is stale, and one
-/// Reset on a later dispatcher turn resynchronizes it.
+/// Reset on a later dispatcher turn resynchronizes it. Later model changes in
+/// that window are not lost: they are coalesced into the Reset, which publishes
+/// the collection as it is then. The Reset recycles every realized card, so
+/// the owner hooks <see cref="Resyncing"/>/<see cref="Resynced"/> to carry
+/// keyboard focus across it.
 /// </summary>
 public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, IDisposable
 {
@@ -43,6 +47,12 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
+    /// <summary>Raised just before the recovery Reset reaches the repeater.</summary>
+    public event Action? Resyncing;
+
+    /// <summary>Raised after the repeater accepted the recovery Reset.</summary>
+    public event Action? Resynced;
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -59,23 +69,27 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         Publish(e);
     }
 
-    private void Publish(NotifyCollectionChangedEventArgs e)
+    private bool Publish(NotifyCollectionChangedEventArgs e)
     {
         _items = [.. Source];
         try
         {
             CollectionChanged?.Invoke(this, e);
+            return true;
         }
         catch (Exception ex)
         {
             // WinUI's ItemsSourceView refreshes its cached Count before the
             // repeater's handler rejects the change, so keep the snapshot that
-            // matches that Count and hold it until the Reset. The observed
+            // matches that Count and hold it until the Reset; restoring the
+            // pre-change list here would let the repeater index past it. The
+            // native fixture pins this by comparing the two counts. The observed
             // rejection is a COMException (E_FAIL), but any failure to deliver
             // leaves the repeater equally stale and must not reach the model.
             RejectedChanges++;
             App.RecordUiDiagnostic($"RepeaterItemsSource rejected action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8} count={Source.Count}");
             QueueResync();
+            return false;
         }
     }
 
@@ -95,7 +109,8 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         if (_disposed) return;
         // A Reset raised inside another layout pass is rejected the same way
         // and queues the next attempt.
-        Publish(ResetArgs);
+        Resyncing?.Invoke();
+        if (Publish(ResetArgs)) Resynced?.Invoke();
     }
 
     public object? this[int index]

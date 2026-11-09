@@ -250,6 +250,9 @@ internal static class HomeReconcileNativeFixture
         }
         try
         {
+            // m2 survives the response as the same object; the recovery Reset
+            // recycles its card and must hand keyboard focus back to it.
+            var focusedItem = FocusCard(repeater, 2);
             repeater.ElementPrepared += Prepared;
             // Growing the row realizes a new card, which raises ElementPrepared mid-measure.
             Apply(mounted, Movies(Enumerable.Range(0, 8)));
@@ -259,14 +262,55 @@ internal static class HomeReconcileNativeFixture
                 throw new InvalidOperationException("during-layout: the response was never applied inside the repeater's layout pass.");
             if (thrown != null)
                 throw new InvalidOperationException($"during-layout: applying the response threw {thrown.GetType().Name} 0x{thrown.HResult:X8}.", thrown);
-            if (Guard(row).RejectedChanges == 0)
+            var guard = Guard(row);
+            if (guard.RejectedChanges == 0)
                 throw new InvalidOperationException("during-layout: ItemsRepeater accepted a mid-layout change; the fixture no longer reaches the rejection.");
-            await RequireCardsMatchAsync(row, mounted, "during-layout", allowRejection: true);
             if (!mounted.Items.Select(Key).SequenceEqual(response.Items.Select(Key)))
                 throw new InvalidOperationException("during-layout: the rejected update did not finish applying the response.");
+            // The recovery Reset is still queued. The repeater indexes the
+            // guard's snapshot by its own cached count, so the two must agree,
+            // and a model change in this window must not move the snapshot
+            // under the stale repeater; the Reset delivers it instead.
+            if (repeater.ItemsSourceView.Count != guard.Count)
+                throw new InvalidOperationException($"during-layout: repeater count {repeater.ItemsSourceView.Count} differs from the guard snapshot {guard.Count} after the rejection.");
+            var held = guard.Cast<MediaItem>().ToArray();
+            mounted.Items.RemoveAt(mounted.Items.Count - 1);
+            if (!held.SequenceEqual(guard.Cast<MediaItem>()))
+                throw new InvalidOperationException("during-layout: a change while the resync was pending moved the guard snapshot.");
+            await RequireCardsMatchAsync(row, mounted, "during-layout", allowRejection: true);
+            if (!mounted.Items.SequenceEqual(guard.Cast<MediaItem>()))
+                throw new InvalidOperationException("during-layout: the recovery Reset did not publish the model as it is now.");
+            if (focusedItem == null)
+                Program.Log("home-reconcile during-layout: host could not take keyboard focus; focus restore not checked.");
+            else if (!ReferenceEquals(FocusedCardItem(repeater), focusedItem))
+                throw new InvalidOperationException($"during-layout: keyboard focus did not return to {Key(focusedItem)} after the recovery Reset.");
             Program.Log($"home-reconcile during-layout: {Guard(row).RejectedChanges} rejected change(s) resynced.");
         }
         finally { repeater.ElementPrepared -= Prepared; parent.Children.Remove(row); }
+    }
+
+    /// <summary>Keyboard-focuses the card at <paramref name="index"/>; null when the host cannot take focus.</summary>
+    private static MediaItem? FocusCard(ItemsRepeater repeater, int index)
+    {
+        if (repeater.TryGetElement(index) is not UIElement card || FindFocusable(card) is not Control focusable) return null;
+        focusable.Focus(FocusState.Keyboard);
+        return FocusedCardItem(repeater);
+    }
+
+    private static MediaItem? FocusedCardItem(ItemsRepeater repeater)
+    {
+        if (repeater.XamlRoot == null || Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(repeater.XamlRoot) is not DependencyObject focused) return null;
+        for (DependencyObject? node = focused; node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+        {
+            if (!ReferenceEquals(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node), repeater)) continue;
+            return node switch
+            {
+                PosterCard poster => poster.MediaItem,
+                LandscapeCard landscape => landscape.MediaItem,
+                _ => null,
+            };
+        }
+        return null;
     }
 
     private static Control? FindFocusable(DependencyObject root)
