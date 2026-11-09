@@ -16,6 +16,10 @@ public static class PageTransitionHelper
         ? new EntranceNavigationTransitionInfo()
         : new SuppressNavigationTransitionInfo();
 
+    /// <summary>
+    /// Resets the incoming page root after an instant (suppressed) swap only; a page
+    /// change that eases in leaves the root to its entrance transition.
+    /// </summary>
     public static void AnimateEntrance(FrameworkElement content)
     {
         content.RenderTransform = null;

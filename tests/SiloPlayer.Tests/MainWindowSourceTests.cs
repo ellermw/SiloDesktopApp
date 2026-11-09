@@ -57,6 +57,10 @@ public sealed class MainWindowSourceTests
         Assert.Contains("_currentPageType == pageType", navigation);
         Assert.Contains("OnNavigated_AnimatePageEntrance", shell);
         Assert.Contains("PageTransitionHelper.AnimateEntrance", shell);
+        // Only an instant swap is normalized; an easing entrance keeps its own opacity and offset.
+        Assert.Contains("transition is not Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo", shell);
+        Assert.True(shell.IndexOf("transition is not Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo", StringComparison.Ordinal)
+            < shell.IndexOf("PageTransitionHelper.AnimateEntrance(content)", StringComparison.Ordinal));
         Assert.Contains("content.Opacity = 1", transition);
         Assert.Contains("content.RenderTransform = null", transition);
         Assert.DoesNotContain("Storyboard", transition);

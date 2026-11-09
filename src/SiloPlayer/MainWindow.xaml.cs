@@ -1382,6 +1382,11 @@ public sealed partial class MainWindow : Window
         object? sender,
         Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
+        // A page change that eases in owns the incoming root's opacity and offset
+        // for its animation; normalizing it here would cut the entrance short.
+        if (e.NavigationTransitionInfo is { } transition
+            && transition is not Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo)
+            return;
         if (e.Content is FrameworkElement content)
             PageTransitionHelper.AnimateEntrance(content);
     }
