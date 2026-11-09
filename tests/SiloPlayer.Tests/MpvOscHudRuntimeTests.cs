@@ -21,7 +21,9 @@ public sealed partial class MpvOscRuntimeTests
             local args = {...}
             if args[1] == 'script-message' and args[2]:match('^silo%-') then
                 if args[2] ~= 'silo-cursor-visible' and args[2] ~= 'silo-cursor-hidden'
-                    and args[2] ~= 'silo-buffering-obscured' then
+                    and args[2] ~= 'silo-buffering-obscured'
+                    -- Playback Info's accessible rows are host state, not a user intent.
+                    and args[2] ~= 'silo-stats-panel-rows' then
                     table.insert(intents, args[2])
                 end
                 return

@@ -5866,7 +5866,10 @@ local function observe_properties()
                 state.chapter_menu_overlay.data = ""
                 state.chapter_menu_overlay:update()
             end
+            -- Hide Playback Info through its renderer so the host is told the
+            -- panel closed and its More menu stops reporting it as shown.
             state.stats_visible = false
+            render_stats()
             state.subtitle_menu_visible = false
             state.quality_menu_visible = false
             state.audio_menu_visible = false

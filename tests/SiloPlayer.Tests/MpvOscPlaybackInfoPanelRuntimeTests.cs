@@ -360,4 +360,33 @@ public sealed partial class MpvOscRuntimeTests
             windowWidth: 1600, windowHeight: 900);
         Assert.Equal("true:true:true:true", output);
     }
+
+    // Minimizing or Playing Next disables the OSC, which hides the panel. The
+    // host must be told exactly once, or its More menu keeps reporting a
+    // hidden panel as shown.
+    [Fact]
+    public void PlaybackInfoHiddenByOscDisableTellsTheHostItClosed()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local reasons = {}
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-stats-panel-rows' then table.insert(reasons, args[3]) end
+                return command(...)
+            end
+            native_handlers['osc-toggle-stats']()
+            native_handlers['osc-set-visibility']('false')
+            native_handlers['osc-set-visibility']('false')
+            local hidden = not s.stats_visible and s.stats_panel_rect == nil
+            native_handlers['osc-set-visibility']('true')
+            native_handlers['osc-toggle-stats']()
+            mp.set_property('user-data/playback-info-disable', tostring(hidden) .. ':' .. table.concat(reasons, ','))
+            """, rawAss: true, resultProperty: "user-data/playback-info-disable", beforeScript: PlaybackInfoProbe,
+            windowWidth: 1920, windowHeight: 1080);
+        Assert.Equal("true:open,close,open", output);
+    }
 }
