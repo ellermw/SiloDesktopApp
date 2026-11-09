@@ -16,7 +16,11 @@ namespace SiloPlayer;
 public sealed partial class MainWindow
 {
     private sealed record PlayingNextArt(string ContentId, string Url, bool Hide, int DecodeWidth,
-        ApiIdentityContext Owner, BitmapImage Image);
+        ApiIdentityContext Owner, BitmapImage Image, string FailureKey)
+    {
+        /// <summary>Set once the picture failed, so the bitmap's and the Image's failure count once.</summary>
+        public bool Failed { get; set; }
+    }
 
     private const double PlayingNextBackdropOpacity = 0.22;
     private const double PlayingNextPreloadRemainingSeconds = 300;
@@ -30,7 +34,7 @@ public sealed partial class MainWindow
     private int _playingNextPreloadFailures;
     private long _playingNextPreloadRetryAt;
     private long _playingNextArtRequested;
-    private BitmapImage? _playingNextShownArt;
+    private PlayingNextArt? _playingNextShownArt;
 
     /// <summary>Raised on mpv's thread: arm the preload once playback nears its end.</summary>
     private void OnPlaybackPositionForPlayingNext(double position)
@@ -117,8 +121,11 @@ public sealed partial class MainWindow
         var owner = _apiClient.CaptureIdentityContext();
         var image = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide, width);
         if (image is null || !_apiClient.IsCurrentIdentityContext(owner)) return null;
-        var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image);
-        image.ImageFailed += (_, e) => OnPlayingNextArtFailed(art, contentId + "\n" + url, e.ErrorMessage);
+        // A blurred still is decoded by SetSourceAsync before its ImageFailed handler exists:
+        // one with no pixels failed and must not be cached as ready.
+        if (hide && image.PixelWidth == 0) throw new InvalidOperationException("Playing Next blurred artwork did not decode");
+        var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image, contentId + "\n" + url);
+        image.ImageFailed += (_, e) => OnPlayingNextArtFailed(art, e.ErrorMessage);
         if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
             _preparedPlayingNextArt = art;
         return art;
@@ -128,11 +135,13 @@ public sealed partial class MainWindow
     /// A picture that cannot be decoded is never reused: the hero falls back to its own
     /// background, the failure is logged once, and the next attempt loads it afresh.
     /// </summary>
-    private void OnPlayingNextArtFailed(PlayingNextArt art, string key, string? error)
+    private void OnPlayingNextArtFailed(PlayingNextArt art, string? error)
     {
+        if (art.Failed) return;
+        art.Failed = true;
         if (ReferenceEquals(_preparedPlayingNextArt, art)) _preparedPlayingNextArt = null;
-        if (ReferenceEquals(_playingNextShownArt, art.Image)) ClearPlayingNextArt();
-        if (NotePlayingNextPreloadFailure(key) == 1)
+        if (ReferenceEquals(_playingNextShownArt, art)) ClearPlayingNextArt();
+        if (NotePlayingNextPreloadFailure(art.FailureKey) == 1)
             LocalLog.AppendLine("catalog_errors.txt", "playing_next_artwork_decode_failed " + LocalLog.RedactDiagnosticText(error));
     }
 
@@ -149,7 +158,7 @@ public sealed partial class MainWindow
             _preparedPlayingNextArt is { } ready &&
             IsCurrentPlayingNextArt(ready, _playerService.NextEpisodeContentId, url, PlayingNextHidesArt(preferences), null))
         {
-            ShowPlayingNextArt(ready.Image);
+            ShowPlayingNextArt(ready);
             return;
         }
         ClearPlayingNextArt();
@@ -169,7 +178,7 @@ public sealed partial class MainWindow
                 imageOwner != _playingNextArtworkGeneration || owner != _playingNextPresentationGeneration ||
                 PlayingNextOverlay.Visibility != Visibility.Visible)
                 return;
-            ShowPlayingNextArt(art.Image);
+            ShowPlayingNextArt(art);
         }
         catch { /* Poster is cosmetic */ }
     }
@@ -185,10 +194,19 @@ public sealed partial class MainWindow
         }
     }
 
-    private void ShowPlayingNextArt(BitmapImage image)
+    /// <summary>A picture that fails once it is in the hero falls back to the hero's background.</summary>
+    private void OnPlayingNextPosterFailed(object sender, ExceptionRoutedEventArgs e)
     {
-        if (ReferenceEquals(_playingNextShownArt, image) && PlayingNextPoster.Opacity > 0) return;
-        _playingNextShownArt = image;
+        if (_playingNextShownArt is { } art) OnPlayingNextArtFailed(art, e.ErrorMessage);
+    }
+
+    private void ShowPlayingNextArt(PlayingNextArt art)
+    {
+        var image = art.Image;
+        if (ReferenceEquals(_playingNextShownArt, art) && PlayingNextPoster.Opacity > 0) return;
+        _playingNextShownArt = art;
+        PlayingNextPoster.ImageFailed -= OnPlayingNextPosterFailed;
+        PlayingNextPoster.ImageFailed += OnPlayingNextPosterFailed;
         PlayingNextPoster.Source = image;
         PlayingNextBackdrop.Source = image;
         // An already decoded picture shows in this frame; a new one waits until it opens.
@@ -198,7 +216,7 @@ public sealed partial class MainWindow
         void Opened(object sender, RoutedEventArgs e)
         {
             image.ImageOpened -= Opened;
-            if (ReferenceEquals(_playingNextShownArt, image)) RevealPlayingNextArt();
+            if (ReferenceEquals(_playingNextShownArt, art)) RevealPlayingNextArt();
         }
         image.ImageOpened += Opened;
         if (image.PixelWidth > 0) Opened(image, new RoutedEventArgs());
