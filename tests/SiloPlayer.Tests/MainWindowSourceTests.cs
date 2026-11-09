@@ -115,6 +115,10 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PlayingNextOnDeckScroller.ChangeView", code);
         Assert.Contains("x:Name=\"PlayingNextHero\"", xaml);
         Assert.Contains("UpdatePlayingNextLayout(e.Size.Width, e.Size.Height)", code);
+        // The hero keeps its final size before any picture, and the next picture loads during playback.
+        Assert.Contains("PlayingNextHero.Width = availableWidth;", code);
+        Assert.Contains("_playerService.PositionChanged += OnPlaybackPositionForPlayingNext;", code);
+        Assert.Contains("BeginPlayingNextArt(hasNextEpisode);", code);
         Assert.Contains("RefreshPlayingNextAutoPlayAsync(presentationGeneration)", code);
         Assert.Contains("The effective-setting request must never hold", code);
         Assert.Contains("_playerService.IsPostRollVideoEnded &&", code);

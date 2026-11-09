@@ -1,0 +1,165 @@
+using System.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Media.Imaging;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
+
+namespace SiloPlayer;
+
+/// <summary>
+/// Playing Next opens with its artwork already in place. The next episode's picture is
+/// fetched while the current one plays, the hero has its final size before any image
+/// arrives, and the poster and its backdrop appear together: at once when ready, with
+/// one short fade when they were late.
+/// </summary>
+public sealed partial class MainWindow
+{
+    private sealed record PlayingNextArt(string ContentId, string Url, bool Hide, int DecodeWidth,
+        ApiIdentityContext Owner, BitmapImage Image);
+
+    private const double PlayingNextBackdropOpacity = 0.22;
+    private const double PlayingNextPreloadRemainingSeconds = 300;
+    private const long PlayingNextPreloadCheckMilliseconds = 2000;
+    private PlayingNextArt? _preparedPlayingNextArt;
+    private long _playingNextPreloadCheckedAt;
+    private int _playingNextPreloadQueued;
+    private long _playingNextArtRequested;
+    private BitmapImage? _playingNextShownArt;
+
+    /// <summary>Raised on mpv's thread: arm the preload once playback nears its end.</summary>
+    private void OnPlaybackPositionForPlayingNext(double position)
+    {
+        var duration = _playerService.Duration;
+        if (duration <= 0 || (position < duration / 2 && duration - position > PlayingNextPreloadRemainingSeconds)) return;
+        var now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _playingNextPreloadCheckedAt) < PlayingNextPreloadCheckMilliseconds) return;
+        Interlocked.Exchange(ref _playingNextPreloadCheckedAt, now);
+        if (Interlocked.Exchange(ref _playingNextPreloadQueued, 1) != 0) return;
+        if (!DispatcherQueue.TryEnqueue(() =>
+        {
+            Interlocked.Exchange(ref _playingNextPreloadQueued, 0);
+            _ = PreparePlayingNextArtSafelyAsync();
+        }))
+            Interlocked.Exchange(ref _playingNextPreloadQueued, 0);
+    }
+
+    private async Task PreparePlayingNextArtSafelyAsync()
+    {
+        try { await PreparePlayingNextArtAsync(); }
+        catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "playing_next_artwork_preload"); }
+    }
+
+    private bool PlayingNextHidesArt(EpisodeSpoilerPreferences preferences) => EpisodeSpoilerPolicy.HideImage(
+        _playerService.IsShufflePlayback ? _playerService.ShuffleNext?.Type ?? "episode" : "episode",
+        _playerService.NextEpisodePosterIsEpisodeStill, _playerService.NextEpisodePlayed,
+        _playerService.NextEpisodeIsInProgress, _playerService.NextEpisodePositionSeconds, preferences.HideImages);
+
+    /// <summary>Decodes at the hero's real pixel width so the picture is sharp on scaled displays.</summary>
+    private int PlayingNextDecodeWidth()
+    {
+        var width = PlayingNextHero.Width is > 0 and var set && !double.IsNaN(set) ? set : 820;
+        var scale = Content?.XamlRoot?.RasterizationScale ?? 1;
+        return Math.Clamp((int)Math.Ceiling(width * scale), 320, 1640);
+    }
+
+    private bool IsCurrentPlayingNextArt(PlayingNextArt art, string? contentId, string url, bool hide, int width) =>
+        art.ContentId == (contentId ?? url) && art.Url == url && art.Hide == hide && art.DecodeWidth == width
+        && _apiClient.IsCurrentIdentityContext(art.Owner);
+
+    private async Task<PlayingNextArt?> PreparePlayingNextArtAsync()
+    {
+        var contentId = _playerService.NextEpisodeContentId;
+        var url = _playerService.NextEpisodePosterUrl;
+        if (string.IsNullOrEmpty(url)) return null;
+        var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+        await preferences.EnsureLoadedAsync();
+        if (contentId != _playerService.NextEpisodeContentId || url != _playerService.NextEpisodePosterUrl) return null;
+        var hide = PlayingNextHidesArt(preferences);
+        var width = PlayingNextDecodeWidth();
+        if (_preparedPlayingNextArt is { } ready && IsCurrentPlayingNextArt(ready, contentId, url, hide, width)) return ready;
+        var owner = _apiClient.CaptureIdentityContext();
+        var image = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide, width);
+        if (image is null || !_apiClient.IsCurrentIdentityContext(owner)) return null;
+        var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image);
+        if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
+            _preparedPlayingNextArt = art;
+        return art;
+    }
+
+    /// <summary>Shows prepared artwork in the same frame as the overlay, or starts loading it.</summary>
+    private void BeginPlayingNextArt(bool hasNextEpisode)
+    {
+        _playingNextArtRequested = Stopwatch.GetTimestamp();
+        var imageOwner = Interlocked.Increment(ref _playingNextArtworkGeneration);
+        var url = _playerService.NextEpisodePosterUrl;
+        var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+        if (hasNextEpisode && !string.IsNullOrEmpty(url) && preferences.IsLoadedForCurrentContext &&
+            _preparedPlayingNextArt is { } ready &&
+            IsCurrentPlayingNextArt(ready, _playerService.NextEpisodeContentId, url, PlayingNextHidesArt(preferences), PlayingNextDecodeWidth()))
+        {
+            ShowPlayingNextArt(ready.Image);
+            return;
+        }
+        ClearPlayingNextArt();
+        if (hasNextEpisode) _ = LoadPlayingNextPosterAsync(imageOwner);
+    }
+
+    private async Task LoadPlayingNextPosterAsync(long? reservedOwner = null)
+    {
+        var imageOwner = reservedOwner ?? Interlocked.Increment(ref _playingNextArtworkGeneration);
+        await Task.Yield();
+        var contentId = _playerService.NextEpisodeContentId;
+        var owner = _playingNextPresentationGeneration;
+        try
+        {
+            var art = await PreparePlayingNextArtAsync();
+            if (art is null || !string.Equals(contentId, _playerService.NextEpisodeContentId, StringComparison.Ordinal) ||
+                imageOwner != _playingNextArtworkGeneration || owner != _playingNextPresentationGeneration ||
+                PlayingNextOverlay.Visibility != Visibility.Visible)
+                return;
+            ShowPlayingNextArt(art.Image);
+        }
+        catch { /* Poster is cosmetic */ }
+    }
+
+    private void ClearPlayingNextArt()
+    {
+        _playingNextShownArt = null;
+        foreach (var image in new[] { PlayingNextPoster, PlayingNextBackdrop })
+        {
+            image.OpacityTransition = null;
+            image.Opacity = 0;
+            image.Source = null;
+        }
+    }
+
+    private void ShowPlayingNextArt(BitmapImage image)
+    {
+        if (ReferenceEquals(_playingNextShownArt, image) && PlayingNextPoster.Opacity > 0) return;
+        _playingNextShownArt = image;
+        PlayingNextPoster.Source = image;
+        PlayingNextBackdrop.Source = image;
+        // An already decoded picture shows in this frame; a new one waits until it opens.
+        if (image.PixelWidth > 0) { RevealPlayingNextArt(); return; }
+        foreach (var element in new[] { PlayingNextPoster, PlayingNextBackdrop }) { element.OpacityTransition = null; element.Opacity = 0; }
+        // Listen on the shared bitmap: with two Images on one source, only one of them raises ImageOpened.
+        void Opened(object sender, RoutedEventArgs e)
+        {
+            image.ImageOpened -= Opened;
+            if (ReferenceEquals(_playingNextShownArt, image)) RevealPlayingNextArt();
+        }
+        image.ImageOpened += Opened;
+        if (image.PixelWidth > 0) Opened(image, new RoutedEventArgs());
+    }
+
+    private void RevealPlayingNextArt()
+    {
+        var fade = Stopwatch.GetElapsedTime(_playingNextArtRequested) > ArtworkReveal.InstantReveal && ArtworkReveal.AnimationsEnabled;
+        var transition = fade ? new ScalarTransition { Duration = ArtworkReveal.RevealDuration } : null;
+        PlayingNextPoster.OpacityTransition = transition;
+        PlayingNextBackdrop.OpacityTransition = transition;
+        PlayingNextPoster.Opacity = 1;
+        PlayingNextBackdrop.Opacity = PlayingNextBackdropOpacity;
+    }
+}

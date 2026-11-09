@@ -35,8 +35,8 @@ public sealed partial class MainWindow
         DispatcherQueue.TryEnqueue(() =>
         {
             if (PlayingNextOverlay.Visibility != Visibility.Visible) return;
-            PlayingNextPoster.Source = null;
-            PlayingNextBackdrop.Source = null;
+            _preparedPlayingNextArt = null;
+            ClearPlayingNextArt();
             PlayingNextOverviewText.Text = "";
             PlayingNextOverviewText.Visibility = Visibility.Collapsed;
             PlayingNextOnDeckRepeater.ItemsSource = null;
@@ -66,14 +66,14 @@ public sealed partial class MainWindow
         catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "playing_next_overview"); }
     }
 
-    private async Task<BitmapImage?> LoadEpisodePreviewImageAsync(string contentId, string url, bool hide)
+    private async Task<BitmapImage?> LoadEpisodePreviewImageAsync(string contentId, string url, bool hide, int decodeWidth = 640)
     {
         var identity = _apiClient.CaptureIdentityContext();
         var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(contentId,
             "playing-next", url, App.Services.GetRequiredService<HttpClient>());
         if (string.IsNullOrWhiteSpace(path)) return null;
         if (!_apiClient.IsCurrentIdentityContext(identity)) return null;
-        if (!hide) return new BitmapImage(new Uri(path)) { DecodePixelWidth = 640 };
+        if (!hide) return new BitmapImage(new Uri(path)) { DecodePixelWidth = decodeWidth };
         var bytes = await ArtworkEffects.BlurEpisodeStillAsync(await File.ReadAllBytesAsync(path));
         var image = new BitmapImage();
         using var stream = new MemoryStream(bytes);

@@ -193,6 +193,7 @@ public sealed partial class MainWindow : Window
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
         // Activate() is never called, so the subscription lives here now.
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
+        _playerService.PositionChanged += OnPlaybackPositionForPlayingNext;
         _playerService.PostRollReturnRequested += OnPostRollReturnRequested;
         _playerService.ShuffleChanged += OnShuffleChanged;
         _playerService.ShuffleFailed += OnShuffleFailed;
@@ -483,6 +484,7 @@ public sealed partial class MainWindow : Window
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
+        _playerService.PositionChanged -= OnPlaybackPositionForPlayingNext;
         _playerService.PostRollReturnRequested -= OnPostRollReturnRequested;
         _playerService.ShuffleChanged -= OnShuffleChanged;
         _playerService.ShuffleFailed -= OnShuffleFailed;
@@ -581,10 +583,9 @@ public sealed partial class MainWindow : Window
             PlayingNextMetaText.Visibility = string.IsNullOrEmpty(PlayingNextMetaText.Text)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
-            PlayingNextPoster.Source = null;
-            PlayingNextBackdrop.Source = null;
-            if (hasNextEpisode)
-                _ = LoadPlayingNextPosterAsync();
+            // Size the hero before it shows, then place the artwork prepared during playback.
+            if (Content?.XamlRoot is { } root) UpdatePlayingNextLayout(root.Size.Width, root.Size.Height);
+            BeginPlayingNextArt(hasNextEpisode);
             PlayingNextOnDeckRepeater.ItemsSource = null;
             PlayingNextOnDeckSection.Visibility = Visibility.Collapsed;
             _ = LoadPlayingNextOnDeckAsync();
@@ -852,33 +853,6 @@ public sealed partial class MainWindow : Window
         _playerService.CancelPlayingNext();
     }
 
-    private async Task LoadPlayingNextPosterAsync()
-    {
-        var imageOwner = Interlocked.Increment(ref _playingNextArtworkGeneration);
-        await Task.Yield();
-        var url = _playerService.NextEpisodePosterUrl;
-        var contentId = _playerService.NextEpisodeContentId;
-        var owner = _playingNextPresentationGeneration;
-        if (string.IsNullOrEmpty(url)) return;
-        try
-        {
-            var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
-            await preferences.EnsureLoadedAsync();
-            var hide = EpisodeSpoilerPolicy.HideImage(_playerService.IsShufflePlayback ? _playerService.ShuffleNext?.Type ?? "episode" : "episode",
-                _playerService.NextEpisodePosterIsEpisodeStill, _playerService.NextEpisodePlayed,
-                _playerService.NextEpisodeIsInProgress, _playerService.NextEpisodePositionSeconds, preferences.HideImages);
-            var bitmap = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide);
-            if (!string.Equals(contentId, _playerService.NextEpisodeContentId, StringComparison.Ordinal) ||
-                imageOwner != _playingNextArtworkGeneration || owner != _playingNextPresentationGeneration || PlayingNextOverlay.Visibility != Visibility.Visible)
-            {
-                return;
-            }
-            PlayingNextPoster.Source = bitmap;
-            PlayingNextBackdrop.Source = bitmap;
-        }
-        catch { /* Poster is cosmetic */ }
-    }
-
     private static string FormatPlayingNextMeta(string? airDate, int runtimeSeconds)
     {
         var parts = new List<string>();
@@ -894,8 +868,11 @@ public sealed partial class MainWindow : Window
         if (PlayingNextHero == null || windowWidth <= 0 || windowHeight <= 0)
             return;
 
+        // A fixed width as well as height: the centered panel otherwise sizes the
+        // hero from its picture, so it would grow from a sliver when the art arrives.
         var availableWidth = Math.Min(820, Math.Max(280, windowWidth - 48));
         var aspectHeight = availableWidth * 9d / 16d;
+        PlayingNextHero.Width = availableWidth;
         PlayingNextHero.Height = Math.Max(180, Math.Min(400, Math.Min(windowHeight * 0.38, aspectHeight)));
     }
 
