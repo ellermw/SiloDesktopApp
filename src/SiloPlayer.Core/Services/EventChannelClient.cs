@@ -28,16 +28,57 @@ public sealed class EventChannelClient : IDisposable
     private ApiRequestContext? _activeSocketContext;
     private int _immediateReconnectRequested;
     private bool _hasConnected;
-    /// <summary>A connection back this soon after one that held missed nothing worth reloading for (Granary and the
-    /// server contract: catch up only after more than five seconds without a connection).</summary>
+    // The server ends every events connection after the ticket's max_connection_seconds (300).
+    // A reconnect right after THAT planned end missed nothing worth reloading for (Granary and
+    // the server contract: catch up only after more than five seconds without a connection);
+    // treating it as a loss retired every page's reads and reloaded the app every five minutes.
+    // Only a provable planned end counts. Times are wall-clock, so sleep counts as time away:
+    // - the connection lasted its announced lifetime (PlannedEndEarly before to PlannedEndLate after),
+    //   so a silent drop noticed late, a slept laptop or an early server failure all catch up;
+    // - it ended abruptly or with a normal close; a restart (1012), try-again-later (1013) or
+    //   any other code catches up, and 4001/access_changed keep their own handling;
+    // - the next connection opened within QuickReconnectWindow of that end. Failed attempts
+    //   keep the old end, so the gap only grows and a long outage still catches up.
     internal static readonly TimeSpan DefaultQuickReconnectWindow = TimeSpan.FromSeconds(5);
     /// <summary>Tests about catch-up itself set it to zero, so every transport loss catches up regardless of timing.</summary>
     internal TimeSpan QuickReconnectWindow { get; set; } = DefaultQuickReconnectWindow;
-    /// <summary>A connection that closed sooner than this may be a server refusing connections: it still catches up.</summary>
-    internal static readonly TimeSpan QuickReconnectHeld = TimeSpan.FromSeconds(1);
-    private long _quietReconnectUntil;
-    private bool IsQuickReconnect() =>
-        Volatile.Read(ref _quietReconnectUntil) is var until && until != 0 && System.Diagnostics.Stopwatch.GetTimestamp() <= until;
+    internal TimeSpan PlannedEndEarly { get; set; } = TimeSpan.FromSeconds(15);
+    internal TimeSpan PlannedEndLate { get; set; } = TimeSpan.FromSeconds(5);
+
+    private sealed class ConnectionRecord(DateTimeOffset connectedAt, int? lifetimeSeconds)
+    {
+        internal DateTimeOffset ConnectedAt { get; } = connectedAt;
+        internal int? LifetimeSeconds { get; } = lifetimeSeconds;
+        internal DateTimeOffset? EndedAt { get; set; }
+        internal bool Abrupt { get; set; }
+        internal int? CloseCode { get; set; }
+    }
+    private ConnectionRecord? _endedConnection;
+
+    private bool IsPlannedEnd(ConnectionRecord? connection, out string why)
+    {
+        why = "no ended connection";
+        if (connection is not { EndedAt: { } ended }) return false;
+        if (connection.LifetimeSeconds is not int lifetimeSeconds) { why = "the ticket announced no lifetime"; return false; }
+        if (!connection.Abrupt && connection.CloseCode != (int)WebSocketCloseStatus.NormalClosure)
+        { why = $"closed with code {connection.CloseCode?.ToString() ?? "none"}"; return false; }
+        var held = ended - connection.ConnectedAt;
+        var lifetime = TimeSpan.FromSeconds(lifetimeSeconds);
+        if (held < lifetime - PlannedEndEarly || held > lifetime + PlannedEndLate)
+        { why = $"held {held.TotalSeconds:0}s of a {lifetimeSeconds}s lifetime"; return false; }
+        why = $"planned end after {held.TotalSeconds:0}s";
+        return true;
+    }
+
+    private bool IsQuietReconnect(DateTimeOffset connectedAt, out string why)
+    {
+        if (QuickReconnectWindow <= TimeSpan.Zero) { why = "quick reconnects disabled"; return false; }
+        if (!IsPlannedEnd(_endedConnection, out why)) return false;
+        var gap = connectedAt - _endedConnection!.EndedAt!.Value;
+        if (gap < TimeSpan.Zero || gap > QuickReconnectWindow) { why = $"{why}, back after {gap.TotalSeconds:0.0}s"; return false; }
+        why = $"{why}, back after {gap.TotalSeconds:0.0}s";
+        return true;
+    }
     // Socket whose hello has been answered with a subscribe frame. Channel-set
     // changes on that socket are sent as a new subscribe frame (the server
     // replaces the set and snapshots it) instead of tearing the socket down.
@@ -393,6 +434,7 @@ public sealed class EventChannelClient : IDisposable
     {
         var backoffMs = 1000;
         var catchUp = false;
+        _endedConnection = null;
         while (!ct.IsCancellationRequested)
         {
             long? connectedAt = null;
@@ -412,17 +454,6 @@ public sealed class EventChannelClient : IDisposable
             }
             backoffMs = ReconnectBackoff.AfterConnection(backoffMs, 1000,
                 connectedAt is { } openedAt ? System.Diagnostics.Stopwatch.GetElapsedTime(openedAt) : TimeSpan.Zero);
-            // The server ends every events connection after max_connection_seconds (300).
-            // Back within QuickReconnectWindow of a connection that held, nothing worth a
-            // catch-up was missed: retiring every page's reads then reloaded the whole app
-            // every five minutes. Only an attempt that connected moves the window, so a
-            // run of failed attempts still catches up once the gap has grown longer.
-            if (connectedAt is { } heldSince)
-                Volatile.Write(ref _quietReconnectUntil,
-                    System.Diagnostics.Stopwatch.GetElapsedTime(heldSince) >= QuickReconnectHeld && QuickReconnectWindow > TimeSpan.Zero
-                        ? System.Diagnostics.Stopwatch.GetTimestamp() + (long)(QuickReconnectWindow.TotalSeconds * System.Diagnostics.Stopwatch.Frequency)
-                        : 0);
-
             if (ct.IsCancellationRequested) return;
             if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
             { catchUp = false; backoffMs = 1000; continue; }
@@ -463,13 +494,14 @@ public sealed class EventChannelClient : IDisposable
                            .Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
                            .TrimEnd('/');
         wsUrl += "/api/v2/events/ws";
-        var ticket = await MintEventsTicketAsync(ct).ConfigureAwait(false);
+        var (ticket, lifetimeSeconds) = await MintEventsTicketAsync(ct).ConfigureAwait(false);
         if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
 
         var ws = new ClientWebSocket();
         ws.Options.AddSubProtocol("silo.events.v2");
         ws.Options.AddSubProtocol("silo.ticket." + ticket);
         lock (_lock) { _ws = ws; _activeSocketContext = context; }
+        ConnectionRecord connection;
         try
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
@@ -477,6 +509,7 @@ public sealed class EventChannelClient : IDisposable
             await ws.ConnectAsync(new Uri(wsUrl), ct);
             if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
             onConnected?.Invoke();
+            connection = new ConnectionRecord(DateTimeOffset.UtcNow, lifetimeSeconds);
             var reconnect = false;
             lock (_lock)
             {
@@ -484,10 +517,11 @@ public sealed class EventChannelClient : IDisposable
                 if (!ReferenceEquals(_ws, ws) || !_apiClient.IsCurrentContext(context))
                     throw new OperationCanceledException("Event authority changed.", ct);
                 reconnect = _hasConnected && catchUp;
-                if (reconnect && IsQuickReconnect())
+                if (reconnect)
                 {
-                    reconnect = false;
-                    Log("Quick reconnect after a connection that held: no catch-up");
+                    var quiet = IsQuietReconnect(connection.ConnectedAt, out var why);
+                    Log(quiet ? $"Quick reconnect ({why}): no catch-up" : $"Catch-up needed ({why})");
+                    reconnect = !quiet;
                 }
                 if (reconnect && !PublishAccessInvalidation(context, out context, transportCatchUp: true))
                     throw new OperationCanceledException("Event authority changed.", ct);
@@ -508,10 +542,13 @@ public sealed class EventChannelClient : IDisposable
 
         try
         {
-            await ReceiveLoop(ws, context, ct);
+            await ReceiveLoop(ws, context, ct, connection);
         }
         finally
         {
+            // Only a connection that opened records an end; failed attempts keep the previous one.
+            connection.EndedAt = DateTimeOffset.UtcNow;
+            _endedConnection = connection;
             try
             {
                 if (ws.State == WebSocketState.Open)
@@ -533,7 +570,8 @@ public sealed class EventChannelClient : IDisposable
     private async Task ReceiveLoop(
         ClientWebSocket ws,
         ApiRequestContext context,
-        CancellationToken ct)
+        CancellationToken ct,
+        ConnectionRecord connection)
     {
         var buffer = new byte[16 * 1024];
         var messageBuffer = new StringBuilder();
@@ -553,12 +591,14 @@ public sealed class EventChannelClient : IDisposable
             }
             catch (WebSocketException ex)
             {
+                connection.Abrupt = true;
                 Log($"Receive error: {ex.Message}");
                 return;
             }
 
             if (result.MessageType == WebSocketMessageType.Close)
             {
+                connection.CloseCode = (int?)result.CloseStatus;
                 if (!ct.IsCancellationRequested) HandleServerClose(ws, (int?)result.CloseStatus);
                 Log($"Server closed connection: {result.CloseStatusDescription}");
                 return;
@@ -761,19 +801,23 @@ public sealed class EventChannelClient : IDisposable
         await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
     }
 
-    private async Task<string> MintEventsTicketAsync(CancellationToken ct)
+    private async Task<(string Ticket, int? LifetimeSeconds)> MintEventsTicketAsync(CancellationToken ct)
     {
         var response = await _apiClient.SendRequestAsync<EventsWsTicketResponse>(HttpMethod.Post,
             "/api/v2/events/ws-ticket", null, null, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(response.Ticket) || response.Protocol != "silo.events.v2")
             throw new InvalidDataException("Invalid event socket ticket response.");
-        return response.Ticket;
+        // How long the server keeps this connection (300 s today). Absent or implausible means
+        // no end can be proven planned, so every reconnect catches up as before.
+        return (response.Ticket, response.MaxConnectionSeconds is >= 1 and <= 3600 ? response.MaxConnectionSeconds : null);
     }
 
     private sealed class EventsWsTicketResponse
     {
         public string Ticket { get; set; } = "";
         public string Protocol { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("max_connection_seconds")]
+        public int? MaxConnectionSeconds { get; set; }
     }
 
     private static void Log(string msg)
