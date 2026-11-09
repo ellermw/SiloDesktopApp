@@ -14,6 +14,22 @@ public partial class LibraryViewModel
     private bool _catalogRefreshPending;
     private Task<CatalogRefreshResult>? _catalogRefreshTask;
     private int _catalogRefreshVersion = -1;
+    private (int Start, CatalogResponse Response)? _confirmedRefreshViewport;
+    private int _confirmedRefreshViewportVersion = -1;
+
+    /// <summary>Only newly authorized rows may be rendered while held windows catch up.</summary>
+    public MediaItem? GetRenderableWindowItem(int index)
+    {
+        if (_catalogContext != _catalogApi.CaptureContext()) return null;
+        if (_confirmedRefreshViewportVersion == _queryVersion && _confirmedRefreshViewport is { } viewport &&
+            (_catalogRefreshPending || _snapshot is null || _snapshot == viewport.Response.Snapshot))
+        {
+            var relative = index - viewport.Start;
+            if (relative >= 0 && relative < viewport.Response.Items.Count && index < TotalCount)
+                return viewport.Response.Items[relative];
+        }
+        return _catalogRefreshPending ? null : GetWindowItem(index);
+    }
 
     // Retained rows have not been authorized by a read under the new context yet.
     public bool RequiresCatalogRefresh => _catalogRefreshPending ||
@@ -47,6 +63,7 @@ public partial class LibraryViewModel
         _completedBoundaries.Clear();
         _loadingPages.Clear();
         _catalogRefreshPending = true;
+        _confirmedRefreshViewport = null;
         // Keep the displayed rail, but never label its old positions as current.
         // A jump/index request must await a fresh index under this query.
         _letterIndexKey = null;
@@ -80,11 +97,13 @@ public partial class LibraryViewModel
             return CatalogRefreshResult.NotLoaded;
         }
         if (IsLetterJumpInProgress) return CatalogRefreshResult.Deferred;
+        var chunks = PlanRefreshChunks(visibleStart, Math.Max(1, visibleCount));
+        // Never turn an unexpectedly oversized held set into an unbounded catch-up.
+        if (chunks.Sum(chunk => chunk.Count) > MaxRefreshedItems) return CatalogRefreshResult.Deferred;
         RebaseCatalogQuery();
         var version = _catalogRefreshVersion = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
         var jump = _letterJumpVersion;
-        var chunks = PlanRefreshChunks(visibleStart, Math.Max(1, visibleCount));
         using var owner = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
         bool Current() => !owner.IsCancellationRequested && version == _queryVersion &&
             _catalogContext == _catalogApi.CaptureContext() && queryKey == CatalogQueryScopeKey() &&
@@ -95,9 +114,9 @@ public partial class LibraryViewModel
         CatalogRefreshResult FailRefresh(string message)
         {
             if (!Current()) return CatalogRefreshResult.Deferred;
-            // No staged rows were published. Retire the unconfirmed old rows as
-            // a unit, but keep the extent/scroll while ordinary viewport loads
-            // retry without depending on an unreadable, distant held window.
+            // Retire unconfirmed held rows, but keep the independently confirmed
+            // viewport renderable. A distant failure must not blank fresh cards.
+            // Foreground reads can establish another snapshot without this offset.
             _pageResponses.Clear();
             _recentWindows.Clear();
             _completedBoundaries.Clear();
@@ -116,22 +135,56 @@ public partial class LibraryViewModel
         }
         try
         {
-            foreach (var (start, count) in chunks)
+            const int MaxSnapshotAttempts = 2;
+            for (var attempt = 0; attempt < MaxSnapshotAttempts; attempt++)
             {
-                if (!Current()) return CatalogRefreshResult.Deferred;
-                CatalogResponse? replacement = null;
-                await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, owner.Token,
-                    publishState: false);
-                if (!Current()) return CatalogRefreshResult.Deferred;
-                if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot))
-                    return FailRefresh("The server did not return a catalog snapshot.");
-                // Stage all chunks without changing live rows, cursors, counts or the
-                // old snapshot. Deferred reads retain them; failed reads retire them as a unit.
-                snapshot ??= replacement.Snapshot;
-                if (replacement.Snapshot != snapshot)
-                    return FailRefresh("The catalog snapshot changed during refresh.");
-                replacements.Add((start, count, replacement));
-                refreshed++;
+                snapshot = null;
+                replacements.Clear();
+                _confirmedRefreshViewport = null;
+                WindowLoaded?.Invoke();
+                var snapshotChanged = false;
+                try
+                {
+                    foreach (var (start, count) in chunks)
+                    {
+                        if (!Current()) return CatalogRefreshResult.Deferred;
+                        CatalogResponse? replacement = null;
+                        await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, owner.Token,
+                            publishState: false);
+                        if (!Current()) return CatalogRefreshResult.Deferred;
+                        if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot))
+                            return FailRefresh("The server did not return a catalog snapshot.");
+                        snapshot ??= replacement.Snapshot;
+                        if (replacement.Snapshot != snapshot)
+                        {
+                            snapshotChanged = true;
+                            break;
+                        }
+                        replacements.Add((start, count, replacement));
+                        refreshed++;
+                        if (replacements.Count == 1)
+                        {
+                            // Publish the viewport after one round trip, independently of
+                            // the all-or-nothing merge of the other held windows.
+                            _confirmedRefreshViewport = (start, new CatalogResponse
+                            {
+                                Items = replacement.Items.Take(count).ToList(), Snapshot = snapshot,
+                            });
+                            _confirmedRefreshViewportVersion = version;
+                            WindowLoaded?.Invoke();
+                        }
+                    }
+                }
+                catch (ApiException ex) when (ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor" && Current())
+                {
+                    snapshotChanged = true;
+                }
+                if (!snapshotChanged) break;
+                // A scan/user-state change is not a failed transport. Retry fresh;
+                // continued churn defers without discarding the retained held set.
+                _confirmedRefreshViewport = null;
+                WindowLoaded?.Invoke();
+                if (attempt == MaxSnapshotAttempts - 1) return CatalogRefreshResult.Deferred;
             }
         }
         catch (OperationCanceledException) when (!Current())
@@ -242,9 +295,10 @@ public partial class LibraryViewModel
     {
         if (replacement.Count == 0) return;
         var end = start + replacement.Count;
-        // Rows nothing held yet (a visible edge) need a window of their own. A range
-        // spread over several held windows must not add one: that would evict another.
-        var unheld = Enumerable.Range(start, replacement.Count).Any(index => GetWindowItem(index) is null);
+        // Only a wholly unheld range needs another cache entry. Never evict a
+        // window this catch-up just merged to store an overlapping visible edge.
+        // The separately confirmed viewport renders that edge until its normal load.
+        var unheld = Enumerable.Range(start, replacement.Count).All(index => GetWindowItem(index) is null);
         if (WindowStartIndex >= 0 && start < WindowStartIndex + _windowItems.Count && end > WindowStartIndex)
         {
             // A new array: the old list may still be shared with a cached window.
@@ -267,7 +321,9 @@ public partial class LibraryViewModel
                 response.Items[index - pageStart] = replacement[index - start];
             Items.SetPage(page, response.Items);
         }
-        if (unheld) RememberWindow(start, new CatalogResponse { Items = replacement.ToList(), Snapshot = _snapshot }, false);
+        if (unheld && _recentWindows.Count < 8 &&
+            _recentWindows.Sum(window => window.Response.Items.Count) + replacement.Count <= 1200)
+            RememberWindow(start, new CatalogResponse { Items = replacement.ToList(), Snapshot = _snapshot }, false);
     }
 
     private static bool SameLetterIndex(CatalogLettersResponse? current, CatalogLettersResponse? next) =>

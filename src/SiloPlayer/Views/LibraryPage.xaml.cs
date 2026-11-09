@@ -1159,7 +1159,8 @@ public sealed partial class LibraryPage : Page,
         LibraryContentArea.Visibility = tag == "Library" && _currentAudiobookAxis == "books" ? Visibility.Visible : Visibility.Collapsed;
         UpdateLibraryArtworkActivity();
         AudiobookGroupsPanel.Visibility = tag == "Library" && _currentAudiobookAxis != "books" ? Visibility.Visible : Visibility.Collapsed;
-        RecommendedPanel.Visibility = tag == "Recommended" ? Visibility.Visible : Visibility.Collapsed;
+        RecommendedPanel.Visibility = tag == "Recommended" && !_recommendedCardsAwaitingConfirmation
+            ? Visibility.Visible : Visibility.Collapsed;
         ArtworkViewport.SetActive(RecommendedPanel, _isNavigated && tag == "Recommended");
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1957,7 +1958,8 @@ public sealed partial class LibraryPage : Page,
         if (ViewModel.RequiresCatalogRefresh)
         {
             HideUnconfirmedCatalogRows();
-            return;
+            // Keep slots as placeholders until their viewport read is confirmed;
+            // distant held windows must not gate painting that first response.
         }
 
         var layout = GetGridLayout();
@@ -1994,7 +1996,7 @@ public sealed partial class LibraryPage : Page,
                 card.BindPlaceholder();
             card.Tag = index;
             PositionVirtualCardSlot(card, index, layout);
-            var item = ViewModel.GetWindowItem(index);
+            var item = ViewModel.GetRenderableWindowItem(index);
             if (item == null)
                 card.BindPlaceholder();
             else if (_catalogCardsAwaitingConfirmation)
@@ -2493,7 +2495,7 @@ public sealed partial class LibraryPage : Page,
             if (card.Tag is not int cardIndex || cardIndex != index)
                 continue;
 
-            var item = ViewModel.GetWindowItem(index);
+            var item = ViewModel.GetRenderableWindowItem(index);
             App.SetPerfBreadcrumb($"Library bind item index={index} hasItem={item != null} attempt={attempts} processed={processed}");
             if (item != null && (!ReferenceEquals(card.MediaItem, item) || card.SortKey != ViewModel.SelectedSort))
                 card.Bind(item, ViewModel.SelectedSort);
@@ -3032,6 +3034,8 @@ public sealed partial class LibraryPage : Page,
 
     private void ResetRecommendedContent()
     {
+        _recommendedCardsAwaitingConfirmation = false;
+        RecommendedPanel.IsHitTestVisible = true;
         _recommendationsVersion++;
         CancelRecommendedRefresh();
         _recommendationsLoadCts?.Cancel();
@@ -3215,11 +3219,13 @@ public sealed partial class LibraryPage : Page,
             return true;
 
         var version = _recommendationsVersion;
+        var context = _stateSettings.CaptureContext();
+        var confirming = _recommendedCardsAwaitingConfirmation;
         try
         {
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
             var layoutResponse = await catalogApi.GetLibraryLayoutAsync(libraryId, cancellationToken);
-            if (version != _recommendationsVersion || _currentTab != "Recommended")
+            if (version != _recommendationsVersion || !_stateSettings.IsCurrentContext(context) || _currentTab != "Recommended")
                 return true;
 
             using var gate = new SemaphoreSlim(4, 4);
@@ -3253,6 +3259,7 @@ public sealed partial class LibraryPage : Page,
 
             var results = await Task.WhenAll(sectionTasks);
             if (version != _recommendationsVersion
+                || !_stateSettings.IsCurrentContext(context)
                 || cancellationToken.IsCancellationRequested
                 || !_isNavigated
                 || _currentTab != "Recommended")
@@ -3260,6 +3267,20 @@ public sealed partial class LibraryPage : Page,
                 return true;
             }
 
+            if (confirming && results.Any(result => result.Failed || result.Section is null))
+            {
+                FailUnconfirmedRecommendedRows();
+                return false;
+            }
+            if (confirming)
+            {
+                // Pinned rows are outside the layout/raw-section map. Retire those
+                // old cards too, and reload them under this refresh's authority.
+                foreach (var row in RecommendedSectionsPanel.Children.OfType<SectionRow>()
+                    .Where(row => !_recommendedRows.ContainsValue(row) && !ReferenceEquals(row, _recommendedHeroRestRow)).ToList())
+                    RecommendedSectionsPanel.Children.Remove(row);
+                _rawRecommendedSections.Clear();
+            }
             _recommendedLayoutOrder = layoutResponse.Sections;
             var activeIds = _recommendedLayoutOrder.Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var staleId in _rawRecommendedSections.Keys.Where(id => !activeIds.Contains(id)).ToList())
@@ -3281,6 +3302,14 @@ public sealed partial class LibraryPage : Page,
                 }
             }
             ApplyRecommendedProjection(libraryId);
+            if (confirming)
+            {
+                await LoadPinnedCollectionRowsAsync(catalogApi, libraryId, version);
+                if (version != _recommendationsVersion || !_stateSettings.IsCurrentContext(context) ||
+                    cancellationToken.IsCancellationRequested || !_isNavigated || _currentTab != "Recommended")
+                    return false;
+                ConfirmRecommendedRows();
+            }
             _ = LoadRecommendedRecipeTypesAsync(version, libraryId, cancellationToken);
             return true;
         }
@@ -3291,8 +3320,10 @@ public sealed partial class LibraryPage : Page,
         }
         catch (Exception ex)
         {
-            // Keep the populated surface mounted when a background refresh
-            // fails. The next media event will retry without flashing content.
+            // Ordinary media refreshes may retain their surface, but transport
+            // catch-up cannot fall back to content whose access is unconfirmed.
+            if (version == _recommendationsVersion && _stateSettings.IsCurrentContext(context))
+                FailUnconfirmedRecommendedRows();
             LocalLog.AppendLine(
                 "library_recommended_refresh.txt",
                 $"layout | {ex.GetType().Name}: {ex.Message}");

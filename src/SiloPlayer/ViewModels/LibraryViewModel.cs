@@ -485,6 +485,8 @@ public partial class LibraryViewModel : ObservableObject
         var matches = _windowItems
             .Concat(_recentWindows.SelectMany(window => window.Response.Items))
             .Concat(_pageResponses.Values.SelectMany(response => response.Items))
+            .Concat(_confirmedRefreshViewportVersion == _queryVersion && _confirmedRefreshViewport is { } viewport
+                ? viewport.Response.Items : Enumerable.Empty<MediaItem>())
             .Where(item => string.Equals(item.ContentId, contentId, StringComparison.OrdinalIgnoreCase))
             .Distinct<MediaItem>(ReferenceEqualityComparer.Instance)
             .ToList();

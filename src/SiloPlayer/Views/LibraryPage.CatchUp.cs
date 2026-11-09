@@ -18,6 +18,47 @@ public sealed partial class LibraryPage
          _currentTab == "Recommended" && _recommendedLoaded);
 
     private bool _catalogCardsAwaitingConfirmation;
+    private bool _recommendedCardsAwaitingConfirmation;
+    private SiloPlayer.Core.Api.ApiRequestContext? _recommendedUnconfirmedContext;
+    private double _unconfirmedRecommendedOffset;
+
+    private void HideUnconfirmedRecommendedRows()
+    {
+        var context = _stateSettings.CaptureContext();
+        if (!_recommendedLoaded || _recommendedUnconfirmedContext == context) return;
+        _recommendedUnconfirmedContext = context;
+        if (!_recommendedCardsAwaitingConfirmation)
+            _unconfirmedRecommendedOffset = RecommendedPanel.VerticalOffset;
+        _recommendedCardsAwaitingConfirmation = true;
+        // Retire old section/layout continuations before they can republish cards.
+        ++_recommendationsVersion;
+        CancelRecommendedRefresh();
+        _recommendationsLoadCts?.Cancel();
+        RecommendedPanel.IsHitTestVisible = false;
+        RecommendedPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+    }
+
+    private void ConfirmRecommendedRows()
+    {
+        if (!_recommendedCardsAwaitingConfirmation) return;
+        _recommendedCardsAwaitingConfirmation = false;
+        RecommendedPanel.IsHitTestVisible = true;
+        RecommendedPanel.Visibility = _currentTab == "Recommended"
+            ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        RecommendedPanel.UpdateLayout();
+        RecommendedPanel.ChangeView(null, _unconfirmedRecommendedOffset, null, true);
+    }
+
+    private void FailUnconfirmedRecommendedRows()
+    {
+        if (!_recommendedCardsAwaitingConfirmation) return;
+        // A failed authorized reread must not fall back to old sections or pins.
+        ResetRecommendedContent();
+        RecommendedPanel.Visibility = _currentTab == "Recommended"
+            ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        RecommendedError.Text = "Recommendations could not be refreshed. Please retry.";
+        RecommendedErrorPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+    }
 
     /// <summary>
     /// A reconnect may have missed an access revocation. Hide cards immediately,
@@ -26,6 +67,7 @@ public sealed partial class LibraryPage
     /// </summary>
     public void HideUnconfirmedCatalogRows()
     {
+        HideUnconfirmedRecommendedRows();
         _catalogCardsAwaitingConfirmation = true;
         _cardBindTimer?.Stop();
         _pendingCardBinds.Clear();
@@ -40,13 +82,13 @@ public sealed partial class LibraryPage
         try
         {
             if (!_isNavigated) return;
+            HideUnconfirmedCatalogRows();
             if (_currentTab == "Recommended")
             {
                 QueueRecommendedRefresh();
                 return;
             }
             if (_currentTab != "Library" || _currentAudiobookAxis != "books") return;
-            HideUnconfirmedCatalogRows();
             var layout = GetGridLayout();
             var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
             if (range.EndIndex < range.StartIndex) range = (Math.Max(0, ViewModel.WindowStartIndex), Math.Max(0, ViewModel.WindowStartIndex));

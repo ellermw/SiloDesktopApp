@@ -6,7 +6,9 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
@@ -102,6 +104,37 @@ internal static class LibraryReconnectNativeFixture
                 Program.Log("PASS: Library tab keeps its page, offset and loaded windows across event-channel reconnects and merges changes in place.");
             }
             finally { page.ViewModel.PropertyChanged -= Watch; }
+
+            // A reconnect can miss an access/rating change on Recommended too.
+            wire.RecommendedEnabled = true;
+            ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("RecommendedTab")).GetPattern(PatternInterface.Invoke)).Invoke();
+            var recommended = (ScrollViewer)page.FindName("RecommendedPanel");
+            var hero = (HeroCarousel)page.FindName("RecommendedHeroCarousel");
+            var sections = (StackPanel)page.FindName("RecommendedSectionsPanel");
+            var awaiting = typeof(LibraryPage).GetField("_recommendedCardsAwaitingConfirmation", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var rawField = typeof(LibraryPage).GetField("_rawRecommendedSections", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            foreach (var failure in new[] { "none", "section", "null", "layout" })
+            {
+                wire.RecommendedFailure = "none";
+                wire.RecommendedRevoked = false;
+                await page.RefreshLocalizedContentAsync();
+                await Until(() => hero.Visibility == Visibility.Visible && sections.Children.OfType<SectionRow>().Any(row => row.Section?.Items.Count > 0));
+                Check(page.CanPreserveOnReconnect, "a populated Recommended tab can catch up in place");
+                wire.RecommendedRevoked = true; // missed access_changed while disconnected
+                wire.RecommendedFailure = failure;
+                Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "Recommended reconnect");
+                page.HideUnconfirmedCatalogRows(); // shell hides before playback can defer the reads
+                Check(recommended.Visibility == Visibility.Collapsed && !recommended.IsHitTestVisible,
+                    "Recommended hero and sections are hidden and disabled before catch-up reads");
+                await page.CatchUpAfterReconnectAsync();
+                await Until(() => !(bool)awaiting.GetValue(page)!);
+                Check(ReferenceEquals(frame.Content, page), "Recommended catch-up keeps its page instance");
+                Check(hero.ItemsSource is null && !sections.Children.OfType<SectionRow>().Any(row => row.Section?.Items.Count > 0),
+                    $"Recommended {failure} reread cannot expose previously authorized titles");
+                var raw = (Dictionary<string, HomeSectionWithItems>)rawField.GetValue(page)!;
+                Check(raw.Values.All(section => section.Items.Count == 0), $"Recommended {failure} reread does not retain old raw sections");
+            }
+            Program.Log("PASS: Recommended reconnect quarantines hero/rows and never restores revoked titles after empty, failed or null section/layout reads.");
         }
         finally
         {
@@ -128,6 +161,8 @@ internal static class LibraryReconnectNativeFixture
     {
         private const int BaseTotal = 3000;
         internal int Inserted = -1;
+        internal bool RecommendedEnabled, RecommendedRevoked;
+        internal string RecommendedFailure = "none";
         private string Id(int index) => Inserted < 0 || index < Inserted ? "item-" + index : index == Inserted ? "inserted" : "item-" + (index - 1);
         private int Total => BaseTotal + (Inserted < 0 ? 0 : 1);
 
@@ -146,6 +181,23 @@ internal static class LibraryReconnectNativeFixture
                 return Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = Id(index), title = "Fixture " + Id(index), type = "movie" }),
                     total, total_exact = !query.ContainsKey("skip_total"), window_cursor = "window",
                     page = new { has_more = offset + count < total, next_cursor = "next:" + (offset + count) } });
+            }
+            if (path.EndsWith("/layout") && RecommendedEnabled)
+            {
+                if (RecommendedFailure == "layout") return Reply(new { detail = "Synthetic layout failure" }, HttpStatusCode.ServiceUnavailable);
+                return Reply(new { sections = new[] {
+                    new { id = "hero", section_type = "recently_added", title = "Featured", featured = true, item_limit = 1 },
+                    new { id = "row", section_type = "recently_added", title = "Titles", featured = false, item_limit = 1 },
+                } });
+            }
+            if (path.Contains("/sections/", StringComparison.Ordinal) && path.EndsWith("/items") && RecommendedEnabled)
+            {
+                if (RecommendedFailure == "section") return Reply(new { detail = "Synthetic section failure" }, HttpStatusCode.ServiceUnavailable);
+                if (RecommendedFailure == "null")
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("null", System.Text.Encoding.UTF8, "application/json") });
+                var id = path.Contains("/hero/", StringComparison.Ordinal) ? "hero" : "row";
+                return Reply(new { id, section_type = "recently_added", title = "Fixture " + id, item_limit = 1,
+                    items = RecommendedRevoked ? Array.Empty<object>() : new object[] { new { content_id = id + "-title", title = "Previously authorized", type = "movie" } } });
             }
             if (path.EndsWith("/layout") || path.EndsWith("/sections")) return Reply(new { sections = Array.Empty<object>() });
             if (path.EndsWith("/filters")) return Reply(new { genres = Array.Empty<string>() });

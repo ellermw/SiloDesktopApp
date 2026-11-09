@@ -212,6 +212,7 @@ public sealed class LibraryBackgroundRefreshTests
             wire.Fail = failRefresh;
             Reconnect(wire);
             Assert.True(model.RequiresCatalogRefresh);
+            Assert.Null(model.GetRenderableWindowItem(500));
             var result = await model.RefreshInPlaceAsync(500, 60);
             await wire.Idle();
             Assert.Equal(failRefresh ? LibraryViewModel.CatalogRefreshResult.Failed :
@@ -269,8 +270,10 @@ public sealed class LibraryBackgroundRefreshTests
             Reconnect(wire);
 
             Assert.Equal(LibraryViewModel.CatalogRefreshResult.Failed, await model.RefreshInPlaceAsync(500, 60));
-            // Neither staged replacements nor unconfirmed old rows remain visible.
+            // Unconfirmed held rows retire, but the independently confirmed viewport survives.
             Assert.All(held, index => Assert.Null(model.GetWindowItem(index)));
+            Assert.Equal("item-499", model.GetRenderableWindowItem(500)?.ContentId);
+            Assert.Null(model.GetRenderableWindowItem(0));
             Assert.NotNull(model.ErrorMessage);
             Assert.Equal(1000, model.TotalCount);
             var reads = wire.Requests.Count;
@@ -304,7 +307,9 @@ public sealed class LibraryBackgroundRefreshTests
             var refresh = model.RefreshInPlaceAsync(500, 60, stop.Token);
             await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
             Assert.Same(item, model.GetWindowItem(500));
-            Assert.True(model.RequiresCatalogRefresh); // retained internally, never renderable yet
+            Assert.True(model.RequiresCatalogRefresh); // ordinary reads still await the atomic held-set merge
+            Assert.Equal("item-499", model.GetRenderableWindowItem(500)?.ContentId);
+            Assert.Null(model.GetRenderableWindowItem(0)); // unconfirmed held windows stay hidden
             stop.Cancel();
             wire.ReleaseChunk.TrySetResult();
             Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await refresh);
@@ -404,6 +409,64 @@ public sealed class LibraryBackgroundRefreshTests
     }
 
     [Fact]
+    public async Task PartiallyHeldViewportCannotEvictFreshRowsAtThe1200RowCacheCap()
+    {
+        using var wire = new Catalog();
+        wire.Titles.AddRange(Enumerable.Range(1000, 2000).Select(index => ("item-" + index, "Item " + index)));
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        await model.LoadCommand.ExecuteAsync(null);
+        await wire.Idle();
+        for (var start = 0; start < 1000; start += 200) await model.LoadWindowAsync(start, 200);
+        await model.LoadWindowAsync(2000, 100);
+        await model.LoadWindowAsync(2300, 100); // 1200 cached rows; oldest is outside the active window
+        var held = Enumerable.Range(0, 3000).Where(index => model.GetWindowItem(index) is not null).ToArray();
+        Assert.Equal(1200, held.Length);
+        Assert.NotNull(model.GetWindowItem(0));
+        Assert.Null(model.GetWindowItem(1000));
+        wire.Titles.Insert(0, ("new-title", "Brand New"));
+
+        Reconnect(wire);
+        Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await model.RefreshInPlaceAsync(990, 60));
+        await wire.Idle();
+        Assert.All(held, index => Assert.Equal(wire.Titles[index].Id, model.GetWindowItem(index)?.ContentId));
+        Assert.Equal(wire.Titles[1049].Id, model.GetRenderableWindowItem(1049)?.ContentId);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task SnapshotChurnRetriesThenDefersWithoutRetiringHeldRowsOrShowingAnError(int changes)
+    {
+        var (wire, model, totals) = Scrolled();
+        using (wire)
+        {
+            var held = Enumerable.Range(0, 1000).Where(index => model.GetWindowItem(index) is not null).ToArray();
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            wire.ChangeSnapshotAt = 560;
+            wire.SnapshotChangesRemaining = changes;
+            var requests = wire.Requests.Count;
+            Reconnect(wire);
+            Assert.Equal(changes == 1 ? LibraryViewModel.CatalogRefreshResult.Completed : LibraryViewModel.CatalogRefreshResult.Deferred,
+                await model.RefreshInPlaceAsync(500, 60));
+            var freshViewportReads = wire.Requests.Skip(requests)
+                .Where(read => read.ContainsKey("skip_total") && read.GetValueOrDefault("seek") == "500").ToList();
+            Assert.Equal(2, freshViewportReads.Count);
+            Assert.All(freshViewportReads, read => Assert.False(read.ContainsKey("cursor")));
+            Assert.All(held, index => Assert.NotNull(model.GetWindowItem(index)));
+            Assert.Null(model.ErrorMessage);
+            Assert.DoesNotContain(0, totals);
+            if (changes == 1) Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            else
+            {
+                Assert.True(model.RequiresCatalogRefresh);
+                Assert.Null(model.GetRenderableWindowItem(500));
+                Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await model.RefreshInPlaceAsync(500, 60));
+                Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            }
+        }
+    }
+
+    [Fact]
     public void ReadsAreBoundedAndStartAtTheViewport()
     {
         var (wire, model, _) = Scrolled();
@@ -460,6 +523,10 @@ public sealed class LibraryBackgroundRefreshTests
         var render = page[page.IndexOf("private void RenderVirtualGrid(", StringComparison.Ordinal)..];
         render = render[..render.IndexOf("private void EnsureVirtualCardSlots(", StringComparison.Ordinal)];
         Assert.Contains("if (ViewModel.RequiresCatalogRefresh)", render);
+        var pendingGate = render[render.IndexOf("if (ViewModel.RequiresCatalogRefresh)", StringComparison.Ordinal)..];
+        pendingGate = pendingGate[..pendingGate.IndexOf("var layout =", StringComparison.Ordinal)];
+        Assert.DoesNotContain("return;", pendingGate); // the first confirmed chunk must paint before the held-set merge
+        Assert.Contains("ViewModel.GetRenderableWindowItem(index)", render);
         Assert.True(render.IndexOf("HideUnconfirmedCatalogRows();", StringComparison.Ordinal) <
             render.IndexOf("range.StartIndex == _lastRenderedStartIndex", StringComparison.Ordinal));
         Assert.Contains("else if (_catalogCardsAwaitingConfirmation)", render);
@@ -486,7 +553,8 @@ public sealed class LibraryBackgroundRefreshTests
         internal bool Fail, OmitWindowTotals, ZeroWindowTotal, HoldCount, TimeoutWindow;
         internal readonly TaskCompletionSource CountStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal int? FailWindowAt, HoldWindowAt;
+        internal int? FailWindowAt, HoldWindowAt, ChangeSnapshotAt;
+        internal int SnapshotChangesRemaining;
         internal readonly TaskCompletionSource ChunkStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseChunk = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Catalog() { Client = new SiloApiClient(new HttpClient(this)); Client.SetBaseUrl("https://background-refresh.invalid"); }
@@ -535,6 +603,12 @@ public sealed class LibraryBackgroundRefreshTests
                         offset = int.Parse(query["seek"]);
                         if (query.TryGetValue("cursor", out var window) && _snapshots.ContainsKey(window)) snapshot = window;
                         else { snapshot = "snap-" + _snapshots.Count; _snapshots[snapshot] = Titles.ToList(); }
+                    }
+                    if (query.ContainsKey("skip_total") && offset == ChangeSnapshotAt && SnapshotChangesRemaining > 0)
+                    {
+                        SnapshotChangesRemaining--;
+                        snapshot = "snap-" + _snapshots.Count;
+                        _snapshots[snapshot] = Titles.ToList();
                     }
                     query["window"] = snapshot;
                     lock (Requests) Requests.Add(query);
