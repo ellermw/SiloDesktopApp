@@ -117,7 +117,33 @@ public sealed partial class LibraryPage
             // without collapsing the extent. The range loader can retry either.
             _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
             ScheduleVisibleRangeLoad(force: true);
+            _ = RetryDeferredCatchUpAsync(++_catchUpRetryVersion);
         }
         catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_transport_catchup"); }
+    }
+
+    private long _catchUpRetryVersion;
+
+    /// <summary>
+    /// Catalog churn or a newer seek can defer the catch-up with the grid still
+    /// quarantined. Retry with backoff until it settles instead of waiting for
+    /// the next scroll or reconnect; held rows stay hidden until confirmed.
+    /// </summary>
+    private async Task RetryDeferredCatchUpAsync(long version)
+    {
+        try
+        {
+            for (var delay = 1000; ; delay = Math.Min(delay * 2, 30000))
+            {
+                await Task.Delay(delay);
+                if (version != _catchUpRetryVersion || !_isNavigated || _currentTab != "Library" ||
+                    _currentAudiobookAxis != "books" || !ViewModel.RequiresCatalogRefresh)
+                    return;
+                LocalLog.AppendLine("catalog_queries.txt", $"library_transport_catchup_retry delay_ms={delay}");
+                _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+                ScheduleVisibleRangeLoad(force: true);
+            }
+        }
+        catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_transport_catchup_retry"); }
     }
 }
