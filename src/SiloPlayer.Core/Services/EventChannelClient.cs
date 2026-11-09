@@ -33,16 +33,17 @@ public sealed class EventChannelClient : IDisposable
     // the server contract: catch up only after more than five seconds without a connection);
     // treating it as a loss retired every page's reads and reloaded the app every five minutes.
     // Only a provable planned end counts. Times are wall-clock, so sleep counts as time away:
-    // - the connection lasted its announced lifetime (PlannedEndEarly before to PlannedEndLate after),
-    //   so a silent drop noticed late, a slept laptop or an early server failure all catch up;
-    // - it ended abruptly or with a normal close; a restart (1012), try-again-later (1013) or
-    //   any other code catches up, and 4001/access_changed keep their own handling;
+    // - the connection lasted its announced lifetime (at most PlannedEndEarly before for a close
+    //   frame, never early for a receive error, and at most PlannedEndLate after), so an early
+    //   reset, a silent drop noticed late or a slept laptop still catches up;
+    // - it ended without a close handshake, with no close status, or with a normal close;
+    //   explicit failure codes catch up, and 4001/access_changed keep their own handling;
     // - the next connection opened within QuickReconnectWindow of that end. Failed attempts
     //   keep the old end, so the gap only grows and a long outage still catches up.
     internal static readonly TimeSpan DefaultQuickReconnectWindow = TimeSpan.FromSeconds(5);
     /// <summary>Tests about catch-up itself set it to zero, so every transport loss catches up regardless of timing.</summary>
     internal TimeSpan QuickReconnectWindow { get; set; } = DefaultQuickReconnectWindow;
-    internal TimeSpan PlannedEndEarly { get; set; } = TimeSpan.FromSeconds(15);
+    internal TimeSpan PlannedEndEarly { get; set; } = TimeSpan.FromSeconds(1);
     internal TimeSpan PlannedEndLate { get; set; } = TimeSpan.FromSeconds(5);
 
     private sealed class ConnectionRecord(DateTimeOffset connectedAt, int? lifetimeSeconds)
@@ -51,6 +52,7 @@ public sealed class EventChannelClient : IDisposable
         internal int? LifetimeSeconds { get; } = lifetimeSeconds;
         internal DateTimeOffset? EndedAt { get; set; }
         internal bool Abrupt { get; set; }
+        internal bool CloseReceived { get; set; }
         internal int? CloseCode { get; set; }
     }
     private ConnectionRecord? _endedConnection;
@@ -60,11 +62,16 @@ public sealed class EventChannelClient : IDisposable
         why = "no ended connection";
         if (connection is not { EndedAt: { } ended }) return false;
         if (connection.LifetimeSeconds is not int lifetimeSeconds) { why = "the ticket announced no lifetime"; return false; }
-        if (!connection.Abrupt && connection.CloseCode != (int)WebSocketCloseStatus.NormalClosure)
-        { why = $"closed with code {connection.CloseCode?.ToString() ?? "none"}"; return false; }
+        if (!connection.Abrupt && !connection.CloseReceived) { why = "no peer end observed"; return false; }
+        if (connection.CloseCode is int code && code != (int)WebSocketCloseStatus.NormalClosure &&
+            code != (int)WebSocketCloseStatus.Empty)
+        { why = $"closed with code {code}"; return false; }
         var held = ended - connection.ConnectedAt;
         var lifetime = TimeSpan.FromSeconds(lifetimeSeconds);
-        if (held < lifetime - PlannedEndEarly || held > lifetime + PlannedEndLate)
+        // A receive error has no server-supplied close status. In particular, an unexplained
+        // reset shortly BEFORE the lifetime must not borrow the close-frame timing tolerance.
+        var early = connection.Abrupt ? TimeSpan.Zero : PlannedEndEarly;
+        if (held < lifetime - early || held > lifetime + PlannedEndLate)
         { why = $"held {held.TotalSeconds:0}s of a {lifetimeSeconds}s lifetime"; return false; }
         why = $"planned end after {held.TotalSeconds:0}s";
         return true;
@@ -214,11 +221,12 @@ public sealed class EventChannelClient : IDisposable
         }
         if (_reconnectSuppressed || !_authService.IsLoggedIn)
             return;
-        if (_runTask != null && !_runTask.IsCompleted && _ws is { } ws &&
+        if (_runTask != null && !_runTask.IsCompleted &&
             _activeSocketContext is { } context && _apiClient.IsCurrentContext(context))
         {
-            // Before hello the pending subscribe reads the current set itself.
-            if (ReferenceEquals(_subscribedSocket, ws))
+            // Before hello (or during reconnect backoff) the pending subscribe reads the
+            // current set itself. Keep that loop's pending transport catch-up intact.
+            if (_ws is { } ws && ReferenceEquals(_subscribedSocket, ws))
                 _ = ResubscribeAsync(ws, _cts?.Token ?? CancellationToken.None);
             return;
         }
@@ -598,6 +606,7 @@ public sealed class EventChannelClient : IDisposable
 
             if (result.MessageType == WebSocketMessageType.Close)
             {
+                connection.CloseReceived = true;
                 connection.CloseCode = (int?)result.CloseStatus;
                 if (!ct.IsCancellationRequested) HandleServerClose(ws, (int?)result.CloseStatus);
                 Log($"Server closed connection: {result.CloseStatusDescription}");
