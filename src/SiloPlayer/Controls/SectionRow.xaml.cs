@@ -44,6 +44,7 @@ public sealed partial class SectionRow : UserControl
     private bool _isDragging;
     private bool _dragCompletionDemandStarted;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
+    private RepeaterItemsSource<MediaItem>? _cardsSource;
     private string? _lastRenderedSectionId;
     private long _activationGeneration;
     private const double DragThreshold = 7;
@@ -246,7 +247,7 @@ public sealed partial class SectionRow : UserControl
         }
         var template = (DataTemplate)this.Resources[templateKey];
         if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
-        if (!ReferenceEquals(CardsRepeater.ItemsSource, section.Items)) CardsRepeater.ItemsSource = section.Items;
+        BindCards(section.Items);
         _lastRenderedSectionId = section.Id;
 
         // F6: show a skeleton row while items are still loading (empty list
@@ -291,6 +292,18 @@ public sealed partial class SectionRow : UserControl
         // without treating the restored offset as forward navigation.
         RestoreScrollPositionAfterRebind(isSameSection, previousOffset);
         UpdateScrollBounds();
+    }
+
+    private void BindCards(System.Collections.ObjectModel.ObservableCollection<MediaItem> items)
+    {
+        if (ReferenceEquals(_cardsSource?.Source, items)) return;
+        // The repeater listens through a guard so an ItemsRepeater rejection
+        // (a change reaching it mid-layout) resyncs this row instead of
+        // throwing into the Home reconciler and aborting the section update.
+        var previous = _cardsSource;
+        _cardsSource = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue);
+        CardsRepeater.ItemsSource = _cardsSource;
+        previous?.Dispose();
     }
 
     private void RestoreScrollPositionAfterRebind(bool preserveOffset, double previousOffset)

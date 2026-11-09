@@ -391,6 +391,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await HomeDismissalNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-reconcile")
+            {
+                await HomeReconcileNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-window")
             {
                 await HomeRowWindowNativeFixture.RunAsync(parent);
