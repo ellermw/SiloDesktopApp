@@ -5237,9 +5237,29 @@ local function handle_mouse_down()
                 state.seek_drag_pos = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
                 return
             end
+            -- A panel clipped to its maximum height also reaches the transport
+            -- row and utility rail. Those controls and the volume bar keep
+            -- their gestures through the normal control path below.
+            local on_control = false
+            for name, rect in pairs(L) do
+                if name:sub(1, 4) == "btn_" and hud_interaction(name, rect) ~= "disabled"
+                    and point_in_rect(mx, my, rect) then
+                    on_control = true
+                    break
+                end
+            end
+            local vb = L.volume_bar
+            if vb and point_in_rect(mx, my, { x = vb.x - 4, y = vb.cy - 12, w = vb.w + 8, h = 24 }) then
+                on_control = true
+            end
+            if not on_control then
+                consume_video_click()
+                return
+            end
+        else
+            consume_video_click()
+            return
         end
-        consume_video_click()
-        return
     end
 
     -- The opener's geometry is authoritative before the next ASS paint.
