@@ -1,0 +1,166 @@
+using SiloPlayer.Core.Services;
+using SiloPlayer.ViewModels;
+
+namespace SiloPlayer.Views;
+
+public sealed partial class LibraryPage
+{
+    /// <summary>
+    /// The server closes the event channel every few minutes; each reconnect asks
+    /// mounted routes to catch up. A loaded title grid or Recommended tab catches up
+    /// in place instead of being remounted, which used to throw away the scroll
+    /// position, the loaded windows and the letter rail. Collections and audiobook
+    /// groups still take the ordinary remount.
+    /// </summary>
+    public bool CanPreserveOnReconnect => _isNavigated && _libraryStateApplied && ViewModel.Library is not null &&
+        string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) &&
+        (_currentTab == "Library" && _currentAudiobookAxis == "books" && _libraryCatalogLoaded && ViewModel.WindowStartIndex >= 0 ||
+         _currentTab == "Recommended" && _recommendedLoaded);
+
+    private bool _catalogCardsAwaitingConfirmation;
+    private bool _recommendedCardsAwaitingConfirmation;
+    private SiloPlayer.Core.Api.ApiRequestContext? _recommendedUnconfirmedContext;
+    // The request context whose reads last authorized the Recommended rows,
+    // tracked apart from the catalog grid, which may never have been loaded.
+    private SiloPlayer.Core.Api.ApiRequestContext? _recommendedRowsContext;
+    // Events that arrived during a confirming reread; they get one follow-up read.
+    private bool _recommendedRefreshAgain;
+    private double _unconfirmedRecommendedOffset;
+
+    /// <summary>A cached page may have missed a reconnect while another route was mounted.</summary>
+    private bool RecommendedRowsRequireConfirmation =>
+        _recommendedLoaded && _recommendedRowsContext != _stateSettings.CaptureContext();
+
+    private void HideUnconfirmedRecommendedRows()
+    {
+        var context = _stateSettings.CaptureContext();
+        if (!_recommendedLoaded || _recommendedUnconfirmedContext == context) return;
+        _recommendedUnconfirmedContext = context;
+        if (!_recommendedCardsAwaitingConfirmation)
+            _unconfirmedRecommendedOffset = RecommendedPanel.VerticalOffset;
+        _recommendedCardsAwaitingConfirmation = true;
+        // Retire old section/layout continuations before they can republish cards.
+        ++_recommendationsVersion;
+        CancelRecommendedRefresh();
+        _recommendationsLoadCts?.Cancel();
+        RecommendedPanel.IsHitTestVisible = false;
+        RecommendedPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+    }
+
+    private void ConfirmRecommendedRows()
+    {
+        if (!_recommendedCardsAwaitingConfirmation) return;
+        _recommendedCardsAwaitingConfirmation = false;
+        // This reread replaced the layout, so an earlier load failure no longer applies.
+        RecommendedError.Text = "";
+        RecommendedErrorPanel.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+        RecommendedPanel.IsHitTestVisible = true;
+        RecommendedPanel.Visibility = _currentTab == "Recommended"
+            ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        RecommendedPanel.UpdateLayout();
+        RecommendedPanel.ChangeView(null, _unconfirmedRecommendedOffset, null, true);
+    }
+
+    private void FailUnconfirmedRecommendedRows()
+    {
+        if (!_recommendedCardsAwaitingConfirmation) return;
+        // A failed authorized reread must not fall back to old sections or pins.
+        ResetRecommendedContent();
+        RecommendedPanel.Visibility = _currentTab == "Recommended"
+            ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        RecommendedError.Text = "Recommendations could not be refreshed. Please retry.";
+        RecommendedErrorPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+    }
+
+    /// <summary>
+    /// A reconnect may have missed an access revocation. Hide cards immediately,
+    /// even while playback defers the refresh, without changing the canvas extent.
+    /// Keep their bindings/artwork for a successful, same-position refresh.
+    /// </summary>
+    public void HideUnconfirmedCatalogRows()
+    {
+        HideUnconfirmedRecommendedRows();
+        _catalogCardsAwaitingConfirmation = true;
+        _cardBindTimer?.Stop();
+        _pendingCardBinds.Clear();
+        _pendingCardBindSet.Clear();
+        _lastRenderedStartIndex = _lastRenderedEndIndex = -1;
+        foreach (var card in _libraryCardSlots)
+            card.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+    }
+
+    public async Task CatchUpAfterReconnectAsync()
+    {
+        try
+        {
+            if (!_isNavigated) return;
+            HideUnconfirmedCatalogRows();
+            if (_currentTab == "Recommended")
+            {
+                QueueRecommendedRefresh();
+                return;
+            }
+            if (_currentTab != "Library" || _currentAudiobookAxis != "books") return;
+            var layout = GetGridLayout();
+            var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
+            if (range.EndIndex < range.StartIndex) range = (Math.Max(0, ViewModel.WindowStartIndex), Math.Max(0, ViewModel.WindowStartIndex));
+            var result = await ViewModel.RefreshInPlaceAsync(range.StartIndex, range.EndIndex - range.StartIndex + 1);
+            if (!_isNavigated) return;
+            LocalLog.AppendLine("catalog_queries.txt", $"library_transport_catchup result={result} first_row={_currentFirstRow} offset={_libraryVerticalOffset:0}");
+            if (result == LibraryViewModel.CatalogRefreshResult.NotLoaded)
+            {
+                // Nothing was retained to keep: load the visible range the ordinary way.
+                await EnsureLibraryCatalogLoadedAsync();
+                await FillViewportAsync();
+            }
+            // A deferred catch-up may remain pending; a failed or churned one retires
+            // its unconfirmed rows without collapsing the extent. The range loader
+            // retries a pending one and otherwise reads the viewport the ordinary way.
+            _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+            ScheduleVisibleRangeLoad(force: true);
+            _ = RetryDeferredCatchUpAsync(++_catchUpRetryVersion);
+        }
+        catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_transport_catchup"); }
+    }
+
+    private long _catchUpRetryVersion;
+    private long _runningCatchUpRetryVersion;
+
+    /// <summary>
+    /// Any pending catch-up needs a retry owner, not only one the shell started:
+    /// a reconnect behind expanded playback or a deferred viewport read has none.
+    /// </summary>
+    private void EnsureDeferredCatchUpRetry()
+    {
+        if (_runningCatchUpRetryVersion != 0 && _runningCatchUpRetryVersion == _catchUpRetryVersion) return;
+        _ = RetryDeferredCatchUpAsync(++_catchUpRetryVersion);
+    }
+
+    /// <summary>
+    /// A newer seek or a metadata-language change can defer the catch-up with the
+    /// grid still quarantined. Retry with backoff until it settles instead of waiting
+    /// for the next scroll or reconnect; held rows stay hidden until confirmed.
+    /// </summary>
+    private async Task RetryDeferredCatchUpAsync(long version)
+    {
+        _runningCatchUpRetryVersion = version;
+        try
+        {
+            for (var delay = 1000; ; delay = Math.Min(delay * 2, 30000))
+            {
+                await Task.Delay(delay);
+                if (version != _catchUpRetryVersion || !_isNavigated || _currentTab != "Library" ||
+                    _currentAudiobookAxis != "books" || !ViewModel.RequiresCatalogRefresh)
+                    return;
+                LocalLog.AppendLine("catalog_queries.txt", $"library_transport_catchup_retry delay_ms={delay}");
+                _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+                ScheduleVisibleRangeLoad(force: true);
+            }
+        }
+        catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_transport_catchup_retry"); }
+        finally
+        {
+            if (_runningCatchUpRetryVersion == version) _runningCatchUpRetryVersion = 0;
+        }
+    }
+}

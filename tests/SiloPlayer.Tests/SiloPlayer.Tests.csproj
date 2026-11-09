@@ -30,6 +30,7 @@
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Letters.cs" Link="Production\LibraryViewModel.Letters.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Refresh.cs" Link="Production\LibraryViewModel.Refresh.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\BoxSetViewModel.cs" Link="Production\BoxSetViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.BoxSets.cs" Link="Production\ItemDetailViewModel.BoxSets.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.cs" Link="Production\ItemDetailViewModel.cs" />

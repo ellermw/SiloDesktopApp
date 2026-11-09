@@ -41,6 +41,9 @@ public partial class LibraryViewModel
     private Task? _letterIndexTask;
     private long _letterIndexLoadVersion;
     private long _letterJumpVersion;
+    // Bumped only when a real seek starts. Routine rail upkeep retires feedback
+    // through _letterJumpVersion and must not abort a reconnect catch-up.
+    private long _letterJumpStartVersion;
     private long _activeLetterJumpVersion;
     public bool IsLetterJumpInProgress => _activeLetterJumpVersion != 0;
     public long LetterJumpVersion => _letterJumpVersion;
@@ -70,6 +73,9 @@ public partial class LibraryViewModel
     private async Task EnsureLetterIndexCoreAsync(bool force = false)
     {
         if (Library is not null) EnsureCatalogScope();
+        // The page's viewport owns catch-up priority, not the start of a held window.
+        // A successful catch-up will reread the retained rail in place.
+        if (_catalogRefreshPending) return;
         if (Library is null || SelectedSort != "title")
         {
             ResetLetterIndex();
@@ -84,7 +90,7 @@ public partial class LibraryViewModel
         await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token));
     }
 
-    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting = false)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -106,6 +112,9 @@ public partial class LibraryViewModel
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
                 queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct);
             if (ct.IsCancellationRequested || key != LetterQueryKey() || loadVersion != _letterIndexLoadVersion) return;
+            // A background reread keeps an unchanged index object, so the rail and
+            // its chosen end letter stay exactly as they are.
+            if (preserveExisting && SameLetterIndex(LetterIndex, index)) return;
             LetterIndex = index;
             if (index is not null)
             {
@@ -131,8 +140,9 @@ public partial class LibraryViewModel
             {
                 _letterIndexKey = null;
                 _letterIndexTask = null;
-                LetterIndex = null;
-                LetterIndexFailed = true;
+                // A failed background reread keeps the retained rail usable.
+                if (!preserveExisting) LetterIndex = null;
+                LetterIndexFailed = LetterIndex is null;
             }
         }
         finally
@@ -149,9 +159,11 @@ public partial class LibraryViewModel
             RetireLetterJump();
             return;
         }
+        _letterJumpStartVersion++;
         // Reset an unobserved API-context change before capturing this jump's
         // owner; the window loader must not retire the seek it is about to read.
-        var contextChanged = _catalogContext is not null && _catalogContext != _catalogApi.CaptureContext();
+        var contextChanged = _catalogRefreshPending ||
+            (_catalogContext is not null && _catalogContext != _catalogApi.CaptureContext());
         if (contextChanged) StartNewCatalogQuery();
         var currentKey = LetterQueryKey();
         var knownIndex = (LetterIndex is not null && _letterIndexKey == currentKey) ||

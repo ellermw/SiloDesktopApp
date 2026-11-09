@@ -28,6 +28,9 @@ public sealed class EventChannelClient : IDisposable
     private ApiRequestContext? _activeSocketContext;
     private int _immediateReconnectRequested;
     private bool _hasConnected;
+    // A transport loss not yet caught up. Kept outside RunLoop so a loop replaced
+    // during backoff (e.g. by a channel-set change) still publishes it once.
+    private bool _transportCatchUpPending;
     // The server ends every events connection after the ticket's max_connection_seconds (300).
     // A reconnect right after THAT planned end missed nothing worth reloading for (Granary and
     // the server contract: catch up only after more than five seconds without a connection);
@@ -368,6 +371,7 @@ public sealed class EventChannelClient : IDisposable
         lock (_lock)
         {
             _hasConnected = false;
+            _transportCatchUpPending = false;
             _reconnectSuppressed = true;
             StopInternal_NoLock();
         }
@@ -490,8 +494,7 @@ public sealed class EventChannelClient : IDisposable
             }
             catch (OperationCanceledException)
             {
-                if (!ct.IsCancellationRequested && Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
-                { catchUp = false; SetPendingTransportCatchUp(ct, false); backoffMs = 1000; continue; }
+                { catchUp = false; lock (_lock) _transportCatchUpPending = false; SetPendingTransportCatchUp(ct, false); backoffMs = 1000; continue; }
                 return;
             }
             catch (Exception ex)
@@ -502,7 +505,7 @@ public sealed class EventChannelClient : IDisposable
                 connectedAt is { } openedAt ? System.Diagnostics.Stopwatch.GetElapsedTime(openedAt) : TimeSpan.Zero);
             if (ct.IsCancellationRequested) return;
             if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
-            { catchUp = false; SetPendingTransportCatchUp(ct, false); backoffMs = 1000; continue; }
+            { catchUp = false; lock (_lock) _transportCatchUpPending = false; SetPendingTransportCatchUp(ct, false); backoffMs = 1000; continue; }
 
             // A transport loss may have missed permission changes. A deliberate
             // channel/profile rebind starts a new loop and must not rebuild pages again.
@@ -589,7 +592,7 @@ public sealed class EventChannelClient : IDisposable
                 ct.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(_ws, ws) || !_apiClient.IsCurrentContext(context))
                     throw new OperationCanceledException("Event authority changed.", ct);
-                reconnect = _hasConnected && catchUp;
+                reconnect = _hasConnected && (catchUp || _transportCatchUpPending);
                 if (reconnect)
                 {
                     var quiet = IsQuietReconnect(connection.ConnectedAt, out var why);
@@ -599,6 +602,7 @@ public sealed class EventChannelClient : IDisposable
                 _pendingTransportCatchUp = false;
                 if (reconnect && !PublishAccessInvalidation(context, out context, transportCatchUp: true))
                     throw new OperationCanceledException("Event authority changed.", ct);
+                _transportCatchUpPending = false;
                 _activeSocketContext = context;
                 _hasConnected = true;
             }
@@ -646,6 +650,12 @@ public sealed class EventChannelClient : IDisposable
                     _ws = null;
                 if (ReferenceEquals(_subscribedSocket, ws))
                     _subscribedSocket = null;
+                // Record the loss before anyone can observe the closed socket and
+                // replace this loop; a deliberate cancel, access close or authority
+                // change is not one (its owner already refreshes the routes).
+                if (!ct.IsCancellationRequested && !ReferenceEquals(_accessHandledSocket, ws) &&
+                    _apiClient.IsCurrentContext(context))
+                    _transportCatchUpPending = true;
             }
             StateChanged?.Invoke(WebSocketState.Closed);
         }
@@ -815,7 +825,7 @@ public sealed class EventChannelClient : IDisposable
 
     private bool PublishAccessInvalidation(ApiRequestContext expected, out ApiRequestContext context, bool transportCatchUp = false)
     {
-        if (!_apiClient.TryInvalidateAccessContext(expected, out context)) return false;
+        if (!_apiClient.TryInvalidateAccessContext(expected, out context, transportCatchUp: transportCatchUp)) return false;
         Log($"{(transportCatchUp ? "Transport catch-up" : "Access reads invalidated")}: readGeneration={context.RequestContextGeneration}; playbackIdentityGeneration={_apiClient.CaptureIdentityContext().IdentityGeneration}");
         lock (_snapshotLock) _latestSnapshots.Clear();
         foreach (var subscriber in (transportCatchUp ? ReadCatchUpRequested : AccessChanged)?.GetInvocationList() ?? [])
