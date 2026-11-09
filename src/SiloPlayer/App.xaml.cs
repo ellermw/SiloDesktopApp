@@ -102,6 +102,8 @@ public partial class App : Application
 
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
+        // Set the update restart frame before either activation path can show the window.
+        MainWindowInstance.ApplyRelaunchPlacement();
         MainWindowInstance.ActivateFromArgument(e.Arguments);
         _window.Activate();
         StartActivationPipeListener();
