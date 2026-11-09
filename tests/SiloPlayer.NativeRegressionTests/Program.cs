@@ -176,6 +176,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await LibraryLettersNativeFixture.RunAsync(parent, _window, verifyPolicy: true);
                 await LibraryLettersNativeFixture.RunAsync(parent, _window);
                 await LibraryCursorNativeFixture.RunAsync(parent, _window);
+                await LibraryReconnectNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-overview")
@@ -858,6 +859,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-cursor")
             {
                 await LibraryCursorNativeFixture.RunAsync(parent, _window);
+                parent.Children.Clear(); await Task.Delay(100);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-reconnect")
+            {
+                await LibraryReconnectNativeFixture.RunAsync(parent, _window);
                 parent.Children.Clear(); await Task.Delay(100);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }

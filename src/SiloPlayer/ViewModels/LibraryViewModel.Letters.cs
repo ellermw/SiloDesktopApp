@@ -84,7 +84,7 @@ public partial class LibraryViewModel
         await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token));
     }
 
-    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting = false)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -106,6 +106,9 @@ public partial class LibraryViewModel
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
                 queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct);
             if (ct.IsCancellationRequested || key != LetterQueryKey() || loadVersion != _letterIndexLoadVersion) return;
+            // A background reread keeps an unchanged index object, so the rail and
+            // its chosen end letter stay exactly as they are.
+            if (preserveExisting && SameLetterIndex(LetterIndex, index)) return;
             LetterIndex = index;
             if (index is not null)
             {
@@ -131,8 +134,9 @@ public partial class LibraryViewModel
             {
                 _letterIndexKey = null;
                 _letterIndexTask = null;
-                LetterIndex = null;
-                LetterIndexFailed = true;
+                // A failed background reread keeps the retained rail usable.
+                if (!preserveExisting) LetterIndex = null;
+                LetterIndexFailed = LetterIndex is null;
             }
         }
         finally

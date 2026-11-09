@@ -1541,6 +1541,15 @@ public sealed partial class MainWindow : Window
                 ApplyPendingAccessRefresh();
                 return;
             }
+            // The server drops the event channel every few minutes. A loaded library
+            // grid merges the catch-up in place; remounting it reset the scroll to the top.
+            if (ContentFrame.Content is LibraryPage library)
+            {
+                _pendingDetailCatchUp = true;
+                _pendingDetailCatchUpRequiresRemount |= !library.CanPreserveOnReconnect;
+                ApplyPendingAccessRefresh();
+                return;
+            }
             if (ContentFrame.Content is HomePage home && NavView.IsPaneVisible &&
                 _playerService.State is not (PlayerState.Expanded or PlayerState.Fullscreen))
             {
@@ -1595,8 +1604,11 @@ public sealed partial class MainWindow : Window
         // Access changes still remount the route. Reconnect alone preserves a
         // healthy detail; a failed initial load needs the normal navigation retry.
         var preserveDetail = !_pendingAccessRefresh && !_pendingDetailCatchUpRequiresRemount
-            && ContentFrame.Content is ItemDetailPage detail
-            && detail.CanPreserveOnReconnect;
+            && (ContentFrame.Content is ItemDetailPage detail && detail.CanPreserveOnReconnect
+                || ContentFrame.Content is LibraryPage retainedLibrary && retainedLibrary.CanPreserveOnReconnect);
+        // A retained library rereads its loaded windows in place (merged, not reset).
+        if (preserveDetail && _pendingDetailCatchUp && ContentFrame.Content is LibraryPage catchUpLibrary)
+            _ = catchUpLibrary.CatchUpAfterReconnectAsync();
         _pendingAccessRefresh = false;
         _pendingDetailCatchUp = false;
         _pendingDetailCatchUpRequiresRemount = false;

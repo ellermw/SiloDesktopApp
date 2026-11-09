@@ -521,8 +521,15 @@ public partial class LibraryViewModel : ObservableObject
         {
             _catalogContext = _catalogApi.CaptureContext(); _catalogLibraryScope = LibraryCatalogScope(Library);
         }
-        else if (_catalogContext != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryCatalogScope(Library))
+        else if (_catalogLibraryScope != LibraryCatalogScope(Library))
             StartNewCatalogQuery();
+        else if (_catalogContext != _catalogApi.CaptureContext())
+        {
+            // Only the read generation moved (event-channel reconnect): keep the
+            // loaded grid and its position, retire just the old cursors and reads.
+            if (HasRetainableCatalog && IsSameCatalogIdentity(_catalogContext, _catalogApi.CaptureContext())) RebaseCatalogQuery();
+            else StartNewCatalogQuery();
+        }
     }
 
     public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
@@ -539,9 +546,8 @@ public partial class LibraryViewModel : ObservableObject
     private Task LoadPreparedWindowAsync(int startIndex, int itemCount, bool force = false, LetterWindowLoad? letterLoad = null)
     {
         if (Library == null || itemCount <= 0) return Task.CompletedTask;
-        var context = _catalogApi.CaptureContext();
-        if (_catalogContext != null && _catalogContext != context) StartNewCatalogQuery();
-        _catalogContext = context;
+        if (_catalogContext != null) EnsureCatalogScope();
+        _catalogContext = _catalogApi.CaptureContext();
         // The still-visible viewport must not cancel an explicit letter seek.
         // The page retries its latest range once the jump has completed.
         if (!force && IsLetterJumpInProgress) return Task.CompletedTask;
