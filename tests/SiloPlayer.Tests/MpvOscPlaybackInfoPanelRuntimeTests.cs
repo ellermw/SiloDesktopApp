@@ -397,6 +397,87 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:true:true:true", output);
     }
 
+    // In a small window the panel, clipped to its maximum height, covers the
+    // transport row, utility rail and volume bar (z=50). Those controls are
+    // drawn beneath the panel (z=60), so a click on the visible panel must not
+    // play/pause, skip, open More, toggle Stats or Fill, enter PiP or change
+    // the volume.
+    [Fact]
+    public void PlaybackInfoPanelOwnsClicksOverHiddenHudControls()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            native_handlers['osc-toggle-stats']()
+            local panel = assert(s.stats_panel_rect, 'Playback info did not render')
+            local close = assert(s.stats_close_rect)
+            osc_test_layout()
+            local L = s.layout
+            -- Every command a covered HUD control would issue on mouse-down.
+            local control_intents = {
+                ['silo-pause-toggle'] = true, ['silo-prev-episode'] = true, ['silo-next-episode'] = true,
+                ['silo-fullscreen-toggle'] = true, ['silo-pip-toggle'] = true,
+            }
+            local actions = {}
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'seek' or args[1] == 'cycle' or (args[1] == 'set' and args[2] == 'volume')
+                    or (args[1] == 'script-message' and (control_intents[args[2]]
+                        or tostring(args[2]):match('^silo%-native%-.+%-open$'))) then
+                    table.insert(actions, table.concat(args, ' '))
+                end
+                return command(...)
+            end
+            local function inside(r, x, y) return x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h end
+            local function overlap(a, b)
+                local x1, y1 = math.max(a.x, b.x), math.max(a.y, b.y)
+                local x2, y2 = math.min(a.x + a.w, b.x + b.w), math.min(a.y + a.h, b.y + b.h)
+                if x2 <= x1 or y2 <= y1 then return nil end
+                return (x1 + x2) / 2, (y1 + y2) / 2
+            end
+            local function hud_owned(x, y)
+                if inside(close, x, y) then return true end
+                for _, name in ipairs({ 'btn_minimize', 'btn_exit' }) do
+                    if L[name] and inside(L[name], x, y) then return true end
+                end
+                local sb = L.seek_bar
+                return sb and x >= sb.x1 and x <= sb.x2 and y >= sb.y and y <= sb.y + sb.h
+            end
+            local targets = {}
+            for name, rect in pairs(L) do
+                if name:sub(1, 4) == 'btn_' and name ~= 'btn_minimize' and name ~= 'btn_exit' then
+                    targets[name] = rect
+                end
+            end
+            if L.volume_bar then
+                local vb = L.volume_bar
+                targets.volume_bar = { x = vb.x - 4, y = vb.cy - 12, w = vb.w + 8, h = 24 }
+            end
+            local mute, volume = mp.get_property('mute'), mp.get_property('volume')
+            local tested, acted = 0, {}
+            for name, rect in pairs(targets) do
+                local x, y = overlap(panel, rect)
+                if x and not hud_owned(x, y) then
+                    tested = tested + 1
+                    native_handlers['osc-mouse-down'](tostring(x), tostring(y))
+                    if s.pressed_control or s.dragging_volume or s.dragging_seek or s.native_menu_request
+                        or s.compact_menu_visible or not s.stats_visible then
+                        table.insert(acted, name)
+                    end
+                    s.pressed_control, s.dragging_volume, s.dragging_seek = nil, false, false
+                    s.compact_menu_visible, s.stats_visible = false, true
+                end
+            end
+            mp.commandv = command
+            mp.set_property('user-data/playback-info-hud', tostring(tested > 0) .. ':' .. table.concat(acted, ',') .. ':'
+                .. tostring(#actions) .. ':' .. tostring(mp.get_property('mute') == mute and mp.get_property('volume') == volume))
+            """, rawAss: true, resultProperty: "user-data/playback-info-hud", beforeScript: PlaybackInfoProbe,
+            windowWidth: 480, windowHeight: 270);
+        Assert.Equal("true::0:true", output);
+    }
+
     // Minimizing or Playing Next disables the OSC, which hides the panel. The
     // host must be told exactly once, or its More menu keeps reporting a
     // hidden panel as shown.
