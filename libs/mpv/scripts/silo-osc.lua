@@ -4867,6 +4867,22 @@ local function toggle_stats()
     render_stats()
 end
 
+-- An overflowing Playback Info panel scrolls from the keyboard and controller
+-- as well as the wheel, so its lower rows stay reachable without a pointer.
+-- Returns false when the panel is closed or already shows every row.
+local function scroll_stats(action)
+    if not state.stats_visible or (state.stats_scroll_max or 0) <= 0 then return false end
+    local step = math.max(20, math.floor(40 * ui_scale()))
+    local offset = state.stats_scroll_offset or 0
+    if action == "home" then offset = 0
+    elseif action == "end" then offset = state.stats_scroll_max
+    elseif action == "up" then offset = offset - step
+    else offset = offset + step end
+    state.stats_scroll_offset = clamp(offset, 0, state.stats_scroll_max)
+    render_stats()
+    return true
+end
+
 local function toggle_transport_menu_from_button(mx, my)
     compute_layout()
     local L = state.layout
@@ -4960,6 +4976,7 @@ local function move_controller_focus(direction)
         end
         return move_keyboard_menu_focus("next")
     end
+    if (direction == "up" or direction == "down") and scroll_stats(direction) then return true end
 
     local controls = focusable_transport_controls()
     if #controls == 0 then return false end
@@ -5138,9 +5155,16 @@ local function handle_mouse_down()
 
     if state.osc_disabled then return end
 
+    -- Playback Info (z=60) is drawn over the Watch Party card (z=50). A wide
+    -- two-column panel can cover the party opener and actions, so a click on
+    -- the visible panel must never reach the hidden party targets beneath it.
+    local over_stats = state.stats_visible and (
+        (state.stats_panel_rect and point_in_rect(mx, my, state.stats_panel_rect)) or
+        (state.stats_close_rect and point_in_rect(mx, my, state.stats_close_rect)))
+
     -- The opener's geometry is authoritative before the next ASS paint.
     -- Room/scope messages and a pointer gesture can arrive in the same frame.
-    if state.native_party_scope and state.watch_party and state.watch_party.visible then
+    if not over_stats and state.native_party_scope and state.watch_party and state.watch_party.visible then
         compute_layout()
         if state.layout.btn_party and point_in_rect(mx, my, state.layout.btn_party) then
             open_native_menu('party')
@@ -5199,7 +5223,7 @@ local function handle_mouse_down()
     end
 
     -- Watch Party host actions live in the same top-right panel as the WebUI.
-    for _, item in ipairs(state.watch_party_actions or {}) do
+    for _, item in ipairs(over_stats and {} or state.watch_party_actions or {}) do
         if point_in_rect(mx, my, item) then
             consume_video_click()
             if item.action == "native-party" then
@@ -6433,12 +6457,14 @@ local function setup_key_bindings()
         if native_menu_input("up") then return end
         if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("previous") then return end
+        if scroll_stats("up") then return end
         mp.commandv("add", "volume", "5")
     end)
     mp.add_forced_key_binding("DOWN", "silo-vol-down", function()
         if native_menu_input("down") then return end
         if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("next") then return end
+        if scroll_stats("down") then return end
         mp.commandv("add", "volume", "-5")
     end)
     mp.add_forced_key_binding("HOME", "silo-menu-home", function()
@@ -6448,7 +6474,7 @@ local function setup_key_bindings()
             render_playback_failure()
             return
         end
-        if not move_keyboard_menu_focus("home") then
+        if not move_keyboard_menu_focus("home") and not scroll_stats("home") then
             state.controller_focus_name = "btn_skip_back"
             show_osc()
             request_tick()
@@ -6461,7 +6487,7 @@ local function setup_key_bindings()
             render_playback_failure()
             return
         end
-        if not move_keyboard_menu_focus("end") then
+        if not move_keyboard_menu_focus("end") and not scroll_stats("end") then
             state.controller_focus_name = "btn_fullscreen"
             show_osc()
             request_tick()

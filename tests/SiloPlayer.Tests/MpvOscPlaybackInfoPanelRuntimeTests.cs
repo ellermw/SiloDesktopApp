@@ -147,4 +147,71 @@ public sealed partial class MpvOscRuntimeTests
             windowWidth: 700, windowHeight: 500);
         Assert.Equal("true:true:true", output);
     }
+
+    // An overflowing panel scrolls from the keyboard and the controller, not
+    // only the wheel, and those keys do not also change the volume.
+    [Theory]
+    [InlineData("key")]
+    [InlineData("controller")]
+    public void PlaybackInfoScrollsFromKeyboardAndControllerWhenItOverflows(string route)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local s = osc_test_state
+            s.osc_disabled = false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            native_handlers['osc-toggle-stats']()
+            local max = s.stats_scroll_max or 0
+            local volume = mp.get_property('volume')
+            local key = '{{route}}' == 'key'
+            local function step(direction)
+                if key then native_keys[direction == 'up' and 'silo-vol-up' or 'silo-vol-down']()
+                else native_handlers['osc-controller-nav'](direction) end
+            end
+            step('down')
+            local moved = (s.stats_scroll_offset or 0) > 0
+            if key then native_keys['silo-menu-end']() else for _ = 1, 200 do step('down') end end
+            local bottom = s.stats_scroll_offset == max
+            if key then native_keys['silo-menu-home']() else for _ = 1, 200 do step('up') end end
+            local top = s.stats_scroll_offset == 0
+            mp.set_property('user-data/playback-info-keys', tostring(max > 0) .. ':' .. tostring(moved) .. ':'
+                .. tostring(bottom) .. ':' .. tostring(top) .. ':' .. tostring(mp.get_property('volume') == volume))
+            """, rawAss: true, resultProperty: "user-data/playback-info-keys", beforeScript: PlaybackInfoProbe,
+            windowWidth: 700, windowHeight: 500);
+        Assert.Equal("true:true:true:true:true", output);
+    }
+
+    // The two-column panel (z=60) can cover the top-right Watch Party opener
+    // and card (z=50). Clicks on the visible panel, including its close
+    // button, must never reach the hidden party targets beneath it.
+    [Theory]
+    [InlineData(960, 540)]
+    [InlineData(900, 700)]
+    public void PlaybackInfoPanelOwnsClicksOverTheWatchPartyCard(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            s.watch_party = { visible=true, code='TEST1234', member_count=2, is_host=true, connection_state='connected' }
+            native_handlers['osc-native-party-scope']('11111111111111111111111111111111')
+            native_handlers['osc-toggle-stats']()
+            osc_test_layout(); osc_test_tick()
+            local panel = assert(s.stats_panel_rect, 'Playback info did not render')
+            local opener = assert(s.layout.btn_party, 'no Watch Party opener')
+            local close = assert(s.stats_close_rect)
+            local function inside(r, x, y) return x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h end
+            for _, item in ipairs(s.watch_party_actions or {}) do
+                local x, y = (item.x or -1) + (item.w or 0) / 2, (item.y or -1) + (item.h or 0) / 2
+                if inside(panel, x, y) then native_handlers['osc-mouse-down'](tostring(x), tostring(y)) end
+            end
+            local kept = s.stats_visible
+            local cx, cy = close.x + close.w / 2, close.y + close.h / 2
+            local covered = inside(opener, cx, cy)
+            native_handlers['osc-mouse-down'](tostring(cx), tostring(cy))
+            mp.set_property('user-data/playback-info-party', tostring(covered) .. ':' .. tostring(kept) .. ':'
+                .. tostring(#party_requests) .. ':' .. tostring(#party_actions) .. ':' .. tostring(s.stats_visible))
+            """, rawAss: true, resultProperty: "user-data/playback-info-party", beforeScript: PartyProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("true:true:0:0:false", output);
+    }
 }
