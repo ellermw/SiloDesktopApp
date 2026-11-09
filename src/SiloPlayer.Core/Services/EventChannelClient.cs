@@ -34,9 +34,10 @@ public sealed class EventChannelClient : IDisposable
     // treating it as a loss retired every page's reads and reloaded the app every five minutes.
     // Only a provable planned end counts. Times come from MonotonicNow, so a wall-clock step
     // cannot move the proof boundary, while sleep still counts as time away:
-    // - the connection lasted its announced lifetime, allowing the measured upgrade duration
-    //   plus PlannedEndEarly for a close frame (only the upgrade duration for a receive error),
-    //   and at most PlannedEndLate after, so an early reset or a slept laptop still catches up;
+    // - the connection lasted its announced lifetime, allowing the measured setup (ticket mint
+    //   plus upgrade) plus PlannedEndEarly, capped at a tenth of the lifetime, for a close frame
+    //   (only the setup for a receive error), and at most PlannedEndLate after, so an early
+    //   reset or a slept laptop still catches up;
     // - it ended without a close handshake, with no close status, or with a normal (1000) or
     //   going-away (1001) close; other explicit codes catch up, and 4001/access_changed keep their own handling;
     // - the next connection opened within QuickReconnectWindow of that end. Failed attempts
@@ -52,6 +53,7 @@ public sealed class EventChannelClient : IDisposable
     private sealed class ConnectionRecord(DateTimeOffset connectedAt, int? lifetimeSeconds)
     {
         internal DateTimeOffset ConnectedAt { get; } = connectedAt;
+        // Stamped before the ticket mint, so the setup covers the ticket round trip and the upgrade.
         internal DateTimeOffset ConnectStartedAt { get; init; } = connectedAt;
         internal int? LifetimeSeconds { get; } = lifetimeSeconds;
         internal DateTimeOffset? EndedAt { get; set; }
@@ -83,15 +85,19 @@ public sealed class EventChannelClient : IDisposable
         { why = $"closed with code {code}"; return false; }
         var held = ended - connection.ConnectedAt;
         var lifetime = TimeSpan.FromSeconds(lifetimeSeconds);
-        // The server can start its timer before the upgrade response reaches us. Count from
-        // before the request for the lower bound, but keep the late bound and reconnect gap
-        // relative to the open socket. Receive errors borrow only this measured upgrade time,
-        // never the additional close-frame tolerance that could hide an early reset.
-        var upgrade = connection.ConnectedAt - connection.ConnectStartedAt;
-        var early = upgrade + MonotonicResolution + (connection.Abrupt ? TimeSpan.Zero : PlannedEndEarly);
+        // The server can start its timer anywhere from the ticket mint to the upgrade response.
+        // Count from before the mint for the lower bound, but keep the late bound and reconnect
+        // gap relative to the open socket. Receive errors borrow only this measured setup time,
+        // never the additional close-frame tolerance that could hide an early reset, and that
+        // tolerance shrinks with a short lifetime so it cannot cover most of it.
+        var setup = connection.ConnectedAt - connection.ConnectStartedAt;
+        var closeTolerance = PlannedEndEarly < lifetime / 10 ? PlannedEndEarly : lifetime / 10;
+        var early = setup + MonotonicResolution + (connection.Abrupt ? TimeSpan.Zero : closeTolerance);
+        if (early >= lifetime)
+        { why = $"setup {setup.TotalSeconds:0.000}s leaves nothing of a {lifetimeSeconds}s lifetime to prove"; return false; }
         if (held < lifetime - early || held > lifetime + PlannedEndLate)
-        { why = $"held {held.TotalSeconds:0.000}s of a {lifetimeSeconds}s lifetime (upgrade {upgrade.TotalSeconds:0.000}s)"; return false; }
-        why = $"planned end after {held.TotalSeconds:0.000}s (upgrade {upgrade.TotalSeconds:0.000}s)";
+        { why = $"held {held.TotalSeconds:0.000}s of a {lifetimeSeconds}s lifetime (setup {setup.TotalSeconds:0.000}s)"; return false; }
+        why = $"planned end after {held.TotalSeconds:0.000}s (setup {setup.TotalSeconds:0.000}s)";
         return true;
     }
 
@@ -547,6 +553,7 @@ public sealed class EventChannelClient : IDisposable
                            .Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
                            .TrimEnd('/');
         wsUrl += "/api/v2/events/ws";
+        var connectStartedAt = MonotonicNow();
         var (ticket, lifetimeSeconds) = await MintEventsTicketAsync(ct).ConfigureAwait(false);
         if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
 
@@ -559,7 +566,6 @@ public sealed class EventChannelClient : IDisposable
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to {logUrl} (channels: {string.Join(",", channelsSnapshot)})");
-            var connectStartedAt = MonotonicNow();
             await ws.ConnectAsync(new Uri(wsUrl), ct);
             if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
             onConnected?.Invoke();
@@ -873,23 +879,51 @@ public sealed class EventChannelClient : IDisposable
             "/api/v2/events/ws-ticket", null, null, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(response.Ticket) || response.Protocol != "silo.events.v2")
             throw new InvalidDataException("Invalid event socket ticket response.");
-        // How long the server keeps this connection (300 s today). Absent or implausible means
-        // no end can be proven planned, so every reconnect catches up as before.
-        if (response.MaxConnectionSeconds is >= 1 and <= 3600)
-            return (response.Ticket, response.MaxConnectionSeconds);
-        Log(response.MaxConnectionSeconds is int announced
-            ? $"Ticket announced an implausible max_connection_seconds ({announced}); every reconnect will catch up"
-            : "Ticket announced no max_connection_seconds; every reconnect will catch up");
+        // How long the server keeps this connection (300 s today). The field is advisory and
+        // unverified, so it is read without throwing: absent, misnamed or unusable means no end
+        // can be proven planned, so every reconnect catches up as before.
+        if (ReadLifetimeSeconds(response.MaxConnectionSeconds) is int lifetime)
+            return (response.Ticket, lifetime);
+        if (response.MaxConnectionSeconds is { ValueKind: not JsonValueKind.Null } raw)
+        {
+            var text = raw.GetRawText();
+            Log($"Ticket announced an unusable max_connection_seconds ({(text.Length > 64 ? text[..64] + "..." : text)}); every reconnect will catch up");
+        }
+        else
+        {
+            var fields = response.OtherFields is { Count: > 0 } other ? string.Join(",", other.Keys) : "none";
+            Log($"Ticket announced no max_connection_seconds (other fields: {fields}); quick reconnects are OFF and every reconnect will catch up");
+        }
         return (response.Ticket, null);
+    }
+
+    // A whole number of seconds from 1 to 3600, as a JSON number (300 or 300.0) or a numeric string.
+    private static int? ReadLifetimeSeconds(JsonElement? value)
+    {
+        double seconds;
+        switch (value)
+        {
+            case { ValueKind: JsonValueKind.Number } number when number.TryGetDouble(out seconds):
+                break;
+            case { ValueKind: JsonValueKind.String } text when double.TryParse(text.GetString(),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out seconds):
+                break;
+            default:
+                return null;
+        }
+        return seconds is >= 1 and <= 3600 && seconds == Math.Floor(seconds) ? (int)seconds : null;
     }
 
     private sealed class EventsWsTicketResponse
     {
         public string Ticket { get; set; } = "";
         public string Protocol { get; set; } = "";
+        // Raw, so a value of an unexpected type can never fail the ticket mint.
         [System.Text.Json.Serialization.JsonPropertyName("max_connection_seconds")]
-        [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString)]
-        public int? MaxConnectionSeconds { get; set; }
+        public JsonElement? MaxConnectionSeconds { get; set; }
+        // Logged when the lifetime is missing, so a renamed field is visible in events_channel.txt.
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public Dictionary<string, JsonElement>? OtherFields { get; set; }
     }
 
     private static void Log(string msg)
