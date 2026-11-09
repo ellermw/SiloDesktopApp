@@ -98,8 +98,9 @@ public sealed partial class MainWindow
         return Math.Clamp((int)Math.Ceiling(width * scale), 320, 1640);
     }
 
-    private bool IsCurrentPlayingNextArt(PlayingNextArt art, string? contentId, string url, bool hide, int width) =>
-        art.ContentId == (contentId ?? url) && art.Url == url && art.Hide == hide && art.DecodeWidth == width
+    /// <summary>A null width accepts any decode size: the Image scales the picture to the hero.</summary>
+    private bool IsCurrentPlayingNextArt(PlayingNextArt art, string? contentId, string url, bool hide, int? width) =>
+        art.ContentId == (contentId ?? url) && art.Url == url && art.Hide == hide && (width is null || art.DecodeWidth == width)
         && _apiClient.IsCurrentIdentityContext(art.Owner);
 
     private async Task<PlayingNextArt?> PreparePlayingNextArtAsync()
@@ -117,9 +118,22 @@ public sealed partial class MainWindow
         var image = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide, width);
         if (image is null || !_apiClient.IsCurrentIdentityContext(owner)) return null;
         var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image);
+        image.ImageFailed += (_, e) => OnPlayingNextArtFailed(art, contentId + "\n" + url, e.ErrorMessage);
         if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
             _preparedPlayingNextArt = art;
         return art;
+    }
+
+    /// <summary>
+    /// A picture that cannot be decoded is never reused: the hero falls back to its own
+    /// background, the failure is logged once, and the next attempt loads it afresh.
+    /// </summary>
+    private void OnPlayingNextArtFailed(PlayingNextArt art, string key, string? error)
+    {
+        if (ReferenceEquals(_preparedPlayingNextArt, art)) _preparedPlayingNextArt = null;
+        if (ReferenceEquals(_playingNextShownArt, art.Image)) ClearPlayingNextArt();
+        if (NotePlayingNextPreloadFailure(key) == 1)
+            LocalLog.AppendLine("catalog_errors.txt", "playing_next_artwork_decode_failed " + LocalLog.RedactDiagnosticText(error));
     }
 
     /// <summary>Shows prepared artwork in the same frame as the overlay, or starts loading it.</summary>
@@ -129,9 +143,11 @@ public sealed partial class MainWindow
         var imageOwner = Interlocked.Increment(ref _playingNextArtworkGeneration);
         var url = _playerService.NextEpisodePosterUrl;
         var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+        // A resize since the preload changes the decode width; the prepared picture still
+        // opens with the overlay rather than being dropped for a late re-decode.
         if (hasNextEpisode && !string.IsNullOrEmpty(url) && preferences.IsLoadedForCurrentContext &&
             _preparedPlayingNextArt is { } ready &&
-            IsCurrentPlayingNextArt(ready, _playerService.NextEpisodeContentId, url, PlayingNextHidesArt(preferences), PlayingNextDecodeWidth()))
+            IsCurrentPlayingNextArt(ready, _playerService.NextEpisodeContentId, url, PlayingNextHidesArt(preferences), null))
         {
             ShowPlayingNextArt(ready.Image);
             return;
