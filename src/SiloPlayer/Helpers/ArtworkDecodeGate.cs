@@ -3,6 +3,9 @@ namespace SiloPlayer.Helpers;
 /// <summary>Revalidates the original bind at each native processing stage without holding a decoder while motion waits.</summary>
 internal sealed class ArtworkDecodeGate(FrameworkElement card, Func<bool> isCurrent, SemaphoreSlim? decoder = null)
 {
+    /// <summary>One BitmapImage creation at a time across all artwork; native decodes share a composition mutex.</summary>
+    internal static readonly SemaphoreSlim BitmapCreateLock = new(1);
+
     private bool _deferOnMotion;
 
     // The caller holds the outer decoder lease for the whole pipeline. A stage

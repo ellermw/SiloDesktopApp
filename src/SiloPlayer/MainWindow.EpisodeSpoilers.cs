@@ -35,13 +35,21 @@ public sealed partial class MainWindow
         DispatcherQueue.TryEnqueue(() =>
         {
             if (PlayingNextOverlay.Visibility != Visibility.Visible) return;
-            PlayingNextPoster.Source = null;
-            PlayingNextBackdrop.Source = null;
+            // Only a change to the image-hide state invalidates the artwork: an overview change or a
+            // routine (re)load keeps the picture already prepared or shown.
+            var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+            bool? hide = preferences.IsLoadedForCurrentContext ? PlayingNextHidesArt(preferences) : null;
+            var url = _playerService.NextEpisodePosterUrl;
+            bool StillApplies(PlayingNextArt art) => hide is { } h && !string.IsNullOrEmpty(url)
+                && IsCurrentPlayingNextArt(art, _playerService.NextEpisodeContentId, url, h, null);
+            if (_preparedPlayingNextArt is { } prepared && !StillApplies(prepared)) _preparedPlayingNextArt = null;
+            var artChanged = _playingNextShownArt is not { } shown || !StillApplies(shown);
+            if (artChanged) ClearPlayingNextArt();
             PlayingNextOverviewText.Text = "";
             PlayingNextOverviewText.Visibility = Visibility.Collapsed;
             PlayingNextOnDeckRepeater.ItemsSource = null;
             _ = UpdatePlayingNextOverviewAsync(_playingNextPresentationGeneration);
-            _ = LoadPlayingNextPosterAsync();
+            if (artChanged) _ = LoadPlayingNextPosterAsync();
             _ = LoadPlayingNextOnDeckAsync();
         });
     }
@@ -56,26 +64,46 @@ public sealed partial class MainWindow
             var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
             await preferences.EnsureLoadedAsync();
             if (!_apiClient.IsCurrentIdentityContext(identity) || overviewOwner != _playingNextOverviewGeneration || owner != _playingNextPresentationGeneration || PlayingNextOverlay.Visibility != Visibility.Visible) return;
-            var protectedEpisode = (!_playerService.IsShufflePlayback || _playerService.ShuffleNext?.Type == "episode")
-                && EpisodeSpoilerPolicy.IsUnwatched(_playerService.NextEpisodePlayed,
-                    _playerService.NextEpisodeIsInProgress, _playerService.NextEpisodePositionSeconds);
-            var overview = protectedEpisode && preferences.HideOverviews ? "" : _playerService.NextEpisodeOverview ?? "";
-            PlayingNextOverviewText.Text = overview;
-            PlayingNextOverviewText.Visibility = string.IsNullOrWhiteSpace(overview) ? Visibility.Collapsed : Visibility.Visible;
+            ShowPlayingNextOverview(preferences.HideOverviews);
         }
         catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "playing_next_overview"); }
     }
 
-    private async Task<BitmapImage?> LoadEpisodePreviewImageAsync(string contentId, string url, bool hide)
+    /// <summary>Shows the next item's overview unless it is an unwatched episode and overviews are hidden.</summary>
+    private void ShowPlayingNextOverview(bool hideOverviews)
+    {
+        var protectedEpisode = (!_playerService.IsShufflePlayback || _playerService.ShuffleNext?.Type == "episode")
+            && EpisodeSpoilerPolicy.IsUnwatched(_playerService.NextEpisodePlayed,
+                _playerService.NextEpisodeIsInProgress, _playerService.NextEpisodePositionSeconds);
+        var overview = protectedEpisode && hideOverviews ? "" : _playerService.NextEpisodeOverview ?? "";
+        PlayingNextOverviewText.Text = overview;
+        PlayingNextOverviewText.Visibility = string.IsNullOrWhiteSpace(overview) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary><paramref name="beforeSource"/> runs before the bitmap gets its source, so no decode failure is missed.</summary>
+    private async Task<BitmapImage?> LoadEpisodePreviewImageAsync(string contentId, string url, bool hide, int decodeWidth = 640,
+        Action<BitmapImage>? beforeSource = null)
     {
         var identity = _apiClient.CaptureIdentityContext();
         var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(contentId,
             "playing-next", url, App.Services.GetRequiredService<HttpClient>());
         if (string.IsNullOrWhiteSpace(path)) return null;
         if (!_apiClient.IsCurrentIdentityContext(identity)) return null;
-        if (!hide) return new BitmapImage(new Uri(path)) { DecodePixelWidth = 640 };
-        var bytes = await ArtworkEffects.BlurEpisodeStillAsync(await File.ReadAllBytesAsync(path));
+        var bytes = hide ? await ArtworkEffects.BlurEpisodeStillAsync(await File.ReadAllBytesAsync(path)) : null;
+        // Create the bitmap through the card pipeline's decoder: a preload during playback
+        // must not contend with library artwork on the UI thread.
+        using var decode = await new ArtworkDecodeGate(PlayingNextHero, static () => true, ArtworkDecodeGate.BitmapCreateLock)
+            .EnterAsync(CancellationToken.None);
+        // The decode size must be set before the source, or the first decode runs at full size.
+        if (bytes is null)
+        {
+            var uriImage = new BitmapImage { DecodePixelWidth = decodeWidth };
+            beforeSource?.Invoke(uriImage);
+            uriImage.UriSource = new Uri(path);
+            return uriImage;
+        }
         var image = new BitmapImage();
+        beforeSource?.Invoke(image);
         using var stream = new MemoryStream(bytes);
         await image.SetSourceAsync(stream.AsRandomAccessStream());
         if (!_apiClient.IsCurrentIdentityContext(identity)) return null;

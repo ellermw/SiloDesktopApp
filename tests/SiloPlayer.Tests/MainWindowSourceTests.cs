@@ -126,6 +126,10 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PlayingNextOnDeckScroller.ChangeView", code);
         Assert.Contains("x:Name=\"PlayingNextHero\"", xaml);
         Assert.Contains("UpdatePlayingNextLayout(e.Size.Width, e.Size.Height)", code);
+        // The hero keeps its final size before any picture, and the next picture loads during playback.
+        Assert.Contains("PlayingNextHero.Width = availableWidth;", code);
+        Assert.Contains("_playerService.PositionChanged += OnPlaybackPositionForPlayingNext;", code);
+        Assert.Contains("BeginPlayingNextArt(hasNextEpisode);", code);
         Assert.Contains("RefreshPlayingNextAutoPlayAsync(presentationGeneration)", code);
         Assert.Contains("The effective-setting request must never hold", code);
         Assert.Contains("_playerService.IsPostRollVideoEnded &&", code);
@@ -134,6 +138,67 @@ public sealed class MainWindowSourceTests
         Assert.Contains("var shouldFocusOverlay = _isWindowActive || _playerService.IsPlaybackSurfaceForeground;", code);
         Assert.Contains("if (shouldFocusOverlay)", code);
         Assert.Contains("Never request focus from the background", code);
+    }
+
+    [Fact]
+    public void ShufflePlayingNextOverviewFollowsEpisodeSpoilerPolicy()
+    {
+        var root = FindRepositoryRoot();
+        var shuffle = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.Shuffle.cs"));
+        var spoilers = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.EpisodeSpoilers.cs"));
+
+        // An unwatched shuffle episode must not republish the overview the policy hid.
+        Assert.DoesNotContain("PlayingNextOverviewText.Text = _playerService.NextEpisodeOverview", shuffle);
+        Assert.Contains("ShowPlayingNextOverview(spoilers.ShouldHideOverviews);", shuffle);
+        Assert.Contains("_playerService.ShuffleNext?.Type == \"episode\"", spoilers);
+        Assert.Contains("protectedEpisode && hideOverviews ? \"\" : _playerService.NextEpisodeOverview", spoilers);
+    }
+
+    [Fact]
+    public void PlayingNextPreloadBacksOffAndSharesTheArtworkDecoder()
+    {
+        var root = FindRepositoryRoot();
+        var artwork = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.PlayingNextArtwork.cs"));
+        var spoilers = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.EpisodeSpoilers.cs"));
+        var card = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "PosterCard.xaml.cs"));
+
+        // The latch is released when the preload finishes, and a failing picture waits before its next attempt.
+        Assert.Contains("DispatcherQueue.TryEnqueue(() => _ = PreloadPlayingNextArtAsync())", artwork);
+        Assert.Contains("finally { Interlocked.Exchange(ref _playingNextPreloadQueued, 0); }", artwork);
+        Assert.Contains("Environment.TickCount64 < _playingNextPreloadRetryAt", artwork);
+        Assert.Contains("if (NotePlayingNextPreloadFailure(key) == 1)", artwork);
+        // Playing Next bitmaps are created through the same decoder as library cards.
+        Assert.Contains("ArtworkDecodeGate.BitmapCreateLock)", spoilers);
+        Assert.Contains("s_bitmapCreateLock = ArtworkDecodeGate.BitmapCreateLock;", card);
+        // A blurred spoiler still is decoded before assignment, so it never waits for an ImageOpened that may not come.
+        Assert.Contains("contentId + \"\\n\" + url, Decoded: hide);", artwork);
+        Assert.Contains("if (art.Decoded || image.PixelWidth > 0) { RevealPlayingNextArt(); return; }", artwork);
+    }
+
+    [Fact]
+    public void PlayingNextArtDecodeFailureIsNeverCached()
+    {
+        var root = FindRepositoryRoot();
+        var artwork = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.PlayingNextArtwork.cs"));
+        var spoilers = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.EpisodeSpoilers.cs"));
+
+        // The failure handler is attached before the bitmap gets its source, so an early decode failure is seen.
+        Assert.DoesNotContain("UriSource = new Uri(path) }", spoilers);
+        Assert.Contains("beforeSource?.Invoke(uriImage);\n            uriImage.UriSource = new Uri(path);", spoilers.ReplaceLineEndings("\n"));
+        Assert.Contains("bitmap => bitmap.ImageFailed += Failed", artwork);
+        // A failed picture is neither reused nor cached, so the next attempt reads it afresh.
+        Assert.Contains("!art.Failed && art.ContentId", artwork);
+        Assert.Contains("if (!art.Failed && contentId == _playerService.NextEpisodeContentId", artwork);
+    }
+
+    [Fact]
+    public void ShufflePlayingNextStillFlagFollowsTheShownImage()
+    {
+        var root = FindRepositoryRoot();
+        var player = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        // A shuffle episode without a poster shows its backdrop, so the backdrop's still flag decides the blur.
+        Assert.Contains("ShuffleNext.PosterUrl is not null ? ShuffleNext.PosterIsEpisodeStill : ShuffleNext?.BackdropIsEpisodeStill", player);
     }
 
     [Fact]

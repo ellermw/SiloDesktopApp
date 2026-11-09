@@ -121,6 +121,32 @@ internal static class UpstreamShellNativeFixture
             Check(Named<TextBlock>("PlayingNextOverviewText").Text == "Secret description", "Playing Next kept a watched description hidden");
             Named<FrameworkElement>("PlayingNextOverlay").Visibility = Visibility.Collapsed;
 
+            // Playing Next artwork: the hero has its final size before any picture, the picture is fetched while
+            // the episode plays, and the poster and its backdrop arrive with the overlay, together.
+            player.SetNextEpisodeHint("current", "next", "Next", "Series", "https://shell-fixture.invalid/art/next.png",
+                "Secret description", played: true);
+            typeof(MainWindow).GetMethod("UpdatePlayingNextLayout", instance)!.Invoke(window, [1920d, 1080d]);
+            var hero = Named<FrameworkElement>("PlayingNextHero");
+            Check(hero.Width == 820, $"Playing Next hero had no fixed width before its picture (width {hero.Width})");
+            var prepare = (Task)typeof(MainWindow).GetMethod("PreparePlayingNextArtAsync", instance)!.Invoke(window, null)!;
+            await prepare;
+            Check(prepare.GetType().GetProperty("Result")!.GetValue(prepare) is not null, "Next episode artwork was not prepared during playback");
+            var poster = Named<Image>("PlayingNextPoster"); var backdrop = Named<Image>("PlayingNextBackdrop");
+            Named<FrameworkElement>("PlayingNextOverlay").Visibility = Visibility.Visible;
+            typeof(MainWindow).GetMethod("BeginPlayingNextArt", instance)!.Invoke(window, [true]);
+            Check(poster.Source is not null && ReferenceEquals(poster.Source, backdrop.Source),
+                "Prepared Playing Next artwork was not placed in the same frame as the overlay");
+            for (var i = 0; i < 150 && poster.Opacity < 1; i++) await Task.Delay(20);
+            Check(poster.Opacity == 1 && backdrop.Opacity > 0.2 && backdrop.Opacity < 0.25,
+                $"Playing Next poster and backdrop did not appear together (poster {poster.Opacity}, backdrop {backdrop.Opacity}, " +
+                $"pixels {(poster.Source as Microsoft.UI.Xaml.Media.Imaging.BitmapImage)?.PixelWidth}, hero {hero.ActualWidth}x{hero.ActualHeight}, " +
+                $"overlay {Named<FrameworkElement>("PlayingNextOverlay").ActualWidth})");
+            Check(ReferenceEquals(poster.OpacityTransition, backdrop.OpacityTransition) || (poster.OpacityTransition is null) == (backdrop.OpacityTransition is null),
+                "Playing Next poster and backdrop used different reveals");
+            Program.Log($"PASS: Playing Next hero is sized before its art; prepared art shows with the overlay ({(poster.OpacityTransition is null ? "at once" : "faded")}).");
+            typeof(MainWindow).GetMethod("ClearPlayingNextArt", instance)!.Invoke(window, null);
+            Named<FrameworkElement>("PlayingNextOverlay").Visibility = Visibility.Collapsed;
+
             // Finished series: On Deck artwork binds inside the ItemsRepeater, and the screen closes by itself
             // as Back does unless the viewer engages with it.
             var overlay = Named<FrameworkElement>("PlayingNextOverlay");
@@ -171,6 +197,9 @@ internal static class UpstreamShellNativeFixture
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path == "/art/next.png")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Convert.FromBase64String(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")) });
             object body = path switch
             {
                 "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 17, supports_idempotent_writes = true, client_families = new[] { "desktop", "web" }, supports_batched_effective = true, supports_device_rename = true },

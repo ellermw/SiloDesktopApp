@@ -675,7 +675,7 @@
             <Image x:Name="PlayingNextBackdrop"
                    Grid.RowSpan="2"
                    Stretch="UniformToFill"
-                   Opacity="0.22" />
+                   Opacity="0" />
             <Border Grid.RowSpan="2" Background="#A8000000" />
             <Button x:Name="PlayingNextCloseButton"
                     Grid.RowSpan="2"
@@ -710,7 +710,7 @@
                     <StackPanel x:Name="PlayingNextEpisodePanel" Spacing="12">
                         <Border x:Name="PlayingNextHero" Height="400" MaxWidth="820" CornerRadius="16"
                                 Background="#202733" BorderBrush="#14FFFFFF" BorderThickness="1">
-                            <Image x:Name="PlayingNextPoster" Stretch="UniformToFill" />
+                            <Image x:Name="PlayingNextPoster" Stretch="UniformToFill" Opacity="0" />
                         </Border>
 
                         <StackPanel HorizontalAlignment="Center" Spacing="5" MaxWidth="650">
