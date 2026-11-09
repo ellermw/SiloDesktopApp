@@ -6,6 +6,12 @@ public sealed class ArtworkMotionPolicy
     /// <summary>Pixels per millisecond above which artwork waits for the viewport to slow (Home rails and pages).</summary>
     public const double DefaultDeferSpeed = 1.2;
 
+    /// <summary>
+    /// Pixels per millisecond above which Library grid artwork waits. Steady wheel scrolling
+    /// stays below it; touchpad flicks (~3 px/ms), flings and fast scrollbar drags exceed it.
+    /// </summary>
+    public const double GridDeferSpeed = 2;
+
     private readonly TimeProvider _clock;
     private readonly double _deferSpeed;
     private readonly object _sync = new();

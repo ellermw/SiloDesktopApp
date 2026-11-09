@@ -17,17 +17,30 @@ public class ArtworkMotionPolicyTests
     }
 
     [Fact]
-    public void A_higher_defer_speed_lets_ordinary_scrolling_load_and_still_defers_flings()
+    public void Grid_defer_speed_lets_steady_scrolling_load_and_still_defers_flicks_and_flings()
     {
         var clock = new Clock();
-        var policy = new ArtworkMotionPolicy(clock, deferSpeed: 4);
+        var policy = new ArtworkMotionPolicy(clock, deferSpeed: ArtworkMotionPolicy.GridDeferSpeed);
         var standard = new ArtworkMotionPolicy(clock);
-        // 60 px in 20 ms (3 px/ms) defers by default but not at 4 px/ms.
-        clock.Advance(20); policy.Observe(0, 60); standard.Observe(0, 60);
+        // 30 px in 20 ms (1.5 px/ms) defers by default but not at the grid speed.
+        clock.Advance(20); policy.Observe(0, 30); standard.Observe(0, 30);
         Assert.False(policy.IsDeferred);
         Assert.True(standard.IsDeferred);
-        // A fling (900 px in 20 ms) still waits for the grid to slow.
-        clock.Advance(20); policy.Observe(0, 960);
+        // A touchpad flick (60 px in 20 ms, 3 px/ms) waits for the grid to slow.
+        clock.Advance(20); policy.Observe(0, 90);
+        Assert.True(policy.IsDeferred);
+        // A fling (900 px in 20 ms) waits too.
+        clock.Advance(20); policy.Observe(0, 990);
+        Assert.True(policy.IsDeferred);
+    }
+
+    [Fact]
+    public void Grid_defer_speed_defers_coalesced_samples_after_a_long_gap()
+    {
+        var clock = new Clock();
+        var policy = new ArtworkMotionPolicy(clock, deferSpeed: ArtworkMotionPolicy.GridDeferSpeed);
+        // 350 px reported after a 150 ms gap is measured over at most 100 ms (3.5 px/ms).
+        clock.Advance(150); policy.Observe(0, 350);
         Assert.True(policy.IsDeferred);
     }
 

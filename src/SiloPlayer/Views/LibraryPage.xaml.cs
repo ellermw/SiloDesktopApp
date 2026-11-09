@@ -168,7 +168,6 @@ public sealed partial class LibraryPage : Page,
     // window stays within one 100-item catalog page; wider grids keep one row.
     private const int MinLibraryOverscanRows = 2;
     private const int MaxLibraryOverscanWindowItems = 100;
-    private const double LibraryArtworkDeferSpeed = 4;
     private const double LibraryHeaderGlassThreshold = 160;
     private const int MaxVisibleMultiSelectOptions = 80;
 
@@ -180,9 +179,9 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
-        // Posters load and decode during ordinary wheel and touchpad scrolling, as
-        // Granary does; only flings and scrollbar drags wait for the grid to slow.
-        _artworkMotion = ArtworkViewport.For(LibraryScroller, LibraryArtworkDeferSpeed);
+        // Posters load and decode during steady wheel and slow touchpad scrolling;
+        // touchpad flicks, flings and fast scrollbar drags wait for the grid to slow.
+        _artworkMotion = ArtworkViewport.For(LibraryScroller, ArtworkMotionPolicy.GridDeferSpeed);
         _artworkReadAhead = new(workers: 4, capacity: 500, ReadAheadArtworkAsync);
         // Observe input even when the ScrollViewer or its scrollbar handles it.
         // ViewChanged also reports inertia and extent clamps, not just new intent.
