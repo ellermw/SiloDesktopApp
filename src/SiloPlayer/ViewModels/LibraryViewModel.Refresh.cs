@@ -15,6 +15,10 @@ public partial class LibraryViewModel
     private Task<CatalogRefreshResult>? _catalogRefreshTask;
     private int _catalogRefreshVersion = -1;
 
+    // Retained rows have not been authorized by a read under the new context yet.
+    public bool RequiresCatalogRefresh => _catalogRefreshPending ||
+        (_catalogContext is not null && _catalogContext != _catalogApi.CaptureContext());
+
     /// <summary>Only transport recovery may retain rows; an access change retires them.</summary>
     private static bool IsSameCatalogIdentity(ApiRequestContext? previous, ApiRequestContext current) =>
         previous is { } before && before.AuthenticationGeneration == current.AuthenticationGeneration &&
@@ -29,7 +33,8 @@ public partial class LibraryViewModel
     /// Moves a loaded catalog onto the current request context without clearing it.
     /// Cursors, boundaries and in-flight reads of the old generation retire; the
     /// snapshot, extent and loaded windows stay together until an atomic refresh
-    /// succeeds. Ordinary reads must finish that refresh before loading new rows.
+    /// succeeds, or a failure retires the unconfirmed rows without losing the extent.
+    /// Ordinary reads cannot mix snapshots while that refresh is pending.
     /// </summary>
     private void RebaseCatalogQuery()
     {
@@ -49,6 +54,7 @@ public partial class LibraryViewModel
         _letterIndexLoadVersion++;
         IsLetterIndexLoading = false;
         IsLoading = false;
+        WindowLoaded?.Invoke();
     }
 
     /// <summary>
@@ -86,6 +92,28 @@ public partial class LibraryViewModel
         string? snapshot = null;
         var replacements = new List<(int Start, int Count, CatalogResponse Response)>();
         var refreshed = 0;
+        CatalogRefreshResult FailRefresh(string message)
+        {
+            if (!Current()) return CatalogRefreshResult.Deferred;
+            // No staged rows were published. Retire the unconfirmed old rows as
+            // a unit, but keep the extent/scroll while ordinary viewport loads
+            // retry without depending on an unreadable, distant held window.
+            _pageResponses.Clear();
+            _recentWindows.Clear();
+            _completedBoundaries.Clear();
+            Items.Reset(TotalCount);
+            _snapshot = null;
+            _hasExactTotal = false;
+            _estimatedTotalItems = TotalCount;
+            _observedCatalogEnd = 0;
+            _catalogEndTotal = null;
+            _exactCountQueryVersion = -1;
+            ResetLetterIndex();
+            _catalogRefreshPending = false;
+            ErrorMessage = $"Failed to refresh catalog: {message}";
+            ClearActiveWindow(notify: true);
+            return CatalogRefreshResult.Failed;
+        }
         try
         {
             foreach (var (start, count) in chunks)
@@ -95,27 +123,28 @@ public partial class LibraryViewModel
                 await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, owner.Token,
                     publishState: false);
                 if (!Current()) return CatalogRefreshResult.Deferred;
-                if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot)) return CatalogRefreshResult.Failed;
+                if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot))
+                    return FailRefresh("The server did not return a catalog snapshot.");
                 // Stage all chunks without changing live rows, cursors, counts or the
-                // old snapshot. A failed/deferred read can then keep them as one unit.
+                // old snapshot. Deferred reads retain them; failed reads retire them as a unit.
                 snapshot ??= replacement.Snapshot;
-                if (replacement.Snapshot != snapshot) return CatalogRefreshResult.Failed;
+                if (replacement.Snapshot != snapshot)
+                    return FailRefresh("The catalog snapshot changed during refresh.");
                 replacements.Add((start, count, replacement));
                 refreshed++;
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!Current())
         {
-            // A newer query, reconnect or letter seek owns the catalog now.
+            // Caller cancellation or a newer query/reconnect/letter seek owns the catalog.
+            // A transport timeout without cancellation instead takes the failure path.
             return CatalogRefreshResult.Deferred;
         }
         catch (Exception ex)
         {
-            // Nothing has been published. Retain the old snapshot and retry before
-            // any ordinary load can bring rows from a new snapshot alongside it.
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex,
                 $"catalog_refresh_in_place refreshed_windows={refreshed} query_version={version}");
-            return CatalogRefreshResult.Failed;
+            return FailRefresh(ex.Message);
         }
         finally
         {
@@ -153,9 +182,9 @@ public partial class LibraryViewModel
             window.Response.Total = 0;
         }
         _catalogRefreshPending = false;
-        // Additions or removals change the extent; the count is read in the same snapshot.
-        var exact = replacements.Select(replacement => replacement.Response).FirstOrDefault(response => response.TotalExact);
-        if (exact is not null) ApplyExactCatalogTotal(exact.Total);
+        ErrorMessage = null;
+        // These chunks used skip_total: omitted totals can deserialize as exact
+        // zero. Keep the extent until the explicit count read in this snapshot.
         _exactCountQueryVersion = _queryVersion;
         _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
         RefreshLetterIndexInPlace();

@@ -327,6 +327,7 @@ public sealed partial class LibraryPage : Page,
         AttachViewModelEvents();
         RegisterMediaMessages();
         AttachRecommendedRealtimeEvents();
+        if (ViewModel.RequiresCatalogRefresh) HideUnconfirmedCatalogRows();
 
         var navigationArgs = e.Parameter as NavigationArgs;
         var library = navigationArgs?.Library ?? e.Parameter as Library;
@@ -1953,6 +1954,12 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
+        if (ViewModel.RequiresCatalogRefresh)
+        {
+            HideUnconfirmedCatalogRows();
+            return;
+        }
+
         var layout = GetGridLayout();
         var range = GetVisibleItemRange(layout);
         range = ClampRealizedRange(range, layout);
@@ -1987,18 +1994,19 @@ public sealed partial class LibraryPage : Page,
                 card.BindPlaceholder();
             card.Tag = index;
             PositionVirtualCardSlot(card, index, layout);
-            if (card.Visibility != Visibility.Visible)
-                card.Visibility = Visibility.Visible;
-
             var item = ViewModel.GetWindowItem(index);
             if (item == null)
-            {
                 card.BindPlaceholder();
-                continue;
-            }
+            else if (_catalogCardsAwaitingConfirmation)
+                // Never expose an old binding while the normal bind queue catches up.
+                card.Bind(item, ViewModel.SelectedSort);
+            else
+                QueueCardBind(index);
 
-            QueueCardBind(index);
+            if (card.Visibility != Visibility.Visible)
+                card.Visibility = Visibility.Visible;
         }
+        _catalogCardsAwaitingConfirmation = false;
 
         var assignedCards = assignments.Values.ToHashSet();
         foreach (var card in _libraryCardSlots)

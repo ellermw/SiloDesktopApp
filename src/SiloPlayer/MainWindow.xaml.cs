@@ -1545,6 +1545,7 @@ public sealed partial class MainWindow : Window
             // grid merges the catch-up in place; remounting it reset the scroll to the top.
             if (ContentFrame.Content is LibraryPage library)
             {
+                library.HideUnconfirmedCatalogRows();
                 _pendingDetailCatchUp = true;
                 _pendingDetailCatchUpRequiresRemount |= !library.CanPreserveOnReconnect;
                 ApplyPendingAccessRefresh();

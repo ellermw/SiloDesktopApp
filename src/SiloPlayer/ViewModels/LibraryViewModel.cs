@@ -391,6 +391,9 @@ public partial class LibraryViewModel : ObservableObject
         if (TotalCount <= 0) return [];
         if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, endIndex - startIndex + 1, ct) != CatalogRefreshResult.Completed)
             return [];
+        // A failed catch-up keeps only the extent. Let a foreground window
+        // establish its fresh snapshot before speculative reads populate caches.
+        if (WindowStartIndex < 0) return [];
 
         var (first, indices) = Neighborhood(startIndex, endIndex, forward);
         var version = _queryVersion;

@@ -17,6 +17,24 @@ public sealed partial class LibraryPage
         (_currentTab == "Library" && _currentAudiobookAxis == "books" && _libraryCatalogLoaded && ViewModel.WindowStartIndex >= 0 ||
          _currentTab == "Recommended" && _recommendedLoaded);
 
+    private bool _catalogCardsAwaitingConfirmation;
+
+    /// <summary>
+    /// A reconnect may have missed an access revocation. Hide cards immediately,
+    /// even while playback defers the refresh, without changing the canvas extent.
+    /// Keep their bindings/artwork for a successful, same-position refresh.
+    /// </summary>
+    public void HideUnconfirmedCatalogRows()
+    {
+        _catalogCardsAwaitingConfirmation = true;
+        _cardBindTimer?.Stop();
+        _pendingCardBinds.Clear();
+        _pendingCardBindSet.Clear();
+        _lastRenderedStartIndex = _lastRenderedEndIndex = -1;
+        foreach (var card in _libraryCardSlots)
+            card.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+    }
+
     public async Task CatchUpAfterReconnectAsync()
     {
         try
@@ -28,6 +46,7 @@ public sealed partial class LibraryPage
                 return;
             }
             if (_currentTab != "Library" || _currentAudiobookAxis != "books") return;
+            HideUnconfirmedCatalogRows();
             var layout = GetGridLayout();
             var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
             if (range.EndIndex < range.StartIndex) range = (Math.Max(0, ViewModel.WindowStartIndex), Math.Max(0, ViewModel.WindowStartIndex));
@@ -40,8 +59,8 @@ public sealed partial class LibraryPage
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
             }
-            // An incomplete catch-up remains pending. The range loader retries it
-            // before admitting any new-snapshot rows beside the retained cards.
+            // A deferred catch-up remains pending; a failed one retires its rows
+            // without collapsing the extent. The range loader can retry either.
             _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
             ScheduleVisibleRangeLoad(force: true);
         }
