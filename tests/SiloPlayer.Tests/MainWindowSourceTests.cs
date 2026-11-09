@@ -165,6 +165,32 @@ public sealed class MainWindowSourceTests
     }
 
     [Fact]
+    public void PlayingNextArtDecodeFailureIsNeverCached()
+    {
+        var root = FindRepositoryRoot();
+        var artwork = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.PlayingNextArtwork.cs"));
+        var spoilers = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.EpisodeSpoilers.cs"));
+
+        // The failure handler is attached before the bitmap gets its source, so an early decode failure is seen.
+        Assert.DoesNotContain("UriSource = new Uri(path) }", spoilers);
+        Assert.Contains("beforeSource?.Invoke(uriImage);\n            uriImage.UriSource = new Uri(path);", spoilers.ReplaceLineEndings("\n"));
+        Assert.Contains("bitmap => bitmap.ImageFailed += Failed", artwork);
+        // A failed picture is neither reused nor cached, so the next attempt reads it afresh.
+        Assert.Contains("!art.Failed && art.ContentId", artwork);
+        Assert.Contains("if (!art.Failed && contentId == _playerService.NextEpisodeContentId", artwork);
+    }
+
+    [Fact]
+    public void ShufflePlayingNextStillFlagFollowsTheShownImage()
+    {
+        var root = FindRepositoryRoot();
+        var player = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        // A shuffle episode without a poster shows its backdrop, so the backdrop's still flag decides the blur.
+        Assert.Contains("ShuffleNext.PosterUrl is not null ? ShuffleNext.PosterIsEpisodeStill : ShuffleNext?.BackdropIsEpisodeStill", player);
+    }
+
+    [Fact]
     public void ApiClientSendsSiloDeviceHeadersForDeviceScopedSettings()
     {
         var root = FindRepositoryRoot();

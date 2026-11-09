@@ -1952,7 +1952,10 @@ public partial class PlayerService : IDisposable
     public bool? NextEpisodePlayed => IsShufflePlayback ? ShuffleNext?.UserState?.Played : EpisodeNavigation.Next?.Played;
     public bool? NextEpisodeIsInProgress => IsShufflePlayback ? ShuffleNext?.UserState?.IsInProgress : EpisodeNavigation.Next?.IsInProgress;
     public double? NextEpisodePositionSeconds => IsShufflePlayback ? ShuffleNext?.PositionSeconds : EpisodeNavigation.Next?.PositionSeconds;
-    public bool? NextEpisodePosterIsEpisodeStill => IsShufflePlayback ? ShuffleNext?.PosterIsEpisodeStill : EpisodeNavigation.Next?.PosterIsEpisodeStill;
+    // Mirrors NextEpisodePosterUrl: a shuffle pick shown through its backdrop is protected by the backdrop's own flag.
+    public bool? NextEpisodePosterIsEpisodeStill => IsShufflePlayback
+        ? (ShuffleNext?.Type == "episode" && ShuffleNext.PosterUrl is not null ? ShuffleNext.PosterIsEpisodeStill : ShuffleNext?.BackdropIsEpisodeStill)
+        : EpisodeNavigation.Next?.PosterIsEpisodeStill;
     public string? PreviousEpisodeContentId => EpisodeNavigation.PreviousContentId;
 
     public bool HasEpisodeNavigationForCurrentPlayback =>

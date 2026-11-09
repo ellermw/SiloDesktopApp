@@ -66,11 +66,13 @@ public sealed partial class MainWindow
             if (string.IsNullOrEmpty(url) ||
                 (key == _playingNextPreloadFailedKey && Environment.TickCount64 < _playingNextPreloadRetryAt))
                 return;
-            if (await PreparePlayingNextArtAsync() is not null)
+            // A picture that failed to decode was already counted by OnPlayingNextArtFailed.
+            var art = await PreparePlayingNextArtAsync();
+            if (art is { Failed: false })
             {
                 if (key == _playingNextPreloadFailedKey) _playingNextPreloadFailedKey = null;
             }
-            else if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
+            else if (art is null && contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
                 NotePlayingNextPreloadFailure(key);
         }
         catch (Exception ex)
@@ -106,7 +108,7 @@ public sealed partial class MainWindow
 
     /// <summary>A null width accepts any decode size: the Image scales the picture to the hero.</summary>
     private bool IsCurrentPlayingNextArt(PlayingNextArt art, string? contentId, string url, bool hide, int? width) =>
-        art.ContentId == (contentId ?? url) && art.Url == url && art.Hide == hide && (width is null || art.DecodeWidth == width)
+        !art.Failed && art.ContentId == (contentId ?? url) && art.Url == url && art.Hide == hide && (width is null || art.DecodeWidth == width)
         && _apiClient.IsCurrentIdentityContext(art.Owner);
 
     private async Task<PlayingNextArt?> PreparePlayingNextArtAsync()
@@ -121,14 +123,24 @@ public sealed partial class MainWindow
         var width = PlayingNextDecodeWidth();
         if (_preparedPlayingNextArt is { } ready && IsCurrentPlayingNextArt(ready, contentId, url, hide, width)) return ready;
         var owner = _apiClient.CaptureIdentityContext();
-        var image = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide, width);
+        // The failure handler is attached before the source is set: a decode that fails while the
+        // bitmap is being created is recorded here and counted once the art exists.
+        PlayingNextArt? art = null;
+        string? earlyFailure = null;
+        void Failed(object sender, ExceptionRoutedEventArgs e)
+        {
+            if (art is null) earlyFailure ??= e.ErrorMessage ?? "";
+            else OnPlayingNextArtFailed(art, e.ErrorMessage);
+        }
+        var image = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide, width, bitmap => bitmap.ImageFailed += Failed);
         if (image is null || !_apiClient.IsCurrentIdentityContext(owner)) return null;
         // No pixels yet is not a failure: SetSourceAsync throws for an unreadable stream, so a hidden
         // (blurred) still is already decoded; a later URI decode failure raises ImageFailed, and
         // ShowPlayingNextArt waits for ImageOpened only for a URI-backed picture.
-        var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image, contentId + "\n" + url, Decoded: hide);
-        image.ImageFailed += (_, e) => OnPlayingNextArtFailed(art, e.ErrorMessage);
-        if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
+        art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image, contentId + "\n" + url, Decoded: hide);
+        if (earlyFailure is not null) OnPlayingNextArtFailed(art, earlyFailure);
+        // A failed picture is never cached, so the next attempt loads it afresh.
+        if (!art.Failed && contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
             _preparedPlayingNextArt = art;
         return art;
     }
@@ -176,7 +188,7 @@ public sealed partial class MainWindow
         try
         {
             var art = await PreparePlayingNextArtAsync();
-            if (art is null || !string.Equals(contentId, _playerService.NextEpisodeContentId, StringComparison.Ordinal) ||
+            if (art is null or { Failed: true } || !string.Equals(contentId, _playerService.NextEpisodeContentId, StringComparison.Ordinal) ||
                 imageOwner != _playingNextArtworkGeneration || owner != _playingNextPresentationGeneration ||
                 PlayingNextOverlay.Visibility != Visibility.Visible)
                 return;

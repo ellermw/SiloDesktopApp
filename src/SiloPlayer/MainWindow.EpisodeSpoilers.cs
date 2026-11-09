@@ -72,7 +72,9 @@ public sealed partial class MainWindow
         PlayingNextOverviewText.Visibility = string.IsNullOrWhiteSpace(overview) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private async Task<BitmapImage?> LoadEpisodePreviewImageAsync(string contentId, string url, bool hide, int decodeWidth = 640)
+    /// <summary><paramref name="beforeSource"/> runs before the bitmap gets its source, so no decode failure is missed.</summary>
+    private async Task<BitmapImage?> LoadEpisodePreviewImageAsync(string contentId, string url, bool hide, int decodeWidth = 640,
+        Action<BitmapImage>? beforeSource = null)
     {
         var identity = _apiClient.CaptureIdentityContext();
         var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(contentId,
@@ -85,8 +87,15 @@ public sealed partial class MainWindow
         using var decode = await new ArtworkDecodeGate(PlayingNextHero, static () => true, ArtworkDecodeGate.BitmapCreateLock)
             .EnterAsync(CancellationToken.None);
         // The decode size must be set before the source, or the first decode runs at full size.
-        if (bytes is null) return new BitmapImage { DecodePixelWidth = decodeWidth, UriSource = new Uri(path) };
+        if (bytes is null)
+        {
+            var uriImage = new BitmapImage { DecodePixelWidth = decodeWidth };
+            beforeSource?.Invoke(uriImage);
+            uriImage.UriSource = new Uri(path);
+            return uriImage;
+        }
         var image = new BitmapImage();
+        beforeSource?.Invoke(image);
         using var stream = new MemoryStream(bytes);
         await image.SetSourceAsync(stream.AsRandomAccessStream());
         if (!_apiClient.IsCurrentIdentityContext(identity)) return null;
