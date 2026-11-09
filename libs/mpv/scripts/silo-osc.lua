@@ -4869,7 +4869,8 @@ end
 
 -- An overflowing Playback Info panel scrolls from the keyboard and controller
 -- as well as the wheel, so its lower rows stay reachable without a pointer.
--- Returns false when the panel is closed or already shows every row.
+-- Returns false when the panel is closed, already shows every row, or is
+-- already at the requested edge, so volume and focus keys keep working.
 local function scroll_stats(action)
     if not state.stats_visible or (state.stats_scroll_max or 0) <= 0 then return false end
     local step = math.max(20, math.floor(40 * ui_scale()))
@@ -4878,7 +4879,9 @@ local function scroll_stats(action)
     elseif action == "end" then offset = state.stats_scroll_max
     elseif action == "up" then offset = offset - step
     else offset = offset + step end
-    state.stats_scroll_offset = clamp(offset, 0, state.stats_scroll_max)
+    offset = clamp(offset, 0, state.stats_scroll_max)
+    if offset == (state.stats_scroll_offset or 0) then return false end
+    state.stats_scroll_offset = offset
     render_stats()
     return true
 end
@@ -5155,16 +5158,26 @@ local function handle_mouse_down()
 
     if state.osc_disabled then return end
 
-    -- Playback Info (z=60) is drawn over the Watch Party card (z=50). A wide
-    -- two-column panel can cover the party opener and actions, so a click on
-    -- the visible panel must never reach the hidden party targets beneath it.
-    local over_stats = state.stats_visible and (
-        (state.stats_panel_rect and point_in_rect(mx, my, state.stats_panel_rect)) or
-        (state.stats_close_rect and point_in_rect(mx, my, state.stats_close_rect)))
+    -- Playback Info (z=60) is drawn over the Watch Party card (z=50) and the
+    -- skip, next-episode and countdown surfaces (z=55-57). A wide two-column
+    -- panel can cover them, so the visible panel and its close button take
+    -- the click before any hidden target beneath them.
+    if state.stats_visible and state.stats_close_rect and
+        point_in_rect(mx, my, state.stats_close_rect) then
+        consume_video_click()
+        state.stats_visible = false
+        render_stats()
+        return
+    end
+    if state.stats_visible and state.stats_panel_rect and
+        point_in_rect(mx, my, state.stats_panel_rect) then
+        consume_video_click()
+        return
+    end
 
     -- The opener's geometry is authoritative before the next ASS paint.
     -- Room/scope messages and a pointer gesture can arrive in the same frame.
-    if not over_stats and state.native_party_scope and state.watch_party and state.watch_party.visible then
+    if state.native_party_scope and state.watch_party and state.watch_party.visible then
         compute_layout()
         if state.layout.btn_party and point_in_rect(mx, my, state.layout.btn_party) then
             open_native_menu('party')
@@ -5223,7 +5236,7 @@ local function handle_mouse_down()
     end
 
     -- Watch Party host actions live in the same top-right panel as the WebUI.
-    for _, item in ipairs(over_stats and {} or state.watch_party_actions or {}) do
+    for _, item in ipairs(state.watch_party_actions or {}) do
         if point_in_rect(mx, my, item) then
             consume_video_click()
             if item.action == "native-party" then
@@ -5245,22 +5258,6 @@ local function handle_mouse_down()
         end
     end
     if state.watch_party_end_confirm then
-        consume_video_click()
-        return
-    end
-
-    -- Stats overlay close button (always check, even if OSC is hidden)
-    if state.stats_visible and state.stats_close_rect then
-        local r = state.stats_close_rect
-        if mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h then
-            consume_video_click()
-            state.stats_visible = false
-            render_stats()
-            return
-        end
-    end
-    if state.stats_visible and state.stats_panel_rect and
-        point_in_rect(mx, my, state.stats_panel_rect) then
         consume_video_click()
         return
     end

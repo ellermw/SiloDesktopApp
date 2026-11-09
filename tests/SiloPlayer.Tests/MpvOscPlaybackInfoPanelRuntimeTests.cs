@@ -214,4 +214,79 @@ public sealed partial class MpvOscRuntimeTests
             windowWidth: width, windowHeight: height);
         Assert.Equal("true:true:0:0:false", output);
     }
+
+    // At the scroll edge the arrow keys fall through to their normal volume
+    // command instead of being swallowed by a panel that cannot move further.
+    [Fact]
+    public void PlaybackInfoReleasesVolumeKeysAtTheScrollEdge()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled = false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            mp.set_property_number('volume', 50)
+            native_handlers['osc-toggle-stats']()
+            local max = s.stats_scroll_max or 0
+            native_keys['silo-vol-up']()
+            local top_up = s.stats_scroll_offset == 0 and mp.get_property_number('volume') == 55
+            native_keys['silo-menu-end']()
+            native_keys['silo-vol-down']()
+            local bottom_down = s.stats_scroll_offset == max and mp.get_property_number('volume') == 50
+            mp.set_property('user-data/playback-info-edge', tostring(max > 0) .. ':' .. tostring(top_up) .. ':'
+                .. tostring(bottom_down) .. ':' .. tostring(s.stats_visible))
+            """, rawAss: true, resultProperty: "user-data/playback-info-edge", beforeScript: PlaybackInfoProbe,
+            windowWidth: 960, windowHeight: 540);
+        Assert.Equal("true:true:true:true", output);
+    }
+
+    // The two-column panel (z=60) can also cover the credits countdown card
+    // (z=57) and the Next Episode button (z=56). A click on the visible panel
+    // must never advance to the next episode.
+    [Theory]
+    [InlineData(960, 540)]
+    [InlineData(1024, 600)]
+    public void PlaybackInfoPanelOwnsClicksOverTheNextEpisodeSurfaces(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local advanced = 0
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-next-episode' then advanced = advanced + 1 end
+                return command(...)
+            end
+            native_handlers['osc-toggle-stats']()
+            local panel = assert(s.stats_panel_rect, 'Playback info did not render')
+            local W, H = s.osd_width, s.osd_height
+            -- render_next_episode_countdown geometry; ui_scale() is 1 at these sizes.
+            local card_x, card_y = W - 24 - 360, H - 96 - 126
+            local buttons_y = card_y + 126 - 16 - 32
+            local cancel_x = card_x + 360 - 16 - 78
+            s.next_ep_available, s.next_ep_visible = true, true
+            s.next_ep_detail = { season_number = 1, episode_number = 2, title = 'Next' }
+            s.next_ep_countdown_active, s.next_ep_countdown_remaining = true, 8
+            s.next_ep_countdown_actions = {
+                { action = 'play', x = card_x + 16, y = buttons_y, w = cancel_x - 8 - card_x - 16, h = 32 },
+                { action = 'cancel', x = cancel_x, y = buttons_y, w = 78, h = 32 },
+            }
+            local function overlap(a, b)
+                local x1, y1 = math.max(a.x, b.x), math.max(a.y, b.y)
+                local x2, y2 = math.min(a.x + a.w, b.x + b.w), math.min(a.y + a.h, b.y + b.h)
+                if x2 <= x1 or y2 <= y1 then return nil end
+                return (x1 + x2) / 2, (y1 + y2) / 2
+            end
+            local px, py = overlap(panel, s.next_ep_countdown_actions[1])
+            if px then native_handlers['osc-mouse-down'](tostring(px), tostring(py)) end
+            local button = { x = W - 180 - 40, y = H - 96 - 44, w = 180, h = 44 }
+            local bx, by = overlap(panel, button)
+            if bx then native_handlers['osc-mouse-down'](tostring(bx), tostring(by)) end
+            mp.set_property('user-data/playback-info-next', tostring(px ~= nil) .. ':' .. tostring(advanced) .. ':'
+                .. tostring(s.next_ep_available) .. ':' .. tostring(s.stats_visible))
+            """, rawAss: true, resultProperty: "user-data/playback-info-next", beforeScript: PlaybackInfoProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("true:0:true:true", output);
+    }
 }
