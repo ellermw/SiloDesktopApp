@@ -462,10 +462,7 @@ public sealed class LibraryBackgroundRefreshTests
         {
             wire.Titles.Insert(450, ("new-title", "Brand New"));
             Reconnect(wire);
-            // A deferred catch-up leaves a pending rebase that read-ahead can resume.
-            wire.ChangeSnapshotAt = 560;
-            wire.SnapshotChangesRemaining = 2;
-            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await model.RefreshInPlaceAsync(500, 60));
+            // Read-ahead itself starts the pending catch-up after the reconnect.
             wire.HoldWindowAt = 560;
             var readAhead = model.PrefetchAroundAsync(500, 559, true, stop.Token);
             await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
@@ -596,7 +593,7 @@ public sealed class LibraryBackgroundRefreshTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
-    public async Task SnapshotChurnRetriesThenDefersWithoutRetiringHeldRowsOrShowingAnError(int changes)
+    public async Task SnapshotChurnRetriesThenHandsBackToOrdinaryReadsWithoutBlankingTheViewportOrShowingAnError(int changes)
     {
         var (wire, model, totals) = Scrolled();
         using (wire)
@@ -613,16 +610,29 @@ public sealed class LibraryBackgroundRefreshTests
                 .Where(read => read.ContainsKey("skip_total") && read.GetValueOrDefault("seek") == "500").ToList();
             Assert.Equal(2, freshViewportReads.Count);
             Assert.All(freshViewportReads, read => Assert.False(read.ContainsKey("cursor")));
-            Assert.All(held, index => Assert.NotNull(model.GetWindowItem(index)));
             Assert.Null(model.ErrorMessage);
             Assert.DoesNotContain(0, totals);
-            if (changes == 1) Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            Assert.Equal(1000, model.TotalCount);
+            if (changes == 1)
+            {
+                Assert.All(held, index => Assert.NotNull(model.GetWindowItem(index)));
+                Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+            }
             else
             {
-                Assert.True(model.RequiresCatalogRefresh);
-                Assert.Null(model.GetRenderableWindowItem(500));
-                Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await model.RefreshInPlaceAsync(500, 60));
+                // Continued churn no longer gates ordinary reads or blanks the grid:
+                // the viewport read under the new context stays renderable, and only
+                // the unconfirmed held rows retire.
+                Assert.False(model.RequiresCatalogRefresh);
+                Assert.All(Enumerable.Range(500, 60), index =>
+                    Assert.Equal(wire.Titles[index].Id, model.GetRenderableWindowItem(index)?.ContentId));
+                Assert.All(held.Where(index => index < 500 || index >= 560), index =>
+                    Assert.Null(model.GetRenderableWindowItem(index)));
+                // An ordinary foreground read establishes the fresh snapshot.
+                await model.LoadWindowAsync(500, 60);
+                await wire.Idle();
                 Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
+                Assert.False(model.RequiresCatalogRefresh);
             }
         }
     }

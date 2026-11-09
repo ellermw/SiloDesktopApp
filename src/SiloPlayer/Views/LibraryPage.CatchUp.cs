@@ -113,8 +113,9 @@ public sealed partial class LibraryPage
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
             }
-            // A deferred catch-up remains pending; a failed one retires its rows
-            // without collapsing the extent. The range loader can retry either.
+            // A deferred catch-up may remain pending; a failed or churned one retires
+            // its unconfirmed rows without collapsing the extent. The range loader
+            // retries a pending one and otherwise reads the viewport the ordinary way.
             _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
             ScheduleVisibleRangeLoad(force: true);
             _ = RetryDeferredCatchUpAsync(++_catchUpRetryVersion);
@@ -125,9 +126,9 @@ public sealed partial class LibraryPage
     private long _catchUpRetryVersion;
 
     /// <summary>
-    /// Catalog churn or a newer seek can defer the catch-up with the grid still
-    /// quarantined. Retry with backoff until it settles instead of waiting for
-    /// the next scroll or reconnect; held rows stay hidden until confirmed.
+    /// A newer seek or a metadata-language change can defer the catch-up with the
+    /// grid still quarantined. Retry with backoff until it settles instead of waiting
+    /// for the next scroll or reconnect; held rows stay hidden until confirmed.
     /// </summary>
     private async Task RetryDeferredCatchUpAsync(long version)
     {

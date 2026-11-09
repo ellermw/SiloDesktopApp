@@ -113,8 +113,9 @@ public partial class LibraryViewModel
     private void PublishConfirmedRows(int start, List<MediaItem> rows, string snapshot, int version)
     {
         var end = start + rows.Count;
-        if (_confirmedRefreshViewport is { } confirmed && start <= confirmed.Start + confirmed.Response.Items.Count &&
-            end >= confirmed.Start)
+        // A retried attempt's first rows replace, never join, an earlier snapshot's viewport.
+        if (_confirmedRefreshViewport is { } confirmed && confirmed.Response.Snapshot == snapshot &&
+            start <= confirmed.Start + confirmed.Response.Items.Count && end >= confirmed.Start)
         {
             var first = Math.Min(start, confirmed.Start);
             var last = Math.Max(end, confirmed.Start + confirmed.Response.Items.Count);
@@ -151,10 +152,13 @@ public partial class LibraryViewModel
         // Only a real seek owns the catalog; rail upkeep (e.g. a non-title sort
         // retiring jump feedback on every WindowLoaded) must not defer this refresh.
         var jump = _letterJumpStartVersion;
+        // A metadata-language change cancels localized reads; that defers, it is not a failure.
+        var localized = _catalogApi.LocalizedReadGeneration;
         var ct = _catalogQueryCts.Token;
         bool Current() => !ct.IsCancellationRequested && version == _queryVersion &&
             _catalogContext == _catalogApi.CaptureContext() && queryKey == CatalogQueryScopeKey() &&
-            jump == _letterJumpStartVersion && !IsLetterJumpInProgress;
+            jump == _letterJumpStartVersion && !IsLetterJumpInProgress &&
+            localized == _catalogApi.LocalizedReadGeneration;
         string? snapshot = null;
         var replacements = new List<(int Start, int Count, CatalogResponse Response)>();
         var pending = new List<(int Start, int Count, bool Viewport)>();
@@ -174,12 +178,13 @@ public partial class LibraryViewModel
                 reads.Add((chunk, Math.Min(CatalogWindowPageSize, start + count - chunk), true));
             pending.InsertRange(0, reads);
         }
-        CatalogRefreshResult FailRefresh(string message)
+        CatalogRefreshResult FailRefresh(string? message)
         {
             if (!Current()) return CatalogRefreshResult.Deferred;
             // Retire unconfirmed held rows, but keep the independently confirmed
             // viewport renderable. A distant failure must not blank fresh cards.
             // Foreground reads can establish another snapshot without this offset.
+            // Continued churn (no message) hands back the same way, without an error.
             _pageResponses.Clear();
             _recentWindows.Clear();
             _completedBoundaries.Clear();
@@ -192,9 +197,9 @@ public partial class LibraryViewModel
             _exactCountQueryVersion = -1;
             ResetLetterIndex();
             _catalogRefreshPending = false;
-            ErrorMessage = $"Failed to refresh catalog: {message}";
+            if (message is not null) ErrorMessage = $"Failed to refresh catalog: {message}";
             ClearActiveWindow(notify: true);
-            return CatalogRefreshResult.Failed;
+            return message is null ? CatalogRefreshResult.Deferred : CatalogRefreshResult.Failed;
         }
         try
         {
@@ -203,8 +208,8 @@ public partial class LibraryViewModel
             {
                 snapshot = null;
                 replacements.Clear();
-                _confirmedRefreshViewport = null;
-                WindowLoaded?.Invoke();
+                // Keep viewport rows already read under this context renderable;
+                // the retry's own viewport read replaces them.
                 pending.Clear();
                 pending.AddRange(chunks.Select(chunk => (chunk.Start, chunk.Count,
                     chunk.Start >= original.Start && chunk.Start < original.Start + original.Count)));
@@ -257,10 +262,10 @@ public partial class LibraryViewModel
                 }
                 if (!snapshotChanged) break;
                 // A scan/user-state change is not a failed transport. Retry fresh;
-                // continued churn defers without discarding the retained held set.
-                _confirmedRefreshViewport = null;
-                WindowLoaded?.Invoke();
-                if (attempt == MaxSnapshotAttempts - 1) return CatalogRefreshResult.Deferred;
+                // continued churn stops gating ordinary reads: unconfirmed held rows
+                // retire, the confirmed viewport and extent stay, and foreground
+                // reads establish a fresh snapshot instead of restarting this reread.
+                if (attempt == MaxSnapshotAttempts - 1) return FailRefresh(null);
             }
         }
         catch (OperationCanceledException) when (!Current())
