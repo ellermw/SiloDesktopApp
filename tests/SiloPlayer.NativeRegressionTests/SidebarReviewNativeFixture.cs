@@ -277,6 +277,39 @@ internal static partial class SidebarReviewNativeFixture
             original.SetResult(EffectiveMenu()); await Drain();
             Check(MenuReads >= 2 && PrimaryRows(nav).Length == 2, "access during initial customization read restarts current load and readiness publication");
         }
+        else if (mode == "sidebar-review-home-playback-catchup")
+        {
+            navigation.Navigate<HomePage>(); await Until(() => navigation.Frame!.Content is HomePage page && page.IsLoaded && !page.ViewModel.IsLoading);
+            var home = (HomePage)navigation.Frame!.Content;
+            var unloaded = false; home.Unloaded += (_, _) => unloaded = true;
+            var rows = home.ViewModel.Sections.Count;
+            var player = provider.GetRequiredService<PlayerService>();
+            var loaded = typeof(HomeViewModel).GetField("_loadedContext", Instance)!;
+            player.SetState(PlayerState.Expanded); await Drain();
+            var first = api.InvalidateAccessContext();
+            Call(window, "OnReadCatchUpRequested", first); await Drain();
+            var second = api.InvalidateAccessContext();
+            Call(window, "OnReadCatchUpRequested", second); await Drain();
+            Check(!(bool)typeof(MainWindow).GetField("_pendingAccessRefresh", Instance)!.GetValue(window)! &&
+                Equals(typeof(MainWindow).GetField("_pendingHomeCatchUp", Instance)!.GetValue(window), second),
+                "transport catch-ups under foreground playback queue one Home catch-up instead of a route remount");
+            player.SetState(PlayerState.Idle);
+            await Until(() => Equals(loaded.GetValue(home.ViewModel), second) && !home.ViewModel.IsLoading); await Drain();
+            Check(ReferenceEquals(navigation.Frame!.Content, home) && home.IsLoaded &&
+                typeof(MainWindow).GetField("_pendingHomeCatchUp", Instance)!.GetValue(window) == null &&
+                !(bool)typeof(MainWindow).GetField("_pendingAccessRefresh", Instance)!.GetValue(window)!,
+                "closing the player catches the mounted Home up in place with the latest context instead of rebuilding it");
+            Check(home.ViewModel.Sections.Count == rows, "in-place Home catch-up reloads the same rows");
+            Check(!unloaded, "mounted Home never unloads for a transport catch-up during playback");
+
+            player.SetState(PlayerState.Fullscreen); await Drain();
+            Call(window, "OnReadCatchUpRequested", api.InvalidateAccessContext()); await Drain();
+            Call(window, "OnAccessChanged", api.InvalidateAccessContext()); await Drain();
+            player.SetState(PlayerState.Idle);
+            await Until(() => navigation.Frame!.Content is HomePage page && !ReferenceEquals(page, home) && page.IsLoaded);
+            Check(typeof(MainWindow).GetField("_pendingHomeCatchUp", Instance)!.GetValue(window) == null,
+                "an access change during playback still remounts Home and drops the queued catch-up");
+        }
         else if (mode.EndsWith("catchup", StringComparison.Ordinal))
         {
             navigation.Navigate<HomePage>(); await Until(() => navigation.Frame!.Content is HomePage page && page.IsLoaded && !page.ViewModel.IsLoading);

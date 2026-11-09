@@ -1473,6 +1473,7 @@ public sealed partial class MainWindow : Window
     private bool _pendingAccessRefresh;
     private bool _pendingDetailCatchUp;
     private bool _pendingDetailCatchUpRequiresRemount;
+    private ApiRequestContext? _pendingHomeCatchUp;
     private string? _hydratedShellKey;
     private bool _playerPrewarmed;
 
@@ -1534,30 +1535,60 @@ public sealed partial class MainWindow : Window
                 ApplyPendingAccessRefresh();
                 return;
             }
-            if (ContentFrame.Content is HomePage home && NavView.IsPaneVisible &&
-                _playerService.State is not (PlayerState.Expanded or PlayerState.Fullscreen))
+            if (ContentFrame.Content is HomePage home)
             {
-                _ = home.CatchUpAfterReconnectAsync(context);
-                if (_hydratedShellKey is { } shellKey &&
-                    _shellHydrationCts is { IsCancellationRequested: false } owner)
+                // The events socket reconnects every few minutes during long
+                // playback. Rebuilding Home for each one recreated every row
+                // and card when the player closed, and full GCs then had to
+                // walk both the new and the retired page.
+                if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
                 {
-                    // Readiness retains the accepted menu during a transient
-                    // failure; unavailable customization still needs a retry.
-                    if (!_sidebarCustomizationReady || _uiCustomizationService.IsUnavailable)
-                        _ = RunShellWorkAsync("home_catchup_ui_customization",
-                            () => LoadSidebarCustomizationAsync(shellKey, owner.Token));
-                    if (_viewModel.NeedsLibraryReload)
-                        _ = RunShellWorkAsync("home_catchup_library_navigation",
-                            () => _viewModel.ReloadLibrariesAsync(owner.Token));
-                    if (!_sidebarPinsReady)
-                        _ = RunShellWorkAsync("home_catchup_sidebar_pins",
-                            () => RefreshSidebarPinsAsync(shellKey, owner.Token));
+                    _pendingHomeCatchUp = context;
+                    return;
                 }
-                return;
+                if (NavView.IsPaneVisible)
+                {
+                    CatchUpHome(home, context);
+                    return;
+                }
             }
             _pendingAccessRefresh = true;
             ApplyPendingAccessRefresh();
         });
+    }
+
+    private void CatchUpHome(HomePage home, ApiRequestContext context)
+    {
+        _ = home.CatchUpAfterReconnectAsync(context);
+        if (_hydratedShellKey is { } shellKey &&
+            _shellHydrationCts is { IsCancellationRequested: false } owner)
+        {
+            // Readiness retains the accepted menu during a transient
+            // failure; unavailable customization still needs a retry.
+            if (!_sidebarCustomizationReady || _uiCustomizationService.IsUnavailable)
+                _ = RunShellWorkAsync("home_catchup_ui_customization",
+                    () => LoadSidebarCustomizationAsync(shellKey, owner.Token));
+            if (_viewModel.NeedsLibraryReload)
+                _ = RunShellWorkAsync("home_catchup_library_navigation",
+                    () => _viewModel.ReloadLibrariesAsync(owner.Token));
+            if (!_sidebarPinsReady)
+                _ = RunShellWorkAsync("home_catchup_sidebar_pins",
+                    () => RefreshSidebarPinsAsync(shellKey, owner.Token));
+        }
+    }
+
+    /// <summary>Runs a catch-up that arrived while playback covered Home, once Home is visible again.</summary>
+    private void ApplyPendingHomeCatchUp()
+    {
+        if (_pendingHomeCatchUp is not { } context || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
+            _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
+        _pendingHomeCatchUp = null;
+        // A pending access change already remounts the route.
+        if (_pendingAccessRefresh) return;
+        if (ContentFrame.Content is HomePage home && _apiClient.IsCurrentContext(context)) CatchUpHome(home, context);
+        // Playback moved off Home, or the context moved on without a newer
+        // catch-up: keep the ordinary route refresh.
+        else _pendingAccessRefresh = true;
     }
 
     private void OnAccountAuthorityChanged()
@@ -1583,6 +1614,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPendingAccessRefresh()
     {
+        ApplyPendingHomeCatchUp();
         if ((!_pendingAccessRefresh && !_pendingDetailCatchUp) || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
             _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
         // Access changes still remount the route. Reconnect alone preserves a
@@ -2519,6 +2551,7 @@ public sealed partial class MainWindow : Window
         _pendingDetailCatchUp = false;
         CancelShellHydration();
         _pendingDetailCatchUpRequiresRemount = false;
+        _pendingHomeCatchUp = null;
         ReleaseNotificationSubscription();
         _brandingLoadGate.Cancel();
     }
