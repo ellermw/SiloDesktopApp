@@ -37,8 +37,12 @@ internal static class HomeCurrentNativeFixture
             {
                 card.MediaItem = new() { ContentId = "overlay-" + position + source, Title = "Overlay fixture", Type = "episode", ItemSource = source, PositionSeconds = position, DurationSeconds = 60 };
                 var host = (StackPanel)card.FindName("OverlayBottomRight");
+                // Since #117 the card's own badge update rebuilds a corner whose children it
+                // did not create, so let that update land before adding the stand-in badge,
+                // then measure with no await in between.
+                await Task.Delay(50);
                 host.Children.Add(new Border { Width = 30, Height = 14 });
-                await Task.Delay(50); card.UpdateLayout();
+                card.UpdateLayout();
                 var painted = (FrameworkElement)host.Children.Last();
                 var bottom = painted.TransformToVisual(card).TransformPoint(new Windows.Foundation.Point(0, painted.ActualHeight)).Y;
                 if (Math.Abs(315 * 9d / 16d - bottom - expectedBottom) > .6)

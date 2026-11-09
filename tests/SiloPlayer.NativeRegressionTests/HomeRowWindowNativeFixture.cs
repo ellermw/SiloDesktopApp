@@ -458,7 +458,8 @@ internal static class HomeRowWindowNativeFixture
                 && vm.Sections[0].Items.Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 60).Select(i => $"alpha-{i}"))
                 && vm.Sections[0].ShownCount == initialCount && !vm.Sections[0].CanComplete,
                 "Uncapped completion must recover all60 cards, including those beyond the advertised query ceiling.");
-            row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); row.UpdateLayout();
+            // The rebind queues a restore of the mounted offset; let it land before scrolling to the tail.
+            row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); row.UpdateLayout(); await Task.Delay(60);
             scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(80);
             await vm.CompleteSectionAsync("row");
             Require(wire.Whole == 1 && !((Button)row.FindName("ScrollRightBtn")).IsEnabled
