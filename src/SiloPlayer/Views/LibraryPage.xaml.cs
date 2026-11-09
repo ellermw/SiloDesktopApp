@@ -322,7 +322,7 @@ public sealed partial class LibraryPage : Page,
         var language = _stateSettings.LocalizedReads.Generation;
         AttachLibraryStateEvents();
         _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
-        AttachGroupedLibraryEvents();
+        AttachLibraryFlagsEvents();
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
@@ -344,15 +344,11 @@ public sealed partial class LibraryPage : Page,
             // slow policy revalidation must not block cached artwork on return.
             ArtworkViewport.SetActive(RecommendedPanel, _currentTab == "Recommended");
             UpdateLibraryArtworkActivity();
-            var groupedVisit = _groupedLibraryVisit;
+            var flagsVisit = _libraryFlagsVisit;
             _libraryFlagsDirty = true;
             await RefreshLibraryFlagsAsync();
-            if (!_isNavigated || groupedVisit != _groupedLibraryVisit) return;
+            if (!_isNavigated || flagsVisit != _libraryFlagsVisit) return;
             library = ViewModel.Library;
-            _groupedCatalogDirty = IsBoxSetLibrary;
-            // Catalog subscriptions were detached while away. Without proof
-            // that changes were state-only, retire adjacent offsets on return.
-            if (_groupedCatalogDirty) _groupedStructureRequested++;
         }
 
         LibraryUnavailableState.Visibility = library == null
@@ -385,7 +381,6 @@ public sealed partial class LibraryPage : Page,
             _stateLanguage = language;
             if (!sameLibrary)
             {
-                _groupedCatalogDirty = false;
                 if (!returningLibrary) _libraryFlagsDirty = false;
                 ResetRecommendedContent();
                 ViewModel.CancelCatalogLoads();
@@ -637,7 +632,6 @@ public sealed partial class LibraryPage : Page,
                 // Saved state can change on another client while this page is
                 // cached. No cursor or card may cross the restored query scope.
                 _libraryCatalogLoaded = false;
-                CancelGroupedCatalogRefresh();
                 ViewModel.CancelCatalogLoads();
                 ViewModel.Items.Clear();
                 ClearVirtualCards();
@@ -694,7 +688,7 @@ public sealed partial class LibraryPage : Page,
         ArtworkViewport.SetActive(RecommendedPanel, false);
         foreach (var card in _libraryCardSlots) card.SuspendArtwork();
         _artworkMotion.Reset(0, LibraryScroller.VerticalOffset);
-        DetachGroupedLibraryEvents();
+        DetachLibraryFlagsEvents();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         DetachRecommendedRealtimeEvents();
@@ -784,7 +778,7 @@ public sealed partial class LibraryPage : Page,
     {
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(); });
+            DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
             return;
         }
 
@@ -801,7 +795,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        DispatcherQueue.TryEnqueue(() => { QueueRecommendedRefresh(); QueueGroupedCatalogRefresh(structural: false); });
+        DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
     }
 
     private void QueueRecommendedRefresh()
@@ -862,13 +856,6 @@ public sealed partial class LibraryPage : Page,
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_isNavigated || (message.Context is {} owner && !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(owner))) return;
-            if (message.Kind is MediaSurfaceChangeKind.ItemMetadataRefreshed or MediaSurfaceChangeKind.CollectionChanged)
-                QueueGroupedCatalogRefresh();
-            else if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared
-                or MediaSurfaceChangeKind.FavoriteAdded or MediaSurfaceChangeKind.FavoriteRemoved
-                or MediaSurfaceChangeKind.WatchlistAdded or MediaSurfaceChangeKind.WatchlistRemoved
-                or MediaSurfaceChangeKind.RatingChanged or MediaSurfaceChangeKind.PlaybackProgress)
-                QueueGroupedCatalogRefresh(structural: false);
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item => message.Kind switch
             {
                 MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
@@ -889,7 +876,6 @@ public sealed partial class LibraryPage : Page,
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var owner = message.Identity ?? catalog.CaptureIdentityContext();
         if (!catalog.IsCurrentIdentityContext(owner)) return;
-        _ = RefreshGroupedAfterPlaybackAsync(message);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_isNavigated || !catalog.IsCurrentIdentityContext(owner)) return;
@@ -1148,7 +1134,6 @@ public sealed partial class LibraryPage : Page,
 
     private void ShowTab(string tag)
     {
-        if (tag != "Library" || _currentAudiobookAxis != "books") CancelGroupedCatalogRefresh();
         // Update tab button styles
         var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
         foreach (var tab in tabs)
@@ -2074,7 +2059,6 @@ public sealed partial class LibraryPage : Page,
             return;
 
         _currentAudiobookAxis = axis;
-        if (axis != "books") CancelGroupedCatalogRefresh();
         SaveViewState(_currentTab);
         UpdateAudiobookAxisButtons();
         var showBooks = axis == "books";
@@ -2985,7 +2969,7 @@ public sealed partial class LibraryPage : Page,
         using var timing = LibraryPerformanceTrace.Measure("library-open");
         // Revalidate pending policy changes, even while this visit's catalog is cached.
         // A read this visit already reported as failed is not repeated here.
-        if (_libraryFlagsDirty && _libraryFlagsAttemptedVisit != _groupedLibraryVisit)
+        if (_libraryFlagsDirty && _libraryFlagsAttemptedVisit != _libraryFlagsVisit)
             await RefreshLibraryFlagsAsync();
         if (!_isNavigated || ViewModel.Library is null) return;
         if (_libraryCatalogLoaded)
@@ -2994,7 +2978,6 @@ public sealed partial class LibraryPage : Page,
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
             _ = ViewModel.EnsureLetterIndexAsync();
-            if (_groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
             return;
         }
 
@@ -3006,7 +2989,6 @@ public sealed partial class LibraryPage : Page,
             await ViewModel.LoadCommand.ExecuteAsync(null);
             try { await overlayWarmup; } catch { }
             _libraryCatalogLoaded = _isNavigated && ViewModel.Library is not null && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
-            if (_libraryCatalogLoaded && _groupedCatalogDirty) QueueGroupedCatalogRefresh(structural: false);
         }
         finally
         {

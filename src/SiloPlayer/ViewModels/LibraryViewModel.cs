@@ -26,42 +26,7 @@ public partial class LibraryViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly HashSet<int> _loadingPages = [];
     private readonly Dictionary<int, CatalogResponse> _pageResponses = [];
-    private sealed class CatalogRangeRead(int start, long count)
-    {
-        public int Start { get; } = start;
-        public long End { get; } = start + count;
-        public bool Retired { get; set; }
-    }
-    private readonly HashSet<CatalogRangeRead> _activeCatalogReads = [];
-    private CatalogRangeRead? _windowRead;
-    private string? _catalogGroup;
     private string? _catalogLibraryScope;
-    private Task<bool>? _groupingTask;
-    public bool IsGroupedCatalog => _catalogGroup == "box_set";
-    // A box set has no single file, so file properties cannot order aggregates; the server answers
-    // group=box_set with these sorts with 422 validation_failed (beta 1.2.812, Bitrate). Any other
-    // shape the server refuses is caught at load time and browsed ungrouped (_refusedGroupingKeys).
-    internal static readonly IReadOnlySet<string> UngroupableSorts = new HashSet<string>(StringComparer.Ordinal)
-        { "bitrate", "resolution", "runtime" };
-    internal static bool SupportsGroupedSort(string? sort) => string.IsNullOrEmpty(sort) || !UngroupableSorts.Contains(sort.TrimStart('-'));
-    // Only remember refusals confirmed by a successful ungrouped read of the same query and API context.
-    private readonly HashSet<(ApiRequestContext? Context, string Query)> _refusedGroupingKeys = [];
-    private (ApiRequestContext? Context, string Query) GroupingRefusalKey() => (_catalogContext, BuildCatalogQueryScopeKey(null));
-    // Servers that rejected the group parameter itself (query.group / body.group). The
-    // official server's catalog accepts only group=work, so box-set grouping is refused
-    // for every sort and filter there; one refusal covers the whole server.
-    private readonly HashSet<string> _groupingRefusedServers = new(StringComparer.OrdinalIgnoreCase);
-    private string? GroupingServerKey() => _catalogContext?.BaseUrl;
-
-    // The server reports validation locations as query.<name>, body.<name> or header.<name>
-    // (RFC 9457 problem errors). Compare the field name alone.
-    internal static string? GroupingRefusalField(string? location)
-    {
-        if (string.IsNullOrEmpty(location)) return null;
-        foreach (var prefix in new[] { "query.", "body." })
-            if (location.StartsWith(prefix, StringComparison.Ordinal)) return location[prefix.Length..];
-        return location;
-    }
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
@@ -346,7 +311,8 @@ public partial class LibraryViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadMoreAsync()
     {
-        if (!HasMore || Library == null || TotalCount <= 0 || !await EnsureGroupingAsync()) return;
+        if (!HasMore || Library == null || TotalCount <= 0) return;
+        EnsureCatalogScope();
 
         var pageCount = (TotalCount + PageSize - 1) / PageSize;
         for (int page = 0; page < pageCount; page++)
@@ -418,9 +384,10 @@ public partial class LibraryViewModel : ObservableObject
     public async Task<IReadOnlyList<MediaItem>> PrefetchAroundAsync(
         int startIndex, int endIndex, bool forward, CancellationToken ct = default)
     {
-        if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex
-            || !await EnsureGroupingAsync() || _catalogContext != _catalogApi.CaptureContext())
-            return [];
+        if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex) return [];
+        // A changed context or library scope starts a new, empty query: nothing to prefetch.
+        EnsureCatalogScope();
+        if (TotalCount <= 0) return [];
 
         var (first, indices) = Neighborhood(startIndex, endIndex, forward);
         var version = _queryVersion;
@@ -433,16 +400,11 @@ public partial class LibraryViewModel : ObservableObject
                 token.ThrowIfCancellationRequested();
                 if (GetWindowItem(index) != null) continue;
                 var fetchStart = first + (index - first) / 100 * 100;
-                var read = BeginCatalogRangeRead(fetchStart, CatalogWindowPageSize);
-                try
-                {
-                    var response = await FetchWindowPageAsync(fetchStart,
-                        false, _snapshot, token, read: read);
-                    if (token.IsCancellationRequested || version != _queryVersion || read.Retired) return [];
-                    RememberWindow(fetchStart, response, false);
-                    if (response.Items.Count == 0) break;
-                }
-                finally { _activeCatalogReads.Remove(read); }
+                var response = await FetchWindowPageAsync(fetchStart,
+                    false, _snapshot, token);
+                if (token.IsCancellationRequested || version != _queryVersion) return [];
+                RememberWindow(fetchStart, response, false);
+                if (response.Items.Count == 0) break;
             }
             return indices.Select(GetWindowItem).OfType<MediaItem>().ToArray();
         }
@@ -529,12 +491,12 @@ public partial class LibraryViewModel : ObservableObject
         return changed;
     }
 
-    private static string LibraryGroupingScope(Library? library) => library is null ? "none"
-        : $"{library.Id}:{library.Type}:{library.Enabled}:{library.BoxSetsEnabled}";
+    private static string LibraryCatalogScope(Library? library) => library is null ? "none"
+        : $"{library.Id}:{library.Type}:{library.Enabled}";
 
     partial void OnLibraryChanged(Library? oldValue, Library? newValue)
     {
-        if (oldValue is not null && LibraryGroupingScope(oldValue) != LibraryGroupingScope(newValue))
+        if (oldValue is not null && LibraryCatalogScope(oldValue) != LibraryCatalogScope(newValue))
         {
             var extent = TotalCount;
             StartNewCatalogQuery();
@@ -546,181 +508,21 @@ public partial class LibraryViewModel : ObservableObject
 
     partial void OnSelectedTypeChanged(string? value)
     {
-        // Type is part of the catalog shape. Retire grouped cards, cursors and
-        // alphabet positions before a non-movie scope can reuse them.
+        // Type is part of the catalog shape. Retire cards, cursors and
+        // alphabet positions before another type's scope can reuse them.
         StartNewCatalogQuery();
         Items.Clear();
     }
 
-    private async Task<bool> EnsureGroupingAsync()
+    /// <summary>Starts a new query when the API context or library scope changed since the current one began.</summary>
+    private void EnsureCatalogScope()
     {
         if (_catalogContext is null && _catalogLibraryScope is null)
         {
-            _catalogContext = _catalogApi.CaptureContext(); _catalogLibraryScope = LibraryGroupingScope(Library);
+            _catalogContext = _catalogApi.CaptureContext(); _catalogLibraryScope = LibraryCatalogScope(Library);
         }
-        else if (_catalogContext != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryGroupingScope(Library))
+        else if (_catalogContext != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryCatalogScope(Library))
             StartNewCatalogQuery();
-        var task = _groupingTask ??= ResolveGroupingAsync(Library, _queryVersion, _catalogQueryCts.Token);
-        var ready = await task;
-        if (!ready && ReferenceEquals(_groupingTask, task)) _groupingTask = null;
-        return ready;
-    }
-
-    private async Task<bool> ResolveGroupingAsync(Library? library, int version, CancellationToken ct)
-    {
-        var supported = false;
-        try
-        {
-            var candidate = library is { Enabled: true, BoxSetsEnabled: true, Type: "movie" or "movies" or "mixed" }
-                && SelectedType is null or "" or "movie" or "video"
-                && SupportsGroupedSort(SelectedSort) && !_refusedGroupingKeys.Contains(GroupingRefusalKey())
-                && (GroupingServerKey() is not { } server || !_groupingRefusedServers.Contains(server));
-            supported = candidate && await _catalogApi.SupportsBoxSetsAsync(ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested || version != _queryVersion) { return false; }
-        catch (Exception ex)
-        {
-            // Optional capabilities (including a transport timeout, not caller
-            // cancellation) must not block browsing. Keep this query ungrouped
-            // throughout its windows, counts and alphabet; a new query can retry.
-            SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex, "catalog_grouping_capabilities");
-        }
-        if (ct.IsCancellationRequested || version != _queryVersion || _catalogContext != _catalogApi.CaptureContext()
-            || _catalogLibraryScope != LibraryGroupingScope(Library)) return false;
-        _catalogGroup = supported ? "box_set" : null;
-        return true;
-    }
-
-    public enum GroupedRefreshResult { Completed, Deferred, Failed }
-
-    public Task<GroupedRefreshResult> RefreshGroupedCatalogAsync(int startIndex, int itemCount)
-        => RefreshGroupedCatalogCoreAsync(startIndex, itemCount, CancellationToken.None);
-
-    public Task<GroupedRefreshResult> RefreshGroupedCatalogStateAsync(int startIndex, int itemCount)
-        => RefreshGroupedCatalogForChangeAsync(startIndex, itemCount, CancellationToken.None, stateOnly: true);
-
-    internal Task<GroupedRefreshResult> RefreshGroupedCatalogCoreAsync(int startIndex, int itemCount, CancellationToken ct)
-        => RefreshGroupedCatalogForChangeAsync(startIndex, itemCount, ct, stateOnly: false);
-
-    private bool CanPreserveGroupedStateOrder => !UseAdvancedRules && string.IsNullOrEmpty(SelectedWatchStatus)
-        && SelectedSort is "title" or "year" or "added_at" or "release_date" or "rating_imdb";
-
-    internal async Task<GroupedRefreshResult> RefreshGroupedCatalogForChangeAsync(int startIndex, int itemCount, CancellationToken ct, bool stateOnly)
-    {
-        if (Library is null || itemCount <= 0 || !await EnsureGroupingAsync()) return GroupedRefreshResult.Failed;
-        if (!IsGroupedCatalog) return GroupedRefreshResult.Completed;
-        if (IsLetterJumpInProgress) return GroupedRefreshResult.Deferred;
-        var version = _queryVersion;
-        var jump = _letterJumpVersion;
-        var key = LetterQueryKey();
-        var group = _catalogGroup;
-        var preserveOrder = stateOnly && CanPreserveGroupedStateOrder;
-        using var pending = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
-        try
-        {
-            // Read a replacement without touching live cards, cursors or totals.
-            // A continuation token fences insertions, not removals, metadata or
-            // viewer-state ordering. Only a proven state-independent query may
-            // retain adjacent slots after an explicitly state-only change.
-            CatalogResponse? replacement = null;
-            await FetchWindowAsync(startIndex, itemCount, false, response => replacement = response,
-                snapshot: preserveOrder ? _snapshot : null, ct: pending.Token, publishState: false);
-            if (pending.IsCancellationRequested || version != _queryVersion || key != LetterQueryKey())
-                return GroupedRefreshResult.Failed;
-            if (IsLetterJumpInProgress || jump != _letterJumpVersion) return GroupedRefreshResult.Deferred;
-            if (replacement is null) return GroupedRefreshResult.Failed;
-
-            if (preserveOrder)
-                RetireOverlappingCatalogReads(startIndex, Math.Max(itemCount, replacement.Items.Count));
-            else
-            {
-                // Retain mounted cards until the read succeeds, then retire all
-                // old offsets and continuations together before publishing.
-                StartNewCatalogQuery(preserveExtent: true, preserveLetters: true);
-                // The retained extent is provisional in the new catalog. Its
-                // previous exact count must not clip newly inserted tail rows.
-                _hasExactTotal = false;
-                _catalogGroup = group;
-                _groupingTask = Task.FromResult(true);
-                Items.Reset(TotalCount);
-                IsLoading = false;
-            }
-            _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + replacement.Items.Count);
-            ApplyWindowResponse(startIndex, replacement, false, preserveAdjacent: preserveOrder);
-            if (preserveOrder) UpdateCachedRange(startIndex, replacement.Items);
-            RememberWindow(startIndex, replacement, false);
-            WindowLoaded?.Invoke();
-            _exactCountQueryVersion = _queryVersion;
-            _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
-            _ = EnsureLetterIndexCoreAsync(preserveExisting: true, force: true);
-            return GroupedRefreshResult.Completed;
-        }
-        catch (OperationCanceledException) when (pending.IsCancellationRequested) { return GroupedRefreshResult.Failed; }
-        catch (ApiException ex) when (preserveOrder && ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor"
-            && !string.IsNullOrWhiteSpace(_snapshot) && !pending.IsCancellationRequested
-            && version == _queryVersion && key == LetterQueryKey())
-        {
-            if (IsLetterJumpInProgress || jump != _letterJumpVersion) return GroupedRefreshResult.Deferred;
-            // The signed scope is no longer usable, even for a state-only
-            // change. Retire all old rows/reads and retry once as a structural
-            // refresh, which starts without a cursor and cannot recover again.
-            StartNewCatalogQuery(preserveExtent: true, preserveLetters: true);
-            _hasExactTotal = false;
-            _catalogGroup = group;
-            _groupingTask = Task.FromResult(true);
-            Items.Reset(TotalCount);
-            IsLoading = false;
-            return await RefreshGroupedCatalogForChangeAsync(startIndex, itemCount, ct, stateOnly: false);
-        }
-        catch (Exception ex)
-        {
-            SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex, "grouped_catalog_refresh");
-            return GroupedRefreshResult.Failed;
-        }
-    }
-
-    private CatalogRangeRead BeginCatalogRangeRead(int start, long count)
-    {
-        var read = new CatalogRangeRead(start, count);
-        _activeCatalogReads.Add(read);
-        return read;
-    }
-
-    private void RetireOverlappingCatalogReads(int start, int count)
-    {
-        var end = (long)start + count;
-        foreach (var read in _activeCatalogReads)
-            if (read.Start < end && start < read.End) read.Retired = true;
-        if (_windowRead?.Retired == true)
-        {
-            // A retired task cannot satisfy even the unrefreshed part of its
-            // range. Release it so the next viewport request starts fresh.
-            CancelWindowLoad();
-            IsLoading = false;
-        }
-        foreach (var boundary in _completedBoundaries.Where(pair => pair.Value.Start < end
-            && start < (long)pair.Value.Start + CatalogWindowPageSize).Select(pair => pair.Key).ToArray())
-            _completedBoundaries.Remove(boundary);
-    }
-
-    private void UpdateCachedRange(int startIndex, IReadOnlyList<MediaItem> replacement)
-    {
-        void Update(int cachedStart, List<MediaItem> cached)
-        {
-            var first = Math.Max(startIndex, cachedStart);
-            var end = Math.Min(startIndex + replacement.Count, cachedStart + cached.Count);
-            for (var index = first; index < end; index++)
-                cached[index - cachedStart] = replacement[index - startIndex];
-        }
-        foreach (var cached in _recentWindows)
-            Update(cached.Start, cached.Response.Items);
-        foreach (var (page, response) in _pageResponses)
-        {
-            var pageStart = page * PageSize;
-            if (pageStart >= startIndex + replacement.Count || pageStart + response.Items.Count <= startIndex) continue;
-            Update(pageStart, response.Items);
-            Items.SetPage(page, response.Items);
-        }
     }
 
     public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
@@ -728,7 +530,9 @@ public partial class LibraryViewModel : ObservableObject
 
     private async Task LoadWindowForOwnerAsync(int startIndex, int itemCount, bool force, LetterWindowLoad? letterLoad)
     {
-        if (Library is null || !await EnsureGroupingAsync() || letterLoad is { IsCurrent: false }) return;
+        if (Library is null) return;
+        EnsureCatalogScope();
+        if (letterLoad is { IsCurrent: false }) return;
         await LoadPreparedWindowAsync(startIndex, itemCount, force, letterLoad);
     }
 
@@ -852,9 +656,6 @@ public partial class LibraryViewModel : ObservableObject
         var ct = linkedCts.Token;
         var windowVersion = ++_windowLoadVersion;
         var queryVersion = _queryVersion;
-        var groupingRefusalKey = GroupingRefusalKey();
-        var read = _windowRead = BeginCatalogRangeRead(startIndex,
-            ((long)itemCount + CatalogWindowPageSize - 1) / CatalogWindowPageSize * CatalogWindowPageSize);
 
         IsLoading = true;
         ErrorMessage = null;
@@ -865,7 +666,7 @@ public partial class LibraryViewModel : ObservableObject
             await FetchWindowAsync(startIndex, itemCount, includeTotal, response =>
             {
                 if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion ||
-                    read.Retired || letterLoad is { IsCurrent: false })
+                    letterLoad is { IsCurrent: false })
                     return;
                 // A count may have landed while this speculative window was
                 // in flight. Even total_exact on a skip-total window cannot
@@ -878,10 +679,9 @@ public partial class LibraryViewModel : ObservableObject
                 if (letterLoad is not null) letterLoad.Received = true;
                 WindowLoaded?.Invoke();
                 EnsureExactCountRequested();
-            }, _snapshot, ct, read: read);
+            }, _snapshot, ct);
         }
         catch (OperationCanceledException) { }
-        catch (Exception) when (read.Retired) { }
         catch (ApiException ex) when (allowCursorRecovery && ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor"
             && !string.IsNullOrWhiteSpace(_snapshot) && queryVersion == _queryVersion && windowVersion == _windowLoadVersion
             && _catalogContext == _catalogApi.CaptureContext())
@@ -908,50 +708,12 @@ public partial class LibraryViewModel : ObservableObject
             _pendingWindowStart = startIndex;
             _pendingWindowEnd = startIndex + itemCount - 1;
             var recoveryQueryVersion = _queryVersion;
-            // Recovery starts a new query, so restore its grouping before the
-            // direct core retry. Retired preflight owners cannot dispatch it.
             IsLoading = false;
-            if (!await EnsureGroupingAsync() || recoveryQueryVersion != _queryVersion) return;
             await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
             // Only restore the optional rail after fresh cards succeed. A
             // failed cursor recovery must not trigger another capability read.
             if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
                 _ = EnsureLetterIndexAsync();
-        }
-        catch (ApiException ex) when (ex.StatusCode == 422 && ex.ErrorCode == "validation_failed"
-            && GroupingRefusalField(ex.ErrorLocation) is null or "sort" or "group"
-            && _catalogGroup == "box_set" && queryVersion == _queryVersion
-            && windowVersion == _windowLoadVersion && _catalogContext == _catalogApi.CaptureContext()
-            && groupingRefusalKey == GroupingRefusalKey())
-        {
-            // Validation can also reject an invalid filter, so try this shape ungrouped once
-            // and remember the refusal only if that read succeeds.
-            if (letterLoad is { IsCurrent: true }) letterLoad.Failed = true;
-            var estimatedTotal = TotalCount;
-            StartNewCatalogQuery();
-            _groupingTask = Task.FromResult(true); // Keep just this retry ungrouped until it is confirmed.
-            _estimatedTotalItems = estimatedTotal;
-            TotalCount = estimatedTotal;
-            DisplayTotalCount = estimatedTotal;
-            Items.Reset(estimatedTotal);
-            SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_errors.txt",
-                $"catalog_grouping_refused start={startIndex} count={itemCount} sort={SelectedSort} type={SelectedType} code={ex.ErrorCode} location={ex.ErrorLocation ?? "none"} query_version={_queryVersion} retry_ungrouped=true");
-            var refusedServer = GroupingRefusalField(ex.ErrorLocation) == "group" ? groupingRefusalKey.Context?.BaseUrl : null;
-            _pendingWindowStart = startIndex;
-            _pendingWindowEnd = startIndex + itemCount - 1;
-            var recoveryQueryVersion = _queryVersion;
-            IsLoading = false;
-            if (!await EnsureGroupingAsync() || recoveryQueryVersion != _queryVersion || IsGroupedCatalog) return;
-            await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
-            if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0
-                && _catalogContext == _catalogApi.CaptureContext() && groupingRefusalKey == GroupingRefusalKey())
-            {
-                _refusedGroupingKeys.Add(groupingRefusalKey);
-                // The server rejected the group parameter itself, not this sort or filter: it
-                // cannot group any browse, so stop asking it on every later query.
-                if (refusedServer is not null) _groupingRefusedServers.Add(refusedServer);
-                _ = EnsureLetterIndexAsync();
-            }
         }
         catch (Exception ex)
         {
@@ -963,8 +725,6 @@ public partial class LibraryViewModel : ObservableObject
         }
         finally
         {
-            _activeCatalogReads.Remove(read);
-            if (ReferenceEquals(_windowRead, read)) _windowRead = null;
             if (ReferenceEquals(_windowLoadCts, linkedCts))
             {
                 _windowLoadCts = null;
@@ -976,18 +736,10 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private int StartNewCatalogQuery(bool preserveExtent = false, bool preserveLetters = false)
+    private int StartNewCatalogQuery()
     {
-        var hadExactTotal = preserveExtent && _hasExactTotal;
-        if (!preserveLetters) ResetLetterIndex();
-        else
-        {
-            _letterIndexKey = null;
-            _letterIndexTask = null;
-            _letterIndexLoadVersion++;
-            IsLetterIndexLoading = false;
-        }
-        _catalogGroup = null; _groupingTask = null; _catalogLibraryScope = LibraryGroupingScope(Library);
+        ResetLetterIndex();
+        _catalogLibraryScope = LibraryCatalogScope(Library);
         _catalogContext = _catalogApi.CaptureContext();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -998,19 +750,16 @@ public partial class LibraryViewModel : ObservableObject
         _pageResponses.Clear();
         _recentWindows.Clear();
         _snapshot = null;
-        _estimatedTotalItems = preserveExtent ? TotalCount : 0;
+        _estimatedTotalItems = 0;
         _observedCatalogEnd = 0;
         _catalogEndTotal = null;
-        _hasExactTotal = hadExactTotal;
+        _hasExactTotal = false;
         _lastVisibleEndIndex = PageSize - 1;
-        if (!preserveExtent)
-        {
-            TotalCount = 0;
-            DisplayTotalCount = 0;
-        }
+        TotalCount = 0;
+        DisplayTotalCount = 0;
         HasMore = false;
         ErrorMessage = null;
-        ClearActiveWindow(notify: !preserveExtent);
+        ClearActiveWindow(notify: true);
         // Sorting or jumping to a letter cancels the query token. Retry any
         // filter load that was already requested but had not finished yet.
         if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
@@ -1020,8 +769,6 @@ public partial class LibraryViewModel : ObservableObject
 
     public void CancelCatalogLoads()
     {
-        _groupingTask = null;
-        _catalogGroup = null;
         _snapshot = null;
         ResetLetterIndex();
         _loadedFiltersLibraryId = null;
@@ -1044,10 +791,6 @@ public partial class LibraryViewModel : ObservableObject
     /// </summary>
     public void SuspendCatalogLoads()
     {
-        // Retained rows and signed cursors keep the resolved grouping decision.
-        // Only a genuinely new query may choose a different catalog shape.
-        _groupingTask = _groupingTask is { IsCompletedSuccessfully: true } && _groupingTask.Result
-            ? Task.FromResult(true) : null;
         ResetLetterIndex();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -1067,7 +810,6 @@ public partial class LibraryViewModel : ObservableObject
     private void CancelWindowLoad()
     {
         _pendingWindowTask = null;
-        _windowRead = null;
         var cts = _windowLoadCts;
         if (cts == null)
             return;
@@ -1105,39 +847,25 @@ public partial class LibraryViewModel : ObservableObject
 
         IsLoading = true;
         ErrorMessage = null;
-        var reads = pagesToLoad.Select(page => (Page: page,
-            Read: BeginCatalogRangeRead(page * PageSize, CatalogWindowPageSize))).ToArray();
 
         try
         {
-            var tasks = reads.Select(async pending =>
-            {
-                try
-                {
-                    return (pending.Page, pending.Read,
-                        Response: await FetchPageAsync(pending.Page, includeTotal: false, snapshot: _snapshot, ct: ct, read: pending.Read));
-                }
-                catch (Exception) when (pending.Read.Retired)
-                {
-                    return (pending.Page, pending.Read, Response: (CatalogResponse?)null);
-                }
-            });
-            var completed = await Task.WhenAll(tasks);
+            var tasks = pagesToLoad.Select(async page => (Page: page, Response: await FetchPageAsync(page, includeTotal: false, snapshot: _snapshot, ct: ct)));
+            var results = await Task.WhenAll(tasks);
             if (version != _queryVersion) return;
-            var results = completed.Where(result => !result.Read.Retired && result.Response is not null).ToArray();
 
             foreach (var result in results.OrderBy(r => r.Page))
             {
-                _pageResponses[result.Page] = result.Response!;
+                _pageResponses[result.Page] = result.Response;
                 if (string.IsNullOrWhiteSpace(_snapshot))
-                    _snapshot = result.Response!.Snapshot;
+                    _snapshot = result.Response.Snapshot;
             }
 
-            if (results.Length > 0) RecomputeVirtualTotal();
+            RecomputeVirtualTotal();
 
             foreach (var result in results.OrderBy(r => r.Page))
-                Items.SetPage(result.Page, result.Response!.Items);
-            if (results.Length > 0) PageLoaded?.Invoke();
+                Items.SetPage(result.Page, result.Response.Items);
+            PageLoaded?.Invoke();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -1147,7 +875,6 @@ public partial class LibraryViewModel : ObservableObject
         }
         finally
         {
-            foreach (var pending in reads) _activeCatalogReads.Remove(pending.Read);
             if (version == _queryVersion)
             {
                 foreach (var page in pagesToLoad)
@@ -1159,9 +886,9 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private async Task<CatalogResponse> FetchPageAsync(int pageIndex, bool includeTotal, string? snapshot = null, CancellationToken ct = default, CatalogRangeRead? read = null)
+    private async Task<CatalogResponse> FetchPageAsync(int pageIndex, bool includeTotal, string? snapshot = null, CancellationToken ct = default)
     {
-        var response = await FetchWindowPageAsync(pageIndex * PageSize, includeTotal, snapshot, ct, read: read);
+        var response = await FetchWindowPageAsync(pageIndex * PageSize, includeTotal, snapshot, ct);
         if (response.Items.Count > PageSize)
         {
             // The legacy sparse list still uses 60-slot UI pages. Its network
@@ -1174,18 +901,18 @@ public partial class LibraryViewModel : ObservableObject
     }
 
     private async Task FetchWindowAsync(int startIndex, int itemCount, bool includeTotal,
-        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default, bool publishState = true, CatalogRangeRead? read = null)
+        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default)
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure(
             includeTotal ? "catalog-request-with-total" : "catalog-request-window");
-        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct, publishState, read);
+        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct);
         ct.ThrowIfCancellationRequested();
         publishPage(response);
         while (response.Items.Count < itemCount && response.HasMore)
         {
             ct.ThrowIfCancellationRequested();
             var next = await FetchWindowPageAsync(startIndex + response.Items.Count,
-                false, response.Snapshot ?? snapshot, ct, publishState, read);
+                false, response.Snapshot ?? snapshot, ct);
             ct.ThrowIfCancellationRequested();
             response.HasMore = next.HasMore;
             if (response.Page is not null) response.Page.HasMore = next.HasMore;
@@ -1222,24 +949,21 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    internal string CatalogQueryScopeKey() => BuildCatalogQueryScopeKey(_catalogGroup);
-
-    private string BuildCatalogQueryScopeKey(string? group) => System.Text.Json.JsonSerializer.Serialize(new
+    internal string CatalogQueryScopeKey() => System.Text.Json.JsonSerializer.Serialize(new
     {
-        library = Library?.Id, group, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
+        library = Library?.Id, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
         SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution, SelectedAudioLanguage,
         SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
         groups = BuildAdvancedGroups(), AdvancedRulesMatch,
     });
 
-    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct, bool publishState = true, CatalogRangeRead? read = null)
+    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct)
     {
-        if (read?.Retired == true) throw new OperationCanceledException("Catalog range was refreshed.", ct);
         using var operation = SiloPlayer.Core.Services.LocalLog.BeginOperation("catalog-" + Guid.NewGuid().ToString("N"));
         var context = _catalogApi.CaptureContext();
         var version = _queryVersion;
         var queryKey = CatalogQueryScopeKey();
-        var nextCursor = publishState && _completedBoundaries.TryGetValue(startIndex, out var boundary)
+        var nextCursor = _completedBoundaries.TryGetValue(startIndex, out var boundary)
             && boundary.QueryVersion == version && boundary.Context == context && boundary.QueryKey == queryKey
             && boundary.Snapshot == snapshot ? boundary.NextCursor : null;
         static string Fingerprint(string? text) => string.IsNullOrEmpty(text) ? "none"
@@ -1248,9 +972,8 @@ public partial class LibraryViewModel : ObservableObject
         var cursorFingerprint = Fingerprint(nextCursor ?? snapshot);
         // A refetch retires the boundary supplied by that page immediately;
         // failed or canceled replacements cannot leave an older cursor usable.
-        if (publishState)
-            foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
-                _completedBoundaries.Remove(end);
+        foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
+            _completedBoundaries.Remove(end);
         CatalogResponse response;
         try
         {
@@ -1276,7 +999,7 @@ public partial class LibraryViewModel : ObservableObject
             includeTotal: includeTotal,
             snapshot: snapshot,
             ct: ct,
-            nextCursor: nextCursor, group: _catalogGroup);
+            nextCursor: nextCursor);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -1286,18 +1009,17 @@ public partial class LibraryViewModel : ObservableObject
             throw;
         }
         ct.ThrowIfCancellationRequested();
-        if (read?.Retired == true) throw new OperationCanceledException("Catalog range was refreshed.", ct);
-        if (version != _queryVersion || context != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryGroupingScope(Library))
+        if (version != _queryVersion || context != _catalogApi.CaptureContext() || _catalogLibraryScope != LibraryCatalogScope(Library))
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
         SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_queries.txt",
             $"action={SiloPlayer.Core.Services.LocalLog.CurrentOperationId} start={startIndex} limit={CatalogWindowPageSize} query_version={version} read_generation={context.RequestContextGeneration} query_fingerprint={queryFingerprint} input_cursor={cursorFingerprint} window_cursor={Fingerprint(response.Snapshot)} next_cursor={Fingerprint(response.Page?.NextCursor)} items={response.Items.Count} totals={includeTotal}");
-        if (publishState && response.Items.Count == CatalogWindowPageSize && response.HasMore
+        if (response.Items.Count == CatalogWindowPageSize && response.HasMore
             && !string.IsNullOrWhiteSpace(response.Snapshot) && !string.IsNullOrWhiteSpace(response.Page?.NextCursor))
         {
             _completedBoundaries[startIndex + CatalogWindowPageSize] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
             while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
         }
-        if (publishState && response.Items.Count > 0)
+        if (response.Items.Count > 0)
             _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + response.Items.Count);
         return response;
     }

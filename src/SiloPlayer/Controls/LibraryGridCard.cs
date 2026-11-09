@@ -69,7 +69,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     internal static AsyncWorkThrottle ImageLoadThrottle => s_imageLoadThrottle;
     internal static SemaphoreSlim BitmapCreateLock => s_bitmapCreateLock;
 
-    private BoxSetCard? _aggregateCard;
     private MediaItem? _mediaItem;
     public MediaItem? MediaItem
     {
@@ -270,32 +269,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     public void Bind(MediaItem item, string? sortKey)
     {
         _artworkOwner = ArtworkBindingOwner.Capture();
-        if (item.Type == "box_set")
-        {
-            if (item.BoxSet is not {} set || string.IsNullOrWhiteSpace(set.Id) || string.IsNullOrWhiteSpace(set.LibraryId))
-            {
-                BindPlaceholder();
-                return;
-            }
-            CancelPosterLoad(clearImage: true); CancelPlaybackPrefetch();
-            MediaItem = item; SortKey = sortKey; IsHitTestVisible = true; Opacity = 1;
-            var previousFocus = FocusState.Unfocused;
-            if (_aggregateCard is null)
-            {
-                previousFocus = new[] { _moreButton, _quickWatchedButton, _quickFavoriteButton }
-                    .Select(button => button.FocusState).FirstOrDefault(state => state != FocusState.Unfocused);
-                foreach (var child in Children) child.Visibility = Visibility.Collapsed;
-                _aggregateCard = new BoxSetCard();
-                _aggregateCard.Invoked += summary => App.Services.GetRequiredService<NavigationService>().Navigate<BoxSetPage>(new BoxSetNavigationArgs(summary.Id, summary.LibraryId));
-                Children.Add(_aggregateCard);
-            }
-            _aggregateCard.SetSummary(set, item.PosterUrl, item.PosterThumbhash);
-            _aggregateCard.SetCatalogLayout(Width, _posterHeight, Height);
-            if (previousFocus != FocusState.Unfocused) _aggregateCard.Focus(previousFocus);
-            return;
-        }
-        var aggregateFocus = _aggregateCard?.FocusState ?? FocusState.Unfocused;
-        ClearAggregateCard();
         var preservePoster = !LibraryPosterBinding.RequiresReload(MediaItem, item) &&
             (_posterImage.Source != null || (_posterLoadCts != null &&
                 MediaItem?.PosterUrl == item.PosterUrl && MediaItem?.BackdropUrl == item.BackdropUrl));
@@ -342,21 +315,12 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             _ = LoadPosterAsync(item, imageUrl, version, _posterLoadCts.Token);
         }
         else if (string.IsNullOrWhiteSpace(imageUrl)) _ = _artworkFallback.ShowThumbhashAsync();
-        if (aggregateFocus != FocusState.Unfocused) _moreButton.Focus(aggregateFocus);
-    }
-
-    private void ClearAggregateCard()
-    {
-        if (_aggregateCard is null) return;
-        _aggregateCard.CancelArtworkLoad();
-        Children.Remove(_aggregateCard); _aggregateCard = null;
-        foreach (var child in Children) child.Visibility = Visibility.Visible;
     }
 
     /// <summary>Refreshes mutable profile state without restarting artwork loading.</summary>
     public void RefreshState()
     {
-        if (MediaItem is not { } item || item.Type == "box_set") return;
+        if (MediaItem is not { } item) return;
         _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, SortKey);
         ApplyCardPresentation();
         UpdateOverlays(item);
@@ -365,7 +329,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     public void ApplyCardPresentation()
     {
-        if (_aggregateCard is not null) return;
         _titleText.Visibility = Visibility.Visible;
         _episodeTitleText.Visibility = !string.IsNullOrWhiteSpace(_episodeTitleText.Text)
             ? Visibility.Visible
@@ -377,7 +340,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     public void SetLayout(double cardWidth, double posterHeight, double cardHeight)
     {
-        _aggregateCard?.SetCatalogLayout(cardWidth, posterHeight, cardHeight);
         if (Math.Abs(Width - cardWidth) < 0.5 &&
             Math.Abs(_posterHeight - posterHeight) < 0.5 &&
             Math.Abs(Height - cardHeight) < 0.5)
@@ -414,7 +376,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     public void BindPlaceholder()
     {
-        ClearAggregateCard();
         CancelPosterLoad(clearImage: true);
         CancelPlaybackPrefetch();
         MediaItem = null;
@@ -438,7 +399,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     public void Reset()
     {
-        ClearAggregateCard();
         CancelPosterLoad(clearImage: true);
         CancelPlaybackPrefetch();
         MediaItem = null;
@@ -611,7 +571,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void OnTapped(object sender, TappedRoutedEventArgs e)
     {
-        if (MediaItem == null || MediaItem.Type == "box_set")
+        if (MediaItem == null)
             return;
 
         var libraryId = MediaNavigationContext.LibraryId(this);
@@ -622,7 +582,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        if (MediaItem?.Type == "box_set") return;
         QueuePlaybackPrefetch();
         if (!CardPointerInteractionPolicy.ShouldRevealHoverActions(
                 e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch))
@@ -650,7 +609,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void OnGotFocus(object sender, RoutedEventArgs e)
     {
-        if (MediaItem?.Type == "box_set") return;
         QueuePlaybackPrefetch();
         _moreButton.Opacity = 1;
         _moreButton.IsHitTestVisible = true;
@@ -671,7 +629,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private async void QueuePlaybackPrefetch()
     {
         var item = MediaItem;
-        if (item == null || item.Type == "box_set")
+        if (item == null)
             return;
 
         CancelPlaybackPrefetch();
@@ -712,7 +670,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void MoreButton_Click(object sender, RoutedEventArgs e)
     {
-        if (MediaItem == null || MediaItem.Type == "box_set")
+        if (MediaItem == null)
             return;
 
         var item = MediaItem;
@@ -729,7 +687,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private async void QuickWatchedButton_Click(object sender, RoutedEventArgs e)
     {
         var item = MediaItem;
-        if (item == null || item.Type == "box_set" || _quickActionPending) return;
+        if (item == null || _quickActionPending) return;
 
         _quickActionPending = true;
         SetQuickActionsEnabled(false);
@@ -751,7 +709,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private async void QuickFavoriteButton_Click(object sender, RoutedEventArgs e)
     {
         var item = MediaItem;
-        if (item == null || item.Type == "box_set" || _quickActionPending) return;
+        if (item == null || _quickActionPending) return;
 
         _quickActionPending = true;
         SetQuickActionsEnabled(false);
@@ -772,7 +730,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void UpdateQuickActionState(MediaItem item)
     {
-        if (item.Type == "box_set") { HideQuickActions(); return; }
         var preferences = App.Services.GetRequiredService<CardOverlayService>();
         var hasState = item.UserState != null && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
         var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");
@@ -867,7 +824,6 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void UpdateOverlays(MediaItem item)
     {
-        if (item.Type == "box_set") { ClearOverlays(); return; }
         ClearOverlays();
         var service = App.Services.GetRequiredService<CardOverlayService>();
         _overlayGeometry = CardOverlayGeometry.ForPoster(Width - 2, service.Preset);
@@ -969,7 +925,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void OnContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
-        if (MediaItem == null || MediaItem.Type == "box_set")
+        if (MediaItem == null)
             return;
 
         var flyout = MediaItemMenu.Build(

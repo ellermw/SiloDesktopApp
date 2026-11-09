@@ -171,15 +171,9 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ArtworkMotionNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "grouped-post-save")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-policy")
             {
-                await LibraryLettersNativeFixture.RunAsync(parent, _window, grouped: true);
-                Program.Log("PASS: native regression run completed."); Exit(); return;
-            }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "grouped-library")
-            {
-                await GroupedLibraryCardsNativeFixture.RunAsync(parent);
-                await LibraryLettersNativeFixture.RunAsync(parent, _window, grouped: true);
+                await LibraryLettersNativeFixture.RunAsync(parent, _window, verifyPolicy: true);
                 await LibraryLettersNativeFixture.RunAsync(parent, _window);
                 await LibraryCursorNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;

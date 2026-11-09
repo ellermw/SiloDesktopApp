@@ -11,7 +11,7 @@ public partial class CatalogApi
         string? contentRating = null, string? country = null, string? resolution = null,
         string? audioLanguage = null, string? yearMin = null, string? yearMax = null, string? type = null,
         IReadOnlyList<QueryRule>? extraRules = null, string extraRulesMatch = "all",
-        IReadOnlyList<QueryGroup>? queryGroups = null, string queryGroupsMatch = "all", CancellationToken ct = default, string? group = null)
+        IReadOnlyList<QueryGroup>? queryGroups = null, string queryGroupsMatch = "all", CancellationToken ct = default)
     {
         var context = client.CaptureContext();
         var language = client.LocalizedReads.Generation;
@@ -25,14 +25,13 @@ public partial class CatalogApi
             ["order"] = order == "desc" ? "desc" : "asc", ["groups"] = groups,
             ["match"] = match == "any" ? "any" : "all",
         };
-        if (group == "box_set") body["group"] = group;
         if (!string.IsNullOrWhiteSpace(type)) body["type"] = type;
         // Freeze editable rules before the first await, so an old request can
         // never acquire newly edited filters under its earlier ownership key.
         var frozenBody = System.Text.Json.JsonSerializer.SerializeToElement(body, BrowseV2.Json);
         var capabilities = await GetSearchRuleCapabilitiesAsync(context, ct);
         ct.ThrowIfCancellationRequested();
-        if (!capabilities.LetterIndex || (group == "box_set" && !capabilities.BoxSets)) return null;
+        if (!capabilities.LetterIndex) return null;
         try
         {
             var response = await client.SendRequestAsync<CatalogLettersResponse>(context, HttpMethod.Post,

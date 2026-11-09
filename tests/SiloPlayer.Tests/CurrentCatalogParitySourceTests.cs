@@ -173,7 +173,7 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("await FillViewportAsync();", retry);
         Assert.True(retry.IndexOf("await RefreshLibraryFlagsAsync()", StringComparison.Ordinal) < retry.IndexOf("await EnsureLibraryCatalogLoadedAsync()", StringComparison.Ordinal));
         // Opening the tab does not repeat a policy read this visit already attempted.
-        Assert.Contains("if (_libraryFlagsDirty && _libraryFlagsAttemptedVisit != _groupedLibraryVisit)\n            await RefreshLibraryFlagsAsync();\n        if (!_isNavigated || ViewModel.Library is null) return;\n        if (_libraryCatalogLoaded)", code.ReplaceLineEndings("\n"));
+        Assert.Contains("if (_libraryFlagsDirty && _libraryFlagsAttemptedVisit != _libraryFlagsVisit)\n            await RefreshLibraryFlagsAsync();\n        if (!_isNavigated || ViewModel.Library is null) return;\n        if (_libraryCatalogLoaded)", code.ReplaceLineEndings("\n"));
         Assert.Contains("await EnsureLibraryCatalogLoadedAsync();", code);
         Assert.Contains("await FillViewportAsync();", code);
     }

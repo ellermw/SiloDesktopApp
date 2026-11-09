@@ -59,17 +59,17 @@ public partial class LibraryViewModel
     private string LetterQueryKey() => JsonSerializer.Serialize(new
     {
         _queryVersion, context = _catalogApi.CaptureContext(), language = _catalogApi.FilterCacheGeneration,
-        library = Library?.Id, grouping = LibraryGroupingScope(Library), group = _catalogGroup, SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
+        library = Library?.Id, scope = LibraryCatalogScope(Library), SelectedSort, SelectedOrder, SelectedType, UseAdvancedRules,
         SelectedGenre, SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution,
         SelectedAudioLanguage, SelectedYearMin, SelectedYearMax,
         rules = BuildExtraRules(), groups = BuildAdvancedGroups(), AdvancedRulesMatch,
     });
 
-    public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync(preserveExisting: false);
+    public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync();
 
-    private async Task EnsureLetterIndexCoreAsync(bool preserveExisting, bool force = false)
+    private async Task EnsureLetterIndexCoreAsync(bool force = false)
     {
-        if (Library is not null && !await EnsureGroupingAsync()) return;
+        if (Library is not null) EnsureCatalogScope();
         if (Library is null || SelectedSort != "title")
         {
             ResetLetterIndex();
@@ -77,14 +77,14 @@ public partial class LibraryViewModel
         }
         var key = LetterQueryKey();
         if (!force && _letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
-        if (!preserveExisting) LetterIndex = null;
+        LetterIndex = null;
         _letterIndexKey = key;
         LetterIndexFailed = false;
         IsLetterIndexLoading = true;
-        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting));
+        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token));
     }
 
-    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -104,7 +104,7 @@ public partial class LibraryViewModel
                 yearMin: UseAdvancedRules ? null : SelectedYearMin,
                 yearMax: UseAdvancedRules ? null : SelectedYearMax, type: type,
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
-                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct, group: _catalogGroup);
+                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct);
             if (ct.IsCancellationRequested || key != LetterQueryKey() || loadVersion != _letterIndexLoadVersion) return;
             LetterIndex = index;
             if (index is not null)
@@ -131,8 +131,8 @@ public partial class LibraryViewModel
             {
                 _letterIndexKey = null;
                 _letterIndexTask = null;
-                if (!preserveExisting) LetterIndex = null;
-                LetterIndexFailed = LetterIndex is null;
+                LetterIndex = null;
+                LetterIndexFailed = true;
             }
         }
         finally
@@ -182,22 +182,14 @@ public partial class LibraryViewModel
         }
         try
         {
-            async Task<bool> EnsureJumpGroupingAsync()
+            // A changed API context or library scope starts a new query, which retires this owner.
+            bool EnsureJumpScope()
             {
                 if (!IsCurrent()) return false;
-                using var owner = JsonDocument.Parse(key);
-                if (!await EnsureGroupingAsync() || jump != _letterJumpVersion) return false;
-                var resolvedKey = LetterQueryKey();
-                using var resolved = JsonDocument.Parse(resolvedKey);
-                // Grouping is resolved before both the initial index and a
-                // signed-scope retry. Only that decision may update this owner.
-                if (owner.RootElement.EnumerateObject().Any(property => property.Name != "group" &&
-                    property.Value.GetRawText() != resolved.RootElement.GetProperty(property.Name).GetRawText()))
-                    return false;
-                key = _letterFeedbackKey = resolvedKey;
-                return true;
+                EnsureCatalogScope();
+                return IsCurrent();
             }
-            for (var attempt = 0; attempt < 2 && await EnsureJumpGroupingAsync(); attempt++)
+            for (var attempt = 0; attempt < 2 && EnsureJumpScope(); attempt++)
             {
                 await EnsureLetterIndexAsync();
                 var index = LetterIndex;
@@ -340,7 +332,7 @@ public partial class LibraryViewModel
     // The explicit request the failed-index rail offers; reads stay optional otherwise.
     [RelayCommand]
     private Task RetryLetterIndexAsync() =>
-        LetterIndexFailed ? EnsureLetterIndexCoreAsync(preserveExisting: false, force: true) : Task.CompletedTask;
+        LetterIndexFailed ? EnsureLetterIndexCoreAsync(force: true) : Task.CompletedTask;
 
     private void ApplyLetterIndexTotal(int total)
     {

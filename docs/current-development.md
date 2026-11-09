@@ -479,3 +479,11 @@ Fresh focused **466/466**, full **3,124/3,124**, Release and **seven native rout
 Final fixture `abc34b8b8cbaa353b332213404a00e6af0f28031` corrects five inherited quick-play setup lookups for public SetState using direct calls, without changing assertions. The original full quick-play failure and both fixture hashes remain preserved; the corrected full suite passes on final and BB82 apps, including all 17 review regressions. The fixture change did not rebuild or modify either app. Admission receipts/manifests are `foundation-companion/admission-*` beneath the same external evidence root, with exact source, artifact and fixture binding in the companion report.
 
 Source stamps remain **1.2.544-beta.1** / **1.2.543.1**. All verification is mutex guarded, isolated under D: and synthetic. Earlier apps and reports remain frozen; no installer, installed-player, credentials, production or remote action occurred. Live interoperability and complete visual parity remain unverified. Parent owns scoped re-review and final delivery gates.
+
+## November 8 — library box-set grouping removed
+
+The official server's catalog accepts only `group=work` (silo-server `internal/apiv2/catalog_items.go`; Granary's contract agrees), so PR7's `group=box_set` library browse could never activate there. Each session paid one refused 422 read before #100/#101 fell back to ungrouped browsing. The owner chose removal on 2026-11-08.
+
+Removed: the `group` parameter on catalog GET, large POST and letter requests; the grouping decision, 422 refusal fallback, grouped refresh and its range-read retirement in `LibraryViewModel`; the page's grouped refresh triggers; and the aggregate card inside `LibraryGridCard`. Box-set libraries now browse their movies individually.
+
+Kept: box-set detail pages, the movie-detail membership row, box-set search results and `BoxSetCard` on Home and Search posters. Also kept: the library-flags revalidation (now `LibraryPage.LibraryFlags.cs`) and the catalog scope check for library type, enabled state and browse type. A box-set toggle no longer retires a loaded catalog. Tests: `LibraryCatalogScopeTests` replaces the grouped unit tests, and native `library-policy` replaces `grouped-library` and `grouped-post-save`.
