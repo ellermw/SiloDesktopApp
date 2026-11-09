@@ -124,6 +124,17 @@ public sealed partial class LibraryPage
     }
 
     private long _catchUpRetryVersion;
+    private long _runningCatchUpRetryVersion;
+
+    /// <summary>
+    /// Any pending catch-up needs a retry owner, not only one the shell started:
+    /// a reconnect behind expanded playback or a deferred viewport read has none.
+    /// </summary>
+    private void EnsureDeferredCatchUpRetry()
+    {
+        if (_runningCatchUpRetryVersion != 0 && _runningCatchUpRetryVersion == _catchUpRetryVersion) return;
+        _ = RetryDeferredCatchUpAsync(++_catchUpRetryVersion);
+    }
 
     /// <summary>
     /// A newer seek or a metadata-language change can defer the catch-up with the
@@ -132,6 +143,7 @@ public sealed partial class LibraryPage
     /// </summary>
     private async Task RetryDeferredCatchUpAsync(long version)
     {
+        _runningCatchUpRetryVersion = version;
         try
         {
             for (var delay = 1000; ; delay = Math.Min(delay * 2, 30000))
@@ -146,5 +158,9 @@ public sealed partial class LibraryPage
             }
         }
         catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_transport_catchup_retry"); }
+        finally
+        {
+            if (_runningCatchUpRetryVersion == version) _runningCatchUpRetryVersion = 0;
+        }
     }
 }

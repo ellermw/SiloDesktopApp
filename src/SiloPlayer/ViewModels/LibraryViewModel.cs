@@ -548,7 +548,12 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (Library is null) return;
         EnsureCatalogScope();
-        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, itemCount) != CatalogRefreshResult.Completed)
+        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, itemCount) is var refresh &&
+            refresh != CatalogRefreshResult.Completed &&
+            // A catch-up that handed back its gate (churn, oversized held set) under
+            // this query leaves the viewport to the ordinary read, not to the next scroll.
+            !(refresh == CatalogRefreshResult.Deferred && !RequiresCatalogRefresh &&
+              _catalogRefreshReleasedVersion == _queryVersion))
             return;
         if (letterLoad is { IsCurrent: false }) return;
         await LoadPreparedWindowAsync(startIndex, itemCount, force, letterLoad);

@@ -1980,6 +1980,7 @@ public sealed partial class LibraryPage : Page,
             HideUnconfirmedCatalogRows();
             // Keep slots as placeholders until their viewport read is confirmed;
             // distant held windows must not gate painting that first response.
+            EnsureDeferredCatchUpRetry();
         }
 
         var layout = GetGridLayout();

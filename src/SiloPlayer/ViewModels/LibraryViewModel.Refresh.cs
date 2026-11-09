@@ -19,6 +19,8 @@ public partial class LibraryViewModel
     // The range the running catch-up publishes, and a newer one a joining caller scrolled to.
     private (int Start, int Count)? _refreshViewportTarget;
     private (int Start, int Count)? _refreshRequestedViewport;
+    // The query whose catch-up handed the gate back without confirming its held rows.
+    private int _catalogRefreshReleasedVersion = -1;
 
     /// <summary>Only newly authorized rows may be rendered while held windows catch up.</summary>
     public MediaItem? GetRenderableWindowItem(int index)
@@ -143,7 +145,15 @@ public partial class LibraryViewModel
         var original = (Start: chunks[0].Start,
             Count: Math.Clamp(Math.Max(1, visibleCount), 1, Math.Max(1, TotalCount - chunks[0].Start)));
         // Never turn an unexpectedly oversized held set into an unbounded catch-up.
-        if (chunks.Sum(chunk => chunk.Count) > MaxRefreshedItems) return CatalogRefreshResult.Deferred;
+        // Deferring would gate reads forever (the held set cannot shrink while they
+        // are refused): retire the unconfirmed rows instead, keeping the extent.
+        if (chunks.Sum(chunk => chunk.Count) > MaxRefreshedItems)
+        {
+            if (!RequiresCatalogRefresh) return CatalogRefreshResult.Deferred;
+            if (_catalogContext != _catalogApi.CaptureContext()) RebaseCatalogQuery();
+            RetireUnconfirmedHeldRows();
+            return CatalogRefreshResult.Deferred;
+        }
         RebaseCatalogQuery();
         _refreshViewportTarget = original;
         _refreshRequestedViewport = null;
@@ -181,24 +191,9 @@ public partial class LibraryViewModel
         CatalogRefreshResult FailRefresh(string? message)
         {
             if (!Current()) return CatalogRefreshResult.Deferred;
-            // Retire unconfirmed held rows, but keep the independently confirmed
-            // viewport renderable. A distant failure must not blank fresh cards.
-            // Foreground reads can establish another snapshot without this offset.
             // Continued churn (no message) hands back the same way, without an error.
-            _pageResponses.Clear();
-            _recentWindows.Clear();
-            _completedBoundaries.Clear();
-            Items.Reset(TotalCount);
-            _snapshot = null;
-            _hasExactTotal = false;
-            _estimatedTotalItems = TotalCount;
-            _observedCatalogEnd = 0;
-            _catalogEndTotal = null;
-            _exactCountQueryVersion = -1;
-            ResetLetterIndex();
-            _catalogRefreshPending = false;
             if (message is not null) ErrorMessage = $"Failed to refresh catalog: {message}";
-            ClearActiveWindow(notify: true);
+            RetireUnconfirmedHeldRows();
             return message is null ? CatalogRefreshResult.Deferred : CatalogRefreshResult.Failed;
         }
         try
@@ -324,6 +319,29 @@ public partial class LibraryViewModel
         RefreshLetterIndexInPlace();
         WindowLoaded?.Invoke();
         return CatalogRefreshResult.Completed;
+    }
+
+    /// <summary>
+    /// Retires unconfirmed held rows and releases the catch-up gate, but keeps the
+    /// extent and the independently confirmed viewport renderable. A distant failure
+    /// must not blank fresh cards; foreground reads establish another snapshot.
+    /// </summary>
+    private void RetireUnconfirmedHeldRows()
+    {
+        _pageResponses.Clear();
+        _recentWindows.Clear();
+        _completedBoundaries.Clear();
+        Items.Reset(TotalCount);
+        _snapshot = null;
+        _hasExactTotal = false;
+        _estimatedTotalItems = TotalCount;
+        _observedCatalogEnd = 0;
+        _catalogEndTotal = null;
+        _exactCountQueryVersion = -1;
+        ResetLetterIndex();
+        _catalogRefreshPending = false;
+        _catalogRefreshReleasedVersion = _queryVersion;
+        ClearActiveWindow(notify: true);
     }
 
     /// <summary>The held index ranges as reads of at most 100 items, the viewport first, then nearest it.</summary>
