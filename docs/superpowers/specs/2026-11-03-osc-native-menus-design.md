@@ -70,7 +70,9 @@ Quality/version choices use existing service plan/replan paths and server-provid
 
 Subtitle search/upload, appearance, timing/sync and AI entry points remain reachable according to current capabilities. Preserve the established session/file/temporary-authority rules and existing genuine-pause behavior. Native presentation must not bypass those checks through dormant `PlayerOverlay` actions.
 
-Chapters and stats preserve current data, seek semantics and chapter/marker thumbnail fallback. The stats path should do bounded work only while visible. Compact More exposes overflow controls without duplicates or unreachable endpoints. Watch Party keeps existing permissions, stop/leave/end confirmations and room ownership; presentation changes do not grant local authority.
+Chapters and stats preserve current data, seek semantics and chapter/marker thumbnail fallback. The stats path should do bounded work only while visible.
+
+Playback Info (stats) is an exception to native presentation: it stays the OSC's own top-left Lua/ASS panel and does not open a native menu. The owner decided that UI Automation announcements are an acceptable accessible representation of this panel. Opening the panel announces every displayed row. Refreshes announce rows whose displayed values changed, and live counters are announced at most once per interval. No focusable per-row native list is provided. To hear the rows again, a screen-reader user closes and reopens the panel. Keyboard and controller users can scroll an overflowing panel. Compact More exposes overflow controls without duplicates or unreachable endpoints. Watch Party keeps existing permissions, stop/leave/end confirmations and room ownership; presentation changes do not grant local authority.
 
 ## Video playback speed
 
