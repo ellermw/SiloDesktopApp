@@ -310,6 +310,38 @@ public sealed class EventAccessTransportTests
         finally { extra?.Dispose(); }
     }
 
+    [Fact]
+    public async Task ATokenRefreshWhileDisconnectedPreservesTransportCatchUp()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var first = await fixture.NextAsync();
+        var prior = fixture.Api.CaptureContext();
+        var catchUps = 0; var invalidations = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Events.StateChanged += state =>
+        {
+            if (state != WebSocketState.Closed || refreshed.Task.IsCompleted) return;
+            // The socket is gone and the loop is about to back off: the scheduled token
+            // rotation falls due now and replaces the loop.
+            typeof(EventChannelClient).GetMethod("OnTokenRefreshed", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(fixture.Events, null);
+            refreshed.TrySetResult();
+        };
+        await first.CloseOutputAsync((WebSocketCloseStatus)1013, "fixture transport loss", CancellationToken.None);
+        await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await fixture.NextAsync();
+        await Until(() => fixture.AccountReads == 1);
+        await Task.Delay(200);
+        Assert.Equal(1, catchUps);
+        Assert.Equal(0, invalidations);
+        Assert.Equal(1, fixture.AccountReads);
+        Assert.Equal(2, fixture.Tickets);
+        Assert.False(fixture.Api.IsCurrentContext(prior));
+    }
+
     // Anything that cannot be proven to be the planned end still catches up once: missed events and access
     // changes are possible there (the P1 on PR #113: a slept laptop or a silently dropped socket).
     [Theory]

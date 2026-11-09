@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SiloPlayer.Tests" />
+    <!-- Links EventAccessTransportTests.cs and runs it against the published assembly. -->
+    <InternalsVisibleTo Include="SiloPlayer.PlaybackIntegrationTests" />
     <EmbeddedResource Include="Models\Settings\device-settings.json" />
   </ItemGroup>
 

@@ -32,14 +32,17 @@ public sealed class EventChannelClient : IDisposable
     // A reconnect right after THAT planned end missed nothing worth reloading for (Granary and
     // the server contract: catch up only after more than five seconds without a connection);
     // treating it as a loss retired every page's reads and reloaded the app every five minutes.
-    // Only a provable planned end counts. Times are wall-clock, so sleep counts as time away:
+    // Only a provable planned end counts. Times come from MonotonicNow, so a wall-clock step
+    // cannot move the proof boundary, while sleep still counts as time away:
     // - the connection lasted its announced lifetime, allowing the measured upgrade duration
     //   plus PlannedEndEarly for a close frame (only the upgrade duration for a receive error),
     //   and at most PlannedEndLate after, so an early reset or a slept laptop still catches up;
     // - it ended without a close handshake, with no close status, or with a normal close;
     //   explicit failure codes catch up, and 4001/access_changed keep their own handling;
     // - the next connection opened within QuickReconnectWindow of that end. Failed attempts
-    //   keep the old end, so the gap only grows and a long outage still catches up.
+    //   keep the old end, so the gap only grows and a long outage still catches up. After a
+    //   planned end the loop reconnects without its own backoff, so that delay does not spend
+    //   the window, and a token refresh while reconnecting keeps the pending catch-up.
     internal static readonly TimeSpan DefaultQuickReconnectWindow = TimeSpan.FromSeconds(5);
     /// <summary>Tests about catch-up itself set it to zero, so every transport loss catches up regardless of timing.</summary>
     internal TimeSpan QuickReconnectWindow { get; set; } = DefaultQuickReconnectWindow;
@@ -57,6 +60,15 @@ public sealed class EventChannelClient : IDisposable
         internal int? CloseCode { get; set; }
     }
     private ConnectionRecord? _endedConnection;
+    // Set when the current loop lost its transport and has not reconnected yet, so a loop
+    // restarted by a token refresh still catches up (or proves a quiet reconnect) once.
+    private bool _pendingTransportCatchUp;
+
+    // Environment.TickCount64 is monotonic, and on Windows it still counts sleep and
+    // hibernation. Its resolution is the system timer tick, so either end of a span can be
+    // one tick off; the lower lifetime bound allows two ticks for that.
+    private static DateTimeOffset MonotonicNow() => DateTimeOffset.UnixEpoch.AddMilliseconds(Environment.TickCount64);
+    private static readonly TimeSpan MonotonicResolution = TimeSpan.FromMilliseconds(32);
 
     private bool IsPlannedEnd(ConnectionRecord? connection, out string why)
     {
@@ -74,7 +86,7 @@ public sealed class EventChannelClient : IDisposable
         // relative to the open socket. Receive errors borrow only this measured upgrade time,
         // never the additional close-frame tolerance that could hide an early reset.
         var upgrade = connection.ConnectedAt - connection.ConnectStartedAt;
-        var early = upgrade + (connection.Abrupt ? TimeSpan.Zero : PlannedEndEarly);
+        var early = upgrade + MonotonicResolution + (connection.Abrupt ? TimeSpan.Zero : PlannedEndEarly);
         if (held < lifetime - early || held > lifetime + PlannedEndLate)
         { why = $"held {held.TotalSeconds:0.000}s of a {lifetimeSeconds}s lifetime (upgrade {upgrade.TotalSeconds:0.000}s)"; return false; }
         why = $"planned end after {held.TotalSeconds:0.000}s (upgrade {upgrade.TotalSeconds:0.000}s)";
@@ -295,8 +307,19 @@ public sealed class EventChannelClient : IDisposable
             Log($"Channel set changed; forcing reconnect");
             CancelCurrentRunLoop_NoLock();
         }
-        _cts = new CancellationTokenSource();
-        _runTask = Task.Run(() => RunLoop(_cts.Token));
+        StartRunLoop_NoLock(keepTransportCatchUp: false);
+    }
+
+    private void StartRunLoop_NoLock(bool keepTransportCatchUp)
+    {
+        // The replacement loop inherits a pending transport catch-up and the end it is measured
+        // from; otherwise it starts fresh, so its first connection never looks like a reconnect.
+        var catchUp = keepTransportCatchUp && _pendingTransportCatchUp;
+        _pendingTransportCatchUp = catchUp;
+        if (!catchUp) _endedConnection = null;
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        _runTask = Task.Run(() => RunLoop(cts.Token, catchUp));
     }
 
     private void StopInternal_NoLock()
@@ -328,8 +351,7 @@ public sealed class EventChannelClient : IDisposable
             _reconnectSuppressed = false;
             Log("Token refreshed; forcing reconnect");
             CancelCurrentRunLoop_NoLock();
-            _cts = new CancellationTokenSource();
-            _runTask = Task.Run(() => RunLoop(_cts.Token));
+            StartRunLoop_NoLock(keepTransportCatchUp: true);
         }
     }
 
@@ -442,11 +464,9 @@ public sealed class EventChannelClient : IDisposable
         }
     }
 
-    private async Task RunLoop(CancellationToken ct)
+    private async Task RunLoop(CancellationToken ct, bool catchUp = false)
     {
         var backoffMs = 1000;
-        var catchUp = false;
-        _endedConnection = null;
         while (!ct.IsCancellationRequested)
         {
             long? connectedAt = null;
@@ -457,7 +477,7 @@ public sealed class EventChannelClient : IDisposable
             catch (OperationCanceledException)
             {
                 if (!ct.IsCancellationRequested && Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
-                { catchUp = false; backoffMs = 1000; continue; }
+                { catchUp = false; SetPendingTransportCatchUp(ct, false); backoffMs = 1000; continue; }
                 return;
             }
             catch (Exception ex)
@@ -468,17 +488,36 @@ public sealed class EventChannelClient : IDisposable
                 connectedAt is { } openedAt ? System.Diagnostics.Stopwatch.GetElapsedTime(openedAt) : TimeSpan.Zero);
             if (ct.IsCancellationRequested) return;
             if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
-            { catchUp = false; backoffMs = 1000; continue; }
+            { catchUp = false; SetPendingTransportCatchUp(ct, false); backoffMs = 1000; continue; }
 
             // A transport loss may have missed permission changes. A deliberate
             // channel/profile rebind starts a new loop and must not rebuild pages again.
             catchUp = true;
+            SetPendingTransportCatchUp(ct, true);
+
+            // The server's planned lifetime end: reconnect now, so our own backoff does not
+            // spend the quick-reconnect window. Only a connection opened this round qualifies.
+            bool plannedEnd;
+            lock (_lock)
+                plannedEnd = connectedAt != null && QuickReconnectWindow > TimeSpan.Zero && IsPlannedEnd(_endedConnection, out _);
+            if (plannedEnd)
+            {
+                Log("Planned end; reconnecting now");
+                continue;
+            }
 
             // Don't spam reconnects — capped exponential backoff up to 30s.
             Log($"Reconnecting in {backoffMs}ms");
             try { await Task.Delay(backoffMs, ct); } catch { return; }
             backoffMs = Math.Min(backoffMs * 2, 30_000);
         }
+    }
+
+    private void SetPendingTransportCatchUp(CancellationToken ct, bool pending)
+    {
+        // A cancelled loop has been replaced; it must not overwrite its successor's state.
+        lock (_lock)
+            if (!ct.IsCancellationRequested) _pendingTransportCatchUp = pending;
     }
 
     private async Task ConnectAndRunOnce(CancellationToken ct, bool catchUp, Action? onConnected = null)
@@ -518,11 +557,11 @@ public sealed class EventChannelClient : IDisposable
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to {logUrl} (channels: {string.Join(",", channelsSnapshot)})");
-            var connectStartedAt = DateTimeOffset.UtcNow;
+            var connectStartedAt = MonotonicNow();
             await ws.ConnectAsync(new Uri(wsUrl), ct);
             if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
             onConnected?.Invoke();
-            connection = new ConnectionRecord(DateTimeOffset.UtcNow, lifetimeSeconds) { ConnectStartedAt = connectStartedAt };
+            connection = new ConnectionRecord(MonotonicNow(), lifetimeSeconds) { ConnectStartedAt = connectStartedAt };
             var reconnect = false;
             lock (_lock)
             {
@@ -536,6 +575,7 @@ public sealed class EventChannelClient : IDisposable
                     Log(quiet ? $"Quick reconnect ({why}): no catch-up" : $"Catch-up needed ({why})");
                     reconnect = !quiet;
                 }
+                _pendingTransportCatchUp = false;
                 if (reconnect && !PublishAccessInvalidation(context, out context, transportCatchUp: true))
                     throw new OperationCanceledException("Event authority changed.", ct);
                 _activeSocketContext = context;
@@ -560,8 +600,18 @@ public sealed class EventChannelClient : IDisposable
         finally
         {
             // Only a connection that opened records an end; failed attempts keep the previous one.
-            connection.EndedAt = DateTimeOffset.UtcNow;
-            _endedConnection = connection;
+            // A cancelled loop has been replaced and must not overwrite its successor's record.
+            connection.EndedAt = MonotonicNow();
+            lock (_lock)
+            {
+                if (!ct.IsCancellationRequested)
+                {
+                    _endedConnection = connection;
+                    // Pending from the moment the socket ends, so a token refresh before the
+                    // loop's backoff still carries the catch-up. Access closes handle their own.
+                    _pendingTransportCatchUp = Volatile.Read(ref _immediateReconnectRequested) == 0;
+                }
+            }
             try
             {
                 if (ws.State == WebSocketState.Open)
