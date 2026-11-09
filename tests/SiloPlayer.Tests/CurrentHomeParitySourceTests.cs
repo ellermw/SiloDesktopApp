@@ -287,7 +287,7 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("Navigate<EbookReaderPage>", code);
         Assert.Contains("ToggleAudiobookPlayback", code);
         Assert.Contains("item.BackdropUrl", code);
-        Assert.Contains("PosterCard.BuildBadge", code);
+        Assert.Contains("CardBadgeHosts.For(item, service", code);
         Assert.Contains("x:Name=\"BadgePill\"", xaml);
         Assert.Contains("GetBadgeLabel(item)", code);
         Assert.Contains("case \"season_premiere\": return \"SEASON PREMIERE\";", code);
@@ -306,6 +306,7 @@ public sealed class CurrentHomeParitySourceTests
         var landscape = ReadRepoFile("src", "SiloPlayer", "Controls", "LandscapeCard.xaml.cs");
         var library = ReadRepoFile("src", "SiloPlayer", "Controls", "LibraryGridCard.cs");
         var detail = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var badges = ReadRepoFile("src", "SiloPlayer", "Controls", "CardBadges.cs");
 
         Assert.Contains("public bool IsLoaded => _initialized;", service);
         Assert.Contains("GetOrderedDefinitions()", service);
@@ -313,7 +314,8 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("Interlocked.Increment(ref _loadGeneration)", service);
         Assert.Contains("_document = BuildDefaultDocument();", service);
         Assert.Contains("\"card_overlay_settings\"", shell);
-        Assert.All(new[] { poster, landscape, library, detail }, source =>
+        Assert.All(new[] { poster, landscape, library }, source => Assert.Contains("CardBadgeHosts.For(item, service", source));
+        Assert.All(new[] { badges, detail }, source =>
         {
             Assert.Contains("GetOrderedDefinitions()", source);
             Assert.Contains(">= 3", source);

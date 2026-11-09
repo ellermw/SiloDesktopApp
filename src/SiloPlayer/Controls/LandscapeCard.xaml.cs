@@ -433,38 +433,14 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         catch { }
     }
 
+    private CardBadgeHosts? _badges;
+
+    /// <summary>Shows the item's corner badges; unchanged badges are kept, so rebinding creates no XAML.</summary>
     private void UpdateBadges(MediaItem item)
     {
-        OverlayTopLeft.Children.Clear();
-        OverlayTopRight.Children.Clear();
-        OverlayBottomLeft.Children.Clear();
-        OverlayBottomRight.Children.Clear();
-
         var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-        var prefs = service.GetPrefs();
-        if (prefs == null) return;
-
-        var data = Services.OverlayData.FromMediaItem(item);
-        var cornerCounts = new Dictionary<Services.OverlayPosition, int>();
-        foreach (var definition in service.GetOrderedDefinitions())
-        {
-            if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-            if (Services.OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs)) continue;
-            var value = definition.GetValue(data);
-            if (string.IsNullOrWhiteSpace(value)) continue;
-            if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
-            var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
-            var host = config.Position switch
-            {
-                Services.OverlayPosition.TopLeft => OverlayTopLeft,
-                Services.OverlayPosition.TopRight => OverlayTopRight,
-                Services.OverlayPosition.BottomLeft => OverlayBottomLeft,
-                Services.OverlayPosition.BottomRight => OverlayBottomRight,
-                _ => OverlayTopLeft,
-            };
-            host.Children.Add(badge);
-            cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
-        }
+        (_badges ??= new(OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight))
+            .Show(CardBadgeHosts.For(item, service, scale: 1, statusAndManga: false, upcoming: false));
     }
 
     private bool HideEpisodeArtwork(MediaItem item)

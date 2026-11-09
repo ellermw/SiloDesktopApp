@@ -29,6 +29,9 @@ internal sealed class PlaybackDiagnostics : IDisposable
     private int _queued;
     private bool _disposed;
     private string? _writeError;
+    private const int IncidentRewriteSeconds = 5;
+    private string? _incidentWritten;
+    private long _incidentWrittenAt;
     private sealed record Entry(string Trace, DateTimeOffset Utc, double ElapsedMs, string Event, object? Data);
     public string DirectoryPath => _directory;
 
@@ -96,9 +99,10 @@ internal sealed class PlaybackDiagnostics : IDisposable
         _ = Task.Run(() => { try { FlushCore(); } finally { Volatile.Write(ref _queued, 0); } });
     }
 
-    internal Task FlushAsync() => Task.Run(FlushCore);
+    internal Task FlushAsync() => Task.Run(() => FlushCore(force: true));
+    internal Task FlushPeriodicAsync() => Task.Run(() => FlushCore(force: false));
 
-    private void FlushCore()
+    private void FlushCore(bool force = false)
     {
         lock (_writeGate)
         {
@@ -128,11 +132,19 @@ internal sealed class PlaybackDiagnostics : IDisposable
                         File.Move(rolling, rolling + ".1", overwrite: true);
                     if (batch.Length > 0)
                         File.AppendAllLines(rolling, batch.Select(entry => JsonSerializer.Serialize(entry, JsonOptions)));
-                    if (incident != null && incidentFile != null)
+                    // An incident holds up to 4096 entries (1–2 MB of JSON). Rewriting it as one string every
+                    // second put megabytes on the large object heap and forced full GCs that froze the UI.
+                    // Stream it to disk instead, and refresh it at most every few seconds until complete.
+                    if (incident != null && incidentFile != null &&
+                        (force || complete || !string.Equals(_incidentWritten, incidentFile, StringComparison.Ordinal) ||
+                         Stopwatch.GetElapsedTime(_incidentWrittenAt).TotalSeconds >= IncidentRewriteSeconds))
                     {
                         var path = Path.Combine(_directory, incidentFile);
-                        File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(incident, JsonOptions));
+                        using (var stream = new FileStream(path + ".tmp", FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024))
+                            JsonSerializer.Serialize(stream, incident, JsonOptions);
                         File.Move(path + ".tmp", path, overwrite: true);
+                        _incidentWritten = incidentFile;
+                        _incidentWrittenAt = Stopwatch.GetTimestamp();
                         if (complete) lock (_gate) { _before = null; _after.Clear(); _incidentFile = null; }
                         foreach (var old in new DirectoryInfo(_directory).GetFiles("stall-*.json")
                             .OrderByDescending(file => file.LastWriteTimeUtc).Skip(8)) old.Delete();
