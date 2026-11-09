@@ -84,7 +84,8 @@ public sealed partial class MainWindow
         // must not contend with library artwork on the UI thread.
         using var decode = await new ArtworkDecodeGate(PlayingNextHero, static () => true, ArtworkDecodeGate.BitmapCreateLock)
             .EnterAsync(CancellationToken.None);
-        if (bytes is null) return new BitmapImage(new Uri(path)) { DecodePixelWidth = decodeWidth };
+        // The decode size must be set before the source, or the first decode runs at full size.
+        if (bytes is null) return new BitmapImage { DecodePixelWidth = decodeWidth, UriSource = new Uri(path) };
         var image = new BitmapImage();
         using var stream = new MemoryStream(bytes);
         await image.SetSourceAsync(stream.AsRandomAccessStream());
