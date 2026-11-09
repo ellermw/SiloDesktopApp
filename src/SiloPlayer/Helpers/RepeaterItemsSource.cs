@@ -1,7 +1,9 @@
 using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Helpers;
 
@@ -16,20 +18,31 @@ namespace SiloPlayer.Helpers;
 /// the repeater reads a snapshot that stays fixed while it is stale, and one
 /// Reset on a later dispatcher turn resynchronizes it. Later model changes in
 /// that window are not lost: they are coalesced into the Reset, which publishes
-/// the collection as it is then. The Reset recycles every realized card, so
-/// the owner hooks <see cref="Resyncing"/>/<see cref="Resynced"/> to carry
-/// keyboard focus across it.
+/// the collection as it is then. A rejected Reset is retried a few times with
+/// a growing delay; after that the view stays stale until the next model
+/// change and the failure is logged to home_error.txt. Only the repeater's
+/// rejection is taken; any other failure propagates as before. The Reset
+/// recycles every realized card, so the owner hooks
+/// <see cref="Resyncing"/>/<see cref="Resynced"/> to carry keyboard focus
+/// across it.
 /// </summary>
 public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, IDisposable
 {
     private static readonly NotifyCollectionChangedEventArgs ResetArgs =
         new(NotifyCollectionChangedAction.Reset);
+    private const int MaxResyncAttempts = 3;
+    private const string LogFile = "home_error.txt";
 
     private readonly DispatcherQueue _dispatcher;
+    private DispatcherQueueTimer? _retryTimer;
     // The items as the repeater knows them. Home rows hold at most a few
     // hundred cards, so a copy per change is cheaper than replaying deltas.
     private List<T> _items;
     private bool _resyncQueued;
+    // Rejected recovery Resets since the last accepted delivery.
+    private int _failedResyncs;
+    // Recovery gave up (or could not be queued); the next model change retries.
+    private bool _stale;
     private bool _disposed;
 
     public RepeaterItemsSource(ObservableCollection<T> source, DispatcherQueue dispatcher)
@@ -42,7 +55,18 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     public ObservableCollection<T> Source { get; }
 
-    /// <summary>Changes the bound repeater rejected; each one queued a resync.</summary>
+    /// <summary>
+    /// Moves this view's model subscription behind every listener added since,
+    /// so an owner that re-subscribes on reload is still notified first.
+    /// </summary>
+    public void Resubscribe()
+    {
+        if (_disposed) return;
+        Source.CollectionChanged -= OnSourceChanged;
+        Source.CollectionChanged += OnSourceChanged;
+    }
+
+    /// <summary>Changes, including recovery Resets, the bound repeater rejected.</summary>
     public int RejectedChanges { get; private set; }
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
@@ -57,6 +81,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     {
         if (_disposed) return;
         _disposed = true;
+        _retryTimer?.Stop();
         Source.CollectionChanged -= OnSourceChanged;
     }
 
@@ -66,7 +91,15 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         // deltas would be applied to the wrong elements. The snapshot stays
         // fixed, and the queued Reset publishes the collection as it is then.
         if (_resyncQueued) return;
-        Publish(e);
+        if (_stale)
+        {
+            // A new change is a fresh chance for the abandoned recovery.
+            _stale = false;
+            _failedResyncs = 0;
+            QueueResync();
+            return;
+        }
+        if (!Publish(e)) QueueResync();
     }
 
     private bool Publish(NotifyCollectionChangedEventArgs e)
@@ -77,40 +110,76 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
             CollectionChanged?.Invoke(this, e);
             return true;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (IsRepeaterRejection(ex))
         {
             // WinUI's ItemsSourceView refreshes its cached Count before the
             // repeater's handler rejects the change, so keep the snapshot that
             // matches that Count and hold it until the Reset; restoring the
-            // pre-change list here would let the repeater index past it. The
-            // native fixture pins this by comparing the two counts. The observed
-            // rejection is a COMException (E_FAIL), but any failure to deliver
-            // leaves the repeater equally stale and must not reach the model.
+            // pre-change list here would let the repeater index past it.
             RejectedChanges++;
-            App.RecordUiDiagnostic($"RepeaterItemsSource rejected action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8} count={Source.Count}");
-            QueueResync();
+            var detail = $"RepeaterItemsSource rejected action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8} count={Source.Count}";
+            App.RecordUiDiagnostic(detail);
+            LocalLog.AppendException(LogFile, ex, detail);
             return false;
         }
     }
+
+    // ItemsRepeater rejects with E_FAIL, which surfaces as a COMException;
+    // WinRT's illegal-state/illegal-call results surface as
+    // InvalidOperationException. Anything else is a real failure and propagates.
+    private static bool IsRepeaterRejection(Exception ex) =>
+        ex is COMException or InvalidOperationException;
 
     private void QueueResync()
     {
         if (_resyncQueued || _disposed) return;
         _resyncQueued = true;
-        // Normal priority so the Reset lands ahead of SectionRow's deferred
-        // scroll restore, which UpdateSection enqueues after this.
-        if (!_dispatcher.TryEnqueue(DispatcherQueuePriority.Normal, Resync))
+        if (_failedResyncs == 0)
+        {
+            // Normal priority so the Reset lands ahead of SectionRow's deferred
+            // scroll restore, which UpdateSection enqueues after this.
+            if (_dispatcher.TryEnqueue(DispatcherQueuePriority.Normal, Resync)) return;
             _resyncQueued = false;
+            _stale = true;
+            App.RecordUiDiagnostic("RepeaterItemsSource resync could not be queued");
+            LocalLog.AppendLine(LogFile, $"RepeaterItemsSource resync could not be queued count={Source.Count}; row stays stale until its next change");
+            return;
+        }
+        // A rejected Reset is retried after a growing delay so the layout
+        // that rejected it can finish instead of being re-entered every turn.
+        if (_retryTimer == null)
+        {
+            _retryTimer = _dispatcher.CreateTimer();
+            _retryTimer.IsRepeating = false;
+            _retryTimer.Tick += (_, _) => Resync();
+        }
+        _retryTimer.Interval = TimeSpan.FromMilliseconds(50 << _failedResyncs);
+        _retryTimer.Start();
     }
 
     private void Resync()
     {
         _resyncQueued = false;
         if (_disposed) return;
-        // A Reset raised inside another layout pass is rejected the same way
-        // and queues the next attempt.
+        // A Reset raised inside another layout pass is rejected the same way.
         Resyncing?.Invoke();
-        if (Publish(ResetArgs)) Resynced?.Invoke();
+        if (Publish(ResetArgs))
+        {
+            _failedResyncs = 0;
+            Resynced?.Invoke();
+            return;
+        }
+        if (++_failedResyncs < MaxResyncAttempts)
+        {
+            QueueResync();
+            return;
+        }
+        // Stop recycling every card: leave the row stale but reported, and
+        // let the next model change try again.
+        _failedResyncs = 0;
+        _stale = true;
+        App.RecordUiDiagnostic($"RepeaterItemsSource gave up after {MaxResyncAttempts} rejected resyncs");
+        LocalLog.AppendLine(LogFile, $"RepeaterItemsSource gave up after {MaxResyncAttempts} rejected resyncs count={Source.Count}; row stays stale until its next change");
     }
 
     public object? this[int index]

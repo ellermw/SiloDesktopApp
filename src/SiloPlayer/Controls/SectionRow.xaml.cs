@@ -125,6 +125,10 @@ public sealed partial class SectionRow : UserControl
             ++_activationGeneration;
             App.RecordUiDiagnostic($"SectionRow loaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(Section?.Items);
+            // Unloaded dropped this row's model handler but kept the guard's,
+            // so put the guard back behind it: UpdateSection must stay queued
+            // ahead of a recovery Reset.
+            _cardsSource?.Resubscribe();
             _uiCustomizationService.Changed += UICustomization_Changed;
             ApplyResponsiveCardWidths(ActualWidth);
             RefreshPresentation();
@@ -316,18 +320,26 @@ public sealed partial class SectionRow : UserControl
         // included. Remember which item held keyboard focus so it gets it back.
         _resyncFocusItem = null;
         if (XamlRoot == null || FocusManager.GetFocusedElement(XamlRoot) is not UIElement focused) return;
+        MediaItem? item = null;
         for (DependencyObject? node = focused; node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
         {
-            if (!ReferenceEquals(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node), CardsRepeater)) continue;
+            // Realized cards sit under the repeater's layout panel, not
+            // directly under it, so take the nearest card and require only
+            // that the repeater is an ancestor.
+            if (ReferenceEquals(node, CardsRepeater))
+            {
+                if (item == null) return;
+                _resyncFocusItem = item;
+                _resyncFocusState = focused.FocusState == FocusState.Unfocused ? FocusState.Programmatic : focused.FocusState;
+                return;
+            }
             // The templates use x:Bind, so the card's item is not its DataContext.
-            _resyncFocusItem = node switch
+            item ??= node switch
             {
                 IMediaItemOwner owner => owner.MediaItem,
                 AudiobookSquareCard audiobook => audiobook.MediaItem,
                 _ => null,
             };
-            _resyncFocusState = focused.FocusState == FocusState.Unfocused ? FocusState.Programmatic : focused.FocusState;
-            return;
         }
     }
 

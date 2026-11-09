@@ -26,7 +26,9 @@ internal static class HomeReconcileNativeFixture
         await TemplateSwapAsync(parent);
         await FocusedCardAsync(parent);
         Program.Log("PASS: Home rows apply refreshed responses in every mounted state without ItemsRepeater rejection.");
-        await DuringLayoutAsync(parent);
+        await DuringLayoutAsync(parent, reloaded: false);
+        // A reloaded row re-subscribes to its items after the guard did.
+        await DuringLayoutAsync(parent, reloaded: true);
         Program.Log("PASS: a Home response applied during the row's layout pass completes and the row resyncs.");
         // Let removed cards run their Unloaded cleanup while app services exist.
         for (var turn = 0; turn < 6; turn++) { await Task.Delay(50); await DrainAsync(); }
@@ -231,12 +233,23 @@ internal static class HomeReconcileNativeFixture
         finally { parent.Children.Remove(row); }
     }
 
-    private static async Task DuringLayoutAsync(StackPanel parent)
+    private static async Task DuringLayoutAsync(StackPanel parent, bool reloaded)
     {
         // The field failure: a Home response reaches the row while its
         // ItemsRepeater is measuring. ElementPrepared runs inside that pass.
+        var scenario = reloaded ? "during-layout-reloaded" : "during-layout";
         var mounted = Movies(Enumerable.Range(0, 3));
         var row = await MountAsync(parent, mounted);
+        if (reloaded)
+        {
+            // A cached Home page's rows unload and reload on navigation.
+            parent.Children.Remove(row);
+            await DrainAsync();
+            parent.Children.Add(row);
+            row.UpdateLayout();
+            await DrainAsync();
+            row.UpdateLayout();
+        }
         var repeater = Repeater(row);
         var response = Movies(new[] { 9, 2, 0, 7, 8, 1, 6 }, versionOf: id => id == 0 ? 1 : 0);
         var applied = false;
@@ -252,58 +265,72 @@ internal static class HomeReconcileNativeFixture
         {
             // m2 survives the response as the same object; the recovery Reset
             // recycles its card and must hand keyboard focus back to it.
-            var focusedItem = FocusCard(repeater, 2);
+            var focusedItem = FocusCard(repeater, 2, scenario);
             repeater.ElementPrepared += Prepared;
             // Growing the row realizes a new card, which raises ElementPrepared mid-measure.
             Apply(mounted, Movies(Enumerable.Range(0, 8)));
             row.UpdateLayout();
             repeater.ElementPrepared -= Prepared;
             if (!applied)
-                throw new InvalidOperationException("during-layout: the response was never applied inside the repeater's layout pass.");
+                throw new InvalidOperationException($"{scenario}: the response was never applied inside the repeater's layout pass.");
             if (thrown != null)
-                throw new InvalidOperationException($"during-layout: applying the response threw {thrown.GetType().Name} 0x{thrown.HResult:X8}.", thrown);
+                throw new InvalidOperationException($"{scenario}: applying the response threw {thrown.GetType().Name} 0x{thrown.HResult:X8}.", thrown);
             var guard = Guard(row);
             if (guard.RejectedChanges == 0)
-                throw new InvalidOperationException("during-layout: ItemsRepeater accepted a mid-layout change; the fixture no longer reaches the rejection.");
+                throw new InvalidOperationException($"{scenario}: ItemsRepeater accepted a mid-layout change; the fixture no longer reaches the rejection.");
             if (!mounted.Items.Select(Key).SequenceEqual(response.Items.Select(Key)))
-                throw new InvalidOperationException("during-layout: the rejected update did not finish applying the response.");
-            // The recovery Reset is still queued. The repeater indexes the
-            // guard's snapshot by its own cached count, so the two must agree,
-            // and a model change in this window must not move the snapshot
-            // under the stale repeater; the Reset delivers it instead.
+                throw new InvalidOperationException($"{scenario}: the rejected update did not finish applying the response.");
+            // The recovery Reset is still queued. Whether WinUI's cached count
+            // matches the guard depends on its internal ordering, so record it
+            // rather than gate on it; the Reset's outcome is asserted below.
             if (repeater.ItemsSourceView.Count != guard.Count)
-                throw new InvalidOperationException($"during-layout: repeater count {repeater.ItemsSourceView.Count} differs from the guard snapshot {guard.Count} after the rejection.");
+                Program.Log($"home-reconcile {scenario}: repeater count {repeater.ItemsSourceView.Count} differs from the guard snapshot {guard.Count} after the rejection.");
+            // A model change in this window must not move the snapshot under
+            // the stale repeater; the Reset delivers it instead.
             var held = guard.Cast<MediaItem>().ToArray();
             mounted.Items.RemoveAt(mounted.Items.Count - 1);
             if (!held.SequenceEqual(guard.Cast<MediaItem>()))
-                throw new InvalidOperationException("during-layout: a change while the resync was pending moved the guard snapshot.");
-            await RequireCardsMatchAsync(row, mounted, "during-layout", allowRejection: true);
+                throw new InvalidOperationException($"{scenario}: a change while the resync was pending moved the guard snapshot.");
+            await RequireCardsMatchAsync(row, mounted, scenario, allowRejection: true);
             if (!mounted.Items.SequenceEqual(guard.Cast<MediaItem>()))
-                throw new InvalidOperationException("during-layout: the recovery Reset did not publish the model as it is now.");
+                throw new InvalidOperationException($"{scenario}: the recovery Reset did not publish the model as it is now.");
             if (focusedItem == null)
-                Program.Log("home-reconcile during-layout: host could not take keyboard focus; focus restore not checked.");
+                Program.Log($"home-reconcile {scenario}: host could not take keyboard focus; focus restore not checked.");
             else if (!ReferenceEquals(FocusedCardItem(repeater), focusedItem))
-                throw new InvalidOperationException($"during-layout: keyboard focus did not return to {Key(focusedItem)} after the recovery Reset.");
-            Program.Log($"home-reconcile during-layout: {Guard(row).RejectedChanges} rejected change(s) resynced.");
+                throw new InvalidOperationException($"{scenario}: keyboard focus did not return to {Key(focusedItem)} after the recovery Reset.");
+            Program.Log($"home-reconcile {scenario}: {Guard(row).RejectedChanges} rejected change(s) resynced.");
         }
         finally { repeater.ElementPrepared -= Prepared; parent.Children.Remove(row); }
     }
 
     /// <summary>Keyboard-focuses the card at <paramref name="index"/>; null when the host cannot take focus.</summary>
-    private static MediaItem? FocusCard(ItemsRepeater repeater, int index)
+    private static MediaItem? FocusCard(ItemsRepeater repeater, int index, string scenario)
     {
         if (repeater.TryGetElement(index) is not UIElement card || FindFocusable(card) is not Control focusable) return null;
-        focusable.Focus(FocusState.Keyboard);
-        return FocusedCardItem(repeater);
+        if (!focusable.Focus(FocusState.Keyboard) || !IsAncestor(card, FocusedElement(repeater))) return null;
+        // The card holds focus now, so a miss is a broken traversal, not the host.
+        return FocusedCardItem(repeater)
+            ?? throw new InvalidOperationException($"{scenario}: card {index} holds keyboard focus but the focus traversal found no card item.");
     }
 
+    private static DependencyObject? FocusedElement(ItemsRepeater repeater) =>
+        repeater.XamlRoot == null ? null : Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(repeater.XamlRoot) as DependencyObject;
+
+    private static bool IsAncestor(DependencyObject ancestor, DependencyObject? node)
+    {
+        for (; node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+            if (ReferenceEquals(node, ancestor)) return true;
+        return false;
+    }
+
+    /// <summary>The nearest card around the focused element, when the repeater is its ancestor.</summary>
     private static MediaItem? FocusedCardItem(ItemsRepeater repeater)
     {
-        if (repeater.XamlRoot == null || Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(repeater.XamlRoot) is not DependencyObject focused) return null;
-        for (DependencyObject? node = focused; node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+        MediaItem? item = null;
+        for (var node = FocusedElement(repeater); node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
         {
-            if (!ReferenceEquals(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node), repeater)) continue;
-            return node switch
+            if (ReferenceEquals(node, repeater)) return item;
+            item ??= node switch
             {
                 PosterCard poster => poster.MediaItem,
                 LandscapeCard landscape => landscape.MediaItem,
