@@ -37,8 +37,15 @@ verification remains required on the packaged build.
 - Paired pane/route transition staging so a populated outgoing page is not
   visibly squeezed during sidebar collapse or expansion.
 - 380 ms safety fallback for interrupted pane transitions.
-- Suppressed stock `Frame` page animations and persistent cache for the
-  high-frequency top-level pages.
+- New-route and Back page changes use WinUI's `EntranceNavigationTransitionInfo`
+  (page-refresh: the incoming page rises slightly and fades in as one compositor
+  visual, with no horizontal directional slide) via
+  `PageTransitionHelper.ForPageChange()`. This replaces the earlier fully
+  suppressed stock `Frame` animation. Windows "Animation effects" off and
+  in-place refreshes of the current route keep the instant
+  `SuppressNavigationTransitionInfo` swap. Persistent cache remains for the
+  high-frequency top-level pages. Confirm top-level route changes visually on
+  the packaged Windows build.
 - 96 px brand area with current WebUI mark/wordmark sizing and crossfade.
 - 42 px navigation rows, 18 px icons, 13 px labels, 12 px radius, and current
   section-heading typography.
