@@ -379,6 +379,7 @@ public sealed partial class MainWindow
     {
         if (_appUpdates is null) return true;
         var closeArmed=false;
+        var placementSaved=false;
         var allowClose=!_manualUpdateRequested || _updateSessionEnding;
         LocalLog.AppendLine("updates.txt", $"exit_requested manual={_manualUpdateRequested} automaticEligible={_appUpdates.ShouldInstallOnExit} sessionEnding={_updateSessionEnding} closeGuard={_updateCloseGuardAvailable}");
         try
@@ -404,6 +405,9 @@ public sealed partial class MainWindow
             using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await _playerService.CloseAsync().WaitAsync(drain.Token);
             await _playerService.AllPendingProgressSaves.WaitAsync(drain.Token);
+            // A manual update restarts Silo; the new client reopens where this window is now.
+            // Saved before the handoff so the file exists before this process can exit.
+            if(_manualUpdateRequested){SaveRelaunchPlacement();placementSaved=true;}
             if(installer is IStagedAppUpdateInstaller stagedInstaller && stagedInstaller.HasPreparedHandoff)
             {stagedInstaller.ArmNormalClose();closeArmed=true;allowClose=true;}
             var state = _appUpdates.State;
@@ -418,6 +422,8 @@ public sealed partial class MainWindow
             if(allowClose){_appUpdateLifetime?.Cancel();await _appUpdateLoop;}
             else
             {
+                // Silo stays open, so no restart will use the saved placement.
+                if(placementSaved)DiscardRelaunchPlacement();
                 _manualUpdateRequested=false;
                 App.Services.GetRequiredService<ToastService>().Error(RequiresManualFullInstaller(_appUpdates.State)
                     ? UpdateInstallation.ManualFullInstallerMessage

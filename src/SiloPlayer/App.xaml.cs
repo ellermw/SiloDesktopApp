@@ -103,7 +103,10 @@ public partial class App : Application
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
         MainWindowInstance.ActivateFromArgument(e.Arguments);
+        // After an update restart: same monitor, frame and maximized state as before it.
+        var maximizeAfterRelaunch = MainWindowInstance.ApplyRelaunchPlacement();
         _window.Activate();
+        if (maximizeAfterRelaunch) MainWindowInstance.MaximizeAfterRelaunch();
         StartActivationPipeListener();
         _window.Closed += (_, _) =>
         {

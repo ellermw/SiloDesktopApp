@@ -423,6 +423,7 @@ public sealed partial class MainWindow : Window
     {
         if (args.DidPresenterChange || args.DidSizeChange || args.DidPositionChange)
         {
+            TrackNormalWindowBounds();
             var p = AppWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
             if (p != null)
             {
