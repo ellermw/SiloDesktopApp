@@ -15,6 +15,7 @@ public partial class PlayerService
         var mute = owner.Mpv.GetMute();
         var audioAvailable = (ActiveVersion?.AudioTracks?.Count ?? 0) > 1;
         var chaptersAvailable = (ActiveVersion?.Chapters?.Count ?? 0) > 0;
+        var statsShown = IsPlaybackInfoShown;
         // This is the existing compact overflow order. Subtitle, settings and
         // fullscreen remain on the compact rail, so there are no duplicates.
         PlaybackMenuChoice[] choices =
@@ -24,8 +25,9 @@ public partial class PlayerService
             new("chapters", "Chapters", "", [], IsEnabled: chaptersAvailable,
                 DisabledReason: chaptersAvailable ? "" : "No chapters available."),
             // Playback Info is the OSC's own drawn panel, not a native list, so
-            // say what this row does in its accessible name.
-            new("stats", "Playback info", "Shows or hides the on-screen panel", []),
+            // say what this row does and whether the panel is shown.
+            new("stats", "Playback info", statsShown ? "On-screen panel shown" : "On-screen panel hidden", [],
+                IsCurrent: statsShown),
             new("pip", "Picture in picture", "", []),
             new("fill", fill ? "Contain video" : "Fill screen", "", [], IsCurrent: fill),
             new("volume-down", "Volume -", $"{volume:0}%", [], IsEnabled: volume > 0,

@@ -2315,6 +2315,11 @@ local function render_stats()
     if not state.stats_visible then
         state.stats_panel_rect = nil
         state.stats_scroll_max = 0
+        -- Tell the host once that the panel it was given rows for has closed,
+        -- so its More menu can report whether Playback Info is shown.
+        if state.stats_rows_sent then
+            mp.commandv("script-message", "silo-stats-panel-rows", "close", "")
+        end
         state.stats_rows_sent = nil
         if state.stats_overlay then
             state.stats_overlay.data = ""

@@ -9,6 +9,11 @@ public partial class PlayerService
 {
     // Last value spoken for each Playback Info row, keyed by its section/label id.
     private Dictionary<string, string>? _playbackInfoSpoken;
+    // The mpv instance whose OSC last reported an open Playback Info panel, so
+    // a panel from a previous player is never reported as shown.
+    private object? _playbackInfoShownOn;
+
+    private bool IsPlaybackInfoShown => _mpv != null && ReferenceEquals(_playbackInfoShownOn, _mpv);
 
     /// <summary>
     /// Playback Info is drawn by the OSC as an ASS overlay, which has no UI
@@ -21,6 +26,8 @@ public partial class PlayerService
     /// </summary>
     private void AnnouncePlaybackInfoRows(string reason, string json)
     {
+        if (reason == "close") { _playbackInfoShownOn = null; _playbackInfoSpoken = null; return; }
+        if (reason is "open" or "update") _playbackInfoShownOn = _mpv;
         if (_closing || _mpv == null || reason is not ("open" or "update") ||
             App.MainWindowInstance?.Content is not UIElement root) return;
         var rows = PlaybackStatsSnapshot.Parse(json);
