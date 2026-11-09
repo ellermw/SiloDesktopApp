@@ -289,4 +289,75 @@ public sealed partial class MpvOscRuntimeTests
             windowWidth: width, windowHeight: height);
         Assert.Equal("true:0:true:true", output);
     }
+
+    // The buffering-quality card (z=85) is drawn over the two-column panel
+    // (z=60). Its visible Lower quality button keeps its own click.
+    [Theory]
+    [InlineData(960, 540)]
+    [InlineData(1024, 600)]
+    public void PlaybackInfoPanelLeavesClicksToTheBufferingQualityCardAboveIt(int width, int height)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            local lowered = 0
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-buffering-lower' then lowered = lowered + 1 end
+                return command(...)
+            end
+            native_handlers['osc-toggle-stats']()
+            local panel = assert(s.stats_panel_rect, 'Playback info did not render')
+            local W, H = s.osd_width, s.osd_height
+            -- render_buffering_quality geometry; ui_scale() is 1 at these sizes.
+            local card_w = math.min(440, W - 24)
+            local card_x, card_y = W - card_w - 12, H - 106 - 105
+            local button_w = math.floor((card_w - 44) / 2)
+            s.buffering_quality_pill = 'prompt'
+            s.buffering_quality_actions = {
+                { action = 'lower', x = card_x + 16, y = card_y + 54, w = button_w, h = 36 },
+                { action = 'keep', x = card_x + 28 + button_w, y = card_y + 54, w = button_w, h = 36 },
+            }
+            local lower = s.buffering_quality_actions[1]
+            local x, y = lower.x + lower.w / 2, lower.y + lower.h / 2
+            local covered = x >= panel.x and x <= panel.x + panel.w and y >= panel.y and y <= panel.y + panel.h
+            native_handlers['osc-mouse-down'](tostring(x), tostring(y))
+            mp.set_property('user-data/playback-info-buffering', tostring(covered) .. ':' .. tostring(lowered) .. ':'
+                .. tostring(s.stats_visible))
+            """, rawAss: true, resultProperty: "user-data/playback-info-buffering", beforeScript: PlaybackInfoProbe,
+            windowWidth: width, windowHeight: height);
+        Assert.Equal("true:1:true", output);
+    }
+
+    // The panel's top edge overlaps the Exit pill and a tall single column
+    // reaches the seek band. While the HUD takes input, those controls keep
+    // their gestures; the rest of the panel still owns its clicks.
+    [Fact]
+    public void PlaybackInfoPanelLeavesWindowChromeAndSeekBandToTheHud()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.pause = false, false
+            s.visible, s.current_alpha, s.target_alpha = true, 1, 1
+            native_handlers['osc-toggle-stats']()
+            local panel = assert(s.stats_panel_rect, 'Playback info did not render')
+            osc_test_layout()
+            local exit, sb = assert(s.layout.btn_exit), assert(s.layout.seek_bar)
+            local function inside(r, x, y) return x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h end
+            local ex, ey = exit.cx, (panel.y + exit.y + exit.h) / 2
+            local sx, sy = panel.x + panel.w / 2, sb.y + sb.h / 2
+            local covered = inside(panel, ex, ey) and inside(exit, ex, ey) and inside(panel, sx, sy)
+            native_handlers['osc-mouse-down'](tostring(ex), tostring(ey))
+            local exit_pressed = s.pressed_control == 'btn_exit'
+            native_handlers['osc-mouse-down'](tostring(panel.x + panel.w / 2), tostring(panel.y + panel.h / 2))
+            local panel_owned = not s.pressed_control and not s.dragging_seek and s.stats_visible
+            native_handlers['osc-mouse-down'](tostring(sx), tostring(sy))
+            mp.set_property('user-data/playback-info-chrome', tostring(covered) .. ':' .. tostring(exit_pressed) .. ':'
+                .. tostring(panel_owned) .. ':' .. tostring(s.dragging_seek == true))
+            """, rawAss: true, resultProperty: "user-data/playback-info-chrome", beforeScript: PlaybackInfoProbe,
+            windowWidth: 1600, windowHeight: 900);
+        Assert.Equal("true:true:true:true", output);
+    }
 }

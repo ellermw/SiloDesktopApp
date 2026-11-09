@@ -5158,19 +5158,65 @@ local function handle_mouse_down()
 
     if state.osc_disabled then return end
 
+    -- The buffering-quality card (z=85) is drawn over Playback Info (z=60).
+    for _, item in ipairs(state.buffering_quality_actions or {}) do
+        if point_in_rect(mx, my, item) then
+            consume_video_click()
+            buffering_quality_action(item.action)
+            return
+        end
+    end
+
     -- Playback Info (z=60) is drawn over the Watch Party card (z=50) and the
     -- skip, next-episode and countdown surfaces (z=55-57). A wide two-column
     -- panel can cover them, so the visible panel and its close button take
-    -- the click before any hidden target beneath them.
-    if state.stats_visible and state.stats_close_rect and
+    -- the click before any hidden target beneath them. Rows of an open
+    -- legacy transport menu (z=70) are drawn over the panel and keep theirs.
+    local on_legacy_menu_item = false
+    for _, menu in ipairs({
+        { state.audio_menu_visible, state.audio_menu_items },
+        { state.chapter_menu_visible, state.chapter_menu_items },
+        { state.subtitle_menu_visible, state.subtitle_menu_items },
+        { state.quality_menu_visible, state.quality_menu_items },
+    }) do
+        if menu[1] then
+            for _, item in ipairs(menu[2] or {}) do
+                if point_in_rect(mx, my, item) then on_legacy_menu_item = true end
+            end
+        end
+    end
+    if state.stats_visible and state.stats_close_rect and not on_legacy_menu_item and
         point_in_rect(mx, my, state.stats_close_rect) then
         consume_video_click()
         state.stats_visible = false
         render_stats()
         return
     end
-    if state.stats_visible and state.stats_panel_rect and
+    if state.stats_visible and state.stats_panel_rect and not on_legacy_menu_item and
         point_in_rect(mx, my, state.stats_panel_rect) then
+        -- The panel's top edge overlaps the Minimize/Exit chrome and a tall
+        -- column can reach the seek band. While the HUD takes input, those
+        -- controls keep their own gestures instead of a silently eaten click.
+        if hud_input_available() then
+            compute_layout()
+            local L = state.layout
+            for _, name in ipairs({ "btn_minimize", "btn_exit" }) do
+                local rect = L[name]
+                if rect and hud_interaction(name, rect) ~= "disabled" and point_in_rect(mx, my, rect) then
+                    state.pressed_control = name
+                    consume_video_click()
+                    show_osc()
+                    request_tick()
+                    return
+                end
+            end
+            local sb = L.seek_bar
+            if sb and mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
+                state.dragging_seek = true
+                state.seek_drag_pos = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+                return
+            end
+        end
         consume_video_click()
         return
     end
@@ -5181,14 +5227,6 @@ local function handle_mouse_down()
         compute_layout()
         if state.layout.btn_party and point_in_rect(mx, my, state.layout.btn_party) then
             open_native_menu('party')
-            return
-        end
-    end
-
-    for _, item in ipairs(state.buffering_quality_actions or {}) do
-        if point_in_rect(mx, my, item) then
-            consume_video_click()
-            buffering_quality_action(item.action)
             return
         end
     end
