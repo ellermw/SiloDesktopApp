@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
-using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 
 namespace SiloPlayer.Helpers;
@@ -67,13 +66,15 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         {
             CollectionChanged?.Invoke(this, e);
         }
-        catch (COMException ex)
+        catch (Exception ex)
         {
             // WinUI's ItemsSourceView refreshes its cached Count before the
             // repeater's handler rejects the change, so keep the snapshot that
-            // matches that Count and hold it until the Reset.
+            // matches that Count and hold it until the Reset. The observed
+            // rejection is a COMException (E_FAIL), but any failure to deliver
+            // leaves the repeater equally stale and must not reach the model.
             RejectedChanges++;
-            App.RecordUiDiagnostic($"RepeaterItemsSource rejected action={e.Action} hr=0x{ex.HResult:X8} count={Source.Count}");
+            App.RecordUiDiagnostic($"RepeaterItemsSource rejected action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8} count={Source.Count}");
             QueueResync();
         }
     }
@@ -82,7 +83,9 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     {
         if (_resyncQueued || _disposed) return;
         _resyncQueued = true;
-        if (!_dispatcher.TryEnqueue(DispatcherQueuePriority.Low, Resync))
+        // Normal priority so the Reset lands ahead of SectionRow's deferred
+        // scroll restore, which UpdateSection enqueues after this.
+        if (!_dispatcher.TryEnqueue(DispatcherQueuePriority.Normal, Resync))
             _resyncQueued = false;
     }
 
