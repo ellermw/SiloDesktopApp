@@ -121,9 +121,8 @@ public sealed partial class MainWindow
         var owner = _apiClient.CaptureIdentityContext();
         var image = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide, width);
         if (image is null || !_apiClient.IsCurrentIdentityContext(owner)) return null;
-        // A blurred still is decoded by SetSourceAsync before its ImageFailed handler exists:
-        // one with no pixels failed and must not be cached as ready.
-        if (hide && image.PixelWidth == 0) throw new InvalidOperationException("Playing Next blurred artwork did not decode");
+        // No pixels yet is not a failure: SetSourceAsync throws for an unreadable stream, a later
+        // decode failure raises ImageFailed, and ShowPlayingNextArt waits for ImageOpened.
         var art = new PlayingNextArt(contentId ?? url, url, hide, width, owner, image, contentId + "\n" + url);
         image.ImageFailed += (_, e) => OnPlayingNextArtFailed(art, e.ErrorMessage);
         if (contentId == _playerService.NextEpisodeContentId && url == _playerService.NextEpisodePosterUrl)
