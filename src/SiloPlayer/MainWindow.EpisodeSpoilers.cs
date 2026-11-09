@@ -35,13 +35,21 @@ public sealed partial class MainWindow
         DispatcherQueue.TryEnqueue(() =>
         {
             if (PlayingNextOverlay.Visibility != Visibility.Visible) return;
-            _preparedPlayingNextArt = null;
-            ClearPlayingNextArt();
+            // Only a change to the image-hide state invalidates the artwork: an overview change or a
+            // routine (re)load keeps the picture already prepared or shown.
+            var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+            bool? hide = preferences.IsLoadedForCurrentContext ? PlayingNextHidesArt(preferences) : null;
+            var url = _playerService.NextEpisodePosterUrl;
+            bool StillApplies(PlayingNextArt art) => hide is { } h && !string.IsNullOrEmpty(url)
+                && IsCurrentPlayingNextArt(art, _playerService.NextEpisodeContentId, url, h, null);
+            if (_preparedPlayingNextArt is { } prepared && !StillApplies(prepared)) _preparedPlayingNextArt = null;
+            var artChanged = _playingNextShownArt is not { } shown || !StillApplies(shown);
+            if (artChanged) ClearPlayingNextArt();
             PlayingNextOverviewText.Text = "";
             PlayingNextOverviewText.Visibility = Visibility.Collapsed;
             PlayingNextOnDeckRepeater.ItemsSource = null;
             _ = UpdatePlayingNextOverviewAsync(_playingNextPresentationGeneration);
-            _ = LoadPlayingNextPosterAsync();
+            if (artChanged) _ = LoadPlayingNextPosterAsync();
             _ = LoadPlayingNextOnDeckAsync();
         });
     }
