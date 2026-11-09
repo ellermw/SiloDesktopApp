@@ -1,9 +1,12 @@
+using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading.Channels;
 using System.Reflection;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -103,6 +106,38 @@ public sealed class EventAccessTransportTests
                 { Content = new StringContent("Synthetic ticket unavailable") });
     }
 
+    [Fact]
+    public async Task ATimedOutTicketMintBacksOffAndRetriesInsteadOfEndingTheLoop()
+    {
+        var handler = new HangingTicketHandler();
+        // HttpClient.Timeout throws a TaskCanceledException while the loop's own token is live.
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(200) };
+        var api = new SiloApiClient(http);
+        api.SetBaseUrl("https://ticket-timeout.fixture.invalid");
+        using var auth = new AuthService(api, new(api));
+        auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+        auth.SetCurrentUser(new() { Id = "account", Role = "admin" });
+        auth.SelectProfile("synthetic-profile", "synthetic-proof");
+        using var events = new EventChannelClient(api, auth);
+        using var subscription = events.Subscribe("notifications");
+        // First mint times out after 0.2 s; the 1 s backoff then mints again.
+        for (var i = 0; i < 1000 && Volatile.Read(ref handler.Tickets) < 2; i++) await Task.Delay(10);
+        Assert.True(Volatile.Read(ref handler.Tickets) >= 2, "A timed-out ticket mint ended the events run loop.");
+        var run = (Task?)typeof(EventChannelClient).GetField("_runTask", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(events);
+        Assert.False(run!.IsCompleted);
+    }
+
+    private sealed class HangingTicketHandler : HttpMessageHandler
+    {
+        internal int Tickets;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath == "/api/v2/events/ws-ticket") Interlocked.Increment(ref Tickets);
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -132,6 +167,7 @@ public sealed class EventAccessTransportTests
     public async Task TransportLossCatchesUpButAnIntentionalSubscriptionRebindDoesNotReloadTheApp()
     {
         await using var fixture = await Fixture.StartAsync();
+        fixture.Events.QuickReconnectWindow = TimeSpan.Zero; // this reconnect is a catch-up, however long the socket held
         using var subscription = fixture.Events.Subscribe("notifications");
         var first = await fixture.NextAsync();
         var invalidations = 0;
@@ -154,6 +190,220 @@ public sealed class EventAccessTransportTests
         Assert.Equal(1, fixture.AccountReads);
     }
 
+    // Use a 3 s announced lifetime, timed on the wall clock like production. Close frames allow
+    // 1 s of timer skew; receive errors may borrow only the measured upgrade duration.
+    private static async Task<Fixture> PlannedLifetimeFixtureAsync(int? lifetimeSeconds = 3)
+    {
+        var fixture = await Fixture.StartAsync();
+        fixture.LifetimeSeconds = lifetimeSeconds;
+        fixture.Events.PlannedEndEarly = fixture.Events.PlannedEndLate = TimeSpan.FromSeconds(1);
+        return fixture;
+    }
+
+    [Fact]
+    public async Task ThePlannedFiveMinuteCloseReconnectsWithoutReloadingTheApp()
+    {
+        await using var fixture = await PlannedLifetimeFixtureAsync();
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var socket = await fixture.NextAsync();
+        var catchUps = 0; var invalidations = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        var context = fixture.Api.CaptureContext();
+        // Exercise an abort without a close handshake, then a normal close frame.
+        foreach (var normalClose in new[] { false, true })
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            if (normalClose) await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "lifetime", CancellationToken.None);
+            else socket.Abort();
+            socket = await fixture.NextAsync(TimeSpan.FromSeconds(10));
+        }
+        await Task.Delay(200);
+        Assert.Equal(0, catchUps);
+        Assert.Equal(0, invalidations);
+        Assert.Equal(0, fixture.AccountReads);
+        Assert.True(fixture.Api.IsCurrentContext(context), "A planned reconnect retired the app's reads.");
+        Assert.Equal(3, fixture.Tickets);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task APlannedFinOrStatuslessCloseReconnectsWithoutReloading(bool tcpFin)
+    {
+        await using var fixture = await PlannedLifetimeFixtureAsync();
+        // Start the lifetime on the server before accepting the upgrade, not after NextAsync's
+        // hello/subscribe round trip. Hold the upgrade response so the old client-side clock
+        // would deterministically measure less than the announced lifetime.
+        fixture.EndAtLifetime = true;
+        fixture.UpgradeDelay = TimeSpan.FromMilliseconds(500);
+        fixture.LifetimeCloseStatus = tcpFin ? null : WebSocketCloseStatus.Empty;
+        using var subscription = fixture.Events.Subscribe("notifications");
+        await fixture.NextAsync();
+        var catchUps = 0; var invalidations = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        var context = fixture.Api.CaptureContext();
+        await fixture.NextAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(200);
+        Assert.Equal(0, catchUps);
+        Assert.Equal(0, invalidations);
+        Assert.Equal(0, fixture.AccountReads);
+        Assert.True(fixture.Api.IsCurrentContext(context));
+        Assert.Equal(2, fixture.Tickets);
+    }
+
+    [Theory]
+    [InlineData(true, false, null, 292, false)]
+    [InlineData(true, false, null, 299.9, false)]
+    [InlineData(true, false, null, 300, true)]
+    [InlineData(true, false, null, 306, false)]
+    [InlineData(false, true, null, 300, true)]
+    [InlineData(false, true, 1005, 300, true)]
+    [InlineData(false, true, 1000, 300, true)]
+    [InlineData(false, true, 1001, 300, true)]
+    [InlineData(false, true, 1001, 306, false)]
+    [InlineData(false, true, 1012, 300, false)]
+    [InlineData(false, true, 1013, 300, false)]
+    [InlineData(false, true, 4001, 300, false)]
+    [InlineData(false, false, null, 300, false)]
+    public async Task PlannedEndRequiresTheAnnouncedLifetimeForReceiveErrors(
+        bool abrupt, bool closeReceived, int? closeCode, double heldSeconds, bool expected)
+    {
+        await using var fixture = await Fixture.StartAsync();
+        // Pin the reported 292/300 s regression without a timing-sensitive five-minute wait.
+        fixture.Events.PlannedEndEarly = TimeSpan.FromSeconds(15);
+        var recordType = typeof(EventChannelClient).GetNestedType("ConnectionRecord", BindingFlags.NonPublic)!;
+        var started = DateTimeOffset.UnixEpoch;
+        var record = Activator.CreateInstance(recordType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, [started, (int?)300], null)!;
+        recordType.GetProperty("EndedAt", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(record, started.AddSeconds(heldSeconds));
+        recordType.GetProperty("Abrupt", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(record, abrupt);
+        recordType.GetProperty("CloseReceived", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(record, closeReceived);
+        recordType.GetProperty("CloseCode", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(record, closeCode);
+        var method = typeof(EventChannelClient).GetMethod("IsPlannedEnd", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments = [record, null];
+        Assert.Equal(expected, (bool)method.Invoke(fixture.Events, arguments)!);
+    }
+
+    [Theory]
+    [InlineData(292, 0.2, false)]
+    [InlineData(299.7, 0.2, false)]
+    [InlineData(299.9, 0.2, true)]
+    [InlineData(300, 0.2, true)]
+    [InlineData(306, 0.2, false)]
+    public async Task ReceiveErrorToleranceIsLimitedToTheMeasuredUpgrade(double heldSeconds, double upgradeSeconds, bool expected)
+    {
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Events.PlannedEndEarly = TimeSpan.FromSeconds(15);
+        var recordType = typeof(EventChannelClient).GetNestedType("ConnectionRecord", BindingFlags.NonPublic)!;
+        var connected = DateTimeOffset.UnixEpoch;
+        var record = Activator.CreateInstance(recordType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, [connected, (int?)300], null)!;
+        recordType.GetProperty("ConnectStartedAt", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(record, connected.AddSeconds(-upgradeSeconds));
+        recordType.GetProperty("EndedAt", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(record, connected.AddSeconds(heldSeconds));
+        recordType.GetProperty("Abrupt", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(record, true);
+        var method = typeof(EventChannelClient).GetMethod("IsPlannedEnd", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        object?[] arguments = [record, null];
+        Assert.Equal(expected, (bool)method.Invoke(fixture.Events, arguments)!);
+    }
+
+    [Fact]
+    public async Task AChannelChangeWhileDisconnectedPreservesTransportCatchUp()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var first = await fixture.NextAsync();
+        var prior = fixture.Api.CaptureContext();
+        var catchUps = 0; var invalidations = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        IDisposable? extra = null;
+        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Events.StateChanged += state =>
+        {
+            if (state != WebSocketState.Closed || changed.Task.IsCompleted) return;
+            // Cleanup has cleared _ws, but the transport recovery loop is still active.
+            // Change channels synchronously here so it cannot race the next connection.
+            extra = fixture.Events.Subscribe("catalog");
+            changed.TrySetResult();
+        };
+        try
+        {
+            await first.CloseOutputAsync((WebSocketCloseStatus)1013, "fixture transport loss", CancellationToken.None);
+            await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await fixture.NextAsync();
+            await Until(() => fixture.AccountReads == 1);
+            await Task.Delay(200);
+            Assert.Equal(1, catchUps);
+            Assert.Equal(0, invalidations);
+            Assert.Equal(1, fixture.AccountReads);
+            Assert.Equal(2, fixture.Tickets);
+            Assert.False(fixture.Api.IsCurrentContext(prior));
+        }
+        finally { extra?.Dispose(); }
+    }
+
+    [Fact]
+    public async Task ATokenRefreshWhileDisconnectedPreservesTransportCatchUp()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var first = await fixture.NextAsync();
+        var prior = fixture.Api.CaptureContext();
+        var catchUps = 0; var invalidations = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Events.StateChanged += state =>
+        {
+            if (state != WebSocketState.Closed || refreshed.Task.IsCompleted) return;
+            // The socket is gone and the loop is about to back off: the scheduled token
+            // rotation falls due now and replaces the loop.
+            typeof(EventChannelClient).GetMethod("OnTokenRefreshed", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(fixture.Events, null);
+            refreshed.TrySetResult();
+        };
+        await first.CloseOutputAsync((WebSocketCloseStatus)1013, "fixture transport loss", CancellationToken.None);
+        await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await fixture.NextAsync();
+        await Until(() => fixture.AccountReads == 1);
+        await Task.Delay(200);
+        Assert.Equal(1, catchUps);
+        Assert.Equal(0, invalidations);
+        Assert.Equal(1, fixture.AccountReads);
+        Assert.Equal(2, fixture.Tickets);
+        Assert.False(fixture.Api.IsCurrentContext(prior));
+    }
+
+    // Anything that cannot be proven to be the planned end still catches up once: missed events and access
+    // changes are possible there (the P1 on PR #113: a slept laptop or a silently dropped socket).
+    [Theory]
+    [InlineData("ended-early")]      // the server failed or the network dropped before the lifetime
+    [InlineData("noticed-late")]     // sleep or a silent drop noticed long after the lifetime
+    [InlineData("service-restart")]  // close 1012 at the lifetime
+    [InlineData("try-again-later")]  // close 1013 at the lifetime
+    [InlineData("slow-reconnect")]   // planned end, but more than 5 s without a connection
+    [InlineData("no-lifetime")]      // the ticket announces no lifetime
+    public async Task AnEndThatIsNotTheProvenPlannedOneStillCatchesUpOnce(string kind)
+    {
+        await using var fixture = await PlannedLifetimeFixtureAsync(kind == "no-lifetime" ? null : 3);
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var socket = await fixture.NextAsync();
+        var catchUps = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        var context = fixture.Api.CaptureContext();
+        await Task.Delay(TimeSpan.FromSeconds(kind switch { "ended-early" => 1, "noticed-late" => 5.5, _ => 3 }));
+        if (kind == "slow-reconnect") fixture.TicketDelay = EventChannelClient.DefaultQuickReconnectWindow + TimeSpan.FromSeconds(1);
+        if (kind is "service-restart" or "try-again-later")
+            await socket.CloseOutputAsync((WebSocketCloseStatus)(kind == "service-restart" ? 1012 : 1013), "fixture", CancellationToken.None);
+        else socket.Abort();
+        await fixture.NextAsync(TimeSpan.FromSeconds(20));
+        await Until(() => Volatile.Read(ref catchUps) == 1);
+        await Until(() => fixture.AccountReads == 1);
+        Assert.False(fixture.Api.IsCurrentContext(context));
+    }
+
     private static Task Send(WebSocket socket, string json) => socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(json)), WebSocketMessageType.Text, true, CancellationToken.None);
 
     [Theory]
@@ -162,6 +412,7 @@ public sealed class EventAccessTransportTests
     public async Task EventSocketReconnectKeepsActivePlaybackProgressAlive(int closeCode)
     {
         await using var fixture = await Fixture.StartAsync();
+        fixture.Events.QuickReconnectWindow = TimeSpan.Zero; // this reconnect is a catch-up, however long the socket held
         using var subscription = fixture.Events.Subscribe("notifications");
         var first = await fixture.NextAsync();
         using var manager = new PlaybackManager(new(fixture.Api), new(fixture.Api), fixture.Auth, fixture.Api);
@@ -195,7 +446,12 @@ public sealed class EventAccessTransportTests
         private readonly HttpClient _http = new();
         private readonly CancellationTokenSource _stop = new();
         private readonly Channel<WebSocket> _sockets = Channel.CreateUnbounded<WebSocket>();
+        private readonly ConcurrentDictionary<WebSocket, Socket> _transportSockets = new();
         internal int Tickets, AccountReads, ProgressReads, PlaybackStarts, PlaybackStops;
+        internal TimeSpan TicketDelay, UpgradeDelay;
+        internal int? LifetimeSeconds;
+        internal bool EndAtLifetime;
+        internal WebSocketCloseStatus? LifetimeCloseStatus;
         internal SiloApiClient Api { get; private set; } = null!;
         internal AuthService Auth { get; private set; } = null!;
         internal EventChannelClient Events { get; private set; } = null!;
@@ -229,12 +485,19 @@ public sealed class EventAccessTransportTests
                     return;
                 }
                 if (context.Request.Path == "/api/v2/events/ws-ticket")
-                { Interlocked.Increment(ref fixture.Tickets); await context.Response.WriteAsync("{\"ticket\":\"isolated-fixture\",\"protocol\":\"silo.events.v2\"}"); return; }
+                { Interlocked.Increment(ref fixture.Tickets); if (fixture.TicketDelay > TimeSpan.Zero) await Task.Delay(fixture.TicketDelay); await context.Response.WriteAsync("{\"ticket\":\"isolated-fixture\",\"protocol\":\"silo.events.v2\"" + (fixture.LifetimeSeconds is int lifetime ? $",\"max_connection_seconds\":{lifetime}" : "") + "}"); return; }
                 if (context.Request.Path == "/api/v2/account/me")
                 { Interlocked.Increment(ref fixture.AccountReads); await context.Response.WriteAsync("{\"id\":\"account\",\"username\":\"Fixture\",\"role\":\"user\"}"); return; }
                 if (context.Request.Path != "/api/v2/events/ws" || !context.WebSockets.IsWebSocketRequest)
                 { context.Response.StatusCode = 404; return; }
+                // The server lifetime starts at accept, before its response reaches the client.
+                var lifetimeEnd = fixture.EndAtLifetime && fixture.LifetimeSeconds is int lifetimeSeconds
+                    ? Task.Delay(TimeSpan.FromSeconds(lifetimeSeconds), fixture._stop.Token) : null;
+                if (fixture.UpgradeDelay > TimeSpan.Zero)
+                    context.Response.OnStarting(() => Task.Delay(fixture.UpgradeDelay, fixture._stop.Token));
                 using var socket = await context.WebSockets.AcceptWebSocketAsync("silo.events.v2");
+                if (context.Features.Get<IConnectionSocketFeature>() is { } transport)
+                    fixture._transportSockets[socket] = transport.Socket;
                 try
                 {
                     await Send(socket, "{\"type\":\"hello\",\"connection_id\":\"fixture\"}");
@@ -242,6 +505,13 @@ public sealed class EventAccessTransportTests
                     await socket.ReceiveAsync(buffer, fixture._stop.Token);
                     await Send(socket, "{\"type\":\"subscribed\",\"rejected\":[]}");
                     await fixture._sockets.Writer.WriteAsync(socket);
+                    if (lifetimeEnd != null)
+                    {
+                        await lifetimeEnd;
+                        if (fixture.LifetimeCloseStatus is { } closeStatus)
+                            await socket.CloseOutputAsync(closeStatus, null, fixture._stop.Token);
+                        else fixture.CloseTransportWithFin(socket);
+                    }
                     await Task.Delay(Timeout.Infinite, fixture._stop.Token);
                 }
                 catch (OperationCanceledException) { }
@@ -257,7 +527,13 @@ public sealed class EventAccessTransportTests
             fixture.Events = new(fixture.Api, fixture.Auth);
             return fixture;
         }
-        internal Task<WebSocket> NextAsync() => _sockets.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        internal Task<WebSocket> NextAsync(TimeSpan? wait = null) => _sockets.Reader.ReadAsync().AsTask().WaitAsync(wait ?? TimeSpan.FromSeconds(5));
+        internal void CloseTransportWithFin(WebSocket socket)
+        {
+            Assert.True(_transportSockets.TryGetValue(socket, out var transport), "Kestrel did not expose its TCP socket.");
+            // Send a real TCP FIN, not a WebSocket close frame or an Abort/RST.
+            transport!.Shutdown(SocketShutdown.Send);
+        }
         public async ValueTask DisposeAsync()
         {
             Events.Dispose(); Auth.Dispose(); _stop.Cancel();

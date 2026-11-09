@@ -113,6 +113,12 @@
         <ProjectCapability Include="Msix" />
     </ItemGroup>
 
+    <!-- Core sources are compiled into this assembly; PlaybackIntegrationTests links
+         EventAccessTransportTests.cs, which uses EventChannelClient's internal test hooks. -->
+    <ItemGroup>
+      <InternalsVisibleTo Include="SiloPlayer.PlaybackIntegrationTests" />
+    </ItemGroup>
+
     <ItemGroup>
       <Compile Include="..\SiloPlayer.Core\**\*.cs" Exclude="..\SiloPlayer.Core\bin\**;..\SiloPlayer.Core\obj\**" LinkBase="SiloPlayer.Core" />
     <EmbeddedResource Include="..\SiloPlayer.Core\Models\Settings\device-settings.json" LogicalName="SiloPlayer.Core.Models.Settings.device-settings.json" />
