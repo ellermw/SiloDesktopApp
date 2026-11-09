@@ -1543,6 +1543,9 @@ public sealed partial class MainWindow : Window
                 // walk both the new and the retired page.
                 if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
                 {
+                    // Adopt the same-owner context now so realtime refreshes
+                    // behind the player patch rows instead of resetting Home.
+                    home.ViewModel.AdoptReconnectContext(context);
                     _pendingHomeCatchUp = context;
                     return;
                 }
@@ -1605,7 +1608,13 @@ public sealed partial class MainWindow : Window
             // Initial login still belongs to the profile/bootstrap flow.
             if (!CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible) return;
             if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
-            { _pendingAccessRefresh = true; return; }
+            {
+                // Every reconnect and token refresh re-reads the account. Only a
+                // new shell identity needs the deferred route remount.
+                if (!string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal))
+                    _pendingAccessRefresh = true;
+                return;
+            }
             ShowMainNavigation();
         }
         if (DispatcherQueue.HasThreadAccess) Refresh();

@@ -293,6 +293,13 @@ internal static partial class SidebarReviewNativeFixture
             Check(!(bool)typeof(MainWindow).GetField("_pendingAccessRefresh", Instance)!.GetValue(window)! &&
                 Equals(typeof(MainWindow).GetField("_pendingHomeCatchUp", Instance)!.GetValue(window), second),
                 "transport catch-ups under foreground playback queue one Home catch-up instead of a route remount");
+            var homeGeneration = home.ViewModel.SurfaceGeneration;
+            Call(window, "OnAccountAuthorityChanged"); await Drain();
+            home.ViewModel.QueueRealtimeRefresh("playback_progress"); await Drain(); await Drain(); await Drain();
+            Check(Equals(loaded.GetValue(home.ViewModel), second) && home.ViewModel.SurfaceGeneration == homeGeneration &&
+                !(bool)typeof(MainWindow).GetField("_pendingAccessRefresh", Instance)!.GetValue(window)! &&
+                Equals(typeof(MainWindow).GetField("_pendingHomeCatchUp", Instance)!.GetValue(window), second),
+                "same-identity account refresh and progress refresh behind playback keep Home and its queued catch-up");
             player.SetState(PlayerState.Idle);
             await Until(() => Equals(loaded.GetValue(home.ViewModel), second) && !home.ViewModel.IsLoading); await Drain();
             Check(ReferenceEquals(navigation.Frame!.Content, home) && home.IsLoaded &&
