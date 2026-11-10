@@ -48,6 +48,7 @@ public sealed partial class SectionRow : UserControl
     private long _activationGeneration;
     private long _offsetRestoreGeneration;
     private double? _pendingRestoreOffset;
+    private double? _navigationTargetOffset;
     private const double DragThreshold = 7;
 
     /// <summary>The containing library. Home sections intentionally leave this null.</summary>
@@ -301,13 +302,17 @@ public sealed partial class SectionRow : UserControl
         // A rebind before an earlier restore landed keeps that earlier target.
         var pendingOffset = _pendingRestoreOffset;
         CancelPendingOffsetRestore();
+        // The row's own animated navigation may still be short of its target;
+        // land it there rather than at the offset it had mid-animation.
+        var navigationTarget = _navigationTargetOffset;
+        _navigationTargetOffset = null;
         if (!preserveOffset)
         {
             CardsScrollViewer.ChangeView(0, null, null, disableAnimation: true);
             return;
         }
 
-        var targetOffset = Math.Max(0, pendingOffset ?? previousOffset);
+        var targetOffset = Math.Max(0, pendingOffset ?? navigationTarget ?? previousOffset);
         if (targetOffset <= 1)
             return;
 
@@ -342,6 +347,26 @@ public sealed partial class SectionRow : UserControl
     {
         if (_pendingRestoreOffset is { } target && offset > target + 1)
             CancelPendingOffsetRestore();
+    }
+
+    /// <summary>
+    /// Hands a queued rebind restore over to the row's own navigation, so the
+    /// navigation starts from the restored position instead of discarding it.
+    /// </summary>
+    private double? TakePendingOffsetRestore()
+    {
+        if (_pendingRestoreOffset is not { } target) return null;
+        CancelPendingOffsetRestore();
+        // Measure the rebound extent so the restored base is not clamped short.
+        CardsScrollViewer.UpdateLayout();
+        return Math.Clamp(Math.Max(target, CardsScrollViewer.HorizontalOffset), 0, CardsScrollViewer.ScrollableWidth);
+    }
+
+    /// <summary>Starts the row's own animated navigation and remembers where it lands.</summary>
+    private void NavigateTo(double target)
+    {
+        _navigationTargetOffset = Math.Abs(target - CardsScrollViewer.HorizontalOffset) > 1 ? target : null;
+        CardsScrollViewer.ChangeView(target, null, null);
     }
 
     private void UpdateSectionVisibility(HomeSectionWithItems section)
@@ -389,6 +414,7 @@ public sealed partial class SectionRow : UserControl
         // Initial layout can already be within one viewport of the tail on
         // wide displays. Wait for forward movement or explicit navigation.
         var offset = CardsScrollViewer.HorizontalOffset;
+        if (!e.IsIntermediate) _navigationTargetOffset = null;
         CancelPendingOffsetRestoreIfMovedForward(offset);
         // Custom drags arm once in PointerMoved, not on each scroll update.
         if (_dragPointerId == null && offset > _lastHorizontalOffset + 1) _completionDemandArmed = true;
@@ -430,13 +456,13 @@ public sealed partial class SectionRow : UserControl
                 break;
             case VirtualKey.Home:
                 CancelPendingOffsetRestore();
-                CardsScrollViewer.ChangeView(0, null, null);
+                NavigateTo(0);
                 e.Handled = true;
                 break;
             case VirtualKey.End:
-                CancelPendingOffsetRestore();
+                TakePendingOffsetRestore();
                 _completionDemandArmed = true;
-                CardsScrollViewer.ChangeView(CardsScrollViewer.ScrollableWidth, null, null);
+                NavigateTo(CardsScrollViewer.ScrollableWidth);
                 UpdateScrollBounds();
                 e.Handled = true;
                 break;
@@ -452,7 +478,7 @@ public sealed partial class SectionRow : UserControl
         ResetDragState();
         _dragPointerId = e.Pointer.PointerId;
         _dragStartX = point.Position.X;
-        _dragStartOffset = CardsScrollViewer.HorizontalOffset;
+        _dragStartOffset = _pendingRestoreOffset ?? CardsScrollViewer.HorizontalOffset;
         _isDragging = false;
     }
 
@@ -474,7 +500,8 @@ public sealed partial class SectionRow : UserControl
                 ResetDragState();
                 return;
             }
-            CancelPendingOffsetRestore();
+            if (TakePendingOffsetRestore() is { } restored) _dragStartOffset = restored;
+            _navigationTargetOffset = null;
         }
 
         var target = Math.Clamp(
@@ -746,14 +773,14 @@ public sealed partial class SectionRow : UserControl
 
     private void ScrollByPage(int direction)
     {
-        CancelPendingOffsetRestore();
+        var baseOffset = TakePendingOffsetRestore() ?? CardsScrollViewer.HorizontalOffset;
         if (direction > 0) _completionDemandArmed = true;
         var page = Math.Max(240, CardsScrollViewer.ViewportWidth * 0.82);
         var target = Math.Clamp(
-            CardsScrollViewer.HorizontalOffset + (page * direction),
+            baseOffset + (page * direction),
             0,
             CardsScrollViewer.ScrollableWidth);
-        CardsScrollViewer.ChangeView(target, null, null);
+        NavigateTo(target);
         // ChangeView need not raise ViewChanged when already at the end.
         UpdateScrollBounds();
     }
