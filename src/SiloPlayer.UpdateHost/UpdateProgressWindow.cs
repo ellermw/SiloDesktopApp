@@ -207,15 +207,19 @@ public sealed class UpdateProgressWindow : Window
             presenter.IsAlwaysOnTop=true;
         }
         // Windows 11 draws the outline itself, following the rounded corners, like its own flyouts.
-        // Older Windows ignores both requests and shows a plain rectangle.
+        // Older Windows rejects both requests, so the panel keeps its own 1px outline there.
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
         // A frameless WinUI window still keeps a classic 3px frame, painted light grey inside the
         // outline. Drop the frame styles so the panel's own background meets the outline.
         SetWindowLongPtr(self,-16,(IntPtr)(GetWindowLongPtr(self,-16).ToInt64() & ~0x00C40000L)); // WS_BORDER|WS_DLGFRAME|WS_THICKFRAME
         SetWindowLongPtr(self,-20,(IntPtr)(GetWindowLongPtr(self,-20).ToInt64() & ~0x00020301L)); // WS_EX_DLGMODALFRAME|WINDOWEDGE|CLIENTEDGE|STATICEDGE
         SetWindowPos(self,IntPtr.Zero,0,0,0,0,0x0237); // SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|NOOWNERZORDER
-        var round=2;_=DwmSetWindowAttribute(self,33,ref round,sizeof(int));
-        var outline=0x00473F3A;_=DwmSetWindowAttribute(self,34,ref outline,sizeof(int)); // #3A3F47 as COLORREF (0x00BBGGRR).
+        var round=2;var rounded=DwmSetWindowAttribute(self,33,ref round,sizeof(int))>=0;
+        var outline=0x00473F3A;var outlined=DwmSetWindowAttribute(self,34,ref outline,sizeof(int))>=0; // #3A3F47 as COLORREF (0x00BBGGRR).
+        if(!rounded || !outlined)
+        {
+            root.BorderThickness=new Thickness(1);root.BorderBrush=new SolidColorBrush(ColorHelper.FromArgb(255,52,57,66));
+        }
         root.SizeChanged+=(_,_)=>{layoutDirty=true;Track();};
         Track();
         tracking.Tick+=(_,_)=>Track();
