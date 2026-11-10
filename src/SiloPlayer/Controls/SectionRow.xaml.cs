@@ -125,9 +125,9 @@ public sealed partial class SectionRow : UserControl
             ++_activationGeneration;
             App.RecordUiDiagnostic($"SectionRow loaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(Section?.Items);
-            // Unloaded dropped this row's model handler but kept the guard's,
-            // so put the guard back behind it: UpdateSection must stay queued
-            // ahead of a recovery Reset.
+            // Unloaded detached the guard along with this row's model handler.
+            // Attach it again behind that handler: UpdateSection must stay
+            // queued ahead of a recovery Reset.
             _cardsSource?.Resubscribe();
             // Recovery gave up while this row was unloaded; rebind it now.
             if (_cardsSource is { IsStale: true }) CardsSource_GaveUp();
@@ -141,6 +141,9 @@ public sealed partial class SectionRow : UserControl
             ++_activationGeneration;
             App.RecordUiDiagnostic($"SectionRow unloaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(null);
+            // Release the guard's model subscription too, so a retired row and
+            // its repeater are not kept alive and driven by the shared model.
+            _cardsSource?.Detach();
             _uiCustomizationService.Changed -= UICustomization_Changed;
         };
     }
@@ -320,26 +323,36 @@ public sealed partial class SectionRow : UserControl
         catch
         {
             // The repeater may already hold the new guard when its change
-            // handling throws. Put the previous guard back, then keep whichever
-            // guard the repeater is actually bound to and dispose only the
-            // other: it must never hold a disposed guard, and only one guard
-            // may observe the model.
+            // handling throws. Put the previous guard back, then keep only the
+            // guard the repeater is actually bound to and dispose the rest: it
+            // must never hold a disposed guard, and only one guard may observe
+            // the model.
             if (previous != null && ReferenceEquals(CardsRepeater.ItemsSource, next))
             {
                 try { CardsRepeater.ItemsSource = previous; }
                 catch (Exception restoreEx) { App.RecordUiDiagnostic($"SectionRow restoring the previous cards source failed hr=0x{restoreEx.HResult:X8}"); }
             }
-            var bound = previous != null && ReferenceEquals(CardsRepeater.ItemsSource, previous) ? previous : next;
-            if (ReferenceEquals(bound, previous)) next.Dispose();
-            else previous?.Dispose();
+            var held = CardsRepeater.ItemsSource;
+            var bound = ReferenceEquals(held, next) ? next
+                : previous != null && ReferenceEquals(held, previous) ? previous
+                : null;
+            if (!ReferenceEquals(bound, next)) next.Dispose();
+            if (previous != null && !ReferenceEquals(bound, previous)) previous.Dispose();
+            // With neither guard bound, clear the source so the next
+            // UpdateSection (model change or reload) binds the repeater again.
             _cardsSource = bound;
+            if (bound == null)
+                App.RecordUiDiagnostic("SectionRow cards binding failed and the repeater holds neither guard; rebinding on the next update");
             // The repeater did not take the binding cleanly, so its view may
             // be out of step: the next model change (or reload) resyncs it.
-            bound.MarkStale();
+            bound?.MarkStale();
+            if (!IsLoaded) bound?.Detach();
             throw;
         }
         _cardsSource = next;
         previous?.Dispose();
+        // An unloaded row observes the model only once it loads again.
+        if (!IsLoaded) next.Detach();
     }
 
     private void CardsSource_GaveUp()
@@ -357,7 +370,7 @@ public sealed partial class SectionRow : UserControl
             || RepeaterItemsSource<MediaItem>.IsRepeaterRejection(ex))
         {
             // Rejected as well: BindCards left the repeater on a live guard
-            // marked stale, so the next model change or reload retries.
+            // marked stale, or unbound, so the next model change or reload retries.
             App.RecordUiDiagnostic($"SectionRow rebind after rejected resyncs failed hr=0x{ex.HResult:X8}");
             return;
         }

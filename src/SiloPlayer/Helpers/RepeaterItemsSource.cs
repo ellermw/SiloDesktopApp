@@ -56,6 +56,8 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     private int _failedResyncs;
     // Recovery gave up (or could not be queued); the next model change retries.
     private bool _stale;
+    // The owner left the visual tree: no model subscription and no retry runs.
+    private bool _detached;
     private bool _disposed;
 
     public RepeaterItemsSource(ObservableCollection<T> source, DispatcherQueue dispatcher)
@@ -72,13 +74,41 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     /// <summary>
     /// Moves this view's model subscription behind every listener added since,
-    /// so an owner that re-subscribes on reload is still notified first.
+    /// so an owner that re-subscribes on reload is still notified first. A
+    /// detached view is attached again, and when the model moved on (or a
+    /// recovery was interrupted) while it was detached, one Reset publishes
+    /// the model as it is now. A stale view stays stale for the owner to rebind.
     /// </summary>
     public void Resubscribe()
     {
         if (_disposed) return;
         Source.CollectionChanged -= OnSourceChanged;
         Source.CollectionChanged += OnSourceChanged;
+        if (!_detached) return;
+        _detached = false;
+        if (_stale || _resyncQueued) return;
+        if (ReferenceEquals(_accepted, _items) && _items.SequenceEqual(Source)) return;
+        _failedResyncs = 0;
+        QueueResync();
+    }
+
+    /// <summary>
+    /// Drops the model subscription and any pending retry while the owner is
+    /// out of the visual tree, so the model does not keep the owner and its
+    /// repeater reachable or keep driving them. <see cref="Resubscribe"/>
+    /// attaches the view again.
+    /// </summary>
+    public void Detach()
+    {
+        if (_disposed || _detached) return;
+        _detached = true;
+        Source.CollectionChanged -= OnSourceChanged;
+        if (_retryTimer is { IsRunning: true })
+        {
+            // Abandon the retry; reattaching queues a fresh one if still needed.
+            _retryTimer.Stop();
+            _resyncQueued = false;
+        }
     }
 
     /// <summary>Changes, including recovery Resets, the bound repeater rejected.</summary>
@@ -212,7 +242,8 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     private void Resync()
     {
         _resyncQueued = false;
-        if (_disposed) return;
+        // A detached view resyncs when it is attached again.
+        if (_disposed || _detached) return;
         // A Reset raised inside another layout pass is rejected the same way.
         Resyncing?.Invoke();
         if (Publish(ResetArgs))

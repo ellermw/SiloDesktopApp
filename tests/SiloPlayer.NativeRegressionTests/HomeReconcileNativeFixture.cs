@@ -190,14 +190,20 @@ internal static class HomeReconcileNativeFixture
         var first = await MountAsync(parent, mounted);
         parent.Children.Remove(first);
         var second = await MountAsync(parent, mounted);
+        // The retired row has unloaded, so its guard must have released the
+        // shared model: its snapshot stays where the row left it.
+        var retired = Guard(first);
+        var retiredSnapshot = retired.Cast<MediaItem>().ToArray();
         try
         {
             Apply(mounted, Movies(new[] { 4, 2, 0, 50 }, version: 1));
             await DrainAsync();
             Apply(mounted, Movies(Enumerable.Range(0, 25)));
             await RequireCardsMatchAsync(second, mounted, "rebuilt-row");
-            if (Guard(first).RejectedChanges != 0)
+            if (retired.RejectedChanges != 0)
                 throw new InvalidOperationException("rebuilt-row: the retired row's repeater rejected a change.");
+            if (!retiredSnapshot.SequenceEqual(retired.Cast<MediaItem>()))
+                throw new InvalidOperationException("rebuilt-row: the retired row's guard still observes the model.");
         }
         finally { parent.Children.Remove(second); }
     }
