@@ -208,9 +208,7 @@ public sealed class UpdateProgressWindow : Window
             presenter.IsAlwaysOnTop=true;
         }
         // Windows 11 draws the outline itself, following the rounded corners, like its own flyouts.
-        // Older Windows rejects the requests, and DWM may accept them yet draw no border for a window
-        // without frame styles, so the panel keeps its own 1px outline unless DWM reports a visible border
-        // (checked again while tracking, see UpdateOutline).
+        // Older Windows rejects the requests, so the panel then draws its own 1px outline (see UpdateOutline).
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
         // A frameless WinUI window still keeps a classic 3px frame, painted light grey inside the
         // outline. Drop the frame styles so the panel's own background meets the outline.
@@ -253,6 +251,7 @@ public sealed class UpdateProgressWindow : Window
     private bool layoutDirty=true;
     private bool outlineRounded,outlineColored;
     private bool? dwmOutline;
+    private bool outlineTraced;
     private PanelRect? anchor;
     private SizeInt32 clientSize;
     private RectInt32 lastBounds;
@@ -317,20 +316,27 @@ public sealed class UpdateProgressWindow : Window
         catch(Exception ex){Console.Error.WriteLine($"Update panel placement failed: {ex.GetType().Name}");}
     }
 
-    // DWM may not report its border until the window is shown, so after the first probe the choice is
-    // made again only while the panel is visible. The fallback uses the DWM outline's colour and rounded
-    // corners (DWMWCP_ROUND is 8px), so the panel looks the same whichever path draws it.
+    // Windows 11 draws a border in DWMWA_BORDER_COLOR around every window it rounds, frame styles or not
+    // (DWMWA_COLOR_NONE is the documented way to suppress it), so DWM accepting both requests decides the
+    // path. DWMWA_VISIBLE_FRAME_BORDER_THICKNESS describes the frame this window no longer has, so it never
+    // decides anything; it is only traced, with the path taken, once the panel is first shown.
+    // The fallback draws the same colour inside the client area, rounded by XAML (DWMWCP_ROUND is 8px).
     private void UpdateOutline(IntPtr self)
     {
-        if(dwmOutline is not null && !AppWindow.IsVisible)return;
-        var drawn=outlineRounded && outlineColored
-            && DwmGetWindowAttribute(self,37,out var border,sizeof(int))>=0 && border>0; // DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
-        if(drawn==dwmOutline)return;
-        dwmOutline=drawn;
-        root.BorderThickness=new Thickness(drawn ? 0 : 1);
-        root.BorderBrush=drawn ? null : new SolidColorBrush(ColorHelper.FromArgb(255,58,63,71));
-        root.CornerRadius=new CornerRadius(!drawn && outlineRounded ? 8 : 0);
-        layoutDirty=true;
+        if(dwmOutline is null)
+        {
+            var drawn=outlineRounded && outlineColored;
+            dwmOutline=drawn;
+            root.BorderThickness=new Thickness(drawn ? 0 : 1);
+            root.BorderBrush=drawn ? null : new SolidColorBrush(ColorHelper.FromArgb(255,58,63,71));
+            root.CornerRadius=new CornerRadius(!drawn && outlineRounded ? 8 : 0);
+            layoutDirty=true;
+        }
+        if(outlineTraced || !AppWindow.IsVisible)return;
+        outlineTraced=true;
+        // Not stderr: the startup smoke test treats any stderr output as a failure.
+        var probed=DwmGetWindowAttribute(self,37,out var border,sizeof(int))>=0; // DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
+        Trace.WriteLine($"Update panel outline: {(dwmOutline==true ? "DWM" : "app")} (round {outlineRounded}, colour {outlineColored}, DWM frame border {(probed ? $"{border}px" : "unavailable")})");
     }
 
     private bool IsVideoSurface(IntPtr hwnd)
