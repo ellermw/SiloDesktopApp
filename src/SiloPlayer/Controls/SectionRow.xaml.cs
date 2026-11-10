@@ -309,11 +309,36 @@ public sealed partial class SectionRow : UserControl
         // (a change reaching it mid-layout) resyncs this row instead of
         // throwing into the Home reconciler and aborting the section update.
         var previous = _cardsSource;
-        _cardsSource = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue);
-        _cardsSource.Resyncing += CardsSource_Resyncing;
-        _cardsSource.Resynced += CardsSource_Resynced;
-        _cardsSource.GaveUp += CardsSource_GaveUp;
-        CardsRepeater.ItemsSource = _cardsSource;
+        var next = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue);
+        next.Resyncing += CardsSource_Resyncing;
+        next.Resynced += CardsSource_Resynced;
+        next.GaveUp += CardsSource_GaveUp;
+        try
+        {
+            CardsRepeater.ItemsSource = next;
+        }
+        catch
+        {
+            // The repeater may already hold the new guard when its change
+            // handling throws. Put the previous guard back, then keep whichever
+            // guard the repeater is actually bound to and dispose only the
+            // other: it must never hold a disposed guard, and only one guard
+            // may observe the model.
+            if (previous != null && ReferenceEquals(CardsRepeater.ItemsSource, next))
+            {
+                try { CardsRepeater.ItemsSource = previous; }
+                catch (Exception restoreEx) { App.RecordUiDiagnostic($"SectionRow restoring the previous cards source failed hr=0x{restoreEx.HResult:X8}"); }
+            }
+            var bound = previous != null && ReferenceEquals(CardsRepeater.ItemsSource, previous) ? previous : next;
+            if (ReferenceEquals(bound, previous)) next.Dispose();
+            else previous?.Dispose();
+            _cardsSource = bound;
+            // The repeater did not take the binding cleanly, so its view may
+            // be out of step: the next model change (or reload) resyncs it.
+            bound.MarkStale();
+            throw;
+        }
+        _cardsSource = next;
         previous?.Dispose();
     }
 
@@ -328,15 +353,11 @@ public sealed partial class SectionRow : UserControl
         {
             BindCards(stale.Source, rebind: true);
         }
-        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException)
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException
+            || RepeaterItemsSource<MediaItem>.IsRepeaterRejection(ex))
         {
-            // Rejected as well: keep the stale guard bound so the next model
-            // change retries, and report it.
-            if (!ReferenceEquals(_cardsSource, stale))
-            {
-                _cardsSource?.Dispose();
-                _cardsSource = stale;
-            }
+            // Rejected as well: BindCards left the repeater on a live guard
+            // marked stale, so the next model change or reload retries.
             App.RecordUiDiagnostic($"SectionRow rebind after rejected resyncs failed hr=0x{ex.HResult:X8}");
             return;
         }
@@ -382,6 +403,13 @@ public sealed partial class SectionRow : UserControl
         var index = -1;
         for (var i = 0; i < source.Count; i++)
             if (ReferenceEquals(source[i], item)) { index = i; break; }
+        // The reconciler replaces a changed item with a new object under the
+        // same ContentId, so the focused card may now hold that object.
+        if (index < 0 && !string.IsNullOrEmpty(item.ContentId))
+        {
+            for (var i = 0; i < source.Count; i++)
+                if (source[i] is MediaItem candidate && string.Equals(candidate.ContentId, item.ContentId, StringComparison.Ordinal)) { index = i; break; }
+        }
         // A card whose item left the row has nothing to return focus to.
         if (index < 0) return;
         var element = CardsRepeater.GetOrCreateElement(index);

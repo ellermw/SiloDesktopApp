@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
-using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 using SiloPlayer.Core.Services;
 
@@ -150,13 +149,38 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
             LocalLog.AppendException(LogFile, ex, detail);
             return false;
         }
+        catch (Exception ex)
+        {
+            // Not the repeater's rejection: a real failure in a listener.
+            // Report it and let it reach whoever changed the model, as before.
+            LocalLog.AppendException(LogFile, ex, $"RepeaterItemsSource listener failed action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8}");
+            throw;
+        }
     }
 
-    // ItemsRepeater rejects with E_FAIL, which surfaces as a COMException;
-    // WinRT's illegal-state/illegal-call results surface as
-    // InvalidOperationException. Anything else is a real failure and propagates.
-    private static bool IsRepeaterRejection(Exception ex) =>
-        ex is COMException or InvalidOperationException;
+    private const int E_FAIL = unchecked((int)0x80004005);
+
+    /// <summary>
+    /// ItemsRepeater rejects a change with E_FAIL, matched by HRESULT rather
+    /// than CLR type so a COMException or InvalidOperationException from a
+    /// card handler is not mistaken for it. An out-of-range index (WinRT
+    /// E_BOUNDS or a list bounds check) means the repeater's indices disagreed
+    /// with the snapshot, which the recovery Reset resolves, so it is taken
+    /// too instead of unwinding into the model change.
+    /// </summary>
+    public static bool IsRepeaterRejection(Exception ex) =>
+        ex.HResult == E_FAIL || ex is ArgumentOutOfRangeException;
+
+    /// <summary>
+    /// The owner could not bind the repeater to this view cleanly, so the
+    /// repeater may be out of step with it. Like a recovery that gave up, the
+    /// next model change publishes a Reset instead of a delta.
+    /// </summary>
+    public void MarkStale()
+    {
+        if (_disposed || _resyncQueued) return;
+        _stale = true;
+    }
 
     private void QueueResync()
     {
@@ -215,7 +239,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     {
         get
         {
-            if (index < _items.Count) return _items[index];
+            if (index >= 0 && index < _items.Count) return _items[index];
             if (!_loggedFallback)
             {
                 _loggedFallback = true;
@@ -223,8 +247,8 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
                 App.RecordUiDiagnostic(detail);
                 LocalLog.AppendLine(LogFile, detail);
             }
-            if (index < _accepted.Count) return _accepted[index];
-            if (index < _widest.Count) return _widest[index];
+            if (index >= 0 && index < _accepted.Count) return _accepted[index];
+            if (index >= 0 && index < _widest.Count) return _widest[index];
             // No delivered snapshot is this long. Never throw into the
             // repeater's layout pass; serve a real item until the Reset.
             return _widest.Count > 0 ? _widest[^1] : null;
