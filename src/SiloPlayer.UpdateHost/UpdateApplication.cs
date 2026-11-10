@@ -27,19 +27,17 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
     private Window? window;
     private UpdateProgressWindow? view;
     private readonly CancellationTokenSource lifetime=new();
-    private TextBlock status=null!;
-    private ProgressBar progress=null!;
     private Button cancel=null!;
     private bool closeAllowed, committed;
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         Resources.MergedDictionaries.Add(new XamlControlsResources());
         view=new UpdateProgressWindow(options.Restart,options.Owner);window=view;
-        status=view.Status;progress=view.Progress;cancel=view.Cancel;
+        cancel=view.Cancel;
         cancel.Click+=(_,_)=>{if(closeAllowed)window.Close();else if(!committed)lifetime.Cancel();};
         window.AppWindow.Closing+=(_,e)=>{if(!closeAllowed){e.Cancel=true;if(!committed)lifetime.Cancel();}};
         window.Closed+=(_,_)=>{lifetime.Cancel();Exit();};
-        window.Activate();
+        // The panel shows itself without taking focus, so scrolling or playback in Silo continues.
         _=RunAsync();
     }
 
@@ -50,6 +48,7 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
         deadline.CancelAfter(TimeSpan.FromMinutes(options.AwaitDownload ? 40 : 20));var ct=deadline.Token;
         using var app=new NamedPipeClientStream(".",options.AppPipe,PipeDirection.InOut,PipeOptions.Asynchronous);
         NamedPipeServerStream? worker=null;
+        Task<UpdateHostMessage>? appFrame=null;
         try
         {
             var hostImage=Environment.ProcessPath!;
@@ -72,6 +71,25 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
                     if(frame.Kind=="cancel"){closeAllowed=true;window!.Close();return;}
                     throw new UpdateClientFailure(frame.Kind=="failed" ? frame.Text : null);
                 }
+                if(options.ConfirmRestart)
+                {
+                    // Waiting for an answer has no deadline: during playback the panel stays hidden
+                    // until the user is back. Silo writes nothing until "close", so a completed read
+                    // here means Silo closed or abandoned the update.
+                    deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+                    appFrame=UpdateHostProtocol.ReadAsync(app,ct);
+                    var choice=view!.AskRestartAsync(ct);
+                    if(await Task.WhenAny(choice,appFrame)==appFrame){_=appFrame.Exception;closeAllowed=true;window!.Close();return;}
+                    if(!await choice)
+                    {
+                        await UpdateHostProtocol.WriteAsync(app,new("later"),ct);
+                        // Silo keeps the download and finishes the update on its next start.
+                        closeAllowed=true;
+                        await Task.WhenAny(appFrame,Task.Delay(TimeSpan.FromSeconds(10),lifetime.Token));
+                        _=appFrame.Exception;window!.Close();return;
+                    }
+                    await UpdateHostProtocol.WriteAsync(app,new("restart"),ct);
+                }
                 deadline.CancelAfter(TimeSpan.FromMinutes(20));
                 view!.Apply(new("progress",Text:"Preparing your update…"));
             }
@@ -92,9 +110,9 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
                 if(message.Kind=="failed")throw new IOException(message.Text);
             }while(message.Kind!="staged");
             var transaction=message.TransactionId!;
-            var close=await UpdateHostProtocol.ReadAsync(app,ct);
+            var close=await (appFrame??UpdateHostProtocol.ReadAsync(app,ct));
             if(close.Kind!="close" || close.TransactionId!=transaction)throw new OperationCanceledException();
-            committed=true; cancel.IsEnabled=false;status.Text="Finishing and restarting Silo…";
+            committed=true;view!.ShowFinishing(options.Restart ? "Finishing and restarting Silo…" : "Finishing the update…");
             await UpdateHostProtocol.WriteAsync(worker,close,ct);
             message=await UpdateHostProtocol.ReadAsync(worker,ct);Render(message);
             if(message.Kind!="activated")throw new IOException(message.Text??"Activation did not finish.");
@@ -123,13 +141,12 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
         catch(Exception ex)
         {
             try{if(app.IsConnected)await UpdateHostProtocol.WriteAsync(app,new("failed",Text:ex is System.ComponentModel.Win32Exception{NativeErrorCode:1223}?"Administrator approval was canceled. Silo remains open.":"The update could not finish. Silo's previous version is preserved."),CancellationToken.None);}catch{}
-            status.Text=committed ? "Silo has not confirmed startup yet. Your previous version is preserved; launch Silo again to recover if the new version exited. No running app will be closed."
+            view?.ShowFailure(committed ? "Silo has not confirmed startup yet. Your previous version is preserved; launch Silo again to recover if the new version exited. No running app will be closed."
                 : ex is UpdateClientFailure{Message.Length:>0} client ? client.Message
-                : "The update was canceled or could not finish. You can continue using Silo and try again.";
-            view?.Apply(new("progress",Text:status.Text,Total:1));
-            progress.IsIndeterminate=false;progress.Value=0;closeAllowed=true;cancel.Content="Close";cancel.IsEnabled=true;
+                : "The update was canceled or could not finish. You can continue using Silo and try again.");
+            closeAllowed=true;
         }
-        finally{worker?.Dispose();}
+        finally{worker?.Dispose();_=appFrame?.Exception;}
     }
     private void Render(UpdateHostMessage message)
     {
@@ -137,32 +154,4 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
     }
     // The client reported that its download failed; show its text instead of the generic failure.
     private sealed class UpdateClientFailure(string? text) : IOException(text ?? "");
-    internal static void CenterWindow(Window target,long owner)
-    {
-        if(IsIconic((IntPtr)owner))return;
-        var dpi=GetDpiForWindow((IntPtr)owner);if(dpi==0)dpi=96;
-        var width=(int)(500*dpi/96);var height=(int)(440*dpi/96);
-        if(GetClientRect((IntPtr)owner,out var rect))
-        {
-            var origin=new Point{X=rect.Left,Y=rect.Top};if(!ClientToScreen((IntPtr)owner,ref origin))return;
-            rect.Right+=origin.X;rect.Bottom+=origin.Y;rect.Left=origin.X;rect.Top=origin.Y;
-            var point=UpdateWindowPlacement.Center(rect.Left,rect.Top,rect.Right-rect.Left,rect.Bottom-rect.Top,width,height);
-            var monitor=new MonitorInfo{Size=Marshal.SizeOf<MonitorInfo>()};
-            if(GetMonitorInfo(MonitorFromWindow((IntPtr)owner,2),ref monitor))
-            {
-                width=Math.Min(width,monitor.Work.Right-monitor.Work.Left);height=Math.Min(height,monitor.Work.Bottom-monitor.Work.Top);
-                point=(Math.Clamp(point.X,monitor.Work.Left,monitor.Work.Right-width),Math.Clamp(point.Y,monitor.Work.Top,monitor.Work.Bottom-height));
-            }
-            target.AppWindow.Resize(new SizeInt32(width,height));target.AppWindow.Move(new PointInt32(point.X,point.Y));
-        }
-    }
-    [StructLayout(LayoutKind.Sequential)]private struct Rect{public int Left,Top,Right,Bottom;}
-    [StructLayout(LayoutKind.Sequential)]private struct Point{public int X,Y;}
-    [StructLayout(LayoutKind.Sequential)]private struct MonitorInfo{public int Size;public Rect Monitor,Work;public uint Flags;}
-    [DllImport("user32.dll")]private static extern bool GetClientRect(IntPtr hwnd,out Rect rect);
-    [DllImport("user32.dll")]private static extern bool ClientToScreen(IntPtr hwnd,ref Point point);
-    [DllImport("user32.dll")]private static extern IntPtr MonitorFromWindow(IntPtr hwnd,uint flags);
-    [DllImport("user32.dll",CharSet=CharSet.Unicode)]private static extern bool GetMonitorInfo(IntPtr monitor,ref MonitorInfo info);
-    [DllImport("user32.dll")]private static extern uint GetDpiForWindow(IntPtr hwnd);
-    [DllImport("user32.dll")]private static extern bool IsIconic(IntPtr hwnd);
 }

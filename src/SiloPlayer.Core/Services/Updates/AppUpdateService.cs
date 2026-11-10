@@ -14,6 +14,9 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
         MaximumRateLimitWait = TimeSpan.FromHours(6);
     public AppUpdateState State => Volatile.Read(ref _state);
     public string CacheDirectory => Path.GetFullPath(cacheDirectory);
+    public Version CurrentVersion => currentVersion;
+    /// <summary>The latest check on this channel reached the release catalog.</summary>
+    public bool LastCheckSucceeded => Interlocked.Read(ref _lastSuccessfulCheckStamp) > 0;
     public bool PreferIncrementalUpdates { get; init; }
     public string InstalledPayloadDirectory { get; init; } = AppContext.BaseDirectory;
     public string? InstallationRoot { get; init; }

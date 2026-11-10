@@ -62,6 +62,7 @@ public sealed partial class MainWindow
     {
         RootGrid.Loaded -= AppUpdateRootLoaded;
         ReadUpdateResult();
+        LoadDeferredAppUpdate();
         _=NotifySideBySideStartupAsync();
         RefreshUpdatePresentation();
     }
@@ -98,7 +99,9 @@ public sealed partial class MainWindow
         ProfileNameText.MaxWidth = available && NavView.IsPaneOpen ? Math.Max(24, NavView.OpenPaneLength - 210) : double.PositiveInfinity;
         UpdateMenuButton.Content = available ? "Update Available — view changelog" : "Check for updates";
         UpdateMenuButton.Foreground = available ? Helpers.AppUpdateAppearance.Green("CardBackgroundBrush") : (Brush)Application.Current.Resources["PrimaryTextBrush"];
-        if (available && RootGrid.IsLoaded && _playerService.State == PlayerState.Idle)
+        TryResumeDeferredAppUpdate();
+        // A running update window already shows this release; don't also announce it.
+        if (available && RootGrid.IsLoaded && _playerService.State == PlayerState.Idle && !_updateWindowOwnsUpdate && !_updateDialogBusy)
         {
             var key = state.Release!.Tag + state.Release.Sha256;
             if (_announcedUpdate != key)
@@ -305,7 +308,7 @@ public sealed partial class MainWindow
                 && _appUpdates.PreferIncrementalUpdates && !_appUpdates.State.RequiresFullInstaller
                 && _appUpdates.State.Release is { Incremental: not null } windowedRelease)
             {
-                await RunWindowedUpdateAsync(sender, windowed, windowedRelease, consent.Token);
+                await RunWindowedUpdateAsync(sender, windowed, windowedRelease, confirmRestart: true, consent.Token);
                 return;
             }
             await _appUpdates.DownloadAsync(ct: consent.Token).WaitAsync(consent.Token);
@@ -336,17 +339,18 @@ public sealed partial class MainWindow
         finally { _manualUpdateConsent = null; _updateDialogBusy = false; RefreshUpdateDialog(); }
     }
 
-    // From Update now on, the small update window owns the update: this dialog closes, the
-    // window shows the download (only the files actually fetched), then installs and restarts.
-    private async Task RunWindowedUpdateAsync(ContentDialog dialog, IWindowedAppUpdateInstaller windowed, AppRelease release, CancellationToken ct)
+    // From Update now on, the small update panel owns the update: this dialog closes, the panel
+    // shows the download (only the files actually fetched), asks Restart now or Later, then
+    // installs and restarts. A resumed deferral passes confirmRestart false and has no dialog.
+    private async Task RunWindowedUpdateAsync(ContentDialog? dialog, IWindowedAppUpdateInstaller windowed, AppRelease release, bool confirmRestart, CancellationToken ct)
     {
         _updateWindowOwnsUpdate = true;
         try
         {
             var updates = _appUpdates!;
             var packageDirectory = IncrementalUpdateClient.PreparedDirectory(updates.CacheDirectory, release);
-            dialog.Hide();
-            var ready = await windowed.PrepareWithDownloadAsync(release, packageDirectory, true, _updateHwnd.ToInt64(), async (report, token) =>
+            dialog?.Hide();
+            var outcome = await windowed.PrepareWithDownloadAsync(release, packageDirectory, true, confirmRestart, _updateHwnd.ToInt64(), async (report, token) =>
             {
                 void Forward(AppUpdateState state) { if (state.PreparationProgress is { } progress) report(progress); }
                 updates.Changed += Forward;
@@ -355,9 +359,16 @@ public sealed partial class MainWindow
                 if (updates.State.RequiresFullInstaller) return new(null, null);
                 if (updates.State.PreparedPackage is null || !await updates.ReverifyReadyAsync(token))
                     return new(null, updates.State.Error ?? "The update could not be downloaded. You can keep using Silo and try again.");
+                if (confirmRestart) _windowedDownloadReady = release;
                 return new(updates.State.PreparedPackage, null);
             }, ct);
-            if (!ready)
+            if (outcome == WindowedUpdateOutcome.Deferred)
+            {
+                // Later: Silo keeps running; the download stays ready and the next start finishes it.
+                DeferAppUpdate(release);
+                return;
+            }
+            if (outcome != WindowedUpdateOutcome.Staged)
             {
                 // A promoted automatic transfer is not owned by the window's cancellation token.
                 await updates.StopAsync();
@@ -372,7 +383,7 @@ public sealed partial class MainWindow
             _manualUpdateRequested = true;
             await CloseWithAppUpdatesAsync();
         }
-        finally { _updateWindowOwnsUpdate = false; }
+        finally { _updateWindowOwnsUpdate = false; _windowedDownloadReady = null; }
     }
 
     private async Task<bool> PrepareAppUpdateExitAsync()
@@ -386,7 +397,9 @@ public sealed partial class MainWindow
         {
             if (_updateWindowOwnsUpdate && !_manualUpdateRequested)
             {
-                // A user close abandons the window's handoff, never starts a second one.
+                // A user close abandons the window's handoff, never starts a second one. Closing
+                // while the panel asks Restart now or Later counts as Later: the next start finishes it.
+                if (_windowedDownloadReady is { } downloaded) DeferAppUpdate(downloaded);
                 _manualUpdateConsent?.Cancel();
                 await _appUpdates.StopAsync();
                 return allowClose;

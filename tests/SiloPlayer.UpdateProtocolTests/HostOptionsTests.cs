@@ -40,6 +40,24 @@ public sealed class HostOptionsTests
         Assert.Throws<InvalidDataException>(() => HostOptions.Parse([.. worker, "--await-download", "yes"]));
     }
 
+    [Fact]
+    public void Only_a_downloading_window_asks_restart_now_or_later()
+    {
+        var download = (string[])[.. Arguments("v1.2.518-beta.1"), "--await-download", "yes"];
+        Assert.False(HostOptions.Parse(download).ConfirmRestart);
+        var asking = HostOptions.Parse([.. download, "--confirm-restart", "yes"]);
+        Assert.True(asking.ConfirmRestart);
+        Assert.False(HostOptions.Parse([.. download, "--confirm-restart", "no"]).ConfirmRestart);
+        // The elevated worker starts after the answer and never carries the flag.
+        var worker = asking.Arguments(true, 789, 101112).ToArray();
+        Assert.DoesNotContain("--confirm-restart", worker);
+        Assert.False(HostOptions.Parse(worker).ConfirmRestart);
+        // Without the client's download there is nothing to ask about.
+        Assert.Throws<InvalidDataException>(() => HostOptions.Parse([.. Arguments("v1.2.518-beta.1"), "--confirm-restart", "yes"]));
+        Assert.Throws<InvalidDataException>(() => HostOptions.Parse([.. download, "--confirm-restart", "later"]));
+        Assert.Throws<InvalidDataException>(() => HostOptions.Parse([.. worker, "--confirm-restart", "yes"]));
+    }
+
     [Theory]
     [InlineData("v1.2.517.1")]
     [InlineData("v1.2.517.12")]

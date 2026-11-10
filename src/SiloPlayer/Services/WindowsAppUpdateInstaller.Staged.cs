@@ -16,14 +16,14 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
     public bool HasPreparedHandoff=>stagedPipe?.IsConnected==true && stagedTransaction is not null;
     public DateTimeOffset? AuthorityCooldownUntil {get;private set;}
 
-    public Task<bool> PrepareAsync(AppRelease release,PreparedUpdatePackage package,bool restart,long ownerWindow,CancellationToken ct)
-        =>HandoffAsync(release,package.Directory,restart,ownerWindow,null,package,ct);
+    public async Task<bool> PrepareAsync(AppRelease release,PreparedUpdatePackage package,bool restart,long ownerWindow,CancellationToken ct)
+        =>await HandoffAsync(release,package.Directory,restart,false,ownerWindow,null,package,ct)==WindowedUpdateOutcome.Staged;
 
-    public Task<bool> PrepareWithDownloadAsync(AppRelease release,string packageDirectory,bool restart,long ownerWindow,
+    public Task<WindowedUpdateOutcome> PrepareWithDownloadAsync(AppRelease release,string packageDirectory,bool restart,bool confirmRestart,long ownerWindow,
         Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>> download,CancellationToken ct)
-        =>HandoffAsync(release,packageDirectory,restart,ownerWindow,download,null,ct);
+        =>HandoffAsync(release,packageDirectory,restart,confirmRestart,ownerWindow,download,null,ct);
 
-    private async Task<bool> HandoffAsync(AppRelease release,string packageDirectory,bool restart,long ownerWindow,
+    private async Task<WindowedUpdateOutcome> HandoffAsync(AppRelease release,string packageDirectory,bool restart,bool confirmRestart,long ownerWindow,
         Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>>? download,PreparedUpdatePackage? package,CancellationToken ct)
     {
         NamedPipeServerStream? pipe=null;
@@ -41,7 +41,7 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
             var start=new ProcessStartInfo(host){UseShellExecute=false,WorkingDirectory=Path.GetDirectoryName(host)!};
             foreach(var arg in new[]{"--worker","no","--app-pipe",pipeName,"--worker-pipe",workerPipe,"--parent",current.Id.ToString(CultureInfo.InvariantCulture),
                 "--parent-start",current.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture),"--package",packageDirectory,"--tag",release.Tag,
-                "--restart",restart?"yes":"no","--owner",ownerWindow.ToString(CultureInfo.InvariantCulture),"--await-download",download is null?"no":"yes"})start.ArgumentList.Add(arg);
+                "--restart",restart?"yes":"no","--owner",ownerWindow.ToString(CultureInfo.InvariantCulture),"--await-download",download is null?"no":"yes","--confirm-restart",confirmRestart && download is not null?"yes":"no"})start.ArgumentList.Add(arg);
             using var process=Process.Start(start)??throw new IOException("The update window could not start.");
             using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);
             // The download has its own 15-minute limit before the usual 20 minutes for installation.
@@ -73,10 +73,21 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                 if(first.Kind!="visible")throw new InvalidDataException("Invalid update handoff.");
                 visible=true;
                 (package,pending)=await DownloadIntoWindowAsync(pipe,download,deadline.Token);
-                if(package is null)return false;
+                if(package is null)return WindowedUpdateOutcome.NotStarted;
                 if(!Path.GetFullPath(package.Directory).Equals(Path.GetFullPath(packageDirectory),StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("The downloaded package is not the one the update window installs.");
                 await UpdateHostProtocol.WriteAsync(pipe,new("downloaded"),deadline.Token);
+                if(confirmRestart)
+                {
+                    // The window now asks Restart now or Later. The answer can take a whole movie,
+                    // so it has no deadline; installation keeps its usual 20 minutes afterwards.
+                    deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+                    var answer=await pending!;pending=null;
+                    if(answer.Kind=="later"){LocalLog.AppendLine("updates.txt","windowed_update_deferred");return WindowedUpdateOutcome.Deferred;}
+                    if(answer.Kind=="failed"){AuthorityCooldownUntil=answer.CooldownUntil;throw new IOException(answer.Text);}
+                    if(answer.Kind!="restart")throw new InvalidDataException("Invalid update handoff.");
+                    deadline.CancelAfter(TimeSpan.FromMinutes(20));
+                }
             }
             while(true)
             {
@@ -87,12 +98,12 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                 else if(message.Kind=="staged")
                 {
                     if(!visible || message.Text!=package!.Manifest.Version || !Guid.TryParseExact(message.TransactionId,"N",out _))throw new InvalidDataException("Invalid update handoff.");
-                    stagedPipe?.Dispose();stagedPipe=pipe;pipe=null;stagedTransaction=message.TransactionId;stagedCloseArmed=false;return true;
+                    stagedPipe?.Dispose();stagedPipe=pipe;pipe=null;stagedTransaction=message.TransactionId;stagedCloseArmed=false;return WindowedUpdateOutcome.Staged;
                 }
             }
         }
-        catch(OperationCanceledException)when(ct.IsCancellationRequested){return false;}
-        catch(Exception ex){LocalLog.AppendLine("updates.txt","staged_handoff_failed kind="+ex.GetType().Name);return false;}
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){return WindowedUpdateOutcome.NotStarted;}
+        catch(Exception ex){LocalLog.AppendLine("updates.txt","staged_handoff_failed kind="+ex.GetType().Name);return WindowedUpdateOutcome.NotStarted;}
         finally{pipe?.Dispose();}
     }
 

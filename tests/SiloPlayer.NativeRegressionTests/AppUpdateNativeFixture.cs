@@ -376,6 +376,8 @@ internal static class AppUpdateNativeFixture
         var type = Assembly.LoadFrom(path).GetType("SiloPlayer.UpdateHost.UpdateProgressWindow", throwOnError: true)!;
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(owner);
         var progressWindow = (Window)Activator.CreateInstance(type, true, hwnd.ToInt64())!;
+        // This fixture's windows are transparent and never in front; keep the panel shown so it renders.
+        type.GetProperty("ManagesVisibility")!.SetValue(progressWindow, false);
         TransparentFixtureWindow.Configure(progressWindow);
         var apply = type.GetMethod("Apply", BindingFlags.Public | BindingFlags.Instance)
             ?? throw new InvalidOperationException("The progress view has no production presentation entry point.");
@@ -384,9 +386,16 @@ internal static class AppUpdateNativeFixture
         var messageType = apply.GetParameters().Single().ParameterType;
         object Message(string kind, string text, long completed = 0, long total = 0)
             => Activator.CreateInstance(messageType, kind, null, text, completed, total, 0, 0L, null)!;
+        object Download(long completed, long total, int files, int count, long fileBytes, long fileTotal)
+            => Activator.CreateInstance(messageType, "download", null, null, completed, total, 0, 0L, null, files, count, fileBytes, fileTotal)!;
         var status = (TextBlock)type.GetProperty("Status")!.GetValue(progressWindow)!;
         var bar = (ProgressBar)type.GetProperty("Progress")!.GetValue(progressWindow)!;
+        var percent = (TextBlock)type.GetProperty("Percent")!.GetValue(progressWindow)!;
         var cancel = (Button)type.GetProperty("Cancel")!.GetValue(progressWindow)!;
+        var details = (HyperlinkButton)type.GetProperty("Details")!.GetValue(progressWindow)!;
+        var restartNow = (Button)type.GetProperty("RestartNow")!.GetValue(progressWindow)!;
+        var later = (Button)type.GetProperty("Later")!.GetValue(progressWindow)!;
+        var content = (FrameworkElement)progressWindow.Content;
         try
         {
             progressWindow.AppWindow.Show(false);
@@ -400,41 +409,97 @@ internal static class AppUpdateNativeFixture
                 owner.AppWindow.Move(new(point.X, point.Y)); owner.AppWindow.ResizeClient(new(point.Width, point.Height));
                 await Task.Delay(650); AssertHostBounds();
             }
+
+            // Collapsed: "Updating…", the bar with its percentage, and Details.
+            apply.Invoke(progressWindow, [Download(6_291_456, 10_485_760, 37, 61, 524_288, 1_048_576)]);
+            await Task.Delay(400);
+            if (status.Text != "Updating…" || bar.IsIndeterminate || Math.Abs(bar.Value - 60) > .01 || percent.Text != "60%"
+                || !IsShown(details, content) || !IsShown(cancel, content))
+                throw new InvalidOperationException("Collapsed update panel did not show Updating…, its percentage, Details and Cancel.");
+            var collapsed = HostRect();
+            await CaptureAsync(content, "update-panel-collapsed.png");
+
+            // Details expands upward: same bottom edge, taller panel, download counts shown.
+            Invoke(details);
+            await Task.Delay(400);
+            var expanded = HostRect();
+            if (expanded.Bottom - expanded.Top <= collapsed.Bottom - collapsed.Top + 40 || Math.Abs(expanded.Bottom - collapsed.Bottom) > 2 || expanded.Left != collapsed.Left
+                || !Descendants<TextBlock>(content).Any(t => t.Text == "37 / 61" && IsShown(t, content)) || !Descendants<TextBlock>(content).Any(t => t.Text == "Hide details"))
+                throw new InvalidOperationException($"Details did not expand the panel upward: collapsed={collapsed.Top}..{collapsed.Bottom}, expanded={expanded.Top}..{expanded.Bottom}.");
+            AssertHostBounds();
+            await CaptureAsync(content, "update-panel-expanded.png");
+            Invoke(details);
+            await Task.Delay(400);
+            var again = HostRect();
+            if (again.Top != collapsed.Top || again.Bottom != collapsed.Bottom || Descendants<TextBlock>(content).Any(t => t.Text == "37 / 61" && IsShown(t, content)))
+                throw new InvalidOperationException("Details did not collapse back to the minimal panel.");
+            Program.Log($"PASS: actual update panel docks bottom-right, expands upward ({collapsed.Bottom - collapsed.Top}px -> {expanded.Bottom - expanded.Top}px, bottom fixed) and collapses back.");
+
+            // Ready: Restart now or Later; Later explains the next start finishes the update.
+            var ask = (Task<bool>)type.GetMethod("AskRestartAsync")!.Invoke(progressWindow, [CancellationToken.None])!;
+            await Task.Delay(400);
+            if (!IsShown(restartNow, content) || !IsShown(later, content) || IsShown(bar, content) || ask.IsCompleted)
+                throw new InvalidOperationException("Ready update panel did not ask Restart now or Later.");
+            AssertHostBounds();
+            await CaptureAsync(content, "update-panel-ready.png");
+            Click(later);
+            if (!ask.IsCompleted || await ask) throw new InvalidOperationException("Later did not answer the ready question.");
+            await Task.Delay(400);
+            if (!Descendants<TextBlock>(content).Any(t => t.Text.Contains("next time you start Silo", StringComparison.Ordinal) && IsShown(t, content)) || (string)cancel.Content != "Close")
+                throw new InvalidOperationException("Later did not explain that the next start finishes the update.");
+            await CaptureAsync(content, "update-panel-later.png");
+            Program.Log("PASS: actual update panel asks Restart now or Later once downloaded; Later explains the next start finishes the update.");
+
             apply.Invoke(progressWindow, [Message("progress", "Installing alongside current version", 50, 100)]);
             await Task.Delay(100);
             if (status.Text != "Installing alongside current version" || bar.IsIndeterminate || Math.Abs(bar.Value - 50) > .01)
                 throw new InvalidOperationException("Actual progress view did not render deterministic installation progress.");
-            await CaptureAsync((FrameworkElement)progressWindow.Content, "update-host-installing.png");
             apply.Invoke(progressWindow, [Message("failed", "Silo has not confirmed startup yet. Your previous version is preserved; launch Silo again to recover if the new version exited. No running app will be closed.")]);
-            await Task.Delay(100);
-            var content = (FrameworkElement)progressWindow.Content; content.UpdateLayout();
+            await Task.Delay(400);
+            content.UpdateLayout();
             var cancelBounds = cancel.TransformToVisual(content).TransformBounds(new Windows.Foundation.Rect(0, 0, cancel.ActualWidth, cancel.ActualHeight));
-            if (cancelBounds.Y < 0 || cancelBounds.Bottom > content.ActualHeight + 1)
+            var host = HostRect();
+            var hostHeight = (host.Bottom - host.Top) / content.XamlRoot.RasterizationScale;
+            if (cancelBounds.Y < 0 || cancelBounds.Bottom > Math.Min(content.ActualHeight, hostHeight) + 1)
                 throw new InvalidOperationException("Updater failure status clips its actionable Close control.");
             await CaptureAsync(content, "update-host-error.png");
             if (owner.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
             {
                 presenter.Maximize(); await Task.Delay(650); AssertHostBounds(); presenter.Restore();
             }
-            Program.Log("PASS: actual finite updater view follows owner client bounds, remains in monitor work area, renders real progress/error states and preserves its actionable control without any worker/elevation.");
+            Program.Log("PASS: actual update panel follows owner client bounds, remains in monitor work area, renders real progress/error states and preserves its actionable control without any worker/elevation.");
         }
         finally { progressWindow.Close(); }
 
+        NativeRect HostRect()
+        {
+            if (!GetWindowRect(WinRT.Interop.WindowNative.GetWindowHandle(progressWindow), out var actual)) throw new System.ComponentModel.Win32Exception();
+            return actual;
+        }
         void AssertHostBounds()
         {
             if (!GetClientRect(hwnd, out var ownerRect)) throw new System.ComponentModel.Win32Exception();
             var origin = new NativePoint(); if (!ClientToScreen(hwnd, ref origin)) throw new System.ComponentModel.Win32Exception();
             var info = new NativeMonitorInfo { Size = System.Runtime.InteropServices.Marshal.SizeOf<NativeMonitorInfo>() };
             if (!GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref info)) throw new System.ComponentModel.Win32Exception();
-            var hostHwnd = WinRT.Interop.WindowNative.GetWindowHandle(progressWindow);
-            if (!GetWindowRect(hostHwnd, out var actual)) throw new System.ComponentModel.Win32Exception();
+            var actual = HostRect();
             var width = actual.Right - actual.Left; var height = actual.Bottom - actual.Top;
-            var expectedX = Math.Clamp(origin.X + (ownerRect.Right - width) / 2, info.Work.Left, Math.Max(info.Work.Left, info.Work.Right - width));
-            var expectedY = Math.Clamp(origin.Y + (ownerRect.Bottom - height) / 2, info.Work.Top, Math.Max(info.Work.Top, info.Work.Bottom - height));
-            Program.Log($"Updater window: ownerClient={origin.X},{origin.Y},{ownerRect.Right},{ownerRect.Bottom}; work={info.Work.Left},{info.Work.Top},{info.Work.Right},{info.Work.Bottom}; actual={actual.Left},{actual.Top},{width},{height}; expected={expectedX},{expectedY}.");
+            var margin = (int)Math.Round(16 * content.XamlRoot.RasterizationScale);
+            var expectedX = Math.Clamp(origin.X + ownerRect.Right - margin - width, info.Work.Left, Math.Max(info.Work.Left, info.Work.Right - width));
+            var expectedY = Math.Clamp(origin.Y + ownerRect.Bottom - margin - height, info.Work.Top, Math.Max(info.Work.Top, info.Work.Bottom - height));
+            Program.Log($"Update panel: ownerClient={origin.X},{origin.Y},{ownerRect.Right},{ownerRect.Bottom}; work={info.Work.Left},{info.Work.Top},{info.Work.Right},{info.Work.Bottom}; actual={actual.Left},{actual.Top},{width},{height}; expected={expectedX},{expectedY}.");
             if (Math.Abs(actual.Left - expectedX) > 2 || Math.Abs(actual.Top - expectedY) > 2)
-                throw new InvalidOperationException("Finite updater window is offset from owner client center or outside work area.");
+                throw new InvalidOperationException("Update panel is not docked to the owner's bottom-right corner inside the work area.");
         }
+    }
+
+    private static void Invoke(HyperlinkButton button) => ((IInvokeProvider)new HyperlinkButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+
+    private static bool IsShown(FrameworkElement element, FrameworkElement root)
+    {
+        for (DependencyObject? current = element; current is not null && !ReferenceEquals(current, root); current = VisualTreeHelper.GetParent(current))
+            if (current is UIElement { Visibility: Visibility.Collapsed }) return false;
+        return element.Visibility == Visibility.Visible && element.ActualHeight > 0;
     }
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
