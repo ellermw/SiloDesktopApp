@@ -129,6 +129,8 @@ public sealed partial class SectionRow : UserControl
             // so put the guard back behind it: UpdateSection must stay queued
             // ahead of a recovery Reset.
             _cardsSource?.Resubscribe();
+            // Recovery gave up while this row was unloaded; rebind it now.
+            if (_cardsSource is { IsStale: true }) CardsSource_GaveUp();
             _uiCustomizationService.Changed += UICustomization_Changed;
             ApplyResponsiveCardWidths(ActualWidth);
             RefreshPresentation();
@@ -300,9 +302,9 @@ public sealed partial class SectionRow : UserControl
         UpdateScrollBounds();
     }
 
-    private void BindCards(System.Collections.ObjectModel.ObservableCollection<MediaItem> items)
+    private void BindCards(System.Collections.ObjectModel.ObservableCollection<MediaItem> items, bool rebind = false)
     {
-        if (ReferenceEquals(_cardsSource?.Source, items)) return;
+        if (!rebind && ReferenceEquals(_cardsSource?.Source, items)) return;
         // The repeater listens through a guard so an ItemsRepeater rejection
         // (a change reaching it mid-layout) resyncs this row instead of
         // throwing into the Home reconciler and aborting the section update.
@@ -310,8 +312,37 @@ public sealed partial class SectionRow : UserControl
         _cardsSource = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue);
         _cardsSource.Resyncing += CardsSource_Resyncing;
         _cardsSource.Resynced += CardsSource_Resynced;
+        _cardsSource.GaveUp += CardsSource_GaveUp;
         CardsRepeater.ItemsSource = _cardsSource;
         previous?.Dispose();
+    }
+
+    private void CardsSource_GaveUp()
+    {
+        // The repeater rejected every recovery Reset. A fresh guard gives it a
+        // new ItemsSourceView over the model as it is now, so the row converges
+        // instead of showing stale cards until its next change. An unloaded
+        // row is rebound when it loads again.
+        if (!IsLoaded || _cardsSource is not { } stale) return;
+        try
+        {
+            BindCards(stale.Source, rebind: true);
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException)
+        {
+            // Rejected as well: keep the stale guard bound so the next model
+            // change retries, and report it.
+            if (!ReferenceEquals(_cardsSource, stale))
+            {
+                _cardsSource?.Dispose();
+                _cardsSource = stale;
+            }
+            App.RecordUiDiagnostic($"SectionRow rebind after rejected resyncs failed hr=0x{ex.HResult:X8}");
+            return;
+        }
+        // The rebind recycled every card; hand keyboard focus back as a
+        // recovery Reset would.
+        CardsSource_Resynced();
     }
 
     private void CardsSource_Resyncing()

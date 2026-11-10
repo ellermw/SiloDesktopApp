@@ -20,12 +20,13 @@ namespace SiloPlayer.Helpers;
 /// holds it fixed; its realized cards still show the items it last accepted.
 /// Whether WinUI's ItemsSourceView cached the new Count before the rejection
 /// is not relied on: an index past the held snapshot is served from the last
-/// accepted one, so a row that shrank cannot be indexed past its end in
-/// either case. Every rejection is logged with both counts. Later model changes in
+/// accepted one, or from the longest snapshot rejected since, so a row that
+/// shrank cannot be indexed past its end in either case. Every rejection is logged with both counts. Later model changes in
 /// that window are not lost: they are coalesced into the Reset, which publishes
 /// the collection as it is then. A rejected Reset is retried a few times with
-/// a growing delay; after that the view stays stale until the next model
-/// change and the failure is logged to home_error.txt. Only the repeater's
+/// a growing delay; after that the failure is logged to home_error.txt and
+/// <see cref="GaveUp"/> lets the owner rebind the repeater. Otherwise the
+/// view stays stale until the next model change. Only the repeater's
 /// rejection is taken; any other failure propagates as before. The Reset
 /// recycles every realized card, so the owner hooks
 /// <see cref="Resyncing"/>/<see cref="Resynced"/> to carry keyboard focus
@@ -46,6 +47,10 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     // The snapshot the repeater last accepted. Until the next accepted change
     // its cached Count may still describe this list instead of _items.
     private List<T> _accepted;
+    // The longest snapshot delivered since the last accepted change. A rejected
+    // growth may have left the repeater's cached Count at its length, so it
+    // backs the indexer past both _items and _accepted.
+    private List<T> _widest;
     private bool _loggedFallback;
     private bool _resyncQueued;
     // Rejected recovery Resets since the last accepted delivery.
@@ -60,6 +65,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _items = [.. source];
         _accepted = _items;
+        _widest = _items;
         Source.CollectionChanged += OnSourceChanged;
     }
 
@@ -86,6 +92,15 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     /// <summary>Raised after the repeater accepted the recovery Reset.</summary>
     public event Action? Resynced;
+
+    /// <summary>
+    /// Raised when the repeater rejected every recovery Reset. The view is
+    /// stale until the owner rebinds the repeater or the model changes again.
+    /// </summary>
+    public event Action? GaveUp;
+
+    /// <summary>The repeater is out of step with the model and no recovery is queued.</summary>
+    public bool IsStale => _stale && !_disposed;
 
     public void Dispose()
     {
@@ -119,6 +134,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         {
             CollectionChanged?.Invoke(this, e);
             _accepted = _items;
+            _widest = _items;
             _loggedFallback = false;
             return true;
         }
@@ -128,6 +144,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
             // the accepted one past its end, so the repeater stays in range
             // whichever Count its ItemsSourceView cached before rejecting.
             RejectedChanges++;
+            if (_items.Count > _widest.Count) _widest = _items;
             var detail = $"RepeaterItemsSource rejected action={e.Action} type={ex.GetType().Name} hr=0x{ex.HResult:X8} count={Source.Count} snapshot={_items.Count} accepted={_accepted.Count}";
             App.RecordUiDiagnostic(detail);
             LocalLog.AppendException(LogFile, ex, detail);
@@ -190,7 +207,8 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         _failedResyncs = 0;
         _stale = true;
         App.RecordUiDiagnostic($"RepeaterItemsSource gave up after {MaxResyncAttempts} rejected resyncs");
-        LocalLog.AppendLine(LogFile, $"RepeaterItemsSource gave up after {MaxResyncAttempts} rejected resyncs count={Source.Count}; row stays stale until its next change");
+        LocalLog.AppendLine(LogFile, $"RepeaterItemsSource gave up after {MaxResyncAttempts} rejected resyncs count={Source.Count}; row stays stale until it is rebound or changes");
+        GaveUp?.Invoke();
     }
 
     public object? this[int index]
@@ -201,11 +219,15 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
             if (!_loggedFallback)
             {
                 _loggedFallback = true;
-                var detail = $"RepeaterItemsSource read index={index} past snapshot={_items.Count}; serving accepted={_accepted.Count} until the Reset";
+                var detail = $"RepeaterItemsSource read index={index} past snapshot={_items.Count}; serving accepted={_accepted.Count} widest={_widest.Count} until the Reset";
                 App.RecordUiDiagnostic(detail);
                 LocalLog.AppendLine(LogFile, detail);
             }
-            return _accepted[index];
+            if (index < _accepted.Count) return _accepted[index];
+            if (index < _widest.Count) return _widest[index];
+            // No delivered snapshot is this long. Never throw into the
+            // repeater's layout pass; serve a real item until the Reset.
+            return _widest.Count > 0 ? _widest[^1] : null;
         }
         set => throw new NotSupportedException();
     }
