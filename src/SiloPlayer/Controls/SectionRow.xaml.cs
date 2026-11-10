@@ -366,12 +366,13 @@ public sealed partial class SectionRow : UserControl
         {
             BindCards(stale.Source, rebind: true);
         }
-        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException
-            || RepeaterItemsSource<MediaItem>.IsRepeaterRejection(ex))
+        catch (Exception ex)
         {
-            // Rejected as well: BindCards left the repeater on a live guard
-            // marked stale, or unbound, so the next model change or reload retries.
-            App.RecordUiDiagnostic($"SectionRow rebind after rejected resyncs failed hr=0x{ex.HResult:X8}");
+            // Rejected as well, whatever the error: BindCards left the repeater
+            // on a live guard marked stale, or unbound, so the next model
+            // change or reload retries. This runs from the dispatcher or
+            // Loaded, where a rethrow would only abandon the recovery.
+            App.RecordUiDiagnostic($"SectionRow rebind after rejected resyncs failed type={ex.GetType().Name} hr=0x{ex.HResult:X8}");
             return;
         }
         // The rebind recycled every card; hand keyboard focus back as a

@@ -189,17 +189,20 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     }
 
     private const int E_FAIL = unchecked((int)0x80004005);
+    private const int E_BOUNDS = unchecked((int)0x8000000B);
 
     /// <summary>
     /// ItemsRepeater rejects a change with E_FAIL, matched by HRESULT rather
     /// than CLR type so a COMException or InvalidOperationException from a
-    /// card handler is not mistaken for it. An out-of-range index (WinRT
-    /// E_BOUNDS or a list bounds check) means the repeater's indices disagreed
-    /// with the snapshot, which the recovery Reset resolves, so it is taken
-    /// too instead of unwinding into the model change.
+    /// card handler is not mistaken for it. A WinRT E_BOUNDS from the
+    /// repeater means its indices disagreed with the snapshot, which the
+    /// recovery Reset resolves, so it is taken too instead of unwinding into
+    /// the model change. It is matched by HRESULT whatever CLR type it
+    /// projects to; a managed ArgumentOutOfRangeException from a card handler
+    /// (COR_E_ARGUMENTOUTOFRANGE) is a real failure and propagates.
     /// </summary>
     public static bool IsRepeaterRejection(Exception ex) =>
-        ex.HResult == E_FAIL || ex is ArgumentOutOfRangeException;
+        ex.HResult is E_FAIL or E_BOUNDS;
 
     /// <summary>
     /// The owner could not bind the repeater to this view cleanly, so the
@@ -244,12 +247,27 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         _resyncQueued = false;
         // A detached view resyncs when it is attached again.
         if (_disposed || _detached) return;
+        // This runs on the dispatcher, where nothing above can handle a
+        // failure: an owner callback or listener that throws is logged and
+        // the recovery bookkeeping carries on.
+        RaiseOwner(Resyncing, nameof(Resyncing));
         // A Reset raised inside another layout pass is rejected the same way.
-        Resyncing?.Invoke();
-        if (Publish(ResetArgs))
+        bool accepted;
+        try
+        {
+            accepted = Publish(ResetArgs);
+        }
+        catch (Exception)
+        {
+            // Publish logged the listener failure. Count it as a rejected
+            // Reset so it is retried and, failing that, given up on.
+            if (_items.Count > _widest.Count) _widest = _items;
+            accepted = false;
+        }
+        if (accepted)
         {
             _failedResyncs = 0;
-            Resynced?.Invoke();
+            RaiseOwner(Resynced, nameof(Resynced));
             return;
         }
         if (++_failedResyncs < MaxResyncAttempts)
@@ -263,7 +281,22 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         _stale = true;
         App.RecordUiDiagnostic($"RepeaterItemsSource gave up after {MaxResyncAttempts} rejected resyncs");
         LocalLog.AppendLine(LogFile, $"RepeaterItemsSource gave up after {MaxResyncAttempts} rejected resyncs count={Source.Count}; row stays stale until it is rebound or changes");
-        GaveUp?.Invoke();
+        RaiseOwner(GaveUp, nameof(GaveUp));
+    }
+
+    private void RaiseOwner(Action? handler, string name)
+    {
+        if (handler == null) return;
+        try
+        {
+            handler();
+        }
+        catch (Exception ex)
+        {
+            var detail = $"RepeaterItemsSource {name} handler failed type={ex.GetType().Name} hr=0x{ex.HResult:X8}";
+            App.RecordUiDiagnostic(detail);
+            LocalLog.AppendException(LogFile, ex, detail);
+        }
     }
 
     public object? this[int index]
