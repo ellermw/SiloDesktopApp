@@ -123,7 +123,8 @@ public sealed class UpdateProgressWindow : Window
     {
         this.owner=(IntPtr)owner;
         if(this.owner!=IntPtr.Zero && GetWindowThreadProcessId(this.owner,out var ownerPid)!=0)ownerProcess=ownerPid;
-        // Kept as the window title: tools and the startup smoke test identify the updater by it.
+        // Kept as the window title: tools and the startup smoke test identify the updater by it. The panel
+        // has no WS_CAPTION, so read it with WM_GETTEXT rather than GetWindowText/Process.MainWindowTitle.
         Title="Updating Silo Desktop Player";
         try
         {
