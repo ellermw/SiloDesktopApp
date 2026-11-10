@@ -31,12 +31,18 @@ internal static class HomeReconcileNativeFixture
         await TemplateSwapAsync(parent);
         await FocusedCardAsync(parent);
         Program.Log("PASS: Home rows apply refreshed responses in every mounted state without ItemsRepeater rejection.");
-        await DuringLayoutAsync(parent, strict, reloaded: false);
+        var exercised = 0;
+        if (await DuringLayoutAsync(parent, strict, reloaded: false)) exercised++;
         // A reloaded row re-subscribes to its items after the guard did.
-        await DuringLayoutAsync(parent, strict, reloaded: true);
+        if (await DuringLayoutAsync(parent, strict, reloaded: true)) exercised++;
         // A response that shrinks a full row leaves realized indices past the new snapshot.
-        await DuringLayoutAsync(parent, strict, reloaded: false, shrink: true);
-        Program.Log("PASS: a Home response applied during the row's layout pass completes and the row resyncs.");
+        if (await DuringLayoutAsync(parent, strict, reloaded: false, shrink: true)) exercised++;
+        // Only report the rejection group as passed when it actually ran; a
+        // run where every scenario skipped must not read as a verified fix.
+        if (exercised > 0)
+            Program.Log($"PASS: a Home response applied during the row's layout pass completes and the row resyncs ({exercised} of 3 scenarios reached the rejection).");
+        else
+            Program.Log("SKIPPED: home-reconcile mid-layout rejection not exercised in this run; run with SILO_NATIVE_TEST_ONLY=home-reconcile (run.ps1 -Only home-reconcile) to verify it.");
         // Let removed cards run their Unloaded cleanup while app services exist.
         for (var turn = 0; turn < 6; turn++) { await Task.Delay(50); await DrainAsync(); }
     }
@@ -240,7 +246,8 @@ internal static class HomeReconcileNativeFixture
         finally { parent.Children.Remove(row); }
     }
 
-    private static async Task DuringLayoutAsync(StackPanel parent, bool strict, bool reloaded, bool shrink = false)
+    /// <returns>Whether the scenario reached ItemsRepeater's rejection and verified the resync.</returns>
+    private static async Task<bool> DuringLayoutAsync(StackPanel parent, bool strict, bool reloaded, bool shrink = false)
     {
         // The field failure: a Home response reaches the row while its
         // ItemsRepeater is measuring. ElementPrepared runs inside that pass.
@@ -299,7 +306,7 @@ internal static class HomeReconcileNativeFixture
                 Program.Log($"SKIP: home-reconcile {scenario}: ElementPrepared did not run inside the layout pass; rejection path not reached.");
                 Apply(mounted, response);
                 await RequireCardsMatchAsync(row, mounted, scenario, allowRejection: true);
-                return;
+                return false;
             }
             if (thrown != null)
                 throw new InvalidOperationException($"{scenario}: applying the response threw {thrown.GetType().Name} 0x{thrown.HResult:X8}.", thrown);
@@ -314,7 +321,7 @@ internal static class HomeReconcileNativeFixture
                 if (!mounted.Items.Select(Key).SequenceEqual(response.Items.Select(Key)))
                     throw new InvalidOperationException($"{scenario}: the accepted update did not finish applying the response.");
                 await RequireCardsMatchAsync(row, mounted, scenario);
-                return;
+                return false;
             }
             if (!mounted.Items.Select(Key).SequenceEqual(response.Items.Select(Key)))
                 throw new InvalidOperationException($"{scenario}: the rejected update did not finish applying the response.");
@@ -339,6 +346,7 @@ internal static class HomeReconcileNativeFixture
             if (focusedItem != null && !ReferenceEquals(FocusedCardItem(repeater), focusedItem))
                 throw new InvalidOperationException($"{scenario}: keyboard focus did not return to {Key(focusedItem)} after the recovery Reset.");
             Program.Log($"home-reconcile {scenario}: {Guard(row).RejectedChanges} rejected change(s) resynced.");
+            return true;
         }
         finally { repeater.ElementPrepared -= Prepared; parent.Children.Remove(row); }
     }
