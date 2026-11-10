@@ -3,16 +3,28 @@ namespace SiloPlayer.Core.Services;
 /// <summary>One viewport's short artwork pause, independent of card and cache ownership.</summary>
 public sealed class ArtworkMotionPolicy
 {
+    /// <summary>Pixels per millisecond above which artwork waits for the viewport to slow (Home rails and pages).</summary>
+    public const double DefaultDeferSpeed = 1.2;
+
+    /// <summary>
+    /// Pixels per millisecond above which Library grid artwork waits. Steady wheel scrolling
+    /// stays below it; touchpad flicks (~3 px/ms), flings and fast scrollbar drags exceed it.
+    /// </summary>
+    public const double GridDeferSpeed = 2;
+
     private readonly TimeProvider _clock;
+    private readonly double _deferSpeed;
     private readonly object _sync = new();
     private long _lastSample, _generation;
     private double _x, _y;
     private ITimer? _settle;
     private TaskCompletionSource? _ready;
 
-    public ArtworkMotionPolicy(TimeProvider? clock = null)
+    /// <param name="deferSpeed">Pixels per millisecond above which artwork waits for the scroll to slow.</param>
+    public ArtworkMotionPolicy(TimeProvider? clock = null, double deferSpeed = DefaultDeferSpeed)
     {
         _clock = clock ?? TimeProvider.System;
+        _deferSpeed = deferSpeed;
         _lastSample = _clock.GetTimestamp();
     }
 
@@ -29,7 +41,7 @@ public sealed class ArtworkMotionPolicy
             var elapsed = Math.Clamp(_clock.GetElapsedTime(_lastSample, now).TotalMilliseconds, 1, 100);
             _x = x; _y = y; _lastSample = now;
             RetireTimer();
-            if (distance / elapsed <= 1.2) { Release(); return; }
+            if (distance / elapsed <= _deferSpeed) { Release(); return; }
             _ready ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
             var generation = _generation;
             _settle = _clock.CreateTimer(_ =>

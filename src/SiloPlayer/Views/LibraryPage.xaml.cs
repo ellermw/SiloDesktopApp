@@ -159,9 +159,15 @@ public sealed partial class LibraryPage : Page,
     private bool _viewModelEventsAttached;
     private bool _messengerRegistered;
     private int? _activeLibraryId;
-    private const int CardBindsPerTick = 4;
+    // Binding is cheap text and overlay work; bind by time budget, not a fixed
+    // handful, so a row entering view is filled in the same frame or the next.
+    private const double CardBindBudgetMs = 6;
     private const int MaxRealizedLibraryCards = 40;
-    private const int LibraryOverscanRows = 1;
+    // Cards are made half a screen above and below the view (at least two rows),
+    // so a scroll in either direction meets bound cards, not placeholders. The
+    // window stays within one 100-item catalog page; wider grids keep one row.
+    private const int MinLibraryOverscanRows = 2;
+    private const int MaxLibraryOverscanWindowItems = 100;
     private const double LibraryHeaderGlassThreshold = 160;
     private const int MaxVisibleMultiSelectOptions = 80;
 
@@ -173,7 +179,9 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
-        _artworkMotion = ArtworkViewport.For(LibraryScroller);
+        // Posters load and decode during steady wheel and slow touchpad scrolling;
+        // touchpad flicks, flings and fast scrollbar drags wait for the grid to slow.
+        _artworkMotion = ArtworkViewport.For(LibraryScroller, ArtworkMotionPolicy.GridDeferSpeed);
         _artworkReadAhead = new(workers: 4, capacity: 500, ReadAheadArtworkAsync);
         // Observe input even when the ScrollViewer or its scrollbar handles it.
         // ViewChanged also reports inertia and extent clamps, not just new intent.
@@ -2005,11 +2013,19 @@ public sealed partial class LibraryPage : Page,
         _cardBindTimer?.Stop();
         _pendingCardBinds.Clear();
         _pendingCardBindSet.Clear();
+        // Visible rows first: a growing pool skips the rows above, and binds run
+        // visible, then below, then above (nearest first).
+        var visibleStartIndex = Math.Clamp(_currentFirstRow * layout.Columns, range.StartIndex, Math.Max(range.StartIndex, range.EndIndex));
+        var assignStartIndex = _libraryCardSlots.Count < range.EndIndex - range.StartIndex + 1
+            ? visibleStartIndex
+            : range.StartIndex;
         var assignments = VirtualGridSlotAllocator.Assign(
-            _libraryCardSlots, _visibleLibraryCards, range.StartIndex, range.EndIndex);
+            _libraryCardSlots, _visibleLibraryCards, assignStartIndex, range.EndIndex);
         _visibleLibraryCards.Clear();
 
-        foreach (var (index, card) in assignments)
+        foreach (var (index, card) in assignments
+            .OrderBy(pair => pair.Key < visibleStartIndex ? 1 : 0)
+            .ThenBy(pair => pair.Key < visibleStartIndex ? -pair.Key : pair.Key))
         {
             _visibleLibraryCards[index] = card;
             var sameIndex = card.Tag is int previousIndex && previousIndex == index;
@@ -2504,7 +2520,7 @@ public sealed partial class LibraryPage : Page,
         int attempts = 0;
         int processed = 0;
 
-        while (attempts < CardBindsPerTick && _pendingCardBinds.Count > 0)
+        while (_pendingCardBinds.Count > 0)
         {
             attempts++;
             var index = _pendingCardBinds.Dequeue();
@@ -2522,7 +2538,7 @@ public sealed partial class LibraryPage : Page,
                 card.Bind(item, ViewModel.SelectedSort);
 
             processed++;
-            if (started.ElapsedMilliseconds >= 4) break;
+            if (started.Elapsed.TotalMilliseconds >= CardBindBudgetMs) break;
         }
 
         if (_pendingCardBinds.Count == 0)
@@ -2679,6 +2695,12 @@ public sealed partial class LibraryPage : Page,
             work.ImageType, work.Url, App.Services.GetRequiredService<HttpClient>(), ct, waitForSharedDownload: true);
     }
 
+    private static int LibraryOverscanRows(int visibleRows, int columns)
+    {
+        var fitRows = (MaxLibraryOverscanWindowItems / Math.Max(1, columns) - visibleRows) / 2;
+        return Math.Max(1, Math.Min(Math.Max(MinLibraryOverscanRows, (visibleRows + 1) / 2), fitRows));
+    }
+
     private (int StartIndex, int EndIndex) GetVisibleItemRange(GridLayoutInfo layout)
     {
         var total = ViewModel.TotalCount;
@@ -2691,8 +2713,8 @@ public sealed partial class LibraryPage : Page,
             layout.Columns,
             _currentFirstRow,
             visibleRows,
-            LibraryOverscanRows,
-            Math.Max(MaxRealizedLibraryCards, (visibleRows + 2 * LibraryOverscanRows) * layout.Columns));
+            LibraryOverscanRows(visibleRows, layout.Columns),
+            Math.Max(MaxRealizedLibraryCards, (visibleRows + 2 * LibraryOverscanRows(visibleRows, layout.Columns)) * layout.Columns));
     }
 
     private (int StartIndex, int EndIndex) ClampRealizedRange(
@@ -2704,7 +2726,7 @@ public sealed partial class LibraryPage : Page,
             return range;
 
         var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight, _libraryVerticalOffset);
-        var maxItems = Math.Max((visibleRows + 2 * LibraryOverscanRows) * layout.Columns, MaxRealizedLibraryCards);
+        var maxItems = Math.Max((visibleRows + 2 * LibraryOverscanRows(visibleRows, layout.Columns)) * layout.Columns, MaxRealizedLibraryCards);
         var (startIndex, endIndex) = VirtualGridScrollGate.ClampRealizedItemRange(
             total,
             layout.Columns,
