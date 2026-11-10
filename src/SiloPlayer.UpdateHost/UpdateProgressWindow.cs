@@ -208,20 +208,16 @@ public sealed class UpdateProgressWindow : Window
         }
         // Windows 11 draws the outline itself, following the rounded corners, like its own flyouts.
         // Older Windows rejects the requests, and DWM may accept them yet draw no border for a window
-        // without frame styles, so the panel keeps its own 1px outline unless DWM reports a visible border.
+        // without frame styles, so the panel keeps its own 1px outline unless DWM reports a visible border
+        // (checked again while tracking, see UpdateOutline).
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
         // A frameless WinUI window still keeps a classic 3px frame, painted light grey inside the
         // outline. Drop the frame styles so the panel's own background meets the outline.
         SetWindowLongPtr(self,-16,(IntPtr)(GetWindowLongPtr(self,-16).ToInt64() & ~0x00C40000L)); // WS_BORDER|WS_DLGFRAME|WS_THICKFRAME
         SetWindowLongPtr(self,-20,(IntPtr)(GetWindowLongPtr(self,-20).ToInt64() & ~0x00020301L)); // WS_EX_DLGMODALFRAME|WINDOWEDGE|CLIENTEDGE|STATICEDGE
         SetWindowPos(self,IntPtr.Zero,0,0,0,0,0x0237); // SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|NOOWNERZORDER
-        var round=2;var rounded=DwmSetWindowAttribute(self,33,ref round,sizeof(int))>=0;
-        var outline=0x00473F3A;var outlined=DwmSetWindowAttribute(self,34,ref outline,sizeof(int))>=0; // #3A3F47 as COLORREF (0x00BBGGRR).
-        var drawn=DwmGetWindowAttribute(self,37,out var border,sizeof(int))>=0 && border>0; // DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
-        if(!rounded || !outlined || !drawn)
-        {
-            root.BorderThickness=new Thickness(1);root.BorderBrush=new SolidColorBrush(ColorHelper.FromArgb(255,52,57,66));
-        }
+        var round=2;outlineRounded=DwmSetWindowAttribute(self,33,ref round,sizeof(int))>=0;
+        var outline=0x00473F3A;outlineColored=DwmSetWindowAttribute(self,34,ref outline,sizeof(int))>=0; // #3A3F47 as COLORREF (0x00BBGGRR).
         root.SizeChanged+=(_,_)=>{layoutDirty=true;Track();};
         Track();
         tracking.Tick+=(_,_)=>Track();
@@ -254,6 +250,8 @@ public sealed class UpdateProgressWindow : Window
     private readonly WinEventProc winEvent;
     private uint ownerProcess;
     private bool layoutDirty=true;
+    private bool outlineRounded,outlineColored;
+    private bool? dwmOutline;
     private PanelRect? anchor;
     private SizeInt32 clientSize;
     private RectInt32 lastBounds;
@@ -274,6 +272,7 @@ public sealed class UpdateProgressWindow : Window
         try
         {
             var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
+            UpdateOutline(self);
             var scale=root.XamlRoot?.RasterizationScale ?? Math.Max(1,(owner!=IntPtr.Zero ? GetDpiForWindow(owner) : GetDpiForWindow(self))/96d);
             if(layoutDirty)
             {
@@ -315,6 +314,22 @@ public sealed class UpdateProgressWindow : Window
             else if(!show && AppWindow.IsVisible)AppWindow.Hide();
         }
         catch(Exception ex){Console.Error.WriteLine($"Update panel placement failed: {ex.GetType().Name}");}
+    }
+
+    // DWM may not report its border until the window is shown, so after the first probe the choice is
+    // made again only while the panel is visible. The fallback uses the DWM outline's colour and rounded
+    // corners (DWMWCP_ROUND is 8px), so the panel looks the same whichever path draws it.
+    private void UpdateOutline(IntPtr self)
+    {
+        if(dwmOutline is not null && !AppWindow.IsVisible)return;
+        var drawn=outlineRounded && outlineColored
+            && DwmGetWindowAttribute(self,37,out var border,sizeof(int))>=0 && border>0; // DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
+        if(drawn==dwmOutline)return;
+        dwmOutline=drawn;
+        root.BorderThickness=new Thickness(drawn ? 0 : 1);
+        root.BorderBrush=drawn ? null : new SolidColorBrush(ColorHelper.FromArgb(255,58,63,71));
+        root.CornerRadius=new CornerRadius(!drawn && outlineRounded ? 8 : 0);
+        layoutDirty=true;
     }
 
     private bool IsVideoSurface(IntPtr hwnd)
