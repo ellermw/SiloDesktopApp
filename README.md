@@ -13,13 +13,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-**Current release: 1.2.964** · [View latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest)
+**Current release: 1.2.968** · [View latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest)
 
-[**Download version 1.2.964 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.964/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.968 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.968/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.964) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.964/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.968) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.968/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
 <!-- beta-download:start -->
 ### Beta
@@ -31,7 +31,7 @@ Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo S
 [Beta release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.968-beta.1) · [Beta SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.968-beta.1/SiloInstaller-Windows-x64.exe.sha256)
 <!-- beta-download:end -->
 
-See the [release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.964) for what's new in 1.2.964.
+See the [release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.968) for what's new in 1.2.968.
 
 The Silo icons, stable taskbar identity, centered keep-open updates and subtitle continuity are retained. For pins created before 1.2.514, unpin the old entry once, launch updated Silo and pin it again. The progress window uses the currently installed helper; updates started after 1.2.515's helper is installed use its corrected Silo icon. Legacy installations require one full installer migration; compatible versioned installations reuse unchanged files.
 
