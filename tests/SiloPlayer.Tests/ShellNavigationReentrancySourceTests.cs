@@ -22,6 +22,25 @@ public sealed class ShellNavigationReentrancySourceTests
     }
 
     [Fact]
+    public void NavigatedHandlerDefersDesktopPaneModeSwitch()
+    {
+        var window = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs").ReplaceLineEndings("\n");
+        var handler = MethodBody(window, "private void OnNavigated_SynchronizeShellChrome(");
+
+        // Switching PaneDisplayMode while ContentFrame (inside NavView) is still
+        // committing fails the navigation with 0x80004005 (NavigationFailed).
+        Assert.Contains("ApplyResponsiveShellLayout(duringFrameNavigation: true);", handler);
+        Assert.DoesNotContain("ApplyResponsiveShellLayout();", handler);
+
+        var layout = MethodBody(window, "private void ApplyResponsiveShellLayout(");
+        Assert.Contains("var deferDesktopPane = duringFrameNavigation && !isNarrow && NavView.PaneDisplayMode != desiredPaneDisplayMode;", layout);
+        var schedule = layout.IndexOf("ScheduleDesktopPaneSynchronization();", StringComparison.Ordinal);
+        var assign = layout.IndexOf("NavView.PaneDisplayMode = desiredPaneDisplayMode;", StringComparison.Ordinal);
+        Assert.True(schedule >= 0 && assign > schedule, "A deferred navigation reconcile must not also assign the mode synchronously.");
+        Assert.Contains("else if (!deferDesktopPane)", layout);
+    }
+
+    [Fact]
     public void ReconnectKeepsHealthyDetailsButStillSchedulesDeferredShellHydrationAndRetriesFailedRoutes()
     {
         var source = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs").ReplaceLineEndings("\n");

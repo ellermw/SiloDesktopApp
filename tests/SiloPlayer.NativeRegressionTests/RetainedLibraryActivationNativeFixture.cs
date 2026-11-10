@@ -45,6 +45,7 @@ internal static partial class RetainedLibraryNativeFixture
                     await Leave();
                     wire.LibraryId++; wire.Search = "?tab=library&type=authors&genre=Crime";
                     library = new Library { Id = wire.LibraryId, Name = "Library B", Type = "audiobook" };
+                    wire.LibraryTypes[wire.LibraryId] = "audiobook";
                     settings.LibraryPageState.Invalidate();
                     wire.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously); reads = wire.StateReads;
                     frame.Navigate(typeof(LibraryPage), library);

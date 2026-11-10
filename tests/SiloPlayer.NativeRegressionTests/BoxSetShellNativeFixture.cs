@@ -48,7 +48,11 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 Check(scope.Player.State is PlayerState.Idle or PlayerState.Minimized, "Fixture missed the pre-Expanded refresh window.");
                 Check(members[0].Focus(FocusState.Keyboard), "Member focus could not be established before shell refresh.");
                 var scroll = Descendants<ScrollViewer>(page).First();
-                var offset = scroll.VerticalOffset;
+                // Keyboard focus scrolls a clipped card into view on a later layout
+                // pass (the Minimized mini player shortens the viewport by 132 px).
+                // Measure the refresh against the offset after that settles.
+                double offset;
+                do { offset = scroll.VerticalOffset; await Task.Delay(100); } while (offset != scroll.VerticalOffset);
                 // Exercise the event publisher and MainWindow subscribers, not direct catalog invalidation.
                 if (invalidation == "language")
                 {
@@ -73,14 +77,23 @@ internal static partial class EpisodeQuickPlayNativeFixture
                     Check(published is true, "Synthetic access/catch-up event was not published.");
                 }
                 await Until(() => scope.Wire.BoxSetReads > reads && !page.ViewModel.IsLoading);
-                Check(ReferenceEquals(scope.Frame.Content, page) && scope.Frame.BackStack.Count == backCount
-                    && ReferenceEquals(play, Descendants<Button>(page).Single(x => x.Name == "BoxSetPlay"))
-                    && Descendants<PosterCard>(page).SequenceEqual(members)
-                    && members[0].FocusState == FocusState.Keyboard && scroll.VerticalOffset == offset
-                    && !lifetime.IsCancellationRequested, "Shell refresh replaced the box-set visit, cards, focus or accepted start.");
+                var lost = new (bool Kept, string Name)[]
+                {
+                    (ReferenceEquals(scope.Frame.Content, page), "visit"), (scope.Frame.BackStack.Count == backCount, "back stack"),
+                    (ReferenceEquals(play, Descendants<Button>(page).Single(x => x.Name == "BoxSetPlay")), "play button"),
+                    (Descendants<PosterCard>(page).SequenceEqual(members), "cards"),
+                    (members[0].FocusState == FocusState.Keyboard, "focus " + members[0].FocusState),
+                    (scroll.VerticalOffset == offset, $"scroll {offset}->{scroll.VerticalOffset}"), (!lifetime.IsCancellationRequested, "accepted start"),
+                }.Where(x => !x.Kept).Select(x => x.Name).ToArray();
+                Check(lost.Length == 0, "Shell refresh replaced the box-set visit, cards, focus or accepted start: " + string.Join(", ", lost) + ".");
             }
             finally { scope.Wire.ReleaseWatch.TrySetResult(); scope.Wire.ReleaseBoundary.TrySetResult(); }
-            await Until(() => !scope.Player.IsLoading && scope.Player.State == PlayerState.Expanded);
+            // The start is accepted once its session reaches the expanded player.
+            // IsLoading then waits for mpv's FILE_LOADED, which this scope never
+            // delivers: its injected mpv has no PlayerService event wiring and the
+            // fixture serves no media bytes.
+            await Until(() => scope.Player.State == PlayerState.Expanded && scope.Player.Manager?.CurrentSession != null
+                && scope.Player.ContentId == "boxset-film");
             Check(scope.Player.Manager?.CurrentSession != null && scope.Player.ContentId == "boxset-film"
                 && scope.Wire.Starts.Count == 1 && !lifetime.IsCancellationRequested,
                 "Shell refresh silently abandoned the accepted movie start.");
@@ -149,7 +162,10 @@ internal static partial class EpisodeQuickPlayNativeFixture
             var published = typeof(EventChannelClient).GetMethod("PublishAccessInvalidation", Private)!
                 .Invoke(events, [scope.Client.CaptureContext(), null, true]);
             Check(published is true, "Catch-up event was not published.");
-            await Until(() => (bool)GetField(scope.Window, "_pendingAccessRefresh")!);
+            // Since #69 a catch-up over a mounted detail is queued as a detail
+            // catch-up; a movie detail cannot be preserved, so it must remount.
+            await Until(() => (bool)GetField(scope.Window, "_pendingDetailCatchUp")!
+                && (bool)GetField(scope.Window, "_pendingDetailCatchUpRequiresRemount")!);
             scope.Wire.HoldStop = true;
             scope.Wire.StopStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
             scope.Wire.ReleaseStop = new(TaskCreationOptions.RunContinuationsAsynchronously);

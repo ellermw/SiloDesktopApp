@@ -37,6 +37,7 @@ internal static partial class RetainedLibraryNativeFixture
             var frame = new Frame { Width = 1000, Height = 700, CacheSize = 2 };
             parent.Children.Add(frame); navigation.Frame = frame;
             var library = new Library { Id = wire.LibraryId, Name = "State ordering fixture", Type = audiobookAxis == null ? "movie" : "audiobook" };
+            wire.LibraryTypes[library.Id] = library.Type;
             var originalSearch = wire.Search; var initialWrites = wire.StateWrites;
             LibraryPage? page = null;
             try

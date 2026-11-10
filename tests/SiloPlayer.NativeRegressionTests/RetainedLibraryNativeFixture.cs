@@ -311,6 +311,8 @@ internal static partial class RetainedLibraryNativeFixture
         internal string LastCatalogRequest = "", ErrorMessage = "Retired synthetic settings failure";
         internal string PutErrorMessage = "Synthetic save failure";
         internal TaskCompletionSource? ReadGate, PutGate, CollectionsGate, RatingsGate, GroupGate, CatalogGate;
+        // Every library a case browses, by type; ids not listed here are movie libraries.
+        internal readonly Dictionary<int, string> LibraryTypes = new() { [11] = "movie", [22] = "audiobook", [33] = "movie" };
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host is not ("retained-library.invalid" or "retained-next.invalid")) throw new InvalidOperationException("External fixture request.");
@@ -335,6 +337,13 @@ internal static partial class RetainedLibraryNativeFixture
                 if (failure) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent(JsonSerializer.Serialize(new { message })) };
                 var payload = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct));
                 Search = payload.GetProperty("value").GetProperty("libraries").GetProperty(LibraryId.ToString()).GetProperty("search").GetString()!;
+            }
+            else if (path == "/api/v2/user/libraries")
+            {
+                // A return to the current library revalidates its policy (#78). The
+                // server still serves each library the fixture browses, so list them.
+                var ids = new SortedSet<int>(LibraryTypes.Keys) { LibraryId, LibraryId + 10000 };
+                body = new { items = ids.Select(id => new { id, name = "Fixture " + id, type = LibraryTypes.GetValueOrDefault(id, "movie") }) };
             }
             else if (path == "/api/v2/capabilities/ratings") { RatingReads++; if (RatingsGate is { } gate) await gate.Task; body = new { state = "available", sources = Array.Empty<object>() }; }
             else if (path == "/api/v2/catalog/audiobook-groups") { if (GroupGate is { } gate) await gate.Task; body = new { items = Enumerable.Range(0, 40).Select(i => new { name = "Keeper " + i, item_count = 1, poster_urls = Array.Empty<string>() }), total = 40, page = new { has_more = false } }; }
