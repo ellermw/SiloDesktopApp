@@ -458,12 +458,20 @@ internal static class HomeRowWindowNativeFixture
                 && vm.Sections[0].Items.Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 60).Select(i => $"alpha-{i}"))
                 && vm.Sections[0].ShownCount == initialCount && !vm.Sections[0].CanComplete,
                 "Uncapped completion must recover all60 cards, including those beyond the advertised query ceiling.");
+            // Scroll immediately after the rebind: its queued offset restore must not undo this.
             row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); row.UpdateLayout();
             scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(80);
             await vm.CompleteSectionAsync("row");
             Require(wire.Whole == 1 && !((Button)row.FindName("ScrollRightBtn")).IsEnabled
                 && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 0,
                 "A completed row must not loop through identical queries or show tail navigation.");
+            // Rebind while the row's own animated page scroll is still running: the page must still land.
+            scroll.ChangeView(300, null, null, true); await Task.Delay(80);
+            var pageTarget = Math.Min(scroll.HorizontalOffset + Math.Max(240, scroll.ViewportWidth * 0.82), scroll.ScrollableWidth);
+            typeof(SectionRow).GetMethod("ScrollByPage", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(row, [1]);
+            row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); await Task.Delay(800);
+            Require(Math.Abs(scroll.HorizontalOffset - pageTarget) <= 1,
+                "A rebind during the row's own animated page scroll must not stop it at the mid-animation offset.");
         }
         finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
     }

@@ -444,6 +444,8 @@ internal static class HomeRowReviewNativeFixture
                 [typeof(SiloApiClient)] = Client, [typeof(HomeApi)] = home, [typeof(HomeViewModel)] = Vm,
                 [typeof(AuthService)] = Auth, [typeof(CatalogApi)] = new CatalogApi(Client), [typeof(ToastService)] = Toast,
                 [typeof(LibraryViewModel)] = new LibraryViewModel(new CatalogApi(Client)),
+                // LibraryPage resolves SettingsApi in a field initializer (#112).
+                [typeof(SettingsApi)] = new SettingsApi(Client),
                 [typeof(EventChannelClient)] = _events }));
         }
         public void Dispose()
