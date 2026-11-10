@@ -207,7 +207,8 @@ public sealed class UpdateProgressWindow : Window
             presenter.IsAlwaysOnTop=true;
         }
         // Windows 11 draws the outline itself, following the rounded corners, like its own flyouts.
-        // Older Windows rejects both requests, so the panel keeps its own 1px outline there.
+        // Older Windows rejects the requests, and DWM may accept them yet draw no border for a window
+        // without frame styles, so the panel keeps its own 1px outline unless DWM reports a visible border.
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
         // A frameless WinUI window still keeps a classic 3px frame, painted light grey inside the
         // outline. Drop the frame styles so the panel's own background meets the outline.
@@ -216,7 +217,8 @@ public sealed class UpdateProgressWindow : Window
         SetWindowPos(self,IntPtr.Zero,0,0,0,0,0x0237); // SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|NOOWNERZORDER
         var round=2;var rounded=DwmSetWindowAttribute(self,33,ref round,sizeof(int))>=0;
         var outline=0x00473F3A;var outlined=DwmSetWindowAttribute(self,34,ref outline,sizeof(int))>=0; // #3A3F47 as COLORREF (0x00BBGGRR).
-        if(!rounded || !outlined)
+        var drawn=DwmGetWindowAttribute(self,37,out var border,sizeof(int))>=0 && border>0; // DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
+        if(!rounded || !outlined || !drawn)
         {
             root.BorderThickness=new Thickness(1);root.BorderBrush=new SolidColorBrush(ColorHelper.FromArgb(255,52,57,66));
         }
@@ -343,6 +345,7 @@ public sealed class UpdateProgressWindow : Window
     [DllImport("user32.dll")]private static extern IntPtr SetWinEventHook(uint min,uint max,IntPtr module,WinEventProc proc,uint process,uint thread,uint flags);
     [DllImport("user32.dll")]private static extern bool UnhookWinEvent(IntPtr hook);
     [DllImport("dwmapi.dll")]private static extern int DwmSetWindowAttribute(IntPtr hwnd,int attribute,ref int value,int size);
+    [DllImport("dwmapi.dll")]private static extern int DwmGetWindowAttribute(IntPtr hwnd,int attribute,out int value,int size);
     [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")]private static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
     [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")]private static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);
     [DllImport("user32.dll")]private static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
