@@ -66,13 +66,14 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
             UpdatePipeIdentity.Authenticate(pipe,true,process.Id,hostStart,host);
             var visible=false;
             Task<UpdateHostMessage>? pending=null;
+            Func<bool>? later=null;
             if(download is not null)
             {
                 var first=await UpdateHostProtocol.ReadAsync(pipe,deadline.Token);
                 if(first.Kind=="failed"){AuthorityCooldownUntil=first.CooldownUntil;throw new IOException(first.Text);}
                 if(first.Kind!="visible")throw new InvalidDataException("Invalid update handoff.");
                 visible=true;
-                (package,pending)=await DownloadIntoWindowAsync(pipe,download,deadline.Token);
+                (package,later,pending)=await DownloadIntoWindowAsync(pipe,download,deadline.Token);
                 if(package is null)return WindowedUpdateOutcome.NotStarted;
                 if(!Path.GetFullPath(package.Directory).Equals(Path.GetFullPath(packageDirectory),StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("The downloaded package is not the one the update window installs.");
@@ -83,7 +84,14 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                     // so it has no deadline; installation keeps its usual 20 minutes afterwards.
                     deadline.CancelAfter(Timeout.InfiniteTimeSpan);
                     var answer=await pending!;pending=null;
-                    if(answer.Kind=="later"){LocalLog.AppendLine("updates.txt","windowed_update_deferred");return WindowedUpdateOutcome.Deferred;}
+                    if(answer.Kind=="later")
+                    {
+                        // The panel only promises the next start once Silo has recorded Later.
+                        if(later?.Invoke()==false)
+                            await UpdateHostProtocol.WriteAsync(pipe,new("failed",Text:"Silo could not save Later, so the update won't finish on the next start. Update again from Silo when ready."),deadline.Token);
+                        else LocalLog.AppendLine("updates.txt","windowed_update_deferred");
+                        return WindowedUpdateOutcome.Deferred;
+                    }
                     if(answer.Kind=="failed"){AuthorityCooldownUntil=answer.CooldownUntil;throw new IOException(answer.Text);}
                     if(answer.Kind!="restart")throw new InvalidDataException("Invalid update handoff.");
                     deadline.CancelAfter(TimeSpan.FromMinutes(20));
@@ -109,8 +117,8 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
 
     // Runs the client's download while the window shows it. The window only writes during this
     // phase to report a failure or cancellation, which stops the download. Returns the ready
-    // package (or null after telling the window why) and the window's pending next frame.
-    private static async Task<(PreparedUpdatePackage? Package,Task<UpdateHostMessage> Pending)> DownloadIntoWindowAsync(PipeStream pipe,
+    // package (or null after telling the window why), how to record Later, and the window's pending next frame.
+    private static async Task<(PreparedUpdatePackage? Package,Func<bool>? Later,Task<UpdateHostMessage> Pending)> DownloadIntoWindowAsync(PipeStream pipe,
         Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>> download,CancellationToken ct)
     {
         var hostFrame=UpdateHostProtocol.ReadAsync(pipe,ct);
@@ -136,9 +144,9 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
         {
             // Neither ready nor failed: another update path is needed; the window closes quietly.
             await UpdateHostProtocol.WriteAsync(pipe,result.Error is null ? new("cancel") : new("failed",Text:result.Error),ct);
-            return (null,hostFrame);
+            return (null,null,hostFrame);
         }
-        return (result.Package,hostFrame);
+        return (result.Package,result.Later,hostFrame);
     }
 
     private static async Task<IncrementalUpdateProgress?> SendProgressAsync(PipeStream pipe,IncrementalUpdateProgress? progress,IncrementalUpdateProgress? sent,CancellationToken ct)

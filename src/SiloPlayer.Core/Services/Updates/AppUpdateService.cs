@@ -15,8 +15,11 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     public AppUpdateState State => Volatile.Read(ref _state);
     public string CacheDirectory => Path.GetFullPath(cacheDirectory);
     public Version CurrentVersion => currentVersion;
-    /// <summary>The latest check on this channel reached the release catalog.</summary>
-    public bool LastCheckSucceeded => Interlocked.Read(ref _lastSuccessfulCheckStamp) > 0;
+    /// <summary>The latest check on this channel reached the complete release catalog; incomplete Beta discovery does not count.</summary>
+    public bool LastCheckSucceeded { get { lock (_channelGate) return Interlocked.Read(ref _lastSuccessfulCheckStamp) > 0 && _lastCheck?.CatalogError is null; } }
+    private int _checksPaused;
+    /// <summary>While set, checks are skipped so the current release and its prepared package stay as they are.</summary>
+    public bool ChecksPaused { get => Volatile.Read(ref _checksPaused) != 0; set => Volatile.Write(ref _checksPaused, value ? 1 : 0); }
     public bool PreferIncrementalUpdates { get; init; }
     public string InstalledPayloadDirectory { get; init; } = AppContext.BaseDirectory;
     public string? InstallationRoot { get; init; }
@@ -83,7 +86,8 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             {
                 // Do not queue behind an active or pending long-running transfer.
                 // Otherwise serialize checks with checks, channel changes and cleanup.
-                if (_transferCancellation is not null || !_transfer.IsCompleted) return;
+                // A paused service keeps a package the update window is about to install.
+                if (ChecksPaused || _transferCancellation is not null || !_transfer.IsCompleted) return;
                 wait = _operation.WaitAsync(ct);
             }
             await wait.ConfigureAwait(false);

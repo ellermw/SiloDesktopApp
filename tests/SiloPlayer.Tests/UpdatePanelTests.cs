@@ -156,8 +156,11 @@ public sealed class DeferredAppUpdateTests : IDisposable
         Assert.Equal(DeferredUpdateAction.Wait, record.Decide(installed, new AppUpdateState(Release("1.2.970"), IsDownloading: true), true));
         // The check found the release: finish the update.
         Assert.Equal(DeferredUpdateAction.Resume, record.Decide(installed, new AppUpdateState(Release("1.2.970")), true));
-        // A newer release on the same channel replaces it; the user already chose to update.
-        Assert.Equal(DeferredUpdateAction.Resume, record.Decide(installed, new AppUpdateState(Release("1.2.975")), true));
+        // Later was consent for 1.2.970 only: another release is never installed silently. A complete
+        // check retires the deferral so the normal notice asks again; an incomplete one keeps waiting.
+        Assert.Equal(DeferredUpdateAction.Discard, record.Decide(installed, new AppUpdateState(Release("1.2.975")), true));
+        Assert.Equal(DeferredUpdateAction.Discard, record.Decide(installed, new AppUpdateState(Release("1.2.969")), true));
+        Assert.Equal(DeferredUpdateAction.Wait, record.Decide(installed, new AppUpdateState(Release("1.2.975")), false));
     }
 
     [Fact]

@@ -14,15 +14,18 @@ public sealed partial class MainWindow
     // The release the update window has fully downloaded while it waits for an answer.
     private AppRelease? _windowedDownloadReady;
 
-    private void DeferAppUpdate(AppRelease release)
+    /// <summary>Records Later and reads it back; false when the next start would not find it.</summary>
+    private bool DeferAppUpdate(AppRelease release)
     {
-        if (_appUpdates is null) return;
+        if (_appUpdates is null) return false;
         try
         {
             DeferredAppUpdate.Save(_appUpdates.CacheDirectory, release, _appUpdates.Channel);
+            if (DeferredAppUpdate.Read(_appUpdates.CacheDirectory)?.Tag != release.Tag) throw new IOException("The deferred update record could not be read back.");
             LocalLog.AppendLine("updates.txt", "update_deferred version=" + release.Version);
+            return true;
         }
-        catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "update_deferral_save"); }
+        catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "update_deferral_save"); return false; }
     }
 
     private void LoadDeferredAppUpdate()

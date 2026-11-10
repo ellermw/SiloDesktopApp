@@ -49,10 +49,11 @@ public sealed record DeferredAppUpdate(string Tag, string Version, AppUpdateChan
     }
 
     /// <summary>
-    /// Resume once a check has found an incremental update; discard when this client already is
-    /// that version (the update finished), when no update remains, when only the full installer
-    /// can apply it (that needs its own consent), or when the channel changed since Later (a
-    /// channel change retires prepared offers). Otherwise wait for the next check.
+    /// Resume once a check has found the deferred release as an incremental update; discard when
+    /// this client already is that version (the update finished), when a complete check found no
+    /// update or another release (that one needs its own consent), when only the full installer
+    /// can apply it, or when the channel changed since Later (a channel change retires prepared
+    /// offers). Otherwise wait for the next check.
     /// </summary>
     public DeferredUpdateAction Decide(Version installed, AppUpdateState state, bool checkSucceeded, AppUpdateChannel channel = AppUpdateChannel.Stable)
     {
@@ -60,6 +61,8 @@ public sealed record DeferredAppUpdate(string Tag, string Version, AppUpdateChan
             || GitHubReleaseReader.Normalize(deferred) <= GitHubReleaseReader.Normalize(installed)) return DeferredUpdateAction.Discard;
         if (state.IsChecking || state.IsDownloading) return DeferredUpdateAction.Wait;
         if (state.Release is null) return checkSucceeded && state.Error is null ? DeferredUpdateAction.Discard : DeferredUpdateAction.Wait;
+        if (state.Release.Tag != Tag || GitHubReleaseReader.Normalize(state.Release.Version) != GitHubReleaseReader.Normalize(deferred))
+            return checkSucceeded && state.Error is null ? DeferredUpdateAction.Discard : DeferredUpdateAction.Wait;
         if (state.RequiresFullInstaller || state.Release.Incremental is null) return DeferredUpdateAction.Discard;
         return DeferredUpdateAction.Resume;
     }

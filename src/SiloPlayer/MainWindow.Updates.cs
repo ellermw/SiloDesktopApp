@@ -99,6 +99,14 @@ public sealed partial class MainWindow
         ProfileNameText.MaxWidth = available && NavView.IsPaneOpen ? Math.Max(24, NavView.OpenPaneLength - 210) : double.PositiveInfinity;
         UpdateMenuButton.Content = available ? "Update Available — view changelog" : "Check for updates";
         UpdateMenuButton.Foreground = available ? Helpers.AppUpdateAppearance.Green("CardBackgroundBrush") : (Brush)Application.Current.Resources["PrimaryTextBrush"];
+        // The panel offers the package it downloaded. If Silo no longer holds it (a channel change),
+        // withdraw the question rather than ask for administrator approval that cannot install it.
+        if (_windowedDownloadReady is { } offered && (_appUpdates.IsChangingChannel || state.Release?.Tag != offered.Tag || state.PreparedPackage is null))
+        {
+            _windowedDownloadReady = null;
+            LocalLog.AppendLine("updates.txt", "windowed_update_withdrawn version=" + offered.Version);
+            _manualUpdateConsent?.Cancel();
+        }
         TryResumeDeferredAppUpdate();
         // A running update window already shows this release; don't also announce it.
         if (available && RootGrid.IsLoaded && _playerService.State == PlayerState.Idle && !_updateWindowOwnsUpdate && !_updateDialogBusy)
@@ -114,7 +122,7 @@ public sealed partial class MainWindow
         RefreshUpdateDialog();
         _appUpdates.SetPlaybackActive(_playerService.State != PlayerState.Idle || _playerService.IsLoading);
         if (state.Release is not null && !state.RequiresFullInstaller && !state.IsChecking && !state.IsDownloading && state.ReadyInstaller is null && state.PreparedPackage is null && state.Error is null
-            && _appUpdates.Mode == AppUpdateMode.Automatic && _playerService.State == PlayerState.Idle && !_playerService.IsLoading && !RequiresManualFullInstaller(state))
+            && _appUpdates.Mode == AppUpdateMode.Automatic && _playerService.State == PlayerState.Idle && !_playerService.IsLoading && !_updateWindowOwnsUpdate && !RequiresManualFullInstaller(state))
             _ = _appUpdates.DownloadAsync(automatic: true, ct: _appUpdateLifetime!.Token);
     }
 
@@ -360,14 +368,13 @@ public sealed partial class MainWindow
                 if (updates.State.PreparedPackage is null || !await updates.ReverifyReadyAsync(token))
                     return new(null, updates.State.Error ?? "The update could not be downloaded. You can keep using Silo and try again.");
                 if (confirmRestart) _windowedDownloadReady = release;
-                return new(updates.State.PreparedPackage, null);
+                // Pin the package the window installs: a check now must not replace the release under it.
+                updates.ChecksPaused = true;
+                return new(updates.State.PreparedPackage, null) { Later = confirmRestart ? () => DeferAppUpdate(release) : null };
             }, ct);
-            if (outcome == WindowedUpdateOutcome.Deferred)
-            {
-                // Later: Silo keeps running; the download stays ready and the next start finishes it.
-                DeferAppUpdate(release);
-                return;
-            }
+            // Later: Silo keeps running; the download stays ready and the next start finishes it.
+            // The handoff already recorded it (or told the panel it could not).
+            if (outcome == WindowedUpdateOutcome.Deferred) return;
             if (outcome != WindowedUpdateOutcome.Staged)
             {
                 // A promoted automatic transfer is not owned by the window's cancellation token.
@@ -380,12 +387,20 @@ public sealed partial class MainWindow
                     App.Services.GetRequiredService<ToastService>().Error(updates.State.Error ?? "The update could not start. You can retry or use the full installer from the release page.");
                 return;
             }
+            if (ct.IsCancellationRequested)
+            {
+                // Silo began closing (or withdrew the offer) before this continuation ran. That close
+                // abandoned the handoff and kept any Later for the next start, so leave the record alone.
+                (windowed as IStagedAppUpdateInstaller)?.CancelPreparedHandoff();
+                return;
+            }
+            _windowedDownloadReady = null;
             // Staged: any earlier Later is now carried out, so the next start must not resume it again.
             DeferredAppUpdate.Clear(updates.CacheDirectory);
             _manualUpdateRequested = true;
             await CloseWithAppUpdatesAsync();
         }
-        finally { _updateWindowOwnsUpdate = false; _windowedDownloadReady = null; }
+        finally { _updateWindowOwnsUpdate = false; _windowedDownloadReady = null; if (_appUpdates is not null) _appUpdates.ChecksPaused = false; }
     }
 
     private async Task<bool> PrepareAppUpdateExitAsync()

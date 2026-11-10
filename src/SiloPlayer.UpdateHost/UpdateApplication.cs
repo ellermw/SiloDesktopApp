@@ -83,9 +83,11 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
                     if(!await choice)
                     {
                         await UpdateHostProtocol.WriteAsync(app,new("later"),ct);
-                        // Silo keeps the download and finishes the update on its next start.
+                        // Silo keeps the download and finishes the update on its next start. If it
+                        // could not record Later it says so, and the panel shows that instead of closing.
                         closeAllowed=true;
                         await Task.WhenAny(appFrame,Task.Delay(TimeSpan.FromSeconds(10),lifetime.Token));
+                        if(appFrame.IsCompletedSuccessfully && appFrame.Result.Kind=="failed"){view!.ShowFailure(appFrame.Result.Text??"Silo could not save Later. Update again from Silo when ready.");return;}
                         _=appFrame.Exception;window!.Close();return;
                     }
                     await UpdateHostProtocol.WriteAsync(app,new("restart"),ct);
