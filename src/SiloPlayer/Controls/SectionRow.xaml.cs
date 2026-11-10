@@ -44,6 +44,9 @@ public sealed partial class SectionRow : UserControl
     private bool _isDragging;
     private bool _dragCompletionDemandStarted;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
+    private RepeaterItemsSource<MediaItem>? _cardsSource;
+    private MediaItem? _resyncFocusItem;
+    private FocusState _resyncFocusState;
     private string? _lastRenderedSectionId;
     private long _activationGeneration;
     private long _offsetRestoreGeneration;
@@ -125,6 +128,12 @@ public sealed partial class SectionRow : UserControl
             ++_activationGeneration;
             App.RecordUiDiagnostic($"SectionRow loaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(Section?.Items);
+            // Unloaded detached the guard along with this row's model handler.
+            // Attach it again behind that handler: UpdateSection must stay
+            // queued ahead of a recovery Reset.
+            _cardsSource?.Resubscribe();
+            // Recovery gave up while this row was unloaded; rebind it now.
+            if (_cardsSource is { IsStale: true }) CardsSource_GaveUp();
             _uiCustomizationService.Changed += UICustomization_Changed;
             ApplyResponsiveCardWidths(ActualWidth);
             RefreshPresentation();
@@ -136,6 +145,9 @@ public sealed partial class SectionRow : UserControl
             ++_activationGeneration;
             App.RecordUiDiagnostic($"SectionRow unloaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(null);
+            // Release the guard's model subscription too, so a retired row and
+            // its repeater are not kept alive and driven by the shared model.
+            _cardsSource?.Detach();
             _uiCustomizationService.Changed -= UICustomization_Changed;
         };
     }
@@ -250,7 +262,7 @@ public sealed partial class SectionRow : UserControl
         }
         var template = (DataTemplate)this.Resources[templateKey];
         if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
-        if (!ReferenceEquals(CardsRepeater.ItemsSource, section.Items)) CardsRepeater.ItemsSource = section.Items;
+        BindCards(section.Items);
         _lastRenderedSectionId = section.Id;
 
         // F6: show a skeleton row while items are still loading (empty list
@@ -295,6 +307,133 @@ public sealed partial class SectionRow : UserControl
         // without treating the restored offset as forward navigation.
         RestoreScrollPositionAfterRebind(isSameSection, previousOffset);
         UpdateScrollBounds();
+    }
+
+    private void BindCards(System.Collections.ObjectModel.ObservableCollection<MediaItem> items, bool rebind = false)
+    {
+        if (!rebind && ReferenceEquals(_cardsSource?.Source, items)) return;
+        // The repeater listens through a guard so an ItemsRepeater rejection
+        // (a change reaching it mid-layout) resyncs this row instead of
+        // throwing into the Home reconciler and aborting the section update.
+        var previous = _cardsSource;
+        var next = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue);
+        next.Resyncing += CardsSource_Resyncing;
+        next.Resynced += CardsSource_Resynced;
+        next.GaveUp += CardsSource_GaveUp;
+        try
+        {
+            CardsRepeater.ItemsSource = next;
+        }
+        catch
+        {
+            // The repeater may already hold the new guard when its change
+            // handling throws. Put the previous guard back, then keep only the
+            // guard the repeater is actually bound to and dispose the rest: it
+            // must never hold a disposed guard, and only one guard may observe
+            // the model.
+            if (previous != null && ReferenceEquals(CardsRepeater.ItemsSource, next))
+            {
+                try { CardsRepeater.ItemsSource = previous; }
+                catch (Exception restoreEx) { App.RecordUiDiagnostic($"SectionRow restoring the previous cards source failed hr=0x{restoreEx.HResult:X8}"); }
+            }
+            var held = CardsRepeater.ItemsSource;
+            var bound = ReferenceEquals(held, next) ? next
+                : previous != null && ReferenceEquals(held, previous) ? previous
+                : null;
+            if (!ReferenceEquals(bound, next)) next.Dispose();
+            if (previous != null && !ReferenceEquals(bound, previous)) previous.Dispose();
+            // With neither guard bound, clear the source so the next
+            // UpdateSection (model change or reload) binds the repeater again.
+            _cardsSource = bound;
+            if (bound == null)
+                App.RecordUiDiagnostic("SectionRow cards binding failed and the repeater holds neither guard; rebinding on the next update");
+            // The repeater did not take the binding cleanly, so its view may
+            // be out of step: the next model change (or reload) resyncs it.
+            bound?.MarkStale();
+            if (!IsLoaded) bound?.Detach();
+            throw;
+        }
+        _cardsSource = next;
+        previous?.Dispose();
+        // An unloaded row observes the model only once it loads again.
+        if (!IsLoaded) next.Detach();
+    }
+
+    private void CardsSource_GaveUp()
+    {
+        // The repeater rejected every recovery Reset. A fresh guard gives it a
+        // new ItemsSourceView over the model as it is now, so the row converges
+        // instead of showing stale cards until its next change. An unloaded
+        // row is rebound when it loads again.
+        if (!IsLoaded || _cardsSource is not { } stale) return;
+        try
+        {
+            BindCards(stale.Source, rebind: true);
+        }
+        catch (Exception ex)
+        {
+            // Rejected as well, whatever the error: BindCards left the repeater
+            // on a live guard marked stale, or unbound, so the next model
+            // change or reload retries. This runs from the dispatcher or
+            // Loaded, where a rethrow would only abandon the recovery.
+            App.RecordUiDiagnostic($"SectionRow rebind after rejected resyncs failed type={ex.GetType().Name} hr=0x{ex.HResult:X8}");
+            return;
+        }
+        // The rebind recycled every card; hand keyboard focus back as a
+        // recovery Reset would.
+        CardsSource_Resynced();
+    }
+
+    private void CardsSource_Resyncing()
+    {
+        // The guard's recovery Reset recycles every card, the focused one
+        // included. Remember which item held keyboard focus so it gets it back.
+        _resyncFocusItem = null;
+        if (XamlRoot == null || FocusManager.GetFocusedElement(XamlRoot) is not UIElement focused) return;
+        MediaItem? item = null;
+        for (DependencyObject? node = focused; node != null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+        {
+            // Realized cards sit under the repeater's layout panel, not
+            // directly under it, so take the nearest card and require only
+            // that the repeater is an ancestor.
+            if (ReferenceEquals(node, CardsRepeater))
+            {
+                if (item == null) return;
+                _resyncFocusItem = item;
+                _resyncFocusState = focused.FocusState == FocusState.Unfocused ? FocusState.Programmatic : focused.FocusState;
+                return;
+            }
+            // The templates use x:Bind, so the card's item is not its DataContext.
+            item ??= node switch
+            {
+                IMediaItemOwner owner => owner.MediaItem,
+                AudiobookSquareCard audiobook => audiobook.MediaItem,
+                _ => null,
+            };
+        }
+    }
+
+    private void CardsSource_Resynced()
+    {
+        var item = _resyncFocusItem;
+        _resyncFocusItem = null;
+        if (item == null || !IsLoaded || _cardsSource is not { } source) return;
+        var index = -1;
+        for (var i = 0; i < source.Count; i++)
+            if (ReferenceEquals(source[i], item)) { index = i; break; }
+        // The reconciler replaces a changed item with a new object under the
+        // same ContentId, so the focused card may now hold that object.
+        if (index < 0 && !string.IsNullOrEmpty(item.ContentId))
+        {
+            for (var i = 0; i < source.Count; i++)
+                if (source[i] is MediaItem candidate && string.Equals(candidate.ContentId, item.ContentId, StringComparison.Ordinal)) { index = i; break; }
+        }
+        // A card whose item left the row has nothing to return focus to.
+        if (index < 0) return;
+        var element = CardsRepeater.GetOrCreateElement(index);
+        element.UpdateLayout();
+        var target = element is Control { IsTabStop: true } card ? card : FocusManager.FindFirstFocusableElement(element) as Control;
+        target?.Focus(_resyncFocusState);
     }
 
     private void RestoreScrollPositionAfterRebind(bool preserveOffset, double previousOffset)

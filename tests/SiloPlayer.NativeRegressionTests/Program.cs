@@ -391,6 +391,18 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await HomeDismissalNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-reconcile")
+            {
+                // This opt-in group runs the strict checks: activate the
+                // off-screen window so the focus-restore check can take
+                // keyboard focus, and require the mid-layout rejection.
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(true);
+                _window.Activate();
+                await Task.Delay(100);
+                await HomeReconcileNativeFixture.RunAsync(parent, strict: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-window")
             {
                 await HomeRowWindowNativeFixture.RunAsync(parent);
@@ -1036,6 +1048,10 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             await ReaderInteropFixture.RunAsync(parent);
             _window.AppWindow.Show(false);
             Program.Log("PASS: local EPUB/PDF location interoperability verified in native WebView2.");
+            // The window stays unactivated here, so focus restore and the
+            // mid-layout rejection are checked when available and logged as
+            // skipped otherwise; SILO_NATIVE_TEST_ONLY=home-reconcile is strict.
+            await HomeReconcileNativeFixture.RunAsync(parent);
             await WatchPartyNativeFixture.RunAsync();
             Program.Log("PASS: published Watch Party coordinator and player transport integration.");
             await SharedAppearanceNativeFixture.RunAsync(parent);
