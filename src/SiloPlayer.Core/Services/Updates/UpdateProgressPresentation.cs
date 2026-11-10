@@ -5,7 +5,7 @@ namespace SiloPlayer.Core.Services.Updates;
 /// <summary>Text for the update progress window. Counts describe only what is downloaded.</summary>
 public static class UpdateProgressPresentation
 {
-    public const string DownloadingText = "Downloading updates…";
+    public const string DownloadingText = "Updating…";
     public static string Megabytes(long bytes) => (Math.Max(0, bytes) / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture);
     public static string Files(int done, int total) => $"{Math.Clamp(done, 0, Math.Max(0, total))} / {Math.Max(0, total)}";
     public static string Size(long done, long total) => $"{Megabytes(Math.Clamp(done, 0, Math.Max(0, total)))} / {Megabytes(total)} MB";

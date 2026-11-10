@@ -5,18 +5,22 @@ using SiloPlayer.Core.Models.Updates;
 namespace SiloPlayer.UpdateHost;
 
 internal sealed record HostOptions(bool Worker,string AppPipe,string WorkerPipe,int ParentPid,long ParentStart,
-    string PackageDirectory,string Tag,bool Restart,long Owner,int BrokerPid,long BrokerStart,bool AwaitDownload=false)
+    string PackageDirectory,string Tag,bool Restart,long Owner,int BrokerPid,long BrokerStart,bool AwaitDownload=false,bool ConfirmRestart=false)
 {
     public static HostOptions Parse(string[] args)
     {
-        if(args.Length is < 16 or > 26 || args.Length%2!=0)throw new InvalidDataException();
+        if(args.Length is < 16 or > 28 || args.Length%2!=0)throw new InvalidDataException();
         var values=new Dictionary<string,string>(StringComparer.Ordinal);
         for(var i=0;i<args.Length;i+=2)if(!values.TryAdd(args[i],args[i+1]))throw new InvalidDataException();
         string Get(string key)=>values.TryGetValue(key,out var value)?value:throw new InvalidDataException();
-        foreach(var key in values.Keys)if(key is not ("--worker" or "--app-pipe" or "--worker-pipe" or "--parent" or "--parent-start" or "--package" or "--tag" or "--restart" or "--owner" or "--broker" or "--broker-start" or "--await-download"))throw new InvalidDataException();
+        foreach(var key in values.Keys)if(key is not ("--worker" or "--app-pipe" or "--worker-pipe" or "--parent" or "--parent-start" or "--package" or "--tag" or "--restart" or "--owner" or "--broker" or "--broker-start" or "--await-download" or "--confirm-restart"))throw new InvalidDataException();
+        static bool YesNo(string value)=>value switch{"yes"=>true,"no"=>false,_=>throw new InvalidDataException()};
         // The window waits for the client's download frames before requesting elevation. Only the broker accepts it.
-        var awaitDownload=values.GetValueOrDefault("--await-download","no") switch{"yes"=>true,"no"=>false,_=>throw new InvalidDataException()};
+        var awaitDownload=YesNo(values.GetValueOrDefault("--await-download","no"));
         if(awaitDownload && values.GetValueOrDefault("--worker")=="yes")throw new InvalidDataException();
+        // After the download the window asks Restart now or Later. Only a downloading broker can ask.
+        var confirmRestart=YesNo(values.GetValueOrDefault("--confirm-restart","no"));
+        if(confirmRestart && !awaitDownload)throw new InvalidDataException();
         foreach(var pipe in new[]{Get("--app-pipe"),Get("--worker-pipe")})if(!Regex.IsMatch(pipe,@"^SiloUpdate-[a-f0-9]{32}$"))throw new InvalidDataException();
         var tag=Get("--tag");
         if(tag.Length is < 2 or > 64 || !tag.StartsWith('v'))throw new InvalidDataException();
@@ -29,7 +33,7 @@ internal sealed record HostOptions(bool Worker,string AppPipe,string WorkerPipe,
         return new(values.GetValueOrDefault("--worker")=="yes",Get("--app-pipe"),Get("--worker-pipe"),int.Parse(Get("--parent"),CultureInfo.InvariantCulture),
             long.Parse(Get("--parent-start"),CultureInfo.InvariantCulture),Path.GetFullPath(Get("--package")),tag,Get("--restart")=="yes",
             long.Parse(Get("--owner"),CultureInfo.InvariantCulture),int.Parse(values.GetValueOrDefault("--broker","0"),CultureInfo.InvariantCulture),
-            long.Parse(values.GetValueOrDefault("--broker-start","0"),CultureInfo.InvariantCulture),awaitDownload);
+            long.Parse(values.GetValueOrDefault("--broker-start","0"),CultureInfo.InvariantCulture),awaitDownload,confirmRestart);
     }
     public IEnumerable<string> Arguments(bool worker,int brokerPid,long brokerStart)
     {

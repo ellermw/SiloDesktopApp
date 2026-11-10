@@ -7,7 +7,7 @@ public sealed class UpdateProgressPresentationTests
     [Fact]
     public void Window_text_shows_downloaded_counts_and_sizes()
     {
-        Assert.Equal("Downloading updates…", UpdateProgressPresentation.DownloadingText);
+        Assert.Equal("Updating…", UpdateProgressPresentation.DownloadingText);
         Assert.Equal("37 / 61", UpdateProgressPresentation.Files(37, 61));
         Assert.Equal("61 / 61", UpdateProgressPresentation.Files(62, 61));
         Assert.Equal("4.2 / 11.8 MB", UpdateProgressPresentation.Size(4404019, 12373197));
