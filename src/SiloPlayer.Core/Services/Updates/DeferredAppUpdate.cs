@@ -8,18 +8,19 @@ public enum DeferredUpdateAction { Wait, Resume, Discard }
 /// <summary>
 /// "Later" in the update panel: the downloaded update finishes on the next start. Per-user
 /// cache only; it records consent, never grants authority. Installation still goes through the
-/// normal window, release authority and administrator approval.
+/// normal window, release authority and administrator approval. The consent belongs to the
+/// channel it was given on; another channel never resumes it.
 /// </summary>
-public sealed record DeferredAppUpdate(string Tag, string Version)
+public sealed record DeferredAppUpdate(string Tag, string Version, AppUpdateChannel Channel = AppUpdateChannel.Stable)
 {
     public const string FileName = "deferred-update.json";
 
-    public static void Save(string cacheDirectory, AppRelease release)
+    public static void Save(string cacheDirectory, AppRelease release, AppUpdateChannel channel = AppUpdateChannel.Stable)
     {
         var path = PathIn(cacheDirectory);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         AppUpdateDownloader.EnsureOrdinaryPath(path);
-        var record = new DeferredAppUpdate(release.Tag, GitHubReleaseReader.Normalize(release.Version).ToString(4));
+        var record = new DeferredAppUpdate(release.Tag, GitHubReleaseReader.Normalize(release.Version).ToString(4), channel);
         var temporary = path + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(record));
         File.Move(temporary, path, overwrite: true);
@@ -33,7 +34,8 @@ public sealed record DeferredAppUpdate(string Tag, string Version)
             AppUpdateDownloader.EnsureOrdinaryPath(path);
             if (!File.Exists(path) || new FileInfo(path).Length is <= 0 or > 4096) return null;
             var record = JsonSerializer.Deserialize<DeferredAppUpdate>(File.ReadAllText(path));
-            if (record is { Tag.Length: > 1 and <= 64 } && record.Tag.StartsWith('v') && System.Version.TryParse(record.Version, out _)) return record;
+            if (record is { Tag.Length: > 1 and <= 64 } && record.Tag.StartsWith('v') && System.Version.TryParse(record.Version, out _)
+                && Enum.IsDefined(record.Channel)) return record;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException) { }
         Clear(cacheDirectory);
@@ -48,12 +50,13 @@ public sealed record DeferredAppUpdate(string Tag, string Version)
 
     /// <summary>
     /// Resume once a check has found an incremental update; discard when this client already is
-    /// that version (the update finished), when no update remains, or when only the full installer
-    /// can apply it (that needs its own consent). Otherwise wait for the next check.
+    /// that version (the update finished), when no update remains, when only the full installer
+    /// can apply it (that needs its own consent), or when the channel changed since Later (a
+    /// channel change retires prepared offers). Otherwise wait for the next check.
     /// </summary>
-    public DeferredUpdateAction Decide(Version installed, AppUpdateState state, bool checkSucceeded)
+    public DeferredUpdateAction Decide(Version installed, AppUpdateState state, bool checkSucceeded, AppUpdateChannel channel = AppUpdateChannel.Stable)
     {
-        if (!System.Version.TryParse(Version, out var deferred)
+        if (channel != Channel || !System.Version.TryParse(Version, out var deferred)
             || GitHubReleaseReader.Normalize(deferred) <= GitHubReleaseReader.Normalize(installed)) return DeferredUpdateAction.Discard;
         if (state.IsChecking || state.IsDownloading) return DeferredUpdateAction.Wait;
         if (state.Release is null) return checkSucceeded && state.Error is null ? DeferredUpdateAction.Discard : DeferredUpdateAction.Wait;

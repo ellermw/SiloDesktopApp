@@ -174,10 +174,30 @@ public sealed class DeferredAppUpdateTests : IDisposable
         Assert.Equal(DeferredUpdateAction.Discard, record.Decide(new Version(1, 2, 968), new AppUpdateState(Release("1.2.970")) { RequiresFullInstaller = true }, true));
     }
 
+    [Fact]
+    public void Later_on_one_channel_never_resumes_on_another()
+    {
+        DeferredAppUpdate.Save(cache, Release("1.2.970"), AppUpdateChannel.Stable);
+        var record = DeferredAppUpdate.Read(cache)!;
+        Assert.Equal(AppUpdateChannel.Stable, record.Channel);
+        var installed = new Version(1, 2, 968, 0);
+        // Switched to Beta before restarting: a beta release found there is not the deferred one.
+        Assert.Equal(DeferredUpdateAction.Discard, record.Decide(installed, new AppUpdateState(Release("1.2.975")), true, AppUpdateChannel.Beta));
+        Assert.Equal(DeferredUpdateAction.Discard, record.Decide(installed, new AppUpdateState(), false, AppUpdateChannel.Beta));
+        Assert.Equal(DeferredUpdateAction.Resume, record.Decide(installed, new AppUpdateState(Release("1.2.970")), true, AppUpdateChannel.Stable));
+
+        DeferredAppUpdate.Save(cache, Release("1.2.970"), AppUpdateChannel.Beta);
+        var beta = DeferredAppUpdate.Read(cache)!;
+        Assert.Equal(new DeferredAppUpdate("v1.2.970", "1.2.970.0", AppUpdateChannel.Beta), beta);
+        Assert.Equal(DeferredUpdateAction.Discard, beta.Decide(installed, new AppUpdateState(Release("1.2.970")), true, AppUpdateChannel.Stable));
+        Assert.Equal(DeferredUpdateAction.Resume, beta.Decide(installed, new AppUpdateState(Release("1.2.970")), true, AppUpdateChannel.Beta));
+    }
+
     [Theory]
     [InlineData("not json")]
     [InlineData("{\"Tag\":\"1.2.970\",\"Version\":\"1.2.970.0\"}")]
     [InlineData("{\"Tag\":\"v1.2.970\",\"Version\":\"soon\"}")]
+    [InlineData("{\"Tag\":\"v1.2.970\",\"Version\":\"1.2.970.0\",\"Channel\":7}")]
     public void A_damaged_record_is_removed_instead_of_resuming(string content)
     {
         Directory.CreateDirectory(cache);

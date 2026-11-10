@@ -19,7 +19,7 @@ public sealed partial class MainWindow
         if (_appUpdates is null) return;
         try
         {
-            DeferredAppUpdate.Save(_appUpdates.CacheDirectory, release);
+            DeferredAppUpdate.Save(_appUpdates.CacheDirectory, release, _appUpdates.Channel);
             LocalLog.AppendLine("updates.txt", "update_deferred version=" + release.Version);
         }
         catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "update_deferral_save"); }
@@ -38,18 +38,18 @@ public sealed partial class MainWindow
         if (_deferredUpdate is not { } deferred || _appUpdates is null || !RootGrid.IsLoaded) return;
         var state = _appUpdates.State;
         var action = _appUpdates.IsChangingChannel ? DeferredUpdateAction.Wait
-            : deferred.Decide(_appUpdates.CurrentVersion, state, _appUpdates.LastCheckSucceeded);
+            : deferred.Decide(_appUpdates.CurrentVersion, state, _appUpdates.LastCheckSucceeded, _appUpdates.Channel);
         if (action == DeferredUpdateAction.Wait) return;
         if (action == DeferredUpdateAction.Resume && (_updateDialogBusy || _updateWindowOwnsUpdate || _appUpdateDialog is not null
             || _playerService.State != PlayerState.Idle || _playerService.IsLoading)) return;
-        // One attempt per deferral: a declined approval or a failure returns to the normal update notice.
         _deferredUpdate = null;
-        DeferredAppUpdate.Clear(_appUpdates.CacheDirectory);
         if (action == DeferredUpdateAction.Discard)
         {
+            DeferredAppUpdate.Clear(_appUpdates.CacheDirectory);
             LocalLog.AppendLine("updates.txt", "deferred_update_retired version=" + deferred.Version);
             return;
         }
+        // The record stays on disk until this attempt ends, so closing Silo during the resume keeps it for the next start.
         _ = ResumeDeferredAppUpdateAsync(state.Release!);
     }
 
@@ -59,6 +59,7 @@ public sealed partial class MainWindow
         if (_appUpdates is null || installer is not IWindowedAppUpdateInstaller windowed || installer.IsSupported != true
             || !_appUpdates.PreferIncrementalUpdates || RequiresManualFullInstaller(_appUpdates.State))
         {
+            if (_appUpdates is not null) DeferredAppUpdate.Clear(_appUpdates.CacheDirectory);
             LocalLog.AppendLine("updates.txt", "deferred_update_unavailable");
             return;
         }
@@ -73,6 +74,13 @@ public sealed partial class MainWindow
         }
         catch (OperationCanceledException) when (consent.IsCancellationRequested) { await _appUpdates.StopAsync(); }
         catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "deferred_update_resume"); }
-        finally { _manualUpdateConsent = null; _updateDialogBusy = false; RefreshUpdateDialog(); }
+        finally
+        {
+            // One attempt per deferral: a declined approval or a failure returns to the normal update notice.
+            // A staged update already retired it. Only an abandoned resume (Silo closing) keeps it for the next start.
+            if (consent.IsCancellationRequested) LocalLog.AppendLine("updates.txt", "deferred_update_kept version=" + release.Version);
+            else DeferredAppUpdate.Clear(_appUpdates.CacheDirectory);
+            _manualUpdateConsent = null; _updateDialogBusy = false; RefreshUpdateDialog();
+        }
     }
 }

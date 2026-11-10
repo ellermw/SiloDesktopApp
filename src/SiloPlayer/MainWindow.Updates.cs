@@ -380,6 +380,8 @@ public sealed partial class MainWindow
                     App.Services.GetRequiredService<ToastService>().Error(updates.State.Error ?? "The update could not start. You can retry or use the full installer from the release page.");
                 return;
             }
+            // Staged: any earlier Later is now carried out, so the next start must not resume it again.
+            DeferredAppUpdate.Clear(updates.CacheDirectory);
             _manualUpdateRequested = true;
             await CloseWithAppUpdatesAsync();
         }
@@ -399,6 +401,7 @@ public sealed partial class MainWindow
             {
                 // A user close abandons the window's handoff, never starts a second one. Closing
                 // while the panel asks Restart now or Later counts as Later: the next start finishes it.
+                // A resumed deferral keeps its record on disk until it is staged, so it survives this close too.
                 if (_windowedDownloadReady is { } downloaded) DeferAppUpdate(downloaded);
                 _manualUpdateConsent?.Cancel();
                 await _appUpdates.StopAsync();
