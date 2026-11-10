@@ -1,5 +1,16 @@
 param([Parameter(Mandatory)][string]$HostExecutable,[Parameter(Mandatory)][string]$ResultDirectory)
 $ErrorActionPreference='Stop'
+Add-Type -Namespace SiloSmoke -Name Native -MemberDefinition @'
+[DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageTimeoutW")]
+public static extern IntPtr SendMessageTimeout(IntPtr hwnd,uint msg,IntPtr wParam,System.Text.StringBuilder lParam,uint flags,uint timeout,out IntPtr result);
+'@
+# The panel is frameless (no WS_CAPTION), and GetWindowText (Process.MainWindowTitle) may return nothing
+# for another process's caption-less window, so ask the window itself with WM_GETTEXT.
+function Get-WindowTitle([IntPtr]$hwnd){
+    $text=[Text.StringBuilder]::new(256);$copied=[IntPtr]::Zero
+    if([SiloSmoke.Native]::SendMessageTimeout($hwnd,0x000D,[IntPtr]256,$text,0x0002,2000,[ref]$copied) -eq [IntPtr]::Zero){return $null} # WM_GETTEXT, SMTO_ABORTIFHUNG
+    $text.ToString()
+}
 $image=[IO.Path]::GetFullPath($HostExecutable)
 if(!(Test-Path -LiteralPath $image -PathType Leaf) -or [IO.Path]::GetFileName($image) -ne 'SiloPlayer.UpdateHost.exe'){throw 'Expected a built updater host.'}
 foreach($hive in @([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryHive]::CurrentUser)) {
@@ -21,7 +32,7 @@ $process=[Diagnostics.Process]::Start($start);$errorTask=$process.StandardError.
 try {
     $end=[DateTime]::UtcNow.AddSeconds(10)
     while(!$process.HasExited -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 100;$process.Refresh();if($process.MainWindowHandle -ne 0){break}}
-    if($process.HasExited -or $process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -ne 'Updating Silo Desktop Player'){throw 'The updater Application did not construct its own window with the Silo Desktop Player title.'}
+    if($process.HasExited -or $process.MainWindowHandle -eq 0 -or (Get-WindowTitle $process.MainWindowHandle) -ne 'Updating Silo Desktop Player'){throw 'The updater Application did not construct its own window with the Silo Desktop Player title.'}
     Start-Sleep -Milliseconds 500;$process.Refresh();if($process.HasExited){throw 'Updater startup crashed after window creation.'}
     $receipt=[ordered]@{image=$image;sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash;version=[Diagnostics.FileVersionInfo]::GetVersionInfo($image).FileVersion;
         ownWindowCreated=$true;unregisteredRoot=$true;noElevationOrNetwork=$true;pid=$process.Id;utc=[DateTimeOffset]::UtcNow}
