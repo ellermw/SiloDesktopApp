@@ -353,6 +353,9 @@ public sealed partial class MainWindow
     private async Task RunWindowedUpdateAsync(ContentDialog? dialog, IWindowedAppUpdateInstaller windowed, AppRelease release, bool confirmRestart, CancellationToken ct)
     {
         _updateWindowOwnsUpdate = true;
+        // A manual run replaces the startup deferral: its own answer (Later, a declined approval) stands
+        // for this session, and any record on disk still drives the next start.
+        if (confirmRestart) _deferredUpdate = null;
         try
         {
             var updates = _appUpdates!;
@@ -360,16 +363,22 @@ public sealed partial class MainWindow
             dialog?.Hide();
             var outcome = await windowed.PrepareWithDownloadAsync(release, packageDirectory, true, confirmRestart, _updateHwnd.ToInt64(), async (report, token) =>
             {
+                // Pin the release the user accepted before downloading it: a check must not replace it under the window.
+                updates.ChecksPaused = true;
+                const string replaced = "Another update was found while this one was being prepared. Check for updates again to install it.";
+                if (updates.State.Release?.Tag != release.Tag) return new(null, replaced);
                 void Forward(AppUpdateState state) { if (state.PreparationProgress is { } progress) report(progress); }
                 updates.Changed += Forward;
                 try { await updates.DownloadAsync(ct: token).WaitAsync(token); }
                 finally { updates.Changed -= Forward; }
+                // A check that was already running when the pin was set can still have swapped the release.
+                if (updates.State.Release?.Tag != release.Tag || (updates.State.PreparedPackage is { } downloaded
+                    && !Path.GetFullPath(downloaded.Directory).Equals(Path.GetFullPath(packageDirectory), StringComparison.OrdinalIgnoreCase)))
+                    return new(null, replaced);
                 if (updates.State.RequiresFullInstaller) return new(null, null);
                 if (updates.State.PreparedPackage is null || !await updates.ReverifyReadyAsync(token))
                     return new(null, updates.State.Error ?? "The update could not be downloaded. You can keep using Silo and try again.");
                 if (confirmRestart) _windowedDownloadReady = release;
-                // Pin the package the window installs: a check now must not replace the release under it.
-                updates.ChecksPaused = true;
                 return new(updates.State.PreparedPackage, null) { Later = confirmRestart ? () => DeferAppUpdate(release) : null };
             }, ct);
             // Later: Silo keeps running; the download stays ready and the next start finishes it.
