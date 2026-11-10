@@ -212,9 +212,7 @@ public sealed class UpdateProgressWindow : Window
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
         // A frameless WinUI window still keeps a classic 3px frame, painted light grey inside the
         // outline. Drop the frame styles so the panel's own background meets the outline.
-        SetWindowLongPtr(self,-16,(IntPtr)(GetWindowLongPtr(self,-16).ToInt64() & ~0x00C40000L)); // WS_BORDER|WS_DLGFRAME|WS_THICKFRAME
-        SetWindowLongPtr(self,-20,(IntPtr)(GetWindowLongPtr(self,-20).ToInt64() & ~0x00020301L)); // WS_EX_DLGMODALFRAME|WINDOWEDGE|CLIENTEDGE|STATICEDGE
-        SetWindowPos(self,IntPtr.Zero,0,0,0,0,0x0237); // SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|NOOWNERZORDER
+        frameless=DropFrameStyles(self);
         var round=2;outlineRounded=DwmSetWindowAttribute(self,33,ref round,sizeof(int))>=0;
         var outline=0x00473F3A;outlineColored=DwmSetWindowAttribute(self,34,ref outline,sizeof(int))>=0; // #3A3F47 as COLORREF (0x00BBGGRR).
         root.SizeChanged+=(_,_)=>{layoutDirty=true;Track();};
@@ -249,7 +247,7 @@ public sealed class UpdateProgressWindow : Window
     private readonly WinEventProc winEvent;
     private uint ownerProcess;
     private bool layoutDirty=true;
-    private bool outlineRounded,outlineColored;
+    private bool outlineRounded,outlineColored,frameless;
     private bool? dwmOutline;
     private bool outlineTraced;
     private PanelRect? anchor;
@@ -317,15 +315,18 @@ public sealed class UpdateProgressWindow : Window
     }
 
     // Windows 11 draws a border in DWMWA_BORDER_COLOR around every window it rounds, frame styles or not
-    // (DWMWA_COLOR_NONE is the documented way to suppress it), so DWM accepting both requests decides the
-    // path. DWMWA_VISIBLE_FRAME_BORDER_THICKNESS describes the frame this window no longer has, so it never
-    // decides anything; it is only traced, with the path taken, once the panel is first shown.
+    // (DWMWA_COLOR_NONE is the documented way to suppress it), so DWM accepting both requests, with the
+    // frame styles verifiably gone, decides the path. DWMWA_VISIBLE_FRAME_BORDER_THICKNESS describes the
+    // frame this window no longer has, so it never decides anything; it is only traced, with the path
+    // taken, once the panel is first shown.
     // The fallback draws the same colour inside the client area, rounded by XAML (DWMWCP_ROUND is 8px).
     private void UpdateOutline(IntPtr self)
     {
-        if(dwmOutline is null)
+        // The presenter can re-apply its own styles when the panel is shown, so assert them once more then.
+        if(!outlineTraced && AppWindow.IsVisible)frameless=DropFrameStyles(self);
+        var drawn=outlineRounded && outlineColored && frameless;
+        if(dwmOutline!=drawn)
         {
-            var drawn=outlineRounded && outlineColored;
             dwmOutline=drawn;
             root.BorderThickness=new Thickness(drawn ? 0 : 1);
             root.BorderBrush=drawn ? null : new SolidColorBrush(ColorHelper.FromArgb(255,58,63,71));
@@ -336,8 +337,31 @@ public sealed class UpdateProgressWindow : Window
         outlineTraced=true;
         // Not stderr: the startup smoke test treats any stderr output as a failure.
         var probed=DwmGetWindowAttribute(self,37,out var border,sizeof(int))>=0; // DWMWA_VISIBLE_FRAME_BORDER_THICKNESS
-        Trace.WriteLine($"Update panel outline: {(dwmOutline==true ? "DWM" : "app")} (round {outlineRounded}, colour {outlineColored}, DWM frame border {(probed ? $"{border}px" : "unavailable")})");
+        Trace.WriteLine($"Update panel outline: {(dwmOutline==true ? "DWM" : "app")} (round {outlineRounded}, colour {outlineColored}, frameless {frameless}, DWM frame border {(probed ? $"{border}px" : "unavailable")})");
     }
+
+    // Clears the classic frame styles and re-reads them, so a refused or overwritten write is noticed rather
+    // than assumed. A failed read (0 with an error set) is never masked and written back as a style word.
+    private static bool DropFrameStyles(IntPtr self)
+    {
+        const long frame=0x00C40000L,frameEx=0x00020301L; // WS_BORDER|WS_DLGFRAME|WS_THICKFRAME; WS_EX_DLGMODALFRAME|WINDOWEDGE|CLIENTEDGE|STATICEDGE
+        if(!TryGetStyle(self,-16,out var style) || !TryGetStyle(self,-20,out var exStyle))return false; // GWL_STYLE, GWL_EXSTYLE
+        if((style & frame)==0 && (exStyle & frameEx)==0)return true;
+        if((style & frame)!=0 && !TrySetStyle(self,-16,style & ~frame))return false;
+        if((exStyle & frameEx)!=0 && !TrySetStyle(self,-20,exStyle & ~frameEx))return false;
+        if(!SetWindowPos(self,IntPtr.Zero,0,0,0,0,0x0237))return false; // SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|NOOWNERZORDER
+        return TryGetStyle(self,-16,out style) && TryGetStyle(self,-20,out exStyle) && (style & frame)==0 && (exStyle & frameEx)==0;
+    }
+
+    // Both calls return 0 for a zero value as well as on failure; only the last error tells them apart.
+    private static bool TryGetStyle(IntPtr hwnd,int index,out long style)
+    {
+        style=GetWindowLongPtr(hwnd,index).ToInt64();
+        return style!=0 || Marshal.GetLastWin32Error()==0;
+    }
+
+    private static bool TrySetStyle(IntPtr hwnd,int index,long style)=>
+        SetWindowLongPtr(hwnd,index,(IntPtr)style)!=IntPtr.Zero || Marshal.GetLastWin32Error()==0;
 
     private bool IsVideoSurface(IntPtr hwnd)
     {
@@ -368,8 +392,8 @@ public sealed class UpdateProgressWindow : Window
     [DllImport("user32.dll")]private static extern bool UnhookWinEvent(IntPtr hook);
     [DllImport("dwmapi.dll")]private static extern int DwmSetWindowAttribute(IntPtr hwnd,int attribute,ref int value,int size);
     [DllImport("dwmapi.dll")]private static extern int DwmGetWindowAttribute(IntPtr hwnd,int attribute,out int value,int size);
-    [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")]private static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
-    [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")]private static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);
+    [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW",SetLastError=true)]private static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
+    [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW",SetLastError=true)]private static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);
     [DllImport("user32.dll")]private static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
     [DllImport("user32.dll")]private static extern bool GetClientRect(IntPtr hwnd,out Rect rect);
     [DllImport("user32.dll")]private static extern bool GetWindowRect(IntPtr hwnd,out Rect rect);
