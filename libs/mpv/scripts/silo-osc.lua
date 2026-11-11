@@ -2729,6 +2729,7 @@ hide_osc = function()
     -- popup from remaining interactive after the controls have faded.
     dismiss_transport_menus_for_fade()
     state.visible = false
+    state.intro_dismissed_key = nil
     state.target_alpha = 0
     if state.hide_timer then
         state.hide_timer:kill()
@@ -4153,6 +4154,7 @@ check_skip_markers = function()
     if state.intro_prompt_key ~= key and not state.intro_pending and not state.intro_undo_origin then
         state.intro_prompt_key = key
         state.intro_expired_key = nil
+        state.intro_dismissed_key = nil
         state.intro_prompt_remaining = 5
         state.intro_resolved_keys = state.intro_resolved_keys or {}
         state.intro_prompt_resolved = state.intro_resolved_keys[key] == true
@@ -4176,6 +4178,7 @@ check_skip_markers = function()
     end
     local in_intro = pos >= state.intro_start and pos < state.intro_end and state.intro_end > state.intro_start
     if not in_intro or state.intro_mode ~= "ask" then state.intro_expired_key = nil end
+    if not in_intro or state.intro_mode ~= "ask" or not state.visible then state.intro_dismissed_key = nil end
     if state.intro_mode == "ask" and in_intro and not state.intro_was_inside and not state.intro_resolved_keys[key] then
         state.intro_prompt_remaining = 5
         state.intro_prompt_resolved = false
@@ -4236,7 +4239,7 @@ check_skip_markers = function()
     -- also required start > 0, which wrongly hid Skip Intro whenever
     -- the intro began at position 0 (common on streaming-first shows).
     local untimed_intro = state.intro_mode == "ask" and state.visible and state.intro_expired_key == key
-        and not state.intro_resolved_keys[key] and not state.intro_pending
+        and state.intro_dismissed_key ~= key and not state.intro_resolved_keys[key] and not state.intro_pending
     if state.intro_mode ~= "never" and (not state.intro_prompt_resolved or untimed_intro) and state.intro_end > state.intro_start then
         if pos >= state.intro_start and pos < state.intro_end then
             state.skip_visible = true
@@ -6597,6 +6600,8 @@ local function setup_key_bindings()
                     state.intro_prompt_remaining = 0
                     state.intro_prompt_resolved = true
                     state.intro_expired_key = state.intro_prompt_key
+                    -- Reoffer only after the controls hide, not on the next tick.
+                    state.intro_dismissed_key = state.intro_prompt_key
                 end
                 state.intro_undo_origin = nil
                 state.skip_visible = false

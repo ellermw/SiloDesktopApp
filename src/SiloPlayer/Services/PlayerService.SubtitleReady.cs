@@ -138,6 +138,11 @@ public partial class PlayerService
     {
         var manager = _playbackManager;
         if (manager == null || !TryGetPayloadInt(payload, "file_id", out var fileId)) return;
+        // The realtime envelope may omit its redundant session ID. Resolve it
+        // once so the same session fence also covers queued/deferred refreshes.
+        if (string.IsNullOrEmpty(eventSessionId) && payload.TryGetProperty("session_id", out var fallbackSession) &&
+            fallbackSession.ValueKind == JsonValueKind.String)
+            eventSessionId = fallbackSession.GetString() ?? "";
         PlaybackStartResponse? session;
         SubtitleOperationOwner? owner;
         lock (manager.SubtitleInventorySyncRoot)

@@ -979,6 +979,9 @@ public sealed partial class MpvOscRuntimeTests
             keys['silo-menu-escape']()
             local dismissed = not state.skip_visible and state.intro_prompt_resolved and state.intro_prompt_remaining == 0
                 and state.intro_expired_key == state.intro_prompt_key and not state.intro_resolved_keys[state.intro_prompt_key]
+            -- Marker ticks while the HUD is still visible must not undo Escape.
+            osc_test_check(); osc_test_check()
+            dismissed = dismissed and state.visible and not state.skip_visible and state.intro_prompt_remaining == 0
             state.visible = false; osc_test_check(); dismissed = dismissed and not state.skip_visible
             state.visible = true; osc_test_check()
             local reoffered = state.skip_visible and state.skip_label == 'Skip Intro' and state.intro_prompt_remaining == 0

@@ -59,6 +59,8 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 using var announcement = JsonDocument.Parse("""
                     {"file_id":42,"subtitle_id":77,"track":{"track_id":"downloaded:77","stored_subtitle_id":77,"combined_index":9,"source":"downloaded","language":"ita","label":"Canonical bitmap","codec":"pgs","delivery":"burn_in_only","unplayable":true}}
                     """);
+                Call(service, "HandleWebSocketEvent", new PlaybackRealtimeEvent { Name = "subtitle_ready", SessionId = "", Payload = announcement.RootElement });
+                Require(!manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 77), "An announcement without any session identity merged into current playback.");
                 Call(service, "HandleWebSocketEvent", new PlaybackRealtimeEvent { Name = "subtitle_ready", SessionId = "old-session", Payload = announcement.RootElement });
                 Require(!manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 77), "A stale event envelope merged into current playback.");
                 Call(service, "HandleWebSocketEvent", new PlaybackRealtimeEvent { Name = "subtitle_ready", SessionId = "fixture", Payload = announcement.RootElement });
@@ -67,6 +69,18 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 Require(added.Index == 9 && added.TrackId == "downloaded:77" && added.Delivery == "burn_in_only" && added.Unplayable && added.Url == "",
                     "Canonical announcement lost its stored ID, assigned ordinal or delivery restrictions.");
                 Require(SubtitleSyncPolicy.Key(added) == null, "A stored row ID invented timing-sync support.");
+                using var payloadOnly = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    session_id = "fixture", file_id = 42, subtitle_id = 77,
+                    track = announcement.RootElement.GetProperty("track"),
+                }));
+                added.Label = "Awaiting payload-only announcement";
+                Call(service, "HandleWebSocketEvent", new PlaybackRealtimeEvent { Name = "subtitle_ready", SessionId = "old-session", Payload = payloadOnly.RootElement });
+                Require(added.Label == "Awaiting payload-only announcement", "A conflicting envelope changed canonical subtitle metadata.");
+                Call(service, "HandleWebSocketEvent", new PlaybackRealtimeEvent { Name = "subtitle_ready", SessionId = "", Payload = payloadOnly.RootElement });
+                await Until(() => added.Label == "Canonical bitmap");
+                Require(ReferenceEquals(added, manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77)),
+                    "A payload-only session announcement replaced its canonical row identity.");
                 Require(manager.CaptureLocalSubtitleIntent() == intent && mpv.GetPropertyDouble("sid") == sid && wire.PreferenceWrites == writes,
                     "Another viewer's added subtitle changed the native choice or saved preferences.");
                 wire.DownloadedAvailable = true;
@@ -100,12 +114,14 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 wire.AdditionalDownloadedAvailable = false;
                 using var stale = JsonDocument.Parse("""{"session_id":"old-session","file_id":42,"subtitle_id":77}""");
                 await (Task)Call(service, "ApplySubtitleReadyAsync", stale.RootElement, "fixture")!;
+                await (Task)Call(service, "ApplySubtitleReadyAsync", stale.RootElement, "")!;
                 Require(wire.Replans.Count == 0, "A stale session announcement replanned current playback.");
                 Require(Equals(originalTransportFile, Get(service, "_fileLoadGeneration")), "A local subtitle merge reloaded mpv.");
                 using var unresolved = JsonDocument.Parse("""{"session_id":"fixture","file_id":42,"subtitle_id":77}""");
                 service.SetPaused(true);
                 Set(service, "_switchingContent", true);
-                await (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "fixture")!;
+                // Payload-only identity must also survive deferral and the later session fences.
+                await (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "")!;
                 Require(wire.Replans.Count == 0, "An inventory refresh interrupted an active native load.");
                 await Load(0, 0); // Actual FILE_LOADED releases the deferred inventory read.
                 await Until(() => wire.Replans.Count == 1 && !service.IsLoading && Get(service, "_loadedMediaInitCts") == null && service.ActiveSubtitleServerIndex == 0);
