@@ -223,21 +223,25 @@ public sealed partial class ProfileSelectPage : Page
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.Profiles.Count > 0) { await StartManagementAsync(true); return; }
-        var result = await Dialogs.ProfileEditorDialog.ShowWithContextAsync(XamlRoot, profile: null);
-        if (result.Profile == null) { await ViewModel.LoadProfilesCommand.ExecuteAsync(null); return; }
-
-        await ViewModel.SelectProfileCommand.ExecuteAsync(result.Profile);
-        if (!ViewModel.IsPinRequired) return;
-
-        ViewModel.Pin = result.Pin;
-        await ViewModel.VerifyPinCommand.ExecuteAsync(null);
-        if (ViewModel.IsPinRequired)
+        try
         {
-            App.Services.GetRequiredService<Services.ToastService>()
-                .Error(ViewModel.PinErrorMessage?.StartsWith("Too many incorrect PINs.", StringComparison.Ordinal) == true
-                    ? $"Profile created. {ViewModel.PinErrorMessage}" : "Profile created, but PIN verification failed");
+            if (ViewModel.Profiles.Count > 0) { await StartManagementAsync(true); return; }
+            var result = await Dialogs.ProfileEditorDialog.ShowWithContextAsync(XamlRoot, profile: null);
+            if (result.Profile == null) { await ViewModel.LoadProfilesCommand.ExecuteAsync(null); return; }
+
+            await ViewModel.SelectProfileCommand.ExecuteAsync(result.Profile);
+            if (!ViewModel.IsPinRequired) return;
+
+            ViewModel.Pin = result.Pin;
+            await ViewModel.VerifyPinCommand.ExecuteAsync(null);
+            if (ViewModel.IsPinRequired)
+            {
+                App.Services.GetRequiredService<Services.ToastService>()
+                    .Error(ViewModel.PinErrorMessage?.StartsWith("Too many incorrect PINs.", StringComparison.Ordinal) == true
+                        ? $"Profile created. {ViewModel.PinErrorMessage}" : "Profile created, but PIN verification failed");
+            }
         }
+        catch (Exception ex) { ViewModel.ErrorMessage = $"Couldn't open the new profile form: {ex.Message}"; }
     }
 
     private async void SignOutButton_Click(object sender, RoutedEventArgs e)

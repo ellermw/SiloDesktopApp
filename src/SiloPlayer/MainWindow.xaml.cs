@@ -2511,7 +2511,8 @@ public sealed partial class MainWindow : Window
                     if (revision != _profilePresentationRevision) return;
                     var canSwitch = Core.Services.ProfileLimits.CanSwitch(response.Profiles.Count, response.MaxProfiles, profile.HasPin);
                     ProfileSwitchButton.Visibility = canSwitch ? Visibility.Visible : Visibility.Collapsed;
-                    SettingsSidebarProfile.IsEnabled = canSwitch;
+                    // Profile management remains available even when there is nobody to switch to.
+                    SettingsSidebarProfile.IsEnabled = true;
                     ProfileNameText.Text = profile.Name;
                     ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
                         ? profile.Name[0].ToString().ToUpperInvariant()

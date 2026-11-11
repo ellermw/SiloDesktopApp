@@ -9,10 +9,14 @@ public class MetadataEditStateTests
     [Theory]
     [InlineData("movie")]
     [InlineData("series")]
+    [InlineData("season")]
+    [InlineData("episode")]
     public void AppliedArtworkKeepsItsLockWhenTheFollowingDetailReadFails(string type)
     {
         var state = new MetadataEditState(new MediaItemDetail { Type = type, Title = "Original" });
         state.SetLock(10, true);
+        Assert.Equal(new[] { 10 }, (int[])state.Changes([])["locked_fields"]!);
+        Assert.Contains(10, state.EffectiveLocks([]));
         state.Set("title", "Edited");
         Assert.Equal(new[] { 0, 10 }, (int[])state.Changes([])["locked_fields"]!);
     }
@@ -35,15 +39,33 @@ public class MetadataEditStateTests
     [Theory]
     [InlineData("season")]
     [InlineData("episode")]
-    public void ChildNumbersAndArtworkCannotAcquireLocksAndUnlockOnlyIsSent(string type)
+    public void ChildNumbersCannotAcquireLocksButArtworkAndUnlockOnlyAreSent(string type)
     {
         var state = new MetadataEditState(new MediaItemDetail { Type = type });
         state.Set("season_number", 2d); state.Set("episode_number", 3d);
-        state.SetLock(4, true); state.SetLock(10, true); state.SetLock(2, true);
+        state.SetLock(4, true); state.SetLock(2, true);
         Assert.False(state.Changes([]).ContainsKey("locked_fields"));
+        state.SetLock(10, true);
+        Assert.Equal(new[] { 10 }, (int[])state.Changes([])["locked_fields"]!);
+        state.SetLock(10, false);
         state.SetLock(0, false);
         Assert.Empty((int[])state.Changes([0])["locked_fields"]!);
+        Assert.Empty((int[])state.Changes([0, 10])["locked_fields"]!);
         Assert.DoesNotContain("runtime", new MetadataEditState(new MediaItemDetail { Type = "season" }).FieldLockMap.Keys);
+    }
+
+    [Theory]
+    [InlineData("season")]
+    [InlineData("episode")]
+    public void ChildSavesPreserveServerLocksOutsideTheEditableMap(string type)
+    {
+        var state = new MetadataEditState(new MediaItemDetail { Type = type, Title = "Before" });
+        Assert.Empty(state.Changes([10]));
+        Assert.Empty(state.Changes([2, 10, 99]));
+        state.Set("title", "After");
+        Assert.Equal(new[] { 0, 2, 10, 99 }, (int[])state.Changes([2, 10, 99])["locked_fields"]!);
+        state.SetLock(0, false);
+        Assert.Equal(new[] { 2, 10, 99 }, (int[])state.Changes([0, 2, 10, 99])["locked_fields"]!);
     }
 
     [Fact]

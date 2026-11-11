@@ -202,9 +202,9 @@ public sealed partial class MatchItemDialog : ContentDialog
             Suggest(IsVideoMatchType(_itemType) ? YearBox : GenericYearBox, hasTitle ? hints!.Year > 0 ? hints.Year.ToString() : "" : _fallbackYear);
             if (IsVideoMatchType(_itemType))
             {
-                Suggest(ImdbIdBox, hints?.ProviderIds.GetValueOrDefault("imdb") ?? "");
-                Suggest(TmdbIdBox, hints?.ProviderIds.GetValueOrDefault("tmdb") ?? "");
-                Suggest(TvdbIdBox, hints?.ProviderIds.GetValueOrDefault("tvdb") ?? "");
+                Suggest(ImdbIdBox, hints?.ProviderIds?.GetValueOrDefault("imdb") ?? "");
+                Suggest(TmdbIdBox, hints?.ProviderIds?.GetValueOrDefault("tmdb") ?? "");
+                Suggest(TvdbIdBox, hints?.ProviderIds?.GetValueOrDefault("tvdb") ?? "");
             }
         }
         finally { _seedingHints = false; _hintsPending = false; UpdateCommands(); }
@@ -733,6 +733,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         if (_searching || _applying || !CanAct) return;
         try { await _initialScope.Task.WaitAsync(_lifetime.Token); await _hintsTask; }
         catch (OperationCanceledException) { return; }
+        catch (Exception) { /* Optional hints must not prevent a manual search. */ }
         if (!CanAct || _searching || _applying || _hintsPending || _applyUnconfirmed || !_scope.CanSearch) return;
         var scope = _scope.State.Capture(); var revision = ++_searchRevision;
         var isVideo = IsVideoMatchType(_itemType);

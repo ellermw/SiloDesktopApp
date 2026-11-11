@@ -6633,10 +6633,14 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
     {
-        await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile: null);
-        // A fresh read in the editor can refuse an Add that another client
-        // has filled. Refresh even then so the limit replaces the stale action.
-        await LoadProfilesAsync();
+        try
+        {
+            await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile: null);
+            // A fresh read in the editor can refuse an Add that another client
+            // has filled. Refresh even then so the limit replaces the stale action.
+            await LoadProfilesAsync();
+        }
+        catch (Exception ex) { ViewModel.ErrorMessage = $"Couldn't open the new profile form: {ex.Message}"; }
     }
 
     /// <summary>

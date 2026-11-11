@@ -42,11 +42,12 @@ public sealed class MetadataEditState
     }
     public void SetLock(int field, bool locked)
     {
-        if (FieldLockMap.Values.Contains(field) || field == 10 && ReferenceEquals(FieldLockMap, LockMap)) _overrides[field] = locked;
+        if (FieldLockMap.Values.Contains(field) || field == 10 && FieldLockMap.Count > 0) _overrides[field] = locked;
     }
     public HashSet<int> EffectiveLocks(IReadOnlyCollection<int> currentLocks)
     {
-        var locks = (ReferenceEquals(FieldLockMap, LockMap) ? currentLocks : currentLocks.Where(FieldLockMap.Values.Contains)).ToHashSet();
+        // locked_fields replaces the full server set, including locks this editor cannot change.
+        var locks = currentLocks.ToHashSet();
         foreach (var (field, locked) in _overrides) { if (locked) locks.Add(field); else locks.Remove(field); }
         return locks;
     }

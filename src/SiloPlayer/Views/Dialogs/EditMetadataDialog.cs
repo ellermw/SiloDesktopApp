@@ -128,14 +128,20 @@ public sealed class EditMetadataDialog : ContentDialog
         confirmation.Children.Add(new TextBlock { Text = item.Type switch
         {
             "series" => "This will unlock all fields on this series and refresh metadata from your providers. Any manual edits to the series will be overwritten. Locked seasons and episodes keep their edits.",
-            "season" => "This will unlock this season's title, overview and air date and refresh metadata from your providers. Any manual edits to them will be overwritten. Artwork you picked stays locked on the series; reset the series to replace it.",
+            "season" => "This will unlock this season's title, overview and air date and refresh metadata from your providers. Any manual edits to them will be overwritten. Artwork you picked stays locked.",
             "episode" => "This will unlock this episode's title, overview, runtime and air date and refresh metadata from your providers. Any manual edits to them will be overwritten.",
             _ => "This will re-fetch metadata from the provider. Your manual edits may be replaced.",
         }, TextWrapping = TextWrapping.Wrap });
         var confirm = new Button { Content = "Reset", Style = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
         var flyout = new Flyout { Content = confirmation }; reset.Flyout = flyout; confirmation.Children.Add(confirm);
         confirm.Click += async (_, _) => { if (_pending || _imagePending) return; _pending = true; confirm.IsEnabled = false; reset.IsEnabled = false; IsPrimaryButtonEnabled = false;
-            try { await _api.ResetToProviderAsync(_item.ContentId, _lifetime.Token); HasSaved = true; Changed(); flyout.Hide(); Hide(); }
+            try
+            {
+                var locksToKeep = _item.Type is "season" or "episode"
+                    ? _state.EffectiveLocks(_item.LockedFields).Except(_state.FieldLockMap.Values).Order().ToArray()
+                    : Array.Empty<int>();
+                await _api.ResetToProviderAsync(_item.ContentId, locksToKeep, _lifetime.Token); HasSaved = true; Changed(); flyout.Hide(); Hide();
+            }
             catch (Exception ex) { Toast().Error(ex); } finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = !_imagePending; IsPrimaryButtonEnabled = !_imagePending; } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;

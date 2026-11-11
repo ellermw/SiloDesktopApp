@@ -52,7 +52,11 @@ internal static class ProfilesMetadataNativeFixture
             await ProfileEditor(parent, wire, services.GetRequiredService<AuthApi>(), primary: true, first: false);
             await ProfileEditor(parent, wire, services.GetRequiredService<AuthApi>(), primary: false, first: true);
             await ProfileEditor(parent, wire, services.GetRequiredService<AuthApi>(), primary: false, first: false);
-            foreach (var type in new[] { "season", "episode" }) await ChildEditor(parent, wire, type);
+            foreach (var type in new[] { "season", "episode" })
+            {
+                await ChildEditor(parent, wire, type, []);
+                await ChildEditor(parent, wire, type, [2, 10, 99]);
+            }
             await Hints(parent, wire, auth);
             Program.Log("PASS profiles/metadata native: all assigned controls, bodies and delayed read ownership checks.");
         }
@@ -79,6 +83,22 @@ internal static class ProfilesMetadataNativeFixture
         Click((Button)settings.FindName("AddProfileButton"));
         await Until(() => ((Button)settings.FindName("AddProfileButton")).Visibility == Visibility.Collapsed);
         Check(((TextBlock)settings.FindName("ProfileLimitText")).Text == ProfileLimits.Message(1), "A freshly refused create left the stale Add action instead of the limit sentence.");
+        try
+        {
+            foreach (var failLibraries in new[] { false, true })
+            {
+                wire.FailProfiles = !failLibraries; wire.FailLibraries = failLibraries;
+                services.GetRequiredService<CatalogApi>().InvalidateLibraryCache();
+                settings.ViewModel.ErrorMessage = null;
+                typeof(SettingsPage).GetMethod("AddProfileButton_Click", Private)!.Invoke(settings, [settings, new RoutedEventArgs()]);
+                await Until(() => settings.ViewModel.ErrorMessage?.StartsWith("Couldn't open the new profile form:") == true);
+                vm.Profiles.Clear(); vm.ErrorMessage = null;
+                services.GetRequiredService<CatalogApi>().InvalidateLibraryCache();
+                typeof(ProfileSelectPage).GetMethod("AddProfileButton_Click", Private)!.Invoke(picker, [picker, new RoutedEventArgs()]);
+                await Until(() => vm.ErrorMessage?.StartsWith("Couldn't open the new profile form:") == true);
+            }
+        }
+        finally { wire.FailProfiles = wire.FailLibraries = false; }
         parent.Children.Remove(household); parent.Children.Remove(settings); parent.Children.Remove(picker); vm.CancelProfileLoad();
         Program.Log("PASS native picker, Settings limit sentence, household Add and omitted-limit refresh.");
     }
@@ -125,9 +145,9 @@ internal static class ProfilesMetadataNativeFixture
         Program.Log($"PASS native profile primary={primary}, first={first}: controls, Kids, stale draft and exact body.");
     }
 
-    private static async Task ChildEditor(StackPanel parent, Wire wire, string type)
+    private static async Task ChildEditor(StackPanel parent, Wire wire, string type, int[] preservedLocks)
     {
-        var dialog = new EditMetadataDialog(new MediaItemDetail { ContentId = "child", Type = type, Title = "Before" }) { XamlRoot = parent.XamlRoot };
+        var dialog = new EditMetadataDialog(new MediaItemDetail { ContentId = "child", Type = type, Title = "Before", LockedFields = preservedLocks.ToList() }) { XamlRoot = parent.XamlRoot };
         var showing = dialog.ShowAsync();
         try
         {
@@ -143,16 +163,16 @@ internal static class ProfilesMetadataNativeFixture
             if (type == "episode") Field<Dictionary<string, NumberBox>>(dialog, "_numberInputs")["runtime"].Value = 42;
             var reset = Field<Button>(dialog, "_reset"); Check(reset.Visibility == Visibility.Visible, "Child Reset hidden.");
             var resetText = Descendants((DependencyObject)((Flyout)reset.Flyout).Content).OfType<TextBlock>().Select(t => t.Text);
-            Check(resetText.Any(t => t.Contains(type == "season" ? "stays locked on the series" : "runtime and air date")), "Child reset explanation wrong.");
-            await Until(() => Field<TextBlock>(dialog, "_lockedCount").Text == (type == "episode" ? "3 locked" : "2 locked"));
+            Check(resetText.Any(t => t.Contains(type == "season" ? "Artwork you picked stays locked." : "runtime and air date")), "Child reset explanation wrong.");
+            await Until(() => Field<TextBlock>(dialog, "_lockedCount").Text == $"{(type == "episode" ? 3 : 2) + preservedLocks.Length} locked");
             await MediaParityNativeFixture.CaptureAsync(dialog, $"profiles-metadata-{type}.png");
             Click(Descendants(dialog).OfType<Button>().Single(b => b.Name == "PrimaryButton"));
             await Until(() => dialog.HasSaved); await showing;
-            Check(wire.MetadataBody.GetProperty("locked_fields").EnumerateArray().Select(v => v.GetInt32()).SequenceEqual(type == "episode" ? new[] { 0, 7, 13 } : new[] { 0, 13 }), "Child metadata PATCH lacks exact locks.");
+            Check(wire.MetadataBody.GetProperty("locked_fields").EnumerateArray().Select(v => v.GetInt32()).SequenceEqual((type == "episode" ? new[] { 0, 7, 13 } : new[] { 0, 13 }).Concat(preservedLocks).Order()), "Child metadata PATCH lacks exact locks.");
         }
         finally { dialog.Hide(); await showing; await Task.Delay(80); }
         wire.MetadataOrder.Clear();
-        var resetting = new EditMetadataDialog(new MediaItemDetail { ContentId = "child", Type = type, Title = "Locked", LockedFields = [0, 13] }) { XamlRoot = parent.XamlRoot };
+        var resetting = new EditMetadataDialog(new MediaItemDetail { ContentId = "child", Type = type, Title = "Locked", LockedFields = (type == "episode" ? new[] { 0, 1, 7, 13 } : new[] { 0, 1, 13 }).Concat(preservedLocks).ToList() }) { XamlRoot = parent.XamlRoot };
         var resetShowing = resetting.ShowAsync();
         try
         {
@@ -162,7 +182,7 @@ internal static class ProfilesMetadataNativeFixture
             await Until(() => confirmation.IsLoaded);
             Click(Descendants(confirmation).OfType<Button>().Single(b => Equals(b.Content, "Reset")));
             await Until(() => resetting.HasSaved); await resetShowing;
-            Check(wire.MetadataOrder.SequenceEqual(new[] { "PATCH:", "POST:quick" }), "Child Reset did not unlock before quick refresh.");
+            Check(wire.MetadataOrder.SequenceEqual(new[] { "PATCH:" + string.Join(",", preservedLocks), "POST:quick" }), "Child Reset did not preserve unrelated locks while unlocking before quick refresh.");
         }
         finally { resetting.Hide(); await resetShowing; await Task.Delay(80); }
         Program.Log("PASS native " + type + " edits, lock toggle/count, reset explanation, serialized PATCH and actual Reset unlock/refresh.");
@@ -214,6 +234,21 @@ internal static class ProfilesMetadataNativeFixture
             Click((Button)dialog.FindName("SearchButton")); await Until(() => wire.SearchBody.GetProperty("title").GetString() == "Entered title");
             Check(wire.SearchBody.GetProperty("year").GetInt32() == 1984 && wire.SearchBody.GetProperty("imdb_id").GetString() == "ttEntered", "Late hints overwrote entered fields.");
         });
+        wire.NullHintProviders = true;
+        await WithDialog(async dialog =>
+        {
+            await Until(() => ((Button)dialog.FindName("SearchButton")).IsEnabled);
+            await Field<Task>(dialog, "_hintsTask");
+            Check(new[] { "ImdbIdBox", "TmdbIdBox", "TvdbIdBox" }.All(name => ((TextBox)dialog.FindName(name)).Text == ""), "Null provider hints did not behave as an empty map.");
+            var searches = wire.Searches;
+            await CallTask(dialog, "DoSearchAsync");
+            Check(wire.Searches == searches + 1 && wire.SearchBody.GetProperty("title").GetString() == "Folder 7", "Null provider hints prevented search.");
+            typeof(MatchItemDialog).GetField("_hintsTask", Private)!.SetValue(dialog, Task.FromException(new InvalidOperationException("Synthetic optional hint failure")));
+            ((TextBox)dialog.FindName("TitleBox")).Text = "Manual title";
+            await CallTask(dialog, "DoSearchAsync");
+            Check(wire.Searches == searches + 2 && wire.SearchBody.GetProperty("title").GetString() == "Manual title", "A faulted optional hints task prevented manual search.");
+        });
+        wire.NullHintProviders = false;
         wire.FailHints = true;
         await WithDialog(async dialog => { await Until(() => ((Button)dialog.FindName("SearchButton")).IsEnabled); Check(((TextBox)dialog.FindName("TitleBox")).Text == "Wrong match", "Failed optional hint lost fallback."); });
         wire.FailHints = false; wire.SupportsHints = false;
@@ -248,7 +283,7 @@ internal static class ProfilesMetadataNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int? Maximum = 1;
-        internal bool SupportsHints, FailHints, DenyAdminCapabilities;
+        internal bool SupportsHints, FailHints, DenyAdminCapabilities, NullHintProviders, FailProfiles, FailLibraries;
         internal int HintReads, Searches;
         internal TaskCompletionSource? HintsGate;
         internal JsonElement ProfileBody, MetadataBody, SearchBody;
@@ -257,6 +292,8 @@ internal static class ProfilesMetadataNativeFixture
         {
             if (request.RequestUri!.Host != "profiles-metadata.fixture.invalid") throw new InvalidOperationException("External request blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (path == "/api/v2/profiles" && FailProfiles || path.EndsWith("/libraries") && FailLibraries)
+                return Json(new { detail = "Fixture profile form read failed" }, HttpStatusCode.BadRequest);
             if (path == "/api/v2/admin/catalog/capabilities" && DenyAdminCapabilities)
                 return Json(new { detail = "Admin primary profile required" }, HttpStatusCode.Forbidden);
             if (request.Content != null)
@@ -273,7 +310,7 @@ internal static class ProfilesMetadataNativeFixture
                 if (!SupportsHints) return Json(new { detail = "Not found" }, HttpStatusCode.NotFound);
                 if (HintsGate != null) await HintsGate.Task;
                 if (FailHints) return Json(new { detail = "Fixture lookup failed" }, HttpStatusCode.InternalServerError);
-                return Json(new { title = $"Folder {library}", year = 1997, provider_ids = new { imdb = $"tt{library}" } });
+                return Json(new { title = $"Folder {library}", year = 1997, provider_ids = NullHintProviders ? null : new { imdb = $"tt{library}" } });
             }
             return Json(path switch
             {

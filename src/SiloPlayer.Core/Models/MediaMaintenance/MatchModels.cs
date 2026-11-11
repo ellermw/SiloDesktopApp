@@ -55,6 +55,6 @@ public sealed class ItemMatchHints
 {
     public string Title { get; set; } = "";
     public int Year { get; set; }
-    public Dictionary<string, string> ProviderIds { get; set; } = [];
+    public Dictionary<string, string>? ProviderIds { get; set; } = [];
 }
 

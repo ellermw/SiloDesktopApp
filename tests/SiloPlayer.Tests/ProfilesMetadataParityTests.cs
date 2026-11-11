@@ -59,7 +59,7 @@ public sealed class ProfilesMetadataParityTests
         using var wire = new Wire { Json = "{\"title\":\"Folder title\",\"year\":1999,\"provider_ids\":{\"imdb\":\"tt42\"}}" };
         var client = Client(wire); var api = new MediaMaintenanceApi(client); var owner = client.CaptureContext();
         var hints = await api.GetMatchHintsAsync(owner, "item/1", library);
-        Assert.Equal("Folder title", hints.Title); Assert.Equal(1999, hints.Year); Assert.Equal("tt42", hints.ProviderIds["imdb"]);
+        Assert.Equal("Folder title", hints.Title); Assert.Equal(1999, hints.Year); Assert.Equal("tt42", hints.ProviderIds?["imdb"]);
         Assert.Equal("/api/v2/admin/items/item%2F1/match/hints" + (library.HasValue ? "?library_id=7" : ""), wire.Path);
         client.SetProfile("replacement");
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.GetMatchHintsAsync(owner, "item", library));

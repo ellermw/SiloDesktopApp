@@ -139,8 +139,8 @@ internal static class ProfileMenuNavigationNativeFixture
                 wire.ProfileCount = count; wire.Maximum = maximum; wire.PrimaryPin = pin;
                 await (Task)typeof(MainWindow).GetMethod("LoadProfileNameAsync", Instance)!.Invoke(window, ["first", shellKey, CancellationToken.None])!;
                 await Until(() => (((Button)root.FindName("ProfileSwitchButton")).Visibility == Visibility.Visible) == expected);
-                if (((Button)root.FindName("SettingsSidebarProfile")).IsEnabled != expected)
-                    throw new InvalidOperationException("Settings sidebar profile action disagrees with switch policy.");
+                if (!((Button)root.FindName("SettingsSidebarProfile")).IsEnabled)
+                    throw new InvalidOperationException("Settings sidebar must keep profile management reachable regardless of switch policy.");
             }
             await Limits(1, 1, false, false);
             wire.FailProfiles = true;
