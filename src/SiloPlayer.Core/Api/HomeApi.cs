@@ -166,6 +166,10 @@ public class HomeApi(SiloApiClient client)
     public Task DismissItemAsync(string surface, string itemId, object body, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v2/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", body, ct);
 
+    public Task UndoDismissalAsync(ApiRequestContext context, string surface, string itemId, CancellationToken ct = default)
+        => client.SendNoContentRequestAsync(context, HttpMethod.Delete,
+            $"/api/v2/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", null, ct: ct);
+
     public Task UndoDismissalAsync(string surface, string itemId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v2/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", ct);
 }

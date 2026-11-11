@@ -583,6 +583,7 @@ public partial class CollectionEditorViewModel : ObservableObject
         {
             if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context))
             {
+                SyncSkippedTitles = null;
                 ErrorMessage = $"Sync failed: {ex.Message}";
                 // The server records a failed run (status, reason, kept members) on the collection,
                 // so read it back for the saved status instead of leaving the previous one showing.

@@ -274,6 +274,13 @@ public class ViewerActionsParityTests
         var catalog = Source("SiloPlayer", "Views", "CatalogPage.xaml.cs");
         Assert.Contains("HomeDismissalPolicy.SectionCardItemSource(_source, item.ItemSource)", catalog);
         Assert.Contains("MediaSurfaceChangeKind.HomeDismissed", catalog);
+        Assert.Contains("IRecipient<HomeDismissalApplied>", catalog);
+        Assert.Contains("UndoDismissalAsync", catalog);
+        Assert.Contains("AutoHideUndoBannerAsync", catalog);
+        Assert.Contains("ClearUndoState", catalog);
+        var catalogXaml = Source("SiloPlayer", "Views", "CatalogPage.xaml");
+        Assert.Contains("x:Name=\"UndoBanner\"", catalogXaml);
+        Assert.Contains("x:Name=\"UndoButton\"", catalogXaml);
         Assert.Contains("LibraryTypeIcons.IconName(type)", Source("SiloPlayer", "MainWindow.xaml.cs"));
         Assert.Contains("UpcomingBadgePresentation.Label(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
         Assert.Contains("UpcomingBadgePresentation.FixedPalette(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
@@ -281,6 +288,7 @@ public class ViewerActionsParityTests
         // Smart collection editor and wizard both gate preview and save on the server's predicate.
         var editor = Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(RuleDefinition)", editor);
+        Assert.Contains("SyncSkippedTitles = null", editor);
         Assert.Contains("if (SmartNeedsRule) { ClearPreview(); return; }", Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.Preview.cs"));
         var wizard = Source("SiloPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(_previewQuery)", wizard);
@@ -290,6 +298,19 @@ public class ViewerActionsParityTests
         var recipes = Source("SiloPlayer", "Views", "Dialogs", "RecipeGalleryDialog.cs");
         Assert.Contains("case \"trending_discover\":", recipes);
         Assert.Contains("SetOptional(config, \"filter_type\", value)", recipes);
+    }
+
+    // ----- G11: failed sync clears the skipped-title count -----
+
+    [Fact]
+    public void FailedSyncClearCodeMatchesWebUiErrorCallback()
+    {
+        var root = RepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs"));
+        var catchIndex = source.IndexOf("Sync failed: {ex.Message}", StringComparison.Ordinal);
+        Assert.True(catchIndex > 0, "the catch block with the error message exists");
+        var clearIndex = source.IndexOf("SyncSkippedTitles = null", catchIndex - 200, StringComparison.Ordinal);
+        Assert.True(clearIndex > 0 && clearIndex < catchIndex, "SyncSkippedTitles is cleared before the error message in the catch block");
     }
 
     private static string RepositoryRoot()

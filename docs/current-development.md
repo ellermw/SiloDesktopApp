@@ -1,3 +1,10 @@
+# Dedicated section dismissal Undo for Beta
+
+Official Server/WebUI reference `4a9e527a432e8ef3a15dcd568802a45c15169039`; source version remains 1.2.970. Dedicated Continue Watching/Next Up dismissal now offers a five-second Undo. Paging is retired before the owner-bound DELETE and blocked until an authoritative server-prefix reconciliation completes. Banner expiry/replacement cannot discard a pending accepted mutation; unmatched events cannot replace the target. Navigation, authority changes, duplicate activation and reset races are guarded. Failed collection sync clears the previous skipped count without replacing unsaved editor drafts.
+
+Verified on the reviewed dependency foundation: 5,443/5,443 full units, Release publish-b, native-green-b exit0 plus completion sentinel, app744/native182 authored PDB documents match. App DLL SHA256 AE162B630EF13FA6FAB3CF5FE1F702D72C0D6C1B6A662816F5C1560411FEB27E. Independent review approves all three corrected P2 findings with no new correctness finding. Evidence: D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-undo-fixes and reopened-undo-final-review.md. Earlier failed native teardown is retained as failed, not acceptance.
+
+Current Beta and PR131 successors still require reconciliation and fresh affected checks before submission. Synthetic verification does not certify live-server interoperability or complete pixel parity. No installed-player/settings/account control, installer or version stamping occurred.
 # Server alignment — profiles and metadata (November 10, 2026)
 
 Base: freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`; stamps remain pipeline-owned. Official Server/WebUI reviewed at `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039` (additional WebUI localization only).

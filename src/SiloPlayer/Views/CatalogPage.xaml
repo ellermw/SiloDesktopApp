@@ -210,6 +210,38 @@
             </StackPanel>
         </ScrollViewer>
 
+        <!-- Undo dismissal banner (bottom, overlaid) — matches Home's UndoBanner. -->
+        <Border
+            x:Name="UndoBanner"
+            Visibility="Collapsed"
+            Grid.RowSpan="5"
+            VerticalAlignment="Bottom"
+            HorizontalAlignment="Center"
+            Margin="0,0,0,24"
+            Padding="16,10,8,10"
+            CornerRadius="12"
+            Background="{StaticResource SurfaceBrush}"
+            BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1"
+            Canvas.ZIndex="100">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock
+                    x:Name="UndoBannerText"
+                    Text="Item dismissed"
+                    FontSize="13"
+                    Foreground="{StaticResource PrimaryTextBrush}"
+                    VerticalAlignment="Center" />
+                <Button
+                    x:Name="UndoButton"
+                    Content="Undo"
+                    Style="{StaticResource AccentButtonStyle}"
+                    FontSize="12"
+                    Padding="12,6"
+                    CornerRadius="8"
+                    Click="UndoButton_Click" />
+            </StackPanel>
+        </Border>
+
         <!-- WebUI parity: floating affordance for long virtual catalog grids. -->
         <Button x:Name="CatalogScrollToTopButton"
                 Grid.RowSpan="5"
