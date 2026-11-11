@@ -30,6 +30,7 @@ public sealed partial class MainWindow
     private bool _updateCloseGuardAvailable;
     private bool _updateDialogBusy;
     private bool _updateWindowOwnsUpdate;
+    private UpdateHost.UpdateProgressWindow? _updatePreparationWindow;
     private CancellationTokenSource? _manualUpdateConsent;
     private string? _announcedUpdate;
     private long _updatePaneToken, _updatePaneVisibleToken;
@@ -356,11 +357,21 @@ public sealed partial class MainWindow
         // A manual run replaces the startup deferral: its own answer (Later, a declined approval) stands
         // for this session, and any record on disk still drives the next start.
         if (confirmRestart) _deferredUpdate = null;
+        using var preparationLifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var closingPreparation = false;
         try
         {
             var updates = _appUpdates!;
             var packageDirectory = IncrementalUpdateClient.PreparedDirectory(updates.CacheDirectory, release);
+            var preparation = new UpdateHost.UpdateProgressWindow(true, _updateHwnd.ToInt64());
+            _updatePreparationWindow = preparation;
+            preparation.Cancel.Click += (_, _) => preparationLifetime.Cancel();
+            preparation.AppWindow.Closing += (_, args) => { if (!closingPreparation) { args.Cancel = true; preparationLifetime.Cancel(); } };
+            // Give XAML a rendering turn before any expensive protected-root or executable hashing work.
+            var painted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            preparation.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => painted.TrySetResult());
             dialog?.Hide();
+            await painted.Task.WaitAsync(preparationLifetime.Token);
             var outcome = await windowed.PrepareWithDownloadAsync(release, packageDirectory, true, confirmRestart, _updateHwnd.ToInt64(), async (report, token) =>
             {
                 // Pin the release the user accepted before downloading it: a check must not replace it under the window.
@@ -380,7 +391,15 @@ public sealed partial class MainWindow
                     return new(null, updates.State.Error ?? "The update could not be downloaded. You can keep using Silo and try again.");
                 if (confirmRestart) _windowedDownloadReady = release;
                 return new(updates.State.PreparedPackage, null) { Later = confirmRestart ? () => DeferAppUpdate(release) : null };
-            }, ct);
+            }, preparationLifetime.Token, trustedWindow =>
+            {
+                preparationLifetime.Token.ThrowIfCancellationRequested();
+                preparation.TransferTo(trustedWindow);
+                // Closing stops hooks/timers; its Closing guard is only for user dismissal.
+                _updatePreparationWindow = null;
+                closingPreparation = true;
+                preparation.Close();
+            });
             // Later: Silo keeps running; the download stays ready and the next start finishes it.
             // The handoff already recorded it (or told the panel it could not).
             if (outcome == WindowedUpdateOutcome.Deferred) return;
@@ -390,9 +409,9 @@ public sealed partial class MainWindow
                 await updates.StopAsync();
                 updates.ApplyAuthorityCooldown((windowed as IStagedAppUpdateInstaller)?.AuthorityCooldownUntil);
                 // A verified migration still needs the full installer and its own consent in the dialog.
-                if (updates.State.RequiresFullInstaller && !ct.IsCancellationRequested)
+                if (updates.State.RequiresFullInstaller && !preparationLifetime.IsCancellationRequested)
                     DispatcherQueue.TryEnqueue(() => _ = ShowAppUpdateDialogAsync());
-                else if (!ct.IsCancellationRequested)
+                else if (!preparationLifetime.IsCancellationRequested)
                     App.Services.GetRequiredService<ToastService>().Error(updates.State.Error ?? "The update could not start. You can retry or use the full installer from the release page.");
                 return;
             }
@@ -409,7 +428,14 @@ public sealed partial class MainWindow
             _manualUpdateRequested = true;
             await CloseWithAppUpdatesAsync();
         }
-        finally { _updateWindowOwnsUpdate = false; _windowedDownloadReady = null; if (_appUpdates is not null) _appUpdates.ChecksPaused = false; }
+        finally
+        {
+            var abandoned = _updatePreparationWindow; _updatePreparationWindow = null;
+            closingPreparation = true;
+            abandoned?.Close();
+            _updateWindowOwnsUpdate = false; _windowedDownloadReady = null;
+            if (_appUpdates is not null) _appUpdates.ChecksPaused = false;
+        }
     }
 
     private async Task<bool> PrepareAppUpdateExitAsync()

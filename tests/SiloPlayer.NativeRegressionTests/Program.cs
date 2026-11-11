@@ -100,6 +100,20 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_OTHER_WINDOW") == "panel")
+        {
+            try { await AppUpdateNativeFixture.RunPresentationPeerAsync(); }
+            catch (Exception ex) { Program.Log(ex.ToString()); Environment.ExitCode=1; }
+            Exit(); return;
+        }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_OTHER_WINDOW") == "1")
+        {
+            _window = new Window { Title = "Synthetic updater focus peer", Content = new Grid() };
+            _window.AppWindow.Move(new(100, 100)); _window.AppWindow.Resize(new(240, 200));
+            _window.Closed += (_, _) => Exit();
+            _window.Activate();
+            return;
+        }
         try
         {
             Resources.MergedDictionaries.Add(new XamlControlsResources());
@@ -909,9 +923,19 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await Task.Delay(100);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "viewer-actions")
+            {
+                await ViewerActionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-pill")
             {
                 await OverlayPillNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-revisions")
+            {
+                await CardOverlayRevisionNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")
@@ -924,12 +948,27 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PersonalListsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-removal")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await RequestRemovalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-interactions")
             {
                 _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
                 _window.AppWindow.Show(false);
                 await RequestsLifecycleNativeFixture.RunAsync(parent);
                 await RequestInteractionNativeFixture.RunAsync(parent);
+                await RequestRemovalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "collections-presentation")
+            {
+                await CollectionsPresentationNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
@@ -1071,6 +1110,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             await RequestViewerNativeFixture.RunAsync(parent);
             await RequestsLifecycleNativeFixture.RunAsync(parent);
             await RequestInteractionNativeFixture.RunAsync(parent);
+            await RequestRemovalNativeFixture.RunAsync(parent);
             await PersonalListsNativeFixture.RunAsync(parent);
             await DetailPresentationNativeFixture.RunAsync(parent);
             await MediaParityNativeFixture.RunAsync(parent);

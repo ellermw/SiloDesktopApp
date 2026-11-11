@@ -8483,7 +8483,8 @@ public sealed partial class ItemDetailPage : Page
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
                 .Prefetch(episode.ContentId);
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(episode.ContentId, ViewModel.LibraryId));
+                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(
+                    episode.ContentId, EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId)));
         };
         button.GotFocus += (_, _) => App.Services
             .GetRequiredService<ItemDetailPrefetchCache>()
@@ -8738,6 +8739,8 @@ public sealed partial class ItemDetailPage : Page
         var topRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
         var bottomLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
         var bottomRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
+        var leftEdge = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Center);
+        var rightEdge = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Center);
         topLeft.Margin = new Thickness(8);
         topRight.Margin = new Thickness(8);
         bottomLeft.Margin = new Thickness(8, 8, 8, 24);
@@ -8746,6 +8749,8 @@ public sealed partial class ItemDetailPage : Page
         host.Children.Add(topRight);
         host.Children.Add(bottomLeft);
         host.Children.Add(bottomRight);
+        host.Children.Add(leftEdge);
+        host.Children.Add(rightEdge);
 
         void Render()
         {
@@ -8753,6 +8758,8 @@ public sealed partial class ItemDetailPage : Page
             topRight.Children.Clear();
             bottomLeft.Children.Clear();
             bottomRight.Children.Clear();
+            leftEdge.Children.Clear();
+            rightEdge.Children.Clear();
 
             var service = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();
             var prefs = service.GetPrefs();
@@ -8777,21 +8784,25 @@ public sealed partial class ItemDetailPage : Page
             foreach (var definition in service.GetOrderedDefinitions())
             {
                 if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-                if (global::SiloPlayer.Services.OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs)) continue;
+                if (service.SuppressesStandalone(definition.Id, prefs)) continue;
                 var value = definition.GetValue(data);
                 if (string.IsNullOrWhiteSpace(value)) continue;
-                if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
+                var position = service.DisplayPosition(config.Position);
+                var limit = position is global::SiloPlayer.Services.OverlayPosition.LeftEdge or global::SiloPlayer.Services.OverlayPosition.RightEdge ? 4 : 3;
+                if (cornerCounts.GetValueOrDefault(position) >= limit) continue;
                 var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
-                var corner = config.Position switch
+                var corner = position switch
                 {
                     global::SiloPlayer.Services.OverlayPosition.TopLeft => topLeft,
                     global::SiloPlayer.Services.OverlayPosition.TopRight => topRight,
                     global::SiloPlayer.Services.OverlayPosition.BottomLeft => bottomLeft,
                     global::SiloPlayer.Services.OverlayPosition.BottomRight => bottomRight,
+                    global::SiloPlayer.Services.OverlayPosition.LeftEdge => leftEdge,
+                    global::SiloPlayer.Services.OverlayPosition.RightEdge => rightEdge,
                     _ => topLeft,
                 };
                 corner.Children.Add(badge);
-                cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
+                cornerCounts[position] = cornerCounts.GetValueOrDefault(position) + 1;
             }
         }
 

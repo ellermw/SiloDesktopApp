@@ -47,8 +47,12 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void ApplyOverlayGeometry()
     {
-        foreach (var host in new[] { OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight })
+        foreach (var host in new[] { OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight, OverlayLeftEdge, OverlayRightEdge })
+        {
             host.Spacing = _overlayGeometry.StackGap;
+            host.MaxWidth = Math.Max(0, Width - 2 * (1 + _overlayGeometry.EdgeInset));
+            host.IsHitTestVisible = false;
+        }
 
         // The XAML poster border is a sibling, so include its 1px inner edge.
         var edge = 1 + _overlayGeometry.EdgeInset;
@@ -56,6 +60,12 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         OverlayTopRight.Margin = new Thickness(edge);
         OverlayBottomLeft.Margin = new Thickness(edge);
         OverlayBottomRight.Margin = new Thickness(edge);
+        OverlayLeftEdge.Margin = OverlayRightEdge.Margin = new Thickness(edge);
+        WatchStatus.Update(MediaItem?.UserState, _overlayGeometry);
+        if (WatchStatus.Visibility == Visibility.Visible)
+            OverlayTopLeft.MaxWidth = Math.Max(0, Width - 2 * edge - WatchStatus.ReservedWidth - _overlayGeometry.StackGap);
+        if (App.Services.GetRequiredService<CardOverlayService>().ManifestRevision < 25 && WatchStatus.Visibility == Visibility.Visible)
+            OverlayTopRight.Margin = new Thickness(edge, edge + _overlayGeometry.WatchStatusSize + _overlayGeometry.StackGap, edge, edge);
     }
 
     private void ApplyActionGeometry(MediaItem? item = null)
@@ -267,7 +277,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         if (MediaItem is not { } item || item.Type == "box_set") return;
         var flyout = MediaItemMenu.Build(
             item,
-            MediaItemMenu.Surface.Default,
+            MediaItemMenu.SurfaceFor(item),
             stateChanged: () => UpdateQuickActionState(item), owner: this);
         if (args.TryGetPosition(this, out var pos))
         {
@@ -342,10 +352,11 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         QuickWatchedButton.Visibility = Visibility.Collapsed;
         QuickFavoriteButton.Visibility = Visibility.Collapsed;
         Badges.Clear();
+        WatchStatus.Update(null, _overlayGeometry);
     }
 
     private CardBadgeHosts? _badges;
-    private CardBadgeHosts Badges => _badges ??= new(OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight);
+    private CardBadgeHosts Badges => _badges ??= new(OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight, OverlayLeftEdge, OverlayRightEdge);
 
     private void ClearOverlayPanels() => Badges.Hide();
 
@@ -498,6 +509,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     {
         RefreshSpoilerArtwork();
         if (MediaItem is not { } item) return;
+        WatchStatus.Update(item.UserState, _overlayGeometry);
         SubtitleText.Text = item.UpcomingEvent is { } upcoming
             ? MediaItemDisplayText.FormatUpcomingSchedule(upcoming)
             : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
@@ -668,7 +680,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private static string? OverlayGlyph(string overlayId) => overlayId switch
     {
-        "resolution" or "resolution_hdr" or "hdr" or "video_codec" => "\uE7F4",
+        "resolution" or "resolution_hdr" or "resolution_hdr_audio" or "hdr" or "video_codec" => "\uE7F4",
         "audio" or "audio_channels" => "\uE767",
         "multi_audio" or "original_language" => "\uE8C1",
         "multi_sub" => "\uED1E",
@@ -957,7 +969,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
         var flyout = MediaItemMenu.Build(
             item,
-            MediaItemMenu.Surface.Default,
+            MediaItemMenu.SurfaceFor(item),
             stateChanged: () => UpdateQuickActionState(item), owner: this);
         flyout.ShowAt(MoreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
         {
@@ -1014,6 +1026,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
     private void UpdateQuickActionState(MediaItem item, bool refreshArtwork = true)
     {
+        ApplyOverlayGeometry();
         var preferences = App.Services.GetRequiredService<CardOverlayService>();
         var hasState = item.UserState != null && !SelectionMode && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
         var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");

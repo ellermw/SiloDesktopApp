@@ -83,6 +83,9 @@ public partial class CollectionsViewModel : ObservableObject
             var first = library.Collections.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
             _serverRest[libraryId] = response.Collections.Select(c => new ServerCollectionSummary { Id = c.Id, Title = c.Title, PosterUrl = c.PosterUrl,
                 PosterThumbhash = c.PosterThumbhash, ItemCount = c.ItemCount, Featured = c.Featured })
+                .Concat(response.Groups.SelectMany(group => group.Collections).Concat(response.Ungrouped?.Collections ?? [])
+                    .Select(c => new ServerCollectionSummary { Id = c.Id, Title = c.Title, PosterUrl = c.PosterUrl,
+                        PosterThumbhash = c.PosterThumbhash, ItemCount = c.ItemCount, Featured = c.Featured }))
                 .Where(c => !first.Contains(c.Id)).DistinctBy(c => c.Id).ToList();
         }
         catch (OperationCanceledException)
@@ -114,8 +117,25 @@ public partial class CollectionsViewModel : ObservableObject
     [ObservableProperty]
     private bool _isEmpty;
 
+    // A view may only say "no collections" once the read behind it actually succeeded for the current
+    // account/profile: a slow or failed request is not "none". They survive a refresh that fails.
+    [ObservableProperty]
+    private bool _personalLoaded;
+
+    [ObservableProperty]
+    private bool _profilesLoaded;
+
+    [ObservableProperty]
+    private bool _isLoadingProfiles;
+
+    [ObservableProperty]
+    private bool _serverLoaded;
+
     [ObservableProperty]
     private string? _errorMessage;
+
+    [ObservableProperty]
+    private string? _serverCollectionsErrorMessage;
 
     [ObservableProperty]
     private bool _isLoadingTemplateFlow;
@@ -146,6 +166,7 @@ public partial class CollectionsViewModel : ObservableObject
         if (_displayContext != context)
         {
             Collections.Clear(); Groups.Clear(); ServerLibraries.Clear(); Profiles.Clear();
+            PersonalLoaded = ProfilesLoaded = ServerLoaded = false;
             Capabilities = null; OnPropertyChanged(nameof(Capabilities));
             _serverRest.Clear(); _requestedServerLibraries.Clear(); _serverCollectionErrors.Clear();
             _displayContext = context;
@@ -156,45 +177,49 @@ public partial class CollectionsViewModel : ObservableObject
         // Preserve the previous page while refreshing. Skeletons are useful
         // only for the first visit; hiding populated collections on every
         // navigation makes the route look as though it was torn down.
-        IsLoading = Collections.Count == 0 && Groups.Count == 0;
-        IsLoadingServerCollections = ServerLibraries.Count == 0;
+        IsLoading = !PersonalLoaded;
+        IsLoadingServerCollections = !ServerLoaded;
         ErrorMessage = null;
-        Task<ServerCollectionsResponse>? serverCollectionsTask = null;
+        ServerCollectionsErrorMessage = null;
         var referenceTask = LoadViewerReferencesAsync();
-
-        try
+        // Both reads start together and settle independently: the server's cards do not wait for the
+        // profile's own, and neither one's failure hides the other.
+        async Task PersonalAsync()
         {
-            var collectionsTask = _collectionsApi.GetCollectionsAsync();
-            serverCollectionsTask = _collectionsApi.GetServerCollectionsAsync();
-            var response = await collectionsTask;
-            if (Current())
+            try
             {
-                Collections.Clear();
-                foreach (var c in response.Collections) Collections.Add(c);
-                Groups.Clear();
-                foreach (var group in response.Groups.OrderBy(group => group.SortOrder)) Groups.Add(group);
-                IsEmpty = Collections.Count == 0;
+                var response = await _collectionsApi.GetCollectionsAsync();
+                if (Current())
+                {
+                    Collections.Clear();
+                    foreach (var c in response.Collections) Collections.Add(c);
+                    Groups.Clear();
+                    foreach (var group in response.Groups.OrderBy(group => group.SortOrder)) Groups.Add(group);
+                    IsEmpty = Collections.Count == 0;
+                    PersonalLoaded = true;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (Current()) ErrorMessage = $"Failed to load collections: {ex.Message}";
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                if (Current()) IsLoading = false;
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            if (Current()) ErrorMessage = $"Failed to load collections: {ex.Message}";
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
-            if (Current()) IsLoading = false;
-        }
 
-        try
+        async Task ServerAsync()
         {
-            if (serverCollectionsTask != null)
+            try
             {
-                var serverResponse = await serverCollectionsTask;
+                var serverResponse = await _collectionsApi.GetServerCollectionsAsync();
                 if (Current())
                 {
                     ServerLibraries.Clear();
                     foreach (var library in serverResponse.Libraries) ServerLibraries.Add(library);
+                    ServerLoaded = true;
                     var requested = _requestedServerLibraries.ToArray();
                     foreach (var libraryId in _serverRest.Keys.Where(id => !ServerLibraries.Any(l => l.LibraryId == id)).ToArray()) _serverRest.Remove(libraryId);
                     if (ServerLibraries.Count == 1) requested = requested.Append(ServerLibraries[0].LibraryId).Distinct().ToArray();
@@ -202,12 +227,19 @@ public partial class CollectionsViewModel : ObservableObject
                     if (Current()) ServerCollectionsChanged();
                 }
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Report this independent failure without hiding the personal cards.
+                if (Current()) ServerCollectionsErrorMessage = $"Couldn't load server collections: {ex.Message}";
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                if (Current()) IsLoadingServerCollections = false;
+            }
         }
-        catch
-        {
-            // Server collections are an independent, optional surface. A
-            // failure here must not hide the user's editable collections.
-        }
+
+        try { await Task.WhenAll(PersonalAsync(), ServerAsync()); }
         finally
         {
             if (generation == _loadGeneration)
@@ -226,9 +258,12 @@ public partial class CollectionsViewModel : ObservableObject
         bool Current() => context == null || _requestClient!.IsCurrentContext(context.Value);
         async Task ProfilesAsync()
         {
-            if (_authApi == null) return;
-            try { var response = await _authApi.GetProfilesAsync(); if (!Current()) return; Profiles.Clear(); foreach (var profile in response.Profiles) Profiles.Add(profile); }
+            // Without a profiles client no read is pending, so the page never waits for names it cannot get.
+            if (_authApi == null) { ProfilesLoaded = true; return; }
+            IsLoadingProfiles = !ProfilesLoaded;
+            try { var response = await _authApi.GetProfilesAsync(); if (!Current()) return; Profiles.Clear(); foreach (var profile in response.Profiles) Profiles.Add(profile); ProfilesLoaded = true; }
             catch { /* Optional profile names must not hide the collection list. */ }
+            finally { if (Current()) IsLoadingProfiles = false; }
         }
         async Task CapabilitiesAsync()
         {
@@ -414,11 +449,22 @@ public partial class CollectionsViewModel : ObservableObject
         try
         {
             await _collectionsApi.DeleteCollectionAsync(id);
-            // Remove from local list
+            // An included personal collection can also be cached in several server libraries,
+            // in either the teaser or a loaded remainder. Remove those copies before the wall rebuilds.
+            var affectedLibraries = new HashSet<int>();
+            foreach (var (libraryId, rest) in _serverRest)
+                if (rest.RemoveAll(collection => collection.Id == id) > 0) affectedLibraries.Add(libraryId);
+            foreach (var library in ServerLibraries)
+            {
+                if (library.Collections.RemoveAll(collection => collection.Id == id) > 0) affectedLibraries.Add(library.LibraryId);
+                if (affectedLibraries.Contains(library.LibraryId)) library.TotalCount = Math.Max(0, library.TotalCount - 1);
+            }
             var item = Collections.FirstOrDefault(c => c.Id == id);
             if (item != null)
                 Collections.Remove(item);
             IsEmpty = Collections.Count == 0;
+            ErrorMessage = null;
+            ServerCollectionsChanged();
         }
         catch (Exception ex)
         {
@@ -443,9 +489,7 @@ public partial class CollectionsViewModel : ObservableObject
                 Collections[index] = updated;
             }
 
-            ErrorMessage = result.Status == "failed"
-                ? $"Collection sync failed: {result.Message}"
-                : null;
+            ErrorMessage = CollectionHeroActions.SyncFailure(result);
         }
         catch (Exception ex)
         {

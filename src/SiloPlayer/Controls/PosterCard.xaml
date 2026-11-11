@@ -128,6 +128,9 @@
                 VerticalAlignment="Bottom"
                 HorizontalAlignment="Right"
                 Margin="8,8,8,48" />
+            <StackPanel x:Name="OverlayLeftEdge" Spacing="4" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="8" IsHitTestVisible="False" />
+            <StackPanel x:Name="OverlayRightEdge" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8" IsHitTestVisible="False" />
+            <controls:CardWatchStatusIndicator x:Name="WatchStatus" />
 
             <!-- Selection remains above artwork and configured badges. -->
             <Border

@@ -33,6 +33,9 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     private readonly StackPanel _overlayTopRight;
     private readonly StackPanel _overlayBottomLeft;
     private readonly StackPanel _overlayBottomRight;
+    private readonly StackPanel _overlayLeftEdge;
+    private readonly StackPanel _overlayRightEdge;
+    private readonly CardWatchStatusIndicator _watchStatus = new();
     internal ArtworkMotionPolicy? ArtworkMotion { get; set; }
     private bool _artworkSuspended;
     private ArtworkBindingOwner? _artworkOwner;
@@ -127,11 +130,16 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         _overlayTopRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top, _overlayGeometry);
         _overlayBottomLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom, _overlayGeometry);
         _overlayBottomRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom, _overlayGeometry);
+        _overlayLeftEdge = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Center, _overlayGeometry);
+        _overlayRightEdge = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Center, _overlayGeometry);
         ApplyOverlayHostGeometry();
         posterHost.Children.Add(_overlayTopLeft);
         posterHost.Children.Add(_overlayTopRight);
         posterHost.Children.Add(_overlayBottomLeft);
         posterHost.Children.Add(_overlayBottomRight);
+        posterHost.Children.Add(_overlayLeftEdge);
+        posterHost.Children.Add(_overlayRightEdge);
+        posterHost.Children.Add(_watchStatus);
         _hoverBrighten = new Border
         {
             Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(24, 255, 255, 255)),
@@ -730,6 +738,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void UpdateQuickActionState(MediaItem item)
     {
+        ApplyOverlayHostGeometry();
         var preferences = App.Services.GetRequiredService<CardOverlayService>();
         var hasState = item.UserState != null && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
         var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");
@@ -804,20 +813,33 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void ApplyOverlayHostGeometry()
     {
-        foreach (var host in new[] { _overlayTopLeft, _overlayTopRight, _overlayBottomLeft, _overlayBottomRight })
+        foreach (var host in new[] { _overlayTopLeft, _overlayTopRight, _overlayBottomLeft, _overlayBottomRight, _overlayLeftEdge, _overlayRightEdge })
+        {
             host.Spacing = _overlayGeometry.StackGap;
+            host.MaxWidth = Math.Max(0, Width - 2 - 2 * _overlayGeometry.EdgeInset);
+        }
 
         var edge = _overlayGeometry.EdgeInset;
         _overlayTopLeft.Margin = new Thickness(edge);
         _overlayTopRight.Margin = new Thickness(edge);
         _overlayBottomLeft.Margin = new Thickness(edge);
         _overlayBottomRight.Margin = new Thickness(edge);
+        _overlayLeftEdge.Margin = _overlayRightEdge.Margin = new Thickness(edge);
+        _watchStatus.Update(MediaItem?.UserState, _overlayGeometry, borderInset: 0);
+        if (_watchStatus.Visibility == Visibility.Visible)
+            _overlayTopLeft.MaxWidth = Math.Max(0, Width - 2 - 2 * edge - _watchStatus.ReservedWidth - _overlayGeometry.StackGap);
+        if (App.Services.GetRequiredService<CardOverlayService>().ManifestRevision < 25 && _watchStatus.Visibility == Visibility.Visible)
+            _overlayTopRight.Margin = new Thickness(edge, edge + _overlayGeometry.WatchStatusSize + _overlayGeometry.StackGap, edge, edge);
     }
 
     private CardBadgeHosts? _badges;
-    private CardBadgeHosts Badges => _badges ??= new(_overlayTopLeft, _overlayTopRight, _overlayBottomLeft, _overlayBottomRight);
+    private CardBadgeHosts Badges => _badges ??= new(_overlayTopLeft, _overlayTopRight, _overlayBottomLeft, _overlayBottomRight, _overlayLeftEdge, _overlayRightEdge);
 
-    private void ClearOverlays() => Badges.Clear();
+    private void ClearOverlays()
+    {
+        Badges.Clear();
+        _watchStatus.Update(null, _overlayGeometry, borderInset: 0);
+    }
 
     /// <summary>Shows the item's corner badges; unchanged badges are kept, so rebinding creates no XAML.</summary>
     private void UpdateOverlays(MediaItem item)
