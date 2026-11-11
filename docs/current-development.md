@@ -38,6 +38,15 @@ Independent Codex review confirmed the dismissal/paging race. The fix cancels an
 App DLL SHA256: `FA7601A51FB4EAEC8B361154DCDF107ADA3D0751265797D094A45B03CD9A6A84`; all 741 authored app PDB documents match final source. Selected native DLL/PDB identities and source documents also match. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/viewer-actions/review-final-binding`, the original `viewer-actions-implementation.md`/review, and `viewer-actions-review-fixes-note.md`.
 
 Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline and candidate; four icon assertions before that failure passed, so no completed sidebar route is claimed. Existing skipped-sync-count retention remains a nonblocking pre-existing gap. Dedicated page has no Home-style Undo. SVG visual parity and live-server interoperability are unverified. Installed player remains running and untouched.
+# November 11 ? collection wall, hero and actions for Beta
+
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Source remains **1.2.970**; the Beta pipeline owns integration, stamps and publication.
+
+Collections now use one responsive poster wall with ownership/library filters and loaded-only empty states, plus a backdrop hero with description, ownership, Shuffle, Edit/Add Home and More actions. Owner Sync now/Delete share policy and confirmation with the wall cards; shared/server collections offer library-page placement. Delete carries the revision. Pending actions retire on navigation or authority changes. Administrator collection management, including Open in, remains outside Desktop's available access.
+
+Independent Claude review found no correctness issue. Final source: **5,330/5,330 full unit tests**, **222 focused tests**, Release publish and six scoped native runs (presentation/actions, owner menu, ownership, server, layout, creation), each with the completion sentinel. The final app DLL SHA256 is `9C3196BD27FDB6145AF18D6EFCA380E3E4A8C312FA21F46B95380D3140D9A587`; all 30 changed-source hashes rechecked. Earlier full5,316 and other native runs predate the actions follow-up and remain historical.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/collections{,-actions}-implementation.md`, `collections-review.md`, `collections/evidence/collections/lead-final-full`, `act-presentation-seven`, and `collections-lead-binding.json`. Baseline browse-parity/ImportedDraft failures are preserved separately. No live-server persistence or complete visual parity certified; wall pagination retains Load more, and backdrop effects use native approximations. No installer or installed-player changes.
 
 ---
 

@@ -9,9 +9,12 @@ public sealed class CurrentCollectionsParitySourceTests
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "CollectionsViewModel.cs");
 
-        Assert.Contains("Your collections", xaml);
-        Assert.Contains("Server collections", xaml);
-        Assert.Contains("ServerCollectionsHeaderActions", xaml);
+        // One full-width wall with Show pills (pinned WebUI Collections.tsx), not stacked sections under a width cap.
+        Assert.Contains("Your collections", ReadRepoFile("src", "SiloPlayer.Core", "Services", "CollectionsWall.cs"));
+        Assert.Contains("x:Name=\"CollectionsFilterPills\"", xaml);
+        Assert.Contains("x:Name=\"CollectionsEmptyLine\"", xaml);
+        Assert.DoesNotContain("MaxWidth=\"1080\"", xaml);
+        Assert.Contains("Server collections", ReadRepoFile("src", "SiloPlayer.Core", "Services", "CollectionsWall.cs"));
         Assert.Contains("Add group", xaml);
         Assert.DoesNotContain("Smart Wizard", xaml);
         Assert.Contains("BuildCollectionGroupSection", code);
@@ -23,7 +26,7 @@ public sealed class CurrentCollectionsParitySourceTests
         Assert.Contains("CollectionsLoadingShell", xaml);
         var posters = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionsPage.Posters.cs");
         Assert.Contains("BuildCollectionSkeletons", posters);
-        Assert.Contains("index < 7", posters);
+        Assert.Contains("index < 8", posters);
         Assert.Contains("return BuildPosterBoard(cards)", posters);
         Assert.Contains("IsLoadingServerCollections", viewModel);
         Assert.Contains("GetServerCollectionsAsync", viewModel);
