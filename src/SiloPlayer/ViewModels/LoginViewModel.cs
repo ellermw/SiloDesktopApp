@@ -444,13 +444,14 @@ public partial class LoginViewModel : ObservableObject
                 { CancelDeviceLogin(clearSession: true); return; }
                 IsDevicePolling = false;
 
-                if (string.Equals(result.Status, "approved", StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(result.AccessToken)
-                    && !string.IsNullOrWhiteSpace(result.RefreshToken)
-                    && result.User != null)
+                if (string.Equals(result.Status, "approved", StringComparison.OrdinalIgnoreCase))
                 {
-                    var response = new LoginResponse { AccessToken = result.AccessToken, RefreshToken = result.RefreshToken,
-                        ExpiresIn = result.ExpiresIn.GetValueOrDefault(), User = result.User };
+                    // An approval missing a token, its lifetime or the account id would open a session
+                    // that cannot refresh or identify its user. It ends the attempt; it is not pending.
+                    if (!result.HasUsableTokens)
+                        throw new InvalidOperationException("The server returned an incomplete device sign-in approval.");
+                    var response = new LoginResponse { AccessToken = result.AccessToken!, RefreshToken = result.RefreshToken!,
+                        ExpiresIn = result.ExpiresIn.GetValueOrDefault(), User = result.User! };
                     if (!_authService.CompleteRecoveryLogin(response, authGeneration, server))
                     { CancelDeviceLogin(clearSession: true); return; }
                     _deviceCompleted = true;

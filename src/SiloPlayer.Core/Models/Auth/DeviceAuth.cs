@@ -79,6 +79,14 @@ public class DeviceLoginPollResponse
     public int? ExpiresIn => Tokens?.ExpiresIn;
     [System.Text.Json.Serialization.JsonIgnore]
     public UserInfo? User => Tokens?.User;
+    /// <summary>
+    /// True when the tokens can open a session: both tokens, a positive lifetime to
+    /// schedule the refresh from, and an account id. An omitted <c>user</c> still
+    /// deserializes as an empty account, so a non-null <see cref="User"/> proves nothing.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasUsableTokens => !string.IsNullOrWhiteSpace(AccessToken) && !string.IsNullOrWhiteSpace(RefreshToken)
+        && ExpiresIn > 0 && !string.IsNullOrWhiteSpace(User?.Id);
     public string? ProfileId { get; set; }
     public string? ProfileToken { get; set; }
     public bool Temporary { get; set; }

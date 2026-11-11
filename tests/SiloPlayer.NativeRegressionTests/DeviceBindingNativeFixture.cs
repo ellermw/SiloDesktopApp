@@ -199,7 +199,23 @@ internal static class DeviceBindingNativeFixture
                 wire.Terminal = terminal; await Start(); await Until(() => vm.DeviceSession is null);
                 Check(vm.ErrorMessage == (terminal == "denied" ? "Approval was denied. Start a new code to try again." : "This code is no longer valid. Start a new one."), "Denial/expiry copy changed");
             }
-            wire.Terminal = null; wire.PollGate = Gate(); await Start();
+            wire.Terminal = null;
+            // An approval without the account, or without a usable lifetime, ends the attempt instead of opening a session.
+            foreach (var incomplete in new object[]
+            {
+                new { status = "approved", tokens = new { access_token = "fixture-binding-access", refresh_token = "fixture-binding-refresh", expires_in = 86400 } },
+                new { status = "approved", tokens = new { access_token = "fixture-binding-access", refresh_token = "fixture-binding-refresh", user = new { id = "binding-user", username = "fixture", role = "user" } } },
+                new { status = "approved", tokens = new { access_token = "fixture-binding-access", refresh_token = "fixture-binding-refresh", expires_in = 0, user = new { id = "binding-user", username = "fixture", role = "user" } } },
+            })
+            {
+                wire.PollGate = Gate(); var polls = wire.Polls.Count;
+                await Start(); await Until(() => wire.Polls.Count > polls);
+                wire.PollGate.TrySetResult(Reply(incomplete)); wire.PollGate = null;
+                await Until(() => vm.DeviceSession is null);
+                Check(vm.ErrorMessage == "Phone sign-in failed. Start a new code to try again." && auth.CurrentUser is null && succeeded == 0 && wire.Refreshes == 0,
+                    "Incomplete approval opened a session");
+            }
+            wire.PollGate = Gate(); await Start();
             wire.PollGate.TrySetResult(Approved()); wire.PollGate = null;
             await Until(() => succeeded == 1);
             Check(auth.CurrentUser?.Id == "binding-user" && wire.Refreshes == 0 && !wire.Authenticated, "Bound normal login did not complete exactly one public bootstrap session");

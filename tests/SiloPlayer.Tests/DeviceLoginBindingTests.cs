@@ -197,6 +197,24 @@ public sealed class DeviceLoginBindingTests
         Assert.Equal(0, wire.Capabilities); Assert.Null(Assert.Single(wire.Hashes)); Assert.Null(Assert.Single(wire.Secrets));
     }
 
+    [Theory]
+    [InlineData("""{"access_token":"a","refresh_token":"r","expires_in":3600,"user":{"id":"1"}}""", true)]
+    [InlineData("""{"access_token":"a","refresh_token":"r","expires_in":3600}""", false)]
+    [InlineData("""{"access_token":"a","refresh_token":"r","expires_in":3600,"user":{"id":" "}}""", false)]
+    [InlineData("""{"access_token":"a","refresh_token":"r","user":{"id":"1"}}""", false)]
+    [InlineData("""{"access_token":"a","refresh_token":"r","expires_in":0,"user":{"id":"1"}}""", false)]
+    [InlineData("""{"access_token":"","refresh_token":"r","expires_in":3600,"user":{"id":"1"}}""", false)]
+    [InlineData("""{"access_token":"a","refresh_token":"","expires_in":3600,"user":{"id":"1"}}""", false)]
+    [InlineData("null", false)]
+    public async Task ApprovedPollHasUsableTokensOnlyWithBothTokensALifetimeAndAnAccountId(string tokens, bool usable)
+    {
+        using var wire = new Wire { PollBody = "{\"status\":\"approved\",\"tokens\":" + tokens + "}" }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl(Wire.Server);
+        var poll = await new AuthApi(client).DevicePollAsync("fixture-device");
+        Assert.Equal("approved", poll.Status);
+        Assert.Equal(usable, poll.HasUsableTokens);
+    }
+
     [Fact]
     public async Task RetiredNegotiationCannotSendStartAndExplicitServerDoesNotFollowActiveServer()
     {
@@ -225,6 +243,7 @@ public sealed class DeviceLoginBindingTests
     {
         internal const string Server = "https://device-contract.invalid";
         internal string Mode = "positive", Query = "";
+        internal string? PollBody;
         internal int Capabilities, Decisions, AcceptedPolls;
         internal bool Authenticated, Refuse, EchoCode, EnforceBinding, TransportEcho;
         internal HttpStatusCode? PollFailureStatus, StartFailureStatus;
@@ -274,6 +293,7 @@ public sealed class DeviceLoginBindingTests
                     return failure;
                 }
                 ++AcceptedPolls;
+                if (PollBody is { } approval) return new(HttpStatusCode.OK) { Content = new StringContent(approval, System.Text.Encoding.UTF8, "application/json") };
                 return Reply(new { status = "pending" });
             }
             Assert.Equal("12345678", body.GetProperty("code").GetString()); Assert.Single(body.EnumerateObject()); ++Decisions;
