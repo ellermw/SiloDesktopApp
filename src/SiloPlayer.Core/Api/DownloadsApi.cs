@@ -42,9 +42,12 @@ public class DownloadsApi(SiloApiClient client)
         int? libraryId, string? seasonContentId = null, CancellationToken ct = default)
     {
         var owner = client.CaptureContext();
+        // The viewer outlives request contexts: reconnect catch-up and access refreshes retire reads, not the picker.
+        var viewer = client.CaptureIdentityContext();
         try { return await DiscoverBatchTemplateVersionsAsync(owner, seriesId, seasonNumber, libraryId, seasonContentId, ct); }
-        // Any other discovery failure ends the lookup with no template. Only a retired owner still stops the picker.
-        catch (Exception) when (!ct.IsCancellationRequested && client.IsCurrentContext(owner)) { return []; }
+        // Any other discovery failure, a retired request context included, ends the lookup with no template.
+        // Only a retired viewer still stops the picker.
+        catch (Exception) when (!ct.IsCancellationRequested && client.IsCurrentIdentityContext(viewer)) { return []; }
     }
 
     private async Task<List<FileVersion>> DiscoverBatchTemplateVersionsAsync(ApiRequestContext owner, string seriesId,
@@ -70,7 +73,8 @@ public class DownloadsApi(SiloApiClient client)
         var id = Uri.EscapeDataString(seriesId);
         var seasons = seasonNumber.HasValue ? new List<Season> { new() { ContentId = seasonContentId ?? "", SeasonNumber = seasonNumber.Value } }
             : await Optional<Season>($"/api/v2/catalog/series/{id}/seasons");
-        foreach (var season in seasons)
+        // A whole series takes its template from the earliest regular season; Specials are only the fallback.
+        foreach (var season in seasons.OrderBy(s => s.SeasonNumber <= 0).ThenBy(s => s.SeasonNumber))
         {
             // The season item route keeps Specials; the legacy series/number route can discard season zero.
             List<Episode> episodes = string.IsNullOrEmpty(season.ContentId) ? []

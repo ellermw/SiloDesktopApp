@@ -63,6 +63,24 @@ public sealed class BatchDownloadOwnershipTests
         Assert.DoesNotContain(wire.Paths,path=>path.Contains("/seasons/0/episodes"));
         Assert.Equal(season.HasValue?2:3,wire.Paths.Count);
     }
+    [Theory] [InlineData(true)] [InlineData(false)]
+    public async Task WholeSeriesTemplatePrefersARegularSeasonOverSpecials(bool regularPlayable)
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        // Shaped like the real server: Specials are listed first.
+        wire.Read = request => { var route=request.RequestUri!.AbsolutePath;
+            return route.EndsWith("/seasons") ? "{\"items\":[{\"content_id\":\"specials-item\",\"season_number\":0},{\"content_id\":\"season-2\",\"season_number\":2},{\"content_id\":\"season-1\",\"season_number\":1}]}"
+                : route=="/api/v2/catalog/items/specials-item/episodes" ? "{\"items\":[{\"content_id\":\"special\",\"files\":[{\"file_id\":\"21\"}]}]}"
+                : route=="/api/v2/catalog/items/season-1/episodes" && regularPlayable ? "{\"items\":[{\"content_id\":\"regular\",\"files\":[{\"file_id\":\"31\"}]}]}"
+                : route=="/api/v2/catalog/items/special/versions" ? "{\"items\":[{\"file_id\":\"21\"}]}"
+                : route=="/api/v2/catalog/items/regular/versions" ? "{\"items\":[{\"file_id\":\"31\"}]}"
+                : "{\"items\":[]}"; };
+        var versions=await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",null,null);
+        Assert.Equal(regularPlayable?31:21,Assert.Single(versions).FileId);
+        if(!regularPlayable) return;
+        Assert.DoesNotContain(wire.Paths,path=>path.Contains("specials-item")||path.Contains("season-2"));
+        Assert.Equal(3,wire.Paths.Count);
+    }
     [Theory] [InlineData(null,404)] [InlineData(0,404)] [InlineData(0,403)]
     public async Task MissingOrForbiddenDiscoveryMeansNoTemplate(int? season,int status)
     {
@@ -90,6 +108,15 @@ public sealed class BatchDownloadOwnershipTests
     public async Task TransportFailureDuringDiscoveryMeansNoTemplate()
     {
         using var wire=new Wire {Read = _=>throw new HttpRequestException("Fixture transport failure")}; using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",null,null));
+        Assert.Single(wire.Paths);
+    }
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public async Task RetiredRequestContextMeansNoTemplate(bool transportCatchUp)
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        // An access refresh or reconnect catch-up retires the read, not the viewer who owns the picker.
+        wire.Read = _ => { client.TryInvalidateAccessContext(client.CaptureContext(),out _,transportCatchUp); return "{\"items\":[{\"content_id\":\"season-item\",\"season_number\":1}]}"; };
         Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",null,null));
         Assert.Single(wire.Paths);
     }
