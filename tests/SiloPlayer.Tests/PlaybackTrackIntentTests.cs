@@ -130,6 +130,8 @@ public sealed class PlaybackTrackIntentTests
     [InlineData("seek", true)]
     [InlineData("recovery", false)]
     [InlineData("recovery", true)]
+    [InlineData("audio", false)]
+    [InlineData("audio", true)]
     public async Task GrantOnlySubtitleWithMissingOrAmbiguousOrdinalDoesNotAbortReplan(string operation, bool duplicate)
     {
         using var scope = new Fixture(); scope.Wire.GrantOnlyInSubtitle = scope.Wire.BurnInSubtitles = true;
@@ -143,16 +145,41 @@ public sealed class PlaybackTrackIntentTests
         {
             "quality" => await scope.Manager.ReplanQualityAsync("720p", 8),
             "seek" => await scope.Manager.ReplanSeekAsync(8),
+            "audio" => await scope.Manager.ReplanAudioAsync(1, 8),
             _ => await scope.Manager.RecoverPlaybackFailureAsync(8, "network_error", "fixture"),
         };
 
         var body = Assert.Single(scope.Wire.Replans);
-        Assert.Equal(operation switch { "quality" => "quality_change", "seek" => "seek_reanchor", _ => "failure_recovery" },
+        Assert.Equal(operation switch { "quality" or "audio" => "quality_change", "seek" => "seek_reanchor", _ => "failure_recovery" },
             body.GetProperty("operation").GetString());
         Assert.False(body.GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        if (operation == "audio")
+            Assert.Equal(1, body.GetProperty("selected_tracks").GetProperty("audio").GetProperty("index").GetInt32());
         Assert.Same(replacement, scope.Manager.CurrentSession);
         Assert.Equal("sub:42:0", replacement.SelectedSubtitleTrackId);
         Assert.Equal("burn_in", replacement.SubtitleMode);
+    }
+
+    [Theory]
+    [InlineData(false, -1)]
+    [InlineData(true, -1)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    public async Task OrdinaryTrackChangeHonorsViewerChoiceOverAnUnresolvedGrant(bool duplicate, int choice)
+    {
+        using var scope = new Fixture(); scope.Wire.GrantOnlyInSubtitle = scope.Wire.BurnInSubtitles = true;
+        if (!duplicate) scope.Wire.MissingSubtitleIndex = 0;
+        var session = await scope.Manager.StartSessionAsync(42);
+        if (duplicate) session.SubtitleUrls.Add(new() { TrackId = session.SelectedSubtitleTrackId, Index = 9 });
+
+        var replacement = await scope.Manager.ReplanSubtitleAsync(choice < 0 ? null : choice, 8);
+
+        var body = Assert.Single(scope.Wire.Replans);
+        Assert.Equal("track_change", body.GetProperty("operation").GetString());
+        if (choice < 0) Assert.False(body.GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        else Assert.Equal(choice, body.GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+        Assert.Equal(choice < 0 ? null : "sub:42:1", replacement.SelectedSubtitleTrackId);
+        Assert.Equal(choice < 0 ? "off" : "burn_in", replacement.SubtitleMode);
     }
 
     [Theory]
@@ -273,6 +300,32 @@ public sealed class PlaybackTrackIntentTests
         var track = Assert.Single(scope.Wire.Replans).GetProperty("selected_tracks").GetProperty("subtitle");
         Assert.Equal(1, track.GetProperty("index").GetInt32());
         Assert.Equal("sub:42:1", track.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task SubtitleAnnouncementCannotMergeIntoAnInFlightInvalidationPlan()
+    {
+        using var scope = new Fixture();
+        var session = await scope.Manager.StartSessionAsync(42);
+        scope.Wire.BlockNext = true;
+        var replan = scope.Manager.ReplanInvalidatedPlanAsync(session.PlanId!, "policy_changed", 8);
+        await scope.Wire.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var announcement = new PlaybackSubtitleInventoryV3
+        {
+            StoredSubtitleId = 77, TrackId = "downloaded:77", CombinedIndex = 9,
+            Source = "downloaded", Delivery = "burn_in_only", Unplayable = true,
+        };
+        try
+        {
+            Assert.False(scope.Manager.TryApplySubtitleTrack(session, announcement));
+            Assert.DoesNotContain(session.SubtitleUrls, row => row.Id == 77);
+        }
+        finally { scope.Wire.Release.TrySetResult(); }
+        var replacement = await replan;
+        Assert.NotNull(replacement);
+        Assert.DoesNotContain(replacement.SubtitleUrls, row => row.Id == 77);
+        Assert.True(scope.Manager.TryApplySubtitleTrack(replacement, announcement));
+        Assert.Contains(replacement.SubtitleUrls, row => row.Id == 77);
     }
 
     [Fact]

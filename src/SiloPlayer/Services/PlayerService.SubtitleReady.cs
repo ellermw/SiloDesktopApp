@@ -20,12 +20,25 @@ public partial class PlayerService
         }
     }
 
+    private bool SubtitleReadyRefreshIsBusy => _switchingContent || IsLoading ||
+        Volatile.Read(ref _pendingPlanInvalidations) > 0 || _playbackTerminalState != null;
+
+    private void ResumePendingSubtitleReadyRefreshes()
+    {
+        Action[] pending;
+        lock (_subtitleReadyRefreshLock) pending = _pendingSubtitleReadyRefreshes.ToArray();
+        foreach (var refresh in pending) refresh();
+    }
+
     private void DeferSubtitleReadyRefresh(JsonElement payload, SubtitleOperationOwner owner, string sessionId, int fileId)
     {
         var announcement = payload.Clone();
         Action refresh = null!;
         refresh = () =>
         {
+            // FILE_LOADED can race the invalidation's finally block. Keep the
+            // payload subscribed until both the plan and native load are idle.
+            if (SubtitleReadyRefreshIsBusy) return;
             lock (_subtitleReadyRefreshLock)
             {
                 if (!_pendingSubtitleReadyRefreshes.Remove(refresh)) return;
@@ -40,7 +53,7 @@ public partial class PlayerService
             _pendingSubtitleReadyRefreshes.Add(refresh);
             ContentLoaded += refresh;
         }
-        if (!_switchingContent && !IsLoading) refresh();
+        refresh();
     }
 
     private static bool SubtitleInventoryRequiresTransportReload(PlaybackStartResponse previous, PlaybackStartResponse next)
@@ -133,6 +146,15 @@ public partial class PlayerService
         }
         var token = _authorityLifetimeCts.Token;
         var entered = false;
+        void RetryIfSuperseded()
+        {
+            // A guard wait or a later busy claim may replace our exact plan.
+            // Keep the announcement for this file lifetime, not that response.
+            if (!token.IsCancellationRequested && owner.IsCurrentForAi && manager.CurrentSession is { } current &&
+                current.SessionId == eventSessionId && current.MediaFileId == fileId &&
+                (SubtitleReadyRefreshIsBusy || !ReferenceEquals(current, session)))
+                DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);
+        }
         try
         {
             // Serialize even in-place merges against inventory publication. A queued
@@ -141,14 +163,18 @@ public partial class PlayerService
             entered = true;
             if (!owner.IsCurrentForAi) return;
             session = manager.CurrentSession;
-            if (session == null || session.SessionId != eventSessionId || session.MediaFileId != fileId || !owner.IsCurrent) return;
+            if (session == null || session.SessionId != eventSessionId || session.MediaFileId != fileId || !owner.IsCurrent)
+            {
+                RetryIfSuperseded();
+                return;
+            }
             var nativeFile = Volatile.Read(ref _fileLoadGeneration);
             var file = Volatile.Read(ref _playbackFileGeneration);
             bool SameFile() => nativeFile == Volatile.Read(ref _fileLoadGeneration) && file == Volatile.Read(ref _playbackFileGeneration);
             bool Current() => owner.IsCurrent && SameFile();
             // Never merge into a plan whose replacement inventory may already be
             // frozen. Retain every payload and replay it after the actual load.
-            if (_switchingContent || IsLoading)
+            if (SubtitleReadyRefreshIsBusy)
             {
                 DeferSubtitleReadyRefresh(payload, owner, session.SessionId, fileId);
                 return;
@@ -171,7 +197,11 @@ public partial class PlayerService
                     lock (_subtitleTrackStateLock)
                     lock (manager.SubtitleInventorySyncRoot)
                     {
-                        if (!Current()) return;
+                        if (!Current() || SubtitleReadyRefreshIsBusy)
+                        {
+                            RetryIfSuperseded();
+                            return;
+                        }
                         if (manager.TryApplySubtitleTrack(session, track))
                         {
                             SendSubtitleListToOsc();
@@ -194,17 +224,25 @@ public partial class PlayerService
                 seekRevision == Volatile.Read(ref _seekRestartGeneration);
             var position = CurrentMediaPosition;
             var replacement = await manager.RefreshSubtitleInventoryForOwnerAsync(position,
-                candidate => Current() && SameTransport() && ReferenceEquals(candidate, session),
-                (previous, next) => next.MediaFileId == fileId && SameTransport() && owner.TryAdoptSession(previous, next), token)
+                candidate => Current() && SameTransport() && !SubtitleReadyRefreshIsBusy && ReferenceEquals(candidate, session),
+                (previous, next) => next.MediaFileId == fileId && SameTransport() && !SubtitleReadyRefreshIsBusy && owner.TryAdoptSession(previous, next), token)
                 .ConfigureAwait(false);
-            if (replacement == null || !Current() || !SameTransport()) return;
+            if (replacement == null || !Current() || !SameTransport())
+            {
+                RetryIfSuperseded();
+                return;
+            }
             if (!SubtitleInventoryRequiresTransportReload(session, replacement))
             {
                 lock (_subtitleSyncGate)
                 lock (_subtitleTrackStateLock)
                 lock (manager.SubtitleInventorySyncRoot)
                 {
-                    if (!Current() || !SameTransport()) return;
+                    if (!Current() || !SameTransport())
+                    {
+                        RetryIfSuperseded();
+                        return;
+                    }
                     AdoptSubtitleInventoryInPlace(session, replacement);
                 }
                 AdoptBufferingQualityPlan();
@@ -221,7 +259,11 @@ public partial class PlayerService
             var prepared = await PreparePlaybackTransportAsync(replacement, version,
                 manager.StreamUrl ?? throw new InvalidOperationException("The refreshed stream URL is unavailable."), position, token)
                 .ConfigureAwait(false);
-            if (!Current() || !SameTransport()) return;
+            if (!Current() || !SameTransport())
+            {
+                RetryIfSuperseded();
+                return;
+            }
             PlayMethod = replacement.PlayMethod;
             ApplyPreparedTransport(prepared);
             PrepareSubtitleFileForReload(session, replacement, manager.SubtitleSelectionForLoad);
@@ -229,7 +271,7 @@ public partial class PlayerService
             SendSubtitleListToOsc();
             await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { RetryIfSuperseded(); }
         catch (Exception ex) { LogToFile("state_trace.txt", $"Subtitle announcement refresh failed: {ex.Message}"); }
         finally { if (entered) _subtitleReadyGuard.Release(); }
     }

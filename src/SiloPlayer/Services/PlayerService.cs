@@ -9967,6 +9967,9 @@ public partial class PlayerService : IDisposable
         finally
         {
             Interlocked.Decrement(ref _pendingPlanInvalidations);
+            // Also release announcements after a no-op invalidation (no
+            // FILE_LOADED), or one whose load completed before this finally.
+            ResumePendingSubtitleReadyRefreshes();
         }
     }
 

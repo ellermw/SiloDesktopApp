@@ -138,6 +138,57 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 await Until(() => Get(service, "_loadedMediaInitCts") == null &&
                     manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 88) && manager.CurrentSession.SubtitleUrls.Any(row => row.Id == 89));
 
+                // Invalidation recovery has no busy claim until its response
+                // arrives. Also cover a manager replan with no UI busy flag at
+                // all: a guard-waiting refresh must retry the replacement owner.
+                foreach (var replanKind in new[] { "invalidation", "manager", "superseded-invalidation" })
+                foreach (var needsReplan in new[] { false, true })
+                {
+                    wire.AdditionalDownloadedAvailable = false;
+                    await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                    var replansBefore = wire.Replans.Count;
+                    wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var outgoingPlanId = manager.CurrentSession!.PlanId!;
+                    Task recovering = replanKind == "invalidation"
+                        ? (Task)Call(service, "HandlePlanInvalidationAsync",
+                            new PlaybackPlanInvalidation(outgoingPlanId, "policy_changed"))!
+                        : manager.ReplanQualityAsync("720p", 0);
+                    await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    if (replanKind == "superseded-invalidation")
+                    {
+                        // This invalidation becomes a no-op behind the quality
+                        // replan: its finally must release payloads without a load.
+                        var checking = (Task)Call(service, "HandlePlanInvalidationAsync",
+                            new PlaybackPlanInvalidation(outgoingPlanId, "policy_changed"))!;
+                        recovering = Task.WhenAll(recovering, checking);
+                    }
+                    Require(Get(service, "_switchingContent") is false && !service.IsLoading,
+                        "The fixture did not exercise a replan without a busy flag.");
+                    wire.AdditionalDownloadedAvailable = true;
+                    using var duringReplan = JsonDocument.Parse(JsonSerializer.Serialize(new
+                    {
+                        session_id = "fixture", file_id = 42, subtitle_id = 78,
+                        track = needsReplan ? null : new { track_id = "downloaded:78", combined_index = 3, source = "downloaded", delivery = "sidecar", url = subtitles.Origin + "/spa.srt" },
+                    }));
+                    var refreshing = (Task)Call(service, "ApplySubtitleReadyAsync", duringReplan.RootElement, "fixture")!;
+                    try
+                    {
+                        Require(!manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 78),
+                            "An announcement mutated the outgoing inventory during a non-busy replan.");
+                        Require(wire.Replans.Count == replansBefore + 1,
+                            "An announcement bypassed the in-flight replan guard.");
+                    }
+                    finally { wire.HoldReplan.TrySetResult(); }
+                    await Task.WhenAll(recovering, refreshing).WaitAsync(TimeSpan.FromSeconds(8));
+                    await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
+                        manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 78));
+                    Require(manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 78).Index == 3,
+                        "A deferred announcement did not reach the replacement inventory.");
+                    wire.HoldReplan = null; wire.ReplanEntered = null;
+                }
+
                 // B must wait for A's frozen response, then either merge into
                 // its replacement or replan from that replacement (not S0).
                 foreach (var needsReplan in new[] { false, true })

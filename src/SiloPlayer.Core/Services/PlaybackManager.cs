@@ -451,8 +451,7 @@ public partial class PlaybackManager : IDisposable
             if (session == null || !canUseSession(session)) return null;
             EnsureBufferingReplanOwner();
             return await ReplanCoreForOwnerAsync("track_change", positionSeconds, _qualityPreferenceV3,
-                _ => { }, null, ct, () => canUseSession(session), replacement => tryAdoptSession(session, replacement),
-                preserveUnresolvedSubtitleGrant: true)
+                _ => { }, null, ct, () => canUseSession(session), replacement => tryAdoptSession(session, replacement))
                 .ConfigureAwait(false);
         }
         finally { _replanGuard.Release(); }
@@ -460,6 +459,15 @@ public partial class PlaybackManager : IDisposable
 
     /// <summary>Accept a session-scoped announcement without selecting it or inventing a file ordinal.</summary>
     public bool TryApplySubtitleTrack(PlaybackStartResponse session, PlaybackSubtitleInventoryV3 track)
+    {
+        // A response already in flight may contain a frozen inventory. Serialize
+        // merges with every replan, including ones without a player busy claim.
+        if (!_replanGuard.Wait(0)) return false;
+        try { return TryApplySubtitleTrackCore(session, track); }
+        finally { _replanGuard.Release(); }
+    }
+
+    private bool TryApplySubtitleTrackCore(PlaybackStartResponse session, PlaybackSubtitleInventoryV3 track)
     {
         lock (_trackIntentGate)
         {
@@ -755,7 +763,7 @@ public partial class PlaybackManager : IDisposable
     private async Task<PlaybackStartResponse> ReplanCoreForOwnerAsync(string operation, double positionSeconds,
         string qualityPreference, Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
         PlaybackFailureV3? failure, CancellationToken ct, Func<bool>? currentOwner,
-        Func<PlaybackStartResponse, bool>? tryAdopt, bool preserveUnresolvedSubtitleGrant = false)
+        Func<PlaybackStartResponse, bool>? tryAdopt)
     {
         if (currentOwner?.Invoke() == false) throw new OperationCanceledException("Subtitle owner retired.", ct);
         var plan = _currentPlanV3
@@ -772,8 +780,8 @@ public partial class PlaybackManager : IDisposable
         var subtitleGrant = plan.SelectedTracks.Subtitle;
         if (subtitleGrant == null && CurrentSession is { } live && !string.IsNullOrWhiteSpace(live.SelectedSubtitleTrackId))
         {
-            // Some plans grant only subtitle.track_id. An inventory refresh
-            // must not turn that omission in selected_tracks into explicit Off.
+            // Some plans grant only subtitle.track_id. A replan must not turn
+            // that omission in selected_tracks into explicit Off.
             var matches = live.SubtitleUrls.Where(track => track.TrackId == live.SelectedSubtitleTrackId)
                 .Take(2).ToArray();
             var index = live.SelectedSubtitleTrackIndex ?? (matches.Length == 1 ? (int?)matches[0].Index : null);
@@ -807,7 +815,7 @@ public partial class PlaybackManager : IDisposable
             // An unresolved grant cannot be expressed by a track_change: omission
             // means Off. Refresh at the same quality instead, where omission preserves
             // the server grant. A pending viewer Off must still use track_change.
-            if (preserveUnresolvedSubtitleGrant && operation == "track_change" &&
+            if (operation == "track_change" &&
                 subtitleGrant == null && selectedTracks.Subtitle == null &&
                 !string.IsNullOrWhiteSpace(CurrentSession?.SelectedSubtitleTrackId) && !NeedsExplicitSubtitleOff())
                 operation = "quality_change";
