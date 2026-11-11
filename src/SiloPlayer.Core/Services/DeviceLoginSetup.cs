@@ -4,6 +4,17 @@ using SiloPlayer.Core.Models.Auth;
 
 namespace SiloPlayer.Core.Services;
 
+/// <summary>How the server answered the binding negotiation of one phone sign-in setup.</summary>
+public enum DeviceLoginBinding
+{
+    /// <summary>The server advertised binding; the start and every poll carry the setup secret.</summary>
+    Bound,
+    /// <summary>The server answered that it does not bind setups.</summary>
+    Declined,
+    /// <summary>The answer does not mention binding, or the server has no capability route.</summary>
+    Unsupported,
+}
+
 /// <summary>
 /// Owns one phone sign-in setup. Its secret stays in memory and is shared by all
 /// requests/retries in this setup; replacing or finishing the setup disposes it.
@@ -12,18 +23,25 @@ public sealed class DeviceLoginSetup(AuthApi api, string server, Func<bool>? isC
 {
     private readonly object _gate = new();
     private readonly byte[] _secret = RandomNumberGenerator.GetBytes(32);
-    private Task<bool>? _negotiation;
+    private Task<DeviceLoginBinding>? _negotiation;
     private bool _disposed;
+
+    /// <summary>
+    /// The negotiated answer, or null until a start has negotiated one. Anything but
+    /// <see cref="DeviceLoginBinding.Bound"/> runs unbound; the caller must tell the
+    /// user so instead of letting the missing setup protection pass silently.
+    /// </summary>
+    public DeviceLoginBinding? Binding => _negotiation is { IsCompletedSuccessfully: true } negotiated ? negotiated.Result : null;
 
     public async Task<DeviceLoginStartResponse> StartAsync(string deviceName, string devicePlatform, CancellationToken ct = default)
     {
-        Task<bool> negotiation;
+        Task<DeviceLoginBinding> negotiation;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             negotiation = _negotiation ??= NegotiateAsync(ct);
         }
-        var bound = await negotiation;
+        var bound = await negotiation == DeviceLoginBinding.Bound;
         Task<DeviceLoginStartResponse> started;
         lock (_gate)
         {
@@ -41,13 +59,13 @@ public sealed class DeviceLoginSetup(AuthApi api, string server, Func<bool>? isC
 
     public async Task<DeviceLoginPollResponse> PollAsync(string deviceCode, CancellationToken ct = default)
     {
-        Task<bool> negotiation;
+        Task<DeviceLoginBinding> negotiation;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             negotiation = _negotiation ?? throw new InvalidOperationException("Start device sign-in before polling.");
         }
-        var bound = await negotiation;
+        var bound = await negotiation == DeviceLoginBinding.Bound;
         Task<DeviceLoginPollResponse> polled;
         lock (_gate)
         {
@@ -59,16 +77,22 @@ public sealed class DeviceLoginSetup(AuthApi api, string server, Func<bool>? isC
         return await polled;
     }
 
-    private async Task<bool> NegotiateAsync(CancellationToken ct)
+    private async Task<DeviceLoginBinding> NegotiateAsync(CancellationToken ct)
     {
-        bool bound;
-        try { bound = (await api.GetDeviceLoginCapabilityAsync(server, ct)).SessionBinding; }
+        DeviceLoginBinding binding;
+        try
+        {
+            // An answer without the flag is not an explicit refusal. Both run
+            // unbound, but they stay distinguishable and are reported to the caller.
+            binding = (await api.GetDeviceLoginCapabilityAsync(server, ct)).SessionBinding switch
+            { true => DeviceLoginBinding.Bound, false => DeviceLoginBinding.Declined, _ => DeviceLoginBinding.Unsupported };
+        }
         // A missing capability route predates binding. Other failures are not an
         // unsupported-capability answer and must not silently start unbound.
-        catch (ApiException ex) when (ex.StatusCode is 404 or 405) { bound = false; }
+        catch (ApiException ex) when (ex.StatusCode is 404 or 405) { binding = DeviceLoginBinding.Unsupported; }
         // Preserve phone sign-in on configured HTTP servers too: binding adds
         // setup ownership, while transport security remains the server's policy.
-        return bound;
+        return binding;
     }
 
     private static string Encode(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');

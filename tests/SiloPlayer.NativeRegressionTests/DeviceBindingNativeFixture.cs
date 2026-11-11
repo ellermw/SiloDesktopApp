@@ -53,6 +53,7 @@ internal static class DeviceBindingNativeFixture
             Check(wire.Capabilities == 1 && wire.Starts.Count == 1 && wire.Starts[0].Binding is { Length: 43 }, "Normal login did not negotiate and send binding");
             VerifyPair(wire.Starts[0].Binding!, wire.Polls[0].Secret);
             Check(vm.DeviceQrImage is not null && vm.FormattedDeviceCode == "1234 5678" && vm.DeviceStatusMessage.Contains("Waiting"), "Native QR/code/waiting entrypoint did not render");
+            Check(vm.DeviceBindingNotice is null, "Bound setup showed the unbound notice");
             Check(!All<TextBlock>(page).Any(t => t.Text.Contains(wire.Polls[0].Secret!)), "Binding secret appeared on the native login page");
             var oldSecret = wire.Polls[0].Secret;
             wire.PollGate.TrySetResult(Reply(new { status = "pending", opened = true })); wire.PollGate = Gate();
@@ -132,6 +133,8 @@ internal static class DeviceBindingNativeFixture
                 Reset(); wire.CapabilityMode = mode; wire.PollGate = Gate(); await Start();
                 await Until(() => wire.Polls.Count > count); count = wire.Polls.Count;
                 Check(wire.Starts[^1].Binding is null && wire.Polls[^1].Secret is null, "Legacy capability flow sent binding fields");
+                Check(vm.DeviceBindingNotice is { Length: > 0 } notice && All<TextBlock>(page).Any(t => t.Text == notice && t.Visibility == Visibility.Visible),
+                    "Unbound setup did not tell the user it is not bound");
             }
             foreach (var mode in new[] { "failure", "transport", "timeout", "malformed" })
             {

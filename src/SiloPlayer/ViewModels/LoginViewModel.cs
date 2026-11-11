@@ -144,6 +144,10 @@ public partial class LoginViewModel : ObservableObject
     [ObservableProperty]
     private string _deviceStatusMessage = "";
 
+    // Shown while a setup runs unbound, so missing setup protection is never silent.
+    [ObservableProperty]
+    private string? _deviceBindingNotice;
+
     private CancellationTokenSource? _deviceLoginCts;
     private DeviceLoginSetup? _deviceSetup;
     private int _deviceAttempt;
@@ -355,6 +359,9 @@ public partial class LoginViewModel : ObservableObject
             DeviceSession = session;
             ShowDeviceFallback = false;
             DeviceStatusMessage = "Waiting for approval on your phone...";
+            // Sign-in still works unbound, but the server does not tie it to this setup.
+            DeviceBindingNotice = setup.Binding == DeviceLoginBinding.Bound ? null
+                : "This server doesn't support setup binding, so this sign-in isn't tied to this app. Approve only if your phone shows the code above.";
             var image = await CreateQrImageAsync(session.VerificationUriComplete);
             if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context) || authGeneration != _authService.SessionGeneration)
             { if (attempt == _deviceAttempt) CancelDeviceLogin(clearSession: true); return; }
@@ -397,6 +404,7 @@ public partial class LoginViewModel : ObservableObject
         DeviceQrImage = null;
         ShowDeviceFallback = false;
         DeviceStatusMessage = "";
+        DeviceBindingNotice = null;
     }
 
     private async Task CancelAbandonedDeviceAsync(string server, string deviceCode)

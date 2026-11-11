@@ -2,7 +2,8 @@ namespace SiloPlayer.Core.Models.Auth;
 
 public sealed class DeviceLoginCapability
 {
-    public bool SessionBinding { get; set; }
+    /// <summary>Null when the answer does not mention binding, which is not an explicit refusal.</summary>
+    public bool? SessionBinding { get; set; }
 }
 
 /// <summary>

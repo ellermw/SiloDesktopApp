@@ -50,6 +50,22 @@ public sealed class DeviceLoginBindingTests
     }
 
     [Theory]
+    [InlineData("positive", DeviceLoginBinding.Bound)]
+    [InlineData("negative", DeviceLoginBinding.Declined)]
+    [InlineData("absent", DeviceLoginBinding.Unsupported)]
+    [InlineData("404", DeviceLoginBinding.Unsupported)]
+    [InlineData("405", DeviceLoginBinding.Unsupported)]
+    public async Task SetupReportsItsNegotiatedBindingAndKeepsAnAbsentFlagApartFromARefusal(string mode, DeviceLoginBinding expected)
+    {
+        using var wire = new Wire { Mode = mode }; using var http = new HttpClient(wire);
+        using var setup = new DeviceLoginSetup(new AuthApi(new SiloApiClient(http)), Wire.Server);
+        Assert.Null(setup.Binding);
+        await setup.StartAsync("Fixture", "Windows");
+        Assert.Equal(expected, setup.Binding);
+        Assert.Equal(expected == DeviceLoginBinding.Bound, Assert.Single(wire.Hashes) is not null);
+    }
+
+    [Theory]
     [InlineData("500")]
     [InlineData("transport")]
     [InlineData("malformed")]
