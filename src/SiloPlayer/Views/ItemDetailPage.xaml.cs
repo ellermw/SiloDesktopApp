@@ -8705,7 +8705,9 @@ public sealed partial class ItemDetailPage : Page
 
     private void AddEpisodeCardOverlays(Grid host, Episode episode)
     {
-        var hosts = CardBadgeHosts.Create(host, CardOverlayGeometry.ForWideCard(), episode.UserData is { Played: false, PositionSeconds: > 0, DurationSeconds: > 0 } ? 8 : 0);
+        // 56 = the hover "More actions" button (12 margin + 36) plus an 8 gap.
+        var hosts = CardBadgeHosts.Create(host, CardOverlayGeometry.ForWideCard(), episode.UserData is { Played: false, PositionSeconds: > 0, DurationSeconds: > 0 } ? 8 : 0,
+            bottomRightClearance: 56);
         void Render()
         {
             var service = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();

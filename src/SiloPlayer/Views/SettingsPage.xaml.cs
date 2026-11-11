@@ -1885,6 +1885,8 @@ _webhookPlexAuthCts?.Cancel();
     {
         var generation = ++_overlayLoadGeneration;
         var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
+        // The draft belongs to the profile; reconnect catch-up retires only the request context.
+        var draftOwner = client.CaptureIdentityContext();
         try
         {
             await _cardOverlayService.EnsureLoadedAsync();
@@ -1895,7 +1897,7 @@ _webhookPlexAuthCts?.Cancel();
             if (generation != _overlayLoadGeneration || !client.IsCurrentContext(context)) return;
             _overlayShownRatings = shown;
             _cardOverlayDraft = _cardOverlayService.GetDocument();
-            _cardOverlayDraftOwner = context;
+            _cardOverlayDraftOwner = draftOwner;
             CardOverlaysDisabledBanner.Visibility = _cardOverlayService.Enabled
                 ? Visibility.Collapsed
                 : Visibility.Visible;
@@ -2354,7 +2356,7 @@ _webhookPlexAuthCts?.Cancel();
         _ = SaveCardOverlayAfterDelayAsync(snapshot, cts, owner);
     }
 
-    private async Task SaveCardOverlayAfterDelayAsync(CardOverlayPrefs snapshot, CancellationTokenSource ownerCts, ApiRequestContext owner)
+    private async Task SaveCardOverlayAfterDelayAsync(CardOverlayPrefs snapshot, CancellationTokenSource ownerCts, ApiIdentityContext owner)
     {
         try
         {
@@ -2376,7 +2378,7 @@ _webhookPlexAuthCts?.Cancel();
     }
 
     private global::SiloPlayer.Controls.CardBadgeHosts? _cardPreviewHosts;
-    private ApiRequestContext? _cardOverlayDraftOwner;
+    private ApiIdentityContext? _cardOverlayDraftOwner;
     private bool IsCurrentCardOverlayDraft() => _cardOverlayDraftOwner is not { } owner || _cardOverlayService.IsCurrentImageOwner(owner);
     private void UpdateCardOverlayPreview()
     {

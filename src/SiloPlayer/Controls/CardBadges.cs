@@ -23,9 +23,11 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
     private string _preset = "classic";
     private Panel? _layoutOwner;
     private bool _observingMount;
-    private ApiRequestContext? _imageOwner;
+    private ApiIdentityContext? _imageOwner;
+    // Space kept under bottom-right badges for a host's own corner controls.
+    private double _bottomRightClearance;
 
-    internal static CardBadgeHosts Create(Grid parent, CardOverlayGeometry geometry, double progressClearance = 0)
+    internal static CardBadgeHosts Create(Grid parent, CardOverlayGeometry geometry, double progressClearance = 0, double bottomRightClearance = 0)
     {
         StackPanel Host(HorizontalAlignment horizontal, VerticalAlignment vertical)
         {
@@ -36,7 +38,8 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         }
         return new(Host(HorizontalAlignment.Left, VerticalAlignment.Top), Host(HorizontalAlignment.Right, VerticalAlignment.Top),
             Host(HorizontalAlignment.Left, VerticalAlignment.Bottom), Host(HorizontalAlignment.Right, VerticalAlignment.Bottom),
-            Host(HorizontalAlignment.Left, VerticalAlignment.Center), Host(HorizontalAlignment.Right, VerticalAlignment.Center));
+            Host(HorizontalAlignment.Left, VerticalAlignment.Center), Host(HorizontalAlignment.Right, VerticalAlignment.Center))
+            { _bottomRightClearance = bottomRightClearance };
     }
 
     public void Show(IReadOnlyList<CardBadge> badges)
@@ -131,6 +134,9 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
     {
         var width = (bottomLeft.Parent as FrameworkElement)?.ActualWidth ?? 0;
         var bottom = Math.Max(bottomLeft.Margin.Bottom, bottomRight.Margin.Bottom);
+        // The shared rows lift only while a bottom-right badge would sit under those
+        // controls; the band is a full-width strip and stays on its edge.
+        if (!_band && _shown.Any(badge => badge.Corner == OverlayPosition.BottomRight)) bottom = Math.Max(bottom, _bottomRightClearance);
         if (_bottomRows is not null) { _bottomRows.Margin = new Thickness(bottomLeft.Margin.Left, 0, bottomRight.Margin.Right, bottom); _bottomRows.InvalidateMeasure(); }
         if (_bottomBand is not null) _bottomBand.Margin = new Thickness(0, 0, 0, Math.Max(0, bottom - bottomLeft.Margin.Left));
         if (_topScrim is not null) _topScrim.Height = Math.Max(0, topLeft.ActualHeight + topLeft.Margin.Top + 24 * (_shown.FirstOrDefault().Scale is > 0 ? _shown[0].Scale : 1));

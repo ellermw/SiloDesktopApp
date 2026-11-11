@@ -160,7 +160,7 @@ public static class OverlayRegistry
         "resolution_hdr_audio" => string.Join(" ", new[] { data.Resolution, data.Hdr, data.Audio }.Where(value => !string.IsNullOrEmpty(value))),
         "video_codec" => data.VideoCodec, "container" => data.Container, "aspect_ratio" => data.AspectRatio, "release_type" => data.ReleaseType,
         "edition" => data.Edition, "content_rating" => data.ContentRating, "original_language" => data.OriginalLanguage, "studio" => data.Studio, "network" => data.Network,
-        "show_status" => FormatShowStatus(data.ShowStatus),
+        "show_status" => data.ShowStatus,
         _ => null,
     };
 
@@ -216,8 +216,8 @@ public static class OverlayRegistry
 
     private static string? FormatShowStatus(string? value)
     {
-        if (string.IsNullOrEmpty(value)) return null;
-        return value.ToLowerInvariant() switch
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return value.Trim().ToLowerInvariant() switch
         {
             "returning" or "returning series" or "continuing" or "in_production" or "in production" => "Returning",
             "ended" => "Ended",
@@ -266,40 +266,66 @@ public class CardOverlayService
     private readonly SemaphoreSlim _imageReads = new(4, 4);
     private CancellationTokenSource _imageOwner = new();
 
-    public bool IsCurrentImageOwner(ApiRequestContext context) => _settingsApi.IsCurrentContext(context);
-    public ApiRequestContext CaptureImageOwner() => _settingsApi.CaptureContext();
+    // Images and their editor belong to the account/profile, not to one request
+    // generation: reconnect catch-up retires requests without changing the owner.
+    public bool IsCurrentImageOwner(ApiIdentityContext owner) => _settingsApi.IsCurrentOverlayImageOwner(owner);
+    public ApiIdentityContext CaptureImageOwner() => _settingsApi.CaptureOverlayImageOwner();
 
     public Task<byte[]?> GetImageAsync(string reference)
     {
-        if (!SupportsImages || !SiloApiClient.IsOverlayImageRef(reference) || _manifestContext is not { } context
-            || !_settingsApi.IsCurrentContext(context)) return Task.FromResult<byte[]?>(null);
+        if (!SupportsImages || !SiloApiClient.IsOverlayImageRef(reference) || _imageIdentity is not { } owner
+            || !_settingsApi.IsCurrentOverlayImageOwner(owner)) return Task.FromResult<byte[]?>(null);
         lock (_images)
         {
             if (_images.TryGetValue(reference, out var pending)) return pending;
             if (_images.Count >= 64)
             {
                 var retired = _images.FirstOrDefault(pair => pair.Value.IsCompleted).Key;
-                if (retired is null) return Task.FromResult<byte[]?>(null);
+                // Every slot is still reading. Wait for one to settle instead of
+                // answering null, which would leave this badge plain for good.
+                if (retired is null) return RetryImageAsync(Task.WhenAny(_images.Values), reference);
                 _images.Remove(retired);
             }
-            return _images[reference] = ReadImageAsync(reference, context, _imageOwner.Token);
+            return _images[reference] = ReadImageAsync(reference, owner, _imageOwner.Token);
         }
     }
 
-    private async Task<byte[]?> ReadImageAsync(string reference, ApiRequestContext context, CancellationToken ct)
+    private async Task<byte[]?> RetryImageAsync(Task settled, string reference)
     {
+        await settled;
+        return await GetImageAsync(reference);
+    }
+
+    private async Task<byte[]?> ReadImageAsync(string reference, ApiIdentityContext owner, CancellationToken ct)
+    {
+        // Leave GetImageAsync's lock first, so a failed read finds its own cache entry.
+        await Task.Yield();
         try
         {
             await _imageReads.WaitAsync(ct);
             try
             {
+                // Capture request authority when the read starts; only the owning
+                // identity has to have survived the wait.
+                var context = _settingsApi.CaptureContext();
+                if (!_settingsApi.IsCurrentOverlayImageOwner(owner)) throw new OperationCanceledException("The selected profile changed.", ct);
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 deadline.CancelAfter(TimeSpan.FromSeconds(10));
                 return await _settingsApi.GetOverlayImageAsync(reference, context, deadline.Token);
             }
             finally { _imageReads.Release(); }
         }
-        catch { return null; }
+        // Content that fails validation is the server's answer; a missing image
+        // already returned null. Both stay cached.
+        catch (InvalidDataException) { return null; }
+        catch
+        {
+            // Timeouts, transport and server errors can recover, so a later mount
+            // must retry. A cancelled owner has already cleared the cache, and any
+            // entry under this reference then belongs to its successor.
+            lock (_images) if (!ct.IsCancellationRequested) _images.Remove(reference);
+            return null;
+        }
     }
     public Dictionary<string, OverlayItemConfig>? GetPrefs() => _enabled && ProfileBadgesEnabled ? _document.Items : null;
 
@@ -311,6 +337,7 @@ public class CardOverlayService
     public int ManifestRevision { get; private set; }
     private bool _manifestUnavailable;
     private ApiRequestContext? _manifestContext;
+    private ApiIdentityContext? _imageIdentity;
 
     public OverlayPosition DisplayPosition(OverlayPosition position) => _manifestUnavailable ? position : PositionForRevision(position, ManifestRevision);
 
@@ -357,6 +384,9 @@ public class CardOverlayService
     {
         if (_initialized) return;
         var context = _settingsApi.CaptureContext();
+        // Captured after the request context, so a context that is still current
+        // at publication proves this identity never changed either.
+        var owner = _settingsApi.CaptureOverlayImageOwner();
         var generation = Volatile.Read(ref _loadGeneration);
         await _initLock.WaitAsync(ct);
         try
@@ -429,6 +459,7 @@ public class CardOverlayService
             ManifestRevision = manifestRevision;
             _manifestUnavailable = manifestUnavailable;
             _manifestContext = manifestUnavailable ? null : context;
+            _imageIdentity = owner;
             _enabled = enabled;
             _document = document;
             ProfileBadgesEnabled = profileEnabled;
@@ -457,6 +488,7 @@ public class CardOverlayService
         _initialized = false;
         _manifestUnavailable = false;
         _manifestContext = null;
+        _imageIdentity = null;
         ManifestRevision = 0;
         _enabled = true;
         _document = BuildDefaultDocument();
@@ -469,6 +501,7 @@ public class CardOverlayService
     public async Task SaveAsync(CardOverlayPrefs prefs, CancellationToken ct = default)
     {
         var context = _settingsApi.CaptureContext();
+        var owner = _settingsApi.CaptureOverlayImageOwner();
         var generation = Volatile.Read(ref _loadGeneration);
         // Finish any preference reload before replacing its document, so its
         // general preferences and manifest are not left at invalidation defaults.
@@ -494,15 +527,16 @@ public class CardOverlayService
                 ManifestRevision = manifestRevision;
                 _manifestUnavailable = false;
                 _manifestContext = context;
+                _imageIdentity = owner;
                 SupportsImages = manifestRevision >= 25 && capabilities.SupportsOverlayImages;
             }
             var normalized = NormalizeDocument(prefs);
             foreach (var definition in OverlayRegistry.All)
             {
                 // An unavailable manifest can expose a badge the server cannot
-                // write. Do not report success after dropping its enablement.
+                // write. Do not report success after dropping any of its edits.
                 if (manifestRevision < IntroducedInRevision(definition.Id) &&
-                    normalized.Items[definition.Id].Enabled != _document.Items[definition.Id].Enabled)
+                    !SameItem(normalized.Items[definition.Id], _document.Items[definition.Id], manifestRevision))
                     throw new InvalidOperationException($"The server manifest does not support changing {definition.Label}. Reload card overlay settings before saving.");
             }
             var json = SerializeForRevision(normalized, manifestRevision);
@@ -702,6 +736,21 @@ public class CardOverlayService
             manifestRevision >= IntroducedInRevision(id) || items.ContainsKey(id)));
         if (root["items"] is not JsonObject) root["items"] = items;
         return root.ToJsonString();
+    }
+
+    // Positions are compared as the manifest would store them: drafts carry the
+    // display mapping, the loaded document the stored one.
+    private static bool SameItem(OverlayItemConfig draft, OverlayItemConfig stored, int manifestRevision)
+    {
+        if (draft.Enabled != stored.Enabled || draft.AccentColor != stored.AccentColor || draft.ShowIcon != stored.ShowIcon || draft.Image != stored.Image
+            || PositionForRevision(draft.Position, manifestRevision) != PositionForRevision(stored.Position, manifestRevision)) return false;
+        var draftImages = draft.ValueImages;
+        var storedImages = stored.ValueImages;
+        if ((draftImages?.Count ?? 0) != (storedImages?.Count ?? 0)) return false;
+        if (draftImages is null || storedImages is null || ReferenceEquals(draftImages, storedImages)) return true;
+        foreach (var pair in draftImages)
+            if (!storedImages.TryGetValue(pair.Key, out var reference) || reference != pair.Value) return false;
+        return true;
     }
 
     private static bool IsHexColor(string? value) =>

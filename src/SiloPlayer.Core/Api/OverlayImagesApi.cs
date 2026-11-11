@@ -50,5 +50,9 @@ public partial class SettingsApi
 {
     public Task<byte[]?> GetOverlayImageAsync(string reference, ApiRequestContext context, CancellationToken ct = default)
         => client.GetOverlayImageAsync(reference, context, ct);
+
+    /// <summary>Account/profile that owns overlay images and edits; unlike a request context it survives reconnect catch-up.</summary>
+    public ApiIdentityContext CaptureOverlayImageOwner() => client.CaptureIdentityContext();
+    public bool IsCurrentOverlayImageOwner(ApiIdentityContext owner) => client.IsCurrentIdentityContext(owner);
 }
 

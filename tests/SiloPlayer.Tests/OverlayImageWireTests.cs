@@ -65,6 +65,47 @@ public sealed class OverlayImageWireTests
     }
 
     [Theory]
+    [InlineData("unauthorized")]
+    [InlineData("unavailable")]
+    public async Task TransientFailureIsRetriedByTheNextReadWithoutAPreferenceRefresh(string failure)
+    {
+        using var wire = new Wire { Failure = failure }; var service = await wire.LoadAsync();
+        Assert.Null(await service.GetImageAsync(wire.Ref));
+        var failedReads = wire.ImageReads;
+        wire.Failure = null;
+        Assert.Equal(wire.Bytes, await service.GetImageAsync(wire.Ref));
+        Assert.Equal(failedReads + 1, wire.ImageReads);
+        Assert.Equal(wire.Bytes, await service.GetImageAsync(wire.Ref));
+        Assert.Equal(failedReads + 1, wire.ImageReads);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("wrong-type")]
+    [InlineData("wrong-hash")]
+    public async Task DefinitiveServerAnswerStaysCached(string failure)
+    {
+        using var wire = new Wire { Failure = failure }; var service = await wire.LoadAsync();
+        Assert.Null(await service.GetImageAsync(wire.Ref));
+        var reads = wire.ImageReads;
+        Assert.Null(await service.GetImageAsync(wire.Ref));
+        Assert.Equal(reads, wire.ImageReads);
+    }
+
+    [Fact]
+    public async Task ReconnectCatchUpKeepsImageOwnerAndImagesAvailable()
+    {
+        using var wire = new Wire(); var service = await wire.LoadAsync();
+        var owner = service.CaptureImageOwner();
+        Assert.True(wire.Client.TryInvalidateAccessContext(wire.Client.CaptureContext(), out _, transportCatchUp: true));
+        Assert.True(service.IsCurrentImageOwner(owner));
+        Assert.Equal(wire.Bytes, await service.GetImageAsync(wire.Ref));
+        Assert.Equal(1, wire.ImageReads);
+        wire.Client.SetProfile("next-fixture-profile", "next-synthetic-token");
+        Assert.False(service.IsCurrentImageOwner(owner));
+    }
+
+    [Theory]
     [InlineData("profile")]
     [InlineData("account")]
     [InlineData("server")]
@@ -92,7 +133,7 @@ public sealed class OverlayImageWireTests
     [InlineData("resolution_hdr", "2160p DV HDR10")]
     [InlineData("resolution_hdr_audio", "2160p DV HDR10 Atmos")]
     [InlineData("original_language", "en")]
-    [InlineData("show_status", "Returning")]
+    [InlineData("show_status", "in_production")]
     public void ValueImagesMatchRawApiKeysRatherThanDisplayText(string id, string expected)
     {
         Assert.Equal(expected, OverlayRegistry.ValueKey(id, new OverlayData { Resolution = "2160p", Hdr = "DV HDR10", Audio = "Atmos", OriginalLanguage = "en", ShowStatus = "in_production" }));
@@ -124,6 +165,19 @@ public sealed class OverlayImageWireTests
     public void UnknownStatusImageKeyRetainsExactApiValue(string value)
         => Assert.Equal(value, OverlayRegistry.ValueKey("show_status", new OverlayData { ShowStatus = value }));
 
+    [Theory]
+    [InlineData(" returning ", "Returning")]
+    [InlineData("IN_PRODUCTION", "Returning")]
+    [InlineData(" Ended", "Ended")]
+    [InlineData("   ", null)]
+    public void StatusLabelNormalizesPaddingAndCaseWhileTheImageKeyStaysRaw(string value, string? label)
+    {
+        var definition = Assert.Single(OverlayRegistry.All, d => d.Id == "show_status");
+        var data = new OverlayData { ShowStatus = value };
+        Assert.Equal(label, definition.GetValue(data));
+        Assert.Equal(value, OverlayRegistry.ValueKey("show_status", data));
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         internal byte[] Bytes = Encoding.ASCII.GetBytes("RIFF-overlay-fixture-WEBP");
@@ -147,7 +201,8 @@ public sealed class OverlayImageWireTests
             {
                 ImageReads++; LastImagePath = path; SawProfileHeader = request.Headers.Contains("X-Profile-Token"); Entered.TrySetResult();
                 if (Hold is not null) await Hold.Task;
-                var response = new HttpResponseMessage(Failure == "missing" ? HttpStatusCode.NotFound : Failure == "unauthorized" ? HttpStatusCode.Unauthorized : HttpStatusCode.OK);
+                var response = new HttpResponseMessage(Failure == "missing" ? HttpStatusCode.NotFound : Failure == "unauthorized" ? HttpStatusCode.Unauthorized
+                    : Failure == "unavailable" ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK);
                 var bytes = Failure is "oversize" or "chunked" ? new byte[SiloApiClient.MaxOverlayImageBytes + 1] : Failure == "wrong-hash" ? new byte[] { 0 } : Bytes;
                 response.Content = Failure == "chunked" ? new StreamContent(new ChunkedStream(bytes)) : new ByteArrayContent(bytes);
                 response.Content.Headers.ContentType = new(Failure == "wrong-type" ? "text/html" : "image/webp"); return response;

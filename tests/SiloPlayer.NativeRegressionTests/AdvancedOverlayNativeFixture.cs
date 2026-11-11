@@ -177,7 +177,7 @@ internal static class AdvancedOverlayNativeFixture
     {
         Configure(service, "plate");
         var page = new SettingsPage();
-        Set(page, "_cardOverlayDraftOwner", client.CaptureContext());
+        Set(page, "_cardOverlayDraftOwner", client.CaptureIdentityContext());
         Set(page, "_overlayShownRatings", new HashSet<string> { "imdb", "tmdb", "rt_critic", "rt_audience" });
         var update = typeof(SettingsPage).GetMethod("UpdateCardOverlayPreview", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var presets = typeof(SettingsPage).GetMethod("BuildCardOverlayPresetCards", BindingFlags.NonPublic | BindingFlags.Instance)!;

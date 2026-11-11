@@ -81,7 +81,7 @@ internal static class OverlayBadgeRenderer
         var originalBackground = badge.Background;
         var originalBorder = badge.BorderThickness;
         var originalShadow = badge.Shadow;
-        async Task<BitmapImage?> DecodeAsync(string? reference, int owner, ApiRequestContext context)
+        async Task<BitmapImage?> DecodeAsync(string? reference, int owner, ApiIdentityContext context)
         {
             if (images is null || !SiloApiClient.IsOverlayImageRef(reference)) return null;
             try
@@ -140,12 +140,20 @@ internal static class OverlayBadgeRenderer
             if (!badge.IsLoaded) return;
             Reset(); Load(badge, new RoutedEventArgs());
         });
+        void Unsubscribe() { if (images is not null) { images.ImagesInvalidated -= Retire; images.Changed -= Reload; } }
         badge.Loaded += (_, args) =>
         {
+            // A repeated Loaded must not stack handlers on the long-lived service.
+            Unsubscribe();
             if (images is not null) { images.ImagesInvalidated += Retire; images.Changed += Reload; }
             Load(badge, args);
         };
-        badge.Unloaded += (_, _) => { if (images is not null) { images.ImagesInvalidated -= Retire; images.Changed -= Reload; } Reset(); };
+        badge.Unloaded += (_, _) =>
+        {
+            // WinUI can deliver a queued Unloaded after this badge has already been reattached.
+            if (badge.IsLoaded) return;
+            Unsubscribe(); Reset();
+        };
         if (config.Position is not OverlayPosition.LeftEdge and not OverlayPosition.RightEdge || preset is "minimal" or "band")
             RoundedBadge.Apply(badge, look.Radius * scale);
         return badge;
