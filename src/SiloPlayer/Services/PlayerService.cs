@@ -9567,24 +9567,32 @@ public partial class PlayerService : IDisposable
                 return;
             }
 
+            // A row this refresh could not make executable is never activated.
             var preferred = preferredSubtitleId.HasValue
-                ? downloaded.FirstOrDefault(track => track.Id == preferredSubtitleId)
+                ? downloaded.FirstOrDefault(track => !track.Unplayable && track.Id == preferredSubtitleId)
                 : null;
             if (preferred != null && _mpv != null)
             {
+                StoredSubtitleCompletion? completion = null;
                 lock (_liveSubtitleLock)
                 {
                     if (!Current() || mayActivate?.Invoke() == false) return;
                     if (liveJobId > 0 && _liveSubtitleJobId == liveJobId)
+                    {
                         _storedSubtitleCompletion = new(authority, authority.ApiClient.CaptureContext(), manager,
                             _mpv, mediaFileId, Volatile.Read(ref _playRequestGeneration),
                             _liveSubtitleFileLoadGeneration, ContentId, liveJobId, preferred.Id!.Value);
+                        completion = _storedSubtitleCompletion;
+                    }
                 }
                 var selected = await TrySetSubtitleTrackAndPersistAsync(
                     preferred.Index + 1, preferred.Language, preferred, claimActivation: false,
                     acceptActivation: () => Current() && mayActivate?.Invoke() != false &&
                         currentOwner?.HasCurrentSubtitleChoice != false,
                     currentOwner: currentOwner).ConfigureAwait(false);
+                // A refused attempt leaves no completion for a later selection to consume.
+                if (!selected && completion != null && ReferenceEquals(_storedSubtitleCompletion, completion))
+                    _storedSubtitleCompletion = null;
                 if (!selected || !Current()) return;
                 // AI owners may follow accepted same-file plans; ordinary
                 // callers still retain their original response object.

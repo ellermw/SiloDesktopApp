@@ -278,8 +278,14 @@ public partial class PlayerService
                             RetryIfSuperseded();
                             return;
                         }
+                        // A successful merge rewrites the row already at this ordinal
+                        // in place. Capture the facts its native caches were read under.
+                        var rewritten = session.SubtitleUrls.FirstOrDefault(row => row.Index == track.CombinedIndex);
+                        var (readUrl, readDelivery) = (rewritten?.Url, rewritten?.Delivery);
                         if (manager.TryApplySubtitleTrack(session, track))
                         {
+                            if (rewritten != null && ((readUrl ?? "") != rewritten.Url || readDelivery != rewritten.Delivery))
+                                InvalidateRewrittenSubtitleCache(rewritten.Index);
                             SendSubtitleListToOsc();
                             return;
                         }
@@ -360,5 +366,31 @@ public partial class PlayerService
             RecoverUnappliedSubtitleInventory();
         }
         finally { if (entered) _subtitleReadyGuard.Release(); }
+    }
+
+    // Called under the sync, track-state and inventory gates. An in-place merge
+    // keeps its row and ordinal, so AdoptSubtitleInventoryInPlace never runs for
+    // it: bytes read under the previous Url/Delivery must not satisfy another
+    // selection. Keep the applied SID visible, but stale; retire every other entry.
+    private void InvalidateRewrittenSubtitleCache(int index)
+    {
+        if (_preparedSubtitleReload is { } prepared && prepared.Index == index) _preparedSubtitleReload = null;
+        if (_prefetchedSubtitleFiles.Remove(index, out var path) && !_prefetchedSubtitleFiles.ContainsValue(path))
+        {
+            _subtitleSyncFiles.Remove(path);
+            try { File.Delete(path); } catch { }
+        }
+        if (_prefetchedSubtitleSids.Remove(index, out var ready) &&
+            ready.FileGeneration == Volatile.Read(ref _fileLoadGeneration)) _mpv?.RemoveSubtitle(ready.Sid);
+        if (index == _activeSubtitleServerIndex)
+        {
+            if (_loadedExternalSubtitleSids.ContainsKey(index)) _staleExternalSubtitleIndices.Add(index);
+        }
+        else if (_loadedExternalSubtitleSids.Remove(index, out var sid))
+        {
+            _staleExternalSubtitleIndices.Remove(index);
+            // Never remove the SID mpv still shows.
+            if (_mpv != null && (int)Math.Round(_mpv.GetPropertyDouble("sid")) != sid) _mpv.RemoveSubtitle(sid);
+        }
     }
 }

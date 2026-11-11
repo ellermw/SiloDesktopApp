@@ -524,6 +524,53 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("(int)Math.Round(_mpv.GetPropertyDouble(\"sid\")) != sid) _mpv.RemoveSubtitle(sid);", adopt);
     }
 
+    [Fact]
+    public void InPlaceAnnouncementMergeRetiresTheCachesOfARowWhoseUrlOrDeliveryItRewrites()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the merge route here: the
+        // row's delivery facts are captured before the merge mutates it, and a
+        // rewrite retires the bytes read under them before the menu republishes.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var apply = Between(ready, "private async Task ApplySubtitleReadyAsync(", "private void InvalidateRewrittenSubtitleCache(");
+        var capture = apply.IndexOf("var (readUrl, readDelivery) = (rewritten?.Url, rewritten?.Delivery);", StringComparison.Ordinal);
+        var merge = apply.IndexOf("if (manager.TryApplySubtitleTrack(session, track))", StringComparison.Ordinal);
+        var changed = apply.IndexOf("(readUrl ?? \"\") != rewritten.Url || readDelivery != rewritten.Delivery", StringComparison.Ordinal);
+        var retire = apply.IndexOf("InvalidateRewrittenSubtitleCache(rewritten.Index);", StringComparison.Ordinal);
+        Assert.True(capture >= 0 && merge > capture && changed > merge && retire > changed);
+        Assert.True(apply.IndexOf("SendSubtitleListToOsc();", retire, StringComparison.Ordinal) > retire);
+
+        var cache = ready[ready.IndexOf("private void InvalidateRewrittenSubtitleCache(", StringComparison.Ordinal)..];
+        Assert.Contains("_prefetchedSubtitleFiles.Remove(index, out var path)", cache);
+        Assert.Contains("try { File.Delete(path); } catch { }", cache);
+        Assert.Contains("_prefetchedSubtitleSids.Remove(index, out var ready)", cache);
+        // The applied SID stays mapped and visible, but stale. Any other is
+        // retired, unless it is the SID mpv still shows.
+        var active = cache.IndexOf("if (index == _activeSubtitleServerIndex)", StringComparison.Ordinal);
+        var stale = cache.IndexOf("if (_loadedExternalSubtitleSids.ContainsKey(index)) _staleExternalSubtitleIndices.Add(index);", StringComparison.Ordinal);
+        var inactive = cache.IndexOf("else if (_loadedExternalSubtitleSids.Remove(index, out var sid))", StringComparison.Ordinal);
+        Assert.True(active >= 0 && stale > active && inactive > stale);
+        Assert.Contains("(int)Math.Round(_mpv.GetPropertyDouble(\"sid\")) != sid) _mpv.RemoveSubtitle(sid);", cache[inactive..]);
+    }
+
+    [Fact]
+    public void OwnerScopedAiRefreshSkipsAnUnplayableCompletionRowAndClearsARefusedCompletion()
+    {
+        // The owner-scoped refresh marks displaced/uncertain rows unplayable,
+        // as the public refresh does. Neither may activate such a row, nor
+        // leave its completion installed after a refused attempt.
+        var refresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        Assert.Contains("downloaded.FirstOrDefault(track => !track.Unplayable && track.Id == preferredSubtitleId)", refresh);
+        Assert.Contains("downloaded.SingleOrDefault(track => !track.Unplayable && track.Id == preferredSubtitleId)",
+            Read("PlayerService.SubtitleRefresh.cs"));
+        var install = refresh.IndexOf("completion = _storedSubtitleCompletion;", StringComparison.Ordinal);
+        var attempt = refresh.IndexOf("var selected = await TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var refused = refresh.IndexOf("if (!selected && completion != null && ReferenceEquals(_storedSubtitleCompletion, completion))", StringComparison.Ordinal);
+        var leave = refresh.IndexOf("if (!selected || !Current()) return;", StringComparison.Ordinal);
+        Assert.True(install >= 0 && attempt > install && refused > attempt && leave > refused);
+        Assert.Contains("_storedSubtitleCompletion = null;", refresh[refused..leave]);
+    }
+
     private static string Reload() => Between(Read("PlayerService.SubtitleSync.cs"),
         "private async Task ReloadCorrectedSubtitleAsync(", "private void SendSubtitleSyncState()");
 
