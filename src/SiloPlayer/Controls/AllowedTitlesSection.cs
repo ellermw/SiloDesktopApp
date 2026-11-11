@@ -19,7 +19,10 @@ public sealed class AllowedTitlesSection : UserControl
     private readonly DispatcherTimer _debounce = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly List<MediaItem> _loadedTitles = [];
     private string? _cursor;
-    private bool _busy, _readingTitles, _readingCollections;
+    private bool _busy;
+    private object? _titleRead, _collectionRead;
+    private bool _readingTitles => _titleRead != null;
+    private bool _readingCollections => _collectionRead != null;
     private long _searchVersion;
 
     public AllowedTitlesSection(TitleAllowanceSession owner, string profileId)
@@ -50,11 +53,12 @@ public sealed class AllowedTitlesSection : UserControl
     private async Task LoadTitlesAsync(bool more)
     {
         if (!_owner.IsCurrent || _readingTitles) return;
-        _readingTitles = true; _more.IsEnabled = false; _titleRetry.Visibility = Visibility.Collapsed;
+        var read = new object(); _titleRead = read;
+        _more.IsEnabled = false; _titleRetry.Visibility = Visibility.Collapsed;
         try
         {
             var page = await _owner.RunAsync((api, owner, ct) => api.GetAllowedTitlesAsync(owner, _profile, more ? _cursor : null, ct));
-            if (!_owner.IsCurrent) return;
+            if (!_owner.IsCurrent || !ReferenceEquals(_titleRead, read)) return;
             if (!more) _loadedTitles.Clear();
             foreach (var title in page.Items) if (_loadedTitles.All(item => item.ContentId != title.ContentId)) _loadedTitles.Add(title);
             _cursor = page.Page is { HasMore: true } ? page.Page.NextCursor : null;
@@ -62,8 +66,8 @@ public sealed class AllowedTitlesSection : UserControl
             _titleError.Text = ""; RenderTitles();
         }
         catch (OperationCanceledException) { }
-        catch { if (_owner.IsCurrent) { _titleError.Text = _loadedTitles.Count > 0 ? "Couldn’t refresh allowed titles. Showing the previous list." : "Couldn’t load allowed titles."; _titleRetry.Visibility = Visibility.Visible; } }
-        finally { _readingTitles = false; _more.IsEnabled = true; }
+        catch { if (_owner.IsCurrent && ReferenceEquals(_titleRead, read)) { _titleError.Text = _loadedTitles.Count > 0 ? "Couldn’t refresh allowed titles. Showing the previous list." : "Couldn’t load allowed titles."; _titleRetry.Visibility = Visibility.Visible; } }
+        finally { if (ReferenceEquals(_titleRead, read)) { _titleRead = null; _more.IsEnabled = true; } }
     }
     private void RenderTitles()
     {
@@ -77,11 +81,11 @@ public sealed class AllowedTitlesSection : UserControl
     private async Task LoadCollectionsAsync()
     {
         if (!_owner.IsCurrent || _readingCollections) return;
-        _readingCollections = true; _collectionRetry.Visibility = Visibility.Collapsed;
+        var read = new object(); _collectionRead = read; _collectionRetry.Visibility = Visibility.Collapsed;
         try
         {
             var result = await _owner.RunAsync((api, owner, ct) => api.GetAllowedCollectionsAsync(owner, _profile, ct));
-            if (!_owner.IsCurrent) return;
+            if (!_owner.IsCurrent || !ReferenceEquals(_collectionRead, read)) return;
             _collectionError.Text = ""; _collections.Children.Clear();
             foreach (var collection in result.Items)
                 _collections.Children.Add(Row($"{collection.Name} · {collection.ItemCount} titles" + (collection.Live ? "" : " · Paused"), "Stop allowing", collection.CollectionId,
@@ -89,8 +93,8 @@ public sealed class AllowedTitlesSection : UserControl
             if (result.Items.Count == 0) _collections.Children.Add(new TextBlock { Text = "No collections allowed." });
         }
         catch (OperationCanceledException) { }
-        catch { if (_owner.IsCurrent) { _collectionError.Text = "Couldn’t refresh allowed collections. Any previous list may be out of date."; _collectionRetry.Visibility = Visibility.Visible; } }
-        finally { _readingCollections = false; }
+        catch { if (_owner.IsCurrent && ReferenceEquals(_collectionRead, read)) { _collectionError.Text = "Couldn’t refresh allowed collections. Any previous list may be out of date."; _collectionRetry.Visibility = Visibility.Visible; } }
+        finally { if (ReferenceEquals(_collectionRead, read)) _collectionRead = null; }
     }
     private async Task SearchAsync()
     {
@@ -128,12 +132,18 @@ public sealed class AllowedTitlesSection : UserControl
     {
         if (_busy || !_owner.IsCurrent) return;
         _busy = true; _mutationError.Text = ""; string? failure = null;
-        try { await _owner.RunAsync(action); }
-        catch (OperationCanceledException) { }
-        catch { failure = "Couldn’t save the allowance. Refresh its current state before trying again."; }
+        try
+        {
+            try { await _owner.RunAsync(action); }
+            catch (OperationCanceledException) { }
+            catch { failure = "Couldn’t save the allowance. Refresh its current state before trying again."; }
+            if (!_owner.IsCurrent) return;
+            // Retire pre-write reads before starting a guaranteed first-page refresh.
+            // Their publication, errors and cleanup cannot affect the replacement read.
+            _titleRead = _collectionRead = null;
+            await LoadAsync();
+            if (_owner.IsCurrent) { _mutationError.Text = failure ?? ""; if (!string.IsNullOrWhiteSpace(_search.Text)) await SearchAsync(); }
+        }
         finally { _busy = false; }
-        if (!_owner.IsCurrent) return;
-        await LoadAsync();
-        if (_owner.IsCurrent) { _mutationError.Text = failure ?? ""; if (!string.IsNullOrWhiteSpace(_search.Text)) await SearchAsync(); }
     }
 }

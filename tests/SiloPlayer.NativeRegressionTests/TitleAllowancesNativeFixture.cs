@@ -17,7 +17,7 @@ using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 using SiloPlayer.Views.Dialogs;
 
-internal static class TitleAllowancesNativeFixture
+internal static partial class TitleAllowancesNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     internal static async Task RunAsync(StackPanel parent)
@@ -41,6 +41,7 @@ internal static class TitleAllowancesNativeFixture
             await Collections(parent, wire, client, auth);
             await CollectionEditor(parent, wire);
             await ProfileAccess(parent, wire, client);
+            await AccessPagingRaces(parent, wire, client, auth);
             Program.Log("PASS title allowances: actual detail/collection menu entrypoints, five states, immediate writes, copy, profile Access paging/search/removal, error/retry and retired ownership.");
         }
         finally { wire.Gate?.TrySetResult(); slot.SetValue(null, original); }
@@ -303,7 +304,7 @@ internal static class TitleAllowancesNativeFixture
             ? new ItemDetailViewModel((CatalogApi)_values[typeof(CatalogApi)], (ItemDetailPrefetchCache)_values[typeof(ItemDetailPrefetchCache)])
             : _values.GetValueOrDefault(type) ?? _original.GetService(type);
     }
-    private sealed class Wire : HttpMessageHandler
+    private sealed partial class Wire : HttpMessageHandler
     {
         internal string Capability = "available";
         internal bool FailTitleStates, FailCollections, EmptyFirstTitlePage, HoldStates, FailMutation, FailCopy, FailSearch;
@@ -316,6 +317,7 @@ internal static class TitleAllowancesNativeFixture
         {
             if (request.RequestUri!.Host != "title-allowances.fixture.invalid") throw new InvalidOperationException("External request blocked.");
             var path = request.RequestUri.AbsolutePath; var query = request.RequestUri.Query;
+            if (RaceMode) return await RaceResponseAsync(request);
             if (request.Method != HttpMethod.Get)
             {
                 Writes.Add(request.Method + " " + path);
