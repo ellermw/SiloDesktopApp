@@ -227,15 +227,14 @@ public sealed class UpdateProgressWindow : Window
         if(AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
         {
             presenter.IsResizable=false;presenter.IsMaximizable=false;presenter.IsMinimizable=false;
-            // Native ownership places this ordinary window above Silo, within its normal z-order group.
+            // Track keeps this ordinary window above Silo without native ownership: Silo's
+            // HWND must be free to close while this panel finishes the staged update.
             presenter.SetBorderAndTitleBar(false,false);
             presenter.IsAlwaysOnTop=false;
         }
         // Windows 11 draws the outline itself, following the rounded corners, like its own flyouts.
         // Older Windows rejects the requests, so the panel then draws its own 1px outline (see UpdateOutline).
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
-        if(this.owner!=IntPtr.Zero && IsWindow(this.owner) && !TrySetStyle(self,-8,this.owner.ToInt64()))
-            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         // A frameless WinUI window still keeps a classic 3px frame, painted light grey inside the
         // outline. Drop the frame styles so the panel's own background meets the outline.
         frameless=DropFrameStyles(self);
@@ -336,6 +335,19 @@ public sealed class UpdateProgressWindow : Window
             var show=UpdatePanelPlacement.ShouldShow(ownerAlive,minimized,playback,silo,AppWindow.IsVisible);
             if(show && !AppWindow.IsVisible)AppWindow.Show(false);
             else if(!show && AppWindow.IsVisible)AppWindow.Hide();
+            if(show && ownerAlive && foreground!=self)
+            {
+                // Insert immediately above Silo, leaving every other window above Silo
+                // above us too. Unlike GWL_HWNDPARENT this cannot tie our lifetime to Silo.
+                var above=GetWindow(owner,3); // GW_HWNDPREV
+                if(above!=self)
+                {
+                    // Inserting after a topmost HWND would make us topmost as well.
+                    if(above!=IntPtr.Zero && TryGetStyle(above,-20,out var exStyle) && (exStyle & 8)!=0)
+                        above=IntPtr.Zero; // HWND_TOP keeps this non-topmost window in its band.
+                    SetWindowPos(self,above,0,0,0,0,0x0213); // NOMOVE|NOSIZE|NOACTIVATE|NOOWNERZORDER
+                }
+            }
         }
         catch(Exception ex){Console.Error.WriteLine($"Update panel placement failed: {ex.GetType().Name}");}
     }
@@ -421,6 +433,7 @@ public sealed class UpdateProgressWindow : Window
     [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW",SetLastError=true)]private static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
     [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW",SetLastError=true)]private static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);
     [DllImport("user32.dll")]private static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
+    [DllImport("user32.dll")]private static extern IntPtr GetWindow(IntPtr hwnd,uint command);
     [DllImport("user32.dll",SetLastError=true)]private static extern IntPtr BeginDeferWindowPos(int windows);
     [DllImport("user32.dll",SetLastError=true)]private static extern IntPtr DeferWindowPos(IntPtr batch,IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
     [DllImport("user32.dll",SetLastError=true)]private static extern bool EndDeferWindowPos(IntPtr batch);

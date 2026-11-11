@@ -27,6 +27,8 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
         Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>>? download,PreparedUpdatePackage? package,CancellationToken ct,Action<long>? presentTrustedHelper=null)
     {
         NamedPipeServerStream? pipe=null;
+        Process? process=null;
+        var visible=false;
         AuthorityCooldownUntil=null;
         try
         {
@@ -44,7 +46,7 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                 "--parent-start",current.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture),"--package",packageDirectory,"--tag",release.Tag,
                 "--restart",restart?"yes":"no","--owner",ownerWindow.ToString(CultureInfo.InvariantCulture),"--await-download",download is null?"no":"yes","--confirm-restart",confirmRestart && download is not null?"yes":"no"})start.ArgumentList.Add(arg);
             if(presentTrustedHelper is not null){start.ArgumentList.Add("--await-presentation");start.ArgumentList.Add("yes");}
-            using var process=Process.Start(start)??throw new IOException("The update window could not start.");
+            process=Process.Start(start)??throw new IOException("The update window could not start.");
             using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);
             // The download has its own 15-minute limit before the usual 20 minutes for installation.
             deadline.CancelAfter(TimeSpan.FromMinutes(download is null ? 20 : 40));
@@ -66,7 +68,6 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                 try { await exited; } catch(OperationCanceledException) { }
             }
             UpdatePipeIdentity.Authenticate(pipe,true,process.Id,hostStart,host);
-            var visible=false;
             if(presentTrustedHelper is not null)
             {
                 await UpdatePresentationHandoff.AcceptAsync(pipe,hwnd=>
@@ -126,7 +127,14 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){return WindowedUpdateOutcome.NotStarted;}
         catch(Exception ex){LocalLog.AppendLine("updates.txt","staged_handoff_failed kind="+ex.GetType().Name);return WindowedUpdateOutcome.NotStarted;}
-        finally{pipe?.Dispose();}
+        finally
+        {
+            // Disposing a Process only releases its handle. A helper that never accepted
+            // presentation still belongs to this attempt, not to an independent update panel.
+            try{if(!visible && process is not null && !process.HasExited)process.Kill();}
+            catch(Exception ex){LocalLog.AppendLine("updates.txt","staged_handoff_host_cleanup_failed kind="+ex.GetType().Name);}
+            finally{process?.Dispose();pipe?.Dispose();}
+        }
     }
 
     // Runs the client's download while the window shows it. The window only writes during this

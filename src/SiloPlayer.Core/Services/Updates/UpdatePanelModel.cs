@@ -77,7 +77,7 @@ public static class UpdatePanelPlacement
     }
 
     /// <summary>
-    /// The panel stays visible with Silo regardless of focus. Native ownership keeps it above
+    /// The panel stays visible with Silo regardless of focus. Native z-order tracking keeps it above
     /// Silo while normal foreground applications can cover it. Playback and minimization hide it.
     /// Once Silo closes to restart, the final status stays visible.
     /// </summary>

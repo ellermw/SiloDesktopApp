@@ -57,13 +57,23 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
             var versionDirectory=Directory.GetParent(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))!.FullName;
             var oldImage=Path.Combine(versionDirectory,"SiloPlayer.exe");
             await Task.Run(()=>UpdateInstallation.RequireProtectedMachineInstallation(root,versionDirectory),ct);
-            using var mutationMutex=UpdatePipeIdentity.CreateMutationMutex(root);
-            await app.ConnectAsync(ct);
+            using var presentationDeadline=CancellationTokenSource.CreateLinkedTokenSource(ct);
+            if(options.AwaitPresentation)
+            {
+                // A hidden helper must not outlive an abandoned preparation, even if the
+                // client exited before it could terminate us. Hashing has its own lifetime.
+                presentationDeadline.CancelAfter(TimeSpan.FromSeconds(15));
+                if(!UpdatePipeIdentity.MatchesProcess(options.ParentPid,options.ParentStart,oldImage))
+                    throw new OperationCanceledException("The update client has exited.");
+            }
+            await app.ConnectAsync(presentationDeadline.Token);
             UpdatePipeIdentity.Authenticate(app,false,options.ParentPid,options.ParentStart,oldImage);
             if(options.AwaitPresentation)
                 await UpdatePresentationHandoff.OfferAsync(app,WinRT.Interop.WindowNative.GetWindowHandle(view!).ToInt64(),()=>
-                {presentationAccepted=true;view!.StartTracking();},ct);
+                {presentationAccepted=true;view!.StartTracking();},presentationDeadline.Token);
             else await UpdateHostProtocol.WriteAsync(app,new("visible"),ct);
+            // Keep the mutex alive only after the app has authenticated and accepted the panel.
+            using var mutationMutex=UpdatePipeIdentity.CreateMutationMutex(root);
             if(options.AwaitDownload)
             {
                 // Show the client's download here, then request elevation only for a complete package.
