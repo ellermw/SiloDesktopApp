@@ -21,6 +21,7 @@ public sealed partial class HouseholdSetupPage : Page
     private readonly SiloApiClient _apiClient;
     private readonly SettingsService _settingsService;
     private CancellationTokenSource? _lifetime;
+    private int? _maxProfiles;
 
     public ObservableCollection<Profile> Profiles { get; } = [];
     public ObservableCollection<HouseholdProfileTile> ProfileTiles { get; } = [];
@@ -67,6 +68,7 @@ public sealed partial class HouseholdSetupPage : Page
             var profilesTask = _authApi.GetProfilesAsync(ct);
             var brandingTask = _settingsApi.GetServerBrandingAsync(ct);
             var response = await profilesTask;
+            _maxProfiles = response.MaxProfiles;
             Profiles.Clear();
             foreach (var profile in response.Profiles) Profiles.Add(profile);
             RebuildProfileTiles();
@@ -134,6 +136,7 @@ public sealed partial class HouseholdSetupPage : Page
     private async Task ReloadProfilesAsync(CancellationToken ct)
     {
         var response = await _authApi.GetProfilesAsync(ct);
+        _maxProfiles = response.MaxProfiles;
         Profiles.Clear();
         foreach (var profile in response.Profiles) Profiles.Add(profile);
         RebuildProfileTiles();
@@ -144,7 +147,7 @@ public sealed partial class HouseholdSetupPage : Page
     {
         ProfileTiles.Clear();
         foreach (var profile in Profiles) ProfileTiles.Add(new HouseholdProfileTile(profile));
-        ProfileTiles.Add(HouseholdProfileTile.AddProfile);
+        if (ProfileLimits.CanAdd(Profiles.Count, _maxProfiles)) ProfileTiles.Add(HouseholdProfileTile.AddProfile);
     }
 
     private void Finish_Click(object sender, RoutedEventArgs e)

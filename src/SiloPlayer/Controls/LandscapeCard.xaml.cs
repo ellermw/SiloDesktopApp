@@ -439,7 +439,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     private void UpdateBadges(MediaItem item)
     {
         var service = App.Services.GetRequiredService<Services.CardOverlayService>();
-        (_badges ??= new(OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight))
+        (_badges ??= new(OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight, OverlayLeftEdge, OverlayRightEdge))
             .Show(CardBadgeHosts.For(item, service, scale: 1, statusAndManga: false, upcoming: false));
     }
 

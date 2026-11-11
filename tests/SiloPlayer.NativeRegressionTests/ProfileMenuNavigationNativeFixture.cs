@@ -132,6 +132,32 @@ internal static class ProfileMenuNavigationNativeFixture
                     Descendants<Button>((DependencyObject)flyout.Content).Any(button => button.IsLoaded &&
                         Descendants<TextBlock>(button).Any(text => text.Text == "Settings")));
             }
+            var shellKey = (string)typeof(MainWindow).GetMethod("GetAuthenticatedShellKey", Instance)!.Invoke(window, null)!;
+            typeof(MainWindow).GetField("_hydratedShellKey", Instance)!.SetValue(window, shellKey);
+            async Task Limits(int count, int? maximum, bool pin, bool expected)
+            {
+                wire.ProfileCount = count; wire.Maximum = maximum; wire.PrimaryPin = pin;
+                await (Task)typeof(MainWindow).GetMethod("LoadProfileNameAsync", Instance)!.Invoke(window, ["first", shellKey, CancellationToken.None])!;
+                await Until(() => (((Button)root.FindName("ProfileSwitchButton")).Visibility == Visibility.Visible) == expected);
+                if (!((Button)root.FindName("SettingsSidebarProfile")).IsEnabled)
+                    throw new InvalidOperationException("Settings sidebar must keep profile management reachable regardless of switch policy.");
+            }
+            await Limits(1, 1, false, false);
+            wire.FailProfiles = true;
+            await (Task)typeof(MainWindow).GetMethod("LoadProfileNameAsync", Instance)!.Invoke(window, ["first", shellKey, CancellationToken.None])!;
+            if (((Button)root.FindName("ProfileSwitchButton")).Visibility != Visibility.Visible || !((Button)root.FindName("SettingsSidebarProfile")).IsEnabled)
+                throw new InvalidOperationException("A failed household refresh retained the previous hidden switch state.");
+            wire.FailProfiles = false;
+            await Limits(1, 1, false, false);
+            wire.ProfileCount = 0;
+            await (Task)typeof(MainWindow).GetMethod("LoadProfileNameAsync", Instance)!.Invoke(window, ["first", shellKey, CancellationToken.None])!;
+            if (((Button)root.FindName("ProfileSwitchButton")).Visibility != Visibility.Visible || !((Button)root.FindName("SettingsSidebarProfile")).IsEnabled)
+                throw new InvalidOperationException("An unresolved profile retained the previous household's hidden switch state.");
+            await Limits(1, 1, true, true);
+            await Limits(2, 2, false, true);
+            await Limits(1, null, false, true);
+            await Limits(2, null, false, true);
+            Program.Log("PASS native shell profile switch: one-slot suppression, PIN escape, several at limit, missing limit and sidebar action.");
             await OpenMenu();
             var settings = Descendants<Button>((DependencyObject)flyout.Content)
                 .Single(button => Descendants<TextBlock>(button).Any(text => text.Text == "Settings"));
@@ -180,11 +206,15 @@ internal static class ProfileMenuNavigationNativeFixture
     }
     private sealed class Wire : HttpMessageHandler
     {
-        internal int Logouts;
+        internal int Logouts, ProfileCount = 2;
+        internal int? Maximum;
+        internal bool PrimaryPin, FailProfiles;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "profile-menu.fixture.invalid") throw new InvalidOperationException("External network access blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (path == "/api/v2/profiles" && FailProfiles)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") });
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY")?.StartsWith("sidebar-review-", StringComparison.Ordinal) == true)
                 return SidebarReviewNativeFixture.RespondAsync(request, ct);
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "sidebar-publication" or "sidebar-detached-publication")
@@ -199,7 +229,7 @@ internal static class ProfileMenuNavigationNativeFixture
             object body = path switch
             {
                 "/api/v2/auth/me" => new { id = "fixture", username = "Fixture", role = "user" },
-                "/api/v2/profiles" => new { items = new object[] { new { id = "first", name = "First", is_primary = true }, new { id = "second", name = "Second", is_primary = false } } },
+                "/api/v2/profiles" => new { items = new object[] { new { id = "first", name = "First", is_primary = true, has_pin = PrimaryPin }, new { id = "second", name = "Second", is_primary = false, has_pin = false } }.Take(ProfileCount), max_profiles = Maximum },
                 "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 22, client_families = new[] { "desktop", "web" }, supports_batched_effective = true },
                 "/api/v2/home/layout" => new { sections = Enumerable.Range(0, partyProbe ? 4 : 1).Select(index => new { id = index == 0 ? "menu-home" : "menu-home-" + index, title = "Fixture Home " + index, section_type = "recently_added", item_limit = partyProbe ? 100 : 20 }).ToArray() },
                 "/api/v2/home/sections/menu-home/items" => new { id = "menu-home", title = "Fixture Home", section_type = "recently_added", items },
