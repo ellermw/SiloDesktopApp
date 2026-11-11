@@ -1,3 +1,10 @@
+# Collection viewport loading and hero effects - final Beta follow-up
+
+Official Server/WebUI pin4a9e527a432e8ef3a15dcd568802a45c15169039. Includes current Beta97cc284a, collection foundation PR128 atf7df8846 and viewer foundation PR131 at98fa4dc8. Source remains1.2.970; pipeline owns stamps and release. Adds measured near-viewport/short-wall sequential loading with explicit keyboard action and stale-owner/error guards, plus motion-aware collection hero pan, text-mask shadow and native backdrop glass/fallback.
+
+Integrated full suite5,543/5,543 passes. Fresh Release and six native groups (presentation, server, layout, ownership, owner-menu, creation) exit0 with exact completion sentinels; five acceptance cases reuse the same compiled fixture to avoid duplicate outputs. Final app754/native184 authored PDB documents match with zero mismatches. App DLL SHA2562F36832CC81A05C86EE5C70A53706B8C244975FFEC24A6096CDF10438FBC3802. Independent feature and successor source reviews find no P0-P2 issue. Evidence: D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-collections/lead-final-{full,publish,native-c,binding-c} and lead-final-replay-c-*.
+
+The two intermediate native failures remain failed: the group fixture assumed five capped cards although automatic loading correctly added the sixth; it now asserts the exact complete unique set. A fake revision GET invented a name different from its list row, correctly tripping the new ETag guard; it now returns the matching fixture collection. Product behavior and conflict protection were preserved. Native compositor effects approximate CSS; synthetic tests do not certify live interoperability, physical input or full pixel parity. No installed-player/settings/account, installer or version changes.
 # November 11 ? collection wall, hero and actions for Beta
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Source remains **1.2.970**; the Beta pipeline owns integration, stamps and publication.

@@ -319,7 +319,12 @@ internal static partial class CollectionsPresentationNativeFixture
                 var section = grid.Children.OfType<StackPanel>().Single(child => Auto.GetName(child) == "Weekend groups");
                 Check(Descendants<Button>(section).Any(button => Auto.GetName(button) == "Rename group")
                     && Descendants<Button>(section).Any(button => Auto.GetName(button) == "Delete group"), "A rebuilt group exposes its editing controls.");
-                Check(OpenButtons(grid).Count() == 1 + 1 + 3, "Group sections must not hide or duplicate own, shared or server posters.");
+                // A short wall now automatically reads Movies' remaining Studio Ghibli
+                // card. Assert the complete known wire set, rather than the capped five.
+                await Until(() => OpenButtons(grid).Any(button => Auto.GetName(button) == "Open Studio Ghibli"));
+                var actual = OpenButtons(grid).Select(Auto.GetName).Order(StringComparer.Ordinal).ToArray();
+                var expected = new[] { "Open Weekend picks 1", "Open Family movie night", "Open Criterion", "Open A24", "Open Studio Ghibli", "Open Anime" }.Order(StringComparer.Ordinal);
+                Check(actual.SequenceEqual(expected), "Group sections must preserve exactly the complete unique own/shared/server set: " + string.Join(", ", actual));
                 var own = Descendants<Border>(grid).First(border => border.Tag is SiloPlayer.Core.Models.Collections.Collection { Id: "own-1" });
                 Check(((MenuFlyout)own.ContextFlyout).Items.OfType<MenuFlyoutSubItem>().Any(menu => menu.Text == "Move to group" && menu.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "Weekend groups")),
                     "The owner card must offer the created group as a move target.");
@@ -1026,7 +1031,11 @@ internal static partial class CollectionsPresentationNativeFixture
             else if (path.StartsWith("/api/v2/collections/") && request.Method == HttpMethod.Get && !path.Contains("/preferences"))
             {
                 Interlocked.Increment(ref SnapshotReads);
-                var snapshot = Reply(PersonalSnapshot ?? new { id = path.Split('/').Last(), creator_profile_id = "me", name = "Snapshot" });
+                var id = path.Split('/').Last();
+                // A revision read must describe the same collection shown in the list.
+                // Returning an invented name correctly triggers the current ETag conflict guard.
+                var listed = Personal().FirstOrDefault(item => JsonSerializer.SerializeToElement(item).GetProperty("id").GetString() == id);
+                var snapshot = Reply(PersonalSnapshot ?? listed ?? new { id, creator_profile_id = "me", name = "Snapshot" });
                 snapshot.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"rev-1\"");
                 return snapshot;
             }
