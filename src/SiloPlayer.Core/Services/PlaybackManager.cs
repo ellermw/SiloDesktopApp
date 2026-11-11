@@ -794,8 +794,8 @@ public partial class PlaybackManager : IDisposable
                     .Take(2).ToArray();
                 if (canonical.Length == 1) index = canonical[0].CombinedIndex;
             }
-            // Transport-only operations may omit an unresolved grant. A track
-            // selection must instead resolve it or refuse to turn it into Off.
+            // Use a selection ordinal only when the accepted inventory resolves
+            // it; an unresolved grant must be preserved by omission below.
             if (index is int grantedIndex && grantedIndex >= 0) subtitleGrant = new PlaybackTrackIdentityV3
             {
                 Id = live.SelectedSubtitleTrackId,
@@ -821,15 +821,13 @@ public partial class PlaybackManager : IDisposable
             subtitleRevision = ApplyLocalSubtitleIntent(selectedTracks, operation);
             audioRevision = ApplyLocalAudioIntent(selectedTracks, operation);
             mutateSelectedTracks(selectedTracks);
-            // Only a read-only inventory refresh may use quality_change to
-            // preserve an unresolved grant. Never reinterpret an audio/track pick
-            // as a quality request or silently send Off for an unknown ordinal.
+            // quality_change applies explicit track picks but preserves an omitted
+            // subtitle. Keep the current quality preference and audio intent without
+            // inventing a subtitle ordinal or turning an unresolved grant Off.
             if (operation == "track_change" &&
                 subtitleGrant == null && selectedTracks.Subtitle == null &&
                 !string.IsNullOrWhiteSpace(CurrentSession?.SelectedSubtitleTrackId) && !NeedsExplicitSubtitleOff())
             {
-                if (!inventoryRefresh)
-                    throw new InvalidOperationException("The granted subtitle's selection ordinal is unavailable.");
                 operation = "quality_change";
             }
         }

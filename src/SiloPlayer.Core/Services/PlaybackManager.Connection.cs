@@ -37,12 +37,12 @@ public partial class PlaybackManager
     private void ConfigureConnectionReplan(PlaybackReplanRequestV3 request, bool inventoryRefresh = false)
     {
         request.ClientFeatures.AddRange(new[] { "buffering_quality_v1", "connection_speed_v1", "playback_plan_summary_v1" }.Where(_connectionFeatures.Contains));
-        // Inventory discovery must not consume buffering intent or re-evaluate
-        // Auto quality with a kept estimate/learned-limit override.
-        if (inventoryRefresh || !_connectionFeatures.Contains("buffering_quality_v1")) return;
-        var intent = request.Operation == "quality_change" ? _bufferingReplanIntent.Value : null;
+        if (!_connectionFeatures.Contains("buffering_quality_v1")) return;
+        // Inventory discovery must not consume buffering intent or kept estimates,
+        // but must still honor the viewer's learned-limit opt-out.
+        var intent = !inventoryRefresh && request.Operation == "quality_change" ? _bufferingReplanIntent.Value : null;
         request.LearnedLimit = BufferingQualityMode == "never" || IgnoreConnectionMeasurements ? "ignore" : intent?.LearnedLimit;
-        if (IgnoreConnectionMeasurements || request.Operation == "seek_reanchor") return;
+        if (inventoryRefresh || IgnoreConnectionMeasurements || request.Operation == "seek_reanchor") return;
         request.BandwidthEstimateKbps = intent?.BandwidthEstimateKbps ?? (request.QualityPreference == "auto" ? KeptBufferingEstimateKbps : null);
         request.BandwidthEstimateSource = intent?.BandwidthEstimateSource;
         request.ObservedThroughputKbps = intent?.ObservedThroughputKbps;

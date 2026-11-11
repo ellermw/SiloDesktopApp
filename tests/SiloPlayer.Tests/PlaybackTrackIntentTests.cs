@@ -132,7 +132,7 @@ public sealed class PlaybackTrackIntentTests
     [InlineData("recovery", true)]
     [InlineData("audio", false)]
     [InlineData("audio", true)]
-    public async Task GrantOnlySubtitleWithMissingOrAmbiguousOrdinalNeverReinterpretsAnAudioPickAsQuality(string operation, bool duplicate)
+    public async Task GrantOnlySubtitleWithMissingOrAmbiguousOrdinalPreservesTheGrantAndAppliesTrackPicks(string operation, bool duplicate)
     {
         using var scope = new Fixture(); scope.Wire.GrantOnlyInSubtitle = scope.Wire.BurnInSubtitles = true;
         if (!duplicate) scope.Wire.MissingSubtitleIndex = 0;
@@ -140,19 +140,6 @@ public sealed class PlaybackTrackIntentTests
         Assert.Null(session.SelectedSubtitleTrackIndex);
         Assert.Equal("sub:42:0", session.SelectedSubtitleTrackId);
         if (duplicate) session.SubtitleUrls.Add(new() { TrackId = session.SelectedSubtitleTrackId, Index = 9 });
-        if (operation == "audio" && !duplicate)
-        {
-            // No accepted inventory contains the grant ordinal. Refuse the
-            // switch rather than inventing one, turning subtitles Off or re-tiering.
-            await Assert.ThrowsAsync<InvalidOperationException>(() => scope.Manager.ReplanAudioAsync(1, 8));
-            Assert.Empty(scope.Wire.Replans);
-            Assert.Same(session, scope.Manager.CurrentSession);
-            Assert.Equal("sub:42:0", session.SelectedSubtitleTrackId);
-            Assert.Equal("auto", scope.Manager.QualityPreference);
-            Assert.Equal(1, scope.Manager.AudioSelectionForLoad);
-            return;
-        }
-
         var replacement = operation switch
         {
             "quality" => await scope.Manager.ReplanQualityAsync("720p", 8),
@@ -162,7 +149,7 @@ public sealed class PlaybackTrackIntentTests
         };
 
         var body = Assert.Single(scope.Wire.Replans);
-        Assert.Equal(operation switch { "quality" => "quality_change", "audio" => "track_change", "seek" => "seek_reanchor", _ => "failure_recovery" },
+        Assert.Equal(operation switch { "quality" => "quality_change", "audio" => duplicate ? "track_change" : "quality_change", "seek" => "seek_reanchor", _ => "failure_recovery" },
             body.GetProperty("operation").GetString());
         if (duplicate)
         {
@@ -172,7 +159,13 @@ public sealed class PlaybackTrackIntentTests
         }
         else Assert.False(body.GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
         if (operation == "audio")
+        {
             Assert.Equal(1, body.GetProperty("selected_tracks").GetProperty("audio").GetProperty("index").GetInt32());
+            Assert.Equal(1, replacement.AudioTrackIndex);
+            Assert.Equal(1, scope.Manager.AudioSelectionForLoad);
+        }
+        Assert.Equal(operation == "quality" ? "720p" : "auto", body.GetProperty("quality_preference").GetString());
+        Assert.Equal(operation == "quality" ? "720p" : "auto", scope.Manager.QualityPreference);
         Assert.Same(replacement, scope.Manager.CurrentSession);
         Assert.Equal("sub:42:0", replacement.SelectedSubtitleTrackId);
         Assert.Equal("burn_in", replacement.SubtitleMode);
@@ -212,11 +205,16 @@ public sealed class PlaybackTrackIntentTests
         scope.Manager.ConnectionPlan!.Subtitle.Inventory.Add(new() { TrackId = session.SelectedSubtitleTrackId!, CombinedIndex = 9 });
         var intent = scope.Manager.CaptureLocalSubtitleIntent();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => scope.Manager.ReplanAudioAsync(1, 8));
+        var replacement = await scope.Manager.ReplanAudioAsync(1, 8);
 
-        Assert.Empty(scope.Wire.Replans);
-        Assert.Same(session, scope.Manager.CurrentSession);
-        Assert.Equal("sub:42:0", session.SelectedSubtitleTrackId);
+        var body = Assert.Single(scope.Wire.Replans);
+        Assert.Equal("quality_change", body.GetProperty("operation").GetString());
+        Assert.Equal("auto", body.GetProperty("quality_preference").GetString());
+        Assert.False(body.GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        Assert.Equal(1, body.GetProperty("selected_tracks").GetProperty("audio").GetProperty("index").GetInt32());
+        Assert.Same(replacement, scope.Manager.CurrentSession);
+        Assert.Equal("sub:42:0", replacement.SelectedSubtitleTrackId);
+        Assert.Equal(1, replacement.AudioTrackIndex);
         Assert.Equal("auto", scope.Manager.QualityPreference);
         Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
         Assert.Equal(1, scope.Manager.AudioSelectionForLoad);
@@ -1672,7 +1670,7 @@ public sealed class PlaybackTrackIntentTests
         public string? UnlabelledSubtitleLanguage;
         public List<FileVersion>? Versions;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _file = 42, _selected = 0;
+        private int _file = 42, _selected = 0, _audio = 0;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath; Paths.Add(path);
@@ -1684,6 +1682,7 @@ public sealed class PlaybackTrackIntentTests
             if (path.EndsWith("/start"))
             {
                 Starts.Add(body); _file = int.Parse(body.GetProperty("file_id").GetString()!);
+                _audio = body.TryGetProperty("audio_track_index", out var startAudio) ? startAudio.GetInt32() : 0;
                 _selected = body.TryGetProperty("subtitle_track_index", out var startSub) ? startSub.GetInt32() : InitialSubtitleSelection;
             }
             else
@@ -1703,6 +1702,8 @@ public sealed class PlaybackTrackIntentTests
                     if (failure == "timeout") throw new TaskCanceledException("Synthetic request timeout.");
                     throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
                 }
+                if (body.GetProperty("selected_tracks").TryGetProperty("audio", out var audio))
+                    _audio = audio.GetProperty("index").GetInt32();
                 if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selected))
                 {
                     _selected = selected.GetProperty("index").GetInt32();
@@ -1742,7 +1743,7 @@ public sealed class PlaybackTrackIntentTests
                 {
                     protocol_version = 3, plan_id = $"plan-{Starts.Count}-{Replans.Count}", plan_attempt_key = "key", session_id = "session", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = "/stream" }, timeline = new { can_seek_anywhere = true },
-                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = GrantOnlyInSubtitle ? null : subtitleIdentity },
+                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:{_audio}", index = _audio }, subtitle = GrantOnlyInSubtitle ? null : subtitleIdentity },
                     subtitle = new { mode = _selected < 0 ? "off" : BurnInSubtitles ? "burn_in" : "native", track_id = OmitTrackIds ? "" : _selected < 0 ? null : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", inventory },
                 },
             }));
