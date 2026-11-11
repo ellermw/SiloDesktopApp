@@ -166,7 +166,7 @@ internal static class RequestRemovalNativeFixture
 
     private static async Task DetailCancellationRefreshAsync(StackPanel parent)
     {
-        foreach (var state in new[] { "eligible", "ineligible", "replaced" })
+        foreach (var state in new[] { "eligible", "ineligible", "replaced", "access", "catch-up" })
         {
             using var rig = new Rig(parent, remove: true);
             var wire = rig.Wire;
@@ -187,8 +187,12 @@ internal static class RequestRemovalNativeFixture
             await (Task)InvokePrivate(page, "RefreshDownloadAsync")!;
             if (ReferenceEquals(before, itemField.GetValue(page)) || !ReferenceEquals(dialog, rig.Dialog()))
                 throw new InvalidOperationException("The detail poll did not replace its item while retaining the cancellation confirmation.");
+            // Retire read authority while the dialog is open, without retiring its account/profile.
+            if (state == "access") rig.Client.InvalidateAccessContext();
+            if (state == "catch-up" && !rig.Client.TryInvalidateAccessContext(rig.Client.CaptureContext(), out _, transportCatchUp: true))
+                throw new InvalidOperationException("Transport catch-up did not invalidate the read context.");
             Primary(dialog);
-            if (state == "eligible")
+            if (state is "eligible" or "access" or "catch-up")
             {
                 await Until(() => wire.Writes.Count == 1);
                 if (wire.Writes.Single() is not { Method: "POST", Path: "/api/v2/requests/r1/cancel" })
@@ -201,7 +205,7 @@ internal static class RequestRemovalNativeFixture
             }
             await Until(() => cancel!.IsEnabled && cancel.Content is not ProgressRing && rig.Dialog() == null);
         }
-        Program.Log("PASS: detail cancellation survives download polling, while changed or ineligible requests explain why cancellation was not sent.");
+        Program.Log("PASS: detail cancellation survives download polling, access invalidation and transport catch-up, while changed or ineligible requests explain why cancellation was not sent.");
     }
 
     private static async Task RemovalReadInvalidationAsync(StackPanel parent)
@@ -240,7 +244,7 @@ internal static class RequestRemovalNativeFixture
     {
         foreach (var catchUp in new[] { false, true })
         foreach (var phase in new[] { "confirmation", "confirmation-pending", "missing-row", "delete", "refresh" })
-        foreach (var status in new[] { HttpStatusCode.NoContent, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
+        foreach (var status in new[] { HttpStatusCode.NoContent, HttpStatusCode.NotFound, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
         {
             if (phase == "missing-row" && status != HttpStatusCode.NoContent) continue;
             using var rig = new Rig(parent, remove: true);
@@ -249,7 +253,7 @@ internal static class RequestRemovalNativeFixture
             var vm = page.ViewModel;
             var wire = rig.Wire;
             wire.DeleteMode = status;
-            if (status == HttpStatusCode.NoContent) wire.OnDelete = id => wire.Mine.Remove(id);
+            if (status is HttpStatusCode.NoContent or HttpStatusCode.NotFound) wire.OnDelete = id => wire.Mine.Remove(id);
             Click(Remove(page, "Failed one"));
             var confirmation = await rig.DialogAsync();
             try
@@ -292,14 +296,14 @@ internal static class RequestRemovalNativeFixture
                 wire.MineGate?.TrySetResult();
             }
             var expected = phase == "missing-row" ? "Could not remove the request - the list changed, try again"
-                : status == HttpStatusCode.NoContent ? "Request removed"
+                : status is HttpStatusCode.NoContent or HttpStatusCode.NotFound ? "Request removed"
                 : status == HttpStatusCode.Conflict ? "This request is no longer failed." : "Fixture outage";
             await rig.ToastAsync(expected);
             await Until(() => !vm.IsRemovingRequest("f1") && !vm.LoadCommand.IsRunning && !vm.IsLoadingMine);
             if (!ReferenceEquals(page, rig.Frame.Content) || wire.Writes.Count != (phase == "missing-row" ? 0 : 1) ||
                 wire.Writes.Any(write => write.Method != "DELETE" || write.Path != "/api/v2/requests/f1" || write.HadBody))
                 throw new InvalidOperationException("Shell refresh lost the removal visit or changed its mutation during " + phase + ".");
-            var removed = phase == "missing-row" || status == HttpStatusCode.NoContent;
+            var removed = phase == "missing-row" || status is HttpStatusCode.NoContent or HttpStatusCode.NotFound;
             if (vm.MyRequests.Any(row => row.Id == "f1") == removed ||
                 ButtonNames(page).Contains("Remove request for Failed one") == removed ||
                 (!removed && !Remove(page, "Failed one").IsEnabled))

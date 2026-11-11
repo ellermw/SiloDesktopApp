@@ -314,26 +314,26 @@ public sealed partial class RequestDetailPage : Page
             cancel.Click += async (_, _) =>
             {
                 if (_requestConfirmationOpen || _lifetime.IsCancellationRequested) return;
-                var context = _api.CaptureContext();
+                var owner = _api.CaptureIdentityContext();
                 var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "Cancel this request?", Content = $"Cancel your request for {item.Title}?", PrimaryButtonText = "Cancel request", CloseButtonText = "Keep request", DefaultButton = ContentDialogButton.Close };
                 ContentDialogResult choice;
                 _requestConfirmationOpen = true;
                 try { choice = await confirmation.ShowAsync(); }
                 finally { _requestConfirmationOpen = false; }
-                if (choice != ContentDialogResult.Primary || _lifetime.IsCancellationRequested || !_api.IsCurrentContext(context)) return;
+                if (choice != ContentDialogResult.Primary || _lifetime.IsCancellationRequested || !_api.IsCurrentIdentityContext(owner)) return;
                 await MutateAsync(cancel, async () =>
                 {
-                    // Polling replaces the detail object, not the request being confirmed. Recheck the
-                    // current request's authority and eligibility instead of retiring the confirmation.
+                    // Polling and read-context invalidation do not retire this identity's confirmation.
+                    // Recheck the current request's authority and eligibility before the identity-bound POST.
                     var current = await _api.GetAsync(requestId, _lifetime.Token);
-                    if (_lifetime.IsCancellationRequested || !_api.IsCurrentContext(context)) return;
+                    if (_lifetime.IsCancellationRequested || !_api.IsCurrentIdentityContext(owner)) return;
                     var state = _item?.Request;
                     if (state == null || state.RequestId != requestId || state.RequestedByViewer != true || !RequestViewerPolicy.CanCancel(current))
                     {
                         App.Services.GetRequiredService<ToastService>().Error("This request has changed and can no longer be cancelled.");
                         return;
                     }
-                    await _api.CancelAsync(requestId, _lifetime.Token);
+                    await _api.CancelAsync(requestId, owner, _lifetime.Token);
                 });
             };
             ApplyPendingAction(cancel); ActionsPanel.Children.Add(cancel);

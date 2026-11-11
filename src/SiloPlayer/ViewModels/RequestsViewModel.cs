@@ -417,7 +417,8 @@ public partial class RequestsViewModel : ObservableObject
                 result = new(RequestRemovalOutcome.Removed);
             }
             catch (OperationCanceledException) when (!IsCurrent()) { result = new(RequestRemovalOutcome.Retired); }
-            catch (ApiException ex) when (ex.StatusCode is 404 or 409) { result = new(RequestRemovalOutcome.Refused, ex.Message); }
+            catch (ApiException ex) when (ex.StatusCode == 404) { result = new(RequestRemovalOutcome.Removed); }
+            catch (ApiException ex) when (ex.StatusCode == 409) { result = new(RequestRemovalOutcome.Refused, ex.Message); }
             catch (Exception ex) { result = new(RequestRemovalOutcome.Failed, ex.Message); }
             // The DELETE may have reached the server: a later visit must read the list again rather than reuse it.
             if (!IsCurrent())
@@ -466,9 +467,9 @@ public partial class RequestsViewModel : ObservableObject
 
 public enum RequestRemovalOutcome
 {
-    /// <summary>The server deleted the request (204).</summary>
+    /// <summary>The server deleted the request (204), or it was already gone (404).</summary>
     Removed,
-    /// <summary>The server refused (409: retried, completed or delivered; 404: already gone). Lists were refreshed.</summary>
+    /// <summary>The server refused (409: retried, completed or delivered). Lists were refreshed.</summary>
     Refused,
     /// <summary>A transport or server failure. The request is still listed and removal can be retried.</summary>
     Failed,
