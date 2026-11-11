@@ -18,9 +18,10 @@ public partial class PlayerService
         string.IsNullOrWhiteSpace(language) || string.IsNullOrWhiteSpace(track.Language) ||
         string.Equals(language, track.Language, StringComparison.OrdinalIgnoreCase);
 
-    // Stored-list refreshes still in flight with a subtitle to select. Each is
-    // offered the inventory an announcement's replan applies in place of the
-    // session it read under.
+    // Stored-list refreshes still in flight with a subtitle to select, and ones
+    // that ended because an announcement's replan replaced their response before
+    // applying its inventory. Each is offered the inventory applied in place of
+    // the session it read under.
     private readonly HashSet<Action<PlaybackStartResponse>> _storedSubtitleListRefreshes = [];
 
     public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, long? preferredSubtitleId = null, Func<bool>? isCurrent = null,
@@ -71,12 +72,22 @@ public partial class PlayerService
         // refresh was asked to make. Once that inventory is applied, start over on
         // it under the activation intent captured here instead of dropping the pick.
         Action<PlaybackStartResponse> superseded = null!;
+        // Set under the refresh lock when this refresh ends while the inventory
+        // that replaced its response is still to be applied; see finally.
+        var ended = false;
+        // The pick was executed or queued. Nothing is left to start over.
+        var handedOver = false;
         superseded = applied =>
         {
-            if (ReferenceEquals(applied, session) || applied.SessionId != session.SessionId ||
-                applied.MediaFileId != mediaFileId) return;
+            if (ReferenceEquals(applied, session)) return;
+            var replaces = applied.SessionId == session.SessionId && applied.MediaFileId == mediaFileId;
             lock (_subtitleReadyRefreshLock)
-                if (!_storedSubtitleListRefreshes.Remove(superseded)) return;
+            {
+                // A refresh that ended is owed the next applied inventory only.
+                // One for another session or file retires its registration.
+                if (!replaces && !ended || !_storedSubtitleListRefreshes.Remove(superseded)) return;
+            }
+            if (!replaces) return;
             DeferUntilSubtitleReadyIdle(() =>
             {
                 // Every fence above except the response and the loaded file,
@@ -330,6 +341,7 @@ public partial class PlayerService
                 if (completion != null) _storedSubtitleCompletion = completion;
                 var executedOrQueued = await TrySetSubtitleTrackAndPersistAsync(1, preferred.Language, preferred,
                     claimActivation: false, acceptActivation: activation).ConfigureAwait(false);
+                handedOver = executedOrQueued;
                 if (executedOrQueued && Current()) mpv.SendScriptMessage("osc-set-active-subtitle", _activeSubtitleServerIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 if (!executedOrQueued && ReferenceEquals(_storedSubtitleCompletion, completion)) _storedSubtitleCompletion = null;
                 // The executor owns cleanup after actual SID execution. A busy
@@ -343,7 +355,15 @@ public partial class PlayerService
         }
         finally
         {
-            lock (_subtitleReadyRefreshLock) _storedSubtitleListRefreshes.Remove(superseded);
+            // A replan can publish its inventory, retiring this response, before
+            // that inventory is applied. Ending on it is not ending the pick: stay
+            // registered so the application still starts this refresh over.
+            var awaiting = !handedOver && AwaitsSubtitleInventoryApplication(manager, session);
+            lock (_subtitleReadyRefreshLock)
+            {
+                ended = awaiting;
+                if (!awaiting) _storedSubtitleListRefreshes.Remove(superseded);
+            }
         }
     }
 

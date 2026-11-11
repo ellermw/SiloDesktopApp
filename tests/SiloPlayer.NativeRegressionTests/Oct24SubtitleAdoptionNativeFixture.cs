@@ -454,8 +454,11 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 // replace the session while the refresh meant to select that stored
                 // subtitle is still reading the list. Once the inventory is applied
                 // in place the refresh must start over on it, not drop the selection.
-                // Cover the AI-completion and the Add Subtitles entry points.
+                // Cover the AI-completion and the Add Subtitles entry points. The
+                // list can also return once that inventory is published but before
+                // it is applied: the refresh then ends ahead of its restart.
                 foreach (var ownerRefresh in new[] { false, true })
+                foreach (var readEndsBeforeApplication in new[] { false, true })
                 {
                     wire.DownloadedAvailable = wire.AdditionalDownloadedAvailable = false;
                     await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
@@ -473,15 +476,37 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     try
                     {
                         await wire.StoredListEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                        await ((Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "fixture")!).WaitAsync(TimeSpan.FromSeconds(6));
+                        if (readEndsBeforeApplication)
+                        {
+                            wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                            wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        }
+                        var applying = readEndsBeforeApplication
+                            ? Task.Run(() => (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "fixture")!)
+                            : (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "fixture")!;
+                        if (readEndsBeforeApplication)
+                        {
+                            await wire.ReplanEntered!.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                            // The in-place application waits on this gate, so the
+                            // read ends between publication and the restart call.
+                            lock (Get(service, "_subtitleSyncGate")!)
+                            {
+                                wire.HoldReplan!.TrySetResult();
+                                Require(SpinWait.SpinUntil(() => !ReferenceEquals(retiredSession, manager.CurrentSession), TimeSpan.FromSeconds(4)),
+                                    "The inventory replacement was not published while native application was held.");
+                                wire.HoldStoredList.TrySetResult();
+                                Require(selecting.Wait(TimeSpan.FromSeconds(6)),
+                                    "A refresh retired by a published inventory did not end before that inventory was applied.");
+                            }
+                        }
+                        await applying.WaitAsync(TimeSpan.FromSeconds(6));
                         Require(!ReferenceEquals(retiredSession, manager.CurrentSession) &&
                             manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 77) &&
                             Equals(retiredFile, Get(service, "_fileLoadGeneration")),
                             "The announcement did not replace the reading refresh's session in place.");
                     }
-                    finally { wire.HoldStoredList.TrySetResult(); }
+                    finally { wire.HoldReplan?.TrySetResult(); wire.HoldStoredList.TrySetResult(); }
                     await selecting.WaitAsync(TimeSpan.FromSeconds(6));
-                    wire.HoldStoredList = null; wire.StoredListEntered = null;
                     await Until(() => service.ActiveSubtitleServerIndex == 2 && NativeSidMatches(2));
                     var selectedRow = manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77);
                     Require(selectedRow.Index == 2 && selectedRow.TrackId == "downloaded:77" && !selectedRow.Unplayable &&
@@ -491,6 +516,8 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     // the next case to the first external subtitle.
                     var restarted = (HashSet<Action<PlaybackStartResponse>>)Get(service, "_storedSubtitleListRefreshes")!;
                     await Until(() => { lock (Get(service, "_subtitleReadyRefreshLock")!) return restarted.Count == 0; });
+                    wire.HoldStoredList = null; wire.StoredListEntered = null;
+                    wire.HoldReplan = null; wire.ReplanEntered = null;
                     manager.RecordLocalSubtitleSelection(0);
                 }
                 // A stored-list-only download owns valid local bytes even when

@@ -9352,12 +9352,22 @@ public partial class PlayerService : IDisposable
         // announcement's inventory replaces its response, start over on that
         // inventory once it is applied instead of dropping the selection.
         Action<PlaybackStartResponse> superseded = null!;
+        // Set under the refresh lock when this refresh ends while the inventory
+        // that replaced its response is still to be applied; see finally.
+        var ended = false;
+        // The pick was executed or queued. Nothing is left to start over.
+        var handedOver = false;
         superseded = applied =>
         {
-            if (ReferenceEquals(applied, session) || applied.SessionId != session.SessionId ||
-                applied.MediaFileId != mediaFileId) return;
+            if (ReferenceEquals(applied, session)) return;
+            var replaces = applied.SessionId == session.SessionId && applied.MediaFileId == mediaFileId;
             lock (_subtitleReadyRefreshLock)
-                if (!_storedSubtitleListRefreshes.Remove(superseded)) return;
+            {
+                // A refresh that ended is owed the next applied inventory only.
+                // One for another session or file retires its registration.
+                if (!replaces && !ended || !_storedSubtitleListRefreshes.Remove(superseded)) return;
+            }
+            if (!replaces) return;
             DeferUntilSubtitleReadyIdle(() =>
             {
                 // Every fence above except the response the inventory replaced.
@@ -9638,6 +9648,7 @@ public partial class PlayerService : IDisposable
                     acceptActivation: () => Current() && mayActivate?.Invoke() != false &&
                         currentOwner?.HasCurrentSubtitleChoice != false,
                     currentOwner: currentOwner).ConfigureAwait(false);
+                handedOver = selected;
                 // A refused attempt leaves no completion for a later selection to consume.
                 if (!selected && completion != null && ReferenceEquals(_storedSubtitleCompletion, completion))
                     _storedSubtitleCompletion = null;
@@ -9674,7 +9685,15 @@ public partial class PlayerService : IDisposable
         }
         finally
         {
-            lock (_subtitleReadyRefreshLock) _storedSubtitleListRefreshes.Remove(superseded);
+            // A replan can publish its inventory, retiring this response, before
+            // that inventory is applied. Ending on it is not ending the pick: stay
+            // registered so the application still starts this refresh over.
+            var awaiting = !handedOver && AwaitsSubtitleInventoryApplication(manager, session);
+            lock (_subtitleReadyRefreshLock)
+            {
+                ended = awaiting;
+                if (!awaiting) _storedSubtitleListRefreshes.Remove(superseded);
+            }
         }
     }
 

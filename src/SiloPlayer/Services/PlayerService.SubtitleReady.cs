@@ -92,6 +92,15 @@ public partial class PlayerService
         foreach (var superseded in reading) superseded(applied);
     }
 
+    // Publication precedes that call. A refresh whose read returns in between
+    // ends on the outgoing response before the restart can see it. The guard is
+    // held from publication to application; a failed one stays pending for its
+    // retry. Only then does an ended refresh keep its registration.
+    private bool AwaitsSubtitleInventoryApplication(PlaybackManager manager, PlaybackStartResponse session)
+        => manager.CurrentSession is { } current && !ReferenceEquals(current, session) &&
+            current.SessionId == session.SessionId && current.MediaFileId == session.MediaFileId &&
+            (_pendingSubtitleInventoryApplication != null || _subtitleReadyGuard.CurrentCount == 0);
+
     private static bool SubtitleInventoryRequiresTransportReload(PlaybackStartResponse previous, PlaybackStartResponse next)
         => previous.StreamUrl != next.StreamUrl || previous.Delivery != next.Delivery ||
             PlaybackTransportPlanner.Plan(previous).TransportKind != PlaybackTransportPlanner.Plan(next).TransportKind ||
