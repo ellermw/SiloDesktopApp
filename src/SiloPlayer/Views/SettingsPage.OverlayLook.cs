@@ -21,14 +21,31 @@ public sealed partial class SettingsPage
             UpdateCardOverlayPreview(); ScheduleCardOverlaySave();
         }
         AdvancedOverlayLookHost.Children.Add(new TextBlock { Text = "Customize look", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        void Number(string label, double? value, double minimum, double maximum, Action<double?> changed)
+        void Number(string label, double? value, double minimum, double maximum, Action<double?> changed, bool integral = false)
         {
-            var box = new NumberBox { Header = label, Minimum = minimum, Maximum = maximum, Value = value ?? double.NaN, SmallChange = .25, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-            box.ValueChanged += (_, args) => changed(double.IsFinite(args.NewValue) ? args.NewValue : null);
+            var box = new NumberBox { Header = label, Minimum = minimum, Maximum = maximum, Value = value ?? double.NaN, SmallChange = integral ? 1 : .25, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+            var normalizing = false;
+            box.ValueChanged += (_, args) =>
+            {
+                if (normalizing) return;
+                double? next = double.IsFinite(args.NewValue) ? args.NewValue : null;
+                if (integral && next.HasValue)
+                {
+                    next = Math.Clamp(Math.Round(next.Value, MidpointRounding.AwayFromZero), minimum, maximum);
+                    // Normalize typed fractions as well as spinner input before scheduling a save.
+                    if (box.Value != next.Value)
+                    {
+                        normalizing = true;
+                        try { box.Value = next.Value; }
+                        finally { normalizing = false; }
+                    }
+                }
+                changed(next);
+            };
             AdvancedOverlayLookHost.Children.Add(box);
         }
         Number("Size (0.75–2)", current.Size, .75, 2, value => Set(style => style with { Size = value }));
-        Number("Border width (0–3)", current.BorderWidth, 0, 3, value => Set(style => style with { BorderWidth = value }));
+        Number("Border width (0–3)", current.BorderWidth, 0, 3, value => Set(style => style with { BorderWidth = value }), integral: true);
         void Choice(string label, string? selected, string[] options, Action<string?> changed)
         {
             var box = new ComboBox { Header = label, HorizontalAlignment = HorizontalAlignment.Stretch };

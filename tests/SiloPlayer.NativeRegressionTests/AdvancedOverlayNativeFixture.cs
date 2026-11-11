@@ -221,7 +221,15 @@ internal static class AdvancedOverlayNativeFixture
         fill.Text = "#11223380";
         await UntilAsync(() => ((CardOverlayPrefs)Get(page, "_cardOverlayDraft")!).Style?.Background == "#11223380", "native fill editor did not accept eight-digit RGBA");
         var acceptedRgbaFill = ((CardOverlayPrefs)Get(page, "_cardOverlayDraft")!).Style?.Background == "#11223380";
-        lookHost.Children.OfType<NumberBox>().Last().Value = 3;
+        var borderWidth = lookHost.Children.OfType<NumberBox>().Last();
+        Check(borderWidth.SmallChange == 1, "border-width spinner uses the official integer step");
+        borderWidth.Value = 1;
+        borderWidth.Value += borderWidth.SmallChange;
+        Check(((CardOverlayPrefs)Get(page, "_cardOverlayDraft")!).Style?.BorderWidth == 2, "border-width increment stays integral");
+        borderWidth.Value = 1.25;
+        Check(borderWidth.Value == 1 && ((CardOverlayPrefs)Get(page, "_cardOverlayDraft")!).Style?.BorderWidth == 1,
+            "typed fractional border width normalizes to an integer before saving");
+        borderWidth.Value = 3;
         void Select(string header, string tag)
         {
             var choice = lookHost.Children.OfType<ComboBox>().Single(box => box.Header as string == header);

@@ -1,6 +1,6 @@
 # Advanced overlays Beta submission branch
 
-This branch starts directly at fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`; only the scoped advanced overlay commit is applied. The earlier dependency-base verification below remains historical; fresh delivery-branch tests and bindings are required. Version remains 1.2.970. Installed app untouched.
+This branch starts directly at fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`; only the scoped advanced overlay commit is applied. The earlier dependency-base verification below remains historical. Delivery-branch full suite passed5,396/5,396; after the final NumberBox callback correction,143 affected evaluator/wire/revision/source tests and the fresh Release advanced-overlays native route pass. Border width uses integer steps and normalizes typed fractions in the original callback because WinUI suppresses reentrant ValueChanged. Final app745/native182 authored PDB documents match with zero mismatches. App DLL SHA2569C59435CF7059A4E00480F3910C94D316D53BBB85D19ADDD8E3585C1350554D9. Receipts: D:/SiloPlayer/.codex-tmp/server-review-nov10/advanced-overlays-beta/normalization-*; prior failed boundary/binding runs are preserved, not counted green. Version remains 1.2.970. Installed app untouched.
 
 # Reopened A1 — advanced card overlays (November 11, 2026)
 
