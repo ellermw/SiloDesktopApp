@@ -42,6 +42,14 @@ public class DownloadsApi(SiloApiClient client)
         int? libraryId, string? seasonContentId = null, CancellationToken ct = default)
     {
         var owner = client.CaptureContext();
+        try { return await DiscoverBatchTemplateVersionsAsync(owner, seriesId, seasonNumber, libraryId, seasonContentId, ct); }
+        // Any other discovery failure ends the lookup with no template. Only a retired owner still stops the picker.
+        catch (Exception) when (!ct.IsCancellationRequested && client.IsCurrentContext(owner)) { return []; }
+    }
+
+    private async Task<List<FileVersion>> DiscoverBatchTemplateVersionsAsync(ApiRequestContext owner, string seriesId,
+        int? seasonNumber, int? libraryId, string? seasonContentId, CancellationToken ct)
+    {
         void Current()
         {
             ct.ThrowIfCancellationRequested();

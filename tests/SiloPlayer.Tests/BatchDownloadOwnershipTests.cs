@@ -70,6 +70,39 @@ public sealed class BatchDownloadOwnershipTests
         Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",season,null,season.HasValue?"season-item":null));
         Assert.Equal(season.HasValue?2:1,wire.Paths.Count);
     }
+    [Theory] [InlineData(null,500)] [InlineData(0,500)] [InlineData(0,400)] [InlineData(0,401)]
+    public async Task FailedDiscoveryMeansNoTemplateAndStopsReading(int? season,int status)
+    {
+        using var wire=new Wire {Status=(HttpStatusCode)status,Read = _=>"{\"title\":\"Server error\"}"}; using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",season,null,season.HasValue?"season-item":null));
+        Assert.Single(wire.Paths);
+    }
+    [Fact]
+    public async Task FailedVersionsReadMeansNoTemplate()
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        wire.Read = request => { var versions=request.RequestUri!.AbsolutePath.EndsWith("/versions"); wire.Status=versions?HttpStatusCode.InternalServerError:HttpStatusCode.OK;
+            return versions ? "{\"title\":\"Server error\"}" : "{\"items\":[{\"content_id\":\"ep-1\",\"files\":[{\"file_id\":\"11\"}]},{\"content_id\":\"ep-2\",\"files\":[{\"file_id\":\"12\"}]}]}"; };
+        Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",1,null,"season-item"));
+        Assert.Equal(2,wire.Paths.Count);
+    }
+    [Fact]
+    public async Task TransportFailureDuringDiscoveryMeansNoTemplate()
+    {
+        using var wire=new Wire {Read = _=>throw new HttpRequestException("Fixture transport failure")}; using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",null,null));
+        Assert.Single(wire.Paths);
+    }
+    [Fact]
+    public async Task RetiredOwnerStillStopsDiscovery()
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        wire.Read = _ => { client.SetProfile("replacement"); return "{\"items\":[]}"; };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",null,null));
+        using var owner=new CancellationTokenSource(); wire.Status=HttpStatusCode.InternalServerError;
+        wire.Read = _ => { owner.Cancel(); return "{\"title\":\"Server error\"}"; };
+        await Assert.ThrowsAnyAsync<Exception>(()=>new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",null,null,null,owner.Token));
+    }
     private sealed class Wire:HttpMessageHandler
     {
         internal List<string> Paths=[]; internal Func<HttpRequestMessage,string> Read = _=>"{}"; internal HttpStatusCode Status=HttpStatusCode.OK;

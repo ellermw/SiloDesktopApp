@@ -84,6 +84,18 @@ public sealed partial class ItemDetailPage
                     }
                     var start = new Button { Content = "Start Download", HorizontalAlignment = HorizontalAlignment.Stretch };
                     var running = false;
+                    const string reconcile = "Some downloads may already be registered. Check Downloads before starting another batch.";
+                    // A closed or retired picker cannot show reconciliation, so the same viewer gets it as a toast.
+                    void Abandon()
+                    {
+                        dialog.Hide();
+                        if (!client.IsCurrentIdentityContext(authority)) return;
+                        App.Services.GetRequiredService<ToastService>().Warning("Download registration was interrupted. " + reconcile, "View Downloads", () =>
+                        {
+                            if (client.IsCurrentIdentityContext(authority)) App.Services.GetRequiredService<NavigationService>().Navigate<DownloadsPage>();
+                            return Task.CompletedTask;
+                        });
+                    }
                     start.Click += async (_, _) =>
                     {
                         if (running) return;
@@ -99,19 +111,20 @@ public sealed partial class ItemDetailPage
                         try
                         {
                             var result = await api.CreateDownloadsAsync(request, ct);
-                            if (!Current()) { dialog.Hide(); return; }
+                            if (!Current()) { Abandon(); return; }
                             var created = result.Downloads.Count; var skipped = result.Skipped.Count;
                             status.Text = $"Registered {created} download{(created == 1 ? "" : "s")}." + (skipped > 0 ? $" {skipped} skipped: {string.Join(", ", result.Skipped.Select(s => s.Reason).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct())}" : "");
                             App.Services.GetRequiredService<ToastService>().Success(status.Text);
                             dialog.Hide();
                         }
-                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+                        // The dispatched page may be accepted although its owner was cancelled.
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { Abandon(); }
                         catch (Exception ex)
                         {
-                            if (!Current()) { dialog.Hide(); return; }
+                            if (!Current()) { Abandon(); return; }
                             // A previous page may be accepted, also when a retired request stops the cursor. A new attempt requires an explicit reconciliation.
                             status.Text = (ex is OperationCanceledException ? "The connection changed while registering downloads." : ex.Message)
-                                + " Some downloads may already be registered. Check Downloads before starting another batch.";
+                                + " " + reconcile;
                             dialog.CloseButtonText = "Close";
                             var inspect = new Button { Content = "View Downloads" };
                             inspect.Click += (_, _) => { var current = Current(); dialog.Hide(); if (current) App.Services.GetRequiredService<NavigationService>().Navigate<DownloadsPage>(); };

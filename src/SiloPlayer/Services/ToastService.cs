@@ -59,6 +59,8 @@ public class ToastService
     }
     public void Info(string message) => Show(message, ToastContainer.ToastKind.Info);
     public void Warning(string message) => Show(message, ToastContainer.ToastKind.Warning);
+    public void Warning(string message, string actionLabel, Func<Task> action)
+        => Show(message, ToastContainer.ToastKind.Warning, actionLabel, action);
 
     private void Show(string message, ToastContainer.ToastKind kind, string? actionLabel = null, Func<Task>? action = null)
     {

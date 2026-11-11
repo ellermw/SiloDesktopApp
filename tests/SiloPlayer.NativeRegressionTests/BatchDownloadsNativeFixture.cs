@@ -29,8 +29,9 @@ internal static class BatchDownloadsNativeFixture
         var catalog = new CatalogApi(client); var settings = new SettingsApi(client);
         var cache = new ItemDetailPrefetchCache(catalog, auth);
         var vm = new ItemDetailViewModel(catalog, cache);
+        var toasts = new ToastService(); var notices = new SiloPlayer.Controls.ToastContainer();
         using var owned = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(catalog)
-            .AddSingleton(vm).AddSingleton(new UICustomizationService(settings)).AddSingleton(new ToastService()).BuildServiceProvider();
+            .AddSingleton(vm).AddSingleton(new UICustomizationService(settings)).AddSingleton(toasts).BuildServiceProvider();
         servicesField.SetValue(null, new Services(owned, previous));
         var page = new ItemDetailPage { Width = 900, Height = 720 }; parent.Children.Add(page);
         using var navigation = new CancellationTokenSource();
@@ -70,6 +71,7 @@ internal static class BatchDownloadsNativeFixture
             }
             // Closing an in-flight picker stops later cursor pages even if a fake wire ignores cancellation.
             wire.Reset(); wire.CreateGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            parent.Children.Add(notices); toasts.Register(notices, parent.DispatcherQueue);
             var held = (Task)Call(page, "ShowBatchDownloadDialogAsync", "series-1", (object)0, "Native fixture")!;
             var pending = await Dialog(parent); await Until(() => Elements<Button>(pending).Any(b => Equals(b.Content, "Start Download")));
             Invoke(Elements<Button>(pending).Single(b => Equals(b.Content, "Start Download")));
@@ -77,6 +79,11 @@ internal static class BatchDownloadsNativeFixture
             wire.CreateGate.TrySetResult(true); await Task.Delay(150);
             Check(wire.Bodies.Count == 1, "Closed picker must not create the next batch page.");
             Program.Log("PASS: closing native picker retires a held creation and suppresses later cursor pages.");
+            // The held page may be accepted, so the viewer still learns where to reconcile it.
+            await Until(() => Elements<TextBlock>(notices).Any(t => t.Text.Contains("may already be registered")));
+            Check(Elements<Button>(notices).Any(b => Equals(b.Content, "View Downloads")), "An abandoned registration must keep a route to Downloads.");
+            toasts.Unregister(); parent.Children.Remove(notices);
+            Program.Log("PASS: a picker closed during registration reports possible registrations with a route to Downloads.");
 
             // Single flight begins before capability discovery and Cancel retires that discovery too.
             wire.Reset(); wire.CapabilityGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -121,8 +128,18 @@ internal static class BatchDownloadsNativeFixture
             Check(wire.Bodies.Count == 1 && Elements<TextBlock>(stalled).Any(t => t.Text.Contains("may already be registered")), "A partial batch must direct the viewer to Downloads.");
             stalled.Hide(); await partial;
             Program.Log("PASS: request-context refresh keeps the native picker usable and reports a partial batch.");
+
+            // Template discovery is optional: a failing catalog read leaves the batch startable without a template.
+            wire.Reset(); wire.DiscoveryFails = true;
+            var degraded = (Task)Call(page, "ShowBatchDownloadDialogAsync", "series-1", (object)0, "Native fixture")!;
+            var plain = await Dialog(parent); await Until(() => Elements<Button>(plain).Any(b => Equals(b.Content, "Start Download")));
+            Check(!Elements<ComboBox>(plain).Any(c => Equals(c.Header, "Version template")) && wire.VersionReads == 0, "Failed template discovery must offer no template.");
+            Invoke(Elements<Button>(plain).Single(b => Equals(b.Content, "Start Download"))); await degraded;
+            Check(wire.Bodies.Count == 2, "Failed template discovery must not block batch creation.");
+            using (var body = JsonDocument.Parse(wire.Bodies[0])) Check(!body.RootElement.TryGetProperty("media_file_id", out _), "A batch without discovered templates must omit the template.");
+            Program.Log("PASS: failed template discovery keeps the native picker startable without a template.");
         }
-        finally { wire.CreateGate?.TrySetResult(true); wire.CapabilityGate?.TrySetResult(true); navigation.Cancel(); parent.Children.Remove(page); servicesField.SetValue(null,previous); }
+        finally { wire.CreateGate?.TrySetResult(true); wire.CapabilityGate?.TrySetResult(true); toasts.Unregister(); parent.Children.Remove(notices); navigation.Cancel(); parent.Children.Remove(page); servicesField.SetValue(null,previous); }
     }
     private static object? Call(object target,string name,params object?[] args)=>target.GetType().GetMethod(name,Private)!.Invoke(target,args);
     private static void Check(bool value,string message) { if(!value) throw new InvalidOperationException(message); }
@@ -135,12 +152,13 @@ internal static class BatchDownloadsNativeFixture
     {
         internal List<string> Bodies=[]; internal int VersionReads,AggregateVersionReads,CapabilityReads;
         internal bool BatchVersion=true,BulkQuality=true; internal string? Refused;
-        internal TaskCompletionSource<bool>? CreateGate,CapabilityGate; internal Action? Created;
-        internal void Reset() { Bodies.Clear(); VersionReads=AggregateVersionReads=CapabilityReads=0; BatchVersion=BulkQuality=true; Refused=null; CreateGate=CapabilityGate=null; Created=null; }
+        internal TaskCompletionSource<bool>? CreateGate,CapabilityGate; internal Action? Created; internal bool DiscoveryFails;
+        internal void Reset() { Bodies.Clear(); VersionReads=AggregateVersionReads=CapabilityReads=0; BatchVersion=BulkQuality=true; Refused=null; CreateGate=CapabilityGate=null; Created=null; DiscoveryFails=false; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var path=request.RequestUri!.AbsolutePath;
             if(path=="/api/v2/capabilities/downloads") { CapabilityReads++; if(CapabilityGate!=null) await CapabilityGate.Task; return Reply(new { enabled=true,download_allowed=true,allowed=Refused!="allowed",bounded_creation=Refused!="bounded_creation",season_download=true,batch_version=BatchVersion,bulk_quality=BulkQuality,quality_presets=new[]{"original","5mbps"} }); }
+            if(DiscoveryFails && path.StartsWith("/api/v2/catalog/")) return new(HttpStatusCode.InternalServerError){Content=new StringContent("{\"title\":\"Server error\"}")};
             if(path.EndsWith("/seasons")) return Reply(new { items=new[]{new {content_id="season-1",season_number=0},new {content_id="season-2",season_number=1}} });
             // Shaped like the real server: the legacy series/number route discards season zero.
             if(path.EndsWith("/seasons/0/episodes")) return Reply(new {items=Array.Empty<object>()});
