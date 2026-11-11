@@ -111,10 +111,11 @@ public sealed partial class ItemDetailPage
                         try
                         {
                             var result = await api.CreateDownloadsAsync(request, ct);
-                            if (!Current()) { Abandon(); return; }
                             var created = result.Downloads.Count; var skipped = result.Skipped.Count;
-                            status.Text = $"Registered {created} download{(created == 1 ? "" : "s")}." + (skipped > 0 ? $" {skipped} skipped: {string.Join(", ", result.Skipped.Select(s => s.Reason).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct())}" : "");
-                            App.Services.GetRequiredService<ToastService>().Success(status.Text);
+                            var registered = $"Registered {created} download{(created == 1 ? "" : "s")}." + (skipped > 0 ? $" {skipped} skipped: {string.Join(", ", result.Skipped.Select(s => s.Reason).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct())}" : "");
+                            // Every page was accepted. A picker retired since then still reports the completed batch to the same viewer, never an interruption.
+                            if (Current()) status.Text = registered;
+                            if (client.IsCurrentIdentityContext(authority)) App.Services.GetRequiredService<ToastService>().Success(registered);
                             dialog.Hide();
                         }
                         // The dispatched page may be accepted although its owner was cancelled.
