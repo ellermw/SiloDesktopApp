@@ -810,7 +810,17 @@ public static partial class RecipeGalleryDialog
             foreach (var task in libraryTasks)
             {
                 var (library, response) = await task;
-                foreach (var collection in response.Collections.Where(collection => collection.Visibility == "visible"))
+                // Grouped tab entries omit visibility; keep any explicit flat-list restriction.
+                var hiddenIds = response.Collections.Where(collection => collection.Visibility != "visible")
+                    .Select(collection => collection.Id).ToHashSet(StringComparer.Ordinal);
+                var visibleCollections = response.Collections.Where(collection => collection.Visibility == "visible")
+                    .Select(collection => (collection.Id, collection.Title))
+                    .Concat(response.Groups.SelectMany(group => group.Collections)
+                        .Concat(response.Ungrouped?.Collections ?? [])
+                        .Where(collection => !hiddenIds.Contains(collection.Id))
+                        .Select(collection => (collection.Id, collection.Title)))
+                    .DistinctBy(collection => collection.Id, StringComparer.Ordinal);
+                foreach (var collection in visibleCollections)
                 {
                     if (libraryOptions.TryGetValue(collection.Id, out var existing))
                     {
