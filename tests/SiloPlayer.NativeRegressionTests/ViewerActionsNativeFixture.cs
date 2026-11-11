@@ -184,6 +184,51 @@ internal static class ViewerActionsNativeFixture
 
     private static async Task DismissalPagingAsync(Frame frame, Wire wire, HomeApi home)
     {
+        // Dismissal must not replace a multi-window collection with only its first page.
+        foreach (var surface in new[] { "cw", "nu" })
+        {
+            var section = "off-prefix-retained-" + surface;
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Progress", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            var items = Field<ObservableCollection<MediaItem>>(page, "_items");
+            await Until(() => !Field<bool>(page, "_loading") && items.Count == 60, "retained first sixty");
+            await (Task)Call(page, "LoadAsync", false)!;
+            await Until(() => !Field<bool>(page, "_loading") && items.Count == 120, "retained loaded suffix");
+            var retained = items.Where(item => !item.ContentId.EndsWith("-001") && !item.ContentId.EndsWith("-090")).ToArray();
+            var selectedId = section + "-100";
+            Field<HashSet<string>>(page, "_selectedIds").Add(selectedId);
+            var scroll = (ScrollViewer)page.FindName("CatalogScrollViewer");
+            page.UpdateLayout();
+            scroll.ChangeView(null, 1200, null, disableAnimation: true);
+            await Until(() => scroll.VerticalOffset > 720, "retained scrolled position");
+            var reset = false;
+            var minimumCount = items.Count;
+            System.Collections.Specialized.NotifyCollectionChangedEventHandler changed = (_, args) =>
+            {
+                reset |= args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset;
+                minimumCount = Math.Min(minimumCount, items.Count);
+            };
+            items.CollectionChanged += changed;
+            try
+            {
+                var surfaceKey = surface == "cw" ? "continue_watching" : "next_up";
+                await home.DismissItemAsync(surfaceKey, section + "-001", surface == "cw"
+                    ? (object)new { progress_updated_at = "2026-11-09T10:00:00Z" }
+                    : new { series_id = section + "-show" });
+                page.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, section + "-001",
+                    section + "-show", context: home.CaptureContext()));
+                await Until(() => !Field<bool>(page, "_loading") && items.All(item => item.ContentId != section + "-001"), "retained dismissal settled");
+                await Task.Delay(200); page.UpdateLayout();
+                Check(!reset && minimumCount >= 118, "dismissal never resets or discards the loaded window");
+                Check(retained.All(item => items.Contains(item)), "every remaining loaded card retains its identity, including the suffix");
+                Check(Field<HashSet<string>>(page, "_selectedIds").Contains(selectedId), "dismissal retains unrelated selection");
+                Check(scroll.VerticalOffset > 720, "dismissal does not return the scroller to the top");
+                Check(Field<int>(page, "_offset") == items.Count && ((TextBlock)page.FindName("CountText")).Text == "128",
+                    "retained window has the corrected paging offset and server count");
+            }
+            finally { items.CollectionChanged -= changed; }
+        }
+
         foreach (var before in new[] { true, false })
         {
             var section = before ? "race-before" : "race-after";

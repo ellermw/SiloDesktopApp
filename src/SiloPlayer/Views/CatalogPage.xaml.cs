@@ -53,6 +53,7 @@ public sealed partial class CatalogPage : Page,
     private int? _fixedLibraryId;
     private string? _initialGenre;
     private string? _snapshot;
+    private int? _retainedSectionWindowSize;
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<QueryRule> _advancedRules = [];
     private bool _advancedMode;
@@ -276,8 +277,8 @@ public sealed partial class CatalogPage : Page,
         });
     }
 
-    // A Continue Watching / Next Up dismissal drops the show from both rows, so the dedicated
-    // page reloads the shortened live row, including its count and paging offset.
+    // A Continue Watching / Next Up dismissal drops the show from both rows. Keep the
+    // loaded cards mounted while reconciling the shortened live row and its count.
     private void RemoveDismissedSectionCards(MediaSurfaceChanged message)
     {
         if (_source != "section") return;
@@ -288,12 +289,19 @@ public sealed partial class CatalogPage : Page,
             .ToList();
         if (removed.Count == 0 && !_items.Any(candidate =>
             candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp)) return;
-        // A continuation may already have appended a window from the shortened row
-        // before this queued message arrived. Its offset can then hide a gap even
-        // though no load is pending. Reset the whole window (and retire any pending
-        // generation) rather than treating that suffix as a stable prefix.
+        var loadedWindowSize = _items.Count;
+        foreach (var item in removed)
+        {
+            _items.Remove(item);
+            _selectedIds.Remove(item.ContentId);
+        }
+        _offset = Math.Max(0, _offset - removed.Count);
+        UpdateSelectionUi();
+        // A completed continuation can already contain a gap when the notification
+        // arrives. Revalidate the loaded window, but do not clear it or its selection:
+        // unchanged cards retain their identity and the scroller retains its extent.
         CountPanel.Visibility = Visibility.Collapsed;
-        _ = LoadAsync(true);
+        _ = LoadCatalogAsync(true, loadedWindowSize);
     }
 
     public void Receive(PlaybackProgressUpdated message)
@@ -384,22 +392,37 @@ public sealed partial class CatalogPage : Page,
         combo.SelectedIndex = 0;
     }
 
-    private async Task LoadAsync(bool reset)
+    private Task LoadAsync(bool reset) => LoadCatalogAsync(reset);
+
+    private async Task LoadCatalogAsync(bool reset, int? retainedWindowSize = null)
     {
         if (_queryFilters?.IsValid == false) return;
         if (_loading && !reset) return;
+        // A failed in-place refresh must be retried before any continuation can append.
+        if (!reset && _retainedSectionWindowSize != null)
+        {
+            reset = true;
+            retainedWindowSize = _retainedSectionWindowSize;
+        }
         if (reset)
         {
             Interlocked.Increment(ref _loadGeneration);
             _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new CancellationTokenSource();
-            _offset = 0; _snapshot = null; _items.Clear();
-            _selectedIds.Clear();
-            UpdateSelectionUi();
+            _snapshot = null;
+            _retainedSectionWindowSize = retainedWindowSize;
+            if (retainedWindowSize == null)
+            {
+                _offset = 0;
+                _items.Clear();
+                _selectedIds.Clear();
+                UpdateSelectionUi();
+            }
         }
         if (_loadCts == null) _loadCts = new CancellationTokenSource();
         var generation = Volatile.Read(ref _loadGeneration);
+        var loadToken = _loadCts.Token;
         _loading = true;
-        var initialLoad = reset && _items.Count == 0;
+        var initialLoad = reset && retainedWindowSize == null && _items.Count == 0;
         CatalogLoadingRepeater.Visibility = initialLoad ? Visibility.Visible : Visibility.Collapsed;
         ItemsRepeater.Visibility = initialLoad ? Visibility.Collapsed : Visibility.Visible;
         LoadingRing.IsActive = !initialLoad;
@@ -419,7 +442,7 @@ public sealed partial class CatalogPage : Page,
                 : _advancedMode
                     ? BuildAdvancedRules()
                     : BuildGuidedRules();
-            var response = await _api.GetCatalogAsync(
+            Task<CatalogResponse> ReadWindowAsync(int offset, int limit, string? snapshot) => _api.GetCatalogAsync(
                 isSection ? _fixedLibraryId : SelectedLibrary(),
                 sort: isSection ? null : requestSort,
                 order: isSection || requestSort == null ? null : SelectedTag(OrderCombo),
@@ -433,9 +456,9 @@ public sealed partial class CatalogPage : Page,
                 yearMax: useGuidedFilters ? TextOrNull(YearToBox) : null,
                 q: isSection ? null : QueryBox.Text.Trim(),
                 type: isSection ? null : SelectedTag(TypeCombo),
-                limit: PageSize,
-                offset: _offset,
-                snapshot: _snapshot,
+                limit: limit,
+                offset: offset,
+                snapshot: snapshot,
                 source: _source == "library" ? null : _source,
                 scope: _scope,
                 sectionId: _sectionId,
@@ -443,8 +466,22 @@ public sealed partial class CatalogPage : Page,
                 extraRulesMatch: _advancedMode ? SelectedTag(AdvancedMatchCombo) ?? "all" : "all",
                 queryGroups: !isSection && _queryFilters != null ? _catalogQuery.Groups : null,
                 queryGroupsMatch: _catalogQuery.Match,
-                ct: _loadCts.Token);
+                ct: loadToken);
+            var response = await ReadWindowAsync(retainedWindowSize == null ? _offset : 0, PageSize, _snapshot);
             if (generation != Volatile.Read(ref _loadGeneration)) return;
+            if (retainedWindowSize is { } windowSize)
+            {
+                var refreshed = new List<MediaItem>(response.Items);
+                while (refreshed.Count < windowSize && response.Items.Count > 0
+                    && (response.HasMore || refreshed.Count < response.Total))
+                {
+                    response = await ReadWindowAsync(refreshed.Count,
+                        Math.Min(PageSize, windowSize - refreshed.Count), response.Snapshot);
+                    if (generation != Volatile.Read(ref _loadGeneration)) return;
+                    refreshed.AddRange(response.Items);
+                }
+                response.Items = refreshed;
+            }
             foreach (var item in response.Items)
             {
                 // A Continue Watching / Next Up row's cards keep the server's item_source in
@@ -452,10 +489,27 @@ public sealed partial class CatalogPage : Page,
                 item.ItemSource = _source == "section"
                     ? HomeDismissalPolicy.SectionCardItemSource(_source, item.ItemSource)
                     : _source;
-                _items.Add(item);
+                if (retainedWindowSize == null) _items.Add(item);
+            }
+            if (retainedWindowSize != null)
+            {
+                for (var index = 0; index < response.Items.Count; index++)
+                {
+                    var item = response.Items[index];
+                    var existingIndex = index;
+                    while (existingIndex < _items.Count && !string.Equals(
+                        _items[existingIndex].ContentId, item.ContentId, StringComparison.OrdinalIgnoreCase))
+                        existingIndex++;
+                    if (existingIndex == _items.Count) _items.Insert(index, item);
+                    else if (existingIndex != index) _items.Move(existingIndex, index);
+                }
+                while (_items.Count > response.Items.Count) _items.RemoveAt(_items.Count - 1);
+                _selectedIds.IntersectWith(_items.Select(item => item.ContentId));
+                UpdateSelectionUi();
             }
             _snapshot = response.Snapshot ?? _snapshot;
-            _offset += response.Items.Count;
+            _offset = retainedWindowSize != null ? response.Items.Count : _offset + response.Items.Count;
+            _retainedSectionWindowSize = null;
             _hasMore = response.HasMore || _offset < response.Total;
             _totalItems = response.Total;
             CountText.Text = _totalItems.ToString("N0");
