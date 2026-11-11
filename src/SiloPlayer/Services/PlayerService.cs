@@ -8972,7 +8972,7 @@ public partial class PlayerService : IDisposable
                 ApplySubtitleTranslationFailed(ev.Payload);
                 break;
             case "subtitle_ready":
-                _ = ApplySubtitleReadyAsync(ev.Payload);
+                _ = ApplySubtitleReadyAsync(ev.Payload, ev.SessionId);
                 break;
         }
     }

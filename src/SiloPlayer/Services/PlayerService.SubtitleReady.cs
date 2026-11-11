@@ -7,29 +7,39 @@ namespace SiloPlayer.Services;
 public partial class PlayerService
 {
     private static readonly JsonSerializerOptions SubtitleReadyJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
-    private Action? _pendingSubtitleReadyRefresh;
+    private readonly SemaphoreSlim _subtitleReadyGuard = new(1, 1);
+    private readonly object _subtitleReadyRefreshLock = new();
+    private readonly HashSet<Action> _pendingSubtitleReadyRefreshes = [];
 
     private void RetirePendingSubtitleReadyRefresh()
     {
-        var pending = Interlocked.Exchange(ref _pendingSubtitleReadyRefresh, null);
-        if (pending != null) ContentLoaded -= pending;
+        lock (_subtitleReadyRefreshLock)
+        {
+            foreach (var pending in _pendingSubtitleReadyRefreshes) ContentLoaded -= pending;
+            _pendingSubtitleReadyRefreshes.Clear();
+        }
     }
 
     private void DeferSubtitleReadyRefresh(JsonElement payload, SubtitleOperationOwner owner, string sessionId, int fileId)
     {
-        RetirePendingSubtitleReadyRefresh();
         var announcement = payload.Clone();
         Action refresh = null!;
         refresh = () =>
         {
-            if (!ReferenceEquals(Interlocked.CompareExchange(ref _pendingSubtitleReadyRefresh, null, refresh), refresh)) return;
-            ContentLoaded -= refresh;
+            lock (_subtitleReadyRefreshLock)
+            {
+                if (!_pendingSubtitleReadyRefreshes.Remove(refresh)) return;
+                ContentLoaded -= refresh;
+            }
             if (owner.IsCurrentForAi && _playbackManager?.CurrentSession is { } current &&
                 current.SessionId == sessionId && current.MediaFileId == fileId)
-                _ = ApplySubtitleReadyAsync(announcement);
+                _ = ApplySubtitleReadyAsync(announcement, sessionId);
         };
-        _pendingSubtitleReadyRefresh = refresh;
-        ContentLoaded += refresh;
+        lock (_subtitleReadyRefreshLock)
+        {
+            _pendingSubtitleReadyRefreshes.Add(refresh);
+            ContentLoaded += refresh;
+        }
         if (!_switchingContent && !IsLoading) refresh();
     }
 
@@ -106,21 +116,43 @@ public partial class PlayerService
             _subtitleReplanAttempt = attempt with { Session = next, SelectionIndex = RebindIndex(attempt.SelectionIndex) ?? -1 };
     }
 
-    private async Task ApplySubtitleReadyAsync(JsonElement payload)
+    private async Task ApplySubtitleReadyAsync(JsonElement payload, string eventSessionId)
     {
         var manager = _playbackManager;
-        var session = manager?.CurrentSession;
-        if (manager == null || session == null || !TryGetPayloadInt(payload, "file_id", out var fileId) ||
-            session.MediaFileId != fileId || !payload.TryGetProperty("session_id", out var eventSession) ||
-            eventSession.ValueKind != JsonValueKind.String || eventSession.GetString() != session.SessionId) return;
-        var owner = CaptureSubtitleOperationOwner(session);
-        if (owner == null || !owner.IsCurrent) return;
-        var nativeFile = Volatile.Read(ref _fileLoadGeneration);
-        var file = Volatile.Read(ref _playbackFileGeneration);
-        bool SameFile() => nativeFile == Volatile.Read(ref _fileLoadGeneration) && file == Volatile.Read(ref _playbackFileGeneration);
-        bool Current() => owner.IsCurrent && SameFile();
+        if (manager == null || !TryGetPayloadInt(payload, "file_id", out var fileId)) return;
+        PlaybackStartResponse? session;
+        SubtitleOperationOwner? owner;
+        lock (manager.SubtitleInventorySyncRoot)
+        {
+            session = manager.CurrentSession;
+            if (session == null || session.MediaFileId != fileId || eventSessionId != session.SessionId ||
+                payload.TryGetProperty("session_id", out var payloadSession) &&
+                    (payloadSession.ValueKind != JsonValueKind.String || payloadSession.GetString() != session.SessionId)) return;
+            owner = CaptureSubtitleOperationOwner(session);
+            if (owner == null || !owner.IsCurrent) return;
+        }
+        var token = _authorityLifetimeCts.Token;
+        var entered = false;
         try
         {
+            // Serialize even in-place merges against inventory publication. A queued
+            // announcement belongs to the same file lifetime, not the outgoing plan.
+            await _subtitleReadyGuard.WaitAsync(token).ConfigureAwait(false);
+            entered = true;
+            if (!owner.IsCurrentForAi) return;
+            session = manager.CurrentSession;
+            if (session == null || session.SessionId != eventSessionId || session.MediaFileId != fileId || !owner.IsCurrent) return;
+            var nativeFile = Volatile.Read(ref _fileLoadGeneration);
+            var file = Volatile.Read(ref _playbackFileGeneration);
+            bool SameFile() => nativeFile == Volatile.Read(ref _fileLoadGeneration) && file == Volatile.Read(ref _playbackFileGeneration);
+            bool Current() => owner.IsCurrent && SameFile();
+            // Never merge into a plan whose replacement inventory may already be
+            // frozen. Retain every payload and replay it after the actual load.
+            if (_switchingContent || IsLoading)
+            {
+                DeferSubtitleReadyRefresh(payload, owner, session.SessionId, fileId);
+                return;
+            }
             if (payload.TryGetProperty("track", out var value) && value.ValueKind == JsonValueKind.Object)
             {
                 PlaybackSubtitleInventoryV3? track = null;
@@ -156,19 +188,11 @@ public partial class PlayerService
             // v3 has no inventory GET. A no-change replan carries the existing
             // grant/retained intent (preserving unresolved grants via quality_change)
             // and returns canonical delivery facts.
-            if (_switchingContent || IsLoading)
-            {
-                // A plan may have frozen its inventory before the subtitle was
-                // added. Re-read after its actual load instead of losing the event.
-                DeferSubtitleReadyRefresh(payload, owner, session.SessionId, fileId);
-                return;
-            }
             var busyRevision = Volatile.Read(ref _playbackBusyRevision);
             var seekRevision = Volatile.Read(ref _seekRestartGeneration);
             bool SameTransport() => SameFile() && busyRevision == Volatile.Read(ref _playbackBusyRevision) &&
                 seekRevision == Volatile.Read(ref _seekRestartGeneration);
             var position = CurrentMediaPosition;
-            var token = _authorityLifetimeCts.Token;
             var replacement = await manager.RefreshSubtitleInventoryForOwnerAsync(position,
                 candidate => Current() && SameTransport() && ReferenceEquals(candidate, session),
                 (previous, next) => next.MediaFileId == fileId && SameTransport() && owner.TryAdoptSession(previous, next), token)
@@ -207,5 +231,6 @@ public partial class PlayerService
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { LogToFile("state_trace.txt", $"Subtitle announcement refresh failed: {ex.Message}"); }
+        finally { if (entered) _subtitleReadyGuard.Release(); }
     }
 }
