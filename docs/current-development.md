@@ -1,3 +1,15 @@
+# November 11 ? collection wall, hero and actions for Beta
+
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Source remains **1.2.970**; the Beta pipeline owns integration, stamps and publication.
+
+Collections now use one responsive poster wall with ownership/library filters and loaded-only empty states, plus a backdrop hero with description, ownership, Shuffle, Edit/Add Home and More actions. Owner Sync now/Delete share policy and confirmation with the wall cards; shared/server collections offer library-page placement. Delete carries the revision. Pending actions retire on navigation or authority changes. Administrator collection management, including Open in, remains outside Desktop's available access.
+
+Historical implementation report (not verification of the current head): Independent Claude review, **5,330/5,330 full unit tests**, **222 focused tests**, Release publish and six scoped native runs (presentation/actions, owner menu, ownership, server, layout, creation) were reported. QA found the presentation/actions fixture's list and detail snapshots disagreed, preventing its card-menu delete from reaching the server; its claimed completion sentinel therefore does not establish a pass for this head. The stub now uses the matching list item for detail reads. QA fixes also protect group/order baselines from late pre-write reads and remove deleted personal collections from cached server cards. Builds and tests were not run during this fix pass; pipeline verification, including the collections-presentation native fixture, is pending. The previously reported app DLL SHA256 `9C3196BD27FDB6145AF18D6EFCA380E3E4A8C312FA21F46B95380D3140D9A587` and 30 changed-source hash checks are historical, not receipts for these fixes. Earlier full5,316 and other native runs also remain historical.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/collections{,-actions}-implementation.md`, `collections-review.md`, `collections/evidence/collections/lead-final-full`, `act-presentation-seven`, and `collections-lead-binding.json`. Baseline browse-parity/ImportedDraft failures are preserved separately. No live-server persistence or complete visual parity certified; wall pagination retains Load more, and backdrop effects use native approximations. No installer or installed-player changes.
+
+---
+
 # November 11 ? Show update preparation immediately and retain panel visibility (Beta candidate)
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Source remains **1.2.970**; the Beta pipeline owns integration, versioning and publication.
