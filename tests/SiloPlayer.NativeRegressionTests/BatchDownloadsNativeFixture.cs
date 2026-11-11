@@ -129,6 +129,16 @@ internal static class BatchDownloadsNativeFixture
             stalled.Hide(); await partial;
             Program.Log("PASS: request-context refresh keeps the native picker usable and reports a partial batch.");
 
+            // A request context retired while the last page is in flight still completes the batch.
+            wire.Reset(); wire.Created = () => { if (wire.Bodies.Count == 2) client.InvalidateAccessContext(); };
+            var finished = (Task)Call(page, "ShowBatchDownloadDialogAsync", "series-1", (object)0, "Native fixture")!;
+            var last = await Dialog(parent); await Until(() => Elements<Button>(last).Any(b => Equals(b.Content, "Start Download")));
+            Invoke(Elements<Button>(last).Single(b => Equals(b.Content, "Start Download")));
+            await Until(() => finished.IsCompleted || Elements<Button>(last).Any(b => Equals(b.Content, "View Downloads")));
+            Check(finished.IsCompleted && wire.Bodies.Count == 2, "A batch whose last page was accepted must complete, not report an interruption.");
+            await finished;
+            Program.Log("PASS: a request context retired during the last page still completes the native batch.");
+
             // Template discovery is optional: a failing catalog read leaves the batch startable without a template.
             wire.Reset(); wire.DiscoveryFails = true;
             var degraded = (Task)Call(page, "ShowBatchDownloadDialogAsync", "series-1", (object)0, "Native fixture")!;

@@ -19,6 +19,37 @@ public sealed class BatchDownloadOwnershipTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>new DownloadsApi(client).CreateDownloadsAsync(new(){ContentId="series",Series=true}));
         Assert.Single(wire.Paths);
     }
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public async Task TerminalResponseFromRetiredRequestContextCompletesTheBatch(bool transportCatchUp)
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        // An access refresh or reconnect catch-up retires the request, not the batch its last page completed.
+        wire.Read = request => { client.TryInvalidateAccessContext(client.CaptureContext(),out ApiRequestContext _,transportCatchUp); return "{\"items\":[{\"id\":\"entry\"}],\"skipped\":[{\"reason\":\"unavailable\"}],\"page\":{\"has_more\":false}}"; };
+        var accepted=0;
+        var result=await new DownloadsApi(client).CreateDownloadsAsync(new(){ContentId="series",Series=true},pageAccepted:()=>accepted++);
+        Assert.Equal("entry",Assert.Single(result.Downloads).Id);
+        Assert.Equal("unavailable",Assert.Single(result.Skipped).Reason);
+        Assert.Equal(1,accepted);
+        Assert.Single(wire.Paths);
+    }
+    [Fact]
+    public async Task OwnerCancelledAfterTheTerminalPageWasAcceptedStillCompletesTheBatch()
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid"); using var owner=new CancellationTokenSource();
+        wire.Read = _ => "{\"items\":[{\"id\":\"entry\"}],\"page\":{\"has_more\":false}}";
+        // The picker closes once the response is read: the accepted page is the last one, so nothing was interrupted.
+        var result=await new DownloadsApi(client).CreateDownloadsAsync(new(){ContentId="series",Series=true},owner.Token,()=>owner.Cancel());
+        Assert.Equal("entry",Assert.Single(result.Downloads).Id);
+        Assert.Single(wire.Paths);
+    }
+    [Fact]
+    public async Task RetiredRequestContextBeforeTheTerminalPageStillStopsTheCursor()
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        wire.Read = request => { client.InvalidateAccessContext(); return "{\"items\":[],\"page\":{\"has_more\":true,\"next_cursor\":\"next\"}}"; };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>new DownloadsApi(client).CreateDownloadsAsync(new(){ContentId="series",Series=true}));
+        Assert.Single(wire.Paths);
+    }
     [Fact]
     public async Task CancelledAcceptedPageNeverDispatchesNextCursor()
     {

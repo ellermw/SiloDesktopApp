@@ -19,6 +19,8 @@ public class DownloadsApi(SiloApiClient client)
         if (request.Series) request.BatchId ??= Guid.NewGuid().ToString();
         var result = new DownloadsResponse();
         var context = client.CaptureContext();
+        // The viewer outlives request contexts: reconnect catch-up and access refreshes retire requests, not a completed batch.
+        var viewer = client.CaptureIdentityContext();
         string? cursor = null;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         do
@@ -29,8 +31,12 @@ public class DownloadsApi(SiloApiClient client)
             var page = await client.SendRequestAsync<DownloadCreated>(context, HttpMethod.Post, path, V2Json.Body(request), ct);
             // Reported before the owner checks: a batch retired here still registered this page.
             pageAccepted?.Invoke();
-            ct.ThrowIfCancellationRequested();
-            if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Download context changed.", ct);
+            // An accepted last page completed the batch. Only a retired viewer discards it; a closed owner or retired request still gets the result.
+            if (page.Page?.HasMore == true || !client.IsCurrentIdentityContext(viewer))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Download context changed.", ct);
+            }
             result.Downloads.AddRange(page.Items);
             result.Skipped.AddRange(page.Skipped);
             if (page.Page?.HasMore != true) return result;
