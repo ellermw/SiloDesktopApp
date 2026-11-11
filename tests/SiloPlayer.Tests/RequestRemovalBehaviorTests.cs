@@ -282,6 +282,32 @@ public sealed class RequestRemovalBehaviorTests
     }
 
     [Fact]
+    public async Task ReturningBeforeTheDeleteSettlesReconcilesTheCachedAccountList()
+    {
+        using var wire = new Wire { HoldDelete = new(TaskCreationOptions.RunContinuationsAsynchronously) }; using var http = new HttpClient(wire);
+        var vm = await LoadedAsync(NewClient(http));
+        using var visit = new CancellationTokenSource();
+        var removal = vm.RemoveFailedRequestAsync(vm.MyRequests.Single(row => row.Id == "failed"), vm.CaptureRemovalOwner(), visit.Token);
+        var reads = 0;
+        try
+        {
+            await UntilAsync(() => wire.Writes.Count == 1);
+            visit.Cancel();
+            await vm.LoadCommand.ExecuteAsync(null);
+            Assert.Contains("failed", vm.MyRequests.Select(row => row.Id));
+            Assert.True(vm.IsRemovingRequest("failed"));
+            reads = wire.Reads.Count;
+        }
+        finally { wire.HoldDelete.TrySetResult(); }
+
+        Assert.Equal(RequestRemovalOutcome.Retired, (await removal).Outcome);
+        Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
+        Assert.DoesNotContain("failed", vm.MyRequests.Select(row => row.Id));
+        Assert.False(vm.IsRemovingRequest("failed"));
+        Assert.Single(wire.Writes);
+    }
+
+    [Fact]
     public async Task ReturningVisitIsNotSwallowedByARefreshItsPreviousVisitAbandoned()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);

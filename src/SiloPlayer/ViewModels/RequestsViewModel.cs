@@ -391,7 +391,8 @@ public partial class RequestsViewModel : ObservableObject
     public async Task<RequestRemovalResult> RemoveFailedRequestAsync(MediaRequest confirmed, ApiIdentityContext owner, CancellationToken visit = default)
     {
         var readOwner = _requestsApi.CaptureContext();
-        bool IsCurrent() => !visit.IsCancellationRequested && _requestsApi.IsCurrentIdentityContext(owner) && _requestsApi.IsCurrentContext(readOwner);
+        bool IsCurrentOwner() => _requestsApi.IsCurrentIdentityContext(owner) && _requestsApi.IsCurrentContext(readOwner);
+        bool IsCurrent() => !visit.IsCancellationRequested && IsCurrentOwner();
         // The viewer confirmed a row that may have been replaced or changed since: act on the current account row.
         var request = MyRequests.FirstOrDefault(row => row.Id == confirmed.Id);
         if (request == null || !IsCurrent() || !CanRemoveRequest(request) ||
@@ -407,11 +408,18 @@ public partial class RequestsViewModel : ObservableObject
                 await _requestsApi.RemoveFailedAsync(request.Id, owner);
                 result = new(RequestRemovalOutcome.Removed);
             }
-            catch (OperationCanceledException) when (!IsCurrent()) { InvalidateCache(); return new(RequestRemovalOutcome.Retired); }
+            catch (OperationCanceledException) when (!IsCurrent()) { result = new(RequestRemovalOutcome.Retired); }
             catch (ApiException ex) when (ex.StatusCode is 404 or 409) { result = new(RequestRemovalOutcome.Refused, ex.Message); }
             catch (Exception ex) { result = new(RequestRemovalOutcome.Failed, ex.Message); }
             // The DELETE may have reached the server: a later visit must read the list again rather than reuse it.
-            if (!IsCurrent()) { InvalidateCache(); return new(RequestRemovalOutcome.Retired); }
+            if (!IsCurrent())
+            {
+                InvalidateCache();
+                // A returning cached page may already have loaded before the DELETE settled. Reconcile its
+                // account rows even though the initiating visit retired, but never read for a different owner.
+                if (IsCurrentOwner()) await LoadMineAsync();
+                return new(RequestRemovalOutcome.Retired);
+            }
             await RefreshAfterRequestChangeAsync(IsCurrent);
             return IsCurrent() ? result : new(RequestRemovalOutcome.Retired);
         }
@@ -455,7 +463,7 @@ public enum RequestRemovalOutcome
     Failed,
     /// <summary>Not eligible, unsupported by the server, or already pending.</summary>
     Skipped,
-    /// <summary>The initiating account/profile or page visit retired; nothing is reported or refreshed for the old owner, but the next load re-reads the lists.</summary>
+    /// <summary>The initiating account/profile or page visit retired; feedback is suppressed, only a still-current owner's account list may refresh, and the next load re-reads the lists.</summary>
     Retired,
 }
 
