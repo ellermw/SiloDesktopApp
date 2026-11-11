@@ -263,7 +263,13 @@ public partial class PlayerService
                     AdoptSubtitleInventoryInPlace(appliedSession, replacement);
                     _pendingSubtitleInventoryApplication = null;
                 }
-                AdoptBufferingQualityPlan();
+                // The native transport did not change. Keep its stall history,
+                // prompt/grace deadlines and throughput samples; only rebase the
+                // session used by subsequent buffering actions and diagnostics.
+                lock (_bufferingGate)
+                    if (ReferenceEquals(_bufferingManager, manager) && ReferenceEquals(_bufferingSession, appliedSession) &&
+                        ReferenceEquals(manager.CurrentSession, replacement))
+                        _bufferingSession = replacement;
                 SendSubtitleListToOsc();
                 EnsureSubtitleSync();
                 await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);

@@ -117,12 +117,38 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 using var invalid = JsonDocument.Parse("""{"session_id":"fixture","file_id":42,"subtitle_id":77,"track":{"combined_index":"invalid"}}""");
                 var inventoryNativeFile = Get(service, "_fileLoadGeneration");
                 var inventorySid = mpv.GetPropertyDouble("sid");
+                var buffering = new BufferingQualityController("ask");
+                buffering.Adopt(new("buffering-plan", "buffering-adoption", "auto", "1080p", 8000,
+                    [new() { Label = "720p", BitrateKbps = 4000 }]), 0);
+                buffering.Observe(new(0, false, false, false, false, false, 0, null));
+                buffering.Observe(new(11000, true, false, false, false, false, 0, 3000));
+                buffering.Observe(new(12500, false, false, false, false, false, 0, 3000));
+                buffering.Observe(new(13000, true, false, false, false, false, 0, 3000));
+                buffering.Observe(new(14500, false, false, false, false, false, 0, 3000));
+                Require(buffering.Pill == "prompt" && buffering.Summary.StallCount == 2,
+                    "The inventory regression did not establish stall evidence and a Lower-quality prompt.");
+                Set(service, "_bufferingController", buffering); Set(service, "_bufferingManager", manager);
+                Set(service, "_bufferingSession", manager.CurrentSession);
+                Set(service, "_bufferingLastDataAt", 12345L); Set(service, "_bufferingLastPosition", (double?)12);
+                var summary = buffering.Summary; var bufferingPlan = buffering.Plan;
+                var grace = Get(buffering, "_grace"); var promptRemaining = buffering.PillRemainingMs;
+                var meter = (NativeMediaThroughputMeter)Get(service, "_nativeMediaMeter")!;
+                meter.Reset(); meter.Observe(0, 0, false, false); meter.Observe(1000, 1000000, false, false);
                 await (Task)Call(service, "ApplySubtitleReadyAsync", invalid.RootElement, "fixture")!;
                 await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
                 Require(Equals(inventoryNativeFile, Get(service, "_fileLoadGeneration")) && mpv.GetPropertyDouble("sid") == inventorySid,
                     "An unchanged-transport inventory refresh reopened mpv or replaced the active subtitle SID.");
                 Require(wire.Replans.Count == 2 && wire.PreferenceWrites == writes && manager.CaptureLocalSubtitleIntent() == intent,
                     "Invalid optional track metadata did not recover through an intent-preserving authoritative replan.");
+                Require(ReferenceEquals(buffering, Get(service, "_bufferingController")) &&
+                    ReferenceEquals(summary, buffering.Summary) && ReferenceEquals(bufferingPlan, buffering.Plan) &&
+                    buffering.Summary.StallCount == 2 && buffering.Pill == "prompt" && buffering.PillRemainingMs == promptRemaining &&
+                    Equals(grace, Get(buffering, "_grace")) && ((Queue<long>)Get(buffering, "_stalls")!).Count == 2 &&
+                    ReferenceEquals(manager.CurrentSession, Get(service, "_bufferingSession")) &&
+                    (long)Get(service, "_bufferingLastDataAt")! == 12345 && (double?)Get(service, "_bufferingLastPosition") == 12 &&
+                    meter.Observe(2000, 2000000, false, false) == 8000,
+                    "A subtitle-only inventory adoption reset buffering history, grace, prompt, throughput or buffering-action ownership.");
+                Set(service, "_bufferingController", null); Set(service, "_bufferingManager", null); Set(service, "_bufferingSession", null);
                 // Retire the transport snapshot after publication but before
                 // the native cache remap. The retry's valid track object must
                 // not bypass the outstanding application of the new inventory.
@@ -358,6 +384,37 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                         "Re-indexing a playing download changed playback intent, preferences or transport.");
                 }
                 wire.ReverseDownloadedOrder = false;
+                wire.AdditionalDownloadedAvailable = false;
+                manager.RecordLocalSubtitleSelection(0);
+                await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                var planOnlyDownload = manager.CurrentSession!.SubtitleUrls.Single(row => row.Source == "downloaded");
+                // Match the pinned playback_start_opaque_ids.json shape: a
+                // downloaded sidecar has an opaque TrackId but no stored keys.
+                // Remove only the extra identities injected by this fake server.
+                planOnlyDownload.Id = null; planOnlyDownload.SyncKey = null;
+                await service.SetSubtitleTrackAndPersistAsync(planOnlyDownload.Index + 1, planOnlyDownload.Language, planOnlyDownload);
+                await Until(() => service.ActiveSubtitleServerIndex == planOnlyDownload.Index && NativeSidMatches(planOnlyDownload.Index));
+                var planOnlySid = mpv.GetPropertyDouble("sid");
+                var planOnlyIntent = manager.CaptureLocalSubtitleIntent(); var planOnlyWrites = wire.PreferenceWrites;
+                var planOnlyFile = Get(service, "_fileLoadGeneration"); var planOnlyUrl = planOnlyDownload.Url;
+                var planOnlyPath = files[planOnlyDownload.Index];
+                foreach (var ownerRefresh in new[] { false, true })
+                {
+                    if (ownerRefresh) await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, null, null, null, null)!;
+                    else await service.RefreshSubtitlesAfterAiAsync(42);
+                    var refreshedDownload = manager.CurrentSession!.SubtitleUrls.Where(row => row.Source == "downloaded").ToArray();
+                    Require(refreshedDownload.Length == 1 && ReferenceEquals(planOnlyDownload, refreshedDownload[0]) &&
+                        planOnlyDownload.Id == null && planOnlyDownload.SyncKey == null && !planOnlyDownload.Unplayable &&
+                        planOnlyDownload.Url == planOnlyUrl && planOnlyDownload.Delivery == "sidecar" &&
+                        ReferenceEquals(planOnlyDownload, Get(service, "_executedSubtitleTrack")) &&
+                        NativeSidMatches(planOnlyDownload.Index) && mpv.GetPropertyDouble("sid") == planOnlySid &&
+                        files.GetValueOrDefault(planOnlyDownload.Index) == planOnlyPath && File.Exists(planOnlyPath),
+                        "A stored-list refresh replaced a plan-only download with an unplayable duplicate or retired its SID/bytes.");
+                    Require(manager.CaptureLocalSubtitleIntent() == planOnlyIntent && wire.PreferenceWrites == planOnlyWrites &&
+                        Equals(planOnlyFile, Get(service, "_fileLoadGeneration")) && service.IsPaused && mpv.IsPaused,
+                        "Refreshing a plan-only download changed playback intent, preferences or transport.");
+                }
                 var accepted = manager.CurrentSession;
                 var nativeFile = Get(service, "_fileLoadGeneration");
                 wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);

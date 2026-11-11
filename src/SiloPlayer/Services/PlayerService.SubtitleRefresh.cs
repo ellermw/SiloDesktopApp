@@ -4,6 +4,11 @@ namespace SiloPlayer.Services;
 
 public partial class PlayerService
 {
+    private static bool IsCanonicalDownloadWithoutStoredIdentity(SubtitleTrackInfo track) =>
+        string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
+        track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey) &&
+        !string.IsNullOrWhiteSpace(track.TrackId) && !string.IsNullOrWhiteSpace(track.Delivery);
+
     public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, long? preferredSubtitleId = null, Func<bool>? isCurrent = null,
         Func<bool>? mayActivate = null)
     {
@@ -67,6 +72,12 @@ public partial class PlayerService
                     return previous;
                 }
                 var ordinal = baseIndex + offset;
+                // Older plans omit stored keys. The list cannot prove that a
+                // canonical row at this slot changed: retain it, without guessing
+                // a stored identity or creating an unplayable positional duplicate.
+                var unknownCanonical = previousDownloads.Where(track => track.Index == ordinal &&
+                    IsCanonicalDownloadWithoutStoredIdentity(track)).Take(2).ToArray();
+                if (unknownCanonical.Length == 1) return unknownCanonical[0];
                 var collision = reserved.Any(track => track.Index == ordinal);
                 var executable = unique && canonicalOrdinalsAgree && !collision;
                 if (collision) ordinal = Math.Max(reserved.Max(track => track.Index) + 1, baseIndex + response.Subtitles.Count) + offset;
@@ -108,6 +119,7 @@ public partial class PlayerService
                     (Track: track, Path: _prefetchedSubtitleFiles.GetValueOrDefault(track.Index))).ToArray();
                 downloaded = downloaded.Select(refreshed =>
                 {
+                    if (previousDownloads.Contains(refreshed)) return refreshed;
                     var matches = previousDownloads.Where(track => track.Id == refreshed.Id ||
                         track.SyncKey == refreshed.SyncKey).Take(2).ToArray();
                     if (matches.Length != 1 || downloaded.Count(track => track.Id == refreshed.Id ||
@@ -133,6 +145,9 @@ public partial class PlayerService
                     retained.Url = refreshed.Url;
                     return retained;
                 }).ToList();
+                // Absence from a stored-ID list cannot retire a plan-only row.
+                downloaded.AddRange(previousDownloads.Where(track =>
+                    IsCanonicalDownloadWithoutStoredIdentity(track) && !downloaded.Contains(track)));
 
                 SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
                 {

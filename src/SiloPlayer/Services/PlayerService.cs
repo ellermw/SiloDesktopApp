@@ -9361,6 +9361,11 @@ public partial class PlayerService : IDisposable
                         return previous;
                     }
                     var ordinal = baseIndex + offset;
+                    // A stored-ID list cannot replace an older plan-only row
+                    // or prove a stored identity for it from its position alone.
+                    var unknownCanonical = previousDownloads.Where(track => track.Index == ordinal &&
+                        IsCanonicalDownloadWithoutStoredIdentity(track)).Take(2).ToArray();
+                    if (unknownCanonical.Length == 1) return unknownCanonical[0];
                     var collision = reserved.Any(track => track.Index == ordinal);
                     var executable = unique && canonicalOrdinalsAgree && !collision;
                     if (collision) ordinal = Math.Max(reserved.Max(track => track.Index) + 1, baseIndex + response.Subtitles.Count) + offset;
@@ -9399,6 +9404,7 @@ public partial class PlayerService : IDisposable
                     (Track: track, Path: _prefetchedSubtitleFiles.GetValueOrDefault(track.Index))).ToArray();
                 downloaded = downloaded.Select(refreshed =>
                 {
+                    if (previousDownloads.Contains(refreshed)) return refreshed;
                     var matches = previousDownloads.Where(track => track.Id == refreshed.Id ||
                         track.SyncKey == refreshed.SyncKey).Take(2).ToArray();
                     if (matches.Length != 1 || downloaded.Count(track => track.Id == refreshed.Id ||
@@ -9432,7 +9438,7 @@ public partial class PlayerService : IDisposable
                 bool UnknownDownload(SubtitleTrackInfo? track) => track != null &&
                     string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
                     track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
-                foreach (var retained in previousDownloads.Where(track => UnknownDownload(track)))
+                foreach (var retained in previousDownloads.Where(track => UnknownDownload(track) && !downloaded.Contains(track)))
                 {
                     if (string.IsNullOrWhiteSpace(retained.TrackId) || string.IsNullOrWhiteSpace(retained.Delivery))
                         retained.Index = downloaded.Concat(reserved).Select(track => track.Index).DefaultIfEmpty(baseIndex - 1).Max() + 1;
