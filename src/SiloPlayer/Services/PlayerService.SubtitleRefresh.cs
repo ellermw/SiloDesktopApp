@@ -18,6 +18,11 @@ public partial class PlayerService
         string.IsNullOrWhiteSpace(language) || string.IsNullOrWhiteSpace(track.Language) ||
         string.Equals(language, track.Language, StringComparison.OrdinalIgnoreCase);
 
+    // Stored-list refreshes still in flight with a subtitle to select. Each is
+    // offered the inventory an announcement's replan applies in place of the
+    // session it read under.
+    private readonly HashSet<Action<PlaybackStartResponse>> _storedSubtitleListRefreshes = [];
+
     public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, long? preferredSubtitleId = null, Func<bool>? isCurrent = null,
         Func<bool>? mayActivate = null)
     {
@@ -62,6 +67,31 @@ public partial class PlayerService
             ReferenceEquals(mpv, _mpv) && content == ContentId && play == Volatile.Read(ref _playRequestGeneration) &&
             file == Volatile.Read(ref _playbackFileGeneration);
         if (!Current()) return;
+        // An announcement's replan retires this response, not the selection this
+        // refresh was asked to make. Once that inventory is applied, start over on
+        // it under the activation intent captured here instead of dropping the pick.
+        Action<PlaybackStartResponse> superseded = null!;
+        superseded = applied =>
+        {
+            if (ReferenceEquals(applied, session) || applied.SessionId != session.SessionId ||
+                applied.MediaFileId != mediaFileId) return;
+            lock (_subtitleReadyRefreshLock)
+                if (!_storedSubtitleListRefreshes.Remove(superseded)) return;
+            DeferUntilSubtitleReadyIdle(() =>
+            {
+                // Every fence above except the response and the loaded file,
+                // which the applied inventory was allowed to replace.
+                if (!_closing && !token.IsCancellationRequested && (isCurrent?.Invoke() ?? true) && activation() &&
+                    ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
+                    ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv) && content == ContentId &&
+                    play == Volatile.Read(ref _playRequestGeneration) && liveJob == Volatile.Read(ref _liveSubtitleJobId) &&
+                    manager.CurrentSession is { } current && current.SessionId == applied.SessionId &&
+                    current.MediaFileId == mediaFileId)
+                    _ = RefreshSubtitlesAfterAiAsync(mediaFileId, preferredSubtitleId, isCurrent, activation);
+            });
+        };
+        if (preferredSubtitleId.HasValue)
+            lock (_subtitleReadyRefreshLock) _storedSubtitleListRefreshes.Add(superseded);
         try
         {
             var response = await authority.PlaybackApi.GetSubtitlesAsync(mediaFileId, token, context).ConfigureAwait(false);
@@ -76,7 +106,8 @@ public partial class PlayerService
                 // An announcement may have merged while the list was read. Build
                 // from the rows as they are now, under the gates that serialize
                 // that merge, so its canonical facts are never judged stale.
-                var previousInventory = acceptedInventory = session.SubtitleUrls;
+                var previousInventory = session.SubtitleUrls;
+                acceptedInventory = previousInventory;
                 var previousDownloads = previousInventory
                     .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
                 var existing = previousInventory.Except(previousDownloads).ToList();
@@ -198,8 +229,7 @@ public partial class PlayerService
                     return retained;
                 }).ToList();
                 // A list read before an announcement landed cannot prove its row gone.
-                downloaded.AddRange(previousDownloads.Where(track => !readInventory.Contains(track) &&
-                    !downloaded.Contains(track)).ToArray());
+                RetainDownloadsAnnouncedDuringRead(readInventory, previousDownloads, downloaded);
                 // Absence from a stored-ID list cannot retire a row without stored
                 // keys. Both refresh entry points keep those rows by the same rule.
                 RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);
@@ -311,6 +341,26 @@ public partial class PlayerService
         {
             LogToFile("state_trace.txt", $"RefreshSubtitlesAfterAiAsync failed: {ex.Message}");
         }
+        finally
+        {
+            lock (_subtitleReadyRefreshLock) _storedSubtitleListRefreshes.Remove(superseded);
+        }
+    }
+
+    // Shared by both stored-list refresh entry points, under their inventory
+    // locks. A canonical row the read inventory did not hold was announced after
+    // the list was requested, so the list cannot prove it gone. A plan accepted
+    // during the read replaces every row object: compare identities, not rows.
+    private static void RetainDownloadsAnnouncedDuringRead(List<SubtitleTrackInfo> readInventory,
+        SubtitleTrackInfo[] previousDownloads, List<SubtitleTrackInfo> downloaded)
+    {
+        bool Known(SubtitleTrackInfo track) => readInventory.Any(read => ReferenceEquals(read, track) ||
+            string.Equals(read.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
+            (track.Id is > 0 && read.Id == track.Id ||
+             !string.IsNullOrWhiteSpace(track.SyncKey) && read.SyncKey == track.SyncKey ||
+             !string.IsNullOrWhiteSpace(track.TrackId) && read.TrackId == track.TrackId));
+        downloaded.AddRange(previousDownloads.Where(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
+            !string.IsNullOrWhiteSpace(track.Delivery) && !Known(track) && !downloaded.Contains(track)).ToArray());
     }
 
     // Shared by both stored-list refresh entry points, under their inventory

@@ -9345,6 +9345,34 @@ public partial class PlayerService : IDisposable
         if (!Current()) return;
         long liveJobId;
         lock (_liveSubtitleLock) liveJobId = _liveSubtitleFileId == mediaFileId ? _liveSubtitleJobId : 0;
+        // The inventory the stored list is read against. Any list published by
+        // now predates that read: rows it lacks at the commit were announced since.
+        var readInventory = session.SubtitleUrls;
+        // Without an owner this refresh cannot follow an accepted plan. When an
+        // announcement's inventory replaces its response, start over on that
+        // inventory once it is applied instead of dropping the selection.
+        Action<PlaybackStartResponse> superseded = null!;
+        superseded = applied =>
+        {
+            if (ReferenceEquals(applied, session) || applied.SessionId != session.SessionId ||
+                applied.MediaFileId != mediaFileId) return;
+            lock (_subtitleReadyRefreshLock)
+                if (!_storedSubtitleListRefreshes.Remove(superseded)) return;
+            DeferUntilSubtitleReadyIdle(() =>
+            {
+                // Every fence above except the response the inventory replaced.
+                if (!_closing && isCurrent?.Invoke() != false && mayActivate?.Invoke() != false &&
+                    ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(mpv, _mpv) &&
+                    playGeneration == Volatile.Read(ref _playRequestGeneration) &&
+                    authority.ApiClient.IsCurrentIdentityContext(identity) && ReferenceEquals(manager, _playbackManager) &&
+                    liveJobId == (_liveSubtitleFileId == mediaFileId ? Volatile.Read(ref _liveSubtitleJobId) : 0) &&
+                    manager.CurrentSession is { } current &&
+                    current.SessionId == applied.SessionId && current.MediaFileId == mediaFileId)
+                    _ = RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, null, mayActivate, isCurrent);
+            });
+        };
+        if (currentOwner == null && preferredSubtitleId.HasValue)
+            lock (_subtitleReadyRefreshLock) _storedSubtitleListRefreshes.Add(superseded);
         try
         {
             var response = await authority.PlaybackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
@@ -9481,6 +9509,8 @@ public partial class PlayerService : IDisposable
                     retained.Url = refreshed.Url;
                     return retained;
                 }).ToList();
+                // A list read before an announcement landed cannot prove its row gone.
+                RetainDownloadsAnnouncedDuringRead(readInventory, previousDownloads, downloaded);
 
                 // Older plan downloads without stored keys cannot be proven gone
                 // by this inventory. Keep their exact rows at separate indices,
@@ -9641,6 +9671,10 @@ public partial class PlayerService : IDisposable
         catch (Exception ex)
         {
             LogToFile("state_trace.txt", $"Subtitle refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            lock (_subtitleReadyRefreshLock) _storedSubtitleListRefreshes.Remove(superseded);
         }
     }
 

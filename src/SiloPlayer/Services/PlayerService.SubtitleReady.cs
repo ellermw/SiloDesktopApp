@@ -51,6 +51,16 @@ public partial class PlayerService
     private void DeferSubtitleReadyRefresh(JsonElement payload, SubtitleOperationOwner owner, string sessionId, int fileId)
     {
         var announcement = payload.Clone();
+        DeferUntilSubtitleReadyIdle(() =>
+        {
+            if (owner.IsCurrentForAi && _playbackManager?.CurrentSession is { } current &&
+                current.SessionId == sessionId && current.MediaFileId == fileId)
+                _ = ApplySubtitleReadyAsync(announcement, sessionId);
+        });
+    }
+
+    private void DeferUntilSubtitleReadyIdle(Action resume)
+    {
         Action refresh = null!;
         refresh = () =>
         {
@@ -62,9 +72,7 @@ public partial class PlayerService
                 if (!_pendingSubtitleReadyRefreshes.Remove(refresh)) return;
                 ContentLoaded -= refresh;
             }
-            if (owner.IsCurrentForAi && _playbackManager?.CurrentSession is { } current &&
-                current.SessionId == sessionId && current.MediaFileId == fileId)
-                _ = ApplySubtitleReadyAsync(announcement, sessionId);
+            resume();
         };
         lock (_subtitleReadyRefreshLock)
         {
@@ -72,6 +80,16 @@ public partial class PlayerService
             ContentLoaded += refresh;
         }
         refresh();
+    }
+
+    // Called once an announcement's replacement inventory is applied to the
+    // loaded file, in place or by its reload. A stored-list refresh still reading
+    // under an outgoing response would otherwise end without its selection.
+    private void RestartSupersededSubtitleListRefreshes(PlaybackStartResponse applied)
+    {
+        Action<PlaybackStartResponse>[] reading;
+        lock (_subtitleReadyRefreshLock) reading = _storedSubtitleListRefreshes.ToArray();
+        foreach (var superseded in reading) superseded(applied);
     }
 
     private static bool SubtitleInventoryRequiresTransportReload(PlaybackStartResponse previous, PlaybackStartResponse next)
@@ -376,6 +394,7 @@ public partial class PlayerService
                         _bufferingSession = replacement;
                 SendSubtitleListToOsc();
                 EnsureSubtitleSync();
+                RestartSupersededSubtitleListRefreshes(replacement);
                 await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
                 return;
             }
@@ -398,6 +417,7 @@ public partial class PlayerService
             BeginMpvLoad(prepared, CaptureUserPausedState());
             _pendingSubtitleInventoryApplication = null;
             SendSubtitleListToOsc();
+            RestartSupersededSubtitleListRefreshes(replacement);
             await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
         }
         // A request timeout also surfaces as a cancellation that superseded nothing.

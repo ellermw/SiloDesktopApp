@@ -409,6 +409,90 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     Require(manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes && service.IsPaused && mpv.IsPaused,
                         "A straddled stored-list refresh changed the viewer's choice, preference or pause intent.");
                 }
+                // The list can also be read before the announced subtitle is stored
+                // in it. Its absence there cannot retire the row that merged while
+                // the read was in flight, through either refresh entry point.
+                foreach (var ownerRefresh in new[] { false, true })
+                {
+                    wire.DownloadedAvailable = wire.AdditionalDownloadedAvailable = false;
+                    await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                    var unlisted = manager.CurrentSession!;
+                    Require(!unlisted.SubtitleUrls.Any(row => row.Id is 77 or 78),
+                        "The unlisted-announcement regression did not establish an inventory without downloads.");
+                    wire.DownloadedAvailable = true;
+                    wire.HoldStoredList = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.StoredListEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var unlistedRead = Task.Run(() => ownerRefresh
+                        ? (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, null, null, null, null)!
+                        : service.RefreshSubtitlesAfterAiAsync(42));
+                    try
+                    {
+                        await wire.StoredListEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        lock (Get(service, "_subtitleSyncGate")!)
+                        lock (Get(service, "_subtitleTrackStateLock")!)
+                            Require(manager.TryApplySubtitleTrack(unlisted, new()
+                            {
+                                StoredSubtitleId = 78, TrackId = "downloaded:78", CombinedIndex = 3,
+                                Source = "downloaded", Delivery = "sidecar", Url = subtitles.Origin + "/spa.srt",
+                            }), "The announcement did not merge while the stored-list read was in flight.");
+                    }
+                    finally { wire.HoldStoredList.TrySetResult(); }
+                    await unlistedRead.WaitAsync(TimeSpan.FromSeconds(6));
+                    wire.HoldStoredList = null; wire.StoredListEntered = null;
+                    var announced = unlisted.SubtitleUrls.SingleOrDefault(row => row.Id == 78);
+                    Require(ReferenceEquals(unlisted, manager.CurrentSession) &&
+                        announced is { Index: 3, TrackId: "downloaded:78", Delivery: "sidecar", Unplayable: false } &&
+                        announced.Url == subtitles.Origin + "/spa.srt",
+                        "A stored list read before an announcement landed retired the announced row.");
+                    Require(unlisted.SubtitleUrls.SingleOrDefault(row => row.Id == 77) is { Index: 2, Unplayable: false, Url: "/stream/fixture/subtitles/2" },
+                        "A row announced during the stored-list read aborted or displaced that refresh.");
+                    Require(manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes && service.IsPaused && mpv.IsPaused,
+                        "A stored-list refresh that kept an announced row changed the viewer's choice, preference or pause intent.");
+                }
+                // An announcement without track metadata replans. Its inventory can
+                // replace the session while the refresh meant to select that stored
+                // subtitle is still reading the list. Once the inventory is applied
+                // in place the refresh must start over on it, not drop the selection.
+                // Cover the AI-completion and the Add Subtitles entry points.
+                foreach (var ownerRefresh in new[] { false, true })
+                {
+                    wire.DownloadedAvailable = wire.AdditionalDownloadedAvailable = false;
+                    await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                    var retiredSession = manager.CurrentSession!;
+                    var retiredFile = Get(service, "_fileLoadGeneration");
+                    Require(!retiredSession.SubtitleUrls.Any(row => row.Id == 77),
+                        "The superseded-refresh regression did not establish an inventory without the stored subtitle.");
+                    wire.DownloadedAvailable = true;
+                    wire.HoldStoredList = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.StoredListEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var selecting = Task.Run(() => ownerRefresh
+                        ? (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, (long?)77, null, null, null)!
+                        : service.RefreshSubtitlesAfterAiAsync(42, 77));
+                    try
+                    {
+                        await wire.StoredListEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        await ((Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "fixture")!).WaitAsync(TimeSpan.FromSeconds(6));
+                        Require(!ReferenceEquals(retiredSession, manager.CurrentSession) &&
+                            manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 77) &&
+                            Equals(retiredFile, Get(service, "_fileLoadGeneration")),
+                            "The announcement did not replace the reading refresh's session in place.");
+                    }
+                    finally { wire.HoldStoredList.TrySetResult(); }
+                    await selecting.WaitAsync(TimeSpan.FromSeconds(6));
+                    wire.HoldStoredList = null; wire.StoredListEntered = null;
+                    await Until(() => service.ActiveSubtitleServerIndex == 2 && NativeSidMatches(2));
+                    var selectedRow = manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77);
+                    Require(selectedRow.Index == 2 && selectedRow.TrackId == "downloaded:77" && !selectedRow.Unplayable &&
+                        Equals(retiredFile, Get(service, "_fileLoadGeneration")),
+                        "A refresh superseded by an announcement's inventory did not select its stored subtitle on that inventory.");
+                    // The restarted refresh is detached. Let it finish, then return
+                    // the next case to the first external subtitle.
+                    var restarted = (HashSet<Action<PlaybackStartResponse>>)Get(service, "_storedSubtitleListRefreshes")!;
+                    await Until(() => { lock (Get(service, "_subtitleReadyRefreshLock")!) return restarted.Count == 0; });
+                    manager.RecordLocalSubtitleSelection(0);
+                }
                 // A stored-list-only download owns valid local bytes even when
                 // a later list order disagrees with the canonical reserved row.
                 wire.DownloadedAvailable = true; wire.AdditionalDownloadedAvailable = false;
