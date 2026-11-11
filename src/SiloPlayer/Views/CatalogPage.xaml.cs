@@ -287,7 +287,8 @@ public sealed partial class CatalogPage : Page,
             .Where(candidate => candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp
                 && HomeDismissalPolicy.IsRemovedBy(candidate, message.ContentId, message.SeriesId))
             .ToList();
-        if (removed.Count == 0) return;
+        if (removed.Count == 0 && !_items.Any(candidate =>
+            candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp)) return;
         // A section is paged from live row membership. A pending seek belongs to the
         // old row, whether the server read it before or after this dismissal.
         var resumePaging = _loading;
@@ -301,12 +302,13 @@ public sealed partial class CatalogPage : Page,
         foreach (var card in removed) _items.Remove(card);
         _selectedIds.ExceptWith(removed.Select(card => card.ContentId));
         _offset = Math.Max(0, _offset - removed.Count);
-        _totalItems = Math.Max(0, _totalItems - removed.Count);
-        CountText.Text = _totalItems.ToString("N0");
-        ResultNounText.Text = _totalItems == 1 ? "RESULT" : "RESULTS";
+        // The show may also have cards beyond the loaded prefix. Hide the old count
+        // and read the live row even if no continuation was pending; only the server
+        // knows its new total. The next window retains the corrected prefix offset.
+        CountPanel.Visibility = Visibility.Collapsed;
         EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSelectionUi();
-        if (resumePaging) _ = LoadAsync(false);
+        _ = LoadAsync(false);
     }
 
     public void Receive(PlaybackProgressUpdated message)

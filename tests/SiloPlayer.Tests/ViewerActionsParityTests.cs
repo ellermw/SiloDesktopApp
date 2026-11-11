@@ -115,7 +115,7 @@ public class ViewerActionsParityTests
         Assert.True(HomeDismissalPolicy.CanDismiss(new MediaItem { ItemSource = "continue_watching", ProgressUpdatedAt = "2026-11-09T10:00:00Z" }));
         Assert.False(HomeDismissalPolicy.CanDismiss(new MediaItem { ItemSource = "continue_watching" }));
         Assert.False(HomeDismissalPolicy.CanDismiss(new MediaItem { ItemSource = "continue_watching", ProgressUpdatedAt = " " }));
-        Assert.True(HomeDismissalPolicy.CanDismiss(new MediaItem { ItemSource = "next_up", SeriesId = "show" }));
+        Assert.True(HomeDismissalPolicy.CanDismiss(new MediaItem { Type = "episode", ItemSource = "next_up", SeriesId = "show" }));
         Assert.False(HomeDismissalPolicy.CanDismiss(new MediaItem { ItemSource = "next_up", ProgressUpdatedAt = "2026-11-09T10:00:00Z" }));
         Assert.False(HomeDismissalPolicy.CanDismiss(new MediaItem { ItemSource = "section", ProgressUpdatedAt = "2026-11-09T10:00:00Z", SeriesId = "show" }));
     }
@@ -136,6 +136,32 @@ public class ViewerActionsParityTests
         // A movie has no series: only that title leaves.
         Assert.True(HomeDismissalPolicy.IsRemovedBy(movie, "movie", null));
         Assert.False(HomeDismissalPolicy.IsRemovedBy(other, "movie", null));
+    }
+
+    [Theory]
+    [InlineData("audiobook")]
+    [InlineData("ebook")]
+    [InlineData("manga")]
+    public void DismissingABookWithASeriesIdRemovesOnlyThatTitle(string type)
+    {
+        var selected = new MediaItem { ContentId = "book-one", Type = type, SeriesId = "books",
+            ItemSource = HomeDismissalPolicy.ContinueWatching, ProgressUpdatedAt = "2026-11-09T10:00:00Z" };
+        var sibling = new MediaItem { ContentId = "book-two", Type = type, SeriesId = "books" };
+        var seriesId = HomeDismissalPolicy.SeriesIdentity(selected);
+        Assert.Null(seriesId);
+        Assert.True(HomeDismissalPolicy.CanDismiss(selected));
+        Assert.True(HomeDismissalPolicy.IsRemovedBy(selected, selected.ContentId, seriesId));
+        Assert.False(HomeDismissalPolicy.IsRemovedBy(sibling, selected.ContentId, seriesId));
+        selected.ItemSource = HomeDismissalPolicy.NextUp;
+        Assert.False(HomeDismissalPolicy.CanDismiss(selected));
+    }
+
+    [Fact]
+    public void ShowIdentityUsesTheEpisodeParentOrTheSeriesContentId()
+    {
+        Assert.Equal("show", HomeDismissalPolicy.SeriesIdentity(new MediaItem { Type = "episode", ContentId = "ep", SeriesId = "show" }));
+        Assert.Equal("show", HomeDismissalPolicy.SeriesIdentity(new MediaItem { Type = "series", ContentId = "show", SeriesId = "unrelated" }));
+        Assert.True(HomeDismissalPolicy.CanDismiss(new MediaItem { Type = "series", ContentId = "show", ItemSource = HomeDismissalPolicy.NextUp }));
     }
 
     [Fact]

@@ -399,6 +399,15 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     private void UpdateContinueState()
     {
+        // CanSave depends on both view-model state and the mutable rules editor.
+        // Refresh the actual control at the same points as the wizard navigation.
+        if (SaveButton != null) SaveButton.IsEnabled = CanSave;
+        if (RuleNeededText != null)
+        {
+            RuleNeededText.Text = SmartCollectionWizardViewModel.RuleNeededMessage;
+            RuleNeededText.Visibility = ViewModel.NeedsRule && !ViewModel.IsReadOnly
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
         if (ContinueButton == null) return;
         ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && (ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0);
     }
