@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Services;
 
@@ -30,6 +31,79 @@ public partial class PlayerService
         _pendingSubtitleReadyRefresh = refresh;
         ContentLoaded += refresh;
         if (!_switchingContent && !IsLoading) refresh();
+    }
+
+    private static bool SubtitleInventoryRequiresTransportReload(PlaybackStartResponse previous, PlaybackStartResponse next)
+        => previous.StreamUrl != next.StreamUrl || previous.Delivery != next.Delivery ||
+            PlaybackTransportPlanner.Plan(previous).TransportKind != PlaybackTransportPlanner.Plan(next).TransportKind ||
+            previous.IsSubtitleBurnedIn != next.IsSubtitleBurnedIn ||
+            previous.IsSubtitleBurnedIn &&
+                ((!string.IsNullOrWhiteSpace(previous.SelectedSubtitleTrackId) || !string.IsNullOrWhiteSpace(next.SelectedSubtitleTrackId)
+                    ? previous.SelectedSubtitleTrackId != next.SelectedSubtitleTrackId
+                    : previous.SelectedSubtitleTrackIndex != next.SelectedSubtitleTrackIndex) ||
+                 previous.SelectedSubtitleArtifactUrl != next.SelectedSubtitleArtifactUrl ||
+                 previous.SubtitleTimingOriginSeconds != next.SubtitleTimingOriginSeconds);
+
+    // The video file is unchanged. Move index-keyed native state by unique,
+    // stable identity rather than reopening mpv just to replace the menu rows.
+    private void AdoptSubtitleInventoryInPlace(PlaybackStartResponse previous, PlaybackStartResponse next)
+    {
+        SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
+        {
+            if (track == null) return null;
+            var matches = next.SubtitleUrls.Where(row => row.Source == track.Source &&
+                !(track.Id is > 0 && row.Id is > 0 && track.Id != row.Id) &&
+                !(!string.IsNullOrWhiteSpace(track.SyncKey) && !string.IsNullOrWhiteSpace(row.SyncKey) && track.SyncKey != row.SyncKey) &&
+                (track.Id is > 0 && row.Id == track.Id ||
+                 !string.IsNullOrWhiteSpace(track.SyncKey) && row.SyncKey == track.SyncKey ||
+                 !string.IsNullOrWhiteSpace(track.TrackId) && row.TrackId == track.TrackId &&
+                    !((track.Id is > 0 || !string.IsNullOrWhiteSpace(track.SyncKey)) &&
+                      (row.Id is > 0 || !string.IsNullOrWhiteSpace(row.SyncKey))))).Take(2).ToArray();
+            return matches.Length == 1 && !matches[0].Unplayable ? matches[0] : null;
+        }
+        int? RebindIndex(int? index) => index == null || index < 0 ? index :
+            Rebind(previous.SubtitleUrls.SingleOrDefault(row => row.Index == index))?.Index;
+        var cacheIndices = previous.SubtitleUrls.Select(row => (Before: row, After: Rebind(row)))
+            .Where(pair => pair.After != null && pair.Before.Url == pair.After.Url && pair.Before.Delivery == pair.After.Delivery)
+            .GroupBy(pair => pair.After!.Index).Where(group => group.Count() == 1).Select(group => group.Single())
+            .GroupBy(pair => pair.Before.Index).Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single().After!.Index);
+        void Remap<T>(Dictionary<int, T> cache)
+        {
+            var retained = cache.Where(pair => cacheIndices.ContainsKey(pair.Key))
+                .Select(pair => (Index: cacheIndices[pair.Key], pair.Value)).ToArray();
+            cache.Clear();
+            foreach (var entry in retained) cache[entry.Index] = entry.Value;
+        }
+        foreach (var entry in _prefetchedSubtitleSids.Where(pair => !cacheIndices.ContainsKey(pair.Key)).ToArray())
+            if (entry.Value.FileGeneration == Volatile.Read(ref _fileLoadGeneration)) _mpv?.RemoveSubtitle(entry.Value.Sid);
+        Remap(_loadedExternalSubtitleSids);
+        Remap(_prefetchedSubtitleFiles);
+        Remap(_prefetchedSubtitleSids);
+        var stale = _staleExternalSubtitleIndices.Where(cacheIndices.ContainsKey).Select(index => cacheIndices[index]).ToArray();
+        _staleExternalSubtitleIndices.Clear();
+        foreach (var staleIndex in stale) _staleExternalSubtitleIndices.Add(staleIndex);
+        _activeSubtitleServerIndex = RebindIndex(_activeSubtitleServerIndex) ?? -1;
+        if (_executedSubtitleFileId == next.MediaFileId)
+        {
+            var executed = _executedSubtitleTrack;
+            _executedSubtitleTrack = Rebind(executed);
+            if (executed != null && _executedSubtitleTrack == null && _liveSubtitleSid <= 0) _mpv?.SetSubtitleTrack(0);
+        }
+        if (_pendingInitialSubtitleFileId == next.MediaFileId)
+        {
+            _pendingInitialServerSubtitleIndex = RebindIndex(_pendingInitialServerSubtitleIndex);
+            _pendingSubtitleSelection = RebindIndex(_pendingSubtitleSelection);
+        }
+        if (_pendingSubtitlePreferenceOwner?.MediaFileId == next.MediaFileId)
+        {
+            _pendingSubtitlePreferenceIndex = RebindIndex(_pendingSubtitlePreferenceIndex);
+            if (!_pendingSubtitlePreferenceIndex.HasValue) _pendingSubtitlePreferenceOwner = null;
+        }
+        if (_preparedSubtitleReload is { } prepared && prepared.MediaFileId == next.MediaFileId)
+            _preparedSubtitleReload = RebindIndex(prepared.Index) is int preparedIndex ? prepared with { Index = preparedIndex } : null;
+        if (_subtitleReplanAttempt is { } attempt && ReferenceEquals(attempt.Session, previous))
+            _subtitleReplanAttempt = attempt with { Session = next, SelectionIndex = RebindIndex(attempt.SelectionIndex) ?? -1 };
     }
 
     private async Task ApplySubtitleReadyAsync(JsonElement payload)
@@ -99,6 +173,21 @@ public partial class PlayerService
                 (previous, next) => next.MediaFileId == fileId && SameTransport() && owner.TryAdoptSession(previous, next), token)
                 .ConfigureAwait(false);
             if (replacement == null || !Current() || !SameTransport()) return;
+            if (!SubtitleInventoryRequiresTransportReload(session, replacement))
+            {
+                lock (_subtitleSyncGate)
+                lock (_subtitleTrackStateLock)
+                lock (manager.SubtitleInventorySyncRoot)
+                {
+                    if (!Current() || !SameTransport()) return;
+                    AdoptSubtitleInventoryInPlace(session, replacement);
+                }
+                AdoptBufferingQualityPlan();
+                SendSubtitleListToOsc();
+                EnsureSubtitleSync();
+                await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
+                return;
+            }
             // Local direct seeks and pause gestures remain available while the
             // inventory request is in flight. Reload at their latest intent.
             position = CurrentMediaPosition;

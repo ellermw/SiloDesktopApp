@@ -24,11 +24,74 @@ public sealed class PlaybackTrackIntentTests
         Assert.False(scope.Manager.TryApplySubtitleTrack(session, new()
         {
             StoredSubtitleId = incomingId, SyncKey = incomingSyncKey, TrackId = row.TrackId,
-            CombinedIndex = 0, Source = "downloaded", Delivery = "sidecar", Language = "deu",
+            CombinedIndex = 0, Source = "downloaded", Delivery = "sidecar", Language = "deu", Url = "/other.srt",
         }));
         Assert.Equal(41, row.Id); Assert.Equal("stored:41", row.SyncKey);
         Assert.Equal("file:42:subtitle:0", session.SelectedSubtitleTrackId);
         Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
+    [Theory]
+    [InlineData(41L, null, null, "stored-55")]
+    [InlineData(null, "stored-41", 55L, null)]
+    public async Task ReusedTrackIdCannotBridgeUnprovenStoredIdentityFields(
+        long? existingId, string? existingKey, long? incomingId, string? incomingKey)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var row = session.SubtitleUrls.Single(item => item.Index == 0);
+        row.Id = existingId; row.SyncKey = existingKey;
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        Assert.False(scope.Manager.TryApplySubtitleTrack(session, new()
+        {
+            StoredSubtitleId = incomingId, SyncKey = incomingKey, TrackId = row.TrackId!,
+            CombinedIndex = row.Index, Source = "downloaded", Delivery = "sidecar", Url = "/other.srt",
+        }));
+        Assert.Equal(existingId, row.Id); Assert.Equal(existingKey, row.SyncKey);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task PartialSidecarAnnouncementPreservesCanonicalOptionalMetadata(string? omitted)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var row = session.SubtitleUrls.Single(item => item.Index == 0);
+        row.Id = 41; row.SyncKey = "stored-41"; row.Delivery = "sidecar";
+        row.Url = "/captions.srt"; row.StreamIndex = 7; row.ContainerTrackId = "container-7";
+        row.NativeSelectable = true; row.NativeTitle = row.Label = "English captions";
+        row.Language = "eng"; row.Codec = "subrip";
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        for (var repeat = 0; repeat < 2; repeat++)
+            Assert.True(scope.Manager.TryApplySubtitleTrack(session, new()
+            {
+                TrackId = row.TrackId!, CombinedIndex = row.Index, Source = "downloaded", Delivery = "sidecar",
+                SyncKey = omitted, Url = omitted, Language = omitted, Codec = omitted, Label = omitted,
+                ContainerTrackId = omitted,
+            }));
+        Assert.Same(row, session.SubtitleUrls.Single(item => item.Id == 41));
+        Assert.Equal("stored-41", row.SyncKey); Assert.Equal("/captions.srt", row.Url);
+        Assert.Equal("eng", row.Language); Assert.Equal("subrip", row.Codec);
+        Assert.Equal("English captions", row.Label); Assert.Equal("English captions", row.NativeTitle);
+        Assert.Equal(7, row.StreamIndex); Assert.Equal("container-7", row.ContainerTrackId);
+        Assert.Equal(true, row.NativeSelectable);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
+    [Fact]
+    public async Task NewSidecarWithoutAnExecutableUrlRequiresAnAuthoritativeRefresh()
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var count = session.SubtitleUrls.Count;
+        Assert.False(scope.Manager.TryApplySubtitleTrack(session, new()
+        {
+            StoredSubtitleId = 77, TrackId = "downloaded:77", CombinedIndex = 9,
+            Source = "downloaded", Delivery = "sidecar",
+        }));
+        Assert.Equal(count, session.SubtitleUrls.Count);
     }
 
     [Fact]
@@ -63,12 +126,16 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData(-1)]
-    [InlineData(1)]
-    public async Task InventoryReplanUsesGrantOrLatestRetainedChoiceWithoutRecordingANewPick(int? choice)
+    [InlineData(null, false)]
+    [InlineData(-1, false)]
+    [InlineData(1, false)]
+    [InlineData(null, true)]
+    [InlineData(-1, true)]
+    [InlineData(1, true)]
+    public async Task InventoryReplanUsesGrantOrLatestRetainedChoiceWithoutRecordingANewPick(int? choice, bool grantOnlyInSubtitle)
     {
-        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        using var scope = new Fixture(); scope.Wire.GrantOnlyInSubtitle = grantOnlyInSubtitle;
+        await scope.Manager.StartSessionAsync(42);
         var session = scope.Manager.CurrentSession!;
         if (choice.HasValue) scope.Manager.RecordLocalSubtitleSelection(choice < 0 ? null : choice);
         var intent = scope.Manager.CaptureLocalSubtitleIntent();
@@ -1374,6 +1441,7 @@ public sealed class PlaybackTrackIntentTests
         public bool OmitTrackIds;
         public bool DownloadedSubtitles;
         public bool IncludeStoredIds;
+        public bool GrantOnlyInSubtitle;
         public bool IncludeStoredKeys;
         public int InitialSubtitleSelection;
         public int SubtitleIndexOffset;
@@ -1453,7 +1521,7 @@ public sealed class PlaybackTrackIntentTests
                 {
                     protocol_version = 3, plan_id = $"plan-{Starts.Count}-{Replans.Count}", plan_attempt_key = "key", session_id = "session", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = "/stream" }, timeline = new { can_seek_anywhere = true },
-                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = subtitleIdentity },
+                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = GrantOnlyInSubtitle ? null : subtitleIdentity },
                     subtitle = new { mode = _selected < 0 ? "off" : BurnInSubtitles ? "burn_in" : "native", track_id = OmitTrackIds ? "" : _selected < 0 ? null : $"sub:{_file}:{_selected}{SubtitleIdSuffix}", inventory },
                 },
             }));

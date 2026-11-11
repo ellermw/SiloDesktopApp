@@ -471,11 +471,28 @@ public partial class PlaybackManager : IDisposable
             // the native caches. Never evict another identity at a reused ordinal.
             if (matches.Length > 1 || matches.Length == 1 && matches[0].Index != track.CombinedIndex ||
                 session.SubtitleUrls.Any(row => row.Index == track.CombinedIndex && !matches.Contains(row))) return false;
-            if (matches.Length == 1 &&
-                (track.StoredSubtitleId is > 0 && matches[0].Id > 0 && matches[0].Id != track.StoredSubtitleId ||
-                 !string.IsNullOrWhiteSpace(track.SyncKey) && !string.IsNullOrWhiteSpace(matches[0].SyncKey) && matches[0].SyncKey != track.SyncKey))
-                return false;
             var row = matches.SingleOrDefault() ?? new SubtitleTrackInfo();
+            var hasStoredIdentity = row.Id is > 0 || !string.IsNullOrWhiteSpace(row.SyncKey);
+            var announcesStoredIdentity = track.StoredSubtitleId is > 0 || !string.IsNullOrWhiteSpace(track.SyncKey);
+            var sharesStoredIdentity = track.StoredSubtitleId is > 0 && row.Id == track.StoredSubtitleId ||
+                !string.IsNullOrWhiteSpace(track.SyncKey) && row.SyncKey == track.SyncKey;
+            if (matches.Length == 1 &&
+                (track.StoredSubtitleId is > 0 && row.Id > 0 && row.Id != track.StoredSubtitleId ||
+                 !string.IsNullOrWhiteSpace(track.SyncKey) && !string.IsNullOrWhiteSpace(row.SyncKey) && row.SyncKey != track.SyncKey ||
+                 hasStoredIdentity && announcesStoredIdentity && !sharesStoredIdentity)) return false;
+            // Optional announcement fields overlay canonical metadata, never erase it.
+            track.StoredSubtitleId = track.StoredSubtitleId is > 0 ? track.StoredSubtitleId : row.Id;
+            if (string.IsNullOrWhiteSpace(track.SyncKey)) track.SyncKey = row.SyncKey;
+            if (string.IsNullOrWhiteSpace(track.Url)) track.Url = row.Url;
+            if (track.Delivery == "sidecar" && string.IsNullOrWhiteSpace(track.Url)) return false;
+            if (string.IsNullOrWhiteSpace(track.Language)) track.Language = row.Language;
+            if (string.IsNullOrWhiteSpace(track.Codec)) track.Codec = row.Codec;
+            if (string.IsNullOrWhiteSpace(track.Label)) track.Label = string.IsNullOrWhiteSpace(row.NativeTitle) ? row.Label : row.NativeTitle;
+            track.StreamIndex ??= row.StreamIndex;
+            if (string.IsNullOrWhiteSpace(track.ContainerTrackId)) track.ContainerTrackId = row.ContainerTrackId;
+            track.NativeSelectable ??= row.NativeSelectable;
+            if (string.IsNullOrWhiteSpace(track.FontBundleUrl)) track.FontBundleUrl = row.FontBundleUrl;
+            if (string.IsNullOrWhiteSpace(track.Source)) track.Source = row.Source ?? "";
             var granted = matches.Length == 1 && (!string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)
                 ? session.SelectedSubtitleTrackId == row.TrackId : session.SelectedSubtitleTrackIndex == row.Index);
             row.Id = track.StoredSubtitleId ?? row.Id; row.TrackId = track.TrackId; row.SyncKey = track.SyncKey;
@@ -748,6 +765,19 @@ public partial class PlaybackManager : IDisposable
         var playbackAttemptId = _playbackAttemptIdV3
             ?? throw new InvalidOperationException("The playback attempt identity is unavailable.");
 
+        var subtitleGrant = plan.SelectedTracks.Subtitle;
+        if (subtitleGrant == null && CurrentSession is { } live && !string.IsNullOrWhiteSpace(live.SelectedSubtitleTrackId))
+        {
+            // Some plans grant only subtitle.track_id. An inventory refresh
+            // must not turn that omission in selected_tracks into explicit Off.
+            var index = live.SelectedSubtitleTrackIndex ?? live.SubtitleUrls
+                .SingleOrDefault(track => track.TrackId == live.SelectedSubtitleTrackId)?.Index;
+            subtitleGrant = new PlaybackTrackIdentityV3
+            {
+                Id = live.SelectedSubtitleTrackId,
+                Index = index ?? throw new InvalidOperationException("The granted subtitle ordinal is unavailable."),
+            };
+        }
         var selectedTracks = new PlaybackSelectedTracksV3
         {
             Audio = plan.SelectedTracks.Audio == null ? null : new PlaybackTrackIdentityV3
@@ -755,10 +785,10 @@ public partial class PlaybackManager : IDisposable
                 Id = plan.SelectedTracks.Audio.Id,
                 Index = plan.SelectedTracks.Audio.Index,
             },
-            Subtitle = plan.SelectedTracks.Subtitle == null ? null : new PlaybackTrackIdentityV3
+            Subtitle = subtitleGrant == null ? null : new PlaybackTrackIdentityV3
             {
-                Id = plan.SelectedTracks.Subtitle.Id,
-                Index = plan.SelectedTracks.Subtitle.Index,
+                Id = subtitleGrant.Id,
+                Index = subtitleGrant.Index,
             },
         };
         var subtitleRevision = ApplyLocalSubtitleIntent(selectedTracks, operation);

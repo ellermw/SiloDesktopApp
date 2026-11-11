@@ -6588,18 +6588,22 @@ local function setup_key_bindings()
         move_controller_focus("right")
     end)
     mp.add_forced_key_binding("ESC", "silo-menu-escape", function()
-        if close_keyboard_surface() then return end
-        if state.skip_visible and (state.skip_label == "Skip Intro" or state.skip_label == "Watch Intro")
-            and not state.intro_expired_key then
-            state.intro_resolved_keys[state.intro_prompt_key] = true
-            state.intro_prompt_resolved = true
-            state.intro_undo_origin = nil
-            state.skip_visible = false
-            render_skip_button()
-            return
+        if not close_keyboard_surface() then
+            if state.skip_visible and (state.skip_label == "Skip Intro" or state.skip_label == "Watch Intro")
+                and not state.intro_expired_key then
+                if type(state.intro_resolved_keys) == "table" and type(state.intro_prompt_key) == "string"
+                    and state.intro_prompt_key ~= "" then
+                    state.intro_resolved_keys[state.intro_prompt_key] = true
+                end
+                state.intro_prompt_resolved = true
+                state.intro_undo_origin = nil
+                state.skip_visible = false
+                render_skip_button()
+                return
+            end
+            if buffering_quality_action("keep") then return end
+            mp.commandv("script-message", "silo-escape-unhandled")
         end
-        if buffering_quality_action("keep") then return end
-        mp.commandv("script-message", "silo-escape-unhandled")
     end)
     -- M = mute toggle
     mp.add_forced_key_binding("m", "silo-mute-toggle", function()

@@ -55,6 +55,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 var intent = manager.CaptureLocalSubtitleIntent();
                 var writes = wire.PreferenceWrites;
                 var sid = mpv.GetPropertyDouble("sid");
+                var originalTransportFile = Get(service, "_fileLoadGeneration");
                 using var announcement = JsonDocument.Parse("""
                     {"session_id":"fixture","file_id":42,"subtitle_id":77,"track":{"track_id":"downloaded:77","stored_subtitle_id":77,"combined_index":9,"source":"downloaded","language":"ita","label":"Canonical bitmap","codec":"pgs","delivery":"burn_in_only","unplayable":true}}
                     """);
@@ -71,9 +72,33 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 Require(ReferenceEquals(added, manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77)) &&
                     added.Index == 9 && added.Delivery == "burn_in_only" && added.Unplayable && added.Label == "Canonical bitmap" && added.Url == "",
                     "A stored-list refresh downgraded canonical metadata or replaced its row identity.");
+                // A canonical download already occupies the first downloaded slot.
+                // The next stored row must use downloaded-base + list position, not
+                // max(canonical) + list position. Exercise both refresh entry points.
+                added.Index = 2;
+                wire.AdditionalDownloadedAvailable = true;
+                foreach (var ownerRefresh in new[] { false, true })
+                {
+                    if (ownerRefresh) await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, null, null, null, null)!;
+                    else await service.RefreshSubtitlesAfterAiAsync(42);
+                    var appended = manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 78);
+                    Require(appended.Index == 3 && appended.Url == "/stream/fixture/subtitles/3" && !appended.Unplayable && added.Index == 2,
+                        "A canonical stored row shifted the newly completed subtitle ordinal or URL.");
+                }
+                added.Index = 9;
+                foreach (var ownerRefresh in new[] { false, true })
+                {
+                    if (ownerRefresh) await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, null, null, null, null)!;
+                    else await service.RefreshSubtitlesAfterAiAsync(42);
+                    var uncertain = manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 78);
+                    Require(uncertain.Unplayable && uncertain.Url == "" && added.Index == 9,
+                        "A noncanonical stored-list layout invented an executable subtitle URL.");
+                }
+                wire.AdditionalDownloadedAvailable = false;
                 using var stale = JsonDocument.Parse("""{"session_id":"old-session","file_id":42,"subtitle_id":77}""");
                 await (Task)Call(service, "ApplySubtitleReadyAsync", stale.RootElement)!;
                 Require(wire.Replans.Count == 0, "A stale session announcement replanned current playback.");
+                Require(Equals(originalTransportFile, Get(service, "_fileLoadGeneration")), "A local subtitle merge reloaded mpv.");
                 using var unresolved = JsonDocument.Parse("""{"session_id":"fixture","file_id":42,"subtitle_id":77}""");
                 service.SetPaused(true);
                 Set(service, "_switchingContent", true);
@@ -87,8 +112,12 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes,
                     "No-track inventory refresh did not retain choice/pause or adopt authoritative combined index.");
                 using var invalid = JsonDocument.Parse("""{"session_id":"fixture","file_id":42,"subtitle_id":77,"track":{"combined_index":"invalid"}}""");
+                var inventoryNativeFile = Get(service, "_fileLoadGeneration");
+                var inventorySid = mpv.GetPropertyDouble("sid");
                 await (Task)Call(service, "ApplySubtitleReadyAsync", invalid.RootElement)!;
                 await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
+                Require(Equals(inventoryNativeFile, Get(service, "_fileLoadGeneration")) && mpv.GetPropertyDouble("sid") == inventorySid,
+                    "An unchanged-transport inventory refresh reopened mpv or replaced the active subtitle SID.");
                 Require(wire.Replans.Count == 2 && wire.PreferenceWrites == writes && manager.CaptureLocalSubtitleIntent() == intent,
                     "Invalid optional track metadata did not recover through an intent-preserving authoritative replan.");
                 var accepted = manager.CurrentSession;
@@ -369,6 +398,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         public int PreferenceWrites;
         public int? AutomaticSubtitleSelection;
         public bool DownloadedAvailable;
+        public bool AdditionalDownloadedAvailable;
         public TaskCompletionSource? HoldReplan, ReplanEntered;
         private string SubtitleId => _subtitle == 2 ? "downloaded:77" : $"sub:{_file}:{_subtitle}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -377,7 +407,9 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             var path = request.RequestUri.AbsolutePath;
             if (path.Contains("-prefs/", StringComparison.Ordinal)) { PreferenceWrites++; return Json("{}"); }
             if (path == "/api/v2/subtitles/42" && DownloadedAvailable)
-                return Json("""{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}""");
+                return Json(AdditionalDownloadedAvailable
+                    ? """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"},{"id":78,"language":"spa","format":"srt","title":"New translation"}]}"""
+                    : """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}""");
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");

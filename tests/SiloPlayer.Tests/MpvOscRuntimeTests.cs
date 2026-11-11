@@ -933,6 +933,30 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:true", result);
     }
 
+    [Theory]
+    [InlineData("osc-set-markers", "{\"content_id\":\"replacement\",\"intro_start\":0,\"intro_end\":30}")]
+    [InlineData("osc-set-intro-mode", "always")]
+    public void EscapeSafelyDismissesTheVisibleIntroBetweenHostResetAndMarkerTick(string message, string payload)
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            state.visible = true; state.intro_mode = 'ask'; state.marker_content_id = 'episode'
+            state.intro_start = 0; state.intro_end = 30; state.time_pos = 5
+            osc_test_check()
+            handlers['{{message}}']('{{payload}}')
+            local reset = state.intro_prompt_key == nil and state.skip_visible
+            local ok = pcall(keys['silo-menu-escape'])
+            mp.set_property('user-data/probe-result', tostring(reset)..':'..tostring(ok)..':'..tostring(not state.skip_visible))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers, keys = {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            """);
+        Assert.Equal("true:true:true", result);
+    }
+
     [Fact]
     public void ExpiredAskOfferFollowsControlsWithoutRenewingTimerOrCapturingSpaceAndFocus()
     {

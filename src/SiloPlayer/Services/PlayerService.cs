@@ -9342,7 +9342,10 @@ public partial class PlayerService : IDisposable
                 var existing = previousInventory.Except(previousDownloads).ToList();
                 var reserved = previousDownloads.Where(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
                     !string.IsNullOrWhiteSpace(track.Delivery)).Concat(existing).ToArray();
-                var baseIndex = reserved.Length == 0 ? 0 : reserved.Max(track => track.Index) + 1;
+                var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
+                var canonicalOrdinalsAgree = response.Subtitles.Select((entry, offset) =>
+                    !reserved.Any(track => (track.Id == entry.Id || track.SyncKey == "stored-" + entry.Id) &&
+                        track.Index != baseIndex + offset)).All(agrees => agrees);
                 downloaded = response.Subtitles.Select((entry, offset) =>
                 {
                     var syncKey = "stored-" + entry.Id;
@@ -9357,14 +9360,18 @@ public partial class PlayerService : IDisposable
                         previous.Id ??= entry.Id;
                         return previous;
                     }
+                    var ordinal = baseIndex + offset;
+                    var collision = reserved.Any(track => track.Index == ordinal);
+                    var executable = unique && canonicalOrdinalsAgree && !collision;
+                    if (collision) ordinal = Math.Max(reserved.Max(track => track.Index) + 1, baseIndex + response.Subtitles.Count) + offset;
                     return new SubtitleTrackInfo
                     {
                         TrackId = previous?.TrackId,
                         SyncKey = previous?.SyncKey ?? syncKey,
                         Id = entry.Id,
-                        Unplayable = !unique || (previous?.Unplayable ?? false),
+                        Unplayable = !executable || (previous?.Unplayable ?? false),
                         Delivery = previous?.Delivery,
-                        Index = baseIndex + offset,
+                        Index = ordinal,
                         MediaFileId = mediaFileId,
                         Language = entry.Language,
                         Codec = previous?.Codec ?? (string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format),
@@ -9377,7 +9384,7 @@ public partial class PlayerService : IDisposable
                         Source = "downloaded",
                         HearingImpaired = entry.HearingImpaired,
                         Forced = entry.Forced,
-                        Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
+                        Url = executable ? $"/stream/{session.SessionId}/subtitles/{ordinal}" : "",
                     };
                 }).ToList();
 
@@ -9401,6 +9408,7 @@ public partial class PlayerService : IDisposable
                     retained.MediaFileId = refreshed.MediaFileId;
                     retained.SyncKey = refreshed.SyncKey;
                     retained.Id = refreshed.Id;
+                    retained.Unplayable = refreshed.Unplayable;
                     retained.Language = refreshed.Language;
                     retained.Codec = refreshed.Codec;
                     retained.NativeTitle = refreshed.NativeTitle;
@@ -9420,7 +9428,7 @@ public partial class PlayerService : IDisposable
                 foreach (var retained in previousDownloads.Where(track => UnknownDownload(track)))
                 {
                     if (string.IsNullOrWhiteSpace(retained.TrackId) || string.IsNullOrWhiteSpace(retained.Delivery))
-                        retained.Index = baseIndex + downloaded.Count;
+                        retained.Index = downloaded.Concat(reserved).Select(track => track.Index).DefaultIfEmpty(baseIndex - 1).Max() + 1;
                     downloaded.Add(retained);
                 }
 
