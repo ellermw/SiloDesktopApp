@@ -40,6 +40,8 @@ public partial class PlayerService
         var roomPlayback = IsWatchTogetherPlayback;
         var mpv = _mpv; var video = _videoWindow; var content = ContentId;
         var play = Volatile.Read(ref _playRequestGeneration);
+        var file = Volatile.Read(ref _playbackFileGeneration);
+        var fileLoad = Volatile.Read(ref _fileLoadGeneration);
         var sessionId = manager?.SessionId;
         var epoch = Volatile.Read(ref _nativeMenuEpoch);
         var publication = Interlocked.Increment(ref _nativeMenuPublication);
@@ -52,6 +54,7 @@ public partial class PlayerService
             (manager?.CurrentSession?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
             State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
             play == Volatile.Read(ref _playRequestGeneration) &&
+            (_sessionHasFramed || (file == Volatile.Read(ref _playbackFileGeneration) && fileLoad == Volatile.Read(ref _fileLoadGeneration))) &&
             ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
             ReferenceEquals(manager, _playbackManager) && sessionId == manager?.SessionId &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
