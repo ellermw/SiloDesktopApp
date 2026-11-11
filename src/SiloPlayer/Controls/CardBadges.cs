@@ -95,13 +95,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         {
             foreach (var badge in upcomingEvent.Badges)
             {
-                var label = badge switch
-                {
-                    "series_premiere" => "Premiere",
-                    "season_premiere" => "New Season",
-                    "finale" => "Finale",
-                    _ => badge,
-                };
+                var label = SiloPlayer.Core.Services.UpcomingBadgePresentation.Label(badge);
                 badges.Add(new(OverlayPosition.TopLeft, label, "upcoming_event", new OverlayItemConfig(true, OverlayPosition.TopLeft), "classic", scale));
             }
         }

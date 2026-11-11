@@ -904,6 +904,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await Task.Delay(100);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "viewer-actions")
+            {
+                await ViewerActionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-pill")
             {
                 await OverlayPillNativeFixture.RunAsync(parent);

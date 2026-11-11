@@ -267,7 +267,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         if (MediaItem is not { } item || item.Type == "box_set") return;
         var flyout = MediaItemMenu.Build(
             item,
-            MediaItemMenu.Surface.Default,
+            MediaItemMenu.SurfaceFor(item),
             stateChanged: () => UpdateQuickActionState(item), owner: this);
         if (args.TryGetPosition(this, out var pos))
         {
@@ -957,7 +957,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
 
         var flyout = MediaItemMenu.Build(
             item,
-            MediaItemMenu.Surface.Default,
+            MediaItemMenu.SurfaceFor(item),
             stateChanged: () => UpdateQuickActionState(item), owner: this);
         flyout.ShowAt(MoreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
         {

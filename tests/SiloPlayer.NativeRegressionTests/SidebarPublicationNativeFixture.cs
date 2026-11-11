@@ -105,6 +105,7 @@ internal static class SidebarPublicationNativeFixture
         var primarySource = (PrimaryMenuItem)primaryTag.GetType().GetProperty("Item")!.GetValue(primaryTag)!;
         Check(ReferenceEquals(PrimaryNodes(nav).Last(), primary) && (string)primary.Content == "Latest shortcut" && primarySource.Label == "Latest shortcut", "custom primary label and cloned navigation tag update in place");
         Check(IconName(PrimaryNodes(nav).Last()) == "tv" && IconName(currentFirst) == "tv", "library and primary icons follow latest media type");
+        await CheckLibraryTypeIconsAsync(nav, vm, catalog);
         // Focus a real descendant, then rename its callback-owned data.
         first.IsExpanded = true; await Drain();
         var pinButton = ((Grid)currentPinContent(currentFirst).Content).Children.OfType<Button>().Single();
@@ -423,6 +424,28 @@ internal static class SidebarPublicationNativeFixture
         await Until(() => Nodes(nav).Any(n => Equals(n.Content, "Second viewer App"))); await Drain();
         Check(Nodes(nav).Any(n => Equals(n.Content, "Second viewer App")), "Settings return publishes current plugin route after replacement read");
         if (Failures.Count > 0) throw new InvalidOperationException("Detached sidebar failures: " + string.Join("; ", Failures));
+    }
+    // Current WebUI library-type icons, including mixed and the other spellings the server stores.
+    // The actual sidebar nodes keep their identity while the library types change, and the libraries
+    // are restored afterward so the remaining ordered checks see the state they expect.
+    private static async Task CheckLibraryTypeIconsAsync(NavigationView nav, MainViewModel vm, CatalogApi catalog)
+    {
+        async Task<string[]> IconsFor(params string[] types)
+        {
+            Libraries = [Lib(2, "Renamed series", types[0]), Lib(1, "Renamed movies", types[1]), Lib(4, "Added", types[2])];
+            Libraries[1].MetadataLanguage = "fr";
+            catalog.InvalidateLibraryCache(); await vm.ReloadLibrariesAsync(); await Drain();
+            return LibraryNodes(nav).Select(IconName).ToArray();
+        }
+        var mixed = await IconsFor("mixed", "ebooks", "podcast");
+        Check(mixed.SequenceEqual(["layers", "book-open", "podcast"]), "mixed, ebooks and podcast libraries use their own sidebar icons: " + string.Join(",", mixed));
+        var aliases = await IconsFor("movie", "tvshows", "manga");
+        Check(aliases.SequenceEqual(["film", "tv", "book-marked"]), "movie, tvshows and manga library spellings use the current icons: " + string.Join(",", aliases));
+        var fallback = await IconsFor("audiobook", "Show", "homevideos");
+        Check(fallback.SequenceEqual(["book-headphones", "tv", "library"]), "audiobook and show spellings keep icons while an unknown type uses the generic library icon: " + string.Join(",", fallback));
+        var restored = await IconsFor("audiobooks", "series", "movies");
+        Libraries[2].Type = "movies";
+        Check(restored.SequenceEqual(["book-headphones", "tv", "film"]), "restored library types return to the earlier icons: " + string.Join(",", restored));
     }
     private static NavigationViewItem currentPinContent(NavigationViewItem library) => (NavigationViewItem)library.MenuItems[0];
     private static object PluginData(string label) => new { items = new[] { new { id = 7, plugin_id = label, routes = new[] { new { path = "/fixture", navigable = true, navigation_kind = "user", navigation_label = label } } } } };

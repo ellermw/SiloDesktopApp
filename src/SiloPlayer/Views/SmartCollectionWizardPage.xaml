@@ -195,8 +195,8 @@
                                           Visibility="{x:Bind ViewModel.IsPreviewing, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                             <Button Content="Retry preview" Click="Preview_Click" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" HorizontalAlignment="Center" />
                             <StackPanel x:Name="PreviewEmptyPanel" Visibility="Collapsed" Spacing="5" HorizontalAlignment="Center" Margin="0,42">
-                                <TextBlock Text="No titles match these filters yet." FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                <TextBlock Text="Loosen the filters above to see what your collection would include."
+                                <TextBlock x:Name="PreviewEmptyTitle" Text="No titles match these filters yet." FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                <TextBlock x:Name="PreviewEmptyHelp" Text="Loosen the filters above to see what your collection would include."
                                            FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                             </StackPanel>
                             <ItemsRepeater x:Name="PreviewItemsRepeater"
