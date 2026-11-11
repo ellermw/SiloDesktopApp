@@ -365,14 +365,12 @@ public partial class LoginViewModel : ObservableObject
         {
             if (attempt == _deviceAttempt) CancelDeviceLogin(clearSession: true);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             if (attempt != _deviceAttempt) return;
             var current = _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration;
             CancelDeviceLogin(clearSession: true);
-            if (current) ErrorMessage = ex is DeviceLoginRequiresHttpsException
-                ? "Phone sign-in requires a secure (HTTPS) server connection."
-                : "Couldn't start phone sign-in. Try again.";
+            if (current) ErrorMessage = "Couldn't start phone sign-in. Try again.";
         }
         finally
         {
@@ -420,8 +418,14 @@ public partial class LoginViewModel : ObservableObject
                 IsDevicePolling = true;
                 DeviceLoginPollResponse result;
                 try { result = await setup.PollAsync(session.DeviceCode, ct); }
-                catch (Exception ex) when (!ct.IsCancellationRequested && (ex is HttpRequestException or OperationCanceledException || ex is ApiException { StatusCode: 429 or >= 500 }))
-                { await Task.Delay(interval, ct); continue; }
+                catch (Exception ex) when (!ct.IsCancellationRequested && (ex is HttpRequestException or OperationCanceledException || ex is ApiException { StatusCode: 408 or 425 or 429 or >= 500 }))
+                {
+                    var delay = ex is ApiException { RetryAfterSeconds: > 0 } problem
+                        ? TimeSpan.FromSeconds(Math.Max(interval.TotalSeconds, problem.RetryAfterSeconds.Value))
+                        : interval;
+                    await Task.Delay(delay, ct);
+                    continue;
+                }
                 if (ct.IsCancellationRequested || attempt != _deviceAttempt || !ReferenceEquals(DeviceSession, session)) return;
                 if (!_apiClient.IsCurrentContext(context) || authGeneration != _authService.SessionGeneration)
                 { CancelDeviceLogin(clearSession: true); return; }

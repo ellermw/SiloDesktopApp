@@ -74,6 +74,25 @@ internal static class DeviceBindingNativeFixture
             var count = wire.Polls.Count; await Task.Delay(1150); Check(wire.Polls.Count == count, "Binding refusal retried or downgraded");
             Program.Log("PASS native bound login negotiation, QR/code, stable retries, rotation, canceled success and sanitized binding refusal");
 
+            foreach (var status in new[] { HttpStatusCode.RequestTimeout, (HttpStatusCode)425, HttpStatusCode.TooManyRequests, HttpStatusCode.ServiceUnavailable })
+            {
+                Reset(); wire.PollGate = Gate(); var pollsBefore = wire.Polls.Count;
+                await Start(); await Until(() => wire.Polls.Count > pollsBefore);
+                var session = vm.DeviceSession; var secret = wire.Polls[^1].Secret;
+                var startsBefore = wire.Starts.Count; var pollsAfterStart = wire.Polls.Count;
+                var failure = Reject("slow_down", status);
+                failure.Headers.RetryAfter = new(TimeSpan.FromSeconds(2));
+                var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                wire.PollGate.TrySetResult(failure); wire.PollGate = Gate();
+                await Until(() => wire.Polls.Count > pollsAfterStart);
+                // Allow timer granularity without accepting the one-second poll interval.
+                Check(elapsed.Elapsed >= TimeSpan.FromMilliseconds(1900), "Transient poll retry ignored Retry-After");
+                Check(ReferenceEquals(vm.DeviceSession, session) && wire.Starts.Count == startsBefore &&
+                    wire.Polls[^1].Secret == secret && vm.ErrorMessage is null && auth.CurrentUser is null,
+                    "Transient HTTP poll failure retired or changed the bound setup");
+            }
+            Program.Log("PASS native 408/425/429/503 poll retries honor Retry-After and retain the same bound setup");
+
             Reset(); wire.PollFailure = "timeout"; wire.PollGate = Gate();
             var timeoutPolls = wire.Polls.Count; await Start();
             await Until(() => wire.Polls.Count >= timeoutPolls + 2);
@@ -105,22 +124,21 @@ internal static class DeviceBindingNativeFixture
 
             Reset(); wire.CapabilityMode = "positive";
             client.SetBaseUrl("http://device-binding-fixture.invalid");
-            var httpStarts = wire.Starts.Count; var httpPolls = wire.Polls.Count;
+            string? previousHttpSecret = null;
             for (var retry = 0; retry < 2; ++retry)
             {
-                await Start();
-                Check(vm.ErrorMessage == "Phone sign-in requires a secure (HTTPS) server connection.",
-                    "Plain HTTP binding refusal did not explain the non-retryable HTTPS requirement");
-                Check(wire.Starts.Count == httpStarts && wire.Polls.Count == httpPolls &&
-                    vm.DeviceSession is null && vm.DeviceQrImage is null && !vm.IsDevicePolling && vm.CanStartAuthentication,
-                    "Plain HTTP binding refusal sent bootstrap requests or left an active setup");
-                page.UpdateLayout();
-                Check(All<TextBlock>(page).Any(t => t.Text == vm.ErrorMessage) &&
-                    ((Border)page.FindName("ErrorBorder")).Visibility == Visibility.Visible,
-                    "The native login page did not display the HTTPS requirement");
+                Reset(); wire.PollGate = Gate();
+                var httpStarts = wire.Starts.Count; var httpPolls = wire.Polls.Count;
+                await Start(); await Until(() => wire.Polls.Count > httpPolls);
+                Check(wire.Starts.Count == httpStarts + 1 && wire.Polls.Count == httpPolls + 1 &&
+                    vm.DeviceSession is not null && vm.DeviceQrImage is not null && vm.IsDevicePolling && vm.ErrorMessage is null,
+                    "Plain HTTP server did not retain phone sign-in");
+                VerifyPair(wire.Starts[^1].Binding!, wire.Polls[^1].Secret);
+                Check(wire.Polls[^1].Secret != previousHttpSecret, "Replacement HTTP setup reused the binding secret");
+                previousHttpSecret = wire.Polls[^1].Secret;
             }
-            client.SetBaseUrl(Wire.Server);
-            Program.Log("PASS native plain HTTP binding refusal displays HTTPS guidance without retry copy or downgrade");
+            Reset(); client.SetBaseUrl(Wire.Server);
+            Program.Log("PASS native plain HTTP phone sign-in retains binding, QR/code and setup rotation without downgrade");
 
             Reset(); wire.CapabilityMode = "positive"; wire.CapabilityGate = Gate();
             Click(Button("Show QR code")); await Until(() => vm.IsStartingDeviceLogin);

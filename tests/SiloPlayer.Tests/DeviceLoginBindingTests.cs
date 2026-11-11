@@ -94,14 +94,39 @@ public sealed class DeviceLoginBindingTests
     }
 
     [Fact]
-    public async Task BindingIsNotSentAcrossPlainHttp()
+    public async Task PlainHttpServersRetainBoundPhoneSignIn()
     {
-        using var wire = new Wire(); using var http = new HttpClient(wire);
+        using var wire = new Wire { EnforceBinding = true }; using var http = new HttpClient(wire);
         using var setup = new DeviceLoginSetup(new AuthApi(new SiloApiClient(http)), "http://device-contract.invalid");
-        await Assert.ThrowsAsync<DeviceLoginRequiresHttpsException>(() => setup.StartAsync("Fixture", "Windows"));
-        await Assert.ThrowsAsync<DeviceLoginRequiresHttpsException>(() => setup.PollAsync("fixture-device"));
+        await setup.StartAsync("Fixture", "Windows");
+        Assert.Equal("pending", (await setup.PollAsync("fixture-device")).Status);
+        Assert.Equal("pending", (await setup.PollAsync("fixture-device")).Status);
         Assert.Equal(1, wire.Capabilities);
-        Assert.Empty(wire.Hashes); Assert.Empty(wire.Secrets);
+        Assert.True(Assert.Single(wire.Hashes) is { Length: 43 });
+        Assert.Equal(2, wire.AcceptedPolls);
+        Assert.True(wire.Secrets[0] is { Length: 43 } && wire.Secrets[0] == wire.Secrets[1]);
+        Assert.False(wire.Authenticated);
+    }
+
+    [Theory]
+    [InlineData(408)]
+    [InlineData(425)]
+    [InlineData(429)]
+    [InlineData(503)]
+    public async Task TransientPollFailurePreservesRetryAfterAndSetupSecret(int status)
+    {
+        using var wire = new Wire { EnforceBinding = true, PollFailureStatus = (HttpStatusCode)status }; using var http = new HttpClient(wire);
+        using var setup = new DeviceLoginSetup(new AuthApi(new SiloApiClient(http)), Wire.Server);
+        await setup.StartAsync("Fixture", "Windows");
+        var error = await Assert.ThrowsAsync<ApiException>(() => setup.PollAsync("fixture-device"));
+        Assert.Equal(status, error.StatusCode);
+        Assert.Equal(2d, error.RetryAfterSeconds);
+        Assert.Equal("pending", (await setup.PollAsync("fixture-device")).Status);
+        Assert.Equal(1, wire.Capabilities);
+        Assert.Single(wire.Hashes);
+        Assert.Equal(2, wire.Secrets.Count);
+        Assert.True(wire.Secrets[0] is { Length: 43 } && wire.Secrets[0] == wire.Secrets[1]);
+        Assert.Equal(1, wire.AcceptedPolls);
     }
 
     [Fact]
@@ -170,6 +195,7 @@ public sealed class DeviceLoginBindingTests
         internal string Mode = "positive", Query = "";
         internal int Capabilities, Decisions, AcceptedPolls;
         internal bool Authenticated, Refuse, EchoCode, EnforceBinding, TransportEcho;
+        internal HttpStatusCode? PollFailureStatus;
         internal List<string?> Hashes = [], Secrets = [];
         internal List<string> Hosts = [];
         internal TaskCompletionSource<HttpResponseMessage>? CapabilityGate;
@@ -207,6 +233,13 @@ public sealed class DeviceLoginBindingTests
                 if (EnforceBinding && (Secrets[^1] is not { } provided || Encode(SHA256.HashData(Convert.FromBase64String(provided.Replace('-', '+').Replace('_', '/') + "="))) != Hashes[0]))
                     return Reply(new { type = "https://siloserver.org/docs/api/v2/problems/device_binding_mismatch" }, HttpStatusCode.Forbidden);
                 if (Refuse) return Reply(new { type = "https://siloserver.org/docs/api/v2/problems/device_binding_mismatch", code = EchoCode ? Secrets[^1] : "device_binding_mismatch", detail = Secrets[^1], errors = new[] { new { location = Secrets[^1] } } }, HttpStatusCode.Forbidden);
+                if (PollFailureStatus is { } status)
+                {
+                    PollFailureStatus = null;
+                    var failure = Reply(new { code = "slow_down" }, status);
+                    failure.Headers.RetryAfter = new(TimeSpan.FromSeconds(2));
+                    return failure;
+                }
                 ++AcceptedPolls;
                 return Reply(new { status = "pending" });
             }
