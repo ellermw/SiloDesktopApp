@@ -14,6 +14,7 @@ public partial class RequestsViewModel : ObservableObject
     private bool _loadInProgress;
     private ApiRequestContext? _loadedContext;
     private ApiRequestContext? _loadingContext;
+    private Func<bool> _loadingVisit = () => true;
     private int _loadRevision;
     private int _discoveryRevision;
     private ApiRequestContext? _configuredDiscoveryContext;
@@ -64,7 +65,8 @@ public partial class RequestsViewModel : ObservableObject
     private async Task LoadForVisitAsync(Func<bool> isCurrentVisit)
     {
         var context = _requestsApi.CaptureContext();
-        if (_loadInProgress && _loadingContext == context) return;
+        // A load owned by a visit that has since ended will discard its result, so it must not swallow this one.
+        if (_loadInProgress && _loadingContext == context && _loadingVisit()) return;
         if (_loadedContext == context && DataVersion > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
         if (_loadedContext != context)
         {
@@ -73,6 +75,7 @@ public partial class RequestsViewModel : ObservableObject
         }
         var revision = ++_loadRevision;
         _loadingContext = context;
+        _loadingVisit = isCurrentVisit;
 
         _loadInProgress = true;
         IsLoading = DataVersion == 0 || _loadedContext != context;
@@ -399,13 +402,16 @@ public partial class RequestsViewModel : ObservableObject
             RequestRemovalResult result;
             try
             {
-                await _requestsApi.RemoveFailedAsync(request.Id, owner, visit);
+                // A confirmed deletion is not abandoned with the page visit; the identity binding alone stops a
+                // switched profile from re-authoring it, and the visit only suppresses feedback.
+                await _requestsApi.RemoveFailedAsync(request.Id, owner);
                 result = new(RequestRemovalOutcome.Removed);
             }
-            catch (OperationCanceledException) { return new(RequestRemovalOutcome.Retired); }
+            catch (OperationCanceledException) when (!IsCurrent()) { InvalidateCache(); return new(RequestRemovalOutcome.Retired); }
             catch (ApiException ex) when (ex.StatusCode is 404 or 409) { result = new(RequestRemovalOutcome.Refused, ex.Message); }
             catch (Exception ex) { result = new(RequestRemovalOutcome.Failed, ex.Message); }
-            if (!IsCurrent()) return new(RequestRemovalOutcome.Retired);
+            // The DELETE may have reached the server: a later visit must read the list again rather than reuse it.
+            if (!IsCurrent()) { InvalidateCache(); return new(RequestRemovalOutcome.Retired); }
             await RefreshAfterRequestChangeAsync(IsCurrent);
             return IsCurrent() ? result : new(RequestRemovalOutcome.Retired);
         }
@@ -421,10 +427,13 @@ public partial class RequestsViewModel : ObservableObject
     private async Task RefreshAfterRequestChangeAsync(Func<bool> isCurrent)
     {
         var loadWasRunning = _loadInProgress;
+        var mineRead = _mineReadRevision;
         InvalidateCache();
         await LoadForVisitAsync(isCurrent);
         if (!isCurrent()) return;
         if (loadWasRunning) await Task.WhenAll(LoadMineAsync(), LoadDiscoveryAsync(brandsPreloaded: true));
+        // The account list must not depend on the status read: a failed status read still re-reads it.
+        else if (mineRead == _mineReadRevision && RequestsEnabled) await LoadMineAsync();
         if (!isCurrent()) return;
         if (!string.IsNullOrWhiteSpace(SearchQuery)) await SearchAsync();
         if (!isCurrent()) return;
@@ -446,7 +455,7 @@ public enum RequestRemovalOutcome
     Failed,
     /// <summary>Not eligible, unsupported by the server, or already pending.</summary>
     Skipped,
-    /// <summary>The initiating account/profile changed; nothing is reported or refreshed for the old owner.</summary>
+    /// <summary>The initiating account/profile or page visit retired; nothing is reported or refreshed for the old owner, but the next load re-reads the lists.</summary>
     Retired,
 }
 

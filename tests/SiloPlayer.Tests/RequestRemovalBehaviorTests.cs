@@ -247,6 +247,79 @@ public sealed class RequestRemovalBehaviorTests
         Assert.False(vm.IsRemovingRequest("failed"));
     }
 
+    [Fact]
+    public async Task TransportTimeoutWhileTheOwnerIsCurrentFailsVisiblyAndRefreshes()
+    {
+        using var wire = new Wire { DeleteThrows = new TaskCanceledException("The request timed out.") }; using var http = new HttpClient(wire);
+        var vm = await LoadedAsync(NewClient(http));
+        var reads = wire.Reads.Count;
+
+        var result = await vm.RemoveFailedRequestAsync(vm.MyRequests.Single(row => row.Id == "failed"), vm.CaptureRemovalOwner());
+
+        Assert.Equal(RequestRemovalOutcome.Failed, result.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(result.Error));
+        Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
+        Assert.False(vm.IsRemovingRequest("failed"));
+    }
+
+    [Fact]
+    public async Task LeavingDuringTheDeleteDoesNotAbortItAndTheNextVisitReadsTheListAgain()
+    {
+        using var wire = new Wire { HoldDelete = new(TaskCreationOptions.RunContinuationsAsynchronously) }; using var http = new HttpClient(wire);
+        var vm = await LoadedAsync(NewClient(http));
+        using var visit = new CancellationTokenSource();
+        var removal = vm.RemoveFailedRequestAsync(vm.MyRequests.Single(row => row.Id == "failed"), vm.CaptureRemovalOwner(), visit.Token);
+        await UntilAsync(() => wire.Writes.Count == 1);
+        visit.Cancel();
+        wire.HoldDelete.SetResult();
+
+        Assert.Equal(RequestRemovalOutcome.Retired, (await removal).Outcome);
+        Assert.DoesNotContain("failed", RemainingIds(wire.Mine));
+        var reads = wire.Reads.Count;
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
+        Assert.DoesNotContain("failed", vm.MyRequests.Select(row => row.Id));
+    }
+
+    [Fact]
+    public async Task ReturningVisitIsNotSwallowedByARefreshItsPreviousVisitAbandoned()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var vm = await LoadedAsync(NewClient(http));
+        using var visit = new CancellationTokenSource();
+        var reads = wire.Reads.Count;
+        wire.HoldStatus = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var removal = vm.RemoveFailedRequestAsync(vm.MyRequests.Single(row => row.Id == "failed"), vm.CaptureRemovalOwner(), visit.Token);
+        await UntilAsync(() => wire.Reads.Skip(reads).Contains("/api/v2/requests/status"));
+        visit.Cancel();
+        var returning = vm.LoadCommand.ExecuteAsync(null);
+        wire.HoldStatus.TrySetResult();
+
+        Assert.Equal(RequestRemovalOutcome.Retired, (await removal).Outcome);
+        await returning;
+        Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
+        Assert.DoesNotContain("failed", vm.MyRequests.Select(row => row.Id));
+    }
+
+    [Fact]
+    public async Task StatusReadFailureAfterRemovalStillReadsTheAccountListAgain()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var vm = await LoadedAsync(NewClient(http));
+        wire.FailStatus = true;
+
+        var result = await vm.RemoveFailedRequestAsync(vm.MyRequests.Single(row => row.Id == "failed"), vm.CaptureRemovalOwner());
+
+        Assert.Equal(RequestRemovalOutcome.Removed, result.Outcome);
+        Assert.Equal(["partial", "retryable"], vm.MyRequests.Select(row => row.Id).Order());
+    }
+
+    private static IEnumerable<string?> RemainingIds(string mine)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(mine);
+        return document.RootElement.GetProperty("items").EnumerateArray().Select(row => row.GetProperty("id").GetString()).ToArray();
+    }
+
     private static SiloApiClient NewClient(HttpClient http)
     {
         var client = new SiloApiClient(http); client.SetBaseUrl("https://request-remove.invalid"); client.SetProfile("profile-a");
@@ -279,6 +352,8 @@ public sealed class RequestRemovalBehaviorTests
         public HttpStatusCode DeleteStatus = HttpStatusCode.NoContent;
         public TaskCompletionSource? HoldDelete;
         public TaskCompletionSource? HoldStatus;
+        public Exception? DeleteThrows;
+        public bool FailStatus;
         public readonly List<string> Reads = [];
         public readonly List<Write> Writes = [];
 
@@ -290,6 +365,7 @@ public sealed class RequestRemovalBehaviorTests
                 var body = request.Content == null ? null : await request.Content.ReadAsStringAsync(ct);
                 Writes.Add(new(request.Method, request.RequestUri.OriginalString.Split('?')[0][(request.RequestUri.GetLeftPart(UriPartial.Authority).Length)..], body, request.Content != null));
                 if (HoldDelete is { } hold) await hold.Task.WaitAsync(ct);
+                if (DeleteThrows != null) throw DeleteThrows;
                 if (DeleteStatus == HttpStatusCode.NoContent)
                 {
                     var id = Uri.UnescapeDataString(path.Split('/').Last());
@@ -300,6 +376,8 @@ public sealed class RequestRemovalBehaviorTests
             }
             Reads.Add(path);
             if (path.EndsWith("/status") && HoldStatus is { } statusGate) await statusGate.Task.WaitAsync(ct);
+            if (path.EndsWith("/status") && FailStatus)
+                return new(HttpStatusCode.BadGateway) { Content = new StringContent("{\"title\":\"Bad gateway\",\"detail\":\"Upstream unavailable.\"}", Encoding.UTF8, "application/problem+json") };
             var json = path.EndsWith("/status") ? Status : path.EndsWith("/mine") ? Mine : path.EndsWith("/search") ? "{\"results\":[],\"page\":1,\"total_pages\":1,\"total_results\":0}"
                 : path.EndsWith("/genres") || path.EndsWith("/studios") || path.EndsWith("/networks") ? "{\"items\":[]}" : "{\"items\":[]}";
             return new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
