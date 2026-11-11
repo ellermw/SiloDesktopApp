@@ -943,12 +943,21 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PersonalListsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-removal")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await RequestRemovalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-interactions")
             {
                 _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
                 _window.AppWindow.Show(false);
                 await RequestsLifecycleNativeFixture.RunAsync(parent);
                 await RequestInteractionNativeFixture.RunAsync(parent);
+                await RequestRemovalNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
@@ -1090,6 +1099,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             await RequestViewerNativeFixture.RunAsync(parent);
             await RequestsLifecycleNativeFixture.RunAsync(parent);
             await RequestInteractionNativeFixture.RunAsync(parent);
+            await RequestRemovalNativeFixture.RunAsync(parent);
             await PersonalListsNativeFixture.RunAsync(parent);
             await DetailPresentationNativeFixture.RunAsync(parent);
             await MediaParityNativeFixture.RunAsync(parent);
