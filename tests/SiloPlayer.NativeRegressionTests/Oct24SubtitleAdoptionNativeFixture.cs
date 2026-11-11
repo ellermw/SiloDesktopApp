@@ -362,6 +362,53 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                         "A same-session transport change dropped the announcement or changed playback intent on retry.");
                     wire.HoldReplan = null; wire.ReplanEntered = null;
                 }
+                // A stored-list read can straddle an announcement for the same file.
+                // A row appended during the GET must not abort the refresh, and one
+                // rewritten while the refresh waits for the commit gates must not be
+                // overwritten from the facts read before that merge.
+                foreach (var rewrite in new[] { false, true })
+                {
+                    wire.DownloadedAvailable = rewrite; wire.AdditionalDownloadedAvailable = false;
+                    await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                    wire.DownloadedAvailable = wire.AdditionalDownloadedAvailable = true;
+                    if (rewrite) await service.RefreshSubtitlesAfterAiAsync(42);
+                    var straddled = manager.CurrentSession!;
+                    var storedOnly = straddled.SubtitleUrls.SingleOrDefault(row => row.Id == 78);
+                    Require(rewrite ? (storedOnly is { Index: 3, TrackId: null, Delivery: null })
+                        : storedOnly == null && !straddled.SubtitleUrls.Any(row => row.Id == 77),
+                        "The straddled-read regression did not establish its stored-list-only or absent rows.");
+                    wire.HoldStoredList = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.StoredListEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var reading = Task.Run(() => service.RefreshSubtitlesAfterAiAsync(42));
+                    try
+                    {
+                        await wire.StoredListEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                        lock (Get(service, "_subtitleSyncGate")!)
+                        lock (Get(service, "_subtitleTrackStateLock")!)
+                        {
+                            // Let the refresh take its response up to these gates first.
+                            if (rewrite) { wire.HoldStoredList.TrySetResult(); Thread.Sleep(250); }
+                            Require(manager.TryApplySubtitleTrack(straddled, new()
+                            {
+                                StoredSubtitleId = 78, TrackId = "downloaded:78", CombinedIndex = 3,
+                                Source = "downloaded", Delivery = "sidecar", Url = subtitles.Origin + "/spa.srt",
+                            }), "The announcement did not merge while the stored-list read was in flight.");
+                        }
+                    }
+                    finally { wire.HoldStoredList.TrySetResult(); }
+                    await reading.WaitAsync(TimeSpan.FromSeconds(6));
+                    wire.HoldStoredList = null; wire.StoredListEntered = null;
+                    var merged = straddled.SubtitleUrls.Single(row => row.Id == 78);
+                    Require(ReferenceEquals(straddled, manager.CurrentSession) && (!rewrite || ReferenceEquals(merged, storedOnly)) &&
+                        merged.Index == 3 && merged.TrackId == "downloaded:78" && merged.Delivery == "sidecar" &&
+                        merged.Url == subtitles.Origin + "/spa.srt" && !merged.Unplayable,
+                        "A stored-list refresh downgraded or retired a row announced while its read was in flight.");
+                    Require(rewrite || straddled.SubtitleUrls.Single(row => row.Id == 77) is { Index: 2, Unplayable: false, Url: "/stream/fixture/subtitles/2" },
+                        "An announcement merged during the stored-list read aborted that refresh.");
+                    Require(manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes && service.IsPaused && mpv.IsPaused,
+                        "A straddled stored-list refresh changed the viewer's choice, preference or pause intent.");
+                }
                 // A stored-list-only download owns valid local bytes even when
                 // a later list order disagrees with the canonical reserved row.
                 wire.DownloadedAvailable = true; wire.AdditionalDownloadedAvailable = false;
@@ -764,6 +811,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         public bool ReverseDownloadedOrder;
         public bool ReindexReadyInventory;
         public TaskCompletionSource? HoldReplan, ReplanEntered;
+        public TaskCompletionSource? HoldStoredList, StoredListEntered;
         private string SubtitleId => _subtitle == 2 ? "downloaded:77" : $"sub:{_file}:{_subtitle}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -771,11 +819,17 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             var path = request.RequestUri.AbsolutePath;
             if (path.Contains("-prefs/", StringComparison.Ordinal)) { PreferenceWrites++; return Json("{}"); }
             if (path == "/api/v2/subtitles/42" && DownloadedAvailable)
-                return Json(AdditionalDownloadedAvailable
+            {
+                // Freeze the list at request entry, as for a held plan below.
+                var stored = AdditionalDownloadedAvailable
                     ? ReverseDownloadedOrder
                         ? """{"subtitles":[{"id":78,"language":"spa","format":"srt","title":"New translation"},{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}"""
                         : """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"},{"id":78,"language":"spa","format":"srt","title":"New translation"}]}"""
-                    : """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}""");
+                    : """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}""";
+                StoredListEntered?.TrySetResult();
+                if (HoldStoredList != null) await HoldStoredList.Task.WaitAsync(ct);
+                return Json(stored);
+            }
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");

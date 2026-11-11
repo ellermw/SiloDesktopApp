@@ -33,19 +33,32 @@ public partial class PlayerService
         var nativeFile = Volatile.Read(ref _fileLoadGeneration);
         var content = ContentId;
         var liveJob = Volatile.Read(ref _liveSubtitleJobId);
-        List<SubtitleTrackInfo> previousInventory;
+        List<SubtitleTrackInfo> readInventory;
         lock (manager.SubtitleInventorySyncRoot)
         {
             if (!ReferenceEquals(session, manager.CurrentSession)) return;
-            previousInventory = session.SubtitleUrls;
+            readInventory = session.SubtitleUrls;
         }
-        var acceptedInventory = previousInventory;
+        var acceptedInventory = readInventory;
         var activation = mayActivate ?? CaptureSubtitleActivationIntent();
+        // A subtitle_ready merge appends canonical rows or rewrites one in place;
+        // it retires nothing this refresh accepted. Any other replacement list does.
+        bool InventoryCurrent()
+        {
+            lock (manager.SubtitleInventorySyncRoot)
+            {
+                var live = session.SubtitleUrls;
+                return ReferenceEquals(acceptedInventory, live) ||
+                    acceptedInventory.All(track => live.Contains(track)) &&
+                    live.Except(acceptedInventory).All(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
+                        !string.IsNullOrWhiteSpace(track.Delivery));
+            }
+        }
         bool Current() => !_closing && !token.IsCancellationRequested && (isCurrent?.Invoke() ?? true) &&
             activation() &&
             ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context) &&
             ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager.CurrentSession) &&
-            ReferenceEquals(acceptedInventory, session.SubtitleUrls) && nativeFile == Volatile.Read(ref _fileLoadGeneration) &&
+            InventoryCurrent() && nativeFile == Volatile.Read(ref _fileLoadGeneration) &&
             ReferenceEquals(mpv, _mpv) && content == ContentId && play == Volatile.Read(ref _playRequestGeneration) &&
             file == Volatile.Read(ref _playbackFileGeneration);
         if (!Current()) return;
@@ -54,83 +67,88 @@ public partial class PlayerService
             var response = await authority.PlaybackApi.GetSubtitlesAsync(mediaFileId, token, context).ConfigureAwait(false);
             if (!Current()) return;
 
-            var previousDownloads = previousInventory
-                .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
-            var existing = previousInventory.Except(previousDownloads).ToList();
-            var reserved = previousDownloads.Where(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
-                !string.IsNullOrWhiteSpace(track.Delivery)).Concat(existing).ToArray();
-            var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
-            // Stored-list ordinals are relative to the non-downloaded inventory.
-            // If canonical rows disagree, only a replan can make new rows executable.
-            var canonicalOrdinalsAgree = response.Subtitles.Select((entry, offset) =>
-                !reserved.Any(track => (track.Id == entry.Id || track.SyncKey == "stored-" + entry.Id) &&
-                    track.Index != baseIndex + offset)).All(agrees => agrees);
-            var canonicalStoredIds = new Dictionary<SubtitleTrackInfo, long>();
-            var displacedCanonical = new HashSet<SubtitleTrackInfo>();
-            var downloaded = response.Subtitles.Select((entry, offset) =>
-            {
-                var syncKey = "stored-" + entry.Id;
-                var unique = entry.Id > 0 && response.Subtitles.Count(item => item.Id == entry.Id) == 1;
-                var matches = previousDownloads.Where(track => unique &&
-                    (track.Id == entry.Id || track.SyncKey == syncKey)).Take(2).ToArray();
-                var previous = matches.Length == 1 ? matches[0] : null;
-                // A stored-list response cannot downgrade canonical plan/event facts.
-                if (previous != null && !string.IsNullOrWhiteSpace(previous.TrackId) &&
-                    !string.IsNullOrWhiteSpace(previous.Delivery))
-                {
-                    canonicalStoredIds[previous] = entry.Id;
-                    return previous;
-                }
-                var ordinal = baseIndex + offset;
-                // Older plans omit stored keys. Position alone cannot prove that a
-                // canonical row at this slot changed: retain it, without guessing
-                // a stored identity or creating an unplayable positional duplicate.
-                var unknownCanonical = previousDownloads.Where(track => track.Index == ordinal &&
-                    IsCanonicalDownloadWithoutStoredIdentity(track)).Take(2).ToArray();
-                if (unknownCanonical.Length == 1)
-                {
-                    // An entry that owns another row, or names another language,
-                    // is not this row: it now holds the row's stored ordinal.
-                    if (previous == null && StoredEntryMayBeCanonicalDownload(unknownCanonical[0], entry.Language))
-                        return unknownCanonical[0];
-                    displacedCanonical.Add(unknownCanonical[0]);
-                }
-                var collision = reserved.Any(track => track.Index == ordinal);
-                var executable = unique && canonicalOrdinalsAgree && !collision;
-                if (collision) ordinal = Math.Max(reserved.Max(track => track.Index) + 1, baseIndex + response.Subtitles.Count) + offset;
-                return new SubtitleTrackInfo
-                {
-                    TrackId = previous?.TrackId,
-                    SyncKey = previous?.SyncKey ?? syncKey,
-                    Id = entry.Id,
-                    Unplayable = !executable || (previous?.Unplayable ?? false),
-                    Delivery = previous?.Delivery,
-                    Index = ordinal,
-                    MediaFileId = mediaFileId,
-                    Language = entry.Language,
-                    Codec = previous?.Codec ?? (string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format),
-                    Label = string.IsNullOrWhiteSpace(entry.ReleaseName)
-                        ? (entry.Title ?? entry.Language)
-                        : $"{entry.ReleaseName} ({entry.Provider})",
-                    Source = "downloaded",
-                    HearingImpaired = entry.HearingImpaired,
-                    Forced = entry.Forced,
-                    Url = executable ? $"/stream/{session.SessionId}/subtitles/{ordinal}" : "",
-                };
-            }).ToList();
-            // That evidence leaves every new positional URL from this list
-            // uncertain too. Only a replan can make those rows executable.
-            if (displacedCanonical.Count > 0)
-                foreach (var row in downloaded.Where(row => !previousDownloads.Contains(row)))
-                {
-                    row.Unplayable = true;
-                    row.Url = "";
-                }
+            List<SubtitleTrackInfo> downloaded;
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             lock (manager.SubtitleInventorySyncRoot)
             {
                 if (!Current()) return;
+                // An announcement may have merged while the list was read. Build
+                // from the rows as they are now, under the gates that serialize
+                // that merge, so its canonical facts are never judged stale.
+                var previousInventory = acceptedInventory = session.SubtitleUrls;
+                var previousDownloads = previousInventory
+                    .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
+                var existing = previousInventory.Except(previousDownloads).ToList();
+                var reserved = previousDownloads.Where(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
+                    !string.IsNullOrWhiteSpace(track.Delivery)).Concat(existing).ToArray();
+                var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
+                // Stored-list ordinals are relative to the non-downloaded inventory.
+                // If canonical rows disagree, only a replan can make new rows executable.
+                var canonicalOrdinalsAgree = response.Subtitles.Select((entry, offset) =>
+                    !reserved.Any(track => (track.Id == entry.Id || track.SyncKey == "stored-" + entry.Id) &&
+                        track.Index != baseIndex + offset)).All(agrees => agrees);
+                var canonicalStoredIds = new Dictionary<SubtitleTrackInfo, long>();
+                var displacedCanonical = new HashSet<SubtitleTrackInfo>();
+                downloaded = response.Subtitles.Select((entry, offset) =>
+                {
+                    var syncKey = "stored-" + entry.Id;
+                    var unique = entry.Id > 0 && response.Subtitles.Count(item => item.Id == entry.Id) == 1;
+                    var matches = previousDownloads.Where(track => unique &&
+                        (track.Id == entry.Id || track.SyncKey == syncKey)).Take(2).ToArray();
+                    var previous = matches.Length == 1 ? matches[0] : null;
+                    // A stored-list response cannot downgrade canonical plan/event facts.
+                    if (previous != null && !string.IsNullOrWhiteSpace(previous.TrackId) &&
+                        !string.IsNullOrWhiteSpace(previous.Delivery))
+                    {
+                        canonicalStoredIds[previous] = entry.Id;
+                        return previous;
+                    }
+                    var ordinal = baseIndex + offset;
+                    // Older plans omit stored keys. Position alone cannot prove that a
+                    // canonical row at this slot changed: retain it, without guessing
+                    // a stored identity or creating an unplayable positional duplicate.
+                    var unknownCanonical = previousDownloads.Where(track => track.Index == ordinal &&
+                        IsCanonicalDownloadWithoutStoredIdentity(track)).Take(2).ToArray();
+                    if (unknownCanonical.Length == 1)
+                    {
+                        // An entry that owns another row, or names another language,
+                        // is not this row: it now holds the row's stored ordinal.
+                        if (previous == null && StoredEntryMayBeCanonicalDownload(unknownCanonical[0], entry.Language))
+                            return unknownCanonical[0];
+                        displacedCanonical.Add(unknownCanonical[0]);
+                    }
+                    var collision = reserved.Any(track => track.Index == ordinal);
+                    var executable = unique && canonicalOrdinalsAgree && !collision;
+                    if (collision) ordinal = Math.Max(reserved.Max(track => track.Index) + 1, baseIndex + response.Subtitles.Count) + offset;
+                    return new SubtitleTrackInfo
+                    {
+                        TrackId = previous?.TrackId,
+                        SyncKey = previous?.SyncKey ?? syncKey,
+                        Id = entry.Id,
+                        Unplayable = !executable || (previous?.Unplayable ?? false),
+                        Delivery = previous?.Delivery,
+                        Index = ordinal,
+                        MediaFileId = mediaFileId,
+                        Language = entry.Language,
+                        Codec = previous?.Codec ?? (string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format),
+                        Label = string.IsNullOrWhiteSpace(entry.ReleaseName)
+                            ? (entry.Title ?? entry.Language)
+                            : $"{entry.ReleaseName} ({entry.Provider})",
+                        Source = "downloaded",
+                        HearingImpaired = entry.HearingImpaired,
+                        Forced = entry.Forced,
+                        Url = executable ? $"/stream/{session.SessionId}/subtitles/{ordinal}" : "",
+                    };
+                }).ToList();
+                // That evidence leaves every new positional URL from this list
+                // uncertain too. Only a replan can make those rows executable.
+                if (displacedCanonical.Count > 0)
+                    foreach (var row in downloaded.Where(row => !previousDownloads.Contains(row)))
+                    {
+                        row.Unplayable = true;
+                        row.Url = "";
+                    }
                 foreach (var entry in canonicalStoredIds) entry.Key.Id ??= entry.Value;
                 // A displaced plan-only row keeps its identity and any bytes it
                 // already loaded, never a URL that may now address another subtitle.
@@ -179,6 +197,9 @@ public partial class PlayerService
                     retained.Url = refreshed.Url;
                     return retained;
                 }).ToList();
+                // A list read before an announcement landed cannot prove its row gone.
+                downloaded.AddRange(previousDownloads.Where(track => !readInventory.Contains(track) &&
+                    !downloaded.Contains(track)).ToArray());
                 // Absence from a stored-ID list cannot retire a row without stored
                 // keys. Both refresh entry points keep those rows by the same rule.
                 RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);
