@@ -647,6 +647,52 @@ public sealed class SubtitleReviewRegressionTests
         }
     }
 
+    [Fact]
+    public void BothStoredListRefreshesReplanOnceWhenAnUncertainLayoutWithholdsTheRequestedSubtitle()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a pick whose
+        // entry the list's layout left without a route asks for one authoritative
+        // inventory, is started over on it, and otherwise tells the viewer. That
+        // covers another language on a plan-only row's ordinal, through both
+        // entry points.
+        var publicRefresh = Between(Read("PlayerService.SubtitleRefresh.cs"), "public async Task RefreshSubtitlesAfterAiAsync(",
+            "private static void RetainDownloadsAnnouncedDuringRead(");
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var refresh in new[] { publicRefresh, ownedRefresh })
+        {
+            // The inventory a pick is started over on is its final answer.
+            var answered = refresh.IndexOf("if (preferredSubtitleId is long stored) MarkStoredSubtitlePickReplanned(applied, stored);", StringComparison.Ordinal);
+            var restarted = refresh.IndexOf("DeferUntilSubtitleReadyIdle(() =>", StringComparison.Ordinal);
+            Assert.True(answered >= 0 && restarted > answered);
+            var uncertain = refresh.IndexOf("uncertainPick = (displacedCanonical.Count > 0 || !canonicalOrdinalsAgree) &&", StringComparison.Ordinal);
+            Assert.True(uncertain > restarted);
+            Assert.Contains("response.Subtitles.Any(entry => entry.Id == preferredSubtitleId);", refresh[uncertain..]);
+            var pick = refresh.IndexOf("track => !track.Unplayable && track.Id == preferredSubtitleId)", uncertain, StringComparison.Ordinal);
+            var fallback = refresh.IndexOf("else if (preferred == null && uncertainPick && preferredSubtitleId is long requested && Current())", StringComparison.Ordinal);
+            var replan = refresh.IndexOf("await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false)", StringComparison.Ordinal);
+            Assert.True(pick > uncertain && fallback > pick && replan > fallback);
+            // Nothing applied, or the pick unmatched there too: never a silent drop.
+            Assert.True(refresh.IndexOf("ShowSubtitleSelectionUnavailable();", replan, StringComparison.Ordinal) > replan);
+        }
+        // An owner holds no registration to start it over: it follows the plan itself.
+        var followed = ownedRefresh.IndexOf("MarkStoredSubtitlePickReplanned(published, requested);", StringComparison.Ordinal);
+        Assert.True(followed >= 0 && ownedRefresh.IndexOf(
+            "await RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent)",
+            followed, StringComparison.Ordinal) > followed);
+
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var request = Between(ready, "private async Task<PlaybackStartResponse?> ReplanForStoredSubtitlePickAsync(",
+            "private static bool SubtitleInventoryRequiresTransportReload(");
+        // One replan per pick and inventory, and only where v3 can supply one.
+        var bound = request.IndexOf("if (session.ProtocolVersion < 3 || _replannedStoredSubtitlePicks is { } picks &&", StringComparison.Ordinal);
+        var replanned = request.IndexOf("await ApplySubtitleReadyAsync(", StringComparison.Ordinal);
+        Assert.True(bound >= 0 && replanned > bound);
+        Assert.Contains("ReferenceEquals(picks.Session, session) && picks.SubtitleIds.Contains(subtitleId)) return null;", request);
+        // Only an inventory applied in place of the read response counts.
+        Assert.Contains("_pendingSubtitleInventoryApplication == null ? applied : null;", request);
+    }
+
     private static string Reload() => Between(Read("PlayerService.SubtitleSync.cs"),
         "private async Task ReloadCorrectedSubtitleAsync(", "private void SendSubtitleSyncState()");
 

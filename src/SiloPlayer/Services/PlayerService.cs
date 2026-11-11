@@ -9368,6 +9368,9 @@ public partial class PlayerService : IDisposable
                 if (!replaces && !ended || !_storedSubtitleListRefreshes.Remove(superseded)) return;
             }
             if (!replaces) return;
+            // That inventory is authoritative. Started over on it, this pick is
+            // answered there and never asks for another.
+            if (preferredSubtitleId is long stored) MarkStoredSubtitlePickReplanned(applied, stored);
             DeferUntilSubtitleReadyIdle(() =>
             {
                 // Every fence above except the response the inventory replaced.
@@ -9389,6 +9392,8 @@ public partial class PlayerService : IDisposable
             if (!Current()) return;
 
             List<SubtitleTrackInfo> downloaded;
+            // The list holds the requested subtitle, but its layout withheld that entry's route.
+            var uncertainPick = false;
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             lock (manager.SubtitleInventorySyncRoot)
@@ -9492,6 +9497,8 @@ public partial class PlayerService : IDisposable
                         fresh.Unplayable = true;
                         fresh.Url = "";
                     }
+                uncertainPick = (displacedCanonical.Count > 0 || !canonicalOrdinalsAgree) &&
+                    response.Subtitles.Any(entry => entry.Id == preferredSubtitleId);
 
                 // MatchCurrentSubtitle, SubtitleSelectionForLoad and presentation
                 // readers share the inventory gate, so retained identities and
@@ -9688,6 +9695,23 @@ public partial class PlayerService : IDisposable
                             ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: false);
                         }
                     }
+                }
+            }
+            else if (preferred == null && uncertainPick && preferredSubtitleId is long requested && Current())
+            {
+                // Only an authoritative inventory can route that entry. Without an
+                // owner its application starts this refresh over; an owner follows
+                // the plan itself. When none is applied, or the list cannot place
+                // the entry there either, tell the viewer.
+                var published = await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false);
+                if (published == null)
+                {
+                    if (Current()) ShowSubtitleSelectionUnavailable();
+                }
+                else if (currentOwner != null && Current())
+                {
+                    MarkStoredSubtitlePickReplanned(published, requested);
+                    await RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent).ConfigureAwait(false);
                 }
             }
         }

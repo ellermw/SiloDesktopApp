@@ -101,6 +101,43 @@ public partial class PlayerService
             current.SessionId == session.SessionId && current.MediaFileId == session.MediaFileId &&
             (_pendingSubtitleInventoryApplication != null || _subtitleReadyGuard.CurrentCount == 0);
 
+    // Stored subtitles whose pick was already started over on the response an
+    // authoritative replan published. That inventory is the final answer for
+    // the pick: a refresh the stored list still cannot place there never asks
+    // for another, so an unmatched pick cannot replan in a loop.
+    private sealed record ReplannedStoredSubtitlePicks(PlaybackStartResponse Session, HashSet<long> SubtitleIds);
+    private ReplannedStoredSubtitlePicks? _replannedStoredSubtitlePicks;
+
+    private void MarkStoredSubtitlePickReplanned(PlaybackStartResponse applied, long subtitleId)
+    {
+        lock (_subtitleReadyRefreshLock)
+        {
+            var picks = _replannedStoredSubtitlePicks;
+            if (picks == null || !ReferenceEquals(picks.Session, applied))
+                _replannedStoredSubtitlePicks = picks = new(applied, []);
+            picks.SubtitleIds.Add(subtitleId);
+        }
+    }
+
+    // Called by both stored-list refresh entry points, outside their gates, when
+    // the list's layout withheld the requested subtitle's route. Only v3 has an
+    // authoritative inventory to ask for: the no-change replan an announcement
+    // without track metadata makes. Returns that response once it is applied in
+    // place of the one the list was read under.
+    private async Task<PlaybackStartResponse?> ReplanForStoredSubtitlePickAsync(PlaybackManager manager,
+        PlaybackStartResponse session, long subtitleId)
+    {
+        lock (_subtitleReadyRefreshLock)
+            if (session.ProtocolVersion < 3 || _replannedStoredSubtitlePicks is { } picks &&
+                ReferenceEquals(picks.Session, session) && picks.SubtitleIds.Contains(subtitleId)) return null;
+        await ApplySubtitleReadyAsync(
+            JsonSerializer.SerializeToElement(new { file_id = session.MediaFileId, subtitle_id = subtitleId }),
+            session.SessionId).ConfigureAwait(false);
+        return manager.CurrentSession is { } applied && !ReferenceEquals(applied, session) &&
+            applied.SessionId == session.SessionId && applied.MediaFileId == session.MediaFileId &&
+            _pendingSubtitleInventoryApplication == null ? applied : null;
+    }
+
     private static bool SubtitleInventoryRequiresTransportReload(PlaybackStartResponse previous, PlaybackStartResponse next)
         => previous.StreamUrl != next.StreamUrl || previous.Delivery != next.Delivery ||
             PlaybackTransportPlanner.Plan(previous).TransportKind != PlaybackTransportPlanner.Plan(next).TransportKind ||

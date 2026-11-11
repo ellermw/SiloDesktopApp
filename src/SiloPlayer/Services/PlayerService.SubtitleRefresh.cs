@@ -88,6 +88,9 @@ public partial class PlayerService
                 if (!replaces && !ended || !_storedSubtitleListRefreshes.Remove(superseded)) return;
             }
             if (!replaces) return;
+            // That inventory is authoritative. Started over on it, this pick is
+            // answered there and never asks for another.
+            if (preferredSubtitleId is long stored) MarkStoredSubtitlePickReplanned(applied, stored);
             DeferUntilSubtitleReadyIdle(() =>
             {
                 // Every fence above except the response and the loaded file,
@@ -109,6 +112,8 @@ public partial class PlayerService
             if (!Current()) return;
 
             List<SubtitleTrackInfo> downloaded;
+            // The list holds the requested subtitle, but its layout withheld that entry's route.
+            var uncertainPick = false;
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             lock (manager.SubtitleInventorySyncRoot)
@@ -201,6 +206,8 @@ public partial class PlayerService
                         row.Unplayable = true;
                         row.Url = "";
                     }
+                uncertainPick = (displacedCanonical.Count > 0 || !canonicalOrdinalsAgree) &&
+                    response.Subtitles.Any(entry => entry.Id == preferredSubtitleId);
                 foreach (var entry in canonicalStoredIds) entry.Key.Id ??= entry.Value;
                 // Carry the pick's id unless a displaced row left this list's ordinals uncertain.
                 if (pickedCanonical != null && displacedCanonical.Count == 0) pickedCanonical.Id = preferredSubtitleId;
@@ -359,6 +366,14 @@ public partial class PlayerService
                 // The executor owns cleanup after actual SID execution. A busy
                 // read or merely queued bitmap reload must retain live cues.
                 CompleteStoredSubtitleReplacement(preferred);
+            }
+            else if (preferred == null && uncertainPick && preferredSubtitleId is long requested && Current())
+            {
+                // Only an authoritative inventory can route that entry. Its
+                // application starts this refresh over. When none is applied, or
+                // the list cannot place the entry there either, tell the viewer.
+                if (await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false) == null && Current())
+                    ShowSubtitleSelectionUnavailable();
             }
         }
         catch (Exception ex)
