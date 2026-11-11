@@ -45,6 +45,10 @@ public sealed partial class CollectionEditorPage
             { CollectionId = id, Title = ViewModel.Name, IsUserCollection = true });
         _headerActions.Children.Add(open);
         var menu = new MenuFlyout();
+        var allowanceVisit = _editorLoadGeneration;
+        if (ViewModel.LoadedCollection is { } allowanceCollection)
+            SiloPlayer.Controls.CollectionAllowanceMenu.Attach(menu, this, allowanceCollection,
+                () => _editorActive && allowanceVisit == _editorLoadGeneration && ViewModel.CollectionId == id && ReferenceEquals(ViewModel.LoadedCollection, allowanceCollection));
         if (ViewModel.IsImportedCollection && ViewModel.Capabilities?.Imports != false)
         {
             var dirty = _draftBaseline != null && CaptureDraft().Any(pair => _draftBaseline.GetValueOrDefault(pair.Key) != pair.Value);
