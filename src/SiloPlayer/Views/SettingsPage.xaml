@@ -340,6 +340,13 @@
                                     <TextBlock Text="Plugins" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+                            <Button x:Name="YourDataTab" Click="Tab_Click" Tag="YourData"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xEBC3;" FontSize="16" />
+                                    <TextBlock Text="Your Data" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                             <Button x:Name="SessionsTab" Click="Tab_Click" Tag="Sessions"
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
@@ -2316,6 +2323,18 @@
                     </StackPanel>
                 </Border>
 
+            </StackPanel>
+
+            <StackPanel x:Name="YourDataPanel" Spacing="24" Margin="0" Visibility="Collapsed">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Your Data" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Export this profile's own data, or import a previous export to merge it back."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+                <ProgressRing x:Name="YourDataLoadingRing" IsActive="False" HorizontalAlignment="Left" Width="24" Height="24" />
+                <StackPanel x:Name="YourDataContentHost" Spacing="16" />
             </StackPanel>
 
             <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0" Visibility="Collapsed">
