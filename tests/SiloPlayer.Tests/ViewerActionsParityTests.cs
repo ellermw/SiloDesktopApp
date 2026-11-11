@@ -76,19 +76,40 @@ public class ViewerActionsParityTests
         Assert.Equal(expected, QueryEditing.HasCompleteRule(QueryEditing.Clone(received)));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void PopulationDropsUnfilledValuesBeforeAndAfterCloning(bool clone)
+    [Fact]
+    public void PopulationDropsUnfilledDraftValues()
     {
-        foreach (var value in new object?[] { "", "  ", null, Array.Empty<object>(),
+        // An editor writes plain values, so these are drafts that filter nothing yet.
+        foreach (var value in new object?[] { "", "  ", Array.Empty<object>(),
             new object[] { 1990d, "" }, new object?[] { 1990d, null }, new object[] { Array.Empty<object>() } })
         {
             var query = Rule("genre", "contains", value);
-            if (clone) query = QueryEditing.Clone(query);
             query.Groups = QueryEditing.PopulatedGroups(query);
             Assert.Empty(query.Groups);
             Assert.False(QueryEditing.HasCompleteRule(query));
+        }
+    }
+
+    [Theory]
+    [InlineData("exists")]
+    [InlineData("not_exists")]
+    [InlineData("future_operator")]
+    public void PopulationKeepsStoredRulesWhateverTheirValue(string op)
+    {
+        // A loaded value is decoded JSON, or missing for an operator that takes none. An
+        // unrelated edit must not delete such a rule from the saved collection.
+        Assert.Single(Assert.Single(QueryEditing.PopulatedGroups(Rule("status", op, null))).Rules);
+        foreach (var json in new[] { "{\"field\":\"status\",\"op\":\"" + op + "\"}", "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":null}",
+            "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":\"\"}", "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":[]}",
+            "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":[1990,\"\"]}" })
+        {
+            var received = JsonSerializer.Deserialize<QueryDefinition>("{\"groups\":[{\"match\":\"all\",\"rules\":[" + json + "]}]}", V2Json.Options)!;
+            foreach (var stored in new[] { received, QueryEditing.Clone(received) })
+            {
+                var rule = Assert.Single(Assert.Single(QueryEditing.PopulatedGroups(stored)).Rules);
+                Assert.Equal("status", rule.Field);
+                Assert.Equal(op, rule.Op);
+            }
         }
     }
 
@@ -106,9 +127,10 @@ public class ViewerActionsParityTests
             new() { Field = "future_field", Op = "future_operator", Value = "filled",
                 AdditionalProperties = new() { ["future_rule_option"] = JsonSerializer.SerializeToElement(true) } }
         ]);
-        draft.Groups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = null }] });
+        draft.Groups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = "  " }] });
+        // As both editors build a query: populate the draft, then detach the result.
         var query = QueryEditing.Clone(draft);
-        query.Groups = QueryEditing.PopulatedGroups(query);
+        query.Groups = QueryEditing.Clone(new QueryDefinition { Groups = QueryEditing.PopulatedGroups(draft) }).Groups;
         var group = Assert.Single(query.Groups);
         Assert.Equal("any", query.Match);
         Assert.Equal("any", group.Match);

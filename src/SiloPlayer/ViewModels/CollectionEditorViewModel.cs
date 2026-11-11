@@ -801,7 +801,9 @@ public partial class CollectionEditorViewModel : ObservableObject
     private QueryDefinition BuildQueryDefinition()
     {
         var query = SiloPlayer.Core.Services.QueryEditing.Clone(RuleDefinition);
-        query.Groups = SiloPlayer.Core.Services.QueryEditing.PopulatedGroups(query);
+        // Populated from the draft, then detached: the clone's values are all JsonElements,
+        // so its blank drafts could no longer be told from stored values.
+        query.Groups = SiloPlayer.Core.Services.QueryEditing.Clone(new QueryDefinition { Groups = SiloPlayer.Core.Services.QueryEditing.PopulatedGroups(RuleDefinition) }).Groups;
         if (query.MediaScope == "all") query.MediaScope = null;
         return query;
     }

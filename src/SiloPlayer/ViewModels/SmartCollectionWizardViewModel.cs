@@ -399,7 +399,9 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         query.LibraryIds = [.. SelectedLibraryIds];
         query.MediaScope = string.IsNullOrWhiteSpace(MediaScope) ? null : MediaScope;
         query.Match = MatchMode;
-        query.Groups = QueryEditing.PopulatedGroups(query);
+        // Populated from the draft, then detached: the clone's values are all JsonElements,
+        // so its blank drafts could no longer be told from stored values.
+        query.Groups = QueryEditing.Clone(new QueryDefinition { Groups = QueryEditing.PopulatedGroups(RuleDefinition) }).Groups;
         query.Sort = new QuerySort { Field = SortField, Order = SortOrder };
         query.Limit = int.TryParse(LimitText, out var limit) ? Math.Clamp(limit, 1, 500) : null;
         return query;

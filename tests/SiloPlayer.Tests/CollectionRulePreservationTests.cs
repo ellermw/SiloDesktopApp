@@ -46,6 +46,39 @@ public sealed class CollectionRulePreservationTests
         else Assert.Equal(JsonSerializer.Serialize(original, V2Json.Options), patch.GetProperty("query_definition").GetRawText());
     }
 
+    [Theory]
+    [InlineData(false, "exists")]
+    [InlineData(true, "exists")]
+    [InlineData(false, "not_exists")]
+    [InlineData(true, "not_exists")]
+    public async Task ChangingTheLimitKeepsStoredRulesThatTakeNoValue(bool wizard, string op)
+    {
+        using var wire = new Wire { QueryOverride = "{\"match\":\"all\",\"groups\":[{\"match\":\"all\",\"rules\":[{\"field\":\"status\",\"op\":\"" + op + "\"},{\"field\":\"genre\",\"op\":\"contains\",\"value\":\"Drama\"}]}]}" };
+        var client = new SiloApiClient(new HttpClient(wire)); client.SetBaseUrl("https://collection-fixture.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("fixture");
+        if (wizard)
+        {
+            var vm = new SmartCollectionWizardViewModel(new CatalogApi(client), new CollectionsApi(client), new AuthApi(client), auth);
+            await vm.ConfigureAsync(new(CollectionId: "fixture")); Assert.Null(vm.ErrorMessage);
+            vm.LimitText = "25";
+            await vm.SaveAsync(); Assert.Null(vm.ErrorMessage);
+        }
+        else
+        {
+            var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth);
+            await vm.LoadExistingCommand.ExecuteAsync("fixture"); Assert.Null(vm.ErrorMessage);
+            vm.RuleDefinition.Limit = 25;
+            await vm.SaveCommand.ExecuteAsync(null); Assert.Null(vm.ErrorMessage);
+        }
+        var query = Assert.IsType<JsonElement>(wire.Patch).GetProperty("query_definition");
+        Assert.Equal(25, query.GetProperty("limit").GetInt32());
+        var rules = Assert.Single(query.GetProperty("groups").EnumerateArray()).GetProperty("rules");
+        Assert.Equal(2, rules.GetArrayLength());
+        Assert.Equal("status", rules[0].GetProperty("field").GetString());
+        Assert.Equal(op, rules[0].GetProperty("op").GetString());
+        Assert.Equal("Drama", rules[1].GetProperty("value").GetString());
+    }
+
     [Fact]
     public async Task ManualCollectionSavesItsVisibleBrowseAndLibraryPreferences()
     {

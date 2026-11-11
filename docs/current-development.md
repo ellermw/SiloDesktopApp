@@ -1,6 +1,10 @@
-# November 11 ? Align viewer actions and smart collection behavior with Server main (Beta candidate)
+# November 11 — Align viewer actions and smart collection behavior with Server main (Beta candidate)
 
-Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Source remains **1.2.970**; the Beta pipeline owns integration, versioning and publication.
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
+
+Source version: `1.2.973-beta.1`; numeric version: `1.2.972.1`.
+
+These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps.
 
 Dedicated Continue Watching/Next Up pages remove eligible cards and update counts. Complete-rule validation gates smart editor/wizard previews and saves; Trending has a Show selector. Calendar labels/palettes, library sidebar icon aliases, failed-sync status refresh with draft preservation and episode library scope match current upstream. Dismissal retires any pending continuation and re-seeks the shortened live row while preserving the already-loaded prefix.
 
