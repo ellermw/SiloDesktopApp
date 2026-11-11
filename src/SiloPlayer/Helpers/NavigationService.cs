@@ -116,6 +116,14 @@ public class NavigationService
             _ = boxSet.ViewModel.RefreshAsync();
             return true;
         }
+        if (pageType == typeof(SiloPlayer.Views.RequestsPage) && frame.Content is SiloPlayer.Views.RequestsPage requests)
+        {
+            // Access changes and event-channel catch-up retire reads, not an open removal
+            // confirmation or its outcome. Keep the visit mounted while rereading fresh authority.
+            requests.ViewModel.InvalidateCache();
+            _ = requests.ViewModel.LoadCommand.ExecuteAsync(null);
+            return true;
+        }
         var forward = frame.ForwardStack.ToArray();
         if (frame.Content is Page current) current.NavigationCacheMode = NavigationCacheMode.Disabled;
         _replacement = new(frame, pageType, parameter, pageType, parameter);

@@ -30,7 +30,7 @@ internal static class RequestRemovalNativeFixture
     {
         // SILO_NATIVE_REQUEST_REMOVAL_CASE=links|removal narrows a run (for example to reproduce one half against an earlier publish).
         var only = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REMOVAL_CASE");
-        if (only != "links") { await RemovalAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
+        if (only != "links") { await RemovalAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalRouteRefreshAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
         if (only == "removal") { Program.Log("PASS: REQUEST_REMOVAL_ONLY_COMPLETED"); return; }
         await RowLinksAsync(parent);
         await DetailLinkAsync(parent);
@@ -156,6 +156,73 @@ internal static class RequestRemovalNativeFixture
                 throw new InvalidOperationException("Read invalidation swallowed a confirmed removal's outcome or left its deleted row listed.");
         }
         Program.Log("PASS: access invalidation and transport catch-up during DELETE preserve removal feedback and reconcile the current profile's list.");
+    }
+
+    private static async Task RemovalRouteRefreshAsync(StackPanel parent)
+    {
+        foreach (var catchUp in new[] { false, true })
+        foreach (var phase in new[] { "confirmation", "missing-row", "delete", "refresh" })
+        foreach (var status in new[] { HttpStatusCode.NoContent, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
+        {
+            if (phase == "missing-row" && status != HttpStatusCode.NoContent) continue;
+            using var rig = new Rig(parent, remove: true);
+            await rig.OpenAsync("yours");
+            var page = rig.Requests;
+            var vm = page.ViewModel;
+            var wire = rig.Wire;
+            wire.DeleteMode = status;
+            if (status == HttpStatusCode.NoContent) wire.OnDelete = id => wire.Mine.Remove(id);
+            Click(Remove(page, "Failed one"));
+            var confirmation = await rig.DialogAsync();
+            try
+            {
+                if (phase is "delete" or "refresh")
+                {
+                    if (phase == "delete") wire.DeleteGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    else wire.StatusGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var statusReads = wire.StatusReads;
+                    Primary(confirmation);
+                    await Until(() => wire.Writes.Count == 1 && (phase == "delete" || wire.StatusReads > statusReads));
+                }
+                if (phase == "missing-row") wire.Mine.Remove("f1");
+                if (catchUp)
+                {
+                    if (!rig.Client.TryInvalidateAccessContext(rig.Client.CaptureContext(), out _, transportCatchUp: true))
+                        throw new InvalidOperationException("Transport catch-up did not invalidate the read context.");
+                }
+                else rig.Client.InvalidateAccessContext();
+                var mineReads = wire.MineReads;
+                // Exercise the route refresh used by MainWindow, not just the API generation change.
+                if (!rig.Navigation.RefreshCurrentEntry() || !ReferenceEquals(page, rig.Frame.Content))
+                    throw new InvalidOperationException("Shell refresh retired the Requests visit during " + phase + ".");
+                if (phase is "confirmation" or "missing-row")
+                {
+                    await Until(() => wire.MineReads > mineReads && !vm.LoadCommand.IsRunning);
+                    if (!ReferenceEquals(confirmation, rig.Dialog()) || wire.Writes.Count != 0)
+                        throw new InvalidOperationException("Shell refresh dismissed or submitted the open removal confirmation.");
+                    Primary(confirmation);
+                }
+            }
+            finally
+            {
+                wire.DeleteGate?.TrySetResult();
+                wire.StatusGate?.TrySetResult();
+            }
+            var expected = phase == "missing-row" ? "Could not remove the request - the list changed, try again"
+                : status == HttpStatusCode.NoContent ? "Request removed"
+                : status == HttpStatusCode.Conflict ? "This request is no longer failed." : "Fixture outage";
+            await rig.ToastAsync(expected);
+            await Until(() => !vm.IsRemovingRequest("f1") && !vm.LoadCommand.IsRunning && !vm.IsLoadingMine);
+            if (!ReferenceEquals(page, rig.Frame.Content) || wire.Writes.Count != (phase == "missing-row" ? 0 : 1) ||
+                wire.Writes.Any(write => write.Method != "DELETE" || write.Path != "/api/v2/requests/f1" || write.HadBody))
+                throw new InvalidOperationException("Shell refresh lost the removal visit or changed its mutation during " + phase + ".");
+            var removed = phase == "missing-row" || status == HttpStatusCode.NoContent;
+            if (vm.MyRequests.Any(row => row.Id == "f1") == removed ||
+                ButtonNames(page).Contains("Remove request for Failed one") == removed ||
+                (!removed && !Remove(page, "Failed one").IsEnabled))
+                throw new InvalidOperationException("Shell refresh left incorrect removal state during " + phase + ".");
+        }
+        Program.Log("PASS: shell route refresh during confirmation, DELETE and reconciliation preserves success/refusal/failure feedback; a vanished row explains why no DELETE was sent.");
     }
 
     private static async Task RemovalFinalizationAsync(StackPanel parent)

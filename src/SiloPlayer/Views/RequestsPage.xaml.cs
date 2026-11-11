@@ -657,7 +657,6 @@ public sealed partial class RequestsPage : Page
         var visit = pageOwner.Token;
         var owner = ViewModel.CaptureRemovalOwner();
         var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
-        var readOwner = api.CaptureContext();
         bool IsCurrent() => !visit.IsCancellationRequested && ReferenceEquals(_libraryCheckOwner, pageOwner) && IsLoaded &&
             api.IsCurrentIdentityContext(owner);
         var confirmation = new ContentDialog
@@ -673,9 +672,9 @@ public sealed partial class RequestsPage : Page
         try { choice = await confirmation.ShowAsync(); }
         finally { _removalConfirmationOpen = false; }
         if (choice != ContentDialogResult.Primary) return;
-        // Require the displayed row's read authority before sending, but keep confirmed outcome feedback
-        // bound only to the visit and identity: access refreshes do not undo an in-flight deletion.
-        if (!IsCurrent() || !api.IsCurrentContext(readOwner)) return;
+        // Read invalidation does not revoke this identity's confirmation. The view model rechecks the
+        // current row, and the server's guarded DELETE remains authoritative if the request changed.
+        if (!IsCurrent()) return;
         button.IsEnabled = false; button.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 };
         // The view model publishes pending state (rebuilding this row disabled) and the refreshed lists.
         var result = await ViewModel.RemoveFailedRequestAsync(request, owner, visit);
@@ -685,6 +684,8 @@ public sealed partial class RequestsPage : Page
         switch (result.Outcome)
         {
             case RequestRemovalOutcome.Removed: toast?.Success("Request removed"); break;
+            case RequestRemovalOutcome.Skipped:
+                toast?.Error("Could not remove the request - the list changed, try again"); break;
             case RequestRemovalOutcome.Refused or RequestRemovalOutcome.Failed:
                 toast?.Error(string.IsNullOrWhiteSpace(result.Error) ? "Failed to remove request" : result.Error); break;
         }
