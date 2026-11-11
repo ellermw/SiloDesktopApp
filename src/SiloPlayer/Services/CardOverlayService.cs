@@ -416,7 +416,16 @@ public class CardOverlayService
                 _manifestUnavailable = false;
                 _manifestContext = context;
             }
-            var json = SerializeForRevision(NormalizeDocument(prefs), manifestRevision);
+            var normalized = NormalizeDocument(prefs);
+            foreach (var definition in OverlayRegistry.All)
+            {
+                // An unavailable manifest can expose a badge the server cannot
+                // write. Do not report success after dropping its enablement.
+                if (manifestRevision < IntroducedInRevision(definition.Id) &&
+                    normalized.Items[definition.Id].Enabled != _document.Items[definition.Id].Enabled)
+                    throw new InvalidOperationException($"The server manifest does not support changing {definition.Label}. Reload card overlay settings before saving.");
+            }
+            var json = SerializeForRevision(normalized, manifestRevision);
             RequireCurrentLoad();
             await _settingsApi.SetContractSettingValueAsync(context, "ui.card_overlays", "profile",
                 JsonSerializer.Deserialize<JsonElement>(json), ct: ct);

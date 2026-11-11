@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
@@ -180,6 +181,82 @@ public sealed class CardOverlayRevisionTests
         var current = new ObservableCollection<MediaItem>([Item(1, 3)]);
         Assert.True(MediaItemCollectionReconciler.Apply(current, [Item(watched, remaining)]));
         Assert.False(MediaItemCollectionReconciler.Apply(current, [Item(watched, remaining)]));
+    }
+
+    [Fact]
+    public void PinnedCatalogFixtureMapsUserDataCountsIntoCardState()
+    {
+        var json = File.ReadAllText(Path.Combine(TestRepository.Root,
+            "tests", "SiloPlayer.Tests", "Fixtures", "BrowseV2", "get_catalog_item_ok.json"));
+        var item = JsonSerializer.Deserialize<MediaItem>(json,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })!;
+        Assert.Equal(1, item.UserState!.WatchedCount);
+        Assert.Equal(0, item.UserState.UnplayedCount);
+        Assert.True(item.UserState.IsFavorite);
+        Assert.Equal("Watched", CardWatchStatus.AccessibleName(item.UserState));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UserDataCountsDriveStatusReconciliationAndWatchedRollbackRegardlessOfPropertyOrder(bool userDataFirst)
+    {
+        var root = JsonNode.Parse(File.ReadAllText(Path.Combine(TestRepository.Root,
+            "tests", "SiloPlayer.Tests", "Fixtures", "BrowseV2", "get_catalog_item_ok.json")))!.AsObject();
+        root["type"] = "series";
+        root["user_state"]!["played"] = false;
+        root["user_data"]!["played"] = false;
+        root["user_data"]!["unplayed_count"] = 3;
+        var last = userDataFirst ? "user_state" : "user_data";
+        var value = root[last];
+        root.Remove(last);
+        root[last] = value;
+        MediaItem Read() => JsonSerializer.Deserialize<MediaItem>(root.ToJsonString(),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })!;
+        var item = Read();
+        Assert.Equal("3 episodes left", CardWatchStatus.AccessibleName(item.UserState));
+        var current = new ObservableCollection<MediaItem>([item]);
+        Assert.False(MediaItemCollectionReconciler.Apply(current, [Read()]));
+        root["user_data"]!["unplayed_count"] = 2;
+        Assert.True(MediaItemCollectionReconciler.Apply(current, [Read()]));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => MediaItemActionExecutor.ToggleWatchedAsync(item, _ =>
+        {
+            Assert.Equal(0, item.UserState!.WatchedCount);
+            Assert.Equal(0, item.UserState.UnplayedCount);
+            throw new InvalidOperationException("Rejected");
+        }));
+        Assert.Equal("3 episodes left", CardWatchStatus.AccessibleName(item.UserState));
+    }
+
+    [Theory]
+    [InlineData(25)]
+    [InlineData(26)]
+    public async Task ProvisionalBadgeEnablementIsPersistedOrReportsUnsupportedManifest(int revision)
+    {
+        using var wire = new OverlayWire(revision, "{\"version\":2,\"preset\":\"classic\",\"items\":{}}")
+            { FailCapabilities = true };
+        var service = await wire.LoadAsync();
+        Assert.True(service.OffersOverlay("resolution_hdr_audio"));
+        var draft = service.GetDocument();
+        draft.Items["resolution_hdr_audio"] = draft.Items["resolution_hdr_audio"] with { Enabled = true };
+        wire.FailCapabilities = false;
+        if (revision < 26)
+        {
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync(draft));
+            Assert.Contains("server manifest does not support", error.Message);
+            Assert.Contains("Resolution + HDR + Audio", error.Message);
+            Assert.Null(wire.Saved);
+            Assert.False(service.GetDocument().Items["resolution_hdr_audio"].Enabled);
+            Assert.True(draft.Items["resolution_hdr_audio"].Enabled);
+        }
+        else
+        {
+            await service.SaveAsync(draft);
+            using var saved = JsonDocument.Parse(wire.Saved!);
+            Assert.True(saved.RootElement.GetProperty("items").GetProperty("resolution_hdr_audio").GetProperty("enabled").GetBoolean());
+            Assert.True(service.GetDocument().Items["resolution_hdr_audio"].Enabled);
+        }
     }
 
     [Fact]

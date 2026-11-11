@@ -38,7 +38,7 @@ public class HomeSectionWithItems
     // requiring a section swap + full row rebuild.
     public ObservableCollection<MediaItem> Items { get; set; } = [];
 }
-public class MediaItem
+public class MediaItem : IJsonOnDeserialized
 {
     public SiloPlayer.Core.Models.Catalog.BoxSetSummary? BoxSet { get; set; }
     public int? AdvisoryAge { get; set; }
@@ -75,6 +75,7 @@ public class MediaItem
     public OverlaySummary? OverlaySummary { get; set; }
     public BrowseItemSortMetrics? SortMetrics { get; set; }
     public UserState? UserState { get; set; }
+    public MediaItemWatchCounts? UserData { get; set; }
     public string? SeriesId { get; set; }
     public string? SeriesTitle { get; set; }
     public int? SeasonNumber { get; set; }
@@ -101,6 +102,24 @@ public class MediaItem
     /// section item cards. Source: HomeSectionItem.badges[] on the server.</summary>
     public List<string>? Badges { get; set; }
     public SectionItemUpcomingEvent? UpcomingEvent { get; set; }
+
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        // The pinned catalog fixture puts counts in user_data. Normalize them
+        // into the mutable card state after both objects have been read, so
+        // JSON property order cannot affect status, reconciliation or rollback.
+        // Retain user_state counts when user_data omits them for compatibility.
+        if (UserData is not { } counts || (counts.WatchedCount is null && counts.UnplayedCount is null)) return;
+        UserState ??= new();
+        if (counts.WatchedCount is { } watched) UserState.WatchedCount = watched;
+        if (counts.UnplayedCount is { } unplayed) UserState.UnplayedCount = unplayed;
+    }
+}
+
+public sealed class MediaItemWatchCounts
+{
+    public int? WatchedCount { get; set; }
+    public int? UnplayedCount { get; set; }
 }
 
 public class SectionItemUpcomingEvent
