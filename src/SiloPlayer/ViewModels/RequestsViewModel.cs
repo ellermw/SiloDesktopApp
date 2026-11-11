@@ -62,6 +62,9 @@ public partial class RequestsViewModel : ObservableObject
     [RelayCommand]
     private Task LoadAsync() => LoadForVisitAsync(() => true);
 
+    // Shell refreshes use the context-aware load guard, independently of a running LoadCommand.
+    public Task RefreshAsync() => LoadForVisitAsync(() => true);
+
     private async Task LoadForVisitAsync(Func<bool> isCurrentVisit)
     {
         var context = _requestsApi.CaptureContext();

@@ -375,6 +375,44 @@ public sealed class RequestRemovalBehaviorTests
         Assert.DoesNotContain("failed", vm.MyRequests.Select(row => row.Id));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InPlaceRefreshLoadsFreshAuthorityWhileTheInitialLoadCommandIsStillRunning(bool catchUp)
+    {
+        var retiredStatus = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var wire = new Wire { HoldStatus = retiredStatus }; using var http = new HttpClient(wire);
+        var client = NewClient(http);
+        var vm = new RequestsViewModel(new RequestsApi(client));
+        var initialLoad = vm.LoadCommand.ExecuteAsync(null);
+        try
+        {
+            await UntilAsync(() => wire.Reads.Contains("/api/v2/requests/status"));
+            Assert.True(vm.LoadCommand.IsRunning);
+            if (catchUp) Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
+            else client.InvalidateAccessContext();
+            wire.HoldStatus = null;
+            var reads = wire.Reads.Count;
+
+            vm.InvalidateCache();
+            await vm.RefreshAsync();
+
+            Assert.True(vm.LoadCommand.IsRunning);
+            Assert.Equal(3, vm.MyRequests.Count);
+            Assert.Contains("/api/v2/requests/status", wire.Reads.Skip(reads));
+            Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
+            Assert.Contains("/api/v2/requests/discover", wire.Reads.Skip(reads));
+            Assert.Contains("/api/v2/requests/discover/studios", wire.Reads.Skip(reads));
+            Assert.Contains("/api/v2/requests/discover/networks", wire.Reads.Skip(reads));
+            Assert.Contains("/api/v2/requests/discover/genres", wire.Reads.Skip(reads));
+            Assert.Null(vm.ErrorMessage);
+        }
+        finally { retiredStatus.TrySetResult(); await initialLoad; }
+        Assert.Equal(3, vm.MyRequests.Count);
+        Assert.False(vm.IsLoading);
+        Assert.Null(vm.ErrorMessage);
+    }
+
     [Fact]
     public async Task StatusReadFailureAfterRemovalStillReadsTheAccountListAgain()
     {

@@ -121,7 +121,7 @@ public class NavigationService
             // Access changes and event-channel catch-up retire reads, not an open removal
             // confirmation or its outcome. Keep the visit mounted while rereading fresh authority.
             requests.ViewModel.InvalidateCache();
-            _ = requests.ViewModel.LoadCommand.ExecuteAsync(null);
+            _ = requests.ViewModel.RefreshAsync();
             return true;
         }
         var forward = frame.ForwardStack.ToArray();
