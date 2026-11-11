@@ -33,6 +33,7 @@ public sealed partial class RequestsPage : Page
     private CancellationTokenSource? _libraryCheckOwner;
     private readonly HashSet<string> _libraryChecks = new(StringComparer.Ordinal);
     private TextBlock? _failedStatusGuide;
+    private bool _removalConfirmationOpen;
 
     public RequestsPage()
     {
@@ -650,7 +651,7 @@ public sealed partial class RequestsPage : Page
 
     private async void RemoveRequest_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: MediaRequest request } button || ViewModel.IsRemovingRequest(request.Id) ||
+        if (sender is not Button { Tag: MediaRequest request } button || _removalConfirmationOpen || ViewModel.IsRemovingRequest(request.Id) ||
             _libraryCheckOwner is not { IsCancellationRequested: false } pageOwner) return;
         // The account that sees this row owns the deletion, even if the confirmation is open while profiles change.
         var visit = pageOwner.Token;
@@ -666,7 +667,12 @@ public sealed partial class RequestsPage : Page
             DefaultButton = ContentDialogButton.Close,
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
         };
-        if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
+        // ContentDialog permits only one open dialog, even when another row is activated.
+        ContentDialogResult choice;
+        _removalConfirmationOpen = true;
+        try { choice = await confirmation.ShowAsync(); }
+        finally { _removalConfirmationOpen = false; }
+        if (choice != ContentDialogResult.Primary) return;
         if (!IsCurrent()) return;
         button.IsEnabled = false; button.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 };
         // The view model publishes pending state (rebuilding this row disabled) and the refreshed lists.

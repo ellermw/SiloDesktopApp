@@ -59,6 +59,12 @@ internal static class RequestRemovalNativeFixture
             dialog.DefaultButton != ContentDialogButton.Close || !body.Contains("Your failed request for \"Failed one\" will be deleted. You can request the title again later."))
             throw new InvalidOperationException("Remove confirmation differs from the official dialog: " + dialog.Title + " / " + body);
         await MediaParityNativeFixture.CaptureAsync(dialog, "request-removal-confirm.png");
+        // Re-enter the handler directly so modal input routing cannot hide duplicate activations.
+        InvokePrivate(rig.Requests, "RemoveRequest_Click", Remove(rig.Requests, "Failed one"), new RoutedEventArgs());
+        InvokePrivate(rig.Requests, "RemoveRequest_Click", Remove(rig.Requests, "Failed two"), new RoutedEventArgs());
+        await Task.Delay(150);
+        if (!ReferenceEquals(rig.Dialog(), dialog) || wire.Writes.Count != 0)
+            throw new InvalidOperationException("A second activation while confirmation is open replaced the dialog or sent a mutation.");
         Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == "Keep request"));
         await Task.Delay(120);
         if (wire.Writes.Count != 0 || !Remove(rig.Requests, "Failed one").IsEnabled) throw new InvalidOperationException("Keeping the request sends a mutation or disables Remove.");
