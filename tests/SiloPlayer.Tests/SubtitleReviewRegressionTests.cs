@@ -621,6 +621,32 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("_storedSubtitleCompletion = null;", refresh[refused..leave]);
     }
 
+    [Fact]
+    public void BothStoredListRefreshesCarryARequestedStoredIdOntoThePlanOnlyRowItLandsOn()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a plan-only
+        // download holds no stored id, so a pick by stored id that the list
+        // places on that row must still find it, through both entry points.
+        var publicRefresh = Between(Read("PlayerService.SubtitleRefresh.cs"), "public async Task RefreshSubtitlesAfterAiAsync(",
+            "private static void RetainDownloadsAnnouncedDuringRead(");
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var refresh in new[] { publicRefresh, ownedRefresh })
+        {
+            var landed = refresh.IndexOf("if (previous == null && StoredEntryMayBeCanonicalDownload(unknownCanonical[0], entry.Language))", StringComparison.Ordinal);
+            Assert.True(landed >= 0);
+            var requested = refresh.IndexOf("if (unique && matches.Length == 0 && entry.Id == preferredSubtitleId &&", landed, StringComparison.Ordinal);
+            var kept = refresh.IndexOf("return unknownCanonical[0];", landed, StringComparison.Ordinal);
+            // Only an unambiguous pick on a trusted layout names the row; any
+            // other refresh still leaves it without a stored identity.
+            Assert.True(requested > landed && kept > requested);
+            Assert.Contains("canonicalOrdinalsAgree && !unknownCanonical[0].Unplayable)", refresh[requested..kept]);
+            var carried = refresh.IndexOf("if (pickedCanonical != null && displacedCanonical.Count == 0) pickedCanonical.Id = preferredSubtitleId;", kept, StringComparison.Ordinal);
+            var pick = refresh.IndexOf("track => !track.Unplayable && track.Id == preferredSubtitleId)", StringComparison.Ordinal);
+            Assert.True(carried > kept && pick > carried);
+        }
+    }
+
     private static string Reload() => Between(Read("PlayerService.SubtitleSync.cs"),
         "private async Task ReloadCorrectedSubtitleAsync(", "private void SendSubtitleSyncState()");
 

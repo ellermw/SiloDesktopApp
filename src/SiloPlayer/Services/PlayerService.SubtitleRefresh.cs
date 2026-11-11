@@ -132,6 +132,8 @@ public partial class PlayerService
                         track.Index != baseIndex + offset)).All(agrees => agrees);
                 var canonicalStoredIds = new Dictionary<SubtitleTrackInfo, long>();
                 var displacedCanonical = new HashSet<SubtitleTrackInfo>();
+                // The plan-only row the list places the caller's requested subtitle on.
+                SubtitleTrackInfo? pickedCanonical = null;
                 downloaded = response.Subtitles.Select((entry, offset) =>
                 {
                     var syncKey = "stored-" + entry.Id;
@@ -157,7 +159,15 @@ public partial class PlayerService
                         // An entry that owns another row, or names another language,
                         // is not this row: it now holds the row's stored ordinal.
                         if (previous == null && StoredEntryMayBeCanonicalDownload(unknownCanonical[0], entry.Language))
+                        {
+                            // A pick names its entry by stored id, and this row is that
+                            // entry's only executable route. Carry the id for the pick
+                            // alone; any other refresh still proves no identity here.
+                            if (unique && matches.Length == 0 && entry.Id == preferredSubtitleId &&
+                                canonicalOrdinalsAgree && !unknownCanonical[0].Unplayable)
+                                pickedCanonical = unknownCanonical[0];
                             return unknownCanonical[0];
+                        }
                         displacedCanonical.Add(unknownCanonical[0]);
                     }
                     var collision = reserved.Any(track => track.Index == ordinal);
@@ -192,6 +202,8 @@ public partial class PlayerService
                         row.Url = "";
                     }
                 foreach (var entry in canonicalStoredIds) entry.Key.Id ??= entry.Value;
+                // Carry the pick's id unless a displaced row left this list's ordinals uncertain.
+                if (pickedCanonical != null && displacedCanonical.Count == 0) pickedCanonical.Id = preferredSubtitleId;
                 // A displaced plan-only row keeps its identity and any bytes it
                 // already loaded, never a URL that may now address another subtitle.
                 foreach (var displaced in displacedCanonical.Where(IsCanonicalDownloadWithoutStoredIdentity))
