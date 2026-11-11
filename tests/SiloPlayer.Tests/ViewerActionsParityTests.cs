@@ -92,6 +92,7 @@ public class ViewerActionsParityTests
 
     [Theory]
     [InlineData("in_progress", "continue_watching")]
+    [InlineData("continue_watching", "continue_watching")]
     [InlineData("next_up", "next_up")]
     [InlineData("recently_added", null)]
     [InlineData("", null)]
@@ -104,6 +105,8 @@ public class ViewerActionsParityTests
     {
         Assert.Equal("continue_watching", HomeDismissalPolicy.SectionCardItemSource("section", "in_progress"));
         Assert.Equal("next_up", HomeDismissalPolicy.SectionCardItemSource("section", "next_up"));
+        // The row-type spelling maps to itself, so a card normalized once keeps its surface.
+        Assert.Equal("continue_watching", HomeDismissalPolicy.SectionCardItemSource("section", "continue_watching"));
         Assert.Equal("section", HomeDismissalPolicy.SectionCardItemSource("section", null));
         Assert.Equal("section", HomeDismissalPolicy.SectionCardItemSource("section", "something_else"));
     }
