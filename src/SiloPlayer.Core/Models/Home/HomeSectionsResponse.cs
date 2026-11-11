@@ -205,6 +205,8 @@ public class OverlaySummary
 public class UserState
 {
     public bool Played { get; set; }
+    public int WatchedCount { get; set; }
+    public int UnplayedCount { get; set; }
     public bool IsInProgress { get; set; }
     public bool IsFavorite { get; set; }
     public bool InWatchlist { get; set; }

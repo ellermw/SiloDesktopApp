@@ -909,6 +909,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await OverlayPillNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-revisions")
+            {
+                await CardOverlayRevisionNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")
             {
                 await AccessNavigationNativeFixture.RunAsync(parent);

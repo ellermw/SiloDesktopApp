@@ -13,21 +13,39 @@ internal readonly record struct CardBadge(OverlayPosition Corner, string Text, s
 /// XAML objects per card, and that churn drove the expensive full garbage collections that froze
 /// the UI for half a second or more. Badges are rebuilt only when what they show changes.
 /// </summary>
-internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottomLeft, Panel bottomRight)
+internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottomLeft, Panel bottomRight, Panel leftEdge, Panel rightEdge)
 {
     private CardBadge[] _shown = [];
+    private double _topLeftMaxWidth = double.NaN;
 
     public void Show(IReadOnlyList<CardBadge> badges)
     {
         SetVisible(true);
-        if (badges.SequenceEqual(_shown) && ShownCount == _shown.Length) return;
+        if (badges.SequenceEqual(_shown) && ShownCount == _shown.Length && topLeft.MaxWidth == _topLeftMaxWidth) return;
         topLeft.Children.Clear();
         topRight.Children.Clear();
         bottomLeft.Children.Clear();
         bottomRight.Children.Clear();
+        leftEdge.Children.Clear();
+        rightEdge.Children.Clear();
         foreach (var badge in badges)
-            Host(badge.Corner).Children.Add(PosterCard.BuildBadge(badge.Text, badge.OverlayId, badge.Config, badge.Preset, badge.Scale));
+        {
+            var host = Host(badge.Corner);
+            var element = PosterCard.BuildBadge(badge.Text, badge.OverlayId, badge.Config, badge.Preset, badge.Scale);
+            element.MaxWidth = host.MaxWidth;
+            // A horizontal StackPanel otherwise measures its text with infinite
+            // width, including under the reserved watch-status corner.
+            if (double.IsFinite(host.MaxWidth) && element.Child is StackPanel content)
+            {
+                var iconWidth = content.Children.OfType<FontIcon>().Sum(icon => icon.Width + content.Spacing);
+                foreach (var text in content.Children.OfType<TextBlock>())
+                    text.MaxWidth = Math.Max(0, host.MaxWidth - element.Padding.Left - element.Padding.Right
+                        - element.BorderThickness.Left - element.BorderThickness.Right - iconWidth);
+            }
+            host.Children.Add(element);
+        }
         _shown = [.. badges];
+        _topLeftMaxWidth = topLeft.MaxWidth;
     }
 
     /// <summary>Hides the badges of a card whose overlays are deferred; the same item shows them again shortly.</summary>
@@ -40,6 +58,8 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         topRight.Children.Clear();
         bottomLeft.Children.Clear();
         bottomRight.Children.Clear();
+        leftEdge.Children.Clear();
+        rightEdge.Children.Clear();
         _shown = [];
     }
 
@@ -47,16 +67,18 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
     {
         var visibility = visible ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         if (topLeft.Visibility == visibility) return;
-        topLeft.Visibility = topRight.Visibility = bottomLeft.Visibility = bottomRight.Visibility = visibility;
+        topLeft.Visibility = topRight.Visibility = bottomLeft.Visibility = bottomRight.Visibility = leftEdge.Visibility = rightEdge.Visibility = visibility;
     }
 
-    private int ShownCount => topLeft.Children.Count + topRight.Children.Count + bottomLeft.Children.Count + bottomRight.Children.Count;
+    private int ShownCount => topLeft.Children.Count + topRight.Children.Count + bottomLeft.Children.Count + bottomRight.Children.Count + leftEdge.Children.Count + rightEdge.Children.Count;
 
     private Panel Host(OverlayPosition corner) => corner switch
     {
         OverlayPosition.TopRight => topRight,
         OverlayPosition.BottomLeft => bottomLeft,
         OverlayPosition.BottomRight => bottomRight,
+        OverlayPosition.LeftEdge => leftEdge,
+        OverlayPosition.RightEdge => rightEdge,
         _ => topLeft,
     };
 
@@ -84,7 +106,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
                 if (item.MangaVolumeCount > 0) counts.Add($"{item.MangaVolumeCount} Vol");
                 if (item.MangaChapterCount > 0) counts.Add($"{item.MangaChapterCount} Ch");
                 if (counts.Count > 0)
-                    badges.Add(new(OverlayPosition.TopRight, string.Join(" · ", counts), "manga_counts", new OverlayItemConfig(true, OverlayPosition.TopRight), service.Preset, scale));
+                    badges.Add(new(service.DisplayPosition(OverlayPosition.TopRight), string.Join(" · ", counts), "manga_counts", new OverlayItemConfig(true, service.DisplayPosition(OverlayPosition.TopRight)), service.Preset, scale));
                 return badges;
             }
         }
@@ -93,7 +115,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         // independent of the user's generic overlay preferences.
         if (upcoming && item.UpcomingEvent is { Badges.Count: > 0 } upcomingEvent)
         {
-            foreach (var badge in upcomingEvent.Badges)
+            foreach (var badge in upcomingEvent.Badges.Take(3))
             {
                 var label = badge switch
                 {
@@ -110,16 +132,18 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         if (prefs == null) return badges; // Admin kill switch engaged → no preference badges.
 
         var data = OverlayData.FromMediaItem(item);
-        var cornerCounts = new Dictionary<OverlayPosition, int>();
+        var cornerCounts = badges.GroupBy(b => b.Corner).ToDictionary(g => g.Key, g => g.Count());
         foreach (var definition in service.GetOrderedDefinitions())
         {
             if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-            if (OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs)) continue;
+            if (OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs, service.ManifestRevision)) continue;
             var value = definition.GetValue(data);
             if (string.IsNullOrWhiteSpace(value)) continue;
-            if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
-            badges.Add(new(config.Position, value, definition.Id, config, service.Preset, scale));
-            cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
+            var position = service.DisplayPosition(config.Position);
+            var limit = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3;
+            if (cornerCounts.GetValueOrDefault(position) >= limit) continue;
+            badges.Add(new(position, value, definition.Id, config, service.Preset, scale));
+            cornerCounts[position] = cornerCounts.GetValueOrDefault(position) + 1;
         }
         return badges;
     }
