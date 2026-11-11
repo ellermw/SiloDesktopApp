@@ -191,21 +191,12 @@ public sealed partial class RequestsPage : Page
         await RunSearchAsync();
     }
 
-    private async Task RunSearchAsync()
+    private Task RunSearchAsync()
     {
-        if (SearchBox.Text.Trim().Length >= 2)
-        {
-            App.Services.GetRequiredService<NavigationService>().Navigate<SearchPage>(SearchBox.Text.Trim());
-            return;
-        }
-        ViewModel.SearchQuery = SearchBox.Text;
-        ViewModel.SelectedMediaType = SelectedTag(MediaTypeComboBox, "all");
-        ViewModel.SearchPage = 1;
-        var searchTask = ViewModel.SearchCommand.ExecuteAsync(null);
-        _activeTab = "discover";
-        Render();
-        await searchTask;
-        Render();
+        var query = SearchBox.Text.Trim();
+        if (query.Length < 2) return Task.CompletedTask;
+        App.Services.GetRequiredService<NavigationService>().Navigate<SearchPage>(query);
+        return Task.CompletedTask;
     }
 
     private async void MediaType_Changed(object sender, SelectionChangedEventArgs e)
