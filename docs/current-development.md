@@ -1,3 +1,15 @@
+# November 11 — Fit OSC popups to content and remove native frames
+
+Based on fresh Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`; source remains **1.2.973-beta.1** (Windows file version **1.2.972.1**). Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
+
+The shared native OSC popup now measures its real wrapped rows and visible footer instead of reserving 102 pixels per choice. Quality's collapsed error footer no longer selects the taller Subtitle cap. Loaded typography and live list-size changes trigger coalesced placement; the existing playback/work-area clamp remains in force. Residual classic window-frame styles and the DWM outline are removed, leaving the app's single rounded outline. A two-choice popup shrank from 256 to 163 pixels, and the unwanted 3-pixel frame is absent.
+
+Verification: fresh Release app/helper, **99/99 focused unit tests**, and five native groups passed with exit 0 and the completion marker: eight-case popup layout/frame matrix, actual OSC Quality, actual Subtitle selection/footer, live menu growth, and resize/wheel selection. Matrix covers 1/2/7/24 choices, 460×300 playback, 1.25× text, and a partially offscreen owner. App/helper/native/unit PE/PDB/source bindings have zero mismatches. Independent Claude review found no actionable issues in the product and popup fixture. A later one-line Speed fixture correction reads the current string-ID wire contract; the lead verified it.
+
+Verification limit: the extra Speed regression stopped first on its outdated numeric-ID fixture; after that test-only correction, its same-owner version/pause assertion fails identically against both untouched Beta and the corrected app. Neither run is counted as passing. The full unit suite was not rerun for this scoped UI change. No installed-player, live account/settings, physical input or system DPI changes occurred; 1.25× is text scaling, not simulated monitor DPI.
+
+Receipts, original failures, baseline comparison, screenshots and review: `D:/SiloPlayer/.codex-tmp/playback-popup-nov11/`. App DLL SHA256 `3D77C5B39E32DF2986C9FE43EF0782DA78BEA53B37BFDFD2F09B900C40C59626`. The existing isolated checkout was reused; no new worktree was created. Beta pipeline owns integration and packaging.
+
 # November 11 ? collection wall, hero and actions for Beta
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Source remains **1.2.970**; the Beta pipeline owns integration, stamps and publication.
