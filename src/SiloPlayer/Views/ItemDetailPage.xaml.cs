@@ -10,6 +10,7 @@ using SiloPlayer.Controls;
 using SiloPlayer.Converters;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Downloads;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
@@ -3658,6 +3659,34 @@ public sealed partial class ItemDetailPage : Page
                 MoreFlyout.Items.Add(download);
                 hasOverflowActions = true;
             }
+        }
+
+        if (CanCurrentUserDownload() && item.Type == "series")
+        {
+            var dlSeries = new MenuFlyoutItem { Text = "Download Series", Icon = new FontIcon { Glyph = "\uE896" } };
+            dlSeries.Click += async (_, _) =>
+            {
+                if (!IsCurrentDetail(item.ContentId)) return;
+                await ShowBatchDownloadDialogAsync(item.ContentId, null, item.Title);
+            };
+            MoreFlyout.Items.Add(dlSeries);
+            hasOverflowActions = true;
+        }
+
+        if (CanCurrentUserDownload() && item.Type == "season" && !string.IsNullOrEmpty(item.SeriesId) && item.SeasonNumber.HasValue)
+        {
+            var dlSeason = new MenuFlyoutItem
+            {
+                Text = item.IsSpecials == true ? "Download Specials" : $"Download Season {item.SeasonNumber}",
+                Icon = new FontIcon { Glyph = "\uE896" },
+            };
+            dlSeason.Click += async (_, _) =>
+            {
+                if (!IsCurrentDetail(item.ContentId)) return;
+                await ShowBatchDownloadDialogAsync(item.SeriesId!, item.SeasonNumber ?? 0, item.SeriesTitle ?? item.Title);
+            };
+            MoreFlyout.Items.Add(dlSeason);
+            hasOverflowActions = true;
         }
 
         if (_selectedVersion != null)

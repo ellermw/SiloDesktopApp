@@ -972,6 +972,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "batch-downloads")
+            {
+                await BatchDownloadsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "browse-parity")
             {
                 await BrowseParityNativeFixture.RunAsync(parent);
