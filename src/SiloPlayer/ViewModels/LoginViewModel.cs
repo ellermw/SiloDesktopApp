@@ -406,7 +406,11 @@ public partial class LoginViewModel : ObservableObject
     private async Task PollDeviceLoginAsync(DeviceLoginSetup setup, DeviceLoginStartResponse session, string server,
         ApiRequestContext context, long authGeneration, int attempt, CancellationToken ct)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(1, session.Interval > 0 ? session.Interval : 3));
+        // Server pacing hints are bounded so an oversized value can neither
+        // overflow Task.Delay nor park the setup far beyond a code's lifetime.
+        const int maxWaitSeconds = 300;
+        var interval = TimeSpan.FromSeconds(Math.Clamp(session.Interval > 0 ? session.Interval : 3, 1, maxWaitSeconds));
+        var wait = interval;
         try
         {
             while (!ct.IsCancellationRequested && attempt == _deviceAttempt && ReferenceEquals(DeviceSession, session))
@@ -419,8 +423,8 @@ public partial class LoginViewModel : ObservableObject
                 catch (Exception ex) when (!ct.IsCancellationRequested && (ex is HttpRequestException or OperationCanceledException || ex is ApiException { StatusCode: 408 or 425 or 429 or >= 500 }))
                 {
                     var delay = ex is ApiException { RetryAfterSeconds: > 0 } problem
-                        ? TimeSpan.FromSeconds(Math.Max(interval.TotalSeconds, problem.RetryAfterSeconds.Value))
-                        : interval;
+                        ? TimeSpan.FromSeconds(Math.Min(maxWaitSeconds, Math.Max(wait.TotalSeconds, problem.RetryAfterSeconds.Value)))
+                        : wait;
                     await Task.Delay(delay, ct);
                     continue;
                 }
@@ -455,7 +459,9 @@ public partial class LoginViewModel : ObservableObject
                 }
 
                 DeviceStatusMessage = result.Status == "opened" ? "Continue on your phone." : "Waiting for approval on your phone...";
-                await Task.Delay(interval, ct);
+                // Like the SiloCast handoff, a poll_after hint replaces the start interval.
+                wait = result.PollAfter > 0 ? TimeSpan.FromSeconds(Math.Min(result.PollAfter, maxWaitSeconds)) : interval;
+                await Task.Delay(wait, ct);
             }
         }
         catch (OperationCanceledException) { }

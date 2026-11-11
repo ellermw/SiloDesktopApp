@@ -93,6 +93,25 @@ internal static class DeviceBindingNativeFixture
             }
             Program.Log("PASS native 408/425/429/503 poll retries honor Retry-After and retain the same bound setup");
 
+            Reset(); wire.PollGate = Gate(); var pacedPolls = wire.Polls.Count;
+            await Start(); await Until(() => wire.Polls.Count > pacedPolls);
+            var pacedSession = vm.DeviceSession; var pacedSecret = wire.Polls[^1].Secret; pacedPolls = wire.Polls.Count;
+            var paced = System.Diagnostics.Stopwatch.StartNew();
+            wire.PollGate.TrySetResult(Reply(new { status = "pending", poll_after = 2 })); wire.PollGate = Gate();
+            await Until(() => wire.Polls.Count > pacedPolls);
+            // Allow timer granularity without accepting the one-second start interval.
+            Check(paced.Elapsed >= TimeSpan.FromMilliseconds(1900), "Pending poll ignored the server's poll_after pacing");
+            Check(ReferenceEquals(vm.DeviceSession, pacedSession) && wire.Polls[^1].Secret == pacedSecret && vm.ErrorMessage is null,
+                "Paced pending poll retired or changed the bound setup");
+            // A year exceeds what Task.Delay accepts; the hint must be bounded, not fatal.
+            var oversized = Reject("slow_down", HttpStatusCode.TooManyRequests);
+            oversized.Headers.RetryAfter = new(TimeSpan.FromDays(365));
+            wire.PollGate.TrySetResult(oversized); wire.PollGate = Gate();
+            await Task.Delay(300);
+            Check(pacedSession is not null && ReferenceEquals(vm.DeviceSession, pacedSession) && vm.ErrorMessage is null && auth.CurrentUser is null,
+                "Oversized Retry-After retired the bound setup");
+            Program.Log("PASS native pending polls honor poll_after and an oversized Retry-After retains the bound setup");
+
             Reset(); wire.PollFailure = "timeout"; wire.PollGate = Gate();
             var timeoutPolls = wire.Polls.Count; await Start();
             await Until(() => wire.Polls.Count >= timeoutPolls + 2);
