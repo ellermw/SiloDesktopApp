@@ -10,6 +10,22 @@ Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/collections{,-actions}-i
 
 ---
 
+# November 11 ? Show update preparation immediately and retain panel visibility (Beta candidate)
+
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Source remains **1.2.970**; the Beta pipeline owns integration, versioning and publication.
+
+Update Now paints the corner panel immediately with Preparing? and animated indeterminate progress, then atomically transfers presentation to the authenticated helper and normal update progress. Ordinary owned-window stacking keeps the panel above Silo on focus loss, allows other apps to cover it and follows minimize/restore. Restart now/Later stay until selected. The helper retains ownership while Silo may survive staging; elevation launch runs off the UI thread.
+
+Verification: 220/220 focused unit tests, 49/49 protocol tests, fresh app and helper Release publishes, and all ten final native scenarios. The separate-process handoff validates the production HWND/PID guard, rejects a foreign PID, and checks staged-failure owner reactivation and minimize/restore. Normal cancellation, fallback consent and successful/faulted playback-save drains pass.
+
+Independent Claude review found the early detach lifecycle defect plus input-queue/coverage concerns. Removed the early detach entirely and moved Process.Start off the interface thread. Expanded cross-process fixtures exercise the actual published shared view and production window validation. Peer logs are isolated. Bring-up failures from a reflected wire-type identity mismatch and an unsupported synthetic acknowledgement are preserved; final uses the exact published type and existing visible frame. Apphost EXE bytes are shared across builds, so final binding includes the native DLL/PDB. Nine valid native cases passed in an earlier attempt; only review-final-native-wire-corrected is claimed as the complete final ten-case pass. Wrongly named earlier scenarios are not counted.
+
+App DLL SHA256: `922A5DF807D816713F0E36111D16EFA28D407E4BF80C8FAB7171A64E5013CA78`; all 739 authored app PDB documents match final source. Helper DLL SHA256: `90BAA4AF4673476874E4149B6475A6457614C02FD448385F988141C26263336E`; all 6 helper documents match. Selected native DLL/PDB identities and source documents also match. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/updater-impl-c601198f20524c6ea075c30808a234fc/review-final-binding-b`, the original `updater-implementation.md`/review, and `updater-review-fixes-note.md`.
+
+Limits: No actual UAC prompt, installation, restart or registered-installation update ran. Synthetic installers/peers leave the installed player and real settings untouched. Signature, package and pipe/process identity checks remain intact. Installed player remains running and untouched.
+
+---
+
 # Overlay review corrections — November 10, 2026
 
 Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.
@@ -42,7 +58,7 @@ Synthetic fixtures do not establish live-server persistence or complete visual p
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.970`; numeric version: `1.2.970.0`.
+Source version: `1.2.973-beta.1`; numeric version: `1.2.972.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -50,7 +66,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.970`; numeric version: `1.2.970.0`.
+Source version: `1.2.973-beta.1`; numeric version: `1.2.972.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -58,7 +74,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.970`; numeric version: `1.2.970.0`.
+Source version: `1.2.973-beta.1`; numeric version: `1.2.972.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -88,7 +104,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.970`; numeric version: `1.2.970.0`.
+Source version: `1.2.973-beta.1`; numeric version: `1.2.972.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

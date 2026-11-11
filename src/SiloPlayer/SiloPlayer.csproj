@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.2.970</Version>
-    <FileVersion>1.2.970.0</FileVersion>
-    <AssemblyVersion>1.2.970.0</AssemblyVersion>
+    <Version>1.2.973-beta.1</Version>
+    <FileVersion>1.2.972.1</FileVersion>
+    <AssemblyVersion>1.2.972.1</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -120,6 +120,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <Compile Include="..\SiloPlayer.UpdateHost\UpdateProgressWindow.cs" Link="Updates\UpdateProgressWindow.cs" />
       <Compile Include="..\SiloPlayer.Core\**\*.cs" Exclude="..\SiloPlayer.Core\bin\**;..\SiloPlayer.Core\obj\**" LinkBase="SiloPlayer.Core" />
     <EmbeddedResource Include="..\SiloPlayer.Core\Models\Settings\device-settings.json" LogicalName="SiloPlayer.Core.Models.Settings.device-settings.json" />
       <Compile Include="..\SiloPlayer.Player\**\*.cs" Exclude="..\SiloPlayer.Player\bin\**;..\SiloPlayer.Player\obj\**" LinkBase="SiloPlayer.Player" />
