@@ -478,6 +478,8 @@
                                 <Grid Margin="8">
                                     <StackPanel x:Name="OverlayPreviewTopLeft" HorizontalAlignment="Left" VerticalAlignment="Top" Spacing="4" />
                                     <StackPanel x:Name="OverlayPreviewTopRight" HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="4" />
+                                    <StackPanel x:Name="OverlayPreviewLeftEdge" HorizontalAlignment="Left" VerticalAlignment="Center" Spacing="4" />
+                                    <StackPanel x:Name="OverlayPreviewRightEdge" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="4" />
                                     <StackPanel x:Name="OverlayPreviewBottomLeft" HorizontalAlignment="Left" VerticalAlignment="Bottom" Spacing="4" />
                                     <StackPanel x:Name="OverlayPreviewBottomRight" HorizontalAlignment="Right" VerticalAlignment="Bottom" Spacing="4" />
                                 </Grid>
@@ -2244,6 +2246,7 @@
                         </StackPanel>
                     </Button>
                 </Grid>
+                <TextBlock x:Name="ProfileLimitText" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" />
                 <StackPanel x:Name="HouseholdStreamsPanel" Spacing="8" />
                 <StackPanel x:Name="ProfileCardsPanel" Spacing="8" />
                 <TextBlock x:Name="NoProfilesText" Text="No profiles yet&#x0a;Create a profile to manage access and playback identity."

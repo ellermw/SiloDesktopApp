@@ -864,7 +864,12 @@ public partial class CollectionEditorViewModel : ObservableObject
     {
         if (sourceConfig == null || !sourceConfig.TryGetValue(key, out var raw) || raw == null) return [];
         if (raw is JsonElement { ValueKind: JsonValueKind.Array } array)
-            return array.EnumerateArray().Where(value => value.TryGetInt32(out _)).Select(value => value.GetInt32()).ToList();
+            return array.EnumerateArray().Select(value => value.ValueKind switch
+            {
+                JsonValueKind.Number when value.TryGetInt32(out var number) => number,
+                JsonValueKind.String when int.TryParse(value.GetString(), out var id) => id,
+                _ => 0,
+            }).Where(id => id > 0).Distinct().ToList();
         if (raw is IEnumerable<object> values)
             return values.Select(value => int.TryParse(value?.ToString(), out var id) ? id : 0).Where(id => id > 0).ToList();
         return [];

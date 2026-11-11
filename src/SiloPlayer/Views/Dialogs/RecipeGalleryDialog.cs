@@ -801,24 +801,48 @@ public static partial class RecipeGalleryDialog
     {
         var combo = new ComboBox { Header = "Collection", Width = double.NaN, HorizontalAlignment = HorizontalAlignment.Stretch };
         combo.Items.Add(new CollectionOption("", "Choose a collection…", "", ""));
+        var userTask = Task.CompletedTask;
         try
         {
             var collectionsApi = App.Services.GetRequiredService<CollectionsApi>();
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
-            var userTask = collectionsApi.GetCollectionsAsync();
+            async Task LoadUserCollectionsAsync()
+            {
+                try
+                {
+                    foreach (var collection in (await collectionsApi.GetCollectionsAsync()).Collections)
+                        combo.Items.Add(new CollectionOption(collection.Id, collection.Name, "My Collections", "user"));
+                }
+                catch { host.Children.Add(Hint("My Collections could not be loaded. Close this panel and try again.")); }
+            }
+            userTask = LoadUserCollectionsAsync();
             var libraries = await catalogApi.GetLibrariesAsync();
-            var libraryTasks = libraries.Select(async library => (Library: library,
-                Response: await catalogApi.GetLibraryCollectionsAsync(library.Id))).ToArray();
+            var libraryTasks = libraries.Select(async library =>
+            {
+                LibraryTabResponse? response = null;
+                try { response = await catalogApi.GetLibraryCollectionsAsync(library.Id); }
+                catch { host.Children.Add(Hint($"{library.Name} collections could not be loaded. Close this panel and try again.")); }
+                return (Library: library, Response: response);
+            }).ToArray();
             await Task.WhenAll(libraryTasks);
-
-            foreach (var collection in (await userTask).Collections)
-                combo.Items.Add(new CollectionOption(collection.Id, collection.Name, "My Collections", "user"));
+            await userTask;
 
             var libraryOptions = new Dictionary<string, CollectionOption>(StringComparer.Ordinal);
             foreach (var task in libraryTasks)
             {
                 var (library, response) = await task;
-                foreach (var collection in response.Collections.Where(collection => collection.Visibility == "visible"))
+                if (response == null) continue;
+                // Grouped tab entries omit visibility; keep any explicit flat-list restriction.
+                var hiddenIds = response.Collections.Where(collection => collection.Visibility != "visible")
+                    .Select(collection => collection.Id).ToHashSet(StringComparer.Ordinal);
+                var visibleCollections = response.Collections.Where(collection => collection.Visibility == "visible")
+                    .Select(collection => (collection.Id, collection.Title))
+                    .Concat(response.Groups.SelectMany(group => group.Collections)
+                        .Concat(response.Ungrouped?.Collections ?? [])
+                        .Where(collection => !hiddenIds.Contains(collection.Id))
+                        .Select(collection => (collection.Id, collection.Title)))
+                    .DistinctBy(collection => collection.Id, StringComparer.Ordinal);
+                foreach (var collection in visibleCollections)
                 {
                     if (libraryOptions.TryGetValue(collection.Id, out var existing))
                     {
@@ -833,8 +857,9 @@ public static partial class RecipeGalleryDialog
         }
         catch
         {
-            host.Children.Add(Hint("Collections could not be loaded. Close this panel and try again."));
+            host.Children.Add(Hint("Library collections could not be loaded. Close this panel and try again."));
         }
+        finally { await userTask; }
 
         var filtering = false;
         var selectedId = StringValue(config, "user_collection_id");

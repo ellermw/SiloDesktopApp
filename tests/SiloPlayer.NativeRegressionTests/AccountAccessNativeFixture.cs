@@ -39,7 +39,7 @@ internal static class AccountAccessNativeFixture
 
             var constructor = typeof(ProfileEditorDialog).GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single();
             var dialog = constructor.Invoke([parent.XamlRoot, new Profile { Name = "Future", MaxContentRating = "future-ceiling", MaxAdvisoryAge = 12 },
-                Array.Empty<Library>(), false, new AuthApi(client), true, false]);
+                Array.Empty<Library>(), false, new AuthApi(client), true, false, false]);
             var rating = Field<ComboBox>(dialog, "_ratingBox");
             if (rating.SelectedItem?.ToString() != "future-ceiling (saved limit)" || Field<ComboBox>(dialog, "_advisoryBox").SelectedIndex != 12)
                 throw new InvalidOperationException("Native profile editor lost a saved ceiling or advisory age.");
