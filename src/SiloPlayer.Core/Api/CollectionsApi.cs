@@ -2,13 +2,15 @@ using SiloPlayer.Core.Models.Collections;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
+using System.Globalization;
 
 namespace SiloPlayer.Core.Api;
 
 public class CollectionsApi(SiloApiClient client)
 {
     private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string ETag)> _revisions = new();
-    private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string Fingerprint)> _baselines = new();
+    private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string Fingerprint, DateTimeOffset? UpdatedAt)> _baselines = new();
+    private readonly object _baselineLock = new();
 
     public async Task<CollectionsResponse> GetCollectionsAsync(CancellationToken ct = default)
     {
@@ -29,8 +31,7 @@ public class CollectionsApi(SiloApiClient client)
         var context = client.CaptureContext();
         var result = await client.GetWithETagAsync<Collection>(path, ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-        RememberBaseline(path, result.Body, context);
-        if (result.ETag != null) _revisions[path] = (context, result.ETag);
+        RememberBaseline(path, result.Body, context, result.ETag);
         return result.Body;
     }
 
@@ -252,12 +253,24 @@ public class CollectionsApi(SiloApiClient client)
     }
 
     private static string OrderPath(string? groupId) => "/api/v2/collections/order" + (groupId == null ? "" : "?group_id=" + Uri.EscapeDataString(groupId));
-    private void RememberBaseline(string path, object body, ApiRequestContext context)
+    private void RememberBaseline(string path, object body, ApiRequestContext context, string? etag = null)
     {
-        // A refreshed body must not inherit a revision from an earlier header or write.
-        // Reads/writes that also return an ETag install it after remembering their baseline.
-        _revisions.TryRemove(path, out _);
-        _baselines[path] = (context, Fingerprint(path, JsonSerializer.SerializeToElement(body, V2Json.Options)));
+        DateTimeOffset? updatedAt = body is Collection collection && DateTimeOffset.TryParse(collection.UpdatedAt,
+            CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) ? timestamp : null;
+        var fingerprint = Fingerprint(path, JsonSerializer.SerializeToElement(body, V2Json.Options));
+        lock (_baselineLock)
+        {
+            // An older list/header response must not roll back a newer snapshot or its ETag.
+            if (_baselines.TryGetValue(path, out var baseline) && baseline.Context == context
+                && baseline.UpdatedAt is { } remembered && updatedAt is { } incoming && incoming < remembered)
+                return;
+
+            // Install the baseline and its revision together, so a concurrent stale read cannot
+            // replace either half. A current body without an ETag still retires the old revision.
+            _revisions.TryRemove(path, out _);
+            _baselines[path] = (context, fingerprint, updatedAt);
+            if (etag != null) _revisions[path] = (context, etag);
+        }
     }
     private static string Fingerprint(string path, JsonElement body)
     {
@@ -314,8 +327,7 @@ public class CollectionsApi(SiloApiClient client)
         {
             var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-            RememberBaseline(path, result.Body!, context);
-            if (result.ETag != null) _revisions[path] = (context, result.ETag);
+            RememberBaseline(path, result.Body!, context, result.ETag);
             return result.Body;
         }
         catch (ApiException ex) when (ex.StatusCode == 412)

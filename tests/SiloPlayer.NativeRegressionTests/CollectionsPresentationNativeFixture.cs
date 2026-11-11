@@ -59,6 +59,7 @@ internal static class CollectionsPresentationNativeFixture
             await fixture.ServerPaginationAsync();
             await fixture.HeroAsync();
             await fixture.HeroMoreActionsAsync();
+            await fixture.CollectionPickerPartialFailuresAsync();
         }
         finally { parent.Children.Clear(); await Task.Delay(100); serviceField.SetValue(null, previous); }
     }
@@ -802,6 +803,59 @@ internal static class CollectionsPresentationNativeFixture
             Log("PASS: a late sync result or a delete confirmed after the page was left changed nothing.");
         }
 
+        internal async Task CollectionPickerPartialFailuresAsync()
+        {
+            foreach (var failure in new[] { "tab", "personal", "libraries", "both" })
+            {
+                wire.Reset(own: 1, shared: 0, libraries: 2);
+                wire.FailedLibraryId = failure == "tab" ? 1 : null;
+                wire.FailPersonal = failure is "personal" or "both";
+                wire.FailLibraries = failure is "libraries" or "both";
+                if (failure == "both") wire.PersonalGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                catalog.InvalidateLibraryCache();
+                var host = new StackPanel();
+                var config = new Dictionary<string, object>();
+                var load = (Task)typeof(SiloPlayer.Views.Dialogs.RecipeGalleryDialog)
+                    .GetMethod("AddCollectionFieldAsync", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [config, host])!;
+                try
+                {
+                    if (failure == "both")
+                    {
+                        await Until(() => wire.PersonalReads == 1);
+                        await Task.Delay(100);
+                        Check(!load.IsCompleted, "A failed library discovery abandoned the pending personal read.");
+                        wire.PersonalGate!.SetResult(true);
+                    }
+                    await load.WaitAsync(TimeSpan.FromSeconds(10));
+                    var combo = host.Children.OfType<ComboBox>().Single();
+                    var options = combo.Items.Cast<object>().ToArray();
+                    if (!wire.FailPersonal)
+                    {
+                        combo.SelectedItem = options.Single(option => option.ToString() == "Weekend picks 1 — My Collections");
+                        Check(config.GetValueOrDefault("user_collection_id") as string == "own-1" && !config.ContainsKey("library_collection_id"),
+                            "A library failure prevented selecting a personal collection.");
+                    }
+                    if (!wire.FailLibraries)
+                    {
+                        combo.SelectedItem = options.Single(option => option.ToString() == "Anime — Shows");
+                        Check(config.GetValueOrDefault("library_collection_id") as string == "srv-3" && !config.ContainsKey("user_collection_id"),
+                            "Another source's failure prevented selecting a healthy library collection.");
+                    }
+                    if (failure == "tab")
+                    {
+                        Check(options.All(option => option.ToString() != "Criterion — Movies"), "The failed library returned picker options.");
+                        Check(host.Children.OfType<TextBlock>().Select(text => text.Text).SequenceEqual([
+                            "Movies collections could not be loaded. Close this panel and try again."]),
+                            "A failed library must be named without claiming that every collection failed.");
+                    }
+                }
+                finally { wire.PersonalGate?.TrySetResult(true); await load; }
+            }
+            wire.Reset(own: 0, shared: 0, libraries: 0);
+            catalog.InvalidateLibraryCache();
+            Log("PASS: collection picker retains selectable healthy sources after personal, library-tab or library-discovery failures and awaits every personal read.");
+        }
+
         // ===== Helpers =====
         private async Task<(Frame Frame, CollectionsPage Page)> OpenWall(double width, double height, CollectionsNavigationArgs? args = null)
         {
@@ -902,6 +956,7 @@ internal static class CollectionsPresentationNativeFixture
         internal TaskCompletionSource<bool>? PersonalGate, ServerGate, TabGate, BackdropGate, SyncGate, DeleteGate;
         internal readonly List<string> SyncRequests = [], DeleteRequests = [], CatalogRequests = [];
         internal int SnapshotReads;
+        internal int? FailedLibraryId;
         internal object[] UserLibraries = [new { id = 1, name = "Movies", type = "movie", enabled = true }, new { id = 2, name = "Shows", type = "show", enabled = true }, new { id = 3, name = "Kids", type = "movie", enabled = true }];
         internal int PersonalReads, ServerReads;
         internal readonly List<string> BackdropRequests = [];
@@ -913,7 +968,7 @@ internal static class CollectionsPresentationNativeFixture
         internal int TabReads(int libraryId) { lock (_tabReads) return _tabReads.GetValueOrDefault(libraryId); }
         internal void Reset(int own, int shared, int libraries, bool singleProfile = false)
         {
-            _own = own; _shared = shared; _libraries = libraries; SingleProfile = singleProfile;
+            _own = own; _shared = shared; _libraries = libraries; SingleProfile = singleProfile; FailedLibraryId = null;
             FailPersonal = FailServer = FailLibraryTab = false; PersonalGate = ServerGate = TabGate = BackdropGate = null; PersonalReads = ServerReads = 0;
             lock (_tabReads) _tabReads.Clear();
             BackdropRequests.Clear(); _described.Clear(); _groups.Clear(); PersonalSnapshot = null; lock (Paths) Paths.Clear();
@@ -1001,7 +1056,7 @@ internal static class CollectionsPresentationNativeFixture
                 var libraryId = int.Parse(path["/api/v2/library/".Length..^"/collections".Length]);
                 lock (_tabReads) _tabReads[libraryId] = _tabReads.GetValueOrDefault(libraryId) + 1;
                 if (TabGate != null) { if (TabGateIgnoresCancellation) await TabGate.Task; else await TabGate.Task.WaitAsync(ct); }
-                if (FailLibraryTab) return Reply(new { message = "tab unavailable" }, HttpStatusCode.ServiceUnavailable);
+                if (FailLibraryTab || FailedLibraryId == libraryId) return Reply(new { message = "tab unavailable" }, HttpStatusCode.ServiceUnavailable);
                 var cards = new List<object>();
                 if (libraryId == 1) cards.AddRange([TabCard("srv-1", "Criterion"), TabCard("srv-2", "A24"), TabCard("srv-4", "Studio Ghibli")]);
                 if (libraryId == 2) cards.Add(TabCard("srv-3", "Anime"));

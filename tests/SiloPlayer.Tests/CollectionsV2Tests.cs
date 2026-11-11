@@ -173,6 +173,89 @@ public sealed class CollectionsV2Tests
     }
 
     [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public async Task LateOlderReadPreservesTheNewerBaselineAndRevision(bool staleHeader, bool updatedViaPatch, bool withETag)
+    {
+        const string older = """{"id":"c1","name":"Synced collection","updated_at":"2026-11-11T11:37:00Z"}""";
+        // Compare instants, not timestamp text: this later revision has a different UTC offset.
+        const string newer = """{"id":"c1","name":"Synced collection","updated_at":"2026-11-11T06:38:00-05:00"}""";
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var changed = false;
+        var headerReads = 0;
+        var deletes = 0;
+        var client = new SiloApiClient(new HttpClient(new AsyncHandler(async request =>
+        {
+            var isList = request.RequestUri!.AbsolutePath == "/api/v2/collections";
+            if (request.Method == HttpMethod.Get)
+            {
+                if (!isList) headerReads++;
+                if (isList || staleHeader && headerReads == 1)
+                {
+                    started.TrySetResult();
+                    return await release.Task;
+                }
+                var response = Json(changed ? newer : older);
+                if (!changed || withETag) response.Headers.ETag = new(changed ? "\"B\"" : "\"A\"");
+                return response;
+            }
+            if (request.Method == HttpMethod.Patch)
+            {
+                Assert.Equal("\"A\"", request.Headers.IfMatch.Single().Tag);
+                changed = true;
+                var response = Json(newer);
+                if (withETag) response.Headers.ETag = new("\"B\"");
+                return response;
+            }
+            Assert.Equal(HttpMethod.Delete, request.Method);
+            Assert.Equal("\"B\"", request.Headers.IfMatch.Single().Tag);
+            deletes++;
+            return new(HttpStatusCode.NoContent);
+        })));
+        client.SetBaseUrl("https://fixture.invalid");
+        var api = new CollectionsApi(client);
+        var lateRead = staleHeader ? (Task)api.GetCollectionAsync("c1") : api.GetCollectionsAsync();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (updatedViaPatch)
+            {
+                await api.GetCollectionAsync("c1");
+                await api.UpdateCollectionAsync("c1", new() { IsShared = true });
+            }
+            else
+            {
+                changed = true;
+                await api.GetCollectionAsync("c1");
+            }
+            var stale = Json(staleHeader ? older : "{\"items\":[" + older + "],\"groups\":[]}");
+            if (staleHeader) stale.Headers.ETag = new("\"A\"");
+            release.SetResult(stale);
+            await lateRead;
+            var readsBeforeDelete = headerReads;
+            var expectedExtraReads = withETag ? 0 : 1;
+            // A missing ETag must revalidate against B, never the late response's old baseline A.
+            // Revision lookup still requires an ETag even when the displayed header omitted it.
+            withETag = true;
+            await api.DeleteCollectionAsync("c1");
+            Assert.Equal(1, deletes);
+            Assert.Equal(expectedExtraReads, headerReads - readsBeforeDelete);
+        }
+        finally
+        {
+            release.TrySetResult(Json(staleHeader ? older : "{\"items\":[],\"groups\":[]}"));
+            await lateRead;
+        }
+    }
+
+    [Theory]
     [InlineData("patch")]
     [InlineData("put")]
     [InlineData("delete")]
