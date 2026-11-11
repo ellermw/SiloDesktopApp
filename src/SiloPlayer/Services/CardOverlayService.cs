@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Services;
 
@@ -26,7 +27,11 @@ public record OverlayItemConfig(
     bool Enabled,
     OverlayPosition Position,
     string? AccentColor = null,
-    bool? ShowIcon = null);
+    bool? ShowIcon = null)
+{
+    public string? Image { get; init; }
+    public IReadOnlyDictionary<string, string>? ValueImages { get; init; }
+}
 
 /// <summary>
 /// Flat data bag passed to the renderer, extracted from a MediaItem once and
@@ -109,6 +114,7 @@ public sealed record CardOverlayPrefs(
     Dictionary<string, OverlayItemConfig> Items)
 {
     public JsonElement? OriginalDocument { get; init; }
+    public OverlayStyle? Style { get; init; }
 }
 
 /// <summary>
@@ -146,6 +152,17 @@ public static class OverlayRegistry
         new("request_status",     "Request Status",   OverlayPosition.TopLeft,     true, d => d.RequestStatus),
         new("advisory_age", "Advisory Age", OverlayPosition.TopRight, false, d => d.AdvisoryAge > 0 ? $"{d.AdvisoryAge}+" : null),
     ];
+
+    public static string? ValueKey(string id, OverlayData data) => id switch
+    {
+        "resolution" => data.Resolution, "hdr" => data.Hdr, "audio" => data.Audio, "audio_channels" => data.AudioChannels,
+        "resolution_hdr" => string.IsNullOrEmpty(data.Resolution) ? null : string.Join(" ", new[] { data.Resolution, data.Hdr }.Where(value => !string.IsNullOrEmpty(value))),
+        "resolution_hdr_audio" => string.Join(" ", new[] { data.Resolution, data.Hdr, data.Audio }.Where(value => !string.IsNullOrEmpty(value))),
+        "video_codec" => data.VideoCodec, "container" => data.Container, "aspect_ratio" => data.AspectRatio, "release_type" => data.ReleaseType,
+        "edition" => data.Edition, "content_rating" => data.ContentRating, "original_language" => data.OriginalLanguage, "studio" => data.Studio, "network" => data.Network,
+        "show_status" => FormatShowStatus(data.ShowStatus),
+        _ => null,
+    };
 
     public static Dictionary<string, OverlayItemConfig> DefaultPrefs =>
         All.ToDictionary(def => def.Id, def => new OverlayItemConfig(def.DefaultEnabled, def.DefaultPosition));
@@ -199,8 +216,8 @@ public static class OverlayRegistry
 
     private static string? FormatShowStatus(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        return value.Trim().ToLowerInvariant() switch
+        if (string.IsNullOrEmpty(value)) return null;
+        return value.ToLowerInvariant() switch
         {
             "returning" or "returning series" or "continuing" or "in_production" or "in production" => "Returning",
             "ended" => "Ended",
@@ -240,6 +257,50 @@ public class CardOverlayService
     public event Action? Changed;
     public bool IsLoaded => _initialized;
     public string Preset => _document.Preset;
+    public OverlayStyle? Style => _document.Style;
+    public bool AdvancedAvailable => !_manifestUnavailable && ManifestRevision >= 25;
+    public bool SupportsImages { get; private set; }
+    public IReadOnlyList<OverlayLibraryImage> Images { get; private set; } = [];
+    public event Action? ImagesInvalidated;
+    private readonly Dictionary<string, Task<byte[]?>> _images = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _imageReads = new(4, 4);
+    private CancellationTokenSource _imageOwner = new();
+
+    public bool IsCurrentImageOwner(ApiRequestContext context) => _settingsApi.IsCurrentContext(context);
+    public ApiRequestContext CaptureImageOwner() => _settingsApi.CaptureContext();
+
+    public Task<byte[]?> GetImageAsync(string reference)
+    {
+        if (!SupportsImages || !SiloApiClient.IsOverlayImageRef(reference) || _manifestContext is not { } context
+            || !_settingsApi.IsCurrentContext(context)) return Task.FromResult<byte[]?>(null);
+        lock (_images)
+        {
+            if (_images.TryGetValue(reference, out var pending)) return pending;
+            if (_images.Count >= 64)
+            {
+                var retired = _images.FirstOrDefault(pair => pair.Value.IsCompleted).Key;
+                if (retired is null) return Task.FromResult<byte[]?>(null);
+                _images.Remove(retired);
+            }
+            return _images[reference] = ReadImageAsync(reference, context, _imageOwner.Token);
+        }
+    }
+
+    private async Task<byte[]?> ReadImageAsync(string reference, ApiRequestContext context, CancellationToken ct)
+    {
+        try
+        {
+            await _imageReads.WaitAsync(ct);
+            try
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                deadline.CancelAfter(TimeSpan.FromSeconds(10));
+                return await _settingsApi.GetOverlayImageAsync(reference, context, deadline.Token);
+            }
+            finally { _imageReads.Release(); }
+        }
+        catch { return null; }
+    }
     public Dictionary<string, OverlayItemConfig>? GetPrefs() => _enabled && ProfileBadgesEnabled ? _document.Items : null;
 
     public CardOverlayPrefs GetDocument() => _document with
@@ -305,7 +366,14 @@ public class CardOverlayService
             var enabled = true;
             var manifestRevision = 0;
             var manifestUnavailable = false;
-            try { manifestRevision = (await _settingsApi.GetContractCapabilitiesAsync(context, ct)).Revision; }
+            var supportsImages = false;
+            IReadOnlyList<OverlayLibraryImage> images = [];
+            try
+            {
+                var capabilities = await _settingsApi.GetContractCapabilitiesAsync(context, ct);
+                manifestRevision = capabilities.Revision;
+                supportsImages = manifestRevision >= 25 && capabilities.SupportsOverlayImages;
+            }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { manifestUnavailable = true; }
             var document = BuildDefaultDocument();
@@ -313,6 +381,8 @@ public class CardOverlayService
             {
                 var config = await _settingsApi.GetOverlayConfigAsync(ct);
                 enabled = config.Enabled;
+                if (supportsImages) images = (config.Images ?? []).Where(image => SiloApiClient.IsOverlayImageRef(image.Ref)
+                    && image.Width is > 0 and <= 600 && image.Height is > 0 and <= 300).Take(256).ToArray();
                 if (!string.IsNullOrWhiteSpace(config.Defaults))
                     document = ParsePrefs(config.Defaults!) ?? document;
             }
@@ -354,6 +424,8 @@ public class CardOverlayService
             catch { }
             ct.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _loadGeneration) || !_settingsApi.IsCurrentContext(context)) return;
+            SupportsImages = supportsImages;
+            Images = images;
             ManifestRevision = manifestRevision;
             _manifestUnavailable = manifestUnavailable;
             _manifestContext = manifestUnavailable ? null : context;
@@ -375,6 +447,13 @@ public class CardOverlayService
     public void Invalidate()
     {
         Interlocked.Increment(ref _loadGeneration);
+        _imageOwner.Cancel();
+        _imageOwner.Dispose();
+        _imageOwner = new();
+        lock (_images) _images.Clear();
+        SupportsImages = false;
+        Images = [];
+        ImagesInvalidated?.Invoke();
         _initialized = false;
         _manifestUnavailable = false;
         _manifestContext = null;
@@ -415,6 +494,7 @@ public class CardOverlayService
                 ManifestRevision = manifestRevision;
                 _manifestUnavailable = false;
                 _manifestContext = context;
+                SupportsImages = manifestRevision >= 25 && capabilities.SupportsOverlayImages;
             }
             var normalized = NormalizeDocument(prefs);
             foreach (var definition in OverlayRegistry.All)
@@ -502,7 +582,13 @@ public class CardOverlayService
                     else if (icon.ValueKind == JsonValueKind.False) showIcon = false;
                 }
 
-                result[def.Id] = new OverlayItemConfig(enabled, position, accentColor, showIcon);
+                result[def.Id] = new OverlayItemConfig(enabled, position, accentColor, showIcon)
+                {
+                    Image = entry.TryGetProperty("image", out var image) && image.ValueKind == JsonValueKind.String ? image.GetString() : null,
+                    ValueImages = entry.TryGetProperty("valueImages", out var values) && values.ValueKind == JsonValueKind.Object
+                        ? values.EnumerateObject().Where(pair => pair.Value.ValueKind == JsonValueKind.String).Take(256)
+                            .ToDictionary(pair => pair.Name, pair => pair.Value.GetString()!, StringComparer.Ordinal) : null,
+                };
             }
 
             var preset = root.TryGetProperty("preset", out var presetElement) && presetElement.ValueKind == JsonValueKind.String
@@ -518,7 +604,7 @@ public class CardOverlayService
                 }
             }
 
-            return NormalizeDocument(new CardOverlayPrefs(version, preset, order, result) { OriginalDocument = root.Clone() });
+            return NormalizeDocument(new CardOverlayPrefs(version, preset, order, result) { OriginalDocument = root.Clone(), Style = root.TryGetProperty("style", out var style) ? OverlayStyle.Parse(style) : null });
         }
         catch
         {
@@ -567,7 +653,7 @@ public class CardOverlayService
             };
         }
         var order = prefs.Order.Distinct(StringComparer.Ordinal).ToArray();
-        return new CardOverlayPrefs(Math.Max(2, prefs.Version), preset, order, items) { OriginalDocument = prefs.OriginalDocument };
+        return new CardOverlayPrefs(Math.Max(2, prefs.Version), preset, order, items) { OriginalDocument = prefs.OriginalDocument, Style = prefs.Style };
     }
 
     private static string SerializePrefs(CardOverlayPrefs prefs)
@@ -590,8 +676,23 @@ public class CardOverlayService
             else item["accentColor"] = config.AccentColor;
             if (config.ShowIcon is null) item.Remove("showIcon");
             else item["showIcon"] = config.ShowIcon;
+            if (manifestRevision >= 25)
+            {
+                if (config.Image is not null) item["image"] = config.Image;
+                else if (item["image"] is JsonValue imageValue && imageValue.TryGetValue<string>(out _)) item.Remove("image");
+                if (config.ValueImages is not null)
+                {
+                    var values = item["valueImages"] as JsonObject ?? new JsonObject();
+                    foreach (var key in values.Select(pair => pair.Key).Take(256).ToArray())
+                        if (values[key] is JsonValue value && value.TryGetValue<string>(out _) && !config.ValueImages.ContainsKey(key)) values.Remove(key);
+                    foreach (var pair in config.ValueImages) values[pair.Key] = pair.Value;
+                    item["valueImages"] = values;
+                }
+            }
             items[def.Id] = item;
         }
+        if (manifestRevision >= 25 && prefs.Style is not null)
+            prefs.Style.WriteTo(root);
         root["version"] = prefs.Version;
         // Preserve stored newer fields, but do not introduce rev-25 presets to
         // servers that cannot accept them.

@@ -1,3 +1,18 @@
+# Advanced overlays Beta submission branch
+
+This branch starts directly at fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`; only the scoped advanced overlay commit is applied. The earlier dependency-base verification below remains historical; fresh delivery-branch tests and bindings are required. Version remains 1.2.970. Installed app untouched.
+
+# Reopened A1 — advanced card overlays (November 11, 2026)
+
+Local uncommitted candidate in `t3/complete-a1-card-overlays`, deliberately retaining dependency base `90aa029a3d2969be7b10ef25c0b12dd52f6dd279`. Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Source stamps remain **1.2.970** / **1.2.970.0**; no rebase onto the lead's newer fetched Beta or delivery action occurred.
+
+Completes the earlier deferred plate/band/source-chip rendering, style overrides, uploaded source/value images, shared bottom-row wrapping and previews across all card hosts. Native editor verification now mounts the actual controls and awaits TextChanged; the previous unmounted fill assertion and interrupted run remain preserved. All seven preset buttons, complete look controls/reset, image selection, raw-value assignment, fallback and stale-owner behavior are exercised. Image wire coverage includes profile/account/server replacement and fresh-read recovery. Revision, opaque-field preservation, capability failure and existing watched rollback remain covered.
+
+Final verification: **5,475 full unit tests passed**, zero failed/skipped; expanded **advanced-overlays native route passed with exit 0 and the literal completion sentinel**, including existing overlay-revisions and pill checks. Inspected representative plate/band/host/settings/fallback captures. The existing successful Release publish was reused after all **1,112 product inputs** matched unchanged, avoiding duplicate payloads. App DLL SHA256 **D443BCBC12A9F74DC5381FC36DCCD8E8172FDDBD62DACD57882AAC9200A862EE**. Actual DLL/PDB identities and authored documents match final source: app749, native183, unit424, unit Core366, unit Player15; zero mismatches. All .NET/native/build/binding operations were serialized under `SiloOct18Build` with the pinned engine and explicit PowerShell7.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-advanced-overlays/` (`units-resumed-final`, `native-editor-controls`, `binding-resumed-final`, original `release-verified`). Full files, commands, failure history and limits: adjacent `reopened-advanced-overlays-implementation.md`. This synthetic evidence does not certify live-server persistence, physical input or complete WebUI pixel parity; the unrelated historical default-native detail fixture limitation was not exercised or fixed. Installed player/settings/accounts remain untouched. No install, restart, version change, commit, push or PR; lead owns independent review, Beta reconciliation and delivery.
+
+
 # Overlay review corrections — November 10, 2026
 
 Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.

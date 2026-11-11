@@ -1,86 +1,197 @@
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
+using Windows.Foundation;
 
 namespace SiloPlayer.Controls;
 
-/// <summary>One overlay badge a card shows: what it says, where, and how it is styled.</summary>
-internal readonly record struct CardBadge(OverlayPosition Corner, string Text, string OverlayId, OverlayItemConfig Config, string Preset, double Scale);
+internal readonly record struct CardBadge(OverlayPosition Corner, string Text, string OverlayId, OverlayItemConfig Config, string Preset, double Scale,
+    OverlayStyle? Style = null, string? ValueKey = null, CardOverlayService? Images = null);
 
-/// <summary>
-/// The four corner badge panels of a card. Cards are bound again each time they scroll back into
-/// view and on every Home or Library refresh; rebuilding identical badges there created a dozen
-/// XAML objects per card, and that churn drove the expensive full garbage collections that froze
-/// the UI for half a second or more. Badges are rebuilt only when what they show changes.
-/// </summary>
 internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottomLeft, Panel bottomRight, Panel leftEdge, Panel rightEdge)
 {
     private CardBadge[] _shown = [];
     private double _topLeftMaxWidth = double.NaN;
+    private OverlayBottomRows? _bottomRows;
+    private Border? _bottomBand;
+    private Border? _topScrim;
+    private bool _band;
+    private string _preset = "classic";
+    private Panel? _layoutOwner;
+    private bool _observingMount;
+    private ApiRequestContext? _imageOwner;
+
+    internal static CardBadgeHosts Create(Grid parent, CardOverlayGeometry geometry, double progressClearance = 0)
+    {
+        StackPanel Host(HorizontalAlignment horizontal, VerticalAlignment vertical)
+        {
+            var stack = new StackPanel { Spacing = geometry.StackGap, HorizontalAlignment = horizontal, VerticalAlignment = vertical,
+                Margin = new Thickness(geometry.EdgeInset, geometry.EdgeInset, geometry.EdgeInset, geometry.EdgeInset + (vertical == VerticalAlignment.Bottom ? progressClearance : 0)), IsHitTestVisible = false };
+            parent.Children.Add(stack);
+            return stack;
+        }
+        return new(Host(HorizontalAlignment.Left, VerticalAlignment.Top), Host(HorizontalAlignment.Right, VerticalAlignment.Top),
+            Host(HorizontalAlignment.Left, VerticalAlignment.Bottom), Host(HorizontalAlignment.Right, VerticalAlignment.Bottom),
+            Host(HorizontalAlignment.Left, VerticalAlignment.Center), Host(HorizontalAlignment.Right, VerticalAlignment.Center));
+    }
 
     public void Show(IReadOnlyList<CardBadge> badges)
     {
-        SetVisible(true);
-        if (badges.SequenceEqual(_shown) && ShownCount == _shown.Length && topLeft.MaxWidth == _topLeftMaxWidth) return;
-        topLeft.Children.Clear();
-        topRight.Children.Clear();
-        bottomLeft.Children.Clear();
-        bottomRight.Children.Clear();
-        leftEdge.Children.Clear();
-        rightEdge.Children.Clear();
-        foreach (var badge in badges)
+        if (!_observingMount)
         {
-            var host = Host(badge.Corner);
-            var element = PosterCard.BuildBadge(badge.Text, badge.OverlayId, badge.Config, badge.Preset, badge.Scale);
-            element.MaxWidth = host.MaxWidth;
-            // A horizontal StackPanel otherwise measures its text with infinite
-            // width, including under the reserved watch-status corner.
-            if (double.IsFinite(host.MaxWidth) && element.Child is StackPanel content)
+            _observingMount = true;
+            bottomLeft.Loaded += (_, _) => bottomLeft.DispatcherQueue.TryEnqueue(() =>
             {
-                var iconWidth = content.Children.OfType<FontIcon>().Sum(icon => icon.Width + content.Spacing);
-                foreach (var text in content.Children.OfType<TextBlock>())
-                    text.MaxWidth = Math.Max(0, host.MaxWidth - element.Padding.Left - element.Padding.Right
-                        - element.BorderThickness.Left - element.BorderThickness.Right - iconWidth);
+                if (bottomLeft.IsLoaded && _shown.Length > 0 && _bottomRows is null) Show(_shown);
+            });
+        }
+        SetVisible(true);
+        var imageOwner = badges.Select(badge => badge.Images).FirstOrDefault(images => images is not null)?.CaptureImageOwner();
+        if (badges.SequenceEqual(_shown) && imageOwner == _imageOwner && topLeft.MaxWidth == _topLeftMaxWidth && _bottomRows?.Parent is not null) { Layout(); return; }
+        Clear();
+        _imageOwner = imageOwner;
+        if (bottomLeft.Parent is Panel parent)
+        {
+            if (_layoutOwner is null)
+            {
+                _layoutOwner = parent;
+                parent.SizeChanged += (_, _) => Layout();
+                topLeft.SizeChanged += (_, _) => Layout();
             }
-            host.Children.Add(element);
+            _bottomRows ??= new OverlayBottomRows { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false };
+            _bottomBand ??= new Border { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false };
+            _topScrim ??= new Border { VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
+            foreach (var element in new FrameworkElement[] { _topScrim, _bottomRows, _bottomBand })
+                if (element.Parent is null)
+                {
+                    parent.Children.Insert(parent.Children.IndexOf(ReferenceEquals(element, _topScrim) ? topLeft : bottomLeft), element);
+                    Grid.SetRow(element, Grid.GetRow(bottomLeft)); Grid.SetColumn(element, Grid.GetColumn(bottomLeft));
+                }
         }
         _shown = [.. badges];
+        var primary = badges.FirstOrDefault(badge => badge.Images is not null);
+        if (primary.Preset is null) primary = badges.FirstOrDefault();
+        _preset = primary.Preset ?? "classic";
+        _band = _preset == "band";
+        var look = OverlayAppearance.Resolve(_preset, primary.Style, null);
+        var scale = badges.Count > 0 ? badges[0].Scale : 1;
+        if (_bottomRows is not null) { _bottomRows.Gap = 8 * scale; _bottomRows.StackGap = look.StackGap * scale; }
+        foreach (var host in new[] { topLeft, topRight, leftEdge, rightEdge }.OfType<StackPanel>()) host.Spacing = look.StackGap * scale;
+        FrameworkElement Build(CardBadge badge) => PosterCard.BuildAdvancedBadge(badge.Text, badge.OverlayId, badge.Config with { Position = badge.Corner }, badge.Preset, badge.Scale, badge.Style, badge.ValueKey, badge.Images);
+        foreach (var badge in badges.Where(badge => badge.Corner is not OverlayPosition.BottomLeft and not OverlayPosition.BottomRight && !(_band && badge.Corner == OverlayPosition.TopLeft)))
+        {
+            var element = Build(badge); var host = Host(badge.Corner);
+            element.HorizontalAlignment = badge.Corner is OverlayPosition.TopRight or OverlayPosition.RightEdge ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            host.Children.Add(element);
+        }
+        var left = badges.Where(badge => badge.Corner == OverlayPosition.BottomLeft).ToArray();
+        var right = badges.Where(badge => badge.Corner == OverlayPosition.BottomRight).ToArray();
+        if (_band)
+        {
+            var top = new OverlayBandMarks { Gap = look.StackGap * scale };
+            foreach (var badge in badges.Where(badge => badge.Corner == OverlayPosition.TopLeft)) top.Children.Add(BandUnit(Build(badge), top.Children.Count > 0, scale));
+            if (top.Children.Count > 0) topLeft.Children.Add(top);
+            if (_bottomBand is not null)
+            {
+                var marks = new OverlayBandMarks { Gap = look.StackGap * scale, HorizontalAlignment = HorizontalAlignment.Center };
+                foreach (var badge in left.Concat(right)) marks.Children.Add(BandUnit(Build(badge), marks.Children.Count > 0, scale));
+                _bottomBand.Child = marks; _bottomBand.Background = Scrim(false); _bottomBand.Padding = new Thickness(8 * scale, 24 * scale, 8 * scale, 8 * scale);
+            }
+            if (_topScrim is not null) _topScrim.Background = Scrim(true);
+        }
+        else if (_bottomRows is not null)
+        {
+            _bottomRows.LeftCount = left.Length;
+            foreach (var badge in left.Concat(right)) _bottomRows.Children.Add(Build(badge));
+        }
+        else foreach (var badge in left.Concat(right)) Host(badge.Corner).Children.Add(Build(badge));
         _topLeftMaxWidth = topLeft.MaxWidth;
+        Layout(); SetVisible(true);
     }
 
-    /// <summary>Hides the badges of a card whose overlays are deferred; the same item shows them again shortly.</summary>
-    public void Hide() => SetVisible(false);
+    private static FrameworkElement BandUnit(FrameworkElement badge, bool divider, double scale)
+    {
+        if (!divider) return badge;
+        var unit = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 * scale };
+        unit.Children.Add(new Border { Width = scale, Height = 12 * scale, Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(76, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center });
+        unit.Children.Add(badge); return unit;
+    }
 
-    /// <summary>Releases the badges of a card being reset to a placeholder, so no previous item's badges outlive its binding.</summary>
+    private static LinearGradientBrush Scrim(bool top) => new()
+    {
+        StartPoint = new Point(0, top ? 0 : 1), EndPoint = new Point(0, top ? 1 : 0),
+        GradientStops = { new() { Color = Microsoft.UI.ColorHelper.FromArgb(217, 0, 0, 0), Offset = 0 }, new() { Color = Microsoft.UI.ColorHelper.FromArgb(153, 0, 0, 0), Offset = .55 }, new() { Color = Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0), Offset = 1 } },
+    };
+
+    private void Layout()
+    {
+        var width = (bottomLeft.Parent as FrameworkElement)?.ActualWidth ?? 0;
+        var bottom = Math.Max(bottomLeft.Margin.Bottom, bottomRight.Margin.Bottom);
+        if (_bottomRows is not null) { _bottomRows.Margin = new Thickness(bottomLeft.Margin.Left, 0, bottomRight.Margin.Right, bottom); _bottomRows.InvalidateMeasure(); }
+        if (_bottomBand is not null) _bottomBand.Margin = new Thickness(0, 0, 0, Math.Max(0, bottom - bottomLeft.Margin.Left));
+        if (_topScrim is not null) _topScrim.Height = Math.Max(0, topLeft.ActualHeight + topLeft.Margin.Top + 24 * (_shown.FirstOrDefault().Scale is > 0 ? _shown[0].Scale : 1));
+        foreach (var host in new[] { topLeft, topRight, leftEdge, rightEdge })
+        {
+            var rail = host == leftEdge || host == rightEdge;
+            var maximum = Math.Min(host.MaxWidth, width > 0 ? width * (rail ? .6 : 1) - (rail ? 0 : host.Margin.Left + host.Margin.Right) : host.MaxWidth);
+            if (!double.IsFinite(maximum)) continue;
+            foreach (var child in host.Children.OfType<FrameworkElement>()) OverlayBadgeMeasure.Limit(child, maximum);
+        }
+        if (_shown.Length > 0)
+        {
+            var inset = _preset is "minimal" or "band" ? topLeft.Margin.Left : 0;
+            leftEdge.Margin = rightEdge.Margin = new Thickness(inset);
+        }
+    }
+
+    public void Hide() => SetVisible(false);
+    public void UpdateGeometry() => Layout();
     public void Clear()
     {
-        topLeft.Children.Clear();
-        topRight.Children.Clear();
-        bottomLeft.Children.Clear();
-        bottomRight.Children.Clear();
-        leftEdge.Children.Clear();
-        rightEdge.Children.Clear();
+        foreach (var host in new[] { topLeft, topRight, bottomLeft, bottomRight, leftEdge, rightEdge }) host.Children.Clear();
+        _bottomRows?.Children.Clear();
+        if (_bottomBand is not null) _bottomBand.Child = null;
         _shown = [];
+        SetVisible(false);
     }
-
     private void SetVisible(bool visible)
     {
-        var visibility = visible ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
-        if (topLeft.Visibility == visibility) return;
-        topLeft.Visibility = topRight.Visibility = bottomLeft.Visibility = bottomRight.Visibility = leftEdge.Visibility = rightEdge.Visibility = visibility;
+        var state = visible ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var host in new[] { topLeft, topRight, bottomLeft, bottomRight, leftEdge, rightEdge }) host.Visibility = state;
+        if (_bottomRows is not null) _bottomRows.Visibility = visible && !_band ? Visibility.Visible : Visibility.Collapsed;
+        if (_bottomBand is not null) _bottomBand.Visibility = visible && _band && _bottomBand.Child is Panel { Children.Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        if (_topScrim is not null) _topScrim.Visibility = visible && _band && topLeft.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
-
-    private int ShownCount => topLeft.Children.Count + topRight.Children.Count + bottomLeft.Children.Count + bottomRight.Children.Count + leftEdge.Children.Count + rightEdge.Children.Count;
-
-    private Panel Host(OverlayPosition corner) => corner switch
+    private Panel Host(OverlayPosition position) => position switch
     {
-        OverlayPosition.TopRight => topRight,
-        OverlayPosition.BottomLeft => bottomLeft,
-        OverlayPosition.BottomRight => bottomRight,
-        OverlayPosition.LeftEdge => leftEdge,
-        OverlayPosition.RightEdge => rightEdge,
-        _ => topLeft,
+        OverlayPosition.TopRight => topRight, OverlayPosition.BottomLeft => bottomLeft, OverlayPosition.BottomRight => bottomRight,
+        OverlayPosition.LeftEdge => leftEdge, OverlayPosition.RightEdge => rightEdge, _ => topLeft,
     };
+
+    internal static List<CardBadge> ForData(OverlayData data, CardOverlayService service, double scale, CardOverlayPrefs? document = null)
+    {
+        var prefs = document?.Items ?? service.GetPrefs();
+        var result = new List<CardBadge>();
+        if (prefs is null) return result;
+        var ordered = document is null ? service.GetOrderedDefinitions() : document.Order.Concat(OverlayRegistry.All.Select(def => def.Id)).Distinct()
+            .Select(id => OverlayRegistry.All.FirstOrDefault(def => def.Id == id)).OfType<OverlayDef>().Where(def => service.OffersOverlay(def.Id)).ToArray();
+        var counts = new Dictionary<OverlayPosition, int>();
+        foreach (var definition in ordered)
+        {
+            if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled || service.SuppressesStandalone(definition.Id, prefs)) continue;
+            var value = definition.GetValue(data); if (string.IsNullOrWhiteSpace(value)) continue;
+            var position = service.DisplayPosition(config.Position);
+            var limit = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3;
+            if (counts.GetValueOrDefault(position) >= limit) continue;
+            result.Add(new(position, value, definition.Id, config, document?.Preset ?? service.Preset, scale, document is null ? service.Style : document.Style, OverlayRegistry.ValueKey(definition.Id, data), service));
+            counts[position] = counts.GetValueOrDefault(position) + 1;
+        }
+        return result;
+    }
 
     /// <summary>
     /// The badges a media card shows: scan status and manga counts replace everything else,
@@ -142,7 +253,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
             var position = service.DisplayPosition(config.Position);
             var limit = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3;
             if (cornerCounts.GetValueOrDefault(position) >= limit) continue;
-            badges.Add(new(position, value, definition.Id, config, service.Preset, scale));
+            badges.Add(new(position, value, definition.Id, config, service.Preset, scale, service.Style, OverlayRegistry.ValueKey(definition.Id, data), service));
             cornerCounts[position] = cornerCounts.GetValueOrDefault(position) + 1;
         }
         return badges;

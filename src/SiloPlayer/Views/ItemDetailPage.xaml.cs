@@ -8705,35 +8705,12 @@ public sealed partial class ItemDetailPage : Page
 
     private void AddEpisodeCardOverlays(Grid host, Episode episode)
     {
-        var topLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Top);
-        var topRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
-        var bottomLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
-        var bottomRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
-        var leftEdge = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Center);
-        var rightEdge = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Center);
-        topLeft.Margin = new Thickness(8);
-        topRight.Margin = new Thickness(8);
-        bottomLeft.Margin = new Thickness(8, 8, 8, 24);
-        bottomRight.Margin = new Thickness(8, 8, 8, 56);
-        host.Children.Add(topLeft);
-        host.Children.Add(topRight);
-        host.Children.Add(bottomLeft);
-        host.Children.Add(bottomRight);
-        host.Children.Add(leftEdge);
-        host.Children.Add(rightEdge);
-
+        var hosts = CardBadgeHosts.Create(host, CardOverlayGeometry.ForWideCard(), episode.UserData is { Played: false, PositionSeconds: > 0, DurationSeconds: > 0 } ? 8 : 0);
         void Render()
         {
-            topLeft.Children.Clear();
-            topRight.Children.Clear();
-            bottomLeft.Children.Clear();
-            bottomRight.Children.Clear();
-            leftEdge.Children.Clear();
-            rightEdge.Children.Clear();
-
             var service = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();
             var prefs = service.GetPrefs();
-            if (prefs == null) return;
+            if (prefs == null) { hosts.Clear(); return; }
             var summary = episode.OverlaySummary;
             var data = new global::SiloPlayer.Services.OverlayData
             {
@@ -8750,30 +8727,7 @@ public sealed partial class ItemDetailPage : Page
                 MultiSub = summary?.MultiSub == true,
                 Runtime = episode.Runtime > 0 ? episode.Runtime : null,
             };
-            var cornerCounts = new Dictionary<global::SiloPlayer.Services.OverlayPosition, int>();
-            foreach (var definition in service.GetOrderedDefinitions())
-            {
-                if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-                if (service.SuppressesStandalone(definition.Id, prefs)) continue;
-                var value = definition.GetValue(data);
-                if (string.IsNullOrWhiteSpace(value)) continue;
-                var position = service.DisplayPosition(config.Position);
-                var limit = position is global::SiloPlayer.Services.OverlayPosition.LeftEdge or global::SiloPlayer.Services.OverlayPosition.RightEdge ? 4 : 3;
-                if (cornerCounts.GetValueOrDefault(position) >= limit) continue;
-                var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
-                var corner = position switch
-                {
-                    global::SiloPlayer.Services.OverlayPosition.TopLeft => topLeft,
-                    global::SiloPlayer.Services.OverlayPosition.TopRight => topRight,
-                    global::SiloPlayer.Services.OverlayPosition.BottomLeft => bottomLeft,
-                    global::SiloPlayer.Services.OverlayPosition.BottomRight => bottomRight,
-                    global::SiloPlayer.Services.OverlayPosition.LeftEdge => leftEdge,
-                    global::SiloPlayer.Services.OverlayPosition.RightEdge => rightEdge,
-                    _ => topLeft,
-                };
-                corner.Children.Add(badge);
-                cornerCounts[position] = cornerCounts.GetValueOrDefault(position) + 1;
-            }
+            hosts.Show(CardBadgeHosts.ForData(data, service, 1));
         }
 
         Render();

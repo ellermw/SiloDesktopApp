@@ -114,7 +114,6 @@ public static class ExternalTitleCard
             var data = new OverlayData { RequestStatus = statusBadge, Year = item.Year, RatingTmdb = item.VoteAverage,
                 ContentRating = (item as WatchlistTitle)?.ContentRating };
             var geometry = CardOverlayGeometry.ForPoster(artworkWidth, overlayService.Preset);
-            var stacks = new Dictionary<OverlayPosition, StackPanel>();
             var percent = item.Request.Download is { Phase: "queued" or "downloading" or "paused" or "stalled" or "importing" or "import_blocked" } download
                 ? download.Percent : null;
             var progressVisible = showWatchlistBadge && !string.IsNullOrWhiteSpace(statusBadge) && percent != null;
@@ -126,30 +125,12 @@ public static class ExternalTitleCard
                 AutomationProperties.SetName(progress, "Request download progress");
                 poster.Children.Add(progress);
             }
-            foreach (var def in overlayService.GetOrderedDefinitions())
-            {
-                if (!overlayPrefs.TryGetValue(def.Id, out var config) || !config.Enabled) continue;
-                var value = def.GetValue(data);
-                if (string.IsNullOrWhiteSpace(value)) continue;
-                var position = overlayService.DisplayPosition(config.Position);
-                if (!stacks.TryGetValue(position, out var stack))
-                {
-                    var bottom = position is OverlayPosition.BottomLeft or OverlayPosition.BottomRight;
-                    stack = new StackPanel { Spacing = geometry.StackGap,
-                        HorizontalAlignment = position is OverlayPosition.TopLeft or OverlayPosition.BottomLeft or OverlayPosition.LeftEdge ? HorizontalAlignment.Left : HorizontalAlignment.Right,
-                        VerticalAlignment = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? VerticalAlignment.Center : bottom ? VerticalAlignment.Bottom : VerticalAlignment.Top,
-                        Margin = new Thickness(geometry.EdgeInset, geometry.EdgeInset, geometry.EdgeInset, geometry.EdgeInset + (bottom && progressVisible ? 8 : 0)),
-                        IsHitTestVisible = false };
-                    stacks[position] = stack; poster.Children.Add(stack);
-                }
-                if (stack.Children.Count >= (position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3)) continue;
-                if (def.Id == "request_status" && attention && config.AccentColor == null) config = config with { AccentColor = "#f59e0b" };
-                var badge = PosterCard.BuildBadge(value, def.Id, config, overlayService.Preset, geometry.Scale);
-                badge.HorizontalAlignment = stack.HorizontalAlignment;
-                badge.VerticalAlignment = stack.VerticalAlignment;
-                badge.MaxWidth = artworkWidth - geometry.EdgeInset * 2;
-                stack.Children.Add(badge);
-            }
+            var hosts = CardBadgeHosts.Create(poster, geometry, progressVisible ? 8 : 0);
+            var badges = CardBadgeHosts.ForData(data, overlayService, geometry.Scale);
+            if (attention)
+                badges = badges.Select(badge => badge.OverlayId == "request_status" && badge.Config.AccentColor is null
+                    ? badge with { Config = badge.Config with { AccentColor = "#f59e0b" } } : badge).ToList();
+            hosts.Show(badges);
         }
         if (!watchlistCard && (state || !item.Request.Requestable || statusBadge != null))
         {
