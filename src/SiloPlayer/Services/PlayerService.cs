@@ -9404,11 +9404,18 @@ public partial class PlayerService : IDisposable
                     if (matches.Length != 1 || downloaded.Count(track => track.Id == refreshed.Id ||
                         track.SyncKey == refreshed.SyncKey) != 1) return refreshed;
                     var retained = matches[0];
+                    // An uncertain positional URL cannot retire bytes already
+                    // loaded for this identity. Inspect caches before re-indexing.
+                    var keepPlayable = !retained.Unplayable &&
+                        (_executedSubtitleFileId == mediaFileId && ReferenceEquals(_executedSubtitleTrack, retained) ||
+                         _loadedExternalSubtitleSids.GetValueOrDefault(retained.Index) > 0 ||
+                         _prefetchedSubtitleFiles.ContainsKey(retained.Index));
+                    var unplayable = refreshed.Unplayable && !keepPlayable;
                     retained.Index = refreshed.Index;
                     retained.MediaFileId = refreshed.MediaFileId;
                     retained.SyncKey = refreshed.SyncKey;
                     retained.Id = refreshed.Id;
-                    retained.Unplayable = refreshed.Unplayable;
+                    retained.Unplayable = unplayable;
                     retained.Language = refreshed.Language;
                     retained.Codec = refreshed.Codec;
                     retained.NativeTitle = refreshed.NativeTitle;

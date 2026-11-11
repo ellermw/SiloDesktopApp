@@ -59,7 +59,10 @@ internal static class MediaInteractionsNativeFixture
             ("read-failed", (string?)null, true, (bool?)null, false, false),
             ("patch-failed", "guest_play_pause", true, (bool?)false, true, true),
             ("save-explicit-after-unread", (string?)null, false, (bool?)true, false, true),
-            ("reopen-changed-elsewhere", "host_only", true, (bool?)null, false, true),
+            ("reopen-changed-elsewhere", "host_only", true, (bool?)null, false, false),
+            ("reopen-disabled-elsewhere", "guest_play_pause", false, (bool?)null, false, false),
+            ("explicit-off-changed-elsewhere", "guest_play_pause", false, (bool?)false, false, true),
+            ("explicit-on-changed-elsewhere", "host_only", true, (bool?)true, false, true),
         })
         {
             handler.SavedPolicy = test.Item2; handler.RoomPolicy = test.Item3 ? "guest_play_pause" : "host_only";

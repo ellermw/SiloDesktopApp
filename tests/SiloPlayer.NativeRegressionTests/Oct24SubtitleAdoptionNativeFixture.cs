@@ -275,6 +275,44 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                         "A same-session transport change dropped the announcement or changed playback intent on retry.");
                     wire.HoldReplan = null; wire.ReplanEntered = null;
                 }
+                // A stored-list-only download owns valid local bytes even when
+                // a later list order disagrees with the canonical reserved row.
+                wire.DownloadedAvailable = true; wire.AdditionalDownloadedAvailable = false;
+                await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                wire.AdditionalDownloadedAvailable = true;
+                await service.RefreshSubtitlesAfterAiAsync(42);
+                var playingDownload = manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 78);
+                Require(playingDownload.Index == 3 && !playingDownload.Unplayable &&
+                    playingDownload.TrackId == null && playingDownload.Delivery == null,
+                    "The playing download regression did not establish a stored-list-only row.");
+                playingDownload.Url = subtitles.Origin + "/spa.srt";
+                await service.SetSubtitleTrackAndPersistAsync(4, playingDownload.Language, playingDownload);
+                await Until(() => service.ActiveSubtitleServerIndex == 3 && NativeSidMatches(3));
+                var playingSid = mpv.GetPropertyDouble("sid");
+                var playingIntent = manager.CaptureLocalSubtitleIntent();
+                var playingWrites = wire.PreferenceWrites;
+                var playingFile = Get(service, "_fileLoadGeneration");
+                var files = (Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!;
+                var playingPath = files[playingDownload.Index];
+                foreach (var ownerRefresh in new[] { false, true })
+                {
+                    wire.ReverseDownloadedOrder = false;
+                    await service.RefreshSubtitlesAfterAiAsync(42);
+                    wire.ReverseDownloadedOrder = true;
+                    if (ownerRefresh) await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, null, null, null, null)!;
+                    else await service.RefreshSubtitlesAfterAiAsync(42);
+                    Require(ReferenceEquals(playingDownload, manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 78)) &&
+                        playingDownload.Index == 4 && !playingDownload.Unplayable && playingDownload.Url == "" &&
+                        service.ActiveSubtitleServerIndex == 4 && NativeSidMatches(4) && mpv.GetPropertyDouble("sid") == playingSid &&
+                        ReferenceEquals(playingDownload, Get(service, "_executedSubtitleTrack")) &&
+                        files.GetValueOrDefault(4) == playingPath && File.Exists(playingPath),
+                        "An uncertain stored-list ordinal retired the playing download or its loaded SID/bytes.");
+                    Require(manager.CaptureLocalSubtitleIntent() == playingIntent && wire.PreferenceWrites == playingWrites &&
+                        Equals(playingFile, Get(service, "_fileLoadGeneration")) && service.IsPaused && mpv.IsPaused,
+                        "Re-indexing a playing download changed playback intent, preferences or transport.");
+                }
+                wire.ReverseDownloadedOrder = false;
                 var accepted = manager.CurrentSession;
                 var nativeFile = Get(service, "_fileLoadGeneration");
                 wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -544,6 +582,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         public int? AutomaticSubtitleSelection;
         public bool DownloadedAvailable;
         public bool AdditionalDownloadedAvailable;
+        public bool ReverseDownloadedOrder;
         public TaskCompletionSource? HoldReplan, ReplanEntered;
         private string SubtitleId => _subtitle == 2 ? "downloaded:77" : $"sub:{_file}:{_subtitle}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -553,7 +592,9 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             if (path.Contains("-prefs/", StringComparison.Ordinal)) { PreferenceWrites++; return Json("{}"); }
             if (path == "/api/v2/subtitles/42" && DownloadedAvailable)
                 return Json(AdditionalDownloadedAvailable
-                    ? """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"},{"id":78,"language":"spa","format":"srt","title":"New translation"}]}"""
+                    ? ReverseDownloadedOrder
+                        ? """{"subtitles":[{"id":78,"language":"spa","format":"srt","title":"New translation"},{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}"""
+                        : """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"},{"id":78,"language":"spa","format":"srt","title":"New translation"}]}"""
                     : """{"subtitles":[{"id":77,"language":"ita","format":"srt","title":"Italian downloaded"}]}""");
             if (path.Contains("/settings/", StringComparison.Ordinal)) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");

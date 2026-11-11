@@ -3444,8 +3444,8 @@ public sealed partial class ItemDetailPage : Page
                     var response = await api.CreateWatchTogetherRoomAsync(mode.SelectedIndex == 1 ? "vote" : "host_pick");
                     if (!client.IsCurrentContext(authority) || response.RoomAccessToken == null) return;
                     var policy = pause.IsOn ? "guest_play_pause" : "host_only";
-                    if ((pauseChoice.HasValue || savedPolicy != null) &&
-                        (response.Room.GuestControlPolicy != policy || pauseChoice.HasValue && savedPolicy != policy))
+                    if (pauseChoice.HasValue &&
+                        (response.Room.GuestControlPolicy != policy || savedPolicy != policy))
                     {
                         try
                         {
