@@ -464,21 +464,54 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
-    public void PublishedSubtitleInventoryIsRetriedThenRecoveredAfterANonCancellationFailure()
+    public void PublishedSubtitleInventoryIsRetriedWithBackoffAndNeverReportedAsAPlaybackFailure()
     {
         // PlayerService requires WinUI/libmpv. Guard the failure route here: a
-        // published plan that mpv never applied is retried, then recovered.
+        // published plan that mpv never applied is retried after a delay, and
+        // a spent budget leaves the transport mpv is playing alone.
         var ready = Read("PlayerService.SubtitleReady.cs");
         Assert.Contains("private const int SubtitleInventoryApplicationRetries = 2;", ready);
         var recover = Between(ready, "void RecoverUnappliedSubtitleInventory()", "// Serialize even in-place merges against inventory publication.");
         Assert.Contains("!entered || token.IsCancellationRequested || _pendingSubtitleInventoryApplication is not { } unapplied", recover);
-        var retry = recover.IndexOf("if (++unapplied.Failures <= SubtitleInventoryApplicationRetries)", StringComparison.Ordinal);
-        var defer = recover.IndexOf("DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);", StringComparison.Ordinal);
-        var reload = recover.IndexOf("else if (SubtitleInventoryRequiresTransportReload(unapplied.Session, published))", StringComparison.Ordinal);
-        var recovery = recover.IndexOf("_ = RecoverInterruptedStreamAsync(CurrentMediaPosition, \"subtitle-inventory-refresh\");", StringComparison.Ordinal);
-        Assert.True(retry >= 0 && defer > retry && reload > defer && recovery > reload);
+        var budget = recover.IndexOf("if (++unapplied.Failures > SubtitleInventoryApplicationRetries) return;", StringComparison.Ordinal);
+        var delay = recover.IndexOf("Task.Delay(SubtitleInventoryApplicationRetryDelay * unapplied.Failures, token)", StringComparison.Ordinal);
+        var defer = recover.IndexOf("DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);", StringComparison.Ordinal);
+        Assert.True(budget >= 0 && delay > budget && defer > delay);
+        // The retry must never replay immediately from the failing attempt.
+        Assert.DoesNotContain("DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);", recover);
+        // An announcement cannot tear down, report or terminate healthy playback.
+        foreach (var escalation in new[] { "RecoverInterruptedStreamAsync", "RunStreamRecoveryAsync", "RecoverPlaybackFailureAsync", "EnterPlaybackTerminalState" })
+            Assert.DoesNotContain(escalation, ready);
         var failure = ready[ready.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
         Assert.Contains("RecoverUnappliedSubtitleInventory();", failure);
+    }
+
+    [Fact]
+    public void BothStoredListRefreshesRetainDownloadsWithoutStoredIdentityByOneRule()
+    {
+        // The public and owner-scoped refreshes read the same stored list. A
+        // download without stored keys must survive both the same way.
+        var refresh = Read("PlayerService.SubtitleRefresh.cs");
+        const string rule = "private void RetainDownloadsWithoutStoredIdentity(";
+        const string retain = "RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);";
+        const string rebind = "SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)";
+        var publicRefresh = Between(refresh, "public async Task RefreshSubtitlesAfterAiAsync(", rule);
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var entry in new[] { publicRefresh, ownedRefresh })
+        {
+            // Retention precedes the rebind of the active selection and its caches.
+            var kept = entry.IndexOf(retain, StringComparison.Ordinal);
+            Assert.True(kept >= 0 && kept < entry.IndexOf(rebind, StringComparison.Ordinal));
+            Assert.Contains("downloaded.Contains(track)) return track.Unplayable ? null : track;", entry);
+        }
+        var shared = refresh[refresh.IndexOf(rule, StringComparison.Ordinal)..];
+        Assert.Contains("IsDownloadWithoutStoredIdentity(track) && !downloaded.Contains(track)", shared);
+        // A re-indexed row never keeps the URL that addressed its old ordinal.
+        var loadedBytes = shared.IndexOf("_loadedExternalSubtitleSids.GetValueOrDefault(legacy.Index) > 0", StringComparison.Ordinal);
+        var url = shared.IndexOf("legacy.Url = \"\";", StringComparison.Ordinal);
+        var index = shared.IndexOf("legacy.Index = free;", StringComparison.Ordinal);
+        Assert.True(loadedBytes >= 0 && url > loadedBytes && index > url);
     }
 
     [Fact]

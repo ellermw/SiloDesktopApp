@@ -4,9 +4,12 @@ namespace SiloPlayer.Services;
 
 public partial class PlayerService
 {
-    private static bool IsCanonicalDownloadWithoutStoredIdentity(SubtitleTrackInfo track) =>
+    private static bool IsDownloadWithoutStoredIdentity(SubtitleTrackInfo track) =>
         string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
-        track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey) &&
+        track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
+
+    private static bool IsCanonicalDownloadWithoutStoredIdentity(SubtitleTrackInfo track) =>
+        IsDownloadWithoutStoredIdentity(track) &&
         !string.IsNullOrWhiteSpace(track.TrackId) && !string.IsNullOrWhiteSpace(track.Delivery);
 
     // A plan-only row is known to the stored list by its ordinal alone. An
@@ -176,14 +179,16 @@ public partial class PlayerService
                     retained.Url = refreshed.Url;
                     return retained;
                 }).ToList();
-                // Absence from a stored-ID list cannot retire a plan-only row.
-                downloaded.AddRange(previousDownloads.Where(track =>
-                    IsCanonicalDownloadWithoutStoredIdentity(track) && !downloaded.Contains(track)));
+                // Absence from a stored-ID list cannot retire a row without stored
+                // keys. Both refresh entry points keep those rows by the same rule.
+                RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);
 
                 SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
                 {
                     if (track == null) return null;
                     if (existing.Contains(track)) return track.Unplayable ? null : track;
+                    // A retained row without stored keys can only rebind to itself.
+                    if (IsDownloadWithoutStoredIdentity(track) && downloaded.Contains(track)) return track.Unplayable ? null : track;
                     var candidates = string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)
                         ? downloaded : existing;
                     var matches = candidates.Where(candidate => !candidate.Unplayable &&
@@ -287,4 +292,29 @@ public partial class PlayerService
         }
     }
 
+    // Shared by both stored-list refresh entry points, under their inventory
+    // locks and before index-keyed caches are remapped. A stored-ID list cannot
+    // prove a download without stored keys gone: keep its exact row. A row with
+    // no canonical ordinal moves to a free index so no stored row shares it; its
+    // positional URL addressed the old ordinal, so only loaded bytes stay usable.
+    private void RetainDownloadsWithoutStoredIdentity(int mediaFileId, SubtitleTrackInfo[] previousDownloads,
+        SubtitleTrackInfo[] reserved, List<SubtitleTrackInfo> downloaded, int baseIndex)
+    {
+        foreach (var legacy in previousDownloads.Where(track => IsDownloadWithoutStoredIdentity(track) && !downloaded.Contains(track)))
+        {
+            if (string.IsNullOrWhiteSpace(legacy.TrackId) || string.IsNullOrWhiteSpace(legacy.Delivery))
+            {
+                var free = downloaded.Concat(reserved).Select(track => track.Index).DefaultIfEmpty(baseIndex - 1).Max() + 1;
+                if (free != legacy.Index)
+                {
+                    legacy.Unplayable |= !(_executedSubtitleFileId == mediaFileId && ReferenceEquals(_executedSubtitleTrack, legacy) ||
+                        _loadedExternalSubtitleSids.GetValueOrDefault(legacy.Index) > 0 ||
+                        _prefetchedSubtitleFiles.ContainsKey(legacy.Index));
+                    legacy.Url = "";
+                    legacy.Index = free;
+                }
+            }
+            downloaded.Add(legacy);
+        }
+    }
 }

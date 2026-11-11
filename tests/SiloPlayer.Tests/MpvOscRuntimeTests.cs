@@ -1006,6 +1006,42 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:true:true:true:true:true:true:true:true:true:true", result);
     }
 
+    [Fact]
+    public void EscapeDismissesTheUntimedExpiredOfferInsteadOfLeavingPlayback()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.visible = false; state.intro_mode = 'ask'; state.marker_content_id = 'episode'
+            state.intro_start = 0; state.intro_end = 30; state.time_pos = 5
+            osc_test_check(); state.intro_prompt_remaining = 0; osc_test_check()
+            state.visible = true; osc_test_check()
+            local offered = state.skip_visible and state.skip_label == 'Skip Intro' and state.intro_prompt_remaining == 0
+                and state.intro_expired_key == state.intro_prompt_key
+            keys['silo-menu-escape']()
+            local unhandled = false
+            for _, name in ipairs(commands) do unhandled = unhandled or name == 'silo-escape-unhandled' end
+            local dismissed = not unhandled and not state.skip_visible and state.intro_prompt_remaining == 0
+                and not state.intro_resolved_keys[state.intro_prompt_key]
+            -- Marker ticks while the HUD is still visible must not undo Escape.
+            osc_test_check(); osc_test_check()
+            dismissed = dismissed and state.visible and not state.skip_visible
+            state.visible = false; osc_test_check(); state.visible = true; osc_test_check()
+            local reoffered = state.skip_visible and state.skip_label == 'Skip Intro' and state.intro_prompt_remaining == 0
+            mp.set_property('user-data/probe-result', tostring(offered)..':'..tostring(dismissed)..':'..tostring(reoffered))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            keys, commands = {}, {}
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' then table.insert(commands, args[2]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("true:true:true", result);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

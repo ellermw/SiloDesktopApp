@@ -6592,10 +6592,11 @@ local function setup_key_bindings()
     end)
     mp.add_forced_key_binding("ESC", "silo-menu-escape", function()
         if not close_keyboard_surface() then
-            if state.skip_visible and (state.skip_label == "Skip Intro" or state.skip_label == "Watch Intro")
-                and not state.intro_expired_key then
+            if state.skip_visible and (state.skip_label == "Skip Intro" or state.skip_label == "Watch Intro") then
                 -- Dismiss Ask just like timer expiry, without retiring the
                 -- marker or suppressing an Always seek that has not succeeded.
+                -- The untimed offer after expiry is dismissed the same way, so
+                -- Escape on a visible offer never falls through to leaving playback.
                 if state.intro_mode == "ask" then
                     state.intro_prompt_remaining = 0
                     state.intro_prompt_resolved = true

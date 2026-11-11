@@ -9463,12 +9463,7 @@ public partial class PlayerService : IDisposable
                 bool UnknownDownload(SubtitleTrackInfo? track) => track != null &&
                     string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
                     track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
-                foreach (var retained in previousDownloads.Where(track => UnknownDownload(track) && !downloaded.Contains(track)))
-                {
-                    if (string.IsNullOrWhiteSpace(retained.TrackId) || string.IsNullOrWhiteSpace(retained.Delivery))
-                        retained.Index = downloaded.Concat(reserved).Select(track => track.Index).DefaultIfEmpty(baseIndex - 1).Max() + 1;
-                    downloaded.Add(retained);
-                }
+                RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);
 
                 SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
                 {

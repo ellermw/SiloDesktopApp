@@ -19,6 +19,7 @@ public partial class PlayerService
     }
     private PendingSubtitleInventoryApplication? _pendingSubtitleInventoryApplication;
     private const int SubtitleInventoryApplicationRetries = 2;
+    private static readonly TimeSpan SubtitleInventoryApplicationRetryDelay = TimeSpan.FromSeconds(2);
 
     private void RetirePendingSubtitleReadyRefresh()
     {
@@ -205,19 +206,23 @@ public partial class PlayerService
         {
             // A failure after publication leaves mpv on a plan the manager no
             // longer holds. Retry the outstanding application a bounded number of
-            // times, then let stream recovery load a changed transport or fail it.
+            // times, backing off so one outage is not replayed as back-to-back
+            // replans. An announcement is never a playback failure: once the
+            // budget is spent, the transport mpv is playing stays up and the
+            // application stays outstanding for the next announcement or load.
             if (!entered || token.IsCancellationRequested || _pendingSubtitleInventoryApplication is not { } unapplied ||
                 !unapplied.Owner.IsCurrentForAi || unapplied.NativeFile != Volatile.Read(ref _fileLoadGeneration) ||
                 unapplied.File != Volatile.Read(ref _playbackFileGeneration) ||
                 manager.CurrentSession is not { } published || published.SessionId != eventSessionId ||
                 published.MediaFileId != fileId) return;
-            if (++unapplied.Failures <= SubtitleInventoryApplicationRetries)
-                DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);
-            else if (SubtitleInventoryRequiresTransportReload(unapplied.Session, published))
+            if (++unapplied.Failures > SubtitleInventoryApplicationRetries) return;
+            // The event's document may be disposed before the delay elapses.
+            var announcement = payload.Clone();
+            _ = Task.Delay(SubtitleInventoryApplicationRetryDelay * unapplied.Failures, token).ContinueWith(_ =>
             {
-                _pendingSubtitleInventoryApplication = null;
-                _ = RecoverInterruptedStreamAsync(CurrentMediaPosition, "subtitle-inventory-refresh");
-            }
+                if (ReferenceEquals(unapplied, _pendingSubtitleInventoryApplication))
+                    DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);
+            }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
         }
         try
         {
