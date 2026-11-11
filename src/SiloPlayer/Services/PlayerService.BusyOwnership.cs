@@ -23,12 +23,44 @@ public partial class PlayerService
     // Only a new busy claim, including true -> true, retires an earlier one.
     // FILE_LOADED may release an older load's flags while a replan is awaiting
     // the server; that release is not a successor taking transport ownership.
+    private sealed record TransportPauseIntent(long Revision, Func<bool> IsCurrent, bool Paused);
+    private TransportPauseIntent? _transportPauseIntent;
+
+    private void RecordTransportPauseIntent(bool paused)
+    {
+        lock (_playbackBusyLock)
+        {
+            var manager = _playbackManager; var lifetime = _playbackCts;
+            var authority = _activeAuthority; var identity = authority.ApiClient.CaptureIdentityContext();
+            var play = Volatile.Read(ref _playRequestGeneration);
+            _transportPauseIntent = new(_playbackBusyRevision,
+                () => ReferenceEquals(manager, _playbackManager) && ReferenceEquals(lifetime, _playbackCts) &&
+                    play == Volatile.Read(ref _playRequestGeneration) && ReferenceEquals(authority, _activeAuthority) &&
+                    authority.ApiClient.IsCurrentIdentityContext(identity), paused);
+        }
+    }
+
+    private bool? TakeTransportPauseIntent()
+    {
+        lock (_playbackBusyLock)
+        {
+            var intent = _transportPauseIntent; _transportPauseIntent = null;
+            return intent != null && intent.Revision == _playbackBusyRevision && intent.IsCurrent() ? intent.Paused : null;
+        }
+    }
+
+    private void ClearTransportPauseIntent()
+    {
+        lock (_playbackBusyLock) _transportPauseIntent = null;
+    }
+
     private void SetSwitchingContent(bool value)
     {
         lock (_playbackBusyLock)
         {
             if (value) ++_playbackBusyRevision;
             _switchingContent = value;
+            if (!value) _transportPauseIntent = null;
         }
     }
 

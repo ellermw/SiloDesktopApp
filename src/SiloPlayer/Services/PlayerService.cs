@@ -635,6 +635,16 @@ public partial class PlayerService : IDisposable
     public Func<double?>? RoomPlaybackStartPosition { private get; set; }
     private bool _roomPlaybackPaused = true;
     private bool _transportHasFirstOutput;
+    // First-output knowledge belongs to the accepted session, not the player lifetime.
+    private Func<bool>? _framedSession;
+    private bool _sessionHasFramed => _framedSession?.Invoke() == true;
+    private sealed record NativeOutputOwner(Func<bool> SessionCurrent, long FileGeneration, string Url)
+    {
+        internal volatile bool FileLoaded;
+    }
+    private NativeOutputOwner? _nativeOutputOwner;
+    private bool OwnsNativeOutput(NativeOutputOwner owner) => ReferenceEquals(owner, _nativeOutputOwner) &&
+        owner.FileGeneration == Volatile.Read(ref _playbackFileGeneration) && owner.SessionCurrent();
     private double? _transportStartPosition;
     private double PlaybackRecoveryPosition => !_transportHasFirstOutput && _transportStartPosition is { } start
         ? start : CurrentMediaPosition;
@@ -748,6 +758,12 @@ public partial class PlayerService : IDisposable
             return;
         }
         _idleRemuxResume.ObservePause(paused, _switchingContent || IsLoading, DateTimeOffset.UtcNow);
+        if (_switchingContent || IsLoading)
+        {
+            RecordTransportPauseIntent(paused);
+            _restorePausedAfterLoad = paused;
+        }
+        else ClearTransportPauseIntent();
         if (paused) _mpv.Pause();
         else _mpv.Play();
         SynchronizeConnectionMediaActivity(paused);
@@ -887,7 +903,7 @@ public partial class PlayerService : IDisposable
 
             SetSwitchingContent(true);
             IsLoading = true;
-            if (loadingOwner != null)
+            if (!_sessionHasFramed && loadingOwner != null)
                 App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
             var seekPaused = forceResume ? false : wasPaused;
             manager.UpdatePosition(ToSessionPosition(mediaPosition), seekPaused);
@@ -2798,6 +2814,7 @@ public partial class PlayerService : IDisposable
         _pendingSubtitlePreferenceIndex = null;
         _pendingSubtitlePreferenceOwner = null;
         LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} subtitleSelection={FormatSubtitleSelection(subtitleSelection)} State={State} IsLoading={IsLoading}");
+        _framedSession = null;
         // Take ownership before clearing the outgoing episode hint. The old
         // file can publish one final position event at the Playing Next
         // countdown boundary; without this guard it can re-enter post-roll
@@ -3256,7 +3273,7 @@ public partial class PlayerService : IDisposable
         // any preparation/native call can fail. A different load invalidates it.
         var fileOwner = Interlocked.Increment(ref _playbackFileGeneration);
         acceptLoad?.Invoke(fileOwner);
-        RetireNativeMenus();
+        if (!_sessionHasFramed) RetireNativeMenus();
         EnsureVideoPlaybackRateSession();
         AdoptBufferingQualityPlan();
         StartPlaybackStallWatchdog();
@@ -3268,6 +3285,7 @@ public partial class PlayerService : IDisposable
         var loadingOwner = _playbackCts;
         PrepareAppliedSubtitleFileForReload();
         RetireForeignSubtitleSelections();
+        var pendingViewerPause = TakeTransportPauseIntent();
         var loadBusyOwner = BeginMpvLoadBusy();
         var busyTransferred = false;
         CancellationTokenSource ownerCts;
@@ -3279,6 +3297,7 @@ public partial class PlayerService : IDisposable
             // Cancellation can synchronously resume the outgoing subtitle
             // choice. Publish the replacement's loading owner first so that
             // choice waits for this file's initialization before applying.
+            // The current initiating owner supplies nullable explicit pause intent.
             CancelPendingLoadedMediaInitialization();
             CancelPendingFileLoadTimeout();
             var playbackToken = _playbackCts?.Token ?? CancellationToken.None;
@@ -3287,15 +3306,22 @@ public partial class PlayerService : IDisposable
             lock (_liveSubtitleLock)
                 TryRetainLiveSubtitleTranslationLocked(_liveSubtitleJobId);
             _fileLoadTimeoutCts = ownerCts;
-            _restorePausedAfterLoad = IsWatchTogetherPlayback ? _roomPlaybackPaused : restorePaused;
+            _restorePausedAfterLoad = IsWatchTogetherPlayback ? _roomPlaybackPaused : (pendingViewerPause ?? restorePaused);
             _transportHasFirstOutput = false;
             _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
                 prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
                 prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
             SetConnectionMediaActive(true);
-            if (loadingOwner != null)
-                App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
-            mpv.SendScriptMessage("osc-set-loading", "true");
+            if (_sessionHasFramed)
+            {
+                mpv.SendScriptMessage("osc-set-transport-reloading", "true");
+            }
+            else
+            {
+                if (loadingOwner != null)
+                    App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
+                mpv.SendScriptMessage("osc-set-loading", "true");
+            }
             ConfigureAudioOutput(mpv);
             var bufferProfile = prepared.Plan.IsHls
                 ? MpvNetworkBufferSizing.Default
@@ -3319,6 +3345,14 @@ public partial class PlayerService : IDisposable
             // the new file; mpv's default track is not the server's choice.
             mpv.SetSubtitleTrack(0);
             Volatile.Write(ref _mpvLoadingOverlayOwner, loadingOwner);
+            var authority = _activeAuthority;
+            var identity = authority.ApiClient.CaptureIdentityContext();
+            var play = Volatile.Read(ref _playRequestGeneration);
+            bool SessionCurrent() => !_closing && ReferenceEquals(mpv, _mpv) &&
+                ReferenceEquals(manager, _playbackManager) && manager.SessionId == sessionId &&
+                ReferenceEquals(loadingOwner, _playbackCts) && play == Volatile.Read(ref _playRequestGeneration) &&
+                ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(identity);
+            _nativeOutputOwner = new(SessionCurrent, fileOwner, prepared.LocalUrl);
             mpv.LoadFile(prepared.LocalUrl, null, prepared.MpvLoadStartSeconds);
         }
         catch
@@ -3326,6 +3360,7 @@ public partial class PlayerService : IDisposable
             void ClearFailedLoad()
             {
                 mpv.SendScriptMessage("osc-set-loading", "false");
+                mpv.SendScriptMessage("osc-set-transport-reloading", "false");
                 mpv.SendScriptMessage("osc-set-buffering", "false");
                 CancelPendingFileLoadTimeout();
             }
@@ -3871,7 +3906,7 @@ public partial class PlayerService : IDisposable
         if (restartSession != null)
             ClearPlaybackTerminalState();
 
-        if (loadingOwner != null)
+        if (!_sessionHasFramed && loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
 
         try
@@ -3959,6 +3994,7 @@ public partial class PlayerService : IDisposable
             }
 
             LogToFile("state_trace.txt", $"Stream recovery ({reason}): restarting session fileId={fileId} pos={resumePosition:F1} audioTrack={audioTrackIndex?.ToString() ?? "auto"}");
+            _framedSession = null;
 
             var newSession = await manager.StartReplacementSessionAsync(
                 fileId,
@@ -4060,6 +4096,7 @@ public partial class PlayerService : IDisposable
 
         _mpv?.Pause();
         _mpv?.SendScriptMessage("osc-set-loading", "false");
+        _mpv?.SendScriptMessage("osc-set-transport-reloading", "false");
         _mpv?.SendScriptMessage("osc-set-buffering", "false");
         _mpv?.SendScriptMessage(
             "osc-show-playback-failure",
@@ -5446,6 +5483,12 @@ public partial class PlayerService : IDisposable
 
         _mpvFileLoadedHandler = () =>
         {
+            var output = _nativeOutputOwner;
+            if (output != null)
+            {
+                if (!OwnsNativeOutput(output) || _mpv?.GetPropertyText("path") != output.Url) return;
+                output.FileLoaded = true;
+            }
             var loadBusyRevision = Volatile.Read(ref _mpvLoadBusyRevision);
             var wasPrematureEofRecovery = _prematureEofRecoveryActive;
             var restorePaused = IsWatchTogetherPlayback ? _roomPlaybackPaused : _restorePausedAfterLoad == true;
@@ -5546,13 +5589,20 @@ public partial class PlayerService : IDisposable
 
         _mpvPlaybackRestartedHandler = () =>
         {
+            var output = _nativeOutputOwner;
+            // Native events order FILE_LOADED before PLAYBACK_RESTART. An old
+            // restart cannot frame a submitted load that has not loaded yet.
+            if (output == null || !output.FileLoaded || !OwnsNativeOutput(output) ||
+                _mpv?.GetPropertyText("path") != output.Url) return;
             var loadingOwner = Volatile.Read(ref _mpvLoadingOverlayOwner);
             _transportHasFirstOutput = true;
+            _framedSession = output.SessionCurrent;
             // MPV_EVENT_PLAYBACK_RESTART is the first-frame-ready boundary for
             // an initial load and fires again after seeks/cache recovery. Keep
             // the opaque startup surface visible through FILE_LOADED so the
             // user never sees an unlabelled black-frame gap.
             _mpv?.SendScriptMessage("osc-set-loading", "false");
+            _mpv?.SendScriptMessage("osc-set-transport-reloading", "false");
             if (loadingOwner != null)
                 App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
             LogToFile("state_trace.txt", "PlaybackRestarted fired (video output ready)");
@@ -6181,6 +6231,7 @@ public partial class PlayerService : IDisposable
             }
             if (preserveTransportState) return;
             mpv.SendScriptMessage("osc-set-loading", "false");
+            mpv.SendScriptMessage("osc-set-transport-reloading", "false");
             if (loadingOwner != null)
                 App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
             var restorePaused = PauseIntent();
@@ -6273,7 +6324,7 @@ public partial class PlayerService : IDisposable
             }
 
             _mpv.Pause();
-            if (loadingOwner != null)
+            if (!_sessionHasFramed && loadingOwner != null)
                 App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
 
             PlaybackStartResponse replanned;
@@ -8173,7 +8224,7 @@ public partial class PlayerService : IDisposable
         var reconcileSubtitles = false;
         CloseNativeActionMenuForPlaybackSwitch();
         var busyOwner = BeginPlaybackBusy(claimState: () => _qualitySwitchActive = true);
-        if (loadingOwner != null)
+        if (!_sessionHasFramed && loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
         try
         {

@@ -1,3 +1,12 @@
+# Continuing playback transport controls — November 11, 2026
+
+Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Branch base `3f098c88` deliberately preserved until reconciliation with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`. Version remains 1.2.970; pipeline owns stamps and packaging.
+
+Continuing same-session seeks/replans use the transparent OSC spinner and keep native menus reachable. Initial and replacement sessions retain an opaque cover until their own first output. Framing is bound to the accepted session/authority/playback lifetime; a submitted load must have its own FILE_LOADED before output can frame it. Latest explicit pause/resume intent is nullable and busy-owner scoped, and is retired on failure/replacement. Audio presentations retire when the accepted track changes; Quality/Chapters/Party presentations retire on the busy/idle transition so stale disabled choices cannot survive completion. Action guards still require transport/room authority.
+
+Lead regression evidence at `D:/SiloPlayer/.codex-tmp/server-review-nov10/playback-lead-corrections/`: red-all-a reproduced ten expected failures against the previous AA2A7150 app; green-all-a passed all20 actual-path scenarios with exit0 and the literal completion sentinel. The last narrow presentation-retirement change and Beta integration still require final checks. Earlier worker claims/receipts retain their original source boundaries and are not relabeled final.
+
+Synthetic HTTP/media/native fixtures do not certify a live room/server or full visual parity. Installed player, real settings/accounts and installer remain untouched. Lead owns final review, verification and Beta PR submission.
 # Server alignment — profiles and metadata (November 10, 2026)
 
 Base: freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`; stamps remain pipeline-owned. Official Server/WebUI reviewed at `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039` (additional WebUI localization only).

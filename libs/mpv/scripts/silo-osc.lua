@@ -288,6 +288,7 @@ local state = {
     -- First-frame / rebuffer feedback. These render in the mpv popup itself;
     -- XAML overlays live behind the native video window and cannot be seen.
     playback_loading = false,
+    transport_reloading = false,
     playback_buffering = false,
     playback_buffering_requested = false,
     playback_buffering_timer = nil,
@@ -2816,7 +2817,7 @@ local function tick()
     end
 
 
-    if state.playback_loading or state.playback_buffering then
+    if state.playback_loading or state.playback_buffering or state.transport_reloading then
         local frame = math.floor(now * 10) % 8
         if frame ~= state.playback_spinner_frame then
             state.playback_spinner_frame = frame
@@ -4425,7 +4426,7 @@ end
 -- Native equivalent of VideoPlayer.tsx's first-frame and buffering surfaces.
 -- Loading owns a solid black frame; rebuffering leaves the picture visible.
 render_playback_wait = function()
-    if state.osc_disabled or (not state.playback_loading and not state.playback_buffering) then
+    if state.osc_disabled or (not state.playback_loading and not state.playback_buffering and not state.transport_reloading) then
         if state.playback_wait_overlay then
             state.playback_wait_overlay.data = ""
             state.playback_wait_overlay:update()
@@ -6090,6 +6091,22 @@ local function observe_properties()
     mp.register_script_message("osc-set-loading", function(value)
         state.playback_loading = (value == "true" or value == "1")
         if state.playback_loading then
+            state.transport_reloading = false
+            state.playback_buffering = false
+            state.playback_buffering_requested = false
+            if state.playback_buffering_timer then
+                state.playback_buffering_timer:kill()
+                state.playback_buffering_timer = nil
+            end
+        end
+        state.playback_spinner_frame = -1
+        render_playback_wait()
+    end)
+
+    mp.register_script_message("osc-set-transport-reloading", function(value)
+        state.transport_reloading = (value == "true" or value == "1")
+        if state.transport_reloading then
+            state.playback_loading = false
             state.playback_buffering = false
             state.playback_buffering_requested = false
             if state.playback_buffering_timer then
@@ -6422,7 +6439,7 @@ local function observe_properties()
             if state.next_ep_visible then render_next_episode_button() end
             if state.next_ep_countdown_active then render_next_episode_countdown() end
             if state.translation_buffering then render_translation_buffering() end
-            if state.playback_loading or state.playback_buffering then render_playback_wait() end
+            if state.playback_loading or state.playback_buffering or state.transport_reloading then render_playback_wait() end
             if state.playback_failure_visible then render_playback_failure() end
             request_tick()
         end

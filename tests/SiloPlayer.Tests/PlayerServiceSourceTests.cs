@@ -296,7 +296,9 @@ public sealed class PlayerServiceSourceTests
         Assert.True(playPrefetchIndex >= 0 && mpvInitIndex > playPrefetchIndex && watchAwaitIndex > mpvInitIndex,
             "First-play libmpv initialization should overlap the in-flight watch-detail request.");
         Assert.Contains("mpv.SendScriptMessage(\"osc-set-loading\", \"true\")", service, StringComparison.Ordinal);
+        Assert.Contains("mpv.SendScriptMessage(\"osc-set-transport-reloading\", \"true\")", service, StringComparison.Ordinal);
         Assert.Contains("_mpv?.SendScriptMessage(\"osc-set-loading\", \"false\")", service, StringComparison.Ordinal);
+        Assert.Contains("_mpv?.SendScriptMessage(\"osc-set-transport-reloading\", \"false\")", service, StringComparison.Ordinal);
         Assert.Contains("_mpv?.SendScriptMessage(\"osc-set-buffering\", buffering ? \"true\" : \"false\")", service, StringComparison.Ordinal);
 
         var fileLoadedHandler = service.IndexOf("_mpvFileLoadedHandler = () =>", StringComparison.Ordinal);
@@ -304,6 +306,24 @@ public sealed class PlayerServiceSourceTests
         var loadingDismissal = service.IndexOf("_mpv?.SendScriptMessage(\"osc-set-loading\", \"false\")", fileLoadedHandler, StringComparison.Ordinal);
         Assert.True(fileLoadedHandler >= 0 && firstFrameHandler > fileLoadedHandler && loadingDismissal > firstFrameHandler,
             "The startup surface must remain visible through FILE_LOADED and dismiss at PLAYBACK_RESTART (first output frame)." );
+
+        // Session identity, pause intent and actual menu behavior are driven by transport-reload-actual.
+        var beginOwnedMpvLoad = service.IndexOf("private void BeginOwnedMpvLoad(", StringComparison.Ordinal);
+        var transportReloadingInLoad = service.IndexOf("osc-set-transport-reloading\", \"true\"", beginOwnedMpvLoad, StringComparison.Ordinal);
+        var loadingInLoad = service.IndexOf("osc-set-loading\", \"true\"", beginOwnedMpvLoad, StringComparison.Ordinal);
+        Assert.True(beginOwnedMpvLoad >= 0 && transportReloadingInLoad > beginOwnedMpvLoad && loadingInLoad > beginOwnedMpvLoad,
+            "BeginOwnedMpvLoad must distinguish startup loading from transport reloading within a framed session.");
+
+        var nativeMenus = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.NativeMenus.cs"));
+        Assert.Contains("!_sessionHasFramed", nativeMenus, StringComparison.Ordinal);
+        var busyActionLine = nativeMenus.IndexOf("var busyAction", StringComparison.Ordinal);
+        Assert.True(busyActionLine >= 0, "Native menu busy guard must exist.");
+        var busyActionEnd = nativeMenus.IndexOf(';', busyActionLine);
+        var busyGuard = nativeMenus[busyActionLine..busyActionEnd];
+        Assert.True(busyGuard.Contains("_sessionHasFramed"),
+            "Native menu admission must allow menus during transport reloading when the session has framed.");
+
+
     }
 
     [Fact]

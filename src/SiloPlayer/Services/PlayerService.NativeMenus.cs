@@ -40,22 +40,20 @@ public partial class PlayerService
         var roomPlayback = IsWatchTogetherPlayback;
         var mpv = _mpv; var video = _videoWindow; var content = ContentId;
         var play = Volatile.Read(ref _playRequestGeneration);
-        var file = Volatile.Read(ref _fileLoadGeneration);
-        var playbackFile = Volatile.Read(ref _playbackFileGeneration);
+        var sessionId = manager?.SessionId;
         var epoch = Volatile.Read(ref _nativeMenuEpoch);
         var publication = Interlocked.Increment(ref _nativeMenuPublication);
         bool Current() => !_closing && !_postRollActive && _playbackTerminalState == null &&
             roomPlayback == IsWatchTogetherPlayback && versions.SequenceEqual(Versions) &&
             (legacyAudio ? ReferenceEquals(transport, _activeTransportPlan) :
                 (version?.AudioTracks?.SequenceEqual(audio) ?? audio.Length == 0)) &&
-            (session?.SubtitleUrls?.Select(CaptureNativeSubtitleIdentity).SequenceEqual(subtitles) ?? subtitles.Length == 0) &&
+            (manager?.CurrentSession?.SubtitleUrls?.Select(CaptureNativeSubtitleIdentity).SequenceEqual(subtitles) ?? subtitles.Length == 0) &&
             (version?.Chapters?.SequenceEqual(chapters) ?? chapters.Length == 0) &&
-            (session?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
+            (manager?.CurrentSession?.AvailableQualities?.SequenceEqual(qualities) ?? qualities.Length == 0) &&
             State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture && epoch == Volatile.Read(ref _nativeMenuEpoch) &&
-            play == Volatile.Read(ref _playRequestGeneration) && file == Volatile.Read(ref _fileLoadGeneration) &&
-            playbackFile == Volatile.Read(ref _playbackFileGeneration) &&
+            play == Volatile.Read(ref _playRequestGeneration) &&
             ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentIdentityContext(context) &&
-            ReferenceEquals(manager, _playbackManager) && ReferenceEquals(session, manager?.CurrentSession) &&
+            ReferenceEquals(manager, _playbackManager) && sessionId == manager?.SessionId &&
             ReferenceEquals(version, ActiveVersion) && content == ContentId &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(video, _videoWindow) && video?.Hwnd != IntPtr.Zero;
         // Busy state gates each menu action, not menu ownership.
@@ -130,7 +128,10 @@ public partial class PlayerService
                 request.Sequence.ToString(CultureInfo.InvariantCulture),
                 reason is PlaybackMenuCloseReason.OutsidePointer or PlaybackMenuCloseReason.PointerSelection ? "true" : "false");
         // A late request or temporary busy state must not retire a current owner.
-        var busyAction = IsLoading || _switchingContent;
+        // After the session's first frame, a transport reload (seek/quality/audio
+        // switch) shows a transparent spinner with controls usable — matching the
+        // official WebUI's transportReloading overlay at z-30 with pointer-events-none.
+        var busyAction = (IsLoading || _switchingContent) && !_sessionHasFramed;
         if (owner == null || owner.Token != request.OwnerToken)
         { Ack(); return; }
         if (!owner.IsCurrent())
@@ -195,12 +196,13 @@ public partial class PlayerService
         // An accepted selection must survive the busy state it claims itself.
         bool InventoryCurrent() => owner.IsCurrent() && ActiveVersion?.AudioTracks is { } current && current.SequenceEqual(tracks);
         var current = _playbackManager?.CurrentSession?.AudioTrackIndex ?? -1;
+        bool TransportIdle() => !IsLoading && !_switchingContent;
         return new PlaybackAudioMenu(owner.Video, request.Anchor,
             tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current)).ToArray(),
-            () => InventoryCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request),
+            () => InventoryCurrent() && (_playbackManager?.CurrentSession?.AudioTrackIndex ?? -1) == current && (TransportIdle() || _sessionHasFramed) && _nativeMenuGate.IsCurrent(request),
             index =>
             {
-                if (InventoryCurrent() && !IsLoading && !_switchingContent && index >= 0 && index < tracks.Length && index != current)
+                if (InventoryCurrent() && TransportIdle() && index >= 0 && index < tracks.Length && index != current)
                     _ = SelectNativeAudioAsync(owner, index, InventoryCurrent);
             }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
     }

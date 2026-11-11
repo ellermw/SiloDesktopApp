@@ -1224,6 +1224,83 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:0:1:1280:0:1:empty:0:1:nonempty", output);
     }
 
+    [Fact]
+    public void TransportReloadingShowsSpinnerWithoutBlackRectangleAndKeepsMenusAccessible()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            state.visible, state.current_alpha, state.target_alpha = true, 1, 1
+            state.duration, state.time_pos, state.volume = 120, 10, 50
+            mp.set_property_number('volume', 50)
+            state.pause = false
+            local results = {}
+
+            -- 1. Transport reloading: spinner but no black rect
+            handlers['osc-set-transport-reloading']('true')
+            assert(state.transport_reloading, 'transport_reloading not set')
+            assert(not state.playback_loading, 'playback_loading should be false during transport reload')
+            local wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            local has_spinner = wait_data:find('draw_circle', 1, true) ~= nil or #wait_data > 10
+            table.insert(results, 'spinner:' .. tostring(has_spinner))
+            -- Black rect uses draw_rect with full-screen 000000 fill; transport reloading should not have it
+            -- The rect is rendered as {\\p1\\bord0\\shad0\\1c&H000000& in ASS
+            local has_black_rect = wait_data:find('1c&H000000&', 1, true) ~= nil
+            table.insert(results, 'black_rect:' .. tostring(has_black_rect))
+
+            -- 2. Native menu should NOT be blocked during transport reload
+            state.native_audio_capable = true
+            state.native_audio_legacy = false
+            state.native_audio_scope = 'test_scope'
+            state.audio_tracks = {{}, {}}
+            state.native_menu_request = nil
+            state.native_menu_sequence = 0
+            state.post_roll_active = false
+            state.playback_failure_visible = false
+            osc_test_layout()
+            local menu_blocked_reload = state.playback_loading
+            table.insert(results, 'menu_blocked_reload:' .. tostring(menu_blocked_reload))
+
+            -- 3. Clear transport reloading
+            handlers['osc-set-transport-reloading']('false')
+            assert(not state.transport_reloading, 'transport_reloading not cleared')
+            wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            table.insert(results, 'cleared:' .. tostring(#wait_data == 0))
+
+            -- 4. Startup loading: HAS black rect and blocks menus
+            handlers['osc-set-loading']('true')
+            assert(state.playback_loading, 'playback_loading not set')
+            assert(not state.transport_reloading, 'transport_reloading should be cleared by loading')
+            wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            local loading_has_black = wait_data:find('1c&H000000&', 1, true) ~= nil
+            table.insert(results, 'loading_black:' .. tostring(loading_has_black))
+            local menu_blocked_loading = state.playback_loading
+            table.insert(results, 'menu_blocked_loading:' .. tostring(menu_blocked_loading))
+
+            -- 5. Mutual exclusion: transport reloading clears loading
+            handlers['osc-set-transport-reloading']('true')
+            assert(not state.playback_loading, 'loading should be cleared by transport reloading')
+            assert(state.transport_reloading, 'transport_reloading not set after mutual clear')
+            table.insert(results, 'mutual_excl:true')
+
+            handlers['osc-set-transport-reloading']('false')
+            handlers['osc-set-loading']('false')
+
+            mp.set_property('user-data/transport-reload-test', table.concat(results, ','))
+            """, beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """, resultProperty: "user-data/transport-reload-test");
+        Assert.Contains("spinner:true", output);
+        Assert.Contains("black_rect:false", output);
+        Assert.Contains("menu_blocked_reload:false", output);
+        Assert.Contains("cleared:true", output);
+        Assert.Contains("loading_black:true", output);
+        Assert.Contains("menu_blocked_loading:true", output);
+        Assert.Contains("mutual_excl:true", output);
+    }
+
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,

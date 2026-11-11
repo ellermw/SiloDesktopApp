@@ -29,7 +29,9 @@ public partial class PlayerService
                     IsPending: VideoPlaybackRatePending));
             return rows;
         }
-        bool Current() => owner.IsCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request);
+        var openedIdle = !IsLoading && !_switchingContent;
+        bool Current() => owner.IsCurrent() && (openedIdle || _sessionHasFramed) &&
+            openedIdle == (!IsLoading && !_switchingContent) && _nativeMenuGate.IsCurrent(request);
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(12, 4, 12, 12) };
         PlaybackChoiceMenu? menu = null;
         void Refresh()
