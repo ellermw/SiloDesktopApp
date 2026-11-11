@@ -491,6 +491,9 @@ public partial class PlaybackManager : IDisposable
             track.StreamIndex ??= row.StreamIndex;
             if (string.IsNullOrWhiteSpace(track.ContainerTrackId)) track.ContainerTrackId = row.ContainerTrackId;
             track.NativeSelectable ??= row.NativeSelectable;
+            if (!track.UnplayableSpecified) track.Unplayable = row.Unplayable;
+            if (!track.ForcedSpecified) track.Forced = row.Forced;
+            if (!track.HearingImpairedSpecified) track.HearingImpaired = row.HearingImpaired;
             if (string.IsNullOrWhiteSpace(track.FontBundleUrl)) track.FontBundleUrl = row.FontBundleUrl;
             if (string.IsNullOrWhiteSpace(track.Source)) track.Source = row.Source ?? "";
             var granted = matches.Length == 1 && (!string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)
@@ -770,12 +773,15 @@ public partial class PlaybackManager : IDisposable
         {
             // Some plans grant only subtitle.track_id. An inventory refresh
             // must not turn that omission in selected_tracks into explicit Off.
-            var index = live.SelectedSubtitleTrackIndex ?? live.SubtitleUrls
-                .SingleOrDefault(track => track.TrackId == live.SelectedSubtitleTrackId)?.Index;
-            subtitleGrant = new PlaybackTrackIdentityV3
+            var matches = live.SubtitleUrls.Where(track => track.TrackId == live.SelectedSubtitleTrackId)
+                .Take(2).ToArray();
+            var index = live.SelectedSubtitleTrackIndex ?? (matches.Length == 1 ? (int?)matches[0].Index : null);
+            // Missing or ambiguous metadata must not abort transport replans.
+            // Without a known ordinal, retain the previous omitted identity.
+            if (index is int grantedIndex) subtitleGrant = new PlaybackTrackIdentityV3
             {
                 Id = live.SelectedSubtitleTrackId,
-                Index = index ?? throw new InvalidOperationException("The granted subtitle ordinal is unavailable."),
+                Index = grantedIndex,
             };
         }
         var selectedTracks = new PlaybackSelectedTracksV3

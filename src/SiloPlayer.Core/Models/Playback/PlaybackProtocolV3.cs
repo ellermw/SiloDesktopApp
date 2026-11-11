@@ -240,11 +240,18 @@ public sealed class PlaybackSubtitleArtifactV3
 
 public sealed class PlaybackSubtitleInventoryV3
 {
+    // Plans expose ordinary bool defaults, but partial announcements must
+    // distinguish an omitted flag from an explicit false.
+    private bool? _unplayable, _forced, _hearingImpaired;
+    internal bool UnplayableSpecified => _unplayable.HasValue;
+    internal bool ForcedSpecified => _forced.HasValue;
+    internal bool HearingImpairedSpecified => _hearingImpaired.HasValue;
+
     public long? StoredSubtitleId { get; set; }
     public int? StreamIndex { get; set; }
     public string? ContainerTrackId { get; set; }
     public bool? NativeSelectable { get; set; }
-    public bool Unplayable { get; set; }
+    public bool Unplayable { get => _unplayable ?? false; set => _unplayable = value; }
     public string? SyncKey { get; set; }
     public string TrackId { get; set; } = "";
     public int CombinedIndex { get; set; }
@@ -252,9 +259,9 @@ public sealed class PlaybackSubtitleInventoryV3
     public string? Codec { get; set; }
     public string? Language { get; set; }
     public string? Label { get; set; }
-    public bool Forced { get; set; }
+    public bool Forced { get => _forced ?? false; set => _forced = value; }
     [JsonPropertyName("default")] public bool IsDefault { get; set; }
-    public bool HearingImpaired { get; set; }
+    public bool HearingImpaired { get => _hearingImpaired ?? false; set => _hearingImpaired = value; }
     public string Delivery { get; set; } = "";
     public string? Url { get; set; }
     public string? FontBundleUrl { get; set; }

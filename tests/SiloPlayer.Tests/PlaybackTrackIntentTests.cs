@@ -94,6 +94,67 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(count, session.SubtitleUrls.Count);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task PartialAnnouncementPreservesOmittedFlagsButAppliesExplicitValues(bool? announced, bool expected)
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        var row = session.SubtitleUrls.Single(item => item.Index == 0);
+        row.Unplayable = row.Forced = row.HearingImpaired = true;
+        var announcement = new Dictionary<string, object>
+        {
+            ["track_id"] = row.TrackId!, ["combined_index"] = row.Index,
+            ["source"] = "downloaded", ["delivery"] = "burn_in_only",
+        };
+        if (announced.HasValue)
+            foreach (var flag in new[] { "unplayable", "forced", "hearing_impaired" })
+                announcement[flag] = announced.Value;
+        for (var repeat = 0; repeat < 2; repeat++)
+        {
+            var track = JsonSerializer.Deserialize<PlaybackSubtitleInventoryV3>(JsonSerializer.Serialize(announcement),
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })!;
+            Assert.True(scope.Manager.TryApplySubtitleTrack(session, track));
+            Assert.Same(row, session.SubtitleUrls.Single(item => item.Index == 0));
+            Assert.Equal(expected, row.Unplayable); Assert.Equal(expected, row.Forced); Assert.Equal(expected, row.HearingImpaired);
+            Assert.Equal(expected, track.Unplayable); Assert.Equal(expected, track.Forced); Assert.Equal(expected, track.HearingImpaired);
+        }
+    }
+
+    [Theory]
+    [InlineData("quality", false)]
+    [InlineData("quality", true)]
+    [InlineData("seek", false)]
+    [InlineData("seek", true)]
+    [InlineData("recovery", false)]
+    [InlineData("recovery", true)]
+    public async Task GrantOnlySubtitleWithMissingOrAmbiguousOrdinalDoesNotAbortReplan(string operation, bool duplicate)
+    {
+        using var scope = new Fixture(); scope.Wire.GrantOnlyInSubtitle = scope.Wire.BurnInSubtitles = true;
+        if (!duplicate) scope.Wire.MissingSubtitleIndex = 0;
+        var session = await scope.Manager.StartSessionAsync(42);
+        Assert.Null(session.SelectedSubtitleTrackIndex);
+        Assert.Equal("sub:42:0", session.SelectedSubtitleTrackId);
+        if (duplicate) session.SubtitleUrls.Add(new() { TrackId = session.SelectedSubtitleTrackId, Index = 9 });
+
+        var replacement = operation switch
+        {
+            "quality" => await scope.Manager.ReplanQualityAsync("720p", 8),
+            "seek" => await scope.Manager.ReplanSeekAsync(8),
+            _ => await scope.Manager.RecoverPlaybackFailureAsync(8, "network_error", "fixture"),
+        };
+
+        var body = Assert.Single(scope.Wire.Replans);
+        Assert.Equal(operation switch { "quality" => "quality_change", "seek" => "seek_reanchor", _ => "failure_recovery" },
+            body.GetProperty("operation").GetString());
+        Assert.False(body.GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+        Assert.Same(replacement, scope.Manager.CurrentSession);
+        Assert.Equal("sub:42:0", replacement.SelectedSubtitleTrackId);
+        Assert.Equal("burn_in", replacement.SubtitleMode);
+    }
+
     [Fact]
     public async Task StoredIdWireAdoptionAndCanonicalAnnouncementRetainIdentityAndChoice()
     {
@@ -418,16 +479,24 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
     }
 
-    [Fact]
-    public async Task LocalOffIsAnExplicitTrackChangeBeforeQualityAndStaysOff()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task LocalOffIsAnExplicitTrackChangeBeforeQualityAndStaysOff(bool grantOnlyInSubtitle, bool burnedIn)
     {
-        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        using var scope = new Fixture(); scope.Wire.GrantOnlyInSubtitle = grantOnlyInSubtitle;
+        scope.Wire.BurnInSubtitles = burnedIn;
+        await scope.Manager.StartSessionAsync(42);
         scope.Manager.RecordLocalSubtitleSelection(null);
         await scope.Manager.ReplanQualityAsync("360p", 52);
         Assert.Equal(2, scope.Wire.Replans.Count);
         Assert.Equal("track_change", scope.Wire.Replans[0].GetProperty("operation").GetString());
         Assert.False(scope.Wire.Replans[0].GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
         Assert.Equal("quality_change", scope.Wire.Replans[1].GetProperty("operation").GetString());
+        Assert.Null(scope.Manager.CurrentSession!.SelectedSubtitleTrackId);
+        Assert.Equal("off", scope.Manager.CurrentSession.SubtitleMode);
         Assert.Equal(-1, scope.Manager.SubtitleSelectionForLoad);
     }
 
