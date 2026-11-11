@@ -126,6 +126,8 @@ public sealed class CardOverlayRevisionTests
 
     [Theory]
     [InlineData("2160p", "DV HDR10", "Atmos", "4K DV Atmos")]
+    [InlineData("4K", "Dolby Vision", "Atmos", "4K DV Atmos")]
+    [InlineData(null, "dolby vision", null, "DV")]
     [InlineData("1080p", "HDR10+", "TrueHD", "1080p HDR10+ TrueHD")]
     [InlineData(null, null, "Atmos", "Atmos")]
     [InlineData(null, "HLG", null, "HDR")]
@@ -134,6 +136,16 @@ public sealed class CardOverlayRevisionTests
     {
         var definition = Assert.Single(OverlayRegistry.All, d => d.Id == "resolution_hdr_audio");
         Assert.Equal(expected, definition.GetValue(new OverlayData { Resolution = resolution, Hdr = hdr, Audio = audio }));
+    }
+
+    [Theory]
+    [InlineData("Dolby Vision")]
+    [InlineData("dolby vision")]
+    [InlineData("DV HDR10")]
+    public void CombinedResolutionHdrBadgeRecognizesDolbyVision(string hdr)
+    {
+        var definition = Assert.Single(OverlayRegistry.All, d => d.Id == "resolution_hdr");
+        Assert.Equal("4K DV", definition.GetValue(new OverlayData { Resolution = "4K", Hdr = hdr }));
     }
 
     [Theory]

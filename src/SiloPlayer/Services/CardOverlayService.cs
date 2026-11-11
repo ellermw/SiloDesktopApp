@@ -180,7 +180,7 @@ public static class OverlayRegistry
     }
 
     private static string? FormatHdr(string? value) => string.IsNullOrWhiteSpace(value) ? null
-        : value.Contains("DV", StringComparison.OrdinalIgnoreCase) ? "DV"
+        : value.Contains("DV", StringComparison.OrdinalIgnoreCase) || value.Contains("Dolby Vision", StringComparison.OrdinalIgnoreCase) ? "DV"
         : value.Contains("HDR10+", StringComparison.OrdinalIgnoreCase) ? "HDR10+" : "HDR";
 
     private static string? JoinParts(params string?[] parts)
