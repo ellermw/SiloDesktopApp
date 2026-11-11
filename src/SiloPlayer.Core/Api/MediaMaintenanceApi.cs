@@ -9,16 +9,19 @@ namespace SiloPlayer.Core.Api;
 /// </summary>
 public sealed class MediaMaintenanceApi(SiloApiClient client)
 {
-    public async Task<MetadataRefreshReceipt> ResetToProviderAsync(string itemId, CancellationToken ct = default)
+    public Task<MetadataRefreshReceipt> ResetToProviderAsync(string itemId, CancellationToken ct = default)
+        => ResetToProviderAsync(itemId, Array.Empty<int>(), ct);
+
+    public async Task<MetadataRefreshReceipt> ResetToProviderAsync(string itemId, IReadOnlyCollection<int> locksToKeep, CancellationToken ct = default)
     {
         EnsureSecureBaseUrl();
         ct.ThrowIfCancellationRequested();
         var owner = client.CaptureContext();
         var path = $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}";
-        // Refresh honors locks. Only an explicit Reset clears them; ordinary
-        // refreshes continue preserving manually protected fields and images.
+        // Refresh honors locks. A child Reset clears only its editable metadata
+        // locks; artwork and fields outside that scope must stay protected.
         await client.SendRequestAsync<SiloPlayer.Core.Models.Catalog.MediaItemDetail>(owner,
-            HttpMethod.Patch, path + "/metadata", new { locked_fields = Array.Empty<int>() }, ct).ConfigureAwait(false);
+            HttpMethod.Patch, path + "/metadata", new { locked_fields = locksToKeep.ToArray() }, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(owner)) throw new OperationCanceledException("Metadata reset owner changed.", ct);
         return await client.SendRequestAsync<MetadataRefreshReceipt>(owner, HttpMethod.Post,
@@ -64,6 +67,17 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
             if (string.IsNullOrEmpty(cursor) || !seen.Add(cursor)) throw new InvalidOperationException("Image choices changed. Reload to try again.");
         } while (true);
         return (images, current, errors);
+    }
+
+    public async Task<ItemMatchHints> GetMatchHintsAsync(ApiRequestContext context, string itemId, int? libraryId, CancellationToken ct = default)
+    {
+        EnsureSecureBaseUrl();
+        RequireCurrent(context, ct);
+        var result = await client.SendRequestAsync<ItemMatchHints>(context, HttpMethod.Get,
+            $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/match/hints" +
+            (libraryId.HasValue ? $"?library_id={libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}" : ""), null, ct);
+        RequireCurrent(context, ct);
+        return result;
     }
 
     public Task<ItemMatchSearchResponse> SearchMatchesAsync(

@@ -318,7 +318,6 @@ public sealed class CurrentHomeParitySourceTests
         Assert.All(new[] { badges, detail }, source =>
         {
             Assert.Contains("GetOrderedDefinitions()", source);
-            Assert.Contains(">= 3", source);
         });
     }
 

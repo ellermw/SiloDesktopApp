@@ -14,6 +14,34 @@ Limits: No actual UAC prompt, installation, restart or registered-installation u
 
 ---
 
+# Overlay review corrections — November 10, 2026
+
+Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.
+
+Final source: 107 focused tests, 5,306 full unit tests, Release publish, expanded overlay-revisions and artwork-first-mount native routes passed. The expanded route covers external cards at revisions 24/25/26 and quick-action geometry; it also has a new isolated receipt retaining the exact fixture host, app and fixture source hashes. App DLL SHA256 `FBBE856CEC8D76E081D9F0DE3819AC71E3563899B7F5D3CF66D2F88A538535D5`; all 739 authored app PDB documents match. Evidence: worktree `.codex-tmp/overlay-revisions/review-*` and `D:/SiloPlayer/.codex-tmp/server-review-nov10/overlay-review-fixes/`. Original failure receipts remain; `review-fixes-red` predates the new tests and is not red evidence. `review-regressions-red`, `review-external-red-b` and `review-quick-red` reproduce the review findings. The first external native attempt failed on a missing fixture NavigationService, then the corrected fixture reproduced the product issue.
+
+The deferred rendering/style/image/bottom-row items below remain disclosed. No live-server or complete visual-parity claim, version stamps, installation or installed-player changes.
+
+# November 10 — card overlays revisions 25/26 (local, uncommitted candidate)
+
+Base: Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, branch `t3/card-overlay-revisions`. Source remains `1.2.970` / `1.2.970.0`, targeting .NET 10; no version, README or installer stamps changed. Official Silo main is `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, confirmed directly with GitHub `git ls-remote` and against the supplied read-only official clone. No commit, push, PR, release, installer, installed-player or production action occurred.
+
+Desktop saves retain plate/band/future presets and opaque root/item fields, style and uploaded-image references. Revision-aware positions preserve legacy writes below 25 and migrate top-right badges to centered right-edge rails from 25. Rails hold four badges, corners three. The editor and preview use the same revision semantics. Revision 26 offers the combined resolution/HDR/audio badge, with duplicate standalone badges suppressed without changing their saved enabled flags. Poster and Library cards show an independent watched/remaining-episodes status corner, reserve its measured width, and retain quick actions. The catalog state now carries watched/unplayed counts and count changes invalidate mounted-card comparisons. Episode/detail and external watchlist badge hosts also honor edge positions.
+
+Verified with SDK `10.0.403`, x64, engine-pin checks and `SiloOct18Build`: **35 new unit cases**, **104 focused tests**, **5,303 full unit tests**, all passing with zero skipped; fresh Release publish; passing actual-control `overlay-revisions`, existing `overlay-pill` and `artwork-first-mount` native groups, all with the completion sentinel. Final app DLL SHA256: `AF7A94A29DA6F8ECA61BF7EBE9BB574732584E0E1C26E31901C068E8F69FE21A`. Native screenshots were inspected. Commands, red/green evidence, source/artifact bindings and native receipts are under this worktree's `.codex-tmp/overlay-revisions/`; see `report.md` there. Existing compiler/analyzer warnings remain.
+
+Dedicated plate/band rendering, style override rendering and uploaded badge images remain outside this candidate; those values survive saves and plate/band currently use the classic look. Shared bottom-corner row wrapping is not implemented. This synthetic fixture evidence does not certify complete visual parity or physical pointer interaction. The unrelated historical default-native `DetailPresentationNativeFixture.cs:55` limitation is not fixed by this task.
+
+# Server alignment — profiles and metadata (November 10, 2026)
+
+Base: freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`; stamps remain pipeline-owned. Official Server/WebUI reviewed at `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039` (additional WebUI localization only).
+
+Aligns primary/first-profile restrictions and household profile limits, season/episode metadata locks/reset, and scope-safe Match Item hints. Independent review corrections remove an admin-only hints gate, preserve parent image locks, restore default Switch Profile visibility while a fresh read is pending/failed, and refresh refused Add flows.
+
+Final verification: 69 focused tests, Release self-contained win-x64 publish, and four targeted native routes passed. App DLL SHA256 `A5CBF4076C0FFB8A84ACD6625B93DADF1F643B8D0B33631A168A8F0235F583A6`; all 738 authored app PDB documents match current source. Receipts, source and artifact manifests, original failed runs and corrected fixture evidence are retained at `D:/SiloPlayer/.codex-tmp/server-review-nov10/profiles-review-fixes/`; review/correction notes are adjacent.
+
+Synthetic fixtures do not establish live-server persistence or complete visual parity. The installed player remained open and untouched. Beta pipeline owns combined-source verification and packaging.
+
 # Current source identity — native Chapters and compact More (PR #91)
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.

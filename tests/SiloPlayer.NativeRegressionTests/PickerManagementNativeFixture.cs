@@ -178,7 +178,7 @@ internal static class PickerManagementNativeFixture
         wire.Protected = false; await vm.LoadProfilesCommand.ExecuteAsync(null);
         await vm.BeginManagementAsync(true); var session = vm.AddSession!;
         var form = typeof(ProfileEditorDialog).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single()
-            .Invoke([frame.XamlRoot, null, session.Libraries, true, api, false, false]);
+            .Invoke([frame.XamlRoot, null, session.Libraries, true, api, false, false, false]);
         Set(form, "_addSession", session); Set(form, "_avatarFileBytes", new byte[] { 1, 2 }); Set(form, "_avatarFileName", "fixture.png"); Set(form, "_avatarContentType", "image/png");
         var nativeEditor = (ContentDialog)Read(form, "_dialog")!; var showing = nativeEditor.ShowAsync();
         await Until(() => CommandOrNull(nativeEditor, "PrimaryButton") != null);
@@ -205,7 +205,7 @@ internal static class PickerManagementNativeFixture
     {
         await vm.BeginManagementAsync(true); var session = vm.AddSession!;
         var form = typeof(ProfileEditorDialog).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single()
-            .Invoke([frame.XamlRoot, null, session.Libraries, true, api, false, false]);
+            .Invoke([frame.XamlRoot, null, session.Libraries, true, api, false, false, false]);
         Set(form, "_addSession", session); Set(form, "_avatarFileBytes", new byte[] { 1 }); Set(form, "_avatarFileName", "fixture.png");
         var dialog = (ContentDialog)Read(form, "_dialog")!; var showing = dialog.ShowAsync();
         await Until(() => CommandOrNull(dialog, "PrimaryButton") != null);

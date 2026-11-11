@@ -131,17 +131,18 @@ public static class ExternalTitleCard
                 if (!overlayPrefs.TryGetValue(def.Id, out var config) || !config.Enabled) continue;
                 var value = def.GetValue(data);
                 if (string.IsNullOrWhiteSpace(value)) continue;
-                if (!stacks.TryGetValue(config.Position, out var stack))
+                var position = overlayService.DisplayPosition(config.Position);
+                if (!stacks.TryGetValue(position, out var stack))
                 {
-                    var bottom = config.Position is OverlayPosition.BottomLeft or OverlayPosition.BottomRight;
+                    var bottom = position is OverlayPosition.BottomLeft or OverlayPosition.BottomRight;
                     stack = new StackPanel { Spacing = geometry.StackGap,
-                        HorizontalAlignment = config.Position is OverlayPosition.TopLeft or OverlayPosition.BottomLeft ? HorizontalAlignment.Left : HorizontalAlignment.Right,
-                        VerticalAlignment = bottom ? VerticalAlignment.Bottom : VerticalAlignment.Top,
+                        HorizontalAlignment = position is OverlayPosition.TopLeft or OverlayPosition.BottomLeft or OverlayPosition.LeftEdge ? HorizontalAlignment.Left : HorizontalAlignment.Right,
+                        VerticalAlignment = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? VerticalAlignment.Center : bottom ? VerticalAlignment.Bottom : VerticalAlignment.Top,
                         Margin = new Thickness(geometry.EdgeInset, geometry.EdgeInset, geometry.EdgeInset, geometry.EdgeInset + (bottom && progressVisible ? 8 : 0)),
                         IsHitTestVisible = false };
-                    stacks[config.Position] = stack; poster.Children.Add(stack);
+                    stacks[position] = stack; poster.Children.Add(stack);
                 }
-                if (stack.Children.Count >= 3) continue;
+                if (stack.Children.Count >= (position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3)) continue;
                 if (def.Id == "request_status" && attention && config.AccentColor == null) config = config with { AccentColor = "#f59e0b" };
                 var badge = PosterCard.BuildBadge(value, def.Id, config, overlayService.Preset, geometry.Scale);
                 badge.HorizontalAlignment = stack.HorizontalAlignment;

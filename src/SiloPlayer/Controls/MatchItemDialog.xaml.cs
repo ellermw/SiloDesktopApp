@@ -39,6 +39,14 @@ public sealed partial class MatchItemDialog : ContentDialog
     private bool _searching;
     private bool _applying;
     private bool _applyUnconfirmed;
+    private readonly TaskCompletionSource _initialScope = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task _hintsTask = Task.CompletedTask;
+    private ItemLibraryScope.Scope? _hintsScope;
+    private int _hintsRevision;
+    private bool _hintsPending = true, _seedingHints;
+    private readonly HashSet<TextBox> _editedHintFields = [];
+    private readonly Dictionary<TextBox, string> _hintValues = [];
+    private readonly string _fallbackTitle, _fallbackYear;
 
     public MatchCandidate? SelectedCandidate => _selectedCandidate;
     public bool HasAppliedMatch { get; private set; }
@@ -61,6 +69,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     {
         _maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         _itemId = itemId; _seriesId = seriesId;
+        _fallbackTitle = title; _fallbackYear = year is > 0 ? year.Value.ToString() : "";
         _itemType = string.IsNullOrWhiteSpace(itemType) ? "item" : itemType.Trim().ToLowerInvariant();
         _client = App.Services.GetRequiredService<SiloApiClient>();
         _auth = App.Services.GetRequiredService<AuthService>();
@@ -88,6 +97,8 @@ public sealed partial class MatchItemDialog : ContentDialog
             _auth.UserChanged += AuthorityChanged; _auth.LoggedOut += AuthorityChanged;
             EditorDialogPresentation.PlaceCornerClose(this, heading, close); UpdateViewport(); if (XamlRoot != null) XamlRoot.Changed += RootChanged;
             try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { } catch (Exception ex) { EmptyText.Text = ex.Message; EmptyText.Visibility = Visibility.Visible; }
+            StartHints();
+            _initialScope.TrySetResult();
             UpdateCommands();
         };
         Closing += (_, args) => { if (_applying) args.Cancel = true; };
@@ -115,6 +126,11 @@ public sealed partial class MatchItemDialog : ContentDialog
             AddProviderIdRow();
         }
 
+        foreach (var box in new[] { TitleBox, YearBox, ImdbIdBox, TmdbIdBox, TvdbIdBox, GenericTitleBox, GenericYearBox })
+        {
+            _hintValues[box] = box.Text;
+            box.TextChanged += (_, _) => { if (!_seedingHints && box.Text != _hintValues[box]) _editedHintFields.Add(box); };
+        }
         PopulateLocalMedia(versions, folderPaths, _itemType == "series");
     }
 
@@ -134,13 +150,64 @@ public sealed partial class MatchItemDialog : ContentDialog
     private void RetireCandidates()
     {
         _searchRevision++; _selectedCandidate = null; ResultsPanel.Children.Clear(); ResultsSection.Visibility = Visibility.Collapsed;
-        ApplyMatchButton.Visibility = ApplyMatchFooter.Visibility = Visibility.Collapsed; ApplyStatusText.Visibility = Visibility.Collapsed; UpdateCommands(); UpdateViewport();
+        ApplyMatchButton.Visibility = ApplyMatchFooter.Visibility = Visibility.Collapsed; ApplyStatusText.Visibility = Visibility.Collapsed; StartHints(); UpdateCommands(); UpdateViewport();
     }
     private void UpdateCommands()
     {
-        SearchButton.IsEnabled = CanAct && _scope.CanSearch && !_searching && !_applying && !_applyUnconfirmed;
+        SearchButton.IsEnabled = CanAct && _scope.CanSearch && !_hintsPending && !_searching && !_applying && !_applyUnconfirmed;
         ApplyMatchButton.IsEnabled = CanAct && _selectedCandidate != null && _scope.IsCurrent(_candidateScope) && !_applying && !_searching && !_applyUnconfirmed;
         _scope.SetEditing(CanAct && !_applying && !_applyUnconfirmed);
+    }
+
+    private void StartHints()
+    {
+        if (!CanAct || !_scope.CanSearch)
+        {
+            ++_hintsRevision; _hintsScope = null; _hintsPending = false;
+            return;
+        }
+        var scope = _scope.State.Capture();
+        if (_hintsScope == scope) return;
+        _hintsScope = scope; _hintsPending = true;
+        _hintsTask = LoadHintsAsync(scope, ++_hintsRevision);
+    }
+
+    private async Task LoadHintsAsync(ItemLibraryScope.Scope scope, int revision)
+    {
+        ItemMatchHints? hints = null;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(6));
+        try
+        {
+            // This item-scoped route accepts curators; the admin capability
+            // endpoint does not. Old servers safely fall back on 404/405.
+            hints = await _maintenanceApi.GetMatchHintsAsync(_context, _itemId, scope.LibraryId, deadline.Token);
+        }
+        catch (Exception) { /* Optional hints: retain current-item fallback and the viewer's input. */ }
+        if (!CanAct || revision != _hintsRevision || !_scope.IsCurrent(scope)) return;
+        void Suggest(TextBox box, string value)
+        {
+            // TextChanged can still be queued when a hint arrives. The visible
+            // draft, as well as observed edits, owns this field at the merge.
+            if (_editedHintFields.Contains(box)) return;
+            if (box.Text != _hintValues[box]) { _editedHintFields.Add(box); return; }
+            _hintValues[box] = value;
+            box.Text = value;
+        }
+        _seedingHints = true;
+        try
+        {
+            var hasTitle = !string.IsNullOrEmpty(hints?.Title);
+            Suggest(IsVideoMatchType(_itemType) ? TitleBox : GenericTitleBox, hasTitle ? hints!.Title : _fallbackTitle);
+            Suggest(IsVideoMatchType(_itemType) ? YearBox : GenericYearBox, hasTitle ? hints!.Year > 0 ? hints.Year.ToString() : "" : _fallbackYear);
+            if (IsVideoMatchType(_itemType))
+            {
+                Suggest(ImdbIdBox, hints?.ProviderIds?.GetValueOrDefault("imdb") ?? "");
+                Suggest(TmdbIdBox, hints?.ProviderIds?.GetValueOrDefault("tmdb") ?? "");
+                Suggest(TvdbIdBox, hints?.ProviderIds?.GetValueOrDefault("tvdb") ?? "");
+            }
+        }
+        finally { _seedingHints = false; _hintsPending = false; UpdateCommands(); }
     }
 
     private async void ApplyMatch_Click(object sender, RoutedEventArgs args)
@@ -664,7 +731,10 @@ public sealed partial class MatchItemDialog : ContentDialog
     private async Task DoSearchAsync()
     {
         if (_searching || _applying || !CanAct) return;
-        if (_applyUnconfirmed || !_scope.CanSearch) return;
+        try { await _initialScope.Task.WaitAsync(_lifetime.Token); await _hintsTask; }
+        catch (OperationCanceledException) { return; }
+        catch (Exception) { /* Optional hints must not prevent a manual search. */ }
+        if (!CanAct || _searching || _applying || _hintsPending || _applyUnconfirmed || !_scope.CanSearch) return;
         var scope = _scope.State.Capture(); var revision = ++_searchRevision;
         var isVideo = IsVideoMatchType(_itemType);
         var title = (isVideo ? TitleBox.Text : GenericTitleBox.Text).Trim();

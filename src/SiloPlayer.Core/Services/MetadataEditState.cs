@@ -8,7 +8,9 @@ public sealed class MetadataEditState
     public Dictionary<string, object?> Fields { get; } = [];
     private readonly Dictionary<string, object?> _original;
     private readonly Dictionary<int, bool> _overrides = [];
-    private readonly bool _lockable;
+    public IReadOnlyDictionary<string, int> FieldLockMap { get; }
+    private static readonly IReadOnlyDictionary<string, int> SeasonLockMap = new Dictionary<string, int> { ["title"] = 0, ["overview"] = 1, ["air_date"] = 13 };
+    private static readonly IReadOnlyDictionary<string, int> EpisodeLockMap = new Dictionary<string, int> { ["title"] = 0, ["overview"] = 1, ["air_date"] = 13, ["runtime"] = 7 };
     public static readonly IReadOnlyDictionary<string, int> LockMap = new Dictionary<string, int>
     {
         ["title"]=0,["sort_title"]=0,["original_title"]=0,["tagline"]=1,["overview"]=1,
@@ -18,7 +20,7 @@ public sealed class MetadataEditState
     };
     public MetadataEditState(MediaItemDetail item)
     {
-        _lockable = item.Type is "movie" or "series";
+        FieldLockMap = item.Type switch { "movie" or "series" => LockMap, "season" => SeasonLockMap, "episode" => EpisodeLockMap, _ => new Dictionary<string, int>() };
         var serialized = JsonSerializer.SerializeToElement(item, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
         foreach (var key in new[] { "title","sort_title","original_title","overview","tagline","content_rating","year","runtime","genres","studios","networks","countries","release_date","first_air_date","last_air_date","air_time","air_timezone","air_date","rating_imdb","rating_tmdb","rating_rt_critic","rating_rt_audience","imdb_id","tmdb_id","tvdb_id","season_number","episode_number" })
         {
@@ -36,11 +38,15 @@ public sealed class MetadataEditState
     public void Set(string key, object? value)
     {
         Fields[key] = value;
-        if (_lockable && LockMap.TryGetValue(key, out var field)) _overrides[field] = true;
+        if (FieldLockMap.TryGetValue(key, out var field)) _overrides[field] = true;
     }
-    public void SetLock(int field, bool locked) { if (_lockable) _overrides[field] = locked; }
+    public void SetLock(int field, bool locked)
+    {
+        if (FieldLockMap.Values.Contains(field) || field == 10 && FieldLockMap.Count > 0) _overrides[field] = locked;
+    }
     public HashSet<int> EffectiveLocks(IReadOnlyCollection<int> currentLocks)
     {
+        // locked_fields replaces the full server set, including locks this editor cannot change.
         var locks = currentLocks.ToHashSet();
         foreach (var (field, locked) in _overrides) { if (locked) locks.Add(field); else locks.Remove(field); }
         return locks;
@@ -54,7 +60,7 @@ public sealed class MetadataEditState
             result[key] = key is "release_date" or "first_air_date" or "last_air_date" or "air_time" or "air_date" && value is "" ? null : value;
         }
         var locks = EffectiveLocks(currentLocks).Order().ToArray();
-        if (_lockable && !locks.SequenceEqual(currentLocks.Order())) result["locked_fields"] = locks;
+        if (FieldLockMap.Count > 0 && !locks.SequenceEqual(currentLocks.Order())) result["locked_fields"] = locks;
         return result;
     }
 }
