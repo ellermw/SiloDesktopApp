@@ -227,7 +227,8 @@ public sealed class RequestRemovalBehaviorTests
     [InlineData("profile")]
     [InlineData("visit")]
     [InlineData("access")]
-    public async Task RetiringRemovalDuringRefreshSuppressesFeedbackAndFollowUpReads(string retirement)
+    [InlineData("catch-up")]
+    public async Task RemovalRefreshRetiresOnlyWithTheOwnerOrVisit(string retirement)
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var client = NewClient(http); var vm = await LoadedAsync(client);
@@ -239,12 +240,59 @@ public sealed class RequestRemovalBehaviorTests
         await UntilAsync(() => wire.Reads.Skip(reads).Contains("/api/v2/requests/status"));
         if (retirement == "profile") client.SetProfile("profile-b");
         else if (retirement == "visit") visit.Cancel();
-        else client.InvalidateAccessContext();
+        else if (retirement == "access") client.InvalidateAccessContext();
+        else Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
         wire.HoldStatus.TrySetResult();
-        Assert.Equal(RequestRemovalOutcome.Retired, (await removal).Outcome);
-        Assert.DoesNotContain("/api/v2/requests/search", wire.Reads.Skip(reads));
-        Assert.DoesNotContain("/api/v2/requests/mine", wire.Reads.Skip(reads));
+        var result = await removal;
+        if (retirement is "access" or "catch-up")
+        {
+            Assert.Equal(RequestRemovalOutcome.Removed, result.Outcome);
+            Assert.Contains("/api/v2/requests/search", wire.Reads.Skip(reads));
+            Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
+            Assert.DoesNotContain("failed", vm.MyRequests.Select(row => row.Id));
+        }
+        else
+        {
+            Assert.Equal(RequestRemovalOutcome.Retired, result.Outcome);
+            Assert.DoesNotContain("/api/v2/requests/search", wire.Reads.Skip(reads));
+            Assert.DoesNotContain("/api/v2/requests/mine", wire.Reads.Skip(reads));
+        }
         Assert.False(vm.IsRemovingRequest("failed"));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ReadInvalidationDuringDeleteOrListRefreshPreservesTheOutcomeAndReconciles(bool catchUp, bool duringRefresh)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = NewClient(http); var vm = await LoadedAsync(client);
+        var row = vm.MyRequests.Single(request => request.Id == "failed");
+        var owner = vm.CaptureRemovalOwner();
+        var reads = wire.Reads.Count;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (duringRefresh) wire.HoldMine = gate;
+        else wire.HoldDelete = gate;
+        var removal = vm.RemoveFailedRequestAsync(row, owner);
+        try
+        {
+            await UntilAsync(() => duringRefresh
+                ? wire.Reads.Skip(reads).Contains("/api/v2/requests/mine") : wire.Writes.Count == 1);
+            if (catchUp) Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
+            else client.InvalidateAccessContext();
+            Assert.True(client.IsCurrentIdentityContext(owner));
+            Assert.True(vm.IsRemovingRequest(row.Id));
+            Assert.Equal(RequestRemovalOutcome.Skipped, (await vm.RemoveFailedRequestAsync(row, owner)).Outcome);
+        }
+        finally { gate.TrySetResult(); }
+
+        Assert.Equal(RequestRemovalOutcome.Removed, (await removal).Outcome);
+        Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
+        Assert.Equal(["partial", "retryable"], vm.MyRequests.Select(request => request.Id).Order());
+        Assert.False(vm.IsRemovingRequest(row.Id));
+        Assert.Single(wire.Writes);
     }
 
     [Fact]
@@ -378,6 +426,7 @@ public sealed class RequestRemovalBehaviorTests
         public HttpStatusCode DeleteStatus = HttpStatusCode.NoContent;
         public TaskCompletionSource? HoldDelete;
         public TaskCompletionSource? HoldStatus;
+        public TaskCompletionSource? HoldMine;
         public Exception? DeleteThrows;
         public bool FailStatus;
         public readonly List<string> Reads = [];
@@ -402,6 +451,7 @@ public sealed class RequestRemovalBehaviorTests
             }
             Reads.Add(path);
             if (path.EndsWith("/status") && HoldStatus is { } statusGate) await statusGate.Task.WaitAsync(ct);
+            if (path.EndsWith("/mine") && HoldMine is { } mineGate) await mineGate.Task.WaitAsync(ct);
             if (path.EndsWith("/status") && FailStatus)
                 return new(HttpStatusCode.BadGateway) { Content = new StringContent("{\"title\":\"Bad gateway\",\"detail\":\"Upstream unavailable.\"}", Encoding.UTF8, "application/problem+json") };
             var json = path.EndsWith("/status") ? Status : path.EndsWith("/mine") ? Mine : path.EndsWith("/search") ? "{\"results\":[],\"page\":1,\"total_pages\":1,\"total_results\":0}"

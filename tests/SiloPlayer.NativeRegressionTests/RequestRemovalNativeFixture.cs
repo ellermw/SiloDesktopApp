@@ -30,7 +30,7 @@ internal static class RequestRemovalNativeFixture
     {
         // SILO_NATIVE_REQUEST_REMOVAL_CASE=links|removal narrows a run (for example to reproduce one half against an earlier publish).
         var only = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REMOVAL_CASE");
-        if (only != "links") { await RemovalAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
+        if (only != "links") { await RemovalAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
         if (only == "removal") { Program.Log("PASS: REQUEST_REMOVAL_ONLY_COMPLETED"); return; }
         await RowLinksAsync(parent);
         await DetailLinkAsync(parent);
@@ -124,6 +124,38 @@ internal static class RequestRemovalNativeFixture
         if (rig.ToastTexts().Any(text => text.Contains("Request removed")) || wire.MineReads != reads)
             throw new InvalidOperationException("A removal started by the old profile reported success or refreshed lists for the new owner.");
         Program.Log("PASS: Remove request Keep/pending/duplicate/409/transient/success/cancel separation/profile retirement on the actual Requests page.");
+    }
+
+    private static async Task RemovalReadInvalidationAsync(StackPanel parent)
+    {
+        foreach (var catchUp in new[] { false, true })
+        {
+            using var rig = new Rig(parent, remove: true);
+            await rig.OpenAsync("yours");
+            var wire = rig.Wire;
+            var vm = rig.Requests.ViewModel;
+            var mineReads = wire.MineReads;
+            wire.DeleteGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.OnDelete = id => wire.Mine.Remove(id);
+            Click(Remove(rig.Requests, "Failed one")); Primary(await rig.DialogAsync());
+            try
+            {
+                await Until(() => wire.Writes.Count == 1);
+                if (catchUp)
+                {
+                    if (!rig.Client.TryInvalidateAccessContext(rig.Client.CaptureContext(), out _, transportCatchUp: true))
+                        throw new InvalidOperationException("Transport catch-up did not invalidate the read context.");
+                }
+                else rig.Client.InvalidateAccessContext();
+            }
+            finally { wire.DeleteGate.TrySetResult(); }
+            await Until(() => !vm.IsRemovingRequest("f1"));
+            await rig.ToastAsync("Request removed");
+            if (wire.MineReads <= mineReads || vm.MyRequests.Any(row => row.Id == "f1") ||
+                ButtonNames(rig.Requests).Contains("Remove request for Failed one") || wire.Writes.Count != 1)
+                throw new InvalidOperationException("Read invalidation swallowed a confirmed removal's outcome or left its deleted row listed.");
+        }
+        Program.Log("PASS: access invalidation and transport catch-up during DELETE preserve removal feedback and reconcile the current profile's list.");
     }
 
     private static async Task RemovalFinalizationAsync(StackPanel parent)

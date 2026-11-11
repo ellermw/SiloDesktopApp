@@ -659,7 +659,7 @@ public sealed partial class RequestsPage : Page
         var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
         var readOwner = api.CaptureContext();
         bool IsCurrent() => !visit.IsCancellationRequested && ReferenceEquals(_libraryCheckOwner, pageOwner) && IsLoaded &&
-            api.IsCurrentIdentityContext(owner) && api.IsCurrentContext(readOwner);
+            api.IsCurrentIdentityContext(owner);
         var confirmation = new ContentDialog
         {
             Title = "Remove this request?", Content = $"Your failed request for \"{request.Title}\" will be deleted. You can request the title again later.",
@@ -673,7 +673,9 @@ public sealed partial class RequestsPage : Page
         try { choice = await confirmation.ShowAsync(); }
         finally { _removalConfirmationOpen = false; }
         if (choice != ContentDialogResult.Primary) return;
-        if (!IsCurrent()) return;
+        // Require the displayed row's read authority before sending, but keep confirmed outcome feedback
+        // bound only to the visit and identity: access refreshes do not undo an in-flight deletion.
+        if (!IsCurrent() || !api.IsCurrentContext(readOwner)) return;
         button.IsEnabled = false; button.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 };
         // The view model publishes pending state (rebuilding this row disabled) and the refreshed lists.
         var result = await ViewModel.RemoveFailedRequestAsync(request, owner, visit);

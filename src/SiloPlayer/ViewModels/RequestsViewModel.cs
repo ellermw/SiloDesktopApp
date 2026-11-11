@@ -390,8 +390,9 @@ public partial class RequestsViewModel : ObservableObject
     /// </summary>
     public async Task<RequestRemovalResult> RemoveFailedRequestAsync(MediaRequest confirmed, ApiIdentityContext owner, CancellationToken visit = default)
     {
-        var readOwner = _requestsApi.CaptureContext();
-        bool IsCurrentOwner() => _requestsApi.IsCurrentIdentityContext(owner) && _requestsApi.IsCurrentContext(readOwner);
+        // Access invalidation and transport catch-up retire reads, not a confirmed mutation's owner.
+        // Each reconciliation read captures fresh authority for this same account/profile.
+        bool IsCurrentOwner() => _requestsApi.IsCurrentIdentityContext(owner);
         bool IsCurrent() => !visit.IsCancellationRequested && IsCurrentOwner();
         // The viewer confirmed a row that may have been replaced or changed since: act on the current account row.
         var request = MyRequests.FirstOrDefault(row => row.Id == confirmed.Id);
@@ -434,12 +435,15 @@ public partial class RequestsViewModel : ObservableObject
     // request, and the row should show what happened. A load already in flight predates the mutation.
     private async Task RefreshAfterRequestChangeAsync(Func<bool> isCurrent)
     {
+        var context = _requestsApi.CaptureContext();
         var loadWasRunning = _loadInProgress;
         var mineRead = _mineReadRevision;
         InvalidateCache();
         await LoadForVisitAsync(isCurrent);
         if (!isCurrent()) return;
-        if (loadWasRunning) await Task.WhenAll(LoadMineAsync(), LoadDiscoveryAsync(brandsPreloaded: true));
+        // An invalidation during refresh may have discarded its reads; reconcile with fresh authority.
+        if (loadWasRunning || !_requestsApi.IsCurrentContext(context))
+            await Task.WhenAll(LoadMineAsync(), LoadDiscoveryAsync(brandsPreloaded: true));
         // The account list must not depend on the status read: a failed status read still re-reads it.
         else if (mineRead == _mineReadRevision && RequestsEnabled) await LoadMineAsync();
         if (!isCurrent()) return;
