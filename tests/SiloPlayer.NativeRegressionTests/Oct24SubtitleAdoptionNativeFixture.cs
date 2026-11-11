@@ -231,21 +231,55 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     Require(legacySession.SubtitleUrls.Any(row => row.Id == 77), "An envelope-only v2 announcement did not refresh stored subtitles.");
                 }
                 finally { legacySession.ProtocolVersion = 3; }
+                // A reload or a refused busy claim can finish without replacing
+                // CurrentSession. Its FILE_LOADED/release happens before the held
+                // refresh returns, so the announcement must arrange its own retry.
+                using var sameSessionReady = JsonDocument.Parse("""{"session_id":"fixture","file_id":42,"subtitle_id":78}""");
+                foreach (var transportChange in new[] { "reload", "busy-release" })
+                {
+                    wire.AdditionalDownloadedAvailable = false;
+                    await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                    await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                    var outgoing = manager.CurrentSession;
+                    var replansBefore = wire.Replans.Count;
+                    wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var refreshing = (Task)Call(service, "ApplySubtitleReadyAsync", sameSessionReady.RootElement, "fixture")!;
+                    await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    try
+                    {
+                        wire.AdditionalDownloadedAvailable = true;
+                        if (transportChange == "reload")
+                        {
+                            await Load(0, 0);
+                            await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                        }
+                        else
+                        {
+                            var busy = Call(service, "BeginPlaybackBusy", true, null)!;
+                            Require(Call(service, "ReleasePlaybackBusy", busy, null) != null,
+                                "The fixture's temporary busy claim was not released.");
+                        }
+                        Require(ReferenceEquals(outgoing, manager.CurrentSession) && !service.IsLoading &&
+                            Get(service, "_switchingContent") is false,
+                            "The fixture did not finish its transport change on the same idle session.");
+                    }
+                    finally { wire.HoldReplan.TrySetResult(); }
+                    var transportFile = Get(service, "_fileLoadGeneration");
+                    await refreshing.WaitAsync(TimeSpan.FromSeconds(6));
+                    await Until(() => wire.Replans.Count == replansBefore + 2 &&
+                        manager.CurrentSession!.SubtitleUrls.Any(row => row.Id == 78));
+                    Require(manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 78).Index == 3 &&
+                        Equals(transportFile, Get(service, "_fileLoadGeneration")) &&
+                        manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes && service.IsPaused && mpv.IsPaused,
+                        "A same-session transport change dropped the announcement or changed playback intent on retry.");
+                    wire.HoldReplan = null; wire.ReplanEntered = null;
+                }
                 var accepted = manager.CurrentSession;
                 var nativeFile = Get(service, "_fileLoadGeneration");
                 wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 var held = (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "fixture")!;
-                await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
-                await Load(0, 0); // A native reload supersedes the outgoing announcement owner.
-                await Until(() => Get(service, "_loadedMediaInitCts") == null);
-                nativeFile = Get(service, "_fileLoadGeneration");
-                wire.HoldReplan.TrySetResult(); await held;
-                Require(ReferenceEquals(accepted, manager.CurrentSession) && Equals(nativeFile, Get(service, "_fileLoadGeneration")),
-                    "An announcement refreshed a replaced native file.");
-                wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                held = (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement, "fixture")!;
                 await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 api.SetProfile("replacement"); wire.HoldReplan.TrySetResult(); await held;
                 Require(ReferenceEquals(accepted, manager.CurrentSession) && Equals(nativeFile, Get(service, "_fileLoadGeneration")),

@@ -34,10 +34,12 @@ public partial class PlaybackManager
         KeptBufferingEstimateKbps = null;
         if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
     }
-    private void ConfigureConnectionReplan(PlaybackReplanRequestV3 request)
+    private void ConfigureConnectionReplan(PlaybackReplanRequestV3 request, bool inventoryRefresh = false)
     {
         request.ClientFeatures.AddRange(new[] { "buffering_quality_v1", "connection_speed_v1", "playback_plan_summary_v1" }.Where(_connectionFeatures.Contains));
-        if (!_connectionFeatures.Contains("buffering_quality_v1")) return;
+        // Inventory discovery must not consume buffering intent or re-evaluate
+        // Auto quality with a kept estimate/learned-limit override.
+        if (inventoryRefresh || !_connectionFeatures.Contains("buffering_quality_v1")) return;
         var intent = request.Operation == "quality_change" ? _bufferingReplanIntent.Value : null;
         request.LearnedLimit = BufferingQualityMode == "never" || IgnoreConnectionMeasurements ? "ignore" : intent?.LearnedLimit;
         if (IgnoreConnectionMeasurements || request.Operation == "seek_reanchor") return;

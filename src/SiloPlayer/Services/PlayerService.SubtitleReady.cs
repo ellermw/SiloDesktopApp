@@ -146,13 +146,20 @@ public partial class PlayerService
         }
         var token = _authorityLifetimeCts.Token;
         var entered = false;
+        var nativeFile = Volatile.Read(ref _fileLoadGeneration);
+        var file = Volatile.Read(ref _playbackFileGeneration);
+        var busyRevision = Volatile.Read(ref _playbackBusyRevision);
+        var seekRevision = Volatile.Read(ref _seekRestartGeneration);
+        bool SameFile() => nativeFile == Volatile.Read(ref _fileLoadGeneration) && file == Volatile.Read(ref _playbackFileGeneration);
+        bool SameTransport() => SameFile() && busyRevision == Volatile.Read(ref _playbackBusyRevision) &&
+            seekRevision == Volatile.Read(ref _seekRestartGeneration);
         void RetryIfSuperseded()
         {
             // A guard wait or a later busy claim may replace our exact plan.
             // Keep the announcement for this file lifetime, not that response.
             if (!token.IsCancellationRequested && owner.IsCurrentForAi && manager.CurrentSession is { } current &&
                 current.SessionId == eventSessionId && current.MediaFileId == fileId &&
-                (SubtitleReadyRefreshIsBusy || !ReferenceEquals(current, session)))
+                (SubtitleReadyRefreshIsBusy || !ReferenceEquals(current, session) || !SameTransport()))
                 DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);
         }
         try
@@ -168,9 +175,10 @@ public partial class PlayerService
                 RetryIfSuperseded();
                 return;
             }
-            var nativeFile = Volatile.Read(ref _fileLoadGeneration);
-            var file = Volatile.Read(ref _playbackFileGeneration);
-            bool SameFile() => nativeFile == Volatile.Read(ref _fileLoadGeneration) && file == Volatile.Read(ref _playbackFileGeneration);
+            nativeFile = Volatile.Read(ref _fileLoadGeneration);
+            file = Volatile.Read(ref _playbackFileGeneration);
+            busyRevision = Volatile.Read(ref _playbackBusyRevision);
+            seekRevision = Volatile.Read(ref _seekRestartGeneration);
             bool Current() => owner.IsCurrent && SameFile();
             // Never merge into a plan whose replacement inventory may already be
             // frozen. Retain every payload and replay it after the actual load.
@@ -218,10 +226,6 @@ public partial class PlayerService
             // v3 has no inventory GET. A no-change replan carries the existing
             // grant/retained intent (preserving unresolved grants via quality_change)
             // and returns canonical delivery facts.
-            var busyRevision = Volatile.Read(ref _playbackBusyRevision);
-            var seekRevision = Volatile.Read(ref _seekRestartGeneration);
-            bool SameTransport() => SameFile() && busyRevision == Volatile.Read(ref _playbackBusyRevision) &&
-                seekRevision == Volatile.Read(ref _seekRestartGeneration);
             var position = CurrentMediaPosition;
             var replacement = await manager.RefreshSubtitleInventoryForOwnerAsync(position,
                 candidate => Current() && SameTransport() && !SubtitleReadyRefreshIsBusy && ReferenceEquals(candidate, session),

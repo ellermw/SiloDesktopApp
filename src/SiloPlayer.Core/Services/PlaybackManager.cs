@@ -451,7 +451,8 @@ public partial class PlaybackManager : IDisposable
             if (session == null || !canUseSession(session)) return null;
             EnsureBufferingReplanOwner();
             return await ReplanCoreForOwnerAsync("track_change", positionSeconds, _qualityPreferenceV3,
-                _ => { }, null, ct, () => canUseSession(session), replacement => tryAdoptSession(session, replacement))
+                _ => { }, null, ct, () => canUseSession(session), replacement => tryAdoptSession(session, replacement),
+                inventoryRefresh: true)
                 .ConfigureAwait(false);
         }
         finally { _replanGuard.Release(); }
@@ -763,7 +764,7 @@ public partial class PlaybackManager : IDisposable
     private async Task<PlaybackStartResponse> ReplanCoreForOwnerAsync(string operation, double positionSeconds,
         string qualityPreference, Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
         PlaybackFailureV3? failure, CancellationToken ct, Func<bool>? currentOwner,
-        Func<PlaybackStartResponse, bool>? tryAdopt)
+        Func<PlaybackStartResponse, bool>? tryAdopt, bool inventoryRefresh = false)
     {
         if (currentOwner?.Invoke() == false) throw new OperationCanceledException("Subtitle owner retired.", ct);
         var plan = _currentPlanV3
@@ -785,9 +786,17 @@ public partial class PlaybackManager : IDisposable
             var matches = live.SubtitleUrls.Where(track => track.TrackId == live.SelectedSubtitleTrackId)
                 .Take(2).ToArray();
             var index = live.SelectedSubtitleTrackIndex ?? (matches.Length == 1 ? (int?)matches[0].Index : null);
-            // Missing or ambiguous metadata must not abort transport replans.
-            // Without a known ordinal, retain the previous omitted identity.
-            if (index is int grantedIndex) subtitleGrant = new PlaybackTrackIdentityV3
+            if (index == null)
+            {
+                // Local inventory overlays can be incomplete or ambiguous. The
+                // accepted plan is still authoritative for a unique grant ordinal.
+                var canonical = plan.Subtitle.Inventory.Where(track => track.TrackId == live.SelectedSubtitleTrackId)
+                    .Take(2).ToArray();
+                if (canonical.Length == 1) index = canonical[0].CombinedIndex;
+            }
+            // Transport-only operations may omit an unresolved grant. A track
+            // selection must instead resolve it or refuse to turn it into Off.
+            if (index is int grantedIndex && grantedIndex >= 0) subtitleGrant = new PlaybackTrackIdentityV3
             {
                 Id = live.SelectedSubtitleTrackId,
                 Index = grantedIndex,
@@ -812,13 +821,17 @@ public partial class PlaybackManager : IDisposable
             subtitleRevision = ApplyLocalSubtitleIntent(selectedTracks, operation);
             audioRevision = ApplyLocalAudioIntent(selectedTracks, operation);
             mutateSelectedTracks(selectedTracks);
-            // An unresolved grant cannot be expressed by a track_change: omission
-            // means Off. Refresh at the same quality instead, where omission preserves
-            // the server grant. A pending viewer Off must still use track_change.
+            // Only a read-only inventory refresh may use quality_change to
+            // preserve an unresolved grant. Never reinterpret an audio/track pick
+            // as a quality request or silently send Off for an unknown ordinal.
             if (operation == "track_change" &&
                 subtitleGrant == null && selectedTracks.Subtitle == null &&
                 !string.IsNullOrWhiteSpace(CurrentSession?.SelectedSubtitleTrackId) && !NeedsExplicitSubtitleOff())
+            {
+                if (!inventoryRefresh)
+                    throw new InvalidOperationException("The granted subtitle's selection ordinal is unavailable.");
                 operation = "quality_change";
+            }
         }
 
         var recoveryAttempt = failure == null
@@ -844,7 +857,7 @@ public partial class PlaybackManager : IDisposable
             ClientPlaybackContext = context,
         };
 
-        ConfigureConnectionReplan(request);
+        ConfigureConnectionReplan(request, inventoryRefresh);
         var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
         void CommitHistory()
         {

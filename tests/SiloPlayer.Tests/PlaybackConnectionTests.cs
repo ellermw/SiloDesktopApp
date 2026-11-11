@@ -94,6 +94,43 @@ public sealed class PlaybackConnectionTests
         Assert.Equal(count, wire.Requests.Count(r => r.Path.EndsWith("/replan")));
         Assert.Equal("720p", manager.QualityPreference);
     }
+    [Theory]
+    [InlineData("never", false)]
+    [InlineData("never", true)]
+    [InlineData("always", false)]
+    [InlineData("always", true)]
+    public async Task SubtitleInventoryRefreshDoesNotSendBufferingQualityInputs(string mode, bool unresolvedGrant)
+    {
+        using var wire = new Wire { Current = true }; var client = Client(wire); var api = new PlaybackApi(client);
+        using var auth = new AuthService(client, new AuthApi(client));
+        using var manager = new PlaybackManager(api, new CatalogApi(client), auth, client);
+        var session = await manager.StartSessionAsync(42,
+            preferences: new PlaybackQualityPreferences(client.CaptureContext(), "auto", null) { BufferingQualityMode = mode });
+        session.SelectedSubtitleTrackId = unresolvedGrant ? "grant-without-an-ordinal" : session.SubtitleUrls[0].TrackId;
+        Assert.Null(session.SelectedSubtitleTrackIndex);
+        manager.ConnectionPlan!.Subtitle.TrackId = session.SelectedSubtitleTrackId;
+        manager.KeptBufferingEstimateKbps = 5600;
+
+        var replacement = await manager.RefreshSubtitleInventoryForOwnerAsync(8,
+            candidate => ReferenceEquals(candidate, session), (_, _) => true);
+
+        Assert.NotNull(replacement);
+        Assert.Same(replacement, manager.CurrentSession);
+        var body = Assert.Single(wire.Requests.Where(r => r.Path.EndsWith("/replan"))).Body;
+        Assert.Equal(unresolvedGrant ? "quality_change" : "track_change", body.GetProperty("operation").GetString());
+        Assert.Equal("auto", body.GetProperty("quality_preference").GetString());
+        foreach (var field in new[] { "learned_limit", "bandwidth_estimate_kbps", "bandwidth_estimate_source", "observed_throughput_kbps" })
+            Assert.False(body.TryGetProperty(field, out _), field + " must not re-tier an inventory refresh.");
+        Assert.Equal(5600, manager.KeptBufferingEstimateKbps);
+
+        // Real quality changes still use the existing connection policy.
+        await manager.ReplanQualityAsync("auto", 8);
+        var quality = wire.Requests.Last(r => r.Path.EndsWith("/replan")).Body;
+        Assert.Equal("quality_change", quality.GetProperty("operation").GetString());
+        Assert.Equal(5600, quality.GetProperty("bandwidth_estimate_kbps").GetInt32());
+        if (mode == "never") Assert.Equal("ignore", quality.GetProperty("learned_limit").GetString());
+        else Assert.False(quality.TryGetProperty("learned_limit", out _));
+    }
     [Theory] [InlineData(true)] [InlineData(false)]
     public async Task StartReusesOneCapabilitySnapshotAndOneScopedPreferenceBatch(bool current)
     {
