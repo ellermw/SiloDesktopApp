@@ -9445,7 +9445,11 @@ public partial class PlayerService : IDisposable
                             // A pick names its entry by stored id, and this row is that
                             // entry's only executable route. Carry the id for the pick
                             // alone; any other refresh still proves no identity here.
+                            // Ordinal and language cannot tell a same-language pair apart:
+                            // an entry with other forced or hearing-impaired facts is not
+                            // proven to be this row, and its pick is left to a replan.
                             if (unique && matches.Length == 0 && entry.Id == preferredSubtitleId &&
+                                entry.Forced == unknownCanonical[0].Forced && entry.HearingImpaired == unknownCanonical[0].HearingImpaired &&
                                 canonicalOrdinalsAgree && !unknownCanonical[0].Unplayable)
                                 pickedCanonical = unknownCanonical[0];
                             return unknownCanonical[0];
@@ -9548,6 +9552,11 @@ public partial class PlayerService : IDisposable
                     string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
                     track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
                 RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);
+                // The entry's own row can withhold the route as well: an ordinal a
+                // canonical row absent from the list still holds, a repeated id, a
+                // plan-only row it was not proven to be, or a row already unplayable.
+                uncertainPick |= response.Subtitles.Any(entry => entry.Id == preferredSubtitleId) &&
+                    !downloaded.Any(track => !track.Unplayable && track.Id == preferredSubtitleId);
 
                 SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
                 {

@@ -444,23 +444,33 @@ public partial class PlayerService
                 await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
                 return;
             }
-            // Local direct seeks and pause gestures remain available while the
-            // inventory request is in flight. Reload at their latest intent.
-            position = CurrentMediaPosition;
-            var version = Versions.FirstOrDefault(item => item.FileId == replacement.MediaFileId)
-                ?? throw new InvalidOperationException("The subtitle inventory's media version is unavailable.");
-            var prepared = await PreparePlaybackTransportAsync(replacement, version,
-                manager.StreamUrl ?? throw new InvalidOperationException("The refreshed stream URL is unavailable."), position, token)
-                .ConfigureAwait(false);
-            if (!Current() || !SameTransport())
+            // A seek restart prepares and loads its own transport under this gate.
+            // Preparation stops the proxies the playing file reads from, so the
+            // last ownership check precedes it: a superseded announcement tears
+            // nothing down, and a prepared replacement is always loaded.
+            await _transportRestartGate.WaitAsync(token).ConfigureAwait(false);
+            try
             {
-                RetryIfSuperseded();
-                return;
+                if (!Current() || !SameTransport())
+                {
+                    RetryIfSuperseded();
+                    return;
+                }
+                // Local direct seeks and pause gestures remain available while the
+                // inventory request is in flight. Reload at their latest intent.
+                position = CurrentMediaPosition;
+                var version = Versions.FirstOrDefault(item => item.FileId == replacement.MediaFileId)
+                    ?? throw new InvalidOperationException("The subtitle inventory's media version is unavailable.");
+                var streamUrl = manager.StreamUrl ?? throw new InvalidOperationException("The refreshed stream URL is unavailable.");
+                var prepared = await PreparePlaybackTransportAsync(replacement, version, streamUrl, position, token)
+                    .ConfigureAwait(false);
+                PlayMethod = replacement.PlayMethod;
+                ApplyPreparedTransport(prepared);
+                PrepareSubtitleFileForReload(appliedSession, replacement, manager.SubtitleSelectionForLoad);
+                BeginMpvLoad(prepared, CaptureUserPausedState());
             }
-            PlayMethod = replacement.PlayMethod;
-            ApplyPreparedTransport(prepared);
-            PrepareSubtitleFileForReload(appliedSession, replacement, manager.SubtitleSelectionForLoad);
-            BeginMpvLoad(prepared, CaptureUserPausedState());
+            // Reconciling a deferred selection below can re-enter the restart gate.
+            finally { _transportRestartGate.Release(); }
             _pendingSubtitleInventoryApplication = null;
             SendSubtitleListToOsc();
             RestartSupersededSubtitleListRefreshes(replacement);
