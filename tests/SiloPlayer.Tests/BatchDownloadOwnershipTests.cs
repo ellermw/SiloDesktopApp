@@ -116,7 +116,7 @@ public sealed class BatchDownloadOwnershipTests
     {
         using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
         // An access refresh or reconnect catch-up retires the read, not the viewer who owns the picker.
-        wire.Read = _ => { client.TryInvalidateAccessContext(client.CaptureContext(),out _,transportCatchUp); return "{\"items\":[{\"content_id\":\"season-item\",\"season_number\":1}]}"; };
+        wire.Read = request => { client.TryInvalidateAccessContext(client.CaptureContext(),out ApiRequestContext _,transportCatchUp); return "{\"items\":[{\"content_id\":\"season-item\",\"season_number\":1}]}"; };
         Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",null,null));
         Assert.Single(wire.Paths);
     }
