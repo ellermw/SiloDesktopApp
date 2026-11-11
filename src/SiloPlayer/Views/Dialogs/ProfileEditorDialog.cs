@@ -70,6 +70,7 @@ public sealed class ProfileEditorDialog
     ];
 
     private readonly Profile? _profile;
+    private readonly bool _isPrimary;
     private readonly IReadOnlyList<Library> _libraries;
     private readonly bool _avatarUploadEnabled;
     private readonly AuthApi _authApi;
@@ -126,9 +127,10 @@ public sealed class ProfileEditorDialog
         Profile? profile,
         IReadOnlyList<Library> libraries,
         bool avatarUploadEnabled,
-        AuthApi authApi, bool ageSupported, bool requireAgeSupported)
+        AuthApi authApi, bool ageSupported, bool requireAgeSupported, bool createsPrimary = false)
     {
         _profile = profile;
+        _isPrimary = profile?.IsPrimary ?? createsPrimary;
         _libraries = libraries.OrderBy(library => library.SortOrder).ToList();
         _avatarUploadEnabled = avatarUploadEnabled;
         _authApi = authApi;
@@ -201,12 +203,14 @@ public sealed class ProfileEditorDialog
         await Task.WhenAll(profileTask, libraryTask);
 
         var profileResponse = await profileTask;
+        if (profile == null && !ProfileLimits.CanAdd(profileResponse.Profiles.Count, profileResponse.MaxProfiles))
+            return new(null, "");
         var editor = new ProfileEditorDialog(
             xamlRoot,
             profile,
             await libraryTask,
             profileResponse.AvatarUploadEnabled,
-            authApi, profileResponse.MaxAdvisoryAgeSupported, profileResponse.RequireAdvisoryAgeSupported);
+            authApi, profileResponse.MaxAdvisoryAgeSupported, profileResponse.RequireAdvisoryAgeSupported, profileResponse.Profiles.Count == 0);
         await editor._dialog.ShowAsync();
         return new ProfileEditorResult(editor.SavedProfile, editor.SubmittedPin);
     }
@@ -230,7 +234,7 @@ public sealed class ProfileEditorDialog
         _pinLabel.Text = _profile?.HasPin == true ? "New PIN" : "PIN (optional)";
         _clearPinButton.Visibility = _profile?.HasPin == true ? Visibility.Visible : Visibility.Collapsed;
         _kidsToggle.IsOn = _profile?.IsChild ?? false;
-        _restrictLibrariesToggle.IsOn = _profile?.LibraryRestrictionsEnabled ?? false;
+        _restrictLibrariesToggle.IsOn = !_isPrimary && (_profile?.LibraryRestrictionsEnabled ?? false);
         _libraryRows.Visibility = _restrictLibrariesToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (var option in RatingOptions) _ratingBox.Items.Add(option.Label);
@@ -433,6 +437,11 @@ public sealed class ProfileEditorDialog
         }
         limits.SizeChanged += (_, _) => ReflowLimits(); _viewportReflows.Add(ReflowLimits);
         body.Children.Add(limits);
+        if (_isPrimary)
+        {
+            body.Children.Add(new TextBlock { Text = "This profile sees every library your account allows. Hide libraries in Settings.", TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") });
+            return section;
+        }
         var libraryGroup = new StackPanel { Spacing = 12 };
         var libraryToggle = ToggleRow("Restrict libraries", "Limit this profile to a specific set of libraries.", _restrictLibrariesToggle);
         libraryToggle.BorderThickness = new Thickness(0); libraryToggle.Padding = new Thickness(0);
@@ -723,8 +732,9 @@ public sealed class ProfileEditorDialog
                 MaxAdvisoryAge = _advisoryBox.SelectedIndex > 0 ? _advisoryBox.SelectedIndex : null,
                 RequireAdvisoryAge = _requireAdvisory.IsOn,
                 MaxPlaybackQuality = QualityOptions[Math.Max(0, _qualityBox.SelectedIndex)].Value,
-                LibraryRestrictionsEnabled = _restrictLibrariesToggle.IsOn,
-                AllowedLibraryIds = _restrictLibrariesToggle.IsOn
+                IsPrimary = _isPrimary,
+                LibraryRestrictionsEnabled = !_isPrimary && _restrictLibrariesToggle.IsOn,
+                AllowedLibraryIds = !_isPrimary && _restrictLibrariesToggle.IsOn
                     ? _libraryChecks.Where(pair => pair.Value.IsOn).Select(pair => pair.Key).Order().ToList()
                     : [],
             };
@@ -813,7 +823,7 @@ public sealed class ProfileEditorDialog
             ShowValidation("PIN must be exactly 4 digits.");
             return false;
         }
-        if (_restrictLibrariesToggle.IsOn && !_libraryChecks.Values.Any(check => check.IsOn))
+        if (!_isPrimary && _restrictLibrariesToggle.IsOn && !_libraryChecks.Values.Any(check => check.IsOn))
         {
             ShowValidation("Choose at least one library.");
             return false;
@@ -830,7 +840,7 @@ public sealed class ProfileEditorDialog
             if (_kidsToggle.IsOn)
             {
                 if (!_contentRatingTouched && _ratingBox.SelectedIndex == 0) _ratingBox.SelectedIndex = 2;
-                if (!_libraryAccessTouched && !_restrictLibrariesToggle.IsOn)
+                if (!_isPrimary && !_libraryAccessTouched && !_restrictLibrariesToggle.IsOn)
                 {
                     _restrictLibrariesToggle.IsOn = true;
                     foreach (var check in _libraryChecks.Values) check.IsOn = false;

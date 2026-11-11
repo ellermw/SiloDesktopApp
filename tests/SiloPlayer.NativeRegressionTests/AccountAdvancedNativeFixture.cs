@@ -45,7 +45,7 @@ internal static class AccountAdvancedNativeFixture
     {
         frame.Width = 900; await Layout(frame);
         var editor = typeof(ProfileEditorDialog).GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single()
-            .Invoke([frame.XamlRoot, new Profile { Id = "fixture", Name = "Primary", IsPrimary = true }, Array.Empty<Library>(), false, App.Services.GetRequiredService<AuthApi>(), true, false]);
+            .Invoke([frame.XamlRoot, new Profile { Id = "fixture", Name = "Primary", IsPrimary = true }, Array.Empty<Library>(), false, App.Services.GetRequiredService<AuthApi>(), true, false, false]);
         var dialog = (ContentDialog)Read(editor, "_dialog")!;
         foreach (var button in ((Grid)Read(editor, "_avatarPresetGrid")!).Children.OfType<Button>())
             if (button.Content is Image image) image.Source = null;
@@ -258,7 +258,7 @@ internal static class AccountAdvancedNativeFixture
     {
         frame.Width = 1100; await Layout(frame);
         var constructor = typeof(ProfileEditorDialog).GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single();
-        var editor = constructor.Invoke([frame.XamlRoot, new Profile { Id = "fixture", Name = "Primary", IsPrimary = true, MaxContentRating = "future-ceiling", MaxAdvisoryAge = 12 }, Array.Empty<Library>(), false, App.Services.GetRequiredService<AuthApi>(), true, false]);
+        var editor = constructor.Invoke([frame.XamlRoot, new Profile { Id = "fixture", Name = "Primary", IsPrimary = true, MaxContentRating = "future-ceiling", MaxAdvisoryAge = 12 }, Array.Empty<Library>(), false, App.Services.GetRequiredService<AuthApi>(), true, false, false]);
         var dialog = (ContentDialog)Read(editor, "_dialog")!;
         // Preset thumbnails use an external artwork source. Clear only fixture
         // images before showing; acceptance here concerns native geometry/actions.
@@ -279,7 +279,7 @@ internal static class AccountAdvancedNativeFixture
         Program.Log($"TRACE profile retry writes={wire.ProfileWrites}, saved={((Profile?)ReadProperty(editor, "SavedProfile"))?.Name}");
         Check(wire.ProfileWrites == 2 && ((Profile?)ReadProperty(editor, "SavedProfile"))?.Name == "Edited fixture", "Profile retry failed to save actual draft");
         Check(wire.ProfilePayload?.GetProperty("max_content_rating").GetString() == "future-ceiling", "Profile Save lost unknown saved rating");
-        var cancelEditor = constructor.Invoke([frame.XamlRoot, new Profile { Id = "fixture", Name = "Primary", IsPrimary = true }, Array.Empty<Library>(), false, App.Services.GetRequiredService<AuthApi>(), true, false]);
+        var cancelEditor = constructor.Invoke([frame.XamlRoot, new Profile { Id = "fixture", Name = "Primary", IsPrimary = true }, Array.Empty<Library>(), false, App.Services.GetRequiredService<AuthApi>(), true, false, false]);
         foreach (var button in ((Grid)Read(cancelEditor, "_avatarPresetGrid")!).Children.OfType<Button>())
             if (button.Content is Image image) image.Source = null;
         var cancelDialog = (ContentDialog)Read(cancelEditor, "_dialog")!;

@@ -5952,6 +5952,10 @@ _webhookPlexAuthCts?.Cancel();
             var response = await authApi.GetProfilesAsync();
             if (generation != Volatile.Read(ref _profilesLoadGeneration) || authApi.CaptureContext() != owner) return;
             var profiles = response.Profiles;
+            var canAdd = ProfileLimits.CanAdd(profiles.Count, response.MaxProfiles);
+            AddProfileButton.Visibility = canAdd ? Visibility.Visible : Visibility.Collapsed;
+            ProfileLimitText.Visibility = canAdd ? Visibility.Collapsed : Visibility.Visible;
+            ProfileLimitText.Text = !canAdd && response.MaxProfiles is {} maximum ? ProfileLimits.Message(maximum) : "";
             ProfileCardsPanel.Children.Clear();
 
             if (profiles.Count == 0)
@@ -6629,9 +6633,14 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
     {
-        var saved = await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile: null);
-        if (saved != null)
+        try
+        {
+            await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile: null);
+            // A fresh read in the editor can refuse an Add that another client
+            // has filled. Refresh even then so the limit replaces the stale action.
             await LoadProfilesAsync();
+        }
+        catch (Exception ex) { ViewModel.ErrorMessage = $"Couldn't open the new profile form: {ex.Message}"; }
     }
 
     /// <summary>
