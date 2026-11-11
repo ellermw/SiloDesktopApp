@@ -2048,7 +2048,7 @@ _webhookPlexAuthCts?.Cancel();
             TextWrapping = TextWrapping.Wrap,
         });
         var suppressed = initial.Enabled && _cardOverlayDraft is not null &&
-            OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, _cardOverlayDraft.Items, _cardOverlayService.ManifestRevision);
+            _cardOverlayService.SuppressesStandalone(definition.Id, _cardOverlayDraft.Items);
         var hint = suppressed
             ? "Hidden while a combined badge is enabled."
             : OverlayAvailabilityNote(definition.Id);
@@ -2399,7 +2399,7 @@ _webhookPlexAuthCts?.Cancel();
         foreach (var definition in definitions)
         {
             if (!OverlayOffered(definition.Id) || !_cardOverlayDraft.Items.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-            if (OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, _cardOverlayDraft.Items, _cardOverlayService.ManifestRevision)) continue;
+            if (_cardOverlayService.SuppressesStandalone(definition.Id, _cardOverlayDraft.Items)) continue;
             if (!sampleValues.TryGetValue(definition.Id, out var value) || string.IsNullOrEmpty(value)) continue;
             var displayPosition = _cardOverlayService.DisplayPosition(config.Position);
             var limit = displayPosition is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3;

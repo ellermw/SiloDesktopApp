@@ -136,7 +136,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         foreach (var definition in service.GetOrderedDefinitions())
         {
             if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-            if (OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs, service.ManifestRevision)) continue;
+            if (service.SuppressesStandalone(definition.Id, prefs)) continue;
             var value = definition.GetValue(data);
             if (string.IsNullOrWhiteSpace(value)) continue;
             var position = service.DisplayPosition(config.Position);

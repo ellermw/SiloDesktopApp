@@ -249,6 +249,7 @@ public class CardOverlayService
     };
     public int ManifestRevision { get; private set; }
     private bool _manifestUnavailable;
+    private ApiRequestContext? _manifestContext;
 
     public OverlayPosition DisplayPosition(OverlayPosition position) => _manifestUnavailable ? position : PositionForRevision(position, ManifestRevision);
 
@@ -261,6 +262,9 @@ public class CardOverlayService
     };
 
     public bool OffersOverlay(string id) => _manifestUnavailable || ManifestRevision >= IntroducedInRevision(id);
+
+    public bool SuppressesStandalone(string id, IReadOnlyDictionary<string, OverlayItemConfig> prefs) =>
+        OverlayRegistry.SuppressesStandaloneOverlays(id, prefs, _manifestUnavailable ? int.MaxValue : ManifestRevision);
 
     private static int IntroducedInRevision(string id) => id switch
     {
@@ -299,9 +303,11 @@ public class CardOverlayService
             if (_initialized) return;
 
             var enabled = true;
-            try { ManifestRevision = (await _settingsApi.GetContractCapabilitiesAsync(ct)).Revision; _manifestUnavailable = false; }
+            var manifestRevision = 0;
+            var manifestUnavailable = false;
+            try { manifestRevision = (await _settingsApi.GetContractCapabilitiesAsync(context, ct)).Revision; }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch { ManifestRevision = 0; _manifestUnavailable = true; }
+            catch { manifestUnavailable = true; }
             var document = BuildDefaultDocument();
             try
             {
@@ -336,17 +342,21 @@ public class CardOverlayService
             var generalAvailable = false;
             try
             {
-                var keys = ManifestRevision >= 8 ? new[] { "ui.card_quick_actions_enabled", "ui.card_quick_actions", "ui.card_overlays_enabled", "ui.card_overlays" } : new[] { "ui.card_overlays" };
+                var keys = manifestRevision >= 8 ? new[] { "ui.card_quick_actions_enabled", "ui.card_quick_actions", "ui.card_overlays_enabled", "ui.card_overlays" } : new[] { "ui.card_overlays" };
                 var effective = await _settingsApi.GetContractEffectiveSettingsAsync(keys, ct: ct);
                 profileEnabled = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_overlays_enabled")?.Value.ValueKind != JsonValueKind.False;
                 quickEnabled = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_quick_actions_enabled")?.Value.ValueKind != JsonValueKind.False;
                 quickMode = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_quick_actions")?.Value.GetString() ?? "both";
                 hasOverride = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_overlays")?.Scope == "profile";
-                generalAvailable = ManifestRevision >= 8;
+                generalAvailable = manifestRevision >= 8;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { }
+            ct.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _loadGeneration) || !_settingsApi.IsCurrentContext(context)) return;
+            ManifestRevision = manifestRevision;
+            _manifestUnavailable = manifestUnavailable;
+            _manifestContext = manifestUnavailable ? null : context;
             _enabled = enabled;
             _document = document;
             ProfileBadgesEnabled = profileEnabled;
@@ -367,6 +377,7 @@ public class CardOverlayService
         Interlocked.Increment(ref _loadGeneration);
         _initialized = false;
         _manifestUnavailable = false;
+        _manifestContext = null;
         ManifestRevision = 0;
         _enabled = true;
         _document = BuildDefaultDocument();
@@ -378,23 +389,47 @@ public class CardOverlayService
 
     public async Task SaveAsync(CardOverlayPrefs prefs, CancellationToken ct = default)
     {
-        if (_manifestUnavailable)
+        var context = _settingsApi.CaptureContext();
+        var generation = Volatile.Read(ref _loadGeneration);
+        // Finish any preference reload before replacing its document, so its
+        // general preferences and manifest are not left at invalidation defaults.
+        await EnsureLoadedAsync(ct);
+        await _initLock.WaitAsync(ct);
+        try
         {
-            // A transient failure is not proof of an older contract. Retry before
-            // serializing so a save cannot downgrade the server's stored rails.
-            var context = _settingsApi.CaptureContext();
-            var capabilities = await _settingsApi.GetContractCapabilitiesAsync(context, ct);
-            ct.ThrowIfCancellationRequested();
-            if (_settingsApi.CaptureContext() != context) throw new OperationCanceledException();
-            ManifestRevision = capabilities.Revision;
-            _manifestUnavailable = false;
+            void RequireCurrentLoad()
+            {
+                ct.ThrowIfCancellationRequested();
+                if (generation != Volatile.Read(ref _loadGeneration) || !_settingsApi.IsCurrentContext(context))
+                    throw new OperationCanceledException("Card overlay preferences changed. Reload before saving.", ct);
+            }
+
+            var manifestRevision = ManifestRevision;
+            RequireCurrentLoad();
+            if (_manifestContext != context)
+            {
+                // Unknown or unavailable is not proof of an older contract.
+                var capabilities = await _settingsApi.GetContractCapabilitiesAsync(context, ct);
+                RequireCurrentLoad();
+                manifestRevision = capabilities.Revision;
+                ManifestRevision = manifestRevision;
+                _manifestUnavailable = false;
+                _manifestContext = context;
+            }
+            var json = SerializeForRevision(NormalizeDocument(prefs), manifestRevision);
+            RequireCurrentLoad();
+            await _settingsApi.SetContractSettingValueAsync(context, "ui.card_overlays", "profile",
+                JsonSerializer.Deserialize<JsonElement>(json), ct: ct);
+            RequireCurrentLoad();
+            Interlocked.Increment(ref _loadGeneration);
+            _document = ParsePrefs(json)!;
+            _initialized = true;
+            HasProfileOverride = true;
         }
-        var json = SerializeForRevision(NormalizeDocument(prefs), ManifestRevision);
-        await _settingsApi.PutSettingAsync("card_overlays", json, ct);
-        Interlocked.Increment(ref _loadGeneration);
-        _document = ParsePrefs(json)!;
-        _initialized = true;
-        HasProfileOverride = true;
+        finally
+        {
+            _initLock.Release();
+        }
         Changed?.Invoke();
     }
 
@@ -555,7 +590,7 @@ public class CardOverlayService
             ? root["preset"]?.GetValue<string>() ?? "classic" : prefs.Preset;
         root["order"] = JsonSerializer.SerializeToNode(prefs.Order.Where(id =>
             manifestRevision >= IntroducedInRevision(id) || items.ContainsKey(id)));
-        if (root["items"] == null) root["items"] = items;
+        if (root["items"] is not JsonObject) root["items"] = items;
         return root.ToJsonString();
     }
 

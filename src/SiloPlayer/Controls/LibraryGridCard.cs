@@ -826,7 +826,8 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         _overlayBottomRight.Margin = new Thickness(edge);
         _overlayLeftEdge.Margin = _overlayRightEdge.Margin = new Thickness(edge);
         _watchStatus.Update(MediaItem?.UserState, _overlayGeometry, borderInset: 0);
-        _overlayTopLeft.MaxWidth = Math.Max(0, Width - 2 - 2 * edge - _watchStatus.ReservedWidth - _overlayGeometry.StackGap);
+        if (_watchStatus.Visibility == Visibility.Visible)
+            _overlayTopLeft.MaxWidth = Math.Max(0, Width - 2 - 2 * edge - _watchStatus.ReservedWidth - _overlayGeometry.StackGap);
         if (App.Services.GetRequiredService<CardOverlayService>().ManifestRevision < 25 && _watchStatus.Visibility == Visibility.Visible)
             _overlayTopRight.Margin = new Thickness(edge, edge + _overlayGeometry.WatchStatusSize + _overlayGeometry.StackGap, edge, edge);
     }

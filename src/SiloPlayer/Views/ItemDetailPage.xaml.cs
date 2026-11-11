@@ -8754,7 +8754,7 @@ public sealed partial class ItemDetailPage : Page
             foreach (var definition in service.GetOrderedDefinitions())
             {
                 if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-                if (global::SiloPlayer.Services.OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, prefs, service.ManifestRevision)) continue;
+                if (service.SuppressesStandalone(definition.Id, prefs)) continue;
                 var value = definition.GetValue(data);
                 if (string.IsNullOrWhiteSpace(value)) continue;
                 var position = service.DisplayPosition(config.Position);

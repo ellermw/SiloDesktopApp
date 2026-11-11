@@ -62,7 +62,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         OverlayBottomRight.Margin = new Thickness(edge);
         OverlayLeftEdge.Margin = OverlayRightEdge.Margin = new Thickness(edge);
         WatchStatus.Update(MediaItem?.UserState, _overlayGeometry);
-        OverlayTopLeft.MaxWidth = Math.Max(0, Width - 2 * edge - WatchStatus.ReservedWidth - _overlayGeometry.StackGap);
+        if (WatchStatus.Visibility == Visibility.Visible)
+            OverlayTopLeft.MaxWidth = Math.Max(0, Width - 2 * edge - WatchStatus.ReservedWidth - _overlayGeometry.StackGap);
         if (App.Services.GetRequiredService<CardOverlayService>().ManifestRevision < 25 && WatchStatus.Visibility == Visibility.Visible)
             OverlayTopRight.Margin = new Thickness(edge, edge + _overlayGeometry.WatchStatusSize + _overlayGeometry.StackGap, edge, edge);
     }

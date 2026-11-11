@@ -199,6 +199,140 @@ public sealed class CardOverlayRevisionTests
         Assert.Contains("left-edge", wire.Saved);
     }
 
+    [Theory]
+    [InlineData("plate")]
+    [InlineData("band")]
+    public async Task SaveDuringPreferenceReloadWaitsForManifestAndGeneralPreferences(string preset)
+    {
+        using var wire = new OverlayWire(26, """
+            {"version":2,"preset":"classic","items":{
+              "year":{"enabled":true,"position":"left-edge"},
+              "request_status":{"enabled":true,"position":"right-edge"},
+              "resolution_hdr_audio":{"enabled":false,"position":"left-edge"}}}
+            """);
+        var service = await wire.LoadAsync();
+        var draft = service.GetDocument() with { Preset = preset, Order = ["resolution_hdr_audio", "year"] };
+        draft.Items["resolution_hdr_audio"] = draft.Items["resolution_hdr_audio"] with { Enabled = true };
+        wire.EffectiveSettings = [
+            new { key = "ui.card_overlays_enabled", value = false },
+            new { key = "ui.card_quick_actions", value = "watched" },
+        ];
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCapabilities = async ct =>
+        {
+            entered.TrySetResult(true);
+            await release.Task.WaitAsync(ct);
+        };
+        var reload = service.RefreshPreferencesAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var save = service.SaveAsync(draft);
+        try
+        {
+            Assert.Null(wire.Saved);
+            Assert.False(save.IsCompleted);
+        }
+        finally { release.TrySetResult(true); }
+        await Task.WhenAll(reload, save).WaitAsync(TimeSpan.FromSeconds(5));
+
+        using var saved = JsonDocument.Parse(wire.Saved!);
+        Assert.Equal(preset, saved.RootElement.GetProperty("preset").GetString());
+        Assert.Equal(new[] { "resolution_hdr_audio", "year" },
+            saved.RootElement.GetProperty("order").EnumerateArray().Select(id => id.GetString()));
+        var items = saved.RootElement.GetProperty("items");
+        Assert.Equal("left-edge", items.GetProperty("year").GetProperty("position").GetString());
+        Assert.Equal("right-edge", items.GetProperty("request_status").GetProperty("position").GetString());
+        Assert.True(items.GetProperty("resolution_hdr_audio").GetProperty("enabled").GetBoolean());
+        Assert.Equal(26, service.ManifestRevision);
+        Assert.False(service.ProfileBadgesEnabled);
+        Assert.Equal("watched", service.QuickActionMode);
+        Assert.True(service.GeneralPreferencesAvailable);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StaleLoadCannotPublishItsManifestAfterInvalidationOrContextChange(bool changeContext)
+    {
+        using var wire = new OverlayWire(26, """
+            {"version":2,"preset":"classic","items":{"year":{"enabled":true,"position":"right-edge"}}}
+            """);
+        var service = await wire.LoadAsync();
+        var draft = service.GetDocument();
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Revision = 24;
+        wire.BeforeCapabilities = async ct =>
+        {
+            entered.TrySetResult(true);
+            await release.Task.WaitAsync(ct);
+        };
+        service.Invalidate();
+        var staleLoad = service.EnsureLoadedAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        service.Invalidate();
+        if (changeContext) wire.Client.SetBaseUrl("https://other.fixture.invalid");
+        wire.Revision = 26;
+        wire.BeforeCapabilities = null;
+        release.TrySetResult(true);
+        await staleLoad.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, service.ManifestRevision);
+        Assert.False(service.IsLoaded);
+        Assert.False(service.OffersOverlay("resolution_hdr_audio"));
+
+        await service.SaveAsync(draft);
+        using var saved = JsonDocument.Parse(wire.Saved!);
+        Assert.Equal(26, service.ManifestRevision);
+        Assert.Equal("right-edge", saved.RootElement.GetProperty("items").GetProperty("year").GetProperty("position").GetString());
+    }
+
+    [Theory]
+    [InlineData(25, false, false)]
+    [InlineData(26, false, true)]
+    [InlineData(26, true, true)]
+    public async Task CombinedSuppressionFollowsAvailabilityWhenCapabilitiesFail(int revision, bool failCapabilities, bool offered)
+    {
+        using var wire = new OverlayWire(revision, """
+            {"version":2,"preset":"classic","items":{"resolution_hdr_audio":{"enabled":true,"position":"top-left"}}}
+            """) { FailCapabilities = failCapabilities };
+        var service = await wire.LoadAsync();
+        var prefs = service.GetDocument().Items;
+        Assert.Equal(offered, service.OffersOverlay("resolution_hdr_audio"));
+        foreach (var id in new[] { "resolution", "hdr", "audio", "resolution_hdr" })
+            Assert.Equal(offered, service.SuppressesStandalone(id, prefs));
+        Assert.False(service.SuppressesStandalone("video_codec", prefs));
+        Assert.True(prefs["resolution"].Enabled);
+        Assert.True(prefs["hdr"].Enabled);
+        Assert.True(prefs["audio"].Enabled);
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("\"future-shape\"")]
+    [InlineData("42")]
+    [InlineData("true")]
+    [InlineData("null")]
+    public async Task SaveReplacesNonObjectItemsWithTheEditedBadgeMap(string items)
+    {
+        using var wire = new OverlayWire(26, $$$$"""
+            {"version":2,"preset":"classic","future_root":7,"items":{{{{items}}}},
+             "year":{"enabled":false,"position":"top-left"}}
+            """);
+        var service = await wire.LoadAsync();
+        var draft = service.GetDocument();
+        Assert.False(draft.Items["year"].Enabled);
+        draft.Items["year"] = new(true, OverlayPosition.LeftEdge, "#123456", false);
+        await service.SaveAsync(draft);
+        using var saved = JsonDocument.Parse(wire.Saved!);
+        var year = saved.RootElement.GetProperty("items").GetProperty("year");
+        Assert.True(year.GetProperty("enabled").GetBoolean());
+        Assert.Equal("left-edge", year.GetProperty("position").GetString());
+        Assert.Equal("#123456", year.GetProperty("accentColor").GetString());
+        Assert.False(year.GetProperty("showIcon").GetBoolean());
+        Assert.Equal(7, saved.RootElement.GetProperty("future_root").GetInt32());
+        Assert.True(service.GetDocument().Items["year"].Enabled);
+    }
+
     [Fact]
     public void UnwatchClearsSeriesCountsEvenWhenAlreadyUnwatched()
     {
@@ -227,11 +361,15 @@ public sealed class CardOverlayRevisionTests
     {
         public string? Saved;
         public bool FailCapabilities;
+        public int Revision = revision;
+        public Func<CancellationToken, Task>? BeforeCapabilities;
+        public object[] EffectiveSettings = [];
+        public SiloApiClient Client { get; private set; } = null!;
         public async Task<CardOverlayService> LoadAsync()
         {
-            var api = new SiloApiClient(new HttpClient(this, disposeHandler: false));
-            api.SetBaseUrl("https://fixture.invalid");
-            var service = new CardOverlayService(new SettingsApi(api));
+            Client = new SiloApiClient(new HttpClient(this, disposeHandler: false));
+            Client.SetBaseUrl("https://fixture.invalid");
+            var service = new CardOverlayService(new SettingsApi(Client));
             await service.EnsureLoadedAsync();
             return service;
         }
@@ -246,14 +384,18 @@ public sealed class CardOverlayRevisionTests
                 Saved = payload.RootElement.GetProperty("value").GetRawText();
                 body = new { };
             }
-            else if (path.EndsWith("/contract/capabilities") && FailCapabilities)
-                return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             else if (path.EndsWith("/contract/capabilities"))
-                body = new { api_version = 1, manifest_revision = revision, supports_batched_effective = true };
+            {
+                var capturedRevision = Revision;
+                if (BeforeCapabilities is { } pause) await pause(ct);
+                if (FailCapabilities)
+                    return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+                body = new { api_version = 1, manifest_revision = capturedRevision, supports_batched_effective = true };
+            }
             else if (path.EndsWith("/overlay-config")) body = new { enabled = true };
             else if (path.EndsWith("/values/ui.card_overlays"))
                 body = new { key = "ui.card_overlays", value = JsonSerializer.Deserialize<JsonElement>(document) };
-            else if (path.EndsWith("/values/effective")) body = new { items = Array.Empty<object>() };
+            else if (path.EndsWith("/values/effective")) body = new { items = EffectiveSettings };
             else throw new InvalidOperationException("Unexpected fixture route " + path);
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
         }

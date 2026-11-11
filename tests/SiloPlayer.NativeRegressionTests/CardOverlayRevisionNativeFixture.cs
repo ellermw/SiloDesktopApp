@@ -72,6 +72,22 @@ internal static class CardOverlayRevisionNativeFixture
             var leftRail = (StackPanel)poster.FindName("OverlayLeftEdge");
             Check(leftRail.Children.Count == 1 && ((StackPanel)((Border)leftRail.Children[0]).Child).Children.OfType<TextBlock>().Single().Text == "4K DV ATMOS",
                 "combined badge uses available resolution, HDR and audio");
+            Set(service, "_manifestUnavailable", true);
+            typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, 0);
+            try
+            {
+                poster.RefreshState(); library.RefreshState();
+                Check(((Panel)poster.FindName("OverlayTopLeft")).Children.Count == 1 &&
+                    ((Panel)Get(library, "_overlayTopLeft")!).Children.Count == 1,
+                    "unavailable capabilities still suppress standalone technical badges on both poster hosts");
+                Check(leftRail.Children.Count == 1 && ((Panel)Get(library, "_overlayLeftEdge")!).Children.Count == 1,
+                    "unavailable capabilities retain the combined technical badge");
+            }
+            finally
+            {
+                Set(service, "_manifestUnavailable", false);
+                typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, 26);
+            }
             foreach (var width in new[] { 96d, 300d, 185d })
             {
                 poster.SetCatalogGridLayout(width);
@@ -133,6 +149,9 @@ internal static class CardOverlayRevisionNativeFixture
         typeof(LibraryGridCard).GetMethod("UpdateQuickActionState", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(library, [item]);
         Check(((StackPanel)poster.FindName("OverlayTopRight")).Margin.Top == posterRow.Margin.Top &&
             ((StackPanel)Get(library, "_overlayTopRight")!).Margin.Top == libraryRow.Margin.Top, "legacy corner shift resets after the status disappears");
+        Check(Math.Abs(posterRow.MaxWidth - (poster.Width - 2 * posterRow.Margin.Left)) < 0.01 &&
+            Math.Abs(libraryRow.MaxWidth - (library.Width - 2 - 2 * libraryRow.Margin.Left)) < 0.01,
+            "no-count cards use the full top-left badge width without a hidden status reservation or gap");
         item.UserState.WatchedCount = 1; item.UserState.UnplayedCount = 3;
         typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, 26);
         poster.RefreshState(); library.RefreshState();
