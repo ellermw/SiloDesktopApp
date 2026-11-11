@@ -142,7 +142,7 @@ public sealed class CollectionsV2Tests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task LatestWallBaselineAllowsRetryAfterAStaleHeaderRevision(bool delete)
+    public async Task LatestWallBaselineAllowsFirstWriteAfterAStaleHeaderRevision(bool delete)
     {
         var changed = false;
         var tags = new List<string>();
@@ -167,12 +167,42 @@ public sealed class CollectionsV2Tests
         Task Write() => delete ? api.DeleteCollectionAsync("c1") : api.UpdateCollectionAsync("c1", new() { Name = "Saved" });
         await api.GetCollectionAsync("c1");
         changed = true;
-        await api.GetCollectionsAsync();   // the wall has observed the change, but the header ETag is still A
-        var conflict = await Assert.ThrowsAsync<ApiException>(Write);
-        Assert.Equal(412, conflict.StatusCode);
-        Assert.Equal(["\"A\""], tags);
+        await api.GetCollectionsAsync();   // the wall observes the change and retires the header's ETag A
         await Write();
-        Assert.Equal(["\"A\"", "\"B\""], tags);
+        Assert.Equal(["\"B\""], tags);   // the first write uses the current revision, with no rejected write or retry
+    }
+
+    [Theory]
+    [InlineData("patch")]
+    [InlineData("put")]
+    [InlineData("delete")]
+    public async Task ServerWriteConflictsUseTheActionableReloadMessage(string method)
+    {
+        var writes = 0;
+        var api = Api(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = Json(method == "put" ? """{"ordered_ids":[]}""" : """{"id":"c1"}""");
+                response.Headers.ETag = new("\"revision\"");
+                return response;
+            }
+            writes++;
+            return new(HttpStatusCode.PreconditionFailed)
+            {
+                Content = new StringContent("""{"status":412,"detail":"Raw server conflict"}"""),
+            };
+        });
+        var conflict = await Assert.ThrowsAsync<ApiException>(() => method switch
+        {
+            "patch" => api.UpdateCollectionAsync("c1", new() { IsShared = true }),
+            "put" => api.ReorderCollectionGroupsAsync([]),
+            _ => api.DeleteCollectionAsync("c1"),
+        });
+        Assert.Equal(412, conflict.StatusCode);
+        Assert.Equal("precondition_failed", conflict.ErrorCode);
+        Assert.Equal("Collections changed elsewhere. Reload before saving.", conflict.Message);
+        Assert.Equal(1, writes);   // conflicts are never retried automatically
     }
 
     [Fact]

@@ -34,15 +34,21 @@ public static class CollectionsWall
 
     /// <summary>
     /// The pills. All, Mine, then Shared and Server when the account has them, then one pill per
-    /// library once there is more than one. Totals are per library and a collection can be in
-    /// several, so the combined count is known only for a lone library or when all totals are zero.
+    /// library once there is more than one. Personal and server collections can overlap, so All
+    /// counts distinct ids only when every library's cards are present; otherwise it stays unknown
+    /// unless either the personal or server set is empty.
     /// </summary>
-    public static IReadOnlyList<Pill> Pills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount)
+    public static IReadOnlyList<Pill> Pills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount,
+        IReadOnlyCollection<string>? personalIds = null)
     {
         var serverCount = ServerCount(libraries);
+        int? allCount = serverCount == 0 ? ownCount + sharedCount : ownCount + sharedCount == 0 ? serverCount : null;
+        if (personalIds != null && libraries.All(library => library.Collections.Count >= library.TotalCount))
+            allCount = personalIds.Concat(libraries.SelectMany(library => library.Collections.Select(collection => collection.Id)))
+                .Distinct(StringComparer.Ordinal).Count();
         var pills = new List<Pill>
         {
-            new(All, "All", serverCount is { } server ? ownCount + sharedCount + server : null),
+            new(All, "All", allCount),
             new(Mine, "Mine", ownCount),
         };
         if (sharedCount > 0) pills.Add(new(Shared, "Shared", sharedCount));

@@ -29,8 +29,8 @@ public class CollectionsApi(SiloApiClient client)
         var context = client.CaptureContext();
         var result = await client.GetWithETagAsync<Collection>(path, ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-        if (result.ETag != null) _revisions[path] = (context, result.ETag);
         RememberBaseline(path, result.Body, context);
+        if (result.ETag != null) _revisions[path] = (context, result.ETag);
         return result.Body;
     }
 
@@ -253,7 +253,12 @@ public class CollectionsApi(SiloApiClient client)
 
     private static string OrderPath(string? groupId) => "/api/v2/collections/order" + (groupId == null ? "" : "?group_id=" + Uri.EscapeDataString(groupId));
     private void RememberBaseline(string path, object body, ApiRequestContext context)
-        => _baselines[path] = (context, Fingerprint(path, JsonSerializer.SerializeToElement(body, V2Json.Options)));
+    {
+        // A refreshed body must not inherit a revision from an earlier header or write.
+        // Reads/writes that also return an ETag install it after remembering their baseline.
+        _revisions.TryRemove(path, out _);
+        _baselines[path] = (context, Fingerprint(path, JsonSerializer.SerializeToElement(body, V2Json.Options)));
+    }
     private static string Fingerprint(string path, JsonElement body)
     {
         string Value(string name) => body.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null ? value.ToString() : "";
@@ -309,9 +314,8 @@ public class CollectionsApi(SiloApiClient client)
         {
             var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-            _revisions.TryRemove(path, out _);
-            if (result.ETag != null) _revisions[path] = (context, result.ETag);
             RememberBaseline(path, result.Body!, context);
+            if (result.ETag != null) _revisions[path] = (context, result.ETag);
             return result.Body;
         }
         catch (ApiException ex) when (ex.StatusCode == 412)
@@ -319,7 +323,7 @@ public class CollectionsApi(SiloApiClient client)
             // Retire a rejected server revision, not the displayed baseline. A retry must
             // still reject concurrent edits until the caller reloads.
             _revisions.TryRemove(path, out _);
-            throw;
+            throw new ApiException("precondition_failed", "Collections changed elsewhere. Reload before saving.", 412);
         }
     }
     private async Task PutAsync(string path, object body, CancellationToken ct)
@@ -332,7 +336,7 @@ public class CollectionsApi(SiloApiClient client)
         catch (ApiException ex) when (ex.StatusCode == 412)
         {
             _revisions.TryRemove(path, out _);
-            throw;
+            throw new ApiException("precondition_failed", "Collections changed elsewhere. Reload before saving.", 412);
         }
         _revisions.TryRemove(path, out _);
     }
@@ -346,7 +350,7 @@ public class CollectionsApi(SiloApiClient client)
         catch (ApiException ex) when (ex.StatusCode == 412)
         {
             _revisions.TryRemove(path, out _);
-            throw;
+            throw new ApiException("precondition_failed", "Collections changed elsewhere. Reload before saving.", 412);
         }
         _revisions.TryRemove(path, out _);
     }

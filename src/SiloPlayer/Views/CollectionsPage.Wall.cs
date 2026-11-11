@@ -39,6 +39,8 @@ public sealed partial class CollectionsPage
         CollectionsSubtitle.Text = multiple ? "Yours, the ones other profiles share with you, and the server's." : "Yours and the server's.";
         var shared = partition.Shared.SelectMany(group => group.Collections.Select(collection => (Collection: collection, Owner: group.Name))).ToArray();
         var libraries = ViewModel.ServerLibraries.ToArray();
+        var personalIds = partition.Own.Select(collection => collection.Id).Concat(shared.Select(entry => entry.Collection.Id))
+            .ToHashSet(StringComparer.Ordinal);
 
         var loading = new CollectionsWall.Loading(ViewModel.IsLoading, ViewModel.IsLoadingProfiles, ViewModel.IsLoadingServerCollections);
         _show = CollectionsWall.Resolve(_requestedShow, libraries, shared.Length, loading);
@@ -52,7 +54,7 @@ public sealed partial class CollectionsPage
         if (!canAddGroup) AddGroupEditor.Visibility = Visibility.Collapsed;
         AddGroupButton.Visibility = canAddGroup && AddGroupEditor.Visibility != Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
 
-        BuildFilterPills(libraries, partition.Own.Count, shared.Length);
+        BuildFilterPills(libraries, partition.Own.Count, shared.Length, personalIds);
         var empty = CollectionsWall.EmptyMessage(_show, ViewModel.PersonalLoaded, ViewModel.ProfilesLoaded, ViewModel.ServerLoaded,
             partition.Own.Count, shared.Length, picked?.TotalCount ?? CollectionsWall.ServerCount(libraries));
         CollectionsEmptyLine.Text = empty ?? "";
@@ -80,7 +82,11 @@ public sealed partial class CollectionsPage
             if (showShared) cards.AddRange(shared.Select(entry => (FrameworkElement)BuildSharedCollectionCard(entry.Collection, entry.Owner)));
         }
         if (showServer)
-            cards.AddRange(ViewModel.GetServerCollectionCards(picked?.LibraryId).Select(card => (FrameworkElement)BuildServerCollectionCard(card.Library, card.Collection)));
+            cards.AddRange(ViewModel.GetServerCollectionCards(picked?.LibraryId)
+                // In All, keep the personal card (including its owner actions) instead of a second server card.
+                // While personal cards load, the server cards remain independently available.
+                .Where(card => _show != CollectionsWall.All || personalLoading || !personalIds.Contains(card.Collection.Id))
+                .Select(card => (FrameworkElement)BuildServerCollectionCard(card.Library, card.Collection)));
         CollectionsGrid.Children.Add(BuildPosterBoard(cards));
         BuildWallStatus(showServer ? (picked == null ? libraries : [picked]) : [], picked, showServer);
 
@@ -95,12 +101,12 @@ public sealed partial class CollectionsPage
         }
     }
 
-    private void BuildFilterPills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount)
+    private void BuildFilterPills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount, IReadOnlyCollection<string> personalIds)
     {
         CollectionsFilterPills.Children.Clear();
         CollectionsFilterScroll.Visibility = CollectionsWall.ShowPills(libraries, sharedCount) ? Visibility.Visible : Visibility.Collapsed;
         if (CollectionsFilterScroll.Visibility == Visibility.Collapsed) return;
-        foreach (var pill in CollectionsWall.Pills(libraries, ownCount, sharedCount))
+        foreach (var pill in CollectionsWall.Pills(libraries, ownCount, sharedCount, personalIds))
         {
             if (pill.Separated)
                 CollectionsFilterPills.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center, Background = (Brush)Application.Current.Resources["BorderBrush"] });

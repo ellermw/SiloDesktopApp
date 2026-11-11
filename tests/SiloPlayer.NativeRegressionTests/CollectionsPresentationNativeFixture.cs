@@ -53,6 +53,7 @@ internal static class CollectionsPresentationNativeFixture
         {
             await fixture.WallFullWidthAndPosterSizeAsync();
             await fixture.ShowPillsAsync();
+            await fixture.IncludedPersonalCollectionsAsync();
             await fixture.EmptyStatesAsync();
             await fixture.GroupsSurviveRebuildAsync();
             await fixture.ServerPaginationAsync();
@@ -167,6 +168,37 @@ internal static class CollectionsPresentationNativeFixture
                 Log("PASS: unavailable filters fall back to All; a navigation-supplied library is honoured.");
             }
             finally { parent.Children.Remove(libraryFrame); }
+        }
+
+        internal async Task IncludedPersonalCollectionsAsync()
+        {
+            wire.Reset(own: 1, shared: 1, libraries: 0);
+            var (frame, page) = await OpenWall(1280, 900);
+            try
+            {
+                await Until(() => page.ViewModel.PersonalLoaded && !page.ViewModel.LoadCollectionsCommand.IsRunning);
+                page.ViewModel.Collections.Single(collection => collection.Id == "own-1").IncludeInServerCollections = true;
+                page.ViewModel.ServerLibraries.Add(new()
+                {
+                    LibraryId = 1, LibraryName = "Movies", TotalCount = 3,
+                    Collections = [new() { Id = "own-1", Title = "Included own" }, new() { Id = "sh-1", Title = "Included shared" },
+                        new() { Id = "server-only", Title = "Server only" }],
+                });
+                var grid = (StackPanel)page.FindName("CollectionsGrid");
+                await Until(() => OpenButtons(grid).Count() == 3 && PillCount(page, "All") == "3");
+                Check(OpenButtons(grid).Select(Auto.GetName).SequenceEqual(["Open Weekend picks 1", "Open Family movie night", "Open Server only"]),
+                    "All keeps the personal cards instead of their server duplicates.");
+                Check(Descendants<Button>(grid).Any(button => Auto.GetName(button) == "More for Weekend picks 1"), "The included own collection keeps its owner actions.");
+                Check(PillCount(page, "Mine") == "1" && PillCount(page, "Shared") == "1" && PillCount(page, "Server") == "3", "Only All merges personal and server identities.");
+                await Press(Pill(page, "Server"));
+                Check(Names(page).SequenceEqual(["Included own", "Included shared", "Server only"]), "Server still shows included personal collections when their personal cards are not rendered.");
+                await Press(Pill(page, "All"));
+                page.ViewModel.Groups.Add(new() { Id = "group", Name = "Group" });
+                await Until(() => grid.Children.OfType<StackPanel>().Any());
+                Check(OpenButtons(grid).Count() == 3 && PillCount(page, "All") == "3", "Grouped personal posters also suppress server duplicates and count once.");
+            }
+            finally { parent.Children.Remove(frame); }
+            Log("PASS: included own/shared collections appear and count once in All, preserve personal actions and groups, and remain available in Server.");
         }
 
         internal async Task EmptyStatesAsync()

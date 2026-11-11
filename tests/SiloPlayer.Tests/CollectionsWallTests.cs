@@ -22,7 +22,8 @@ public sealed class CollectionsWallTests
     [Fact]
     public void PillsCountOnlyWhatTheyCanKnow()
     {
-        var one = CollectionsWall.Pills([Library(1, "Movies", 9)], ownCount: 3, sharedCount: 2);
+        var one = CollectionsWall.Pills([Library(1, "Movies", 9, Enumerable.Range(1, 9).Select(id => "server-" + id).ToArray())],
+            ownCount: 3, sharedCount: 2, personalIds: ["own-1", "own-2", "own-3", "shared-1", "shared-2"]);
         Assert.Equal(["all", "mine", "shared", "server"], one.Select(p => p.Value));
         Assert.Equal([3 + 2 + 9, 3, 2, 9], one.Select(p => p.Count!.Value));
 
@@ -35,6 +36,31 @@ public sealed class CollectionsWallTests
 
         var none = CollectionsWall.Pills([], 4, 0);
         Assert.Equal(["all", "mine"], none.Select(p => p.Value)); Assert.Equal(4, none[0].Count);
+    }
+
+    [Fact]
+    public void AllCountsIncludedPersonalCollectionsOnlyOnceAcrossServerLibraries()
+    {
+        var libraries = new[] { Library(1, "Movies", 3, "own", "shared", "server"), Library(2, "Shows", 2, "own", "server") };
+        var pills = CollectionsWall.Pills(libraries, ownCount: 1, sharedCount: 1, personalIds: ["own", "shared"]);
+        Assert.Equal(3, pills.Single(pill => pill.Value == CollectionsWall.All).Count);
+        Assert.Equal(1, pills.Single(pill => pill.Value == CollectionsWall.Mine).Count);
+        Assert.Equal(1, pills.Single(pill => pill.Value == CollectionsWall.Shared).Count);
+
+        var singleLibrary = CollectionsWall.Pills([libraries[0]], 1, 1, ["own", "shared"]);
+        Assert.Equal(3, singleLibrary.Single(pill => pill.Value == CollectionsWall.All).Count);
+        Assert.Equal(3, singleLibrary.Single(pill => pill.Value == CollectionsWall.Server).Count);
+    }
+
+    [Fact]
+    public void AllOmitsTheCountWhenUnloadedServerCardsCouldOverlapPersonalCollections()
+    {
+        var libraries = new[] { Library(1, "Movies", 3, "own") };
+        var pills = CollectionsWall.Pills(libraries, 1, 0, ["own"]);
+        Assert.Null(pills.Single(pill => pill.Value == CollectionsWall.All).Count);
+        Assert.Equal(3, pills.Single(pill => pill.Value == CollectionsWall.Server).Count);
+        Assert.Equal(3, CollectionsWall.Pills(libraries, 0, 0, [])[0].Count);   // no personal/server overlap to resolve
+        Assert.Null(CollectionsWall.Pills(libraries, 1, 0)[0].Count);   // counts alone cannot establish a distinct total
     }
 
     [Theory]
