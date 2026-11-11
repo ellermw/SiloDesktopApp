@@ -7,7 +7,10 @@ namespace SiloPlayer.Core.Services;
 /// <summary>How the server answered the binding negotiation of one phone sign-in setup.</summary>
 public enum DeviceLoginBinding
 {
-    /// <summary>The server advertised binding; the start and every poll carry the setup secret.</summary>
+    /// <summary>
+    /// The server advertised binding; the start and every poll carry the setup secret.
+    /// This is what was negotiated and sent, not proof that the server enforces it.
+    /// </summary>
     Bound,
     /// <summary>The server answered that it does not bind setups.</summary>
     Declined,
@@ -19,6 +22,16 @@ public enum DeviceLoginBinding
 /// Owns one phone sign-in setup. Its secret stays in memory and is shared by all
 /// requests/retries in this setup; replacing or finishing the setup disposes it.
 /// </summary>
+/// <remarks>
+/// When bound, the start sends <c>binding</c>, the unpadded base64url SHA-256 of the
+/// secret, and every poll sends <c>binding_secret</c>, the unpadded base64url secret
+/// itself. The server is expected to hash the presented secret and compare it with the
+/// stored binding, so the two encodings differ on purpose and must only change together.
+/// These names and encodings are unverified against a pinned server revision (see "QA
+/// contract status" in docs/current-development.md). A server that advertises binding
+/// but ignores the fields is not detected here, and one that compares them verbatim
+/// refuses every poll with <c>device_binding_mismatch</c>.
+/// </remarks>
 public sealed class DeviceLoginSetup(AuthApi api, string server, Func<bool>? isCurrent = null) : IDisposable
 {
     private readonly object _gate = new();
