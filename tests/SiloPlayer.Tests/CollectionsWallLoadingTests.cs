@@ -50,6 +50,26 @@ public sealed class CollectionsWallLoadingTests
     }
 
     [Fact]
+    public async Task FirstServerFailureHasAnIndependentErrorAndRetryClearsIt()
+    {
+        using var wire = new Wire { FailServer = true }; var client = wire.Client();
+        var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.True(vm.PersonalLoaded); Assert.True(vm.ProfilesLoaded); Assert.False(vm.ServerLoaded);
+        Assert.Empty(vm.Collections); Assert.Empty(vm.ServerLibraries);
+        Assert.Null(vm.ErrorMessage);
+        Assert.StartsWith("Couldn't load server collections:", vm.ServerCollectionsErrorMessage);
+        Assert.False(vm.IsLoadingServerCollections);
+        Assert.Null(CollectionsWall.EmptyMessage("all", vm.PersonalLoaded, vm.ProfilesLoaded, vm.ServerLoaded, 0, 0, 0));
+
+        wire.FailServer = false;
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.True(vm.ServerLoaded);
+        Assert.Null(vm.ServerCollectionsErrorMessage);
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("all", vm.PersonalLoaded, vm.ProfilesLoaded, vm.ServerLoaded, 0, 0, 0));
+    }
+
+    [Fact]
     public async Task ARefreshThatFailsKeepsWhatAnEarlierReadLoaded()
     {
         using var wire = new Wire(); var client = wire.Client();

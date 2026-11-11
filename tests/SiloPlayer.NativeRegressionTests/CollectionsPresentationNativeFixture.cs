@@ -54,6 +54,7 @@ internal static class CollectionsPresentationNativeFixture
             await fixture.WallFullWidthAndPosterSizeAsync();
             await fixture.ShowPillsAsync();
             await fixture.EmptyStatesAsync();
+            await fixture.GroupsSurviveRebuildAsync();
             await fixture.ServerPaginationAsync();
             await fixture.HeroAsync();
             await fixture.HeroMoreActionsAsync();
@@ -222,6 +223,14 @@ internal static class CollectionsPresentationNativeFixture
                 await Until(() => viewModel.PersonalLoaded && !viewModel.IsLoadingServerCollections);
                 await Task.Delay(200);
                 Check(((TextBlock)serverFail.FindName("CollectionsEmptyLine")).Visibility == Visibility.Collapsed, "A failed server read must not say there are no collections at all.");
+                var status = (StackPanel)serverFail.FindName("ServerCollectionsRows");
+                await Until(() => ServerRows(serverFail).Any(button => Auto.GetName(button) == "Retry server collections"));
+                Check(Descendants<TextBlock>(status).Any(text => text.Text.StartsWith("Couldn't load server collections:")), "A first server-read failure must explain the blank wall.");
+                wire.FailServer = false;
+                await Press(ServerRows(serverFail).Single(button => Auto.GetName(button) == "Retry server collections"));
+                await Until(() => viewModel.ServerLoaded && ((TextBlock)serverFail.FindName("CollectionsEmptyLine")).Visibility == Visibility.Visible);
+                Check(!ServerRows(serverFail).Any(button => Auto.GetName(button) == "Retry server collections") && viewModel.ServerCollectionsErrorMessage == null,
+                    "Retry recovers the aggregate read and removes its error.");
             }
             finally { parent.Children.Remove(serverFailFrame); }
 
@@ -251,6 +260,43 @@ internal static class CollectionsPresentationNativeFixture
             }
             finally { parent.Children.Remove(personalFirstFrame); }
             Log("PASS: empty lines appear only after their reads succeed; no dashed New collection tile; personal and server cards load independently.");
+        }
+
+        internal async Task GroupsSurviveRebuildAsync()
+        {
+            wire.Reset(own: 1, shared: 1, libraries: 2);
+            var (frame, page) = await OpenWall(1280, 900);
+            try
+            {
+                await Until(() => page.ViewModel.PersonalLoaded && !page.ViewModel.LoadCollectionsCommand.IsRunning);
+                var add = (Button)page.FindName("AddGroupButton");
+                var editor = (StackPanel)page.FindName("AddGroupEditor");
+                Check(add.Visibility == Visibility.Visible, "The wall must offer Add group.");
+                await Press(add);
+                var input = (TextBox)page.FindName("AddGroupNameBox");
+                input.Text = "Weekend groups";
+                await page.ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
+                await Task.Delay(150);
+                Check(editor.Visibility == Visibility.Visible && input.Text == "Weekend groups", "A wall rebuild must not discard the open group editor.");
+                await Press(Descendants<Button>(editor).Single(button => Equals(button.Content, "Add")));
+                var grid = (StackPanel)page.FindName("CollectionsGrid");
+                await Until(() => page.ViewModel.Groups.Count == 1 && grid.Children.OfType<StackPanel>().Any(child => Auto.GetName(child) == "Weekend groups"));
+                await page.ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
+                await Layout(frame, 1280, 900);
+                var section = grid.Children.OfType<StackPanel>().Single(child => Auto.GetName(child) == "Weekend groups");
+                Check(Descendants<Button>(section).Any(button => Auto.GetName(button) == "Rename group")
+                    && Descendants<Button>(section).Any(button => Auto.GetName(button) == "Delete group"), "A rebuilt group exposes its editing controls.");
+                Check(OpenButtons(grid).Count() == 1 + 1 + 3, "Group sections must not hide or duplicate own, shared or server posters.");
+                var own = Descendants<Border>(grid).First(border => border.Tag is SiloPlayer.Core.Models.Collections.Collection { Id: "own-1" });
+                Check(((MenuFlyout)own.ContextFlyout).Items.OfType<MenuFlyoutSubItem>().Any(menu => menu.Text == "Move to group" && menu.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "Weekend groups")),
+                    "The owner card must offer the created group as a move target.");
+                await Press(Pill(page, "Shared"));
+                Check(add.Visibility == Visibility.Collapsed && !grid.Children.OfType<StackPanel>().Any(child => Auto.GetName(child) == "Weekend groups"), "Shared must not show the viewer's editable groups.");
+                await Press(Pill(page, "Mine"));
+                Check(add.Visibility == Visibility.Visible && grid.Children.OfType<StackPanel>().Any(child => Auto.GetName(child) == "Weekend groups"), "Mine restores group sections and Add group.");
+            }
+            finally { parent.Children.Remove(frame); }
+            Log("PASS: Add group creates a persistent section; rebuilds preserve the editor, group controls and owner move targets; filters preserve ownership.");
         }
 
         internal async Task ServerPaginationAsync()
@@ -829,6 +875,7 @@ internal static class CollectionsPresentationNativeFixture
         internal readonly List<string> BackdropRequests = [];
         internal readonly List<string> Paths = [];
         internal object? PersonalSnapshot;
+        private readonly List<object> _groups = [];
         private int _own, _shared, _libraries;
 
         internal int TabReads(int libraryId) { lock (_tabReads) return _tabReads.GetValueOrDefault(libraryId); }
@@ -837,7 +884,7 @@ internal static class CollectionsPresentationNativeFixture
             _own = own; _shared = shared; _libraries = libraries; SingleProfile = singleProfile;
             FailPersonal = FailServer = FailLibraryTab = false; PersonalGate = ServerGate = TabGate = BackdropGate = null; PersonalReads = ServerReads = 0;
             lock (_tabReads) _tabReads.Clear();
-            BackdropRequests.Clear(); _described.Clear(); PersonalSnapshot = null; lock (Paths) Paths.Clear();
+            BackdropRequests.Clear(); _described.Clear(); _groups.Clear(); PersonalSnapshot = null; lock (Paths) Paths.Clear();
             Imports = true; FailLibraries = FailSync = FailDelete = false; FirstOwnType = null; SyncStatus = "success"; SyncMessage = ""; SyncGate = DeleteGate = null; SnapshotReads = 0;
             lock (SyncRequests) { SyncRequests.Clear(); DeleteRequests.Clear(); CatalogRequests.Clear(); }
         }
@@ -880,7 +927,14 @@ internal static class CollectionsPresentationNativeFixture
                 PersonalReads++;
                 if (PersonalGate != null) await PersonalGate.Task.WaitAsync(ct);
                 if (FailPersonal) return Reply(new { message = "personal unavailable" }, HttpStatusCode.ServiceUnavailable);
-                body = new { items = Personal(), groups = Array.Empty<object>() };
+                body = new { items = Personal(), groups = _groups.ToArray() };
+            }
+            else if (path == "/api/v2/collections/groups" && request.Method == HttpMethod.Post)
+            {
+                using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                body = new { id = "group-" + (_groups.Count + 1), name = payload.RootElement.GetProperty("name").GetString(),
+                    slug = payload.RootElement.GetProperty("slug").GetString(), sort_order = _groups.Count };
+                _groups.Add(body);
             }
             else if (path == "/api/v2/collections/server")
             {

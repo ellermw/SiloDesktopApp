@@ -135,6 +135,9 @@ public partial class CollectionsViewModel : ObservableObject
     private string? _errorMessage;
 
     [ObservableProperty]
+    private string? _serverCollectionsErrorMessage;
+
+    [ObservableProperty]
     private bool _isLoadingTemplateFlow;
 
     [ObservableProperty]
@@ -177,6 +180,7 @@ public partial class CollectionsViewModel : ObservableObject
         IsLoading = !PersonalLoaded;
         IsLoadingServerCollections = !ServerLoaded;
         ErrorMessage = null;
+        ServerCollectionsErrorMessage = null;
         var referenceTask = LoadViewerReferencesAsync();
         // Both reads start together and settle independently: the server's cards do not wait for the
         // profile's own, and neither one's failure hides the other.
@@ -223,11 +227,12 @@ public partial class CollectionsViewModel : ObservableObject
                     if (Current()) ServerCollectionsChanged();
                 }
             }
-            catch
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Server collections are an independent, optional surface. A
-                // failure here must not hide the user's editable collections.
+                // Report this independent failure without hiding the personal cards.
+                if (Current()) ServerCollectionsErrorMessage = $"Couldn't load server collections: {ex.Message}";
             }
+            catch (OperationCanceledException) { }
             finally
             {
                 if (Current()) IsLoadingServerCollections = false;

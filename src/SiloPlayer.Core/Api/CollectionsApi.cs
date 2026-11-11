@@ -303,10 +303,10 @@ public class CollectionsApi(SiloApiClient client)
     }
     private async Task<T> PatchAsync<T>(string path, object body, CancellationToken ct)
     {
+        var context = client.CaptureContext();
+        var tag = await RevisionAsync(path, ct);
         try
         {
-            var context = client.CaptureContext();
-            var tag = await RevisionAsync(path, ct);
             var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
             _revisions.TryRemove(path, out _);
@@ -316,40 +316,36 @@ public class CollectionsApi(SiloApiClient client)
         }
         catch (ApiException ex) when (ex.StatusCode == 412)
         {
-            // Surface the conflict, then let an explicit retry read the current revision.
+            // Retire a rejected server revision, not the displayed baseline. A retry must
+            // still reject concurrent edits until the caller reloads.
             _revisions.TryRemove(path, out _);
-            _baselines.TryRemove(path, out _);
             throw;
         }
     }
     private async Task PutAsync(string path, object body, CancellationToken ct)
     {
+        var tag = await RevisionAsync(path, ct);
         try
         {
-            var tag = await RevisionAsync(path, ct);
             await client.PutWithETagAsync<JsonElement>(path, V2Json.Body(body), tag, ct);
         }
         catch (ApiException ex) when (ex.StatusCode == 412)
         {
             _revisions.TryRemove(path, out _);
-            _baselines.TryRemove(path, out _);
             throw;
         }
         _revisions.TryRemove(path, out _);
     }
     private async Task DeleteAsync(string path, CancellationToken ct)
     {
+        var tag = await RevisionAsync(path, ct);
         try
         {
-            var tag = await RevisionAsync(path, ct);
             await client.DeleteWithETagAsync(path, tag, ct);
         }
         catch (ApiException ex) when (ex.StatusCode == 412)
         {
-            // Keep the conflict visible, but let an explicit retry read the current revision.
-            // The old baseline must retire too, or it would reject that fresh read again.
             _revisions.TryRemove(path, out _);
-            _baselines.TryRemove(path, out _);
             throw;
         }
         _revisions.TryRemove(path, out _);

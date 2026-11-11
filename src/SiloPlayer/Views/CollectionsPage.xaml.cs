@@ -45,7 +45,7 @@ public sealed partial class CollectionsPage : Page
             if (args.PropertyName == nameof(ViewModel.IsEmpty))
                 DispatcherQueue.TryEnqueue(UpdateEmptyState);
             else if (args.PropertyName is nameof(ViewModel.IsLoadingServerCollections) or nameof(ViewModel.IsLoading) or nameof(ViewModel.IsLoadingProfiles)
-                or nameof(ViewModel.PersonalLoaded) or nameof(ViewModel.ProfilesLoaded) or nameof(ViewModel.ServerLoaded))
+                or nameof(ViewModel.PersonalLoaded) or nameof(ViewModel.ProfilesLoaded) or nameof(ViewModel.ServerLoaded) or nameof(ViewModel.ServerCollectionsErrorMessage))
                 DispatcherQueue.TryEnqueue(BuildServerCollectionRows);
             else if (args.PropertyName == nameof(ViewModel.Capabilities)) QueueCollectionBuild();
             else if (args.PropertyName == nameof(ViewModel.ServerCollectionRevision)) BuildServerCollectionRows();
@@ -441,7 +441,8 @@ public sealed partial class CollectionsPage : Page
 
     private UIElement BuildCollectionGroupSection(CollectionGroup? group, string title, IReadOnlyList<Collection> items)
     {
-        var section = new StackPanel { Spacing = 14, Margin = new Thickness(0, 0, 0, 28) };
+        var section = new StackPanel { Spacing = 14, Margin = new Thickness(0, 0, 0, 28), Tag = group };
+        AutomationProperties.SetName(section, title);
         section.AllowDrop = true;
         section.DragOver += (_, args) => args.AcceptedOperation = DataPackageOperation.Move;
         section.Drop += async (_, args) =>
@@ -451,7 +452,10 @@ public sealed partial class CollectionsPage : Page
             var payload = await args.DataView.GetTextAsync();
             if (payload.StartsWith(CollectionDragPrefix, StringComparison.Ordinal))
             {
-                await ViewModel.DropCollectionAsync(payload[CollectionDragPrefix.Length..], null, group?.Id);
+                var source = ViewModel.Collections.FirstOrDefault(collection => collection.Id == payload[CollectionDragPrefix.Length..]);
+                if (source != null && PersonalCollectionOwnership.IsOwn(source, App.Services.GetRequiredService<AuthService>().SelectedProfileId)
+                    && source.GroupId != group?.Id)
+                    await ViewModel.MoveCollectionToGroupAsync(source, group?.Id);
             }
             else if (group != null && payload.StartsWith(GroupDragPrefix, StringComparison.Ordinal))
             {
@@ -601,19 +605,7 @@ public sealed partial class CollectionsPage : Page
             return section;
         }
 
-        var repeater = new ItemsRepeater
-        {
-            ItemsSource = items.Select(BuildCollectionCard).ToList(),
-            Layout = new UniformGridLayout
-            {
-                MaximumRowsOrColumns = Math.Max(1, _collectionColumnCount),
-                MinItemWidth = 280,
-                MinColumnSpacing = 16,
-                MinRowSpacing = 16,
-                ItemsStretch = UniformGridLayoutItemsStretch.Fill
-            }
-        };
-        section.Children.Add(repeater);
+        section.Children.Add(BuildPosterBoard(items.Select(BuildCollectionCard).Cast<FrameworkElement>().ToArray()));
         return section;
     }
 
@@ -644,6 +636,7 @@ public sealed partial class CollectionsPage : Page
             Content = new FontIcon { Glyph = glyph, FontSize = 13 }
         };
         ToolTipService.SetToolTip(button, tooltip);
+        AutomationProperties.SetName(button, tooltip);
         button.Click += async (_, _) =>
         {
             button.IsEnabled = false;
@@ -871,9 +864,7 @@ public sealed partial class CollectionsPage : Page
     {
         AddGroupNameBox.Text = "";
         AddGroupEditor.Visibility = Visibility.Collapsed;
-        AddGroupButton.Visibility = ViewModel.Collections.Count > 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        BuildWall();
     }
 
     private async Task RenameGroupAsync(CollectionGroup group)

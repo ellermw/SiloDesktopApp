@@ -125,7 +125,7 @@ public sealed class CollectionPageHeaderTests
     }
 
     [Fact]
-    public async Task HeaderLoadThenServerChangeAllowsDeleteRetryWithTheCurrentRevision()
+    public async Task HeaderLoadThenServerChangeRejectsDeleteRetriesUntilReload()
     {
         using var wire = new Wire
         {
@@ -139,20 +139,27 @@ public sealed class CollectionPageHeaderTests
             "p1", true, null, "me", CancellationToken.None);
         Assert.Equal(CollectionPageAccessKind.Manage, header.Access.Kind);
 
-        // A sync (including one from another device) changes both the ETag and the saved baseline.
+        // A sync from another device changes the server, not the displayed baseline.
         wire.Personal = """{"id":"p1","creator_profile_id":"me","name":"Weekly","collection_type":"mdblist","updated_at":"B"}""";
         wire.PersonalETag = "\"B\"";
         var conflict = await Assert.ThrowsAsync<ApiException>(() => collections.DeleteCollectionAsync("p1"));
         Assert.Equal(412, conflict.StatusCode);
         Assert.Equal(["\"A\""], wire.DeleteTags);   // never automatically retry a destructive action
 
+        for (var retry = 0; retry < 2; retry++)
+        {
+            conflict = await Assert.ThrowsAsync<ApiException>(() => collections.DeleteCollectionAsync("p1"));
+            Assert.Equal(412, conflict.StatusCode);
+        }
+        Assert.Equal(["\"A\""], wire.DeleteTags);
+        await collections.GetCollectionAsync("p1");
         await collections.DeleteCollectionAsync("p1");
         Assert.Equal(["\"A\"", "\"B\""], wire.DeleteTags);
-        Assert.Equal(2, wire.PersonalReads);   // the dialog's retry reads a fresh revision without reopening the page
+        Assert.Equal(4, wire.PersonalReads);   // initial load, two rejected retry reads, explicit reload
     }
 
     [Fact]
-    public async Task HeaderLoadThenServerChangeAllowsSharingRetryWithTheCurrentRevision()
+    public async Task HeaderLoadThenServerChangeRejectsSharingRetriesUntilReload()
     {
         using var wire = new Wire
         {
@@ -172,9 +179,16 @@ public sealed class CollectionPageHeaderTests
         Assert.Equal(412, conflict.StatusCode);
         Assert.Equal(["\"A\""], wire.PatchTags);   // the conflict stays visible; there is no automatic retry
 
+        for (var retry = 0; retry < 2; retry++)
+        {
+            conflict = await Assert.ThrowsAsync<ApiException>(() => collections.UpdateCollectionAsync("p1", new() { IsShared = true }));
+            Assert.Equal(412, conflict.StatusCode);
+        }
+        Assert.Equal(["\"A\""], wire.PatchTags);
+        await collections.GetCollectionAsync("p1");
         await collections.UpdateCollectionAsync("p1", new() { IsShared = true });
         Assert.Equal(["\"A\"", "\"B\""], wire.PatchTags);
-        Assert.Equal(2, wire.PersonalReads);   // retry retires both the header's revision and its old baseline
+        Assert.Equal(4, wire.PersonalReads);   // rejected retries do not retire the displayed baseline
     }
 
     private const string ThreeLibraries = "{\"items\":[{\"id\":1,\"name\":\"Movies\"},{\"id\":2,\"name\":\"Shows\"},{\"id\":3,\"name\":\"Kids\"}]}";

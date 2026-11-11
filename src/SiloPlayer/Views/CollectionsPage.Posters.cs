@@ -100,6 +100,16 @@ public sealed partial class CollectionsPage
         var home = new MenuFlyoutItem { Text = "Add to my Home…" };
         AutomationProperties.SetHelpText(home, "A row on your Home"); ToolTipService.SetToolTip(home, "A row on your Home");
         home.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<CustomizeHomePage>(new CustomizeHomeNavigationArgs(collection.Id, collection.Name)); menu.Items.Add(home);
+        var move = new MenuFlyoutSubItem { Text = "Move to group", Icon = WebUiIcon.Navigation("folder", 16, Brush("SecondaryTextBrush")) };
+        foreach (var group in ViewModel.Groups.Cast<CollectionGroup?>().Prepend(null))
+        {
+            var targetGroupId = group?.Id;
+            var entry = new MenuFlyoutItem { Text = group?.Name ?? "Ungrouped" };
+            CollectionActionMenuPresentation.Configure(entry);
+            entry.Click += async (_, _) => await ViewModel.MoveCollectionToGroupAsync(collection, targetGroupId);
+            move.Items.Add(entry);
+        }
+        menu.Items.Add(move);
         if (ViewModel.Profiles.Any(profile => profile.Id != collection.CreatorProfileId))
         {
             menu.Items.Add(new MenuFlyoutSeparator());
