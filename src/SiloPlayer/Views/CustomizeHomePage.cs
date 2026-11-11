@@ -4,7 +4,8 @@ using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Views;
 
-public sealed record CustomizeHomeNavigationArgs(string CollectionId, string Name, int? LibraryId = null);
+/// <summary>ServerCollection: CollectionId names a server (library) collection, not one of the profile's own.</summary>
+public sealed record CustomizeHomeNavigationArgs(string CollectionId, string Name, int? LibraryId = null, bool ServerCollection = false);
 
 /// <summary>Compact profile Home/library editor sharing the same row mutations and responsive form.</summary>
 public sealed class CustomizeHomePage : Page

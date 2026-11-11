@@ -85,15 +85,15 @@ public sealed class UpdatePanelTests
     }
 
     [Fact]
-    public void Panel_shows_only_while_Silo_is_in_front_and_no_video_plays_over_it()
+    public void Panel_remains_visible_when_another_application_takes_focus()
     {
         Assert.True(UpdatePanelPlacement.ShouldShow(ownerAlive: true, ownerMinimized: false, playback: false, foregroundIsSilo: true, visibleNow: false));
-        Assert.False(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: false, visibleNow: true)); // Another app in front.
+        Assert.True(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: false, visibleNow: true));
         Assert.False(UpdatePanelPlacement.ShouldShow(true, ownerMinimized: true, false, true, true));
         Assert.False(UpdatePanelPlacement.ShouldShow(true, false, playback: true, true, true)); // Fullscreen or windowed video.
         // Secure desktop during administrator approval: keep whatever is showing.
         Assert.True(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: null, visibleNow: true));
-        Assert.False(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: null, visibleNow: false));
+        Assert.True(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: null, visibleNow: false));
         // Silo closed to restart: the final status stays visible.
         Assert.True(UpdatePanelPlacement.ShouldShow(ownerAlive: false, true, true, false, false));
     }
