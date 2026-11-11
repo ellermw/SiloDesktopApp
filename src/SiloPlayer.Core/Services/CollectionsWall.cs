@@ -36,15 +36,17 @@ public static class CollectionsWall
     /// The pills. All, Mine, then Shared and Server when the account has them, then one pill per
     /// library once there is more than one. Personal and server collections can overlap, so All
     /// counts distinct ids only when every library's cards are present; otherwise it stays unknown
-    /// unless either the personal or server set is empty.
+    /// unless either the personal or server set is empty. <paramref name="restIds"/> holds, per library
+    /// whose rest has loaded, the ids read past its teaser.
     /// </summary>
     public static IReadOnlyList<Pill> Pills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount,
-        IReadOnlyCollection<string>? personalIds = null)
+        IReadOnlyCollection<string>? personalIds = null, IReadOnlyDictionary<int, IReadOnlyCollection<string>>? restIds = null)
     {
         var serverCount = ServerCount(libraries);
         int? allCount = serverCount == 0 ? ownCount + sharedCount : ownCount + sharedCount == 0 ? serverCount : null;
-        if (personalIds != null && libraries.All(library => library.Collections.Count >= library.TotalCount))
-            allCount = personalIds.Concat(libraries.SelectMany(library => library.Collections.Select(collection => collection.Id)))
+        if (personalIds != null && libraries.All(library => library.Collections.Count >= library.TotalCount || restIds?.ContainsKey(library.LibraryId) == true))
+            allCount = personalIds.Concat(libraries.SelectMany(library => library.Collections.Select(collection => collection.Id)
+                    .Concat(restIds?.GetValueOrDefault(library.LibraryId) ?? [])))
                 .Distinct(StringComparer.Ordinal).Count();
         var pills = new List<Pill>
         {

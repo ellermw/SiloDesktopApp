@@ -62,8 +62,46 @@ public sealed class CollectionsWallLoadingTests
         wire.LibraryTab.SetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"stale"}]}"""));
         await first;
         Assert.False(vm.HasServerLibraryRest(1));
+        Assert.False(vm.IsLoadingServerLibraryRest);   // a retired read does not leave the wall busy
         if (retirement == "cancel") Assert.Equal(1, vm.NextServerLibrary?.LibraryId);
         else if (retirement != "admission") Assert.False(vm.HasCurrentServerCollections);
+    }
+
+    [Fact]
+    public async Task RefreshDropsTheRestOfALibraryItsTeaserNowHoldsInFull()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(["s1", "s2", "s3"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        // The server now lists one collection, all of it in the teaser: the cards read past the old teaser are gone.
+        wire.ServerBody = OneLibrary;
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.False(vm.HasServerLibraryRest(1));
+        Assert.Equal(["s1"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Null(vm.NextServerLibrary); Assert.Null(vm.ServerLibraryError(1));
+        Assert.Equal(1, wire.LibraryTabReads);
+    }
+
+    [Fact]
+    public async Task AllPillCountsTheWallOnceALibrarysRestHasLoaded()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"own"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        int? All() => CollectionsWall.Pills(vm.ServerLibraries.ToArray(), 1, 0, ["own"], vm.ServerLibraryRestIds).Single(pill => pill.Value == CollectionsWall.All).Count;
+        Assert.Null(All());   // two cards are still unread and could be the personal one
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(3, All());   // s1, s3 and the personal collection the library also lists
     }
 
     [Fact]

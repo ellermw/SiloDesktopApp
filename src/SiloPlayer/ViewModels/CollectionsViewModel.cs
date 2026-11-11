@@ -58,6 +58,8 @@ public partial class CollectionsViewModel : ObservableObject
     public bool IsServerLibraryLoading(int libraryId) => _loadingServerLibraries.Contains(libraryId);
     public string? ServerLibraryError(int libraryId) => _serverCollectionErrors.GetValueOrDefault(libraryId);
     public bool HasServerLibraryRest(int libraryId) => _serverRest.ContainsKey(libraryId);
+    public IReadOnlyDictionary<int, IReadOnlyCollection<string>> ServerLibraryRestIds
+        => _serverRest.ToDictionary(rest => rest.Key, rest => (IReadOnlyCollection<string>)rest.Value.Select(c => c.Id).ToArray());
     public bool HasCurrentServerCollections => _requestClient == null || _displayContext == _requestClient.CaptureContext();
     public bool IsLoadingServerLibraryRest => _loadingServerLibraries.Count > 0;
     public ServerCollectionsLibrary? NextServerLibrary => ServerLibraries.FirstOrDefault(l => l.TotalCount > l.Collections.Count && !_requestedServerLibraries.Contains(l.LibraryId));
@@ -102,7 +104,8 @@ public partial class CollectionsViewModel : ObservableObject
         }
         finally
         {
-            if (Current()) { _loadingServerLibraries.Remove(libraryId); ServerCollectionsChanged(); }
+            // A profile or access change retires the result, not the busy state; only a replaced owner has already cleared it.
+            if (owner == _serverCollectionOwner && _loadingServerLibraries.Remove(libraryId)) ServerCollectionsChanged();
         }
     }
 
@@ -226,6 +229,9 @@ public partial class CollectionsViewModel : ObservableObject
                     ServerLoaded = true;
                     var requested = _requestedServerLibraries.ToArray();
                     foreach (var libraryId in _serverRest.Keys.Where(id => !ServerLibraries.Any(l => l.LibraryId == id)).ToArray()) _serverRest.Remove(libraryId);
+                    // A library whose total now fits its teaser has no rest: what an earlier read left for it is stale.
+                    foreach (var library in ServerLibraries.Where(l => l.TotalCount <= l.Collections.Count))
+                    { _serverRest.Remove(library.LibraryId); _requestedServerLibraries.Remove(library.LibraryId); _serverCollectionErrors.Remove(library.LibraryId); }
                     foreach (var libraryId in requested) { if (!Current()) break; await LoadServerLibraryAsync(libraryId); }
                     if (Current()) ServerCollectionsChanged();
                 }

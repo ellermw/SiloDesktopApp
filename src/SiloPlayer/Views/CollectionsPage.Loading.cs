@@ -101,11 +101,12 @@ public sealed partial class CollectionsPage
         }
         finally
         {
-            if (Current())
+            // A profile or access change retires this load without a reset, so its busy state ends here too.
+            if (generation == _wallGeneration)
             {
                 _wallLoading = false;
                 UpdateWallLoadAction();
-                QueueWallAdmission();
+                if (Current()) QueueWallAdmission();
             }
         }
     }

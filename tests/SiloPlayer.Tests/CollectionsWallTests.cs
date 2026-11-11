@@ -63,6 +63,20 @@ public sealed class CollectionsWallTests
         Assert.Null(CollectionsWall.Pills(libraries, 1, 0)[0].Count);   // counts alone cannot establish a distinct total
     }
 
+    [Fact]
+    public void AllCountsTheLoadedRestOnceEveryLibrarysCardsArePresent()
+    {
+        var libraries = new[] { Library(1, "Movies", 3, "own", "one"), Library(2, "Shows", 1, "two") };
+        var rest = new Dictionary<int, IReadOnlyCollection<string>> { [1] = new[] { "shared", "three" } };
+        int? All(IReadOnlyList<ServerCollectionsLibrary> shown, IReadOnlyDictionary<int, IReadOnlyCollection<string>>? loaded)
+            => CollectionsWall.Pills(shown, 1, 1, ["own", "shared"], loaded).Single(pill => pill.Value == CollectionsWall.All).Count;
+        Assert.Null(All(libraries, null));
+        Assert.Equal(5, All(libraries, rest));   // own, shared, one, three and two, each once
+        Assert.Null(CollectionsWall.Pills(libraries, 1, 1, ["own", "shared"], rest).Single(pill => pill.Value == CollectionsWall.Server).Count);
+        // A library whose rest is still unread keeps the total unknown.
+        Assert.Null(All([.. libraries, Library(3, "Kids", 4, "kids")], rest));
+    }
+
     [Theory]
     [InlineData("mine", "mine")]
     [InlineData("shared", "all")]      // nobody shares: falls back to All

@@ -104,8 +104,9 @@ internal static partial class CollectionsPresentationNativeFixture
                 var names = () => Names(page);
                 await Until(() => Pills(page).Length == 6 && OpenButtons(Board(page)).Count() == 3 + 1 + 4 && page.ViewModel.ProfilesLoaded && PillCount(page, "Mine") == "3");
                 Check(Pills(page).Select(Auto.GetName).SequenceEqual(["All", "Mine", "Shared", "Server", "Movies", "Shows"]), "Show pills are All, Mine, Shared, Server, then one per library.");
-                Check(PillCount(page, "All") == null && PillCount(page, "Server") == null && PillCount(page, "Mine") == "3" && PillCount(page, "Shared") == "1" && PillCount(page, "Movies") == "3" && PillCount(page, "Shows") == "1",
-                    "Pills count only what they can know: no combined count for several libraries.");
+                // The short wall has already read Movies' rest, so every library's cards are present and All counts them once.
+                Check(PillCount(page, "All") == "8" && PillCount(page, "Server") == null && PillCount(page, "Mine") == "3" && PillCount(page, "Shared") == "1" && PillCount(page, "Movies") == "3" && PillCount(page, "Shows") == "1",
+                    $"Pills count only what they can know: All once every library's cards are loaded, no combined Server count for several libraries (All={PillCount(page, "All")}).");
                 Check(Auto.GetItemStatus(Pill(page, "All")) == "Selected", "All starts selected.");
                 Check(names().Distinct().Count() == 8 && names().Contains("Family movie night") && names().Contains("Weekend picks 1") && names().Contains("Criterion"), "All shows yours, shared and the server's in one grid, continuing a short wall automatically.");
                 await Capture(page, "collections-wall-pills-all-1280.png");
