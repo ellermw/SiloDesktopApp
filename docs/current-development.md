@@ -25,6 +25,21 @@ Desktop saves retain plate/band/future presets and opaque root/item fields, styl
 Verified with SDK `10.0.403`, x64, engine-pin checks and `SiloOct18Build`: **35 new unit cases**, **104 focused tests**, **5,303 full unit tests**, all passing with zero skipped; fresh Release publish; passing actual-control `overlay-revisions`, existing `overlay-pill` and `artwork-first-mount` native groups, all with the completion sentinel. Final app DLL SHA256: `AF7A94A29DA6F8ECA61BF7EBE9BB574732584E0E1C26E31901C068E8F69FE21A`. Native screenshots were inspected. Commands, red/green evidence, source/artifact bindings and native receipts are under this worktree's `.codex-tmp/overlay-revisions/`; see `report.md` there. Existing compiler/analyzer warnings remain.
 
 Dedicated plate/band rendering, style override rendering and uploaded badge images remain outside this candidate; those values survive saves and plate/band currently use the classic look. Shared bottom-corner row wrapping is not implemented. This synthetic fixture evidence does not certify complete visual parity or physical pointer interaction. The unrelated historical default-native `DetailPresentationNativeFixture.cs:55` limitation is not fixed by this task.
+# November 11 ? Align viewer actions and smart collection behavior with Server main (Beta candidate)
+
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Source remains **1.2.970**; the Beta pipeline owns integration, versioning and publication.
+
+Dedicated Continue Watching/Next Up pages remove eligible cards and update counts. Complete-rule validation gates smart editor/wizard previews and saves; Trending has a Show selector. Calendar labels/palettes, library sidebar icon aliases, failed-sync status refresh with draft preservation and episode library scope match current upstream. Dismissal retires any pending continuation and re-seeks the shortened live row while preserving the already-loaded prefix.
+
+Verification: Final full unit suite 5,352/5,352; fresh Release publish; expanded viewer-actions native route passes every scoped scenario. Both paging response orderings retain all 129 remaining titles exactly once and the correct count. The race-after native case reproduces a missing title/duplicate against the frozen earlier candidate.
+
+Independent Codex review confirmed the dismissal/paging race. The fix cancels and retires the old load generation, clears its snapshot and resumes at the corrected prefix offset; cancellation-ignoring held responses cannot append. The initial test-edit command failed before saving, but the corrected source was saved before the queued red fixture compiled; its result records the expected race-after defect. Earlier worker source/test-manifest mismatch is superseded by final PDB binding and source manifests.
+
+App DLL SHA256: `FA7601A51FB4EAEC8B361154DCDF107ADA3D0751265797D094A45B03CD9A6A84`; all 741 authored app PDB documents match final source. Selected native DLL/PDB identities and source documents also match. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/viewer-actions/review-final-binding`, the original `viewer-actions-implementation.md`/review, and `viewer-actions-review-fixes-note.md`.
+
+Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline and candidate; four icon assertions before that failure passed, so no completed sidebar route is claimed. Existing skipped-sync-count retention remains a nonblocking pre-existing gap. Dedicated page has no Home-style Undo. SVG visual parity and live-server interoperability are unverified. Installed player remains running and untouched.
+
+---
 
 # Current source identity — native Chapters and compact More (PR #91)
 

@@ -219,6 +219,14 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         foreach (var group in RuleDefinition.Groups) group.Rules.Remove(rule);
     }
 
+    public const string RuleNeededMessage = "Add at least one rule with a field, an operator and a value.";
+
+    /// <summary>
+    /// The rules this wizard would send hold no rule complete enough to filter, so the
+    /// query would match every title and the server refuses to save it.
+    /// </summary>
+    public bool NeedsRule => !QueryEditing.HasCompleteRule(RuleDefinition);
+
     public async Task PreviewAsync(CancellationToken ct = default)
     {
         var generation = ++_previewGeneration;
@@ -226,6 +234,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         _previewSnapshot = null;
         PreviewHasMore = false;
         PreviewItems.Clear(); PreviewMediaItems.Clear();
+        if (!QueryEditing.HasCompleteRule(_previewQuery))
+        {
+            // Sends nothing; an empty rule set would list the whole catalog.
+            PreviewTotal = 0; IsPreviewing = false; ErrorMessage = null; _failedPreviewContinuation = false;
+            return;
+        }
         await LoadPreviewWindowAsync(_previewQuery, reset: true, generation, ct);
     }
 
@@ -286,6 +300,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(Title))
         {
             ErrorMessage = "Collection title is required.";
+            return;
+        }
+
+        if (NeedsRule)
+        {
+            ErrorMessage = RuleNeededMessage;
             return;
         }
 

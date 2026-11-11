@@ -15,11 +15,38 @@ public sealed class CollectionEditorCurrentDraftTests
         var client = wire.Client(); using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("mine");
         var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth)
             { Name = "Draft", Description = "Keep this", CollectionType = "smart" };
+        vm.AddRuleCommand.Execute(null); vm.RuleDefinition.Groups[0].Rules[0].Value = "Drama";
         await vm.SaveCommand.ExecuteAsync(null);
         Assert.Equal("created", vm.CollectionId); Assert.True(vm.IsEditing); Assert.NotNull(vm.ErrorMessage);
         await vm.SaveCommand.ExecuteAsync(null);
         Assert.Null(vm.ErrorMessage); Assert.Equal(1, wire.CreateCount); Assert.Equal(2, wire.PatchCount);
         Assert.Equal("Keep this", wire.LastPatch!.Value.GetProperty("description").GetString());
+    }
+
+    [Fact]
+    public async Task SmartCollectionWithoutACompleteRuleIsNeitherPreviewedNorSaved()
+    {
+        using var wire = new Wire(); var client = wire.Client(); using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("mine");
+        var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth)
+            { Name = "Draft", CollectionType = "smart" };
+        Assert.True(vm.SmartNeedsRule);
+        await vm.RefreshPreviewAsync();
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Equal("Add at least one rule.", vm.ErrorMessage); Assert.Equal(0, wire.CreateCount); Assert.False(vm.HasPreview);
+        vm.AddRuleCommand.Execute(null);
+        Assert.True(vm.SmartNeedsRule); // a blank value is not a rule
+        foreach (var value in new object?[] { 0, false, "Drama" })
+        {
+            vm.RuleDefinition.Groups[0].Rules[0].Value = value;
+            Assert.False(vm.SmartNeedsRule);
+        }
+        vm.RuleDefinition.Groups[0].Rules[0].Value = new object[] { 1990, "" };
+        Assert.True(vm.SmartNeedsRule);
+        vm.RuleDefinition.Groups[0].Rules[0].Value = "Drama";
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Null(vm.ErrorMessage); Assert.Equal(1, wire.CreateCount);
+        var manual = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth) { Name = "Manual", CollectionType = "manual" };
+        Assert.False(manual.SmartNeedsRule);
     }
 
     [Fact]
@@ -171,7 +198,7 @@ public sealed class CollectionEditorCurrentDraftTests
                 PatchCount++; LastPatch = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement.Clone();
                 if (FailFirstPatch && PatchCount == 1) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"metadata unavailable\"}") };
             }
-            var json = path == "/api/v2/collections" || path == "/api/v2/collections/created" ? JsonSerializer.Serialize(new { id = "created", creator_profile_id = "mine", name = "Draft", collection_type = Kind, source_url = "https://mdblist.com/lists/fixture/saved/", poster_url = "https://artwork.invalid/poster.jpg", sync_schedule = "0 0 * * *", sync_cadence = "daily", sort_config = SortConfig }) : "{}";
+            var json = path == "/api/v2/collections" || path == "/api/v2/collections/created" ? JsonSerializer.Serialize(new { id = "created", creator_profile_id = "mine", name = "Draft", collection_type = Kind, source_url = "https://mdblist.com/lists/fixture/saved/", poster_url = "https://artwork.invalid/poster.jpg", sync_schedule = "0 0 * * *", sync_cadence = "daily", sort_config = SortConfig, query_definition = Kind == "smart" ? (object)new { match = "all", groups = new[] { new { match = "all", rules = new[] { new { field = "genre", op = "is", value = "Drama" } } } } } : null }) : "{}";
             if (path == "/api/v2/collections/capabilities")
                 json = CollectionDefaultSort is { } supported ? JsonSerializer.Serialize(new { collection_default_sort = supported }) : "{}";
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) }; response.Headers.ETag = new("\"draft-revision\""); return response;

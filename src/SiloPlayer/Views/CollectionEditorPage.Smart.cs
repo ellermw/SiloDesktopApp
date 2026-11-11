@@ -119,8 +119,19 @@ public sealed partial class CollectionEditorPage
     private void ScheduleSmartPreview()
     {
         _smartPreviewDelay.Stop(); ViewModel.CancelPreview();
+        // No complete rule would match every title: send nothing and ask for one.
+        if (_editorActive && !_initializingEditor && !ViewModel.IsLoading && ViewModel.SmartNeedsRule)
+        {
+            ViewModel.ClearPreview();
+            // Nothing changes when the preview was already empty, and the page may not be loaded yet,
+            // so draw the request for a rule directly instead of waiting for a preview change.
+            BuildPreviewItemsUI();
+            return;
+        }
         if (CanPreviewSmart()) _smartPreviewDelay.Start();
     }
+
+    internal const string SmartPreviewNeedsRuleText = "Add a rule to see what it matches\nPick a field, an operator and a value.";
 
     private void QueueSmartPreviewPresentation()
     {
@@ -161,7 +172,8 @@ public sealed partial class CollectionEditorPage
         }
         if (_smartPreviewTiles.Count == 0)
             for (var n = 0; n < 8; n++) { var ghost = new Border { CornerRadius = new(10), Background = CurrentBrush("SurfaceBrush"), BorderBrush = CurrentBrush("BorderBrush"), BorderThickness = new(1) }; _smartPreviewTiles.Add(ghost); _smartPreviewGrid.Children.Add(ghost); }
-        _smartPreviewStatus.Text = ViewModel.PreviewError ?? (ViewModel.HasPreview && ViewModel.PreviewItems.Count == 0 ? "No titles match yet\nYou can still save. Titles that match later join on their own." : "");
+        _smartPreviewStatus.Text = ViewModel.SmartNeedsRule ? SmartPreviewNeedsRuleText
+            : ViewModel.PreviewError ?? (ViewModel.HasPreview && ViewModel.PreviewItems.Count == 0 ? "No titles match yet\nYou can still save. Titles that match later join on their own." : "");
         _smartPreviewStatus.Visibility = string.IsNullOrEmpty(_smartPreviewStatus.Text) ? Visibility.Collapsed : Visibility.Visible;
         LayoutSmartPreview();
     }

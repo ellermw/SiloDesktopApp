@@ -36,7 +36,8 @@ public sealed partial class SmartCollectionWizardPage : Page
     private int _pageLifetime;
 
     public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading
-        && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title) && _rulesEditor?.IsValid != false;
+        && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title) && _rulesEditor?.IsValid != false
+        && !ViewModel.NeedsRule;
     public string PreviewCountText
         => ViewModel.PreviewTotal > 0
             ? $"{ViewModel.PreviewTotal:N0} matched"
@@ -274,7 +275,7 @@ public sealed partial class SmartCollectionWizardPage : Page
         _rulesEditor = editor;
         WizardFiltersSheet.ConfigureFilterHeader(editor.DetachModeSelector(), "Refine your catalog results");
         editor.Load(ViewModel.RuleDefinition, ViewModel.MediaScope, ViewModel.SelectedLibraryIds.FirstOrDefault() is var libraryId && libraryId > 0 ? libraryId : null);
-        editor.Changed += () => { ViewModel.MatchMode = ViewModel.RuleDefinition.Match; Bindings.Update(); UpdateContinueState(); if (editor.IsValid) SchedulePreview(); };
+        editor.Changed += () => { ViewModel.MatchMode = ViewModel.RuleDefinition.Match; Bindings.Update(); UpdatePreviewState(); if (editor.IsValid) SchedulePreview(); };
         RulesPanel.Children.Add(editor);
         MatchModeCombo.Visibility = Visibility.Collapsed;
         _ = RefreshRuleScopeAsync();
@@ -320,6 +321,10 @@ public sealed partial class SmartCollectionWizardPage : Page
         PreviewCountTextBlock.Text = ViewModel.IsPreviewing && ViewModel.PreviewMediaItems.Count == 0
             ? "Loading items…"
             : $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")}";
+        // With no complete rule the preview sends nothing; say what it is waiting for.
+        var needsRule = ViewModel.NeedsRule;
+        PreviewEmptyTitle.Text = needsRule ? "Add a rule to see what it matches" : "No titles match these filters yet.";
+        PreviewEmptyHelp.Text = needsRule ? "Pick a field, an operator and a value." : "Loosen the filters above to see what your collection would include.";
         PreviewEmptyPanel.Visibility = !ViewModel.IsPreviewing && ViewModel.PreviewMediaItems.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;

@@ -239,11 +239,17 @@ public sealed partial class CatalogPage : Page,
     {
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (message.Kind == MediaSurfaceChangeKind.HomeDismissed)
+            {
+                RemoveDismissedSectionCards(message);
+                return;
+            }
+
             var item = _items.FirstOrDefault(candidate =>
                 string.Equals(candidate.ContentId, message.ContentId, StringComparison.OrdinalIgnoreCase));
             if (item == null) return;
 
-            var remove = (_source == "favorites" && message.Kind == MediaSurfaceChangeKind.FavoriteRemoved)
+            var remove =(_source == "favorites" && message.Kind == MediaSurfaceChangeKind.FavoriteRemoved)
                 || (_source == "watchlist" && message.Kind == MediaSurfaceChangeKind.WatchlistRemoved)
                 || (_source == "history" && message.Kind == MediaSurfaceChangeKind.WatchedCleared);
             if (remove)
@@ -268,6 +274,39 @@ public sealed partial class CatalogPage : Page,
             };
             if (changed) RefreshRealizedItemState(message.ContentId);
         });
+    }
+
+    // A Continue Watching / Next Up dismissal drops the show from both rows, so the dedicated
+    // page removes its cards like Home does and keeps the count and paging offset in step with
+    // the server's now shorter row.
+    private void RemoveDismissedSectionCards(MediaSurfaceChanged message)
+    {
+        if (_source != "section") return;
+        if (message.Context is { } context && !_api.IsCurrentContext(context)) return;
+        var removed = _items
+            .Where(candidate => candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp
+                && HomeDismissalPolicy.IsRemovedBy(candidate, message.ContentId, message.SeriesId))
+            .ToList();
+        if (removed.Count == 0) return;
+        // A section is paged from live row membership. A pending seek belongs to the
+        // old row, whether the server read it before or after this dismissal.
+        var resumePaging = _loading;
+        if (resumePaging)
+        {
+            Interlocked.Increment(ref _loadGeneration);
+            _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new CancellationTokenSource();
+            _loading = false;
+        }
+        _snapshot = null;
+        foreach (var card in removed) _items.Remove(card);
+        _selectedIds.ExceptWith(removed.Select(card => card.ContentId));
+        _offset = Math.Max(0, _offset - removed.Count);
+        _totalItems = Math.Max(0, _totalItems - removed.Count);
+        CountText.Text = _totalItems.ToString("N0");
+        ResultNounText.Text = _totalItems == 1 ? "RESULT" : "RESULTS";
+        EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSelectionUi();
+        if (resumePaging) _ = LoadAsync(false);
     }
 
     public void Receive(PlaybackProgressUpdated message)
@@ -421,7 +460,11 @@ public sealed partial class CatalogPage : Page,
             if (generation != Volatile.Read(ref _loadGeneration)) return;
             foreach (var item in response.Items)
             {
-                item.ItemSource = _source;
+                // A Continue Watching / Next Up row's cards keep the server's item_source in
+                // the Home vocabulary so their menu offers the same removal as Home.
+                item.ItemSource = _source == "section"
+                    ? HomeDismissalPolicy.SectionCardItemSource(_source, item.ItemSource)
+                    : _source;
                 _items.Add(item);
             }
             _snapshot = response.Snapshot ?? _snapshot;

@@ -30,6 +30,17 @@ public static class MediaItemMenu
         NextUp,
     }
 
+    /// <summary>
+    /// The menu surface a card's row implies. Cards on Home and on a dedicated Continue Watching /
+    /// Next Up page share the Home row vocabulary in <see cref="MediaItem.ItemSource"/>.
+    /// </summary>
+    public static Surface SurfaceFor(MediaItem item) => item.ItemSource switch
+    {
+        HomeDismissalPolicy.ContinueWatching => Surface.ContinueWatching,
+        HomeDismissalPolicy.NextUp => Surface.NextUp,
+        _ => Surface.Default,
+    };
+
     public static MenuFlyout Build(
         MediaItem item,
         Surface surface = Surface.Default,

@@ -196,7 +196,7 @@ public sealed partial class CollectionEditorPage
         EditorPrimaryColumn.IsHitTestVisible = !ViewModel.IsSaving;
         EditorEditGuard.IsEnabled = !_initializingEditor && !ViewModel.IsLoading && !ViewModel.IsSaving && !ViewModel.IsReadOnly;
         SaveButton.IsEnabled = !_initializingEditor && !ViewModel.IsLoading && !ViewModel.IsSaving && !ViewModel.IsLoadUnavailable;
-        SaveButton.IsEnabled &= !string.IsNullOrWhiteSpace(ViewModel.Name);
+        SaveButton.IsEnabled &= !string.IsNullOrWhiteSpace(ViewModel.Name) && !ViewModel.SmartNeedsRule;
         UpdateManualContents(phone);
         UpdateEditorFooter(phone);
         WatchFilterCombo.MinHeight = MediaFilterCombo.MinHeight = 36;
