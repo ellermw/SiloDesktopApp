@@ -452,11 +452,16 @@ public sealed partial class CatalogPage : Page,
         }
         try
         {
-            try { await _homeApi.UndoDismissalAsync(owner, surface, itemId, visit!.Token); }
-            catch (Exception ex) when (Current())
+            // The accepted mutation belongs to its captured owner, not to this visit: leaving
+            // the page must not abort the DELETE. Only the follow-up read is visit-bound.
+            try { await _homeApi.UndoDismissalAsync(owner, surface, itemId, CancellationToken.None); }
+            catch (Exception ex) when (_api.IsCurrentContext(owner))
             {
                 failure = ex;
                 LocalLog.AppendException("errors.txt", ex, "CatalogPage.UndoDismissalAsync");
+                // The banner left with the page, so the failure is reported where the user is now.
+                if (!Current())
+                    App.Services.GetRequiredService<ToastService>().Error("Could not undo. The title is still removed.");
             }
             if (!Current()) return;
             // Banner expiry/replacement is independent from accepting this mutation's

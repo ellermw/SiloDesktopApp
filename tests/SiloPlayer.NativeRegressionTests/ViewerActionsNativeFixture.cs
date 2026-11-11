@@ -422,10 +422,14 @@ internal static class ViewerActionsNativeFixture
         var departed = await OpenAsync("cw"); await DismissAsync(departed, "film");
         wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(departed);
         await Until(() => wire.Undos.Count == 1, "departing Undo dispatched");
+        var answered = wire.UndosAnswered;
         frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Other page", null, null, "plain"));
-        wire.HoldUndo.TrySetResult(); await Task.Delay(150);
+        wire.HoldUndo.TrySetResult();
+        // The held DELETE honors cancellation: it is answered only if leaving the page did not abort it.
+        await Until(() => wire.UndosAnswered == answered + 1, "departing Undo is not cancelled with its page");
+        await Task.Delay(150);
         Check(Items(departed).All(item => item.ContentId != "film") && ((Border)departed.FindName("UndoBanner")).Visibility == Visibility.Collapsed, "departed page rejects late success");
-        Program.Log("PASS: navigation retires pending Undo and its queued UI completion.");
+        Program.Log("PASS: navigation retires the pending Undo's queued UI completion without cancelling its DELETE.");
 
         var reset = await OpenAsync("race-reset"); await DismissAsync(reset, "race-reset-001");
         var resetCount = Items(reset).Count;
@@ -799,7 +803,7 @@ internal static class ViewerActionsNativeFixture
         internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [];
         internal string SyncState = "ok"; internal bool FailSync = true;
         internal int SyncUnmatched;
-        internal TaskCompletionSource? HoldUndo; internal bool FailUndo, FailSectionReads;
+        internal TaskCompletionSource? HoldUndo; internal bool FailUndo, FailSectionReads; internal int UndosAnswered;
         internal TaskCompletionSource? HoldCollectionRead; internal int CollectionReadsHeld;
         private readonly HashSet<string> _dismissed = [];
         internal void ClearDismissed() => _dismissed.Clear();
@@ -827,7 +831,8 @@ internal static class ViewerActionsNativeFixture
                     }
                     var undoId = path[(path.LastIndexOf('/') + 1)..]; _dismissed.Remove(undoId);
                     if (undoId.StartsWith("show-")) { _dismissed.Remove("show-a"); _dismissed.Remove("show-b"); }
-                    if (HoldUndo != null) await HoldUndo.Task;
+                    if (HoldUndo != null) await HoldUndo.Task.WaitAsync(ct);
+                    UndosAnswered++;
                     return new(HttpStatusCode.NoContent);
                 }
                 Dismissals.Add((path, text ?? ""));
