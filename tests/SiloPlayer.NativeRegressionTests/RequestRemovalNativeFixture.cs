@@ -30,7 +30,7 @@ internal static class RequestRemovalNativeFixture
     {
         // SILO_NATIVE_REQUEST_REMOVAL_CASE=links|removal narrows a run (for example to reproduce one half against an earlier publish).
         var only = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REMOVAL_CASE");
-        if (only != "links") { await RemovalAsync(parent); await DetailCancellationAsync(parent); await DetailCancellationRefreshAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalRouteRefreshAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
+        if (only != "links") { await RemovalAsync(parent); await DetailCancellationAsync(parent); await DetailCancellationRefreshAsync(parent); await DetailCancellationRouteRefreshAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalRouteRefreshAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
         if (only == "removal") { Program.Log("PASS: REQUEST_REMOVAL_ONLY_COMPLETED"); return; }
         await RowLinksAsync(parent);
         await DetailLinkAsync(parent);
@@ -206,6 +206,69 @@ internal static class RequestRemovalNativeFixture
             await Until(() => cancel!.IsEnabled && cancel.Content is not ProgressRing && rig.Dialog() == null);
         }
         Program.Log("PASS: detail cancellation survives download polling, access invalidation and transport catch-up, while changed or ineligible requests explain why cancellation was not sent.");
+    }
+
+    private static async Task DetailCancellationRouteRefreshAsync(StackPanel parent)
+    {
+        foreach (var catchUp in new[] { false, true })
+        foreach (var phase in new[] { "confirmation", "cancel", "departure" })
+        {
+            if (phase == "departure" && catchUp) continue;
+            using var rig = new Rig(parent, remove: true);
+            var wire = rig.Wire;
+            wire.DetailRequest = "{\"requestable\":false,\"requested_by_viewer\":true,\"request_id\":\"r1\",\"status\":\"pending\"}";
+            rig.Navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("movie", 7));
+            var page = (RequestDetailPage)rig.Frame.Content;
+            await Until(() => page.IsLoaded && DetailCancel(page) != null);
+            Click(DetailCancel(page)!);
+            var dialog = await rig.DialogAsync();
+            if (phase == "departure")
+            {
+                // Leaving the title, unlike a remount of its route, abandons the open confirmation.
+                rig.Navigation.NavigateImmediately(typeof(Page));
+                await Task.Delay(80);
+                Primary(dialog);
+                await Task.Delay(200);
+                if (wire.Writes.Count != 0 || rig.ToastTexts().Any(text => text.Contains("Request cancelled")))
+                    throw new InvalidOperationException("A detail cancellation abandoned by navigation was still sent or reported.");
+                continue;
+            }
+            try
+            {
+                if (phase == "cancel")
+                {
+                    wire.CancelGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Primary(dialog);
+                    await Until(() => wire.Writes.Count == 1);
+                }
+                if (catchUp)
+                {
+                    if (!rig.Client.TryInvalidateAccessContext(rig.Client.CaptureContext(), out _, transportCatchUp: true))
+                        throw new InvalidOperationException("Transport catch-up did not invalidate the read context.");
+                }
+                else rig.Client.InvalidateAccessContext();
+                // Exercise the route refresh used by MainWindow, which may replace the page that owns the confirmation or POST.
+                if (!rig.Navigation.RefreshCurrentEntry() || rig.Frame.Content is not RequestDetailPage)
+                    throw new InvalidOperationException("Shell refresh left the request detail route during " + phase + ".");
+                var mounted = (RequestDetailPage)rig.Frame.Content;
+                await Until(() => mounted.IsLoaded && DetailCancel(mounted) != null);
+                if (phase == "confirmation")
+                {
+                    if (!ReferenceEquals(dialog, rig.Dialog()) || wire.Writes.Count != 0)
+                        throw new InvalidOperationException("Shell refresh dismissed or submitted the open detail cancellation confirmation.");
+                    Primary(dialog);
+                }
+            }
+            finally { wire.CancelGate?.TrySetResult(); }
+            await Until(() => wire.Writes.Count == 1);
+            if (wire.Writes.Single() is not { Method: "POST", Path: "/api/v2/requests/r1/cancel" })
+                throw new InvalidOperationException("Confirmed detail cancellation did not send its cancel POST across a shell refresh during " + phase + ".");
+            await rig.ToastAsync("Request cancelled");
+            await Until(() => rig.Dialog() == null && rig.Frame.Content is RequestDetailPage current && DetailCancel(current) == null);
+            await Task.Delay(150);
+            if (wire.Writes.Count != 1) throw new InvalidOperationException("Shell refresh duplicated the detail cancellation during " + phase + ".");
+        }
+        Program.Log("PASS: shell route refresh during detail cancellation confirmation or POST still sends one cancel, reports it and rereads the mounted detail; leaving the title abandons the confirmation.");
     }
 
     private static async Task RemovalReadInvalidationAsync(StackPanel parent)
@@ -483,6 +546,7 @@ internal static class RequestRemovalNativeFixture
     private static IEnumerable<string> ButtonNames(DependencyObject root) => Descendants(root).OfType<Button>().Select(AutomationProperties.GetName).Where(name => !string.IsNullOrEmpty(name));
     private static string[] RemoveNames(DependencyObject root) => ButtonNames(root).Where(name => name.StartsWith("Remove request for ")).ToArray();
     private static Button Remove(DependencyObject root, string title) => Descendants(root).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Remove request for " + title);
+    private static Button? DetailCancel(DependencyObject root) => Descendants(root).OfType<Button>().FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == "cancel");
     private static void Click(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Invoke(Button button) => Click(button);
     private static void Primary(ContentDialog dialog) => Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == dialog.PrimaryButtonText));
@@ -569,6 +633,7 @@ internal static class RequestRemovalNativeFixture
             Wire.DeleteGate?.TrySetResult();
             Wire.StatusGate?.TrySetResult();
             Wire.MineGate?.TrySetResult();
+            Wire.CancelGate?.TrySetResult();
             Navigation.NavigationRequestHandler = null;
             try { Frame.Content = null; } catch { }
             _parent.Children.Remove(Frame); Navigation.Frame = null; Toasts.Unregister(); _parent.Children.Remove(_toast);
@@ -591,7 +656,7 @@ internal static class RequestRemovalNativeFixture
         internal readonly SortedDictionary<string, string> Mine = new(StringComparer.Ordinal);
         internal HttpStatusCode DeleteMode = HttpStatusCode.NoContent; internal TaskCompletionSource? DeleteGate; internal Action<string>? OnDelete;
         internal readonly List<Write> Writes = []; internal int MineReads, DiscoverReads;
-        internal int StatusReads; internal TaskCompletionSource? StatusGate, MineGate;
+        internal int StatusReads; internal TaskCompletionSource? StatusGate, MineGate, CancelGate;
         internal readonly Dictionary<string, TaskCompletionSource> Gates = [];
         internal readonly Dictionary<string, HttpStatusCode> CatalogStatus = new() { ["lib-404"] = HttpStatusCode.NotFound, ["lib-500"] = HttpStatusCode.InternalServerError };
         private readonly Dictionary<string, int> _catalogReads = [];
@@ -611,6 +676,7 @@ internal static class RequestRemovalNativeFixture
                     OnDelete?.Invoke(id);
                     return Problem(DeleteMode, DeleteMode == HttpStatusCode.Conflict ? "This request is no longer failed." : "Fixture outage");
                 }
+                if (path == "/api/v2/requests/r1/cancel" && CancelGate is { } cancelGate) await cancelGate.Task.WaitAsync(ct);
                 if (path == "/api/v2/requests/r1/cancel") { Mine["r1"] = Row("r1", "Retryable", status: "pending", outcome: "cancelled"); return Json("{\"id\":\"r1\",\"status\":\"pending\",\"outcome\":\"cancelled\"}"); }
                 throw new InvalidOperationException("Unexpected fixture mutation " + request.Method + " " + path);
             }

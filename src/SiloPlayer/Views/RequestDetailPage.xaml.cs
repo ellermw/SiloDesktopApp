@@ -320,26 +320,60 @@ public sealed partial class RequestDetailPage : Page
                 _requestConfirmationOpen = true;
                 try { choice = await confirmation.ShowAsync(); }
                 finally { _requestConfirmationOpen = false; }
-                if (choice != ContentDialogResult.Primary || _lifetime.IsCancellationRequested || !_api.IsCurrentIdentityContext(owner)) return;
-                await MutateAsync(cancel, async () =>
+                // A shell refresh remounting this route retires the page, not this identity's confirmation;
+                // only a changed account/profile or leaving the title abandons it.
+                bool Abandoned() => !_api.IsCurrentIdentityContext(owner) || _lifetime.IsCancellationRequested && Successor() == null;
+                if (choice != ContentDialogResult.Primary || Abandoned()) return;
+                var toast = App.Services.GetRequiredService<ToastService>();
+                async Task SubmitAsync()
                 {
                     // Polling and read-context invalidation do not retire this identity's confirmation.
                     // Recheck the current request's authority and eligibility before the identity-bound POST.
-                    var current = await _api.GetAsync(requestId, _lifetime.Token);
-                    if (_lifetime.IsCancellationRequested || !_api.IsCurrentIdentityContext(owner)) return;
-                    var state = _item?.Request;
+                    var current = await _api.GetAsync(requestId);
+                    if (Abandoned()) return;
+                    var state = (Successor()?._item ?? _item)?.Request;
                     if (state == null || state.RequestId != requestId || state.RequestedByViewer != true || !RequestViewerPolicy.CanCancel(current))
                     {
-                        App.Services.GetRequiredService<ToastService>().Error("This request has changed and can no longer be cancelled.");
+                        toast.Error("This request has changed and can no longer be cancelled.");
                         return;
                     }
-                    await _api.CancelAsync(requestId, owner, _lifetime.Token);
-                });
+                    await _api.CancelAsync(requestId, owner);
+                    // A page replaced meanwhile cannot show the outcome: report it and reread the one mounted in its place.
+                    if (!_lifetime.IsCancellationRequested || Abandoned()) return;
+                    toast.Success("Request cancelled");
+                    _ = Successor()?.RefreshRequestAsync();
+                }
+                if (!_lifetime.IsCancellationRequested) { await MutateAsync(cancel, SubmitAsync); return; }
+                try { await SubmitAsync(); }
+                catch (Exception ex) { if (!Abandoned()) toast.Error(ex); }
             };
             ApplyPendingAction(cancel); ActionsPanel.Children.Add(cancel);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Request cancellation eligibility unavailable: {ex.GetType().Name}"); }
+    }
+
+    // An access refresh or reconnect catch-up remounts this route (NavigationService.RefreshCurrentEntry) while a
+    // cancellation confirmation can still be open or its POST in flight. The page mounted in this one's place for
+    // the same title stands in for it; any other destination means the viewer left.
+    private RequestDetailPage? Successor() => _lifetime.IsCancellationRequested &&
+        App.Services.GetRequiredService<NavigationService>().Frame?.Content is RequestDetailPage page &&
+        !ReferenceEquals(page, this) && page._navigation == _navigation ? page : null;
+
+    // A cancellation confirmed on the page this one replaced settled after this page may have read the request.
+    private async Task RefreshRequestAsync()
+    {
+        if (_item is not { } shown || _lifetime.IsCancellationRequested) return;
+        var context = _downloadRefreshClient.CaptureContext();
+        try
+        {
+            var fresh = await _api.GetDetailAsync(shown.MediaType, shown.TmdbId, _lifetime.Token);
+            if (_lifetime.IsCancellationRequested || !_downloadRefreshClient.IsCurrentContext(context)) return;
+            _item = fresh;
+            BuildActions(fresh); BuildSeasons(fresh);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Request detail refresh after cancellation unavailable: {ex.GetType().Name}"); }
     }
 
     private async Task MutateAsync(Button button, Func<Task> action)
