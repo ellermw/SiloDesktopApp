@@ -13,7 +13,8 @@ public class DownloadsApi(SiloApiClient client)
             ?? throw new InvalidOperationException(created.Skipped.FirstOrDefault()?.Reason ?? "No downloadable media was returned.");
     }
 
-    public async Task<DownloadsResponse> CreateDownloadsAsync(DownloadRequest request, CancellationToken ct = default)
+    /// <summary><paramref name="pageAccepted"/> runs for each page the server accepted, also when the batch stops afterwards.</summary>
+    public async Task<DownloadsResponse> CreateDownloadsAsync(DownloadRequest request, CancellationToken ct = default, Action? pageAccepted = null)
     {
         if (request.Series) request.BatchId ??= Guid.NewGuid().ToString();
         var result = new DownloadsResponse();
@@ -26,6 +27,8 @@ public class DownloadsApi(SiloApiClient client)
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Download context changed.", ct);
             var path = "/api/v2/downloads" + (cursor == null ? "" : "?cursor=" + Uri.EscapeDataString(cursor));
             var page = await client.SendRequestAsync<DownloadCreated>(context, HttpMethod.Post, path, V2Json.Body(request), ct);
+            // Reported before the owner checks: a batch retired here still registered this page.
+            pageAccepted?.Invoke();
             ct.ThrowIfCancellationRequested();
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Download context changed.", ct);
             result.Downloads.AddRange(page.Items);

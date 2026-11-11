@@ -85,6 +85,8 @@ public sealed partial class ItemDetailPage
                     var start = new Button { Content = "Start Download", HorizontalAlignment = HorizontalAlignment.Stretch };
                     var running = false;
                     const string reconcile = "Some downloads may already be registered. Check Downloads before starting another batch.";
+                    // Server text is not always punctuated, so it is closed before another sentence follows it.
+                    static string Sentence(string text) { text = text.Trim(); return text.Length == 0 || ".!?…".Contains(text[^1]) ? text : text + "."; }
                     // A closed or retired picker cannot show reconciliation, so the same viewer gets it as a toast.
                     void Abandon()
                     {
@@ -108,9 +110,10 @@ public sealed partial class ItemDetailPage
                             FileId = versionPicker is { SelectedIndex: > 0 } ? versions[versionPicker.SelectedIndex - 1].FileId : null,
                             Quality = qualityPicker is { SelectedIndex: >= 0 } ? qualities[qualityPicker.SelectedIndex] : "original" };
                         status.Text = "Registering downloads…";
+                        var accepted = false;
                         try
                         {
-                            var result = await api.CreateDownloadsAsync(request, ct);
+                            var result = await api.CreateDownloadsAsync(request, ct, () => accepted = true);
                             var created = result.Downloads.Count; var skipped = result.Skipped.Count;
                             var registered = $"Registered {created} download{(created == 1 ? "" : "s")}." + (skipped > 0 ? $" {skipped} skipped: {string.Join(", ", result.Skipped.Select(s => s.Reason).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct())}" : "");
                             // Every page was accepted. A picker retired since then still reports the completed batch to the same viewer, never an interruption.
@@ -120,12 +123,29 @@ public sealed partial class ItemDetailPage
                         }
                         // The dispatched page may be accepted although its owner was cancelled.
                         catch (OperationCanceledException) when (ct.IsCancellationRequested) { Abandon(); }
+                        // A client-error answer before any accepted page registered nothing, so there is nothing to reconcile.
+                        // Server errors and transport failures stay uncertain and keep the reconciliation below.
+                        catch (ApiException ex) when (!accepted && ex.StatusCode is >= 400 and < 500)
+                        {
+                            var refused = "No downloads were registered. " + Sentence(ex.Message);
+                            if (!Current())
+                            {
+                                dialog.Hide();
+                                if (client.IsCurrentIdentityContext(authority)) App.Services.GetRequiredService<ToastService>().Warning(refused);
+                                return;
+                            }
+                            status.Text = refused;
+                            // The same picker retries in place, with another template or quality when that was refused.
+                            running = false; start.IsEnabled = true;
+                            if (versionPicker != null) versionPicker.IsEnabled = true;
+                            if (qualityPicker != null) qualityPicker.IsEnabled = true;
+                        }
                         catch (Exception ex)
                         {
                             if (!Current()) { Abandon(); return; }
                             // A previous page may be accepted, also when a retired request stops the cursor. A new attempt requires an explicit reconciliation.
-                            status.Text = (ex is OperationCanceledException ? "The connection changed while registering downloads." : ex.Message)
-                                + " " + reconcile;
+                            status.Text = (Sentence(ex is OperationCanceledException ? "The connection changed while registering downloads." : ex.Message)
+                                + " " + reconcile).TrimStart();
                             dialog.CloseButtonText = "Close";
                             var inspect = new Button { Content = "View Downloads" };
                             inspect.Click += (_, _) => { var current = Current(); dialog.Hide(); if (current) App.Services.GetRequiredService<NavigationService>().Navigate<DownloadsPage>(); };

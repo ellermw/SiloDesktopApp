@@ -255,6 +255,47 @@ public sealed class BatchDownloadTests
     }
 
     [Fact]
+    public async Task RefusedFirstPageReportsNoAcceptedPage()
+    {
+        using var server = new Server(new Reply(Status: HttpStatusCode.NotFound,
+            Json: """{"type":"not_found","title":"Not found","detail":"The requested file does not belong to this series."}"""));
+
+        var request = new DownloadRequest
+        {
+            ContentId = "series-1",
+            Series = true,
+            FileId = 999,
+            Quality = "original",
+        };
+        var accepted = 0;
+
+        await Assert.ThrowsAsync<ApiException>(
+            () => new DownloadsApi(server.Client).CreateDownloadsAsync(request, pageAccepted: () => accepted++));
+        Assert.Equal(0, accepted);
+    }
+
+    [Fact]
+    public async Task FailureAfterAnAcceptedPageReportsThatPage()
+    {
+        using var server = new Server(
+            new Reply("download_batch_page1"),
+            new Reply(Status: HttpStatusCode.NotFound, Json: """{"type":"not_found","title":"Not found"}"""));
+
+        var request = new DownloadRequest
+        {
+            ContentId = "series-1",
+            Series = true,
+            Quality = "original",
+        };
+        var accepted = 0;
+
+        await Assert.ThrowsAsync<ApiException>(
+            () => new DownloadsApi(server.Client).CreateDownloadsAsync(request, pageAccepted: () => accepted++));
+        Assert.Equal(1, accepted);
+        Assert.Equal(2, server.Requests.Count);
+    }
+
+    [Fact]
     public async Task ContextChangeAbortsMidPage()
     {
         using var server = new ContextSwitchServer();
