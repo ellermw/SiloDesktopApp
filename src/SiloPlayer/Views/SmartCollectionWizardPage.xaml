@@ -181,6 +181,9 @@
                                 <TextBlock x:Name="PreviewCountTextBlock" Text="Loading items…" FontSize="13"
                                            Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </controls:WrapPanel>
+                            <TextBlock x:Name="PreviewScopeText" Text="{x:Bind ViewModel.PreviewScopeNote, Mode=OneWay}" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       Visibility="{x:Bind ViewModel.PreviewScopeNote, Mode=OneWay, Converter={StaticResource NullToVis}}" />
 
                             <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}"
                                     BorderThickness="1" CornerRadius="14" Padding="18,14">
@@ -195,8 +198,8 @@
                                           Visibility="{x:Bind ViewModel.IsPreviewing, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                             <Button Content="Retry preview" Click="Preview_Click" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" HorizontalAlignment="Center" />
                             <StackPanel x:Name="PreviewEmptyPanel" Visibility="Collapsed" Spacing="5" HorizontalAlignment="Center" Margin="0,42">
-                                <TextBlock Text="No titles match these filters yet." FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                <TextBlock Text="Loosen the filters above to see what your collection would include."
+                                <TextBlock x:Name="PreviewEmptyTitle" Text="No titles match these filters yet." FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                <TextBlock x:Name="PreviewEmptyHelp" Text="Loosen the filters above to see what your collection would include."
                                            FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                             </StackPanel>
                             <ItemsRepeater x:Name="PreviewItemsRepeater"
@@ -221,6 +224,8 @@
                     <StackPanel x:Name="FiltersStepPreviewPanel" Grid.Column="1" Visibility="Collapsed" />
                 </Grid>
 
+                <TextBlock x:Name="RuleNeededText" Visibility="Collapsed" TextWrapping="Wrap"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
                     <Button x:Name="WizardDeleteButton" Content="Delete collection" Click="DeleteCollection_Click" Visibility="Collapsed" Style="{StaticResource DestructiveButtonStyle}" />
                     <Button
@@ -238,7 +243,7 @@
                         x:Name="SaveButton"
                         Visibility="Collapsed"
                         Style="{StaticResource AccentButtonStyle}"
-                        IsEnabled="{x:Bind CanSave, Mode=OneTime}"
+                        IsEnabled="False"
                         Click="Save_Click">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <ProgressRing

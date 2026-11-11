@@ -8454,7 +8454,8 @@ public sealed partial class ItemDetailPage : Page
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
                 .Prefetch(episode.ContentId);
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(episode.ContentId, ViewModel.LibraryId));
+                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(
+                    episode.ContentId, EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId)));
         };
         button.GotFocus += (_, _) => App.Services
             .GetRequiredService<ItemDetailPrefetchCache>()
