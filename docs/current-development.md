@@ -1,3 +1,11 @@
+## November 11 — version-aware batch download candidate
+
+Native series, season and Specials download actions now support official batch-version templates and optional bulk quality. Aggregate items need no Versions list: templates come from readable episode versions, with automatic per-episode selection available. Cursor creation retains one batch id and owner; closing the picker cancels future pages, duplicate activation is single flight, and effective capability refusals remain authoritative. A partial failure directs the viewer to Downloads for reconciliation.
+
+Source is Beta `3f098c88ca4770db6f71e84e0e2290df42f8ec2c`, version 1.2.970, compared with official Server `4a9e527a432e8ef3a15dcd568802a45c15169039`. Verification: 41 focused and 5,327 full unit tests; fresh Release publish; six passing native groups for series/season/Specials selection, cancellation, duplicate activation and effective/legacy capabilities. App DLL SHA256 `B0727098C6FCBCED87D281E02677F017B1CC53E734139FA023C410861307492E`; 739 app and 181 fixture authored PDB documents match source. Independent review accepts with no P0–P2 findings; pathological template discovery may require many reads.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-batch-fixes/`, `reopened-batch-corrections.md`, `reopened-batch-final-review.md`. The reviewer’s pending-full-suite note is superseded by `full-final-a`; its table incorrectly marks `native-green-a` as passing—the preserved run failed on a WinRT callback defect, corrected before publish-c/native-green-b. The native route checks real More-menu availability and invokes the picker method; it does not certify physical pointer/keyboard input or live-server interoperability. No installed player, account, settings, installer or version stamp was changed. Beta pipeline owns subsequent QA and delivery.
+
 # Server alignment — profiles and metadata (November 10, 2026)
 
 Base: freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`; stamps remain pipeline-owned. Official Server/WebUI reviewed at `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039` (additional WebUI localization only).
