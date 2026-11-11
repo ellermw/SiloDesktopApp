@@ -106,8 +106,8 @@ public partial class AuthApi(SiloApiClient client)
         {
             ["name"] = request.Name,
             ["is_child"] = request.IsChild,
-            ["library_restrictions_enabled"] = request.LibraryRestrictionsEnabled,
-            ["allowed_library_ids"] = request.AllowedLibraryIds.Select(id => id.ToString(CultureInfo.InvariantCulture)).ToArray(),
+            ["library_restrictions_enabled"] = !request.IsPrimary && request.LibraryRestrictionsEnabled,
+            ["allowed_library_ids"] = request.IsPrimary ? Array.Empty<string>() : request.AllowedLibraryIds.Select(id => id.ToString(CultureInfo.InvariantCulture)).ToArray(),
         };
         if (!string.IsNullOrEmpty(request.MaxContentRating)) body["max_content_rating"] = request.MaxContentRating;
         else if (updating) body["max_content_rating"] = null;

@@ -4,6 +4,7 @@ namespace SiloPlayer.Core.Models.Auth;
 
 public class CreateProfileRequest
 {
+    [JsonIgnore] public bool IsPrimary { get; set; }
     public string Name { get; set; } = "";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Avatar { get; set; } = "";

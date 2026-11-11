@@ -22,6 +22,20 @@ public sealed class MetadataResetApiTests
     }
 
     [Fact]
+    public async Task ScopedResetPreservesLocksOutsideItsScopeBeforeRefreshing()
+    {
+        using var wire = new Wire(); var client = Client(wire);
+        var receipt = await new MediaMaintenanceApi(client).ResetToProviderAsync("child", new[] { 2, 10, 99 });
+        Assert.Equal("queued", receipt.Status);
+        Assert.Equal(new[] { "PATCH", "POST" }, wire.Methods);
+        using var unlock = JsonDocument.Parse(wire.Bodies[0]);
+        Assert.Single(unlock.RootElement.EnumerateObject());
+        Assert.Equal(new[] { 2, 10, 99 }, unlock.RootElement.GetProperty("locked_fields").EnumerateArray().Select(v => v.GetInt32()));
+        using var refresh = JsonDocument.Parse(wire.Bodies[1]);
+        Assert.Equal("quick", refresh.RootElement.GetProperty("mode").GetString());
+    }
+
+    [Fact]
     public async Task FailedUnlockCannotQueueARefresh()
     {
         using var wire = new Wire { RefuseUnlock = true }; var client = Client(wire);
