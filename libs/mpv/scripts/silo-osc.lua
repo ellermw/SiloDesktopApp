@@ -6591,11 +6591,13 @@ local function setup_key_bindings()
         if not close_keyboard_surface() then
             if state.skip_visible and (state.skip_label == "Skip Intro" or state.skip_label == "Watch Intro")
                 and not state.intro_expired_key then
-                if type(state.intro_resolved_keys) == "table" and type(state.intro_prompt_key) == "string"
-                    and state.intro_prompt_key ~= "" then
-                    state.intro_resolved_keys[state.intro_prompt_key] = true
+                -- Dismiss Ask just like timer expiry, without retiring the
+                -- marker or suppressing an Always seek that has not succeeded.
+                if state.intro_mode == "ask" then
+                    state.intro_prompt_remaining = 0
+                    state.intro_prompt_resolved = true
+                    state.intro_expired_key = state.intro_prompt_key
                 end
-                state.intro_prompt_resolved = true
                 state.intro_undo_origin = nil
                 state.skip_visible = false
                 render_skip_button()

@@ -976,11 +976,17 @@ public sealed partial class MpvOscRuntimeTests
             local untimed = state.skip_visible and state.intro_prompt_remaining == 0
             state.time_pos = 35; osc_test_check(); local left = not state.skip_visible and state.intro_expired_key == nil
             state.time_pos = 5; osc_test_check(); local fresh = state.skip_visible and state.intro_prompt_remaining > 0
-            keys['silo-menu-escape'](); state.visible = false; osc_test_check(); state.visible = true; osc_test_check()
-            local dismissed = not state.skip_visible
+            keys['silo-menu-escape']()
+            local dismissed = not state.skip_visible and state.intro_prompt_resolved and state.intro_prompt_remaining == 0
+                and state.intro_expired_key == state.intro_prompt_key and not state.intro_resolved_keys[state.intro_prompt_key]
+            state.visible = false; osc_test_check(); dismissed = dismissed and not state.skip_visible
+            state.visible = true; osc_test_check()
+            local reoffered = state.skip_visible and state.skip_label == 'Skip Intro' and state.intro_prompt_remaining == 0
+            state.time_pos = 35; osc_test_check(); state.time_pos = 5; osc_test_check()
+            local rearmed = state.skip_visible and not state.intro_prompt_resolved and state.intro_prompt_remaining > 0
             handlers['osc-set-markers']('{"content_id":"next","intro_start":0,"intro_end":30}')
             osc_test_check()
-            mp.set_property('user-data/probe-result', table.concat({tostring(hidden),tostring(offered),tostring(normal_input),tostring(hidden_again),tostring(untimed),tostring(left),tostring(fresh),tostring(dismissed),tostring(state.skip_visible)}, ':'))
+            mp.set_property('user-data/probe-result', table.concat({tostring(hidden),tostring(offered),tostring(normal_input),tostring(hidden_again),tostring(untimed),tostring(left),tostring(fresh),tostring(dismissed),tostring(reoffered),tostring(rearmed),tostring(state.skip_visible)}, ':'))
             """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
             handlers, keys, commands = {}, {}, {}
             local register = mp.register_script_message
@@ -994,7 +1000,38 @@ public sealed partial class MpvOscRuntimeTests
                 return command(...)
             end
             """);
-        Assert.Equal("true:true:true:true:true:true:true:true:true", result);
+        Assert.Equal("true:true:true:true:true:true:true:true:true:true:true", result);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EscapeDoesNotResolveAnAlwaysIntroBeforeItsSeekSucceeds(bool seekPending)
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            state.visible = true; state.intro_mode = 'ask'; state.marker_content_id = 'episode'
+            state.intro_start = 0; state.intro_end = 30; state.time_pos = 5
+            osc_test_check(); state.intro_mode = 'always'
+            if {{(seekPending ? "true" : "false")}} then osc_test_check() end
+            keys['silo-menu-escape']()
+            local dismissed = not state.skip_visible and not state.intro_prompt_resolved
+                and not state.intro_resolved_keys[state.intro_prompt_key]
+            if state.intro_pending then state.intro_pending.requested = mp.get_time() - 6 end
+            osc_test_check()
+            local seeking = state.intro_pending ~= nil and state.intro_pending.automatic
+                and state.intro_pending.target == 30 and not state.intro_prompt_resolved
+            state.time_pos = 30; osc_test_check()
+            local undo = state.skip_visible and state.skip_label == 'Watch Intro'
+            keys['silo-menu-escape'](); osc_test_check()
+            local undo_dismissed = not state.skip_visible and state.intro_undo_origin == nil
+            mp.set_property('user-data/probe-result', tostring(dismissed)..':'..tostring(seeking)..':'..tostring(undo)..':'..tostring(undo_dismissed))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            keys = {}
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            """);
+        Assert.Equal("true:true:true:true", result);
     }
 
     [Fact]
