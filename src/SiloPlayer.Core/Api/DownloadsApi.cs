@@ -39,7 +39,7 @@ public class DownloadsApi(SiloApiClient client)
     /// <summary>Use the first accessible playable episode as the version template source.
     /// Aggregate series and season records deliberately have no versions.</summary>
     public async Task<List<FileVersion>> GetBatchTemplateVersionsAsync(string seriesId, int? seasonNumber,
-        int? libraryId, CancellationToken ct = default)
+        int? libraryId, string? seasonContentId = null, CancellationToken ct = default)
     {
         var owner = client.CaptureContext();
         void Current()
@@ -49,29 +49,36 @@ public class DownloadsApi(SiloApiClient client)
         }
         string Scoped(string path) => libraryId.HasValue
             ? path + "?library_id=" + libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : path;
+        // Templates are optional: a missing or forbidden list means no template, never a failed batch.
+        async Task<List<T>> Optional<T>(string path)
+        {
+            List<T> items;
+            try { items = await BrowseV2.AllAsync<T>(client, Scoped(path), ct); }
+            catch (ApiException ex) when (ex.StatusCode is 403 or 404) { items = []; }
+            Current();
+            return items;
+        }
         Current();
         var id = Uri.EscapeDataString(seriesId);
-        var seasons = seasonNumber.HasValue ? new List<Season> { new() { SeasonNumber = seasonNumber.Value } }
-            : await BrowseV2.AllAsync<Season>(client, Scoped($"/api/v2/catalog/series/{id}/seasons"), ct);
-        Current();
+        var seasons = seasonNumber.HasValue ? new List<Season> { new() { ContentId = seasonContentId ?? "", SeasonNumber = seasonNumber.Value } }
+            : await Optional<Season>($"/api/v2/catalog/series/{id}/seasons");
         foreach (var season in seasons)
         {
-            var number = season.SeasonNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var episodes = await BrowseV2.AllAsync<Episode>(client, Scoped($"/api/v2/catalog/series/{id}/seasons/{number}/episodes"), ct);
-            Current();
+            // The season item route keeps Specials; the legacy series/number route can discard season zero.
+            List<Episode> episodes = string.IsNullOrEmpty(season.ContentId) ? []
+                : await Optional<Episode>($"/api/v2/catalog/items/{Uri.EscapeDataString(season.ContentId)}/episodes");
+            if (episodes.Count == 0)
+            {
+                var number = season.SeasonNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                episodes = await Optional<Episode>($"/api/v2/catalog/series/{id}/seasons/{number}/episodes");
+            }
             foreach (var episode in episodes)
             {
                 var readable = episode.Files.Where(file => file.FileId > 0 && file.Unreadable != true).Select(file => file.FileId).ToHashSet();
                 if (readable.Count == 0) continue;
-                try
-                {
-                    var versions = await BrowseV2.AllAsync<FileVersion>(client,
-                        Scoped($"/api/v2/catalog/items/{Uri.EscapeDataString(episode.ContentId)}/versions"), ct);
-                    Current();
-                    var candidates = versions.Where(v => readable.Contains(v.FileId)).DistinctBy(v => v.FileId).ToList();
-                    if (candidates.Count > 0) return candidates;
-                }
-                catch (ApiException ex) when (ex.StatusCode is 403 or 404) { Current(); }
+                var versions = await Optional<FileVersion>($"/api/v2/catalog/items/{Uri.EscapeDataString(episode.ContentId)}/versions");
+                var candidates = versions.Where(v => readable.Contains(v.FileId)).DistinctBy(v => v.FileId).ToList();
+                if (candidates.Count > 0) return candidates;
             }
         }
         return [];

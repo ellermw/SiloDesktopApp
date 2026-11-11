@@ -48,10 +48,32 @@ public sealed class BatchDownloadOwnershipTests
         using var wire=new Wire {Read = _=>"{\"items\":[]}"}; using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
         Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",0,null));
     }
+    [Theory] [InlineData(null)] [InlineData(0)]
+    public async Task SpecialsTemplatesComeFromTheSeasonItemRoute(int? season)
+    {
+        using var wire=new Wire(); using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        // Shaped like the real server: the legacy series/number route discards season zero.
+        wire.Read = request => request.RequestUri!.AbsolutePath.EndsWith("/versions") ? "{\"items\":[{\"file_id\":\"21\"}]}"
+            : request.RequestUri.AbsolutePath.EndsWith("/seasons") ? "{\"items\":[{\"content_id\":\"specials-item\",\"season_number\":0}]}"
+            : request.RequestUri.AbsolutePath=="/api/v2/catalog/items/specials-item/episodes" ? "{\"items\":[{\"content_id\":\"special\",\"files\":[{\"file_id\":\"21\"}]}]}"
+            : "{\"items\":[]}";
+        var versions=await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",season,7,season.HasValue?"specials-item":null);
+        Assert.Equal(21,Assert.Single(versions).FileId);
+        Assert.All(wire.Paths,path=>Assert.Contains("library_id=7",path));
+        Assert.DoesNotContain(wire.Paths,path=>path.Contains("/seasons/0/episodes"));
+        Assert.Equal(season.HasValue?2:3,wire.Paths.Count);
+    }
+    [Theory] [InlineData(null,404)] [InlineData(0,404)] [InlineData(0,403)]
+    public async Task MissingOrForbiddenDiscoveryMeansNoTemplate(int? season,int status)
+    {
+        using var wire=new Wire {Status=(HttpStatusCode)status,Read = _=>"{\"title\":\"Not found\"}"}; using var http=new HttpClient(wire); var client=new SiloApiClient(http); client.SetBaseUrl("https://batch-test.invalid");
+        Assert.Empty(await new DownloadsApi(client).GetBatchTemplateVersionsAsync("series",season,null,season.HasValue?"season-item":null));
+        Assert.Equal(season.HasValue?2:1,wire.Paths.Count);
+    }
     private sealed class Wire:HttpMessageHandler
     {
-        internal List<string> Paths=[]; internal Func<HttpRequestMessage,string> Read = _=>"{}";
+        internal List<string> Paths=[]; internal Func<HttpRequestMessage,string> Read = _=>"{}"; internal HttpStatusCode Status=HttpStatusCode.OK;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
-        { Paths.Add(request.RequestUri!.PathAndQuery); var body=Read(request); return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {Content=new StringContent(body)}); }
+        { Paths.Add(request.RequestUri!.PathAndQuery); var body=Read(request); return Task.FromResult(new HttpResponseMessage(Status) {Content=new StringContent(body)}); }
     }
 }

@@ -20,7 +20,8 @@ public sealed partial class ItemDetailPage
         // Acquire before discovery: More may be reopened while its HTTP read is held.
         if (_batchDownloadAttempt != null || !CanCurrentUserDownload() || ViewModel.Item is not { } item || XamlRoot == null) return;
         var client = App.Services.GetRequiredService<SiloApiClient>();
-        var authority = client.CaptureContext();
+        // Viewer and title own the picker. Reconnect catch-up and access refreshes retire requests, not this dialog.
+        var authority = client.CaptureIdentityContext();
         var navigation = _navigationCts;
         if (navigation == null || !IsCurrentDetail(item.ContentId)) return;
         var library = ViewModel.LibraryId;
@@ -29,7 +30,7 @@ public sealed partial class ItemDetailPage
         var ct = owner.Token;
         bool Current() => !ct.IsCancellationRequested && ReferenceEquals(_batchDownloadAttempt, owner)
             && ReferenceEquals(_navigationCts, navigation) && IsCurrentDetail(item.ContentId)
-            && ReferenceEquals(ViewModel.Item, item) && ViewModel.LibraryId == library && client.IsCurrentContext(authority);
+            && ViewModel.LibraryId == library && client.IsCurrentIdentityContext(authority);
         var content = new StackPanel { MaxWidth = 420, Spacing = 12 };
         var status = new TextBlock { Text = "Preparing downloads…", TextWrapping = TextWrapping.Wrap };
         content.Children.Add(status);
@@ -56,8 +57,11 @@ public sealed partial class ItemDetailPage
                     var capability = await api.GetCapabilityAsync(ct);
                     if (!Current()) return;
                     if (!capability.CanCreateBatch) { status.Text = "Season/series downloads are not available."; return; }
+                    // A season detail is the season item, whose episode route keeps Specials.
+                    var seasonContentId = seasonNumber.HasValue && item.Type == "season" && item.SeriesId == seriesContentId
+                        && item.SeasonNumber == seasonNumber ? item.ContentId : null;
                     var versions = capability.BatchVersion
-                        ? await api.GetBatchTemplateVersionsAsync(seriesContentId, seasonNumber, library, ct) : new List<FileVersion>();
+                        ? await api.GetBatchTemplateVersionsAsync(seriesContentId, seasonNumber, library, seasonContentId, ct) : new List<FileVersion>();
                     if (!Current()) return;
                     status.Text = versions.Count > 0 ? "Choose an episode version as a template. Each episode uses its closest matching version." : "Each episode uses its best available version.";
                     ComboBox? versionPicker = null, qualityPicker = null;
@@ -82,7 +86,9 @@ public sealed partial class ItemDetailPage
                     var running = false;
                     start.Click += async (_, _) =>
                     {
-                        if (running || !Current()) return;
+                        if (running) return;
+                        // A retired owner closes the picker; it never leaves dead controls.
+                        if (!Current()) { dialog.Hide(); return; }
                         running = true; start.IsEnabled = false;
                         if (versionPicker != null) versionPicker.IsEnabled = false;
                         if (qualityPicker != null) qualityPicker.IsEnabled = false;
@@ -93,28 +99,29 @@ public sealed partial class ItemDetailPage
                         try
                         {
                             var result = await api.CreateDownloadsAsync(request, ct);
-                            if (!Current()) return;
+                            if (!Current()) { dialog.Hide(); return; }
                             var created = result.Downloads.Count; var skipped = result.Skipped.Count;
                             status.Text = $"Registered {created} download{(created == 1 ? "" : "s")}." + (skipped > 0 ? $" {skipped} skipped: {string.Join(", ", result.Skipped.Select(s => s.Reason).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct())}" : "");
                             App.Services.GetRequiredService<ToastService>().Success(status.Text);
                             dialog.Hide();
                         }
-                        catch (OperationCanceledException) { }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
                         catch (Exception ex)
                         {
-                            if (!Current()) return;
-                            // A previous page may be accepted. A new attempt requires an explicit reconciliation.
-                            status.Text = ex.Message + " Some downloads may already be registered. Check Downloads before starting another batch.";
+                            if (!Current()) { dialog.Hide(); return; }
+                            // A previous page may be accepted, also when a retired request stops the cursor. A new attempt requires an explicit reconciliation.
+                            status.Text = (ex is OperationCanceledException ? "The connection changed while registering downloads." : ex.Message)
+                                + " Some downloads may already be registered. Check Downloads before starting another batch.";
                             dialog.CloseButtonText = "Close";
                             var inspect = new Button { Content = "View Downloads" };
-                            inspect.Click += (_, _) => { if (!Current()) return; dialog.Hide(); App.Services.GetRequiredService<NavigationService>().Navigate<DownloadsPage>(); };
+                            inspect.Click += (_, _) => { var current = Current(); dialog.Hide(); if (current) App.Services.GetRequiredService<NavigationService>().Navigate<DownloadsPage>(); };
                             content.Children.Add(inspect);
                         }
                     };
                     content.Children.Add(start);
                 }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { if (Current()) status.Text = ex.Message; }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+                catch (Exception ex) { if (Current()) status.Text = ex is OperationCanceledException ? "The connection changed while preparing downloads. Close this dialog and try again." : ex.Message; }
                 finally { if (!Current()) dialog.Hide(); }
             }
             var population = Populate();

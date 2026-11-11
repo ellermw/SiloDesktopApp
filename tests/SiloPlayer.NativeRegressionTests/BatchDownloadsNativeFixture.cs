@@ -103,6 +103,24 @@ internal static class BatchDownloadsNativeFixture
             Invoke(Elements<Button>(old).Single(b=>Equals(b.Content,"Start Download"))); await legacy;
             using(var body=JsonDocument.Parse(wire.Bodies[0])) Check(!body.RootElement.TryGetProperty("media_file_id",out _),"Legacy batch must omit template.");
             Program.Log("PASS: effective refusal and legacy batch capability gates exercised through native dialogs.");
+
+            // Reconnect catch-up or an access refresh retires requests, not the open picker.
+            wire.Reset();
+            var refreshed = (Task)Call(page, "ShowBatchDownloadDialogAsync", "series-1", (object)0, "Native fixture")!;
+            var open = await Dialog(parent); await Until(() => Elements<Button>(open).Any(b => Equals(b.Content, "Start Download")));
+            client.InvalidateAccessContext();
+            Invoke(Elements<Button>(open).Single(b => Equals(b.Content, "Start Download"))); await refreshed;
+            Check(wire.Bodies.Count == 2, "A refreshed request context must not leave Start Download inert.");
+
+            // A request context retired between cursor pages surfaces reconciliation instead of hanging.
+            wire.Reset(); wire.Created = () => client.InvalidateAccessContext();
+            var partial = (Task)Call(page, "ShowBatchDownloadDialogAsync", "series-1", (object)0, "Native fixture")!;
+            var stalled = await Dialog(parent); await Until(() => Elements<Button>(stalled).Any(b => Equals(b.Content, "Start Download")));
+            Invoke(Elements<Button>(stalled).Single(b => Equals(b.Content, "Start Download")));
+            await Until(() => Elements<Button>(stalled).Any(b => Equals(b.Content, "View Downloads")));
+            Check(wire.Bodies.Count == 1 && Elements<TextBlock>(stalled).Any(t => t.Text.Contains("may already be registered")), "A partial batch must direct the viewer to Downloads.");
+            stalled.Hide(); await partial;
+            Program.Log("PASS: request-context refresh keeps the native picker usable and reports a partial batch.");
         }
         finally { wire.CreateGate?.TrySetResult(true); wire.CapabilityGate?.TrySetResult(true); navigation.Cancel(); parent.Children.Remove(page); servicesField.SetValue(null,previous); }
     }
@@ -117,16 +135,18 @@ internal static class BatchDownloadsNativeFixture
     {
         internal List<string> Bodies=[]; internal int VersionReads,AggregateVersionReads,CapabilityReads;
         internal bool BatchVersion=true,BulkQuality=true; internal string? Refused;
-        internal TaskCompletionSource<bool>? CreateGate,CapabilityGate;
-        internal void Reset() { Bodies.Clear(); VersionReads=AggregateVersionReads=CapabilityReads=0; BatchVersion=BulkQuality=true; Refused=null; CreateGate=CapabilityGate=null; }
+        internal TaskCompletionSource<bool>? CreateGate,CapabilityGate; internal Action? Created;
+        internal void Reset() { Bodies.Clear(); VersionReads=AggregateVersionReads=CapabilityReads=0; BatchVersion=BulkQuality=true; Refused=null; CreateGate=CapabilityGate=null; Created=null; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var path=request.RequestUri!.AbsolutePath;
             if(path=="/api/v2/capabilities/downloads") { CapabilityReads++; if(CapabilityGate!=null) await CapabilityGate.Task; return Reply(new { enabled=true,download_allowed=true,allowed=Refused!="allowed",bounded_creation=Refused!="bounded_creation",season_download=true,batch_version=BatchVersion,bulk_quality=BulkQuality,quality_presets=new[]{"original","5mbps"} }); }
             if(path.EndsWith("/seasons")) return Reply(new { items=new[]{new {content_id="season-1",season_number=0},new {content_id="season-2",season_number=1}} });
+            // Shaped like the real server: the legacy series/number route discards season zero.
+            if(path.EndsWith("/seasons/0/episodes")) return Reply(new {items=Array.Empty<object>()});
             if(path.EndsWith("/episodes")) return Reply(new {items=new[]{new {content_id="ep-1",title="First episode",files=new[]{new {file_id="101"},new {file_id="102"}}}}});
             if(path.EndsWith("/versions")) { if(!path.Contains("/ep-1/")) AggregateVersionReads++; VersionReads++; return Reply(new {items=new[]{new {file_id="101",resolution="1080p",codec_video="h264",hdr=false},new {file_id="102",resolution="2160p",codec_video="hevc",hdr=true}}}); }
-            if(path=="/api/v2/downloads" && request.Method==HttpMethod.Post) { Bodies.Add(await request.Content!.ReadAsStringAsync(ct)); if(CreateGate!=null) await CreateGate.Task; return Reply(new {items=new[]{new {id="download-"+Bodies.Count}},skipped=Bodies.Count==2?new[]{new {episode_id="missing",reason="unavailable"}}:[],page=new {has_more=Bodies.Count==1,next_cursor=Bodies.Count==1?"next":null}}); }
+            if(path=="/api/v2/downloads" && request.Method==HttpMethod.Post) { Bodies.Add(await request.Content!.ReadAsStringAsync(ct)); Created?.Invoke(); if(CreateGate!=null) await CreateGate.Task; return Reply(new {items=new[]{new {id="download-"+Bodies.Count}},skipped=Bodies.Count==2?new[]{new {episode_id="missing",reason="unavailable"}}:[],page=new {has_more=Bodies.Count==1,next_cursor=Bodies.Count==1?"next":null}}); }
             if(path=="/api/v2/downloads") return Reply(new {items=Array.Empty<object>()});
             return Reply(new {});
         }
