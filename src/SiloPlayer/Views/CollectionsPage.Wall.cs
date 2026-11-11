@@ -104,7 +104,9 @@ public sealed partial class CollectionsPage
         CollectionsFilterPills.Children.Clear();
         CollectionsFilterScroll.Visibility = CollectionsWall.ShowPills(libraries, sharedCount) ? Visibility.Visible : Visibility.Collapsed;
         if (CollectionsFilterScroll.Visibility == Visibility.Collapsed) return;
-        foreach (var pill in CollectionsWall.Pills(libraries, ownCount, sharedCount, personalIds, ViewModel.ServerLibraryRestIds))
+        // A slow or failed personal or server read leaves All without a count rather than a partial one.
+        foreach (var pill in CollectionsWall.Pills(libraries, ownCount, sharedCount, personalIds, ViewModel.ServerLibraryRestIds,
+            ViewModel.PersonalLoaded, ViewModel.ServerLoaded))
         {
             if (pill.Separated)
                 CollectionsFilterPills.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center, Background = (Brush)Application.Current.Resources["BorderBrush"] });

@@ -565,6 +565,14 @@ public partial class CollectionEditorViewModel : ObservableObject
         {
             var result = await _collectionsApi.SyncCollectionAsync(id);
             if (generation != _editorLoadGeneration || CollectionId != id || !_catalogApi.IsCurrentContext(context)) return;
+            if (CollectionHeroActions.SyncFailure(result) is { } failure)
+            {
+                // A run that finished as failed is recorded like one that threw: the collection keeps its
+                // members, so the run's matched count is not its item count. Read the saved state back.
+                ErrorMessage = failure;
+                await RefreshRecordedSyncStateAsync(id, generation, context);
+                return;
+            }
             if (LoadedCollection is { } collection)
             {
                 collection.ItemCount = result.ItemsMatched;

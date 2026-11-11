@@ -188,6 +188,43 @@ public sealed class CollectionsWallLoadingTests
         Assert.True(vm.PersonalLoaded); Assert.False(vm.IsLoading);
     }
 
+    private const string OneOwn = "{\"items\":[{\"id\":\"own\",\"name\":\"Mine\"}],\"groups\":[]}";
+
+    // The All pill as the page asks for it: what has been read so far, with the view model's loaded flags.
+    private static int? AllCount(CollectionsViewModel vm)
+        => CollectionsWall.Pills(vm.ServerLibraries.ToArray(), vm.Collections.Count, 0, vm.Collections.Select(collection => collection.Id).ToArray(),
+            vm.ServerLibraryRestIds, vm.PersonalLoaded, vm.ServerLoaded).Single(pill => pill.Value == CollectionsWall.All).Count;
+
+    [Fact]
+    public async Task AllPillHasNoCountWhileTheProfilesOwnCollectionsAreStillOnTheirWay()
+    {
+        using var wire = new Wire { ServerBody = OneLibrary, HoldPersonal = true }; var client = wire.Client();
+        var vm = Vm(client);
+        var load = vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await wire.PersonalStarted.Task;
+        await Until(() => vm.ServerLoaded);
+        Assert.False(vm.PersonalLoaded);
+        Assert.Null(AllCount(vm));   // the server's one card is not the whole wall while the profile's own are unread
+        wire.Personal.SetResult(Wire.Ok(OneOwn));
+        await load;
+        Assert.Equal(2, AllCount(vm));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AllPillHasNoCountWhenTheServerOrPersonalReadFailed(bool failServer)
+    {
+        using var wire = new Wire { ServerBody = OneLibrary, PersonalBody = OneOwn, FailServer = failServer, FailPersonal = !failServer }; var client = wire.Client();
+        var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(!failServer, vm.ServerLoaded); Assert.Equal(failServer, vm.PersonalLoaded);
+        Assert.Null(AllCount(vm));   // the half that was read is not the total, and stays unknown after the failure
+        wire.FailServer = wire.FailPersonal = false;
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(2, AllCount(vm));
+    }
+
     [Fact]
     public async Task ProfilesLoadingIsTrackedSoASavedSharedFilterSurvivesIt()
     {
