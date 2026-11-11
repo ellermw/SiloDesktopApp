@@ -26,6 +26,9 @@ public sealed class LibraryTabCollection
     public string Title { get; set; } = "";
     public string? PosterUrl { get; set; }
     public string? PosterThumbhash { get; set; }
+    public string? Description { get; set; }
+    public string? BackdropUrl { get; set; }
+    public string? BackdropThumbhash { get; set; }
     public int ItemCount { get; set; }
     public bool Featured { get; set; }
     public string? CreatorProfileId { get; set; }

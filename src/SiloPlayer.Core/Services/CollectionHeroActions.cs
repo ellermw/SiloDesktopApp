@@ -76,9 +76,21 @@ public static class CollectionHeroActions
     {
         if (collection.CollectionType == "manual") return [];
         if (collection.SourceConfig != null && collection.SourceConfig.TryGetValue("library_ids", out var configured) && configured is JsonElement { ValueKind: JsonValueKind.Array } array)
-            return Distinct(array.EnumerateArray().Where(value => value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out _)).Select(value => (int)Math.Truncate(value.GetDouble())));
+            return Distinct(array.EnumerateArray().Select(value => value.ValueKind switch
+            {
+                JsonValueKind.Number when value.TryGetDouble(out var number) => (int)Math.Truncate(number),
+                JsonValueKind.String when int.TryParse(value.GetString(), out var id) => id,
+                _ => 0,
+            }));
         if (collection.SourceConfig != null && collection.SourceConfig.TryGetValue("library_ids", out var list) && list is IEnumerable<object> values)
-            return Distinct(values.Select(value => value is int number ? number : value is long big ? (int)big : value is double real ? (int)Math.Truncate(real) : 0));
+            return Distinct(values.Select(value => value switch
+            {
+                int number => number,
+                long big => (int)big,
+                double real => (int)Math.Truncate(real),
+                string text when int.TryParse(text, out var id) => id,
+                _ => 0,
+            }));
         return Distinct(collection.QueryDefinition?.LibraryIds ?? []);
     }
 

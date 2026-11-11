@@ -50,6 +50,23 @@ public sealed class CollectionPageHeaderTests
         Assert.Equal([2], wire.TabReads);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ServerCollectionReadsHeaderFromGroupedAndUngroupedTabs(bool inGroup)
+    {
+        using var wire = new Wire();
+        wire.Tab[7] = inGroup
+            ? """{"library_id":7,"collections":[{"id":"other"}],"groups":[{"id":"g1","collections":[{"id":"c1","title":"One","description":"  Grouped description  ","backdrop_url":"https://img.invalid/grouped.jpg","backdrop_thumbhash":"HASH"}]}]}"""
+            : """{"library_id":7,"groups":[],"ungrouped":{"collections":[{"id":"c1","title":"One","description":"  Grouped description  ","backdrop_url":"https://img.invalid/grouped.jpg","backdrop_thumbhash":"HASH"}]}}""";
+        var header = await Load(wire, "c1", false, 7);
+        Assert.Equal("Grouped description", header.Description);
+        Assert.Equal("https://img.invalid/grouped.jpg", header.BackdropUrl);
+        Assert.Equal("HASH", header.BackdropThumbhash);
+        Assert.True(header.HasBackdrop);
+        Assert.Equal(CollectionPageAccessKind.ReadOnly, header.Access.Kind);
+    }
+
     [Fact]
     public async Task ServerCollectionPastTheTeaserSearchesEveryCutShortLibrary()
     {
@@ -105,6 +122,33 @@ public sealed class CollectionPageHeaderTests
         using var noNames = new Wire { Personal = "{\"id\":\"p1\",\"creator_profile_id\":\"owner\",\"name\":\"Theirs\"}", FailProfiles = true };
         var unsigned = await Load(noNames, "p1", true, null, profile: "me");
         Assert.Equal(CollectionPageAccessKind.ReadOnly, unsigned.Access.Kind); Assert.Null(unsigned.Access.OwnerName);
+    }
+
+    [Fact]
+    public async Task HeaderLoadThenServerChangeAllowsDeleteRetryWithTheCurrentRevision()
+    {
+        using var wire = new Wire
+        {
+            Personal = """{"id":"p1","creator_profile_id":"me","name":"Weekly","collection_type":"mdblist","updated_at":"A"}""",
+            PersonalETag = "\"A\"",
+            Capabilities = "{\"imports\":true}",
+        };
+        var client = wire.Client();
+        var collections = new CollectionsApi(client);
+        var header = await CollectionPageHeaderLoader.LoadAsync(collections, new CatalogApi(client), new AuthApi(client),
+            "p1", true, null, "me", CancellationToken.None);
+        Assert.Equal(CollectionPageAccessKind.Manage, header.Access.Kind);
+
+        // A sync (including one from another device) changes both the ETag and the saved baseline.
+        wire.Personal = """{"id":"p1","creator_profile_id":"me","name":"Weekly","collection_type":"mdblist","updated_at":"B"}""";
+        wire.PersonalETag = "\"B\"";
+        var conflict = await Assert.ThrowsAsync<ApiException>(() => collections.DeleteCollectionAsync("p1"));
+        Assert.Equal(412, conflict.StatusCode);
+        Assert.Equal(["\"A\""], wire.DeleteTags);   // never automatically retry a destructive action
+
+        await collections.DeleteCollectionAsync("p1");
+        Assert.Equal(["\"A\"", "\"B\""], wire.DeleteTags);
+        Assert.Equal(2, wire.PersonalReads);   // the dialog's retry reads a fresh revision without reopening the page
     }
 
     private const string ThreeLibraries = "{\"items\":[{\"id\":1,\"name\":\"Movies\"},{\"id\":2,\"name\":\"Shows\"},{\"id\":3,\"name\":\"Kids\"}]}";
@@ -210,6 +254,9 @@ public sealed class CollectionPageHeaderTests
     private sealed class Wire : HttpMessageHandler
     {
         public string? Personal, Profiles, ServerList, Libraries, Capabilities;
+        public string? PersonalETag;
+        public int PersonalReads;
+        public readonly List<string> DeleteTags = [];
         public bool FailPersonal, FailProfiles, FailTabs, FailServerList, FailLibraries, FailCapabilities;
         public int LibraryReads, CapabilityReads;
         public readonly Dictionary<int, string> Tab = [];
@@ -232,7 +279,21 @@ public sealed class CollectionPageHeaderTests
             }
             if (path == "/api/v2/user/libraries") { Interlocked.Increment(ref LibraryReads); return Task.FromResult(FailLibraries ? Fail() : Ok(Libraries ?? "{\"items\":[]}")); }
             if (path == "/api/v2/collections/capabilities") { Interlocked.Increment(ref CapabilityReads); return Task.FromResult(FailCapabilities ? Fail() : Ok(Capabilities ?? "{}")); }
-            if (path.StartsWith("/api/v2/collections/")) return Task.FromResult(FailPersonal ? Fail() : Ok(Personal ?? "{}"));
+            if (path.StartsWith("/api/v2/collections/"))
+            {
+                if (request.Method == HttpMethod.Delete && PersonalETag != null)
+                {
+                    var tag = request.Headers.IfMatch.Single().Tag;
+                    DeleteTags.Add(tag);
+                    return Task.FromResult(tag == PersonalETag
+                        ? new HttpResponseMessage(HttpStatusCode.NoContent)
+                        : new HttpResponseMessage(HttpStatusCode.PreconditionFailed) { Content = new StringContent("{\"status\":412,\"detail\":\"Changed elsewhere\"}") });
+                }
+                Interlocked.Increment(ref PersonalReads);
+                var response = FailPersonal ? Fail() : Ok(Personal ?? "{}");
+                if (PersonalETag != null) response.Headers.ETag = new(PersonalETag);
+                return Task.FromResult(response);
+            }
             return Task.FromResult(Ok("{}"));
         }
     }

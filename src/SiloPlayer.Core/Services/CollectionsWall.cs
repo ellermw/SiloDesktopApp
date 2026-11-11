@@ -28,6 +28,10 @@ public static class CollectionsWall
 
     public static bool IsLibrary(string show) => show.StartsWith(LibraryPrefix, StringComparison.Ordinal);
 
+    /// <summary>Only a lone library has a known combined server collection count; several may overlap.</summary>
+    public static int? ServerCount(IReadOnlyList<ServerCollectionsLibrary> libraries)
+        => libraries.Count > 1 ? null : libraries.Count == 1 ? libraries[0].TotalCount : 0;
+
     /// <summary>
     /// The pills. All, Mine, then Shared and Server when the account has them, then one pill per
     /// library once there is more than one. Totals are per library and a collection can be in
@@ -35,7 +39,7 @@ public static class CollectionsWall
     /// </summary>
     public static IReadOnlyList<Pill> Pills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount)
     {
-        int? serverCount = libraries.Count > 1 ? null : libraries.Count == 1 ? libraries[0].TotalCount : 0;
+        var serverCount = ServerCount(libraries);
         var pills = new List<Pill>
         {
             new(All, "All", serverCount is { } server ? ownCount + sharedCount + server : null),
@@ -99,10 +103,11 @@ public static class CollectionsWall
     /// shows has loaded: a slow or failed request isn't "none".
     /// </summary>
     public static string? EmptyMessage(string show, bool personalLoaded, bool profilesLoaded, bool serverLoaded,
-        int ownCount, int sharedCount, int libraryCount)
+        int ownCount, int sharedCount, int? serverCount)
     {
         if (show == Mine && personalLoaded && ownCount == 0) return EmptyMine;
-        if (show == All && personalLoaded && profilesLoaded && serverLoaded && ownCount + sharedCount + libraryCount == 0) return EmptyAll;
+        if (show == All && personalLoaded && profilesLoaded && serverLoaded && ownCount == 0 && sharedCount == 0 && serverCount == 0) return EmptyAll;
+        if ((show == Server || IsLibrary(show)) && serverLoaded && serverCount == 0) return EmptyAll;
         return null;
     }
 }

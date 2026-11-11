@@ -121,6 +121,10 @@ public static class CollectionPageHeaderLoader
                 var found = tab.Collections.FirstOrDefault(collection => collection.Id == id);
                 if (found != null)
                     return new(Clean(found.Description), Clean(found.BackdropUrl), Clean(found.BackdropThumbhash), access);
+                var grouped = tab.Groups.SelectMany(group => group.Collections)
+                    .Concat(tab.Ungrouped?.Collections ?? []).FirstOrDefault(collection => collection.Id == id);
+                if (grouped != null)
+                    return new(Clean(grouped.Description), Clean(grouped.BackdropUrl), Clean(grouped.BackdropThumbhash), access);
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { }
         }

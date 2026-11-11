@@ -34,10 +34,10 @@ public sealed partial class CollectionsPage
         EmptyState.Visibility = AddGroupButton.Visibility = AddGroupEditor.Visibility = Visibility.Collapsed;
         var profileId = App.Services.GetRequiredService<AuthService>().SelectedProfileId;
         var partition = PersonalCollectionOwnership.Split(ViewModel.Collections, profileId, ViewModel.Profiles.ToArray());
-        // A one-profile account has nobody to share with: no sharing switch, no Shared.
-        var multiple = ViewModel.Profiles.Count > 1;
+        // Only a successfully read one-profile account gets the short subtitle. Names never hide cards.
+        var multiple = !ViewModel.ProfilesLoaded || ViewModel.Profiles.Count != 1 || partition.Shared.Count > 0;
         CollectionsSubtitle.Text = multiple ? "Yours, the ones other profiles share with you, and the server's." : "Yours and the server's.";
-        var shared = multiple ? partition.Shared.SelectMany(group => group.Collections.Select(collection => (Collection: collection, Owner: group.Name))).ToArray() : [];
+        var shared = partition.Shared.SelectMany(group => group.Collections.Select(collection => (Collection: collection, Owner: group.Name))).ToArray();
         var libraries = ViewModel.ServerLibraries.ToArray();
 
         var loading = new CollectionsWall.Loading(ViewModel.IsLoading, ViewModel.IsLoadingProfiles, ViewModel.IsLoadingServerCollections);
@@ -51,7 +51,7 @@ public sealed partial class CollectionsPage
 
         BuildFilterPills(libraries, partition.Own.Count, shared.Length);
         var empty = CollectionsWall.EmptyMessage(_show, ViewModel.PersonalLoaded, ViewModel.ProfilesLoaded, ViewModel.ServerLoaded,
-            partition.Own.Count, shared.Length, libraries.Length);
+            partition.Own.Count, shared.Length, picked?.TotalCount ?? CollectionsWall.ServerCount(libraries));
         CollectionsEmptyLine.Text = empty ?? "";
         CollectionsEmptyLine.Visibility = empty == null ? Visibility.Collapsed : Visibility.Visible;
         // The personal cards' place while they load; the server's don't wait for them.

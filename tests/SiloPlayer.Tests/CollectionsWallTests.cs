@@ -102,9 +102,29 @@ public sealed class CollectionsWallTests
         Assert.Null(CollectionsWall.EmptyMessage("all", true, false, true, 0, 0, 0));   // profiles (who shares) unknown
         Assert.Null(CollectionsWall.EmptyMessage("all", true, true, false, 0, 0, 0));   // server unknown or failed
         Assert.Null(CollectionsWall.EmptyMessage("all", true, true, true, 0, 1, 0));    // something shared
-        Assert.Null(CollectionsWall.EmptyMessage("all", true, true, true, 0, 0, 1));    // a library lists collections
-        Assert.Null(CollectionsWall.EmptyMessage("server", true, true, true, 0, 0, 0));
+        Assert.Null(CollectionsWall.EmptyMessage("all", true, true, true, 0, 0, 1));    // one server collection
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("server", true, true, true, 0, 0, 0));
         Assert.Null(CollectionsWall.EmptyMessage("shared", true, true, true, 0, 0, 0));
+    }
+
+    [Fact]
+    public void OneLibraryWithNoCollectionsShowsTheLoadedEmptyLine()
+    {
+        var libraries = new[] { Library(1, "Movies", 0) };
+        var count = CollectionsWall.ServerCount(libraries);
+        Assert.Equal(0, count);
+        Assert.Equal(0, CollectionsWall.Pills(libraries, 0, 0)[0].Count);
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("all", true, true, true, 0, 0, count));
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("server", false, false, true, 2, 1, count));
+        Assert.Null(CollectionsWall.EmptyMessage("all", true, true, false, 0, 0, count));
+        Assert.Null(CollectionsWall.EmptyMessage("server", true, true, false, 0, 0, count));
+
+        // Multiple libraries may overlap: their combined count remains unknown, not zero.
+        var unknown = CollectionsWall.ServerCount([libraries[0], Library(2, "Shows", 0)]);
+        Assert.Null(unknown);
+        Assert.Null(CollectionsWall.EmptyMessage("all", true, true, true, 0, 0, unknown));
+        Assert.Null(CollectionsWall.EmptyMessage("server", true, true, true, 0, 0, unknown));
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("library:1", false, false, true, 0, 0, libraries[0].TotalCount));
     }
 
     [Theory]

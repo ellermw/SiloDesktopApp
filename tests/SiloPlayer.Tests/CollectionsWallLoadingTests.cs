@@ -34,7 +34,7 @@ public sealed class CollectionsWallLoadingTests
         Assert.False(vm.PersonalLoaded); Assert.False(vm.ProfilesLoaded); Assert.False(vm.ServerLoaded);
         Assert.NotNull(vm.ErrorMessage);
         Assert.False(vm.IsLoading); Assert.False(vm.IsLoadingServerCollections);
-        Assert.Null(CollectionsWall.EmptyMessage("all", vm.PersonalLoaded, vm.ProfilesLoaded, vm.ServerLoaded, vm.Collections.Count, 0, vm.ServerLibraries.Count));
+        Assert.Null(CollectionsWall.EmptyMessage("all", vm.PersonalLoaded, vm.ProfilesLoaded, vm.ServerLoaded, vm.Collections.Count, 0, CollectionsWall.ServerCount(vm.ServerLibraries.ToArray())));
         Assert.Null(CollectionsWall.EmptyMessage("mine", vm.PersonalLoaded, vm.ProfilesLoaded, vm.ServerLoaded, vm.Collections.Count, 0, 0));
     }
 
@@ -105,6 +105,39 @@ public sealed class CollectionsWallLoadingTests
         Assert.Empty(vm.Collections); Assert.Empty(vm.ServerLibraries);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SharedCollectionsRemainAvailableWhileProfileNamesArePendingOrFailed(bool pending)
+    {
+        using var wire = new Wire
+        {
+            PersonalBody = """{"items":[{"id":"shared","creator_profile_id":"other","name":"Weekend picks","is_shared":true}],"groups":[]}""",
+            HoldProfiles = pending,
+            FailProfiles = !pending,
+        };
+        var client = wire.Client(); client.SetProfile("me");
+        var vm = Vm(client);
+        var load = vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await Until(() => vm.PersonalLoaded);
+        if (!pending) await load;
+        Assert.False(vm.ProfilesLoaded);
+        Assert.Empty(vm.Profiles);
+        var partition = PersonalCollectionOwnership.Split(vm.Collections, "me", vm.Profiles.ToArray());
+        var shared = Assert.Single(partition.Shared);
+        Assert.Equal("Another profile", shared.Name);
+        Assert.Equal("Weekend picks", Assert.Single(shared.Collections).Name);
+        var pills = CollectionsWall.Pills([], partition.Own.Count, shared.Collections.Count);
+        Assert.Equal(1, pills.Single(pill => pill.Value == CollectionsWall.All).Count);
+        Assert.Equal(1, pills.Single(pill => pill.Value == CollectionsWall.Shared).Count);
+        if (pending)
+        {
+            wire.Profiles.SetResult(Wire.Ok("{\"items\":[{\"id\":\"me\",\"name\":\"Me\"},{\"id\":\"other\",\"name\":\"Alex\"}]}"));
+            await load;
+            Assert.Equal("Alex", Assert.Single(PersonalCollectionOwnership.Split(vm.Collections, "me", vm.Profiles.ToArray()).Shared).Name);
+        }
+    }
+
     [Fact]
     public async Task FailedLibraryRestKeepsTheFirstCardsAndReportsOnlyThatLibrary()
     {
@@ -129,6 +162,7 @@ public sealed class CollectionsWallLoadingTests
     private sealed class Wire : HttpMessageHandler
     {
         public string ServerBody = "{\"libraries\":[]}";
+        public string PersonalBody = "{\"items\":[],\"groups\":[]}";
         public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles;
         public int LibraryTabReads;
         public TaskCompletionSource PersonalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -158,7 +192,7 @@ public sealed class CollectionsWallLoadingTests
             {
                 PersonalStarted.TrySetResult();
                 if (HoldPersonal) return Personal.Task;
-                return Task.FromResult(FailPersonal ? Fail() : Ok("{\"items\":[],\"groups\":[]}"));
+                return Task.FromResult(FailPersonal ? Fail() : Ok(PersonalBody));
             }
             return Task.FromResult(Ok("{}"));
         }

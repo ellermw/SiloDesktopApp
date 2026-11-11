@@ -88,6 +88,26 @@ public sealed class CollectionHeroActionsTests
         Assert.Equal("Movies page", CollectionHeroActions.LibraryPage("Movies"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NumericStringLibraryIdsKeepPersonalLibraryPagesRestricted(bool materialized)
+    {
+        var collection = new Collection
+        {
+            CollectionType = "mdblist",
+            SourceConfig = new()
+            {
+                ["library_ids"] = materialized
+                    ? (object)new List<object> { "3", 3, "x", "0", "-1", "2147483648" }
+                    : JsonDocument.Parse("""["3",3,"x","0","-1","2147483648"]""").RootElement.Clone(),
+            },
+        };
+        var ids = CollectionHeroActions.PersonalLibraryIds(collection);
+        Assert.Equal([3], ids);
+        Assert.Equal(["Kids"], CollectionHeroActions.LibraryPages(true, ids, Three).Select(page => page.Name));
+    }
+
     [Fact]
     public void SyncOutcomesReportFailureWarningsAndCounts()
     {

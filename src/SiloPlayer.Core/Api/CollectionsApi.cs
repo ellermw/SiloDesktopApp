@@ -320,8 +320,19 @@ public class CollectionsApi(SiloApiClient client)
     }
     private async Task DeleteAsync(string path, CancellationToken ct)
     {
-        var tag = await RevisionAsync(path, ct);
-        await client.DeleteWithETagAsync(path, tag, ct);
+        try
+        {
+            var tag = await RevisionAsync(path, ct);
+            await client.DeleteWithETagAsync(path, tag, ct);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 412)
+        {
+            // Keep the conflict visible, but let an explicit retry read the current revision.
+            // The old baseline must retire too, or it would reject that fresh read again.
+            _revisions.TryRemove(path, out _);
+            _baselines.TryRemove(path, out _);
+            throw;
+        }
         _revisions.TryRemove(path, out _);
     }
     private async Task<MDBListDiscoveryResponse> ReadDiscoveryAsync(string path, CancellationToken ct)

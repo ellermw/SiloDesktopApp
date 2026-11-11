@@ -70,6 +70,15 @@ public sealed class CollectionsPresentationSourceTests
     }
 
     [Fact]
+    public void WallDoesNotGateSharedCardsOnOptionalProfileNamesAndCountsServerCollectionsNotLibraries()
+    {
+        var wall = Read("src", "SiloPlayer", "Views", "CollectionsPage.Wall.cs");
+        Assert.Contains("var shared = partition.Shared.SelectMany(", wall);
+        Assert.Contains("!ViewModel.ProfilesLoaded || ViewModel.Profiles.Count != 1", wall);
+        Assert.Contains("partition.Own.Count, shared.Length, picked?.TotalCount ?? CollectionsWall.ServerCount(libraries)", wall);
+    }
+
+    [Fact]
     public void AddToMyHomeCanNameAServerCollectionRow()
     {
         var args = Read("src", "SiloPlayer", "Views", "CustomizeHomePage.cs");
