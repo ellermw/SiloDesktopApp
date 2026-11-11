@@ -13,8 +13,12 @@ public partial class PlayerService
     // Publication can precede native application. Retries on the same loaded
     // file must still compare/remap from the inventory mpv actually uses.
     private sealed record PendingSubtitleInventoryApplication(SubtitleOperationOwner Owner,
-        PlaybackStartResponse Session, long NativeFile, long File);
+        PlaybackStartResponse Session, long NativeFile, long File)
+    {
+        public int Failures;
+    }
     private PendingSubtitleInventoryApplication? _pendingSubtitleInventoryApplication;
+    private const int SubtitleInventoryApplicationRetries = 2;
 
     private void RetirePendingSubtitleReadyRefresh()
     {
@@ -103,6 +107,18 @@ public partial class PlayerService
             cache.Clear();
             foreach (var entry in retained) cache[entry.Index] = entry.Value;
         }
+        // Captions already on screen outlive a changed Url/Delivery for the same
+        // identity: keep the applied SID visible, but stale, so a re-selection
+        // fetches the canonical cues instead of adding a duplicate track. Retire
+        // every other dropped SID and sidecar file along with its cache entry.
+        var active = _activeSubtitleServerIndex;
+        var activeSid = active >= 0 && !cacheIndices.ContainsKey(active) ? _loadedExternalSubtitleSids.GetValueOrDefault(active) : 0;
+        var retainedActive = activeSid > 0 && RebindIndex(active) is int reboundActive && !cacheIndices.ContainsValue(reboundActive)
+            ? reboundActive : (int?)null;
+        var droppedSids = _loadedExternalSubtitleSids.Where(pair => !cacheIndices.ContainsKey(pair.Key) &&
+            !(retainedActive.HasValue && pair.Key == active)).Select(pair => pair.Value).ToArray();
+        var droppedFiles = _prefetchedSubtitleFiles.Where(pair => !cacheIndices.ContainsKey(pair.Key))
+            .Select(pair => pair.Value).Distinct().ToArray();
         foreach (var entry in _prefetchedSubtitleSids.Where(pair => !cacheIndices.ContainsKey(pair.Key)).ToArray())
             if (entry.Value.FileGeneration == Volatile.Read(ref _fileLoadGeneration)) _mpv?.RemoveSubtitle(entry.Value.Sid);
         Remap(_loadedExternalSubtitleSids);
@@ -111,6 +127,16 @@ public partial class PlayerService
         var stale = _staleExternalSubtitleIndices.Where(cacheIndices.ContainsKey).Select(index => cacheIndices[index]).ToArray();
         _staleExternalSubtitleIndices.Clear();
         foreach (var staleIndex in stale) _staleExternalSubtitleIndices.Add(staleIndex);
+        if (retainedActive is int retainedIndex)
+        {
+            _loadedExternalSubtitleSids[retainedIndex] = activeSid;
+            _staleExternalSubtitleIndices.Add(retainedIndex);
+        }
+        foreach (var path in droppedFiles.Where(path => !_prefetchedSubtitleFiles.ContainsValue(path)))
+        {
+            _subtitleSyncFiles.Remove(path);
+            try { File.Delete(path); } catch { }
+        }
         _activeSubtitleServerIndex = RebindIndex(_activeSubtitleServerIndex) ?? -1;
         if (_executedSubtitleFileId == next.MediaFileId)
         {
@@ -132,6 +158,9 @@ public partial class PlayerService
             _preparedSubtitleReload = RebindIndex(prepared.Index) is int preparedIndex ? prepared with { Index = preparedIndex } : null;
         if (_subtitleReplanAttempt is { } attempt && ReferenceEquals(attempt.Session, previous))
             _subtitleReplanAttempt = attempt with { Session = next, SelectionIndex = RebindIndex(attempt.SelectionIndex) ?? -1 };
+        // A retired selection is off screen only now. Never remove the SID mpv still shows.
+        foreach (var sid in droppedSids.Where(sid => !_loadedExternalSubtitleSids.ContainsValue(sid)))
+            if (_mpv != null && (int)Math.Round(_mpv.GetPropertyDouble("sid")) != sid) _mpv.RemoveSubtitle(sid);
     }
 
     private async Task ApplySubtitleReadyAsync(JsonElement payload, string eventSessionId)
@@ -171,6 +200,24 @@ public partial class PlayerService
                 current.SessionId == eventSessionId && current.MediaFileId == fileId &&
                 (SubtitleReadyRefreshIsBusy || !ReferenceEquals(current, session) || !SameTransport()))
                 DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);
+        }
+        void RecoverUnappliedSubtitleInventory()
+        {
+            // A failure after publication leaves mpv on a plan the manager no
+            // longer holds. Retry the outstanding application a bounded number of
+            // times, then let stream recovery load a changed transport or fail it.
+            if (!entered || token.IsCancellationRequested || _pendingSubtitleInventoryApplication is not { } unapplied ||
+                !unapplied.Owner.IsCurrentForAi || unapplied.NativeFile != Volatile.Read(ref _fileLoadGeneration) ||
+                unapplied.File != Volatile.Read(ref _playbackFileGeneration) ||
+                manager.CurrentSession is not { } published || published.SessionId != eventSessionId ||
+                published.MediaFileId != fileId) return;
+            if (++unapplied.Failures <= SubtitleInventoryApplicationRetries)
+                DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);
+            else if (SubtitleInventoryRequiresTransportReload(unapplied.Session, published))
+            {
+                _pendingSubtitleInventoryApplication = null;
+                _ = RecoverInterruptedStreamAsync(CurrentMediaPosition, "subtitle-inventory-refresh");
+            }
         }
         try
         {
@@ -302,7 +349,11 @@ public partial class PlayerService
             await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { RetryIfSuperseded(); }
-        catch (Exception ex) { LogToFile("state_trace.txt", $"Subtitle announcement refresh failed: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            LogToFile("state_trace.txt", $"Subtitle announcement refresh failed: {ex.Message}");
+            RecoverUnappliedSubtitleInventory();
+        }
         finally { if (entered) _subtitleReadyGuard.Release(); }
     }
 }

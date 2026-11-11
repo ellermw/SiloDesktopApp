@@ -431,6 +431,50 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                         Equals(planOnlyFile, Get(service, "_fileLoadGeneration")) && service.IsPaused && mpv.IsPaused,
                         "Refreshing a plan-only download changed playback intent, preferences or transport.");
                 }
+                // The stored-list shape of that playing download (no Delivery, a
+                // positional URL) is replaced in place by its canonical plan row.
+                // The applied SID must stay mapped and visible, but stale.
+                var canonicalSession = manager.CurrentSession!;
+                var storedShape = new PlaybackStartResponse
+                {
+                    SessionId = canonicalSession.SessionId, MediaFileId = canonicalSession.MediaFileId,
+                    SubtitleUrls = [.. canonicalSession.SubtitleUrls.Select(row => !ReferenceEquals(row, planOnlyDownload) ? row : new SubtitleTrackInfo
+                    {
+                        TrackId = row.TrackId, Index = row.Index, MediaFileId = row.MediaFileId, Language = row.Language,
+                        Codec = row.Codec, Label = row.Label, Source = row.Source, Url = $"/stream/fixture/subtitles/{row.Index}",
+                    })],
+                };
+                lock (Get(service, "_subtitleSyncGate")!)
+                lock (Get(service, "_subtitleTrackStateLock")!)
+                    Call(service, "AdoptSubtitleInventoryInPlace", storedShape, canonicalSession);
+                Require(service.ActiveSubtitleServerIndex == planOnlyDownload.Index && NativeSidMatches(planOnlyDownload.Index) &&
+                    mpv.GetPropertyDouble("sid") == planOnlySid && ReferenceEquals(planOnlyDownload, Get(service, "_executedSubtitleTrack")) &&
+                    ((HashSet<int>)Get(service, "_staleExternalSubtitleIndices")!).Contains(planOnlyDownload.Index) &&
+                    !files.ContainsKey(planOnlyDownload.Index),
+                    "Adopting a canonical row with a changed Url/Delivery dropped the playing SID or left its old bytes reusable.");
+                // A different stored subtitle sorted onto that plan-only row's
+                // ordinal is not the row. It must stay visible as its own entry,
+                // and the row's positional URL can no longer be trusted.
+                wire.AdditionalDownloadedAvailable = true; wire.ReverseDownloadedOrder = true;
+                foreach (var ownerRefresh in new[] { false, true })
+                {
+                    if (ownerRefresh) await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, null, null, null, null)!;
+                    else await service.RefreshSubtitlesAfterAiAsync(42);
+                    var displacing = manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 78);
+                    Require(!ReferenceEquals(displacing, planOnlyDownload) && displacing.Language == "spa" &&
+                        displacing.Index != planOnlyDownload.Index && displacing.Unplayable && displacing.Url == "",
+                        "A stored entry sorted onto a plan-only row's ordinal was swallowed or made executable.");
+                    Require(manager.CurrentSession.SubtitleUrls.Contains(planOnlyDownload) && planOnlyDownload.Id == null &&
+                        planOnlyDownload.SyncKey == null && planOnlyDownload.Language == "ita" &&
+                        planOnlyDownload.Url == "" && !planOnlyDownload.Unplayable &&
+                        ReferenceEquals(planOnlyDownload, Get(service, "_executedSubtitleTrack")) &&
+                        NativeSidMatches(planOnlyDownload.Index) && mpv.GetPropertyDouble("sid") == planOnlySid,
+                        "A displaced plan-only row kept a stale positional URL or lost its playing SID.");
+                    Require(manager.CaptureLocalSubtitleIntent() == planOnlyIntent && wire.PreferenceWrites == planOnlyWrites &&
+                        Equals(planOnlyFile, Get(service, "_fileLoadGeneration")) && service.IsPaused && mpv.IsPaused,
+                        "Displacing a plan-only download changed playback intent, preferences or transport.");
+                }
+                wire.ReverseDownloadedOrder = false; wire.AdditionalDownloadedAvailable = false;
                 var accepted = manager.CurrentSession;
                 var nativeFile = Get(service, "_fileLoadGeneration");
                 wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);

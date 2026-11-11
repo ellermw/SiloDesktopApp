@@ -9,6 +9,12 @@ public partial class PlayerService
         track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey) &&
         !string.IsNullOrWhiteSpace(track.TrackId) && !string.IsNullOrWhiteSpace(track.Delivery);
 
+    // A plan-only row is known to the stored list by its ordinal alone. An
+    // entry there that names another language is proof of a different subtitle.
+    private static bool StoredEntryMayBeCanonicalDownload(SubtitleTrackInfo track, string? language) =>
+        string.IsNullOrWhiteSpace(language) || string.IsNullOrWhiteSpace(track.Language) ||
+        string.Equals(language, track.Language, StringComparison.OrdinalIgnoreCase);
+
     public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, long? preferredSubtitleId = null, Func<bool>? isCurrent = null,
         Func<bool>? mayActivate = null)
     {
@@ -57,6 +63,7 @@ public partial class PlayerService
                 !reserved.Any(track => (track.Id == entry.Id || track.SyncKey == "stored-" + entry.Id) &&
                     track.Index != baseIndex + offset)).All(agrees => agrees);
             var canonicalStoredIds = new Dictionary<SubtitleTrackInfo, long>();
+            var displacedCanonical = new HashSet<SubtitleTrackInfo>();
             var downloaded = response.Subtitles.Select((entry, offset) =>
             {
                 var syncKey = "stored-" + entry.Id;
@@ -72,12 +79,19 @@ public partial class PlayerService
                     return previous;
                 }
                 var ordinal = baseIndex + offset;
-                // Older plans omit stored keys. The list cannot prove that a
+                // Older plans omit stored keys. Position alone cannot prove that a
                 // canonical row at this slot changed: retain it, without guessing
                 // a stored identity or creating an unplayable positional duplicate.
                 var unknownCanonical = previousDownloads.Where(track => track.Index == ordinal &&
                     IsCanonicalDownloadWithoutStoredIdentity(track)).Take(2).ToArray();
-                if (unknownCanonical.Length == 1) return unknownCanonical[0];
+                if (unknownCanonical.Length == 1)
+                {
+                    // An entry that owns another row, or names another language,
+                    // is not this row: it now holds the row's stored ordinal.
+                    if (previous == null && StoredEntryMayBeCanonicalDownload(unknownCanonical[0], entry.Language))
+                        return unknownCanonical[0];
+                    displacedCanonical.Add(unknownCanonical[0]);
+                }
                 var collision = reserved.Any(track => track.Index == ordinal);
                 var executable = unique && canonicalOrdinalsAgree && !collision;
                 if (collision) ordinal = Math.Max(reserved.Max(track => track.Index) + 1, baseIndex + response.Subtitles.Count) + offset;
@@ -101,12 +115,29 @@ public partial class PlayerService
                     Url = executable ? $"/stream/{session.SessionId}/subtitles/{ordinal}" : "",
                 };
             }).ToList();
+            // That evidence leaves every new positional URL from this list
+            // uncertain too. Only a replan can make those rows executable.
+            if (displacedCanonical.Count > 0)
+                foreach (var row in downloaded.Where(row => !previousDownloads.Contains(row)))
+                {
+                    row.Unplayable = true;
+                    row.Url = "";
+                }
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             lock (manager.SubtitleInventorySyncRoot)
             {
                 if (!Current()) return;
                 foreach (var entry in canonicalStoredIds) entry.Key.Id ??= entry.Value;
+                // A displaced plan-only row keeps its identity and any bytes it
+                // already loaded, never a URL that may now address another subtitle.
+                foreach (var displaced in displacedCanonical.Where(IsCanonicalDownloadWithoutStoredIdentity))
+                {
+                    displaced.Unplayable |= !(_executedSubtitleFileId == mediaFileId && ReferenceEquals(_executedSubtitleTrack, displaced) ||
+                        _loadedExternalSubtitleSids.GetValueOrDefault(displaced.Index) > 0 ||
+                        _prefetchedSubtitleFiles.ContainsKey(displaced.Index));
+                    displaced.Url = "";
+                }
 
                 // Keep row objects for uniquely identified downloads. Awaiting
                 // selections follow that identity (including a changed Index),

@@ -463,6 +463,34 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("_activeSubtitleServerIndex = track.Index;", legacy);
     }
 
+    [Fact]
+    public void PublishedSubtitleInventoryIsRetriedThenRecoveredAfterANonCancellationFailure()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the failure route here: a
+        // published plan that mpv never applied is retried, then recovered.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        Assert.Contains("private const int SubtitleInventoryApplicationRetries = 2;", ready);
+        var recover = Between(ready, "void RecoverUnappliedSubtitleInventory()", "// Serialize even in-place merges against inventory publication.");
+        Assert.Contains("!entered || token.IsCancellationRequested || _pendingSubtitleInventoryApplication is not { } unapplied", recover);
+        var retry = recover.IndexOf("if (++unapplied.Failures <= SubtitleInventoryApplicationRetries)", StringComparison.Ordinal);
+        var defer = recover.IndexOf("DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);", StringComparison.Ordinal);
+        var reload = recover.IndexOf("else if (SubtitleInventoryRequiresTransportReload(unapplied.Session, published))", StringComparison.Ordinal);
+        var recovery = recover.IndexOf("_ = RecoverInterruptedStreamAsync(CurrentMediaPosition, \"subtitle-inventory-refresh\");", StringComparison.Ordinal);
+        Assert.True(retry >= 0 && defer > retry && reload > defer && recovery > reload);
+        var failure = ready[ready.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
+        Assert.Contains("RecoverUnappliedSubtitleInventory();", failure);
+    }
+
+    [Fact]
+    public void InPlaceInventoryAdoptionKeepsTheAppliedSidStaleAndNeverRemovesTheSidOnScreen()
+    {
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var adopt = Between(ready, "private void AdoptSubtitleInventoryInPlace(", "private async Task ApplySubtitleReadyAsync(");
+        var retained = adopt.IndexOf("_loadedExternalSubtitleSids[retainedIndex] = activeSid;", StringComparison.Ordinal);
+        Assert.True(retained >= 0 && adopt.IndexOf("_staleExternalSubtitleIndices.Add(retainedIndex);", StringComparison.Ordinal) > retained);
+        Assert.Contains("(int)Math.Round(_mpv.GetPropertyDouble(\"sid\")) != sid) _mpv.RemoveSubtitle(sid);", adopt);
+    }
+
     private static string Reload() => Between(Read("PlayerService.SubtitleSync.cs"),
         "private async Task ReloadCorrectedSubtitleAsync(", "private void SendSubtitleSyncState()");
 
