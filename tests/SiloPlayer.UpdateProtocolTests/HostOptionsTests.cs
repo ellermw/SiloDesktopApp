@@ -4,6 +4,17 @@ namespace SiloPlayer.UpdateProtocolTests;
 
 public sealed class HostOptionsTests
 {
+    [Fact]
+    public void Presentation_handoff_is_broker_only_and_never_reaches_elevated_worker()
+    {
+        var broker=HostOptions.Parse([.. Arguments("v1.2.970"),"--await-presentation","yes"]);
+        Assert.True(broker.AwaitPresentation);
+        var worker=broker.Arguments(true,789,101112).ToArray();
+        Assert.DoesNotContain("--await-presentation",worker);
+        Assert.False(HostOptions.Parse(worker).AwaitPresentation);
+        Assert.Throws<InvalidDataException>(()=>HostOptions.Parse([.. worker,"--await-presentation","yes"]));
+        Assert.Throws<InvalidDataException>(()=>HostOptions.Parse([.. Arguments("v1.2.970"),"--await-presentation","maybe"]));
+    }
     private static string[] Arguments(string tag) =>
         ["--worker", "no", "--app-pipe", "SiloUpdate-" + new string('a', 32),
          "--worker-pipe", "SiloUpdate-" + new string('b', 32), "--parent", "123",

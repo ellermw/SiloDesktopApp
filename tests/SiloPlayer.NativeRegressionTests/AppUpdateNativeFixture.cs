@@ -22,7 +22,7 @@ using SiloPlayer.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Views;
 
-internal static class AppUpdateNativeFixture
+internal static partial class AppUpdateNativeFixture
 {
     internal static void Configure(IServiceCollection services)
     {
@@ -52,6 +52,8 @@ internal static class AppUpdateNativeFixture
         window.Closed += (_, _) => closed.TrySetResult();
         var nav = (NavigationView)root.FindName("NavView"); nav.IsPaneVisible = true; nav.IsPaneOpen = true;
         var updates = services.GetRequiredService<AppUpdateService>();
+        if (scenario.StartsWith("preparation", StringComparison.Ordinal)) { await CheckPreparationAsync(window, updates, scenario); return; }
+        if (scenario == "panel-focus") { await CheckPanelFocusAsync(window); return; }
         if (scenario == "full-success")
         {
             Directory.CreateDirectory(updates.CacheDirectory);

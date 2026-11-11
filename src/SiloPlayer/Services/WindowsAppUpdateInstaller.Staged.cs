@@ -20,13 +20,15 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
         =>await HandoffAsync(release,package.Directory,restart,false,ownerWindow,null,package,ct)==WindowedUpdateOutcome.Staged;
 
     public Task<WindowedUpdateOutcome> PrepareWithDownloadAsync(AppRelease release,string packageDirectory,bool restart,bool confirmRestart,long ownerWindow,
-        Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>> download,CancellationToken ct)
-        =>HandoffAsync(release,packageDirectory,restart,confirmRestart,ownerWindow,download,null,ct);
+        Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>> download,CancellationToken ct,Action<long>? presentTrustedHelper=null)
+        =>HandoffAsync(release,packageDirectory,restart,confirmRestart,ownerWindow,download,null,ct,presentTrustedHelper);
 
     private async Task<WindowedUpdateOutcome> HandoffAsync(AppRelease release,string packageDirectory,bool restart,bool confirmRestart,long ownerWindow,
-        Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>>? download,PreparedUpdatePackage? package,CancellationToken ct)
+        Func<Action<IncrementalUpdateProgress>,CancellationToken,Task<WindowedUpdateDownload>>? download,PreparedUpdatePackage? package,CancellationToken ct,Action<long>? presentTrustedHelper=null)
     {
         NamedPipeServerStream? pipe=null;
+        Process? process=null;
+        var visible=false;
         AuthorityCooldownUntil=null;
         try
         {
@@ -34,6 +36,7 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
             var version=Path.GetFileName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory));
             await Task.Run(()=>UpdateInstallation.RequireProtectedMachineInstallation(root,AppContext.BaseDirectory),ct);
             var host=await Task.Run(()=>SideBySideInstallation.VerifyInstalledClientFile(root,version,"Updater/SiloPlayer.UpdateHost.exe"),ct);
+            ct.ThrowIfCancellationRequested();
             var pipeName="SiloUpdate-"+Guid.NewGuid().ToString("N");
             pipe=UpdatePipeIdentity.CreateServer(pipeName);
             var workerPipe="SiloUpdate-"+Guid.NewGuid().ToString("N");
@@ -42,7 +45,8 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
             foreach(var arg in new[]{"--worker","no","--app-pipe",pipeName,"--worker-pipe",workerPipe,"--parent",current.Id.ToString(CultureInfo.InvariantCulture),
                 "--parent-start",current.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture),"--package",packageDirectory,"--tag",release.Tag,
                 "--restart",restart?"yes":"no","--owner",ownerWindow.ToString(CultureInfo.InvariantCulture),"--await-download",download is null?"no":"yes","--confirm-restart",confirmRestart && download is not null?"yes":"no"})start.ArgumentList.Add(arg);
-            using var process=Process.Start(start)??throw new IOException("The update window could not start.");
+            if(presentTrustedHelper is not null){start.ArgumentList.Add("--await-presentation");start.ArgumentList.Add("yes");}
+            process=Process.Start(start)??throw new IOException("The update window could not start.");
             using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);
             // The download has its own 15-minute limit before the usual 20 minutes for installation.
             deadline.CancelAfter(TimeSpan.FromMinutes(download is null ? 20 : 40));
@@ -64,14 +68,25 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                 try { await exited; } catch(OperationCanceledException) { }
             }
             UpdatePipeIdentity.Authenticate(pipe,true,process.Id,hostStart,host);
-            var visible=false;
+            if(presentTrustedHelper is not null)
+            {
+                await UpdatePresentationHandoff.AcceptAsync(pipe,hwnd=>
+                {
+                    ValidatePresentationWindow(hwnd,process.Id);
+                    presentTrustedHelper(hwnd);
+                },deadline.Token);
+                visible=true;
+            }
             Task<UpdateHostMessage>? pending=null;
             Func<bool>? later=null;
             if(download is not null)
             {
-                var first=await UpdateHostProtocol.ReadAsync(pipe,deadline.Token);
-                if(first.Kind=="failed"){AuthorityCooldownUntil=first.CooldownUntil;throw new IOException(first.Text);}
-                if(first.Kind!="visible")throw new InvalidDataException("Invalid update handoff.");
+                if(!visible)
+                {
+                    var first=await UpdateHostProtocol.ReadAsync(pipe,deadline.Token);
+                    if(first.Kind=="failed"){AuthorityCooldownUntil=first.CooldownUntil;throw new IOException(first.Text);}
+                    if(first.Kind!="visible")throw new InvalidDataException("Invalid update handoff.");
+                }
                 visible=true;
                 (package,later,pending)=await DownloadIntoWindowAsync(pipe,download,deadline.Token);
                 if(package is null)return WindowedUpdateOutcome.NotStarted;
@@ -112,7 +127,14 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
         }
         catch(OperationCanceledException)when(ct.IsCancellationRequested){return WindowedUpdateOutcome.NotStarted;}
         catch(Exception ex){LocalLog.AppendLine("updates.txt","staged_handoff_failed kind="+ex.GetType().Name);return WindowedUpdateOutcome.NotStarted;}
-        finally{pipe?.Dispose();}
+        finally
+        {
+            // Disposing a Process only releases its handle. A helper that never accepted
+            // presentation still belongs to this attempt, not to an independent update panel.
+            try{if(!visible && process is not null && !process.HasExited)process.Kill();}
+            catch(Exception ex){LocalLog.AppendLine("updates.txt","staged_handoff_host_cleanup_failed kind="+ex.GetType().Name);}
+            finally{process?.Dispose();pipe?.Dispose();}
+        }
     }
 
     // Runs the client's download while the window shows it. The window only writes during this
@@ -172,4 +194,13 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
     }
     public void ArmNormalClose(){if(!HasPreparedHandoff)throw new InvalidOperationException("The update handoff is unavailable.");stagedCloseArmed=true;}
     public void CancelPreparedHandoff(){Interlocked.Exchange(ref stagedPipe,null)?.Dispose();stagedTransaction=null;stagedCloseArmed=false;}
+
+    private static void ValidatePresentationWindow(long hwnd,int expectedProcessId)
+    {
+        if(!IsWindow((IntPtr)hwnd) || GetWindowThreadProcessId((IntPtr)hwnd,out var pid)==0 || pid!=(uint)expectedProcessId)
+            throw new InvalidDataException("The update window does not belong to the authenticated helper.");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool IsWindow(IntPtr hwnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
 }

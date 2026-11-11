@@ -100,6 +100,20 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_OTHER_WINDOW") == "panel")
+        {
+            try { await AppUpdateNativeFixture.RunPresentationPeerAsync(); }
+            catch (Exception ex) { Program.Log(ex.ToString()); Environment.ExitCode=1; }
+            Exit(); return;
+        }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_OTHER_WINDOW") == "1")
+        {
+            _window = new Window { Title = "Synthetic updater focus peer", Content = new Grid() };
+            _window.AppWindow.Move(new(100, 100)); _window.AppWindow.Resize(new(240, 200));
+            _window.Closed += (_, _) => Exit();
+            _window.Activate();
+            return;
+        }
         try
         {
             Resources.MergedDictionaries.Add(new XamlControlsResources());
