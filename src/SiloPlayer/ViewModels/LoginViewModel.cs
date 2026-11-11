@@ -361,10 +361,8 @@ public partial class LoginViewModel : ObservableObject
             DeviceQrImage = image;
             _ = PollDeviceLoginAsync(setup, session, server, context, authGeneration, attempt, ct);
         }
-        catch (OperationCanceledException)
-        {
-            if (attempt == _deviceAttempt) CancelDeviceLogin(clearSession: true);
-        }
+        // A user cancel or replacement advances the attempt, so a cancellation that
+        // reaches the current attempt is a stalled response (HTTP timeout), not a cancel.
         catch (Exception)
         {
             if (attempt != _deviceAttempt) return;

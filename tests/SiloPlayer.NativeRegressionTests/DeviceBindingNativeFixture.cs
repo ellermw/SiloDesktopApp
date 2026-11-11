@@ -114,7 +114,7 @@ internal static class DeviceBindingNativeFixture
                 await Until(() => wire.Polls.Count > count); count = wire.Polls.Count;
                 Check(wire.Starts[^1].Binding is null && wire.Polls[^1].Secret is null, "Legacy capability flow sent binding fields");
             }
-            foreach (var mode in new[] { "failure", "transport", "malformed" })
+            foreach (var mode in new[] { "failure", "transport", "timeout", "malformed" })
             {
                 Reset(); wire.CapabilityMode = mode; var starts = wire.Starts.Count;
                 await Start(); Check(wire.Starts.Count == starts && vm.DeviceSession is null && vm.ErrorMessage is not null,
@@ -233,7 +233,7 @@ internal static class DeviceBindingNativeFixture
                 {
                     "negative" => Reply(new { session_binding = false }), "absent" => Reply(new { protocol_versions = new[] { 2 } }),
                     "legacy404" => Reject("not_found", HttpStatusCode.NotFound), "legacy405" => Reject("not_allowed", HttpStatusCode.MethodNotAllowed),
-                    "failure" => Reject("server_error", HttpStatusCode.ServiceUnavailable), "transport" => throw new HttpRequestException("Synthetic offline"),
+                    "failure" => Reject("server_error", HttpStatusCode.ServiceUnavailable), "transport" => throw new HttpRequestException("Synthetic offline"), "timeout" => throw new TaskCanceledException("Synthetic HTTP timeout"),
                     "malformed" => Reply(new { session_binding = "true" }), _ => Reply(new { session_binding = true })
                 };
             }
