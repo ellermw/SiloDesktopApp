@@ -108,7 +108,14 @@ public sealed class CardOverlayRevisionTests
         using var wire = new OverlayWire(24, "{\"version\":2,\"preset\":\"classic\",\"items\":{}}");
         var service = await wire.LoadAsync();
         var draft = service.GetDocument() with { Preset = "plate", Order = ["resolution_hdr_audio", "year"] };
-        await service.SaveAsync(draft);
+        // A preset the manifest cannot store is reported, not replaced behind a successful save.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync(draft));
+        Assert.Contains("server manifest does not support", error.Message);
+        Assert.Contains("plate", error.Message);
+        Assert.Null(wire.Saved);
+        Assert.Equal("classic", service.GetDocument().Preset);
+
+        await service.SaveAsync(draft with { Preset = "classic" });
         using var saved = JsonDocument.Parse(wire.Saved!);
         Assert.Equal("classic", saved.RootElement.GetProperty("preset").GetString());
         Assert.Equal(new[] { "year" }, saved.RootElement.GetProperty("order").EnumerateArray().Select(id => id.GetString()));

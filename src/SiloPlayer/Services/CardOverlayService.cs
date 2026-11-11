@@ -538,6 +538,20 @@ public class CardOverlayService
                 if (manifestRevision < IntroducedInRevision(definition.Id) &&
                     !SameItem(normalized.Items[definition.Id], _document.Items[definition.Id], manifestRevision))
                     throw new InvalidOperationException($"The server manifest does not support changing {definition.Label}. Reload card overlay settings before saving.");
+                // Images need revision 25. Below it the serializer keeps the stored
+                // ones, so an image edit is reported the same way.
+                if (manifestRevision < 25 && !SameImages(normalized.Items[definition.Id], _document.Items[definition.Id]))
+                    throw new InvalidOperationException($"The server manifest does not support changing {definition.Label} images. Reload card overlay settings before saving.");
+            }
+            if (manifestRevision < 25)
+            {
+                // Likewise the look and the plate/band presets: the stored values
+                // would be written back and the save would still claim success.
+                var unsupported = (normalized.Style ?? new()) != (_document.Style ?? new()) ? "the badge look"
+                    : normalized.Preset is "plate" or "band" && normalized.Preset != _document.Preset ? $"to the {normalized.Preset} preset"
+                    : null;
+                if (unsupported is not null)
+                    throw new InvalidOperationException($"The server manifest does not support changing {unsupported}. Reload card overlay settings before saving.");
             }
             var json = SerializeForRevision(normalized, manifestRevision);
             RequireCurrentLoad();
@@ -742,8 +756,14 @@ public class CardOverlayService
     // display mapping, the loaded document the stored one.
     private static bool SameItem(OverlayItemConfig draft, OverlayItemConfig stored, int manifestRevision)
     {
-        if (draft.Enabled != stored.Enabled || draft.AccentColor != stored.AccentColor || draft.ShowIcon != stored.ShowIcon || draft.Image != stored.Image
+        if (draft.Enabled != stored.Enabled || draft.AccentColor != stored.AccentColor || draft.ShowIcon != stored.ShowIcon
             || PositionForRevision(draft.Position, manifestRevision) != PositionForRevision(stored.Position, manifestRevision)) return false;
+        return SameImages(draft, stored);
+    }
+
+    private static bool SameImages(OverlayItemConfig draft, OverlayItemConfig stored)
+    {
+        if (draft.Image != stored.Image) return false;
         var draftImages = draft.ValueImages;
         var storedImages = stored.ValueImages;
         if ((draftImages?.Count ?? 0) != (storedImages?.Count ?? 0)) return false;

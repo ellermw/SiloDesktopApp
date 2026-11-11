@@ -105,6 +105,20 @@ public sealed class OverlayImageWireTests
         Assert.False(service.IsCurrentImageOwner(owner));
     }
 
+    [Fact]
+    public async Task ReconnectCatchUpDuringAHeldReadStillDeliversTheImage()
+    {
+        using var wire = new Wire(); var service = await wire.LoadAsync();
+        wire.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = service.GetImageAsync(wire.Ref);
+        await wire.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.True(wire.Client.TryInvalidateAccessContext(wire.Client.CaptureContext(), out _, transportCatchUp: true));
+        wire.Hold.TrySetResult();
+        Assert.Equal(wire.Bytes, await held);
+        Assert.Equal(wire.Bytes, await service.GetImageAsync(wire.Ref));
+        Assert.Equal(1, wire.ImageReads);
+    }
+
     [Theory]
     [InlineData("profile")]
     [InlineData("account")]
@@ -149,14 +163,47 @@ public sealed class OverlayImageWireTests
         var service = await wire.LoadAsync(); var draft = service.GetDocument();
         draft = draft with { Style = draft.Style! with { Size = 2 } };
         draft.Items["resolution"] = draft.Items["resolution"] with { Image = wire.Ref, ValueImages = new Dictionary<string, string> { ["2160p"] = wire.Ref } };
+        if (revision < 25)
+        {
+            // The look and images cannot be written below revision 25. The save reports
+            // that, and an edit the manifest does support still keeps every stored field.
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync(draft));
+            Assert.Contains("server manifest does not support", error.Message);
+            Assert.Null(wire.Saved);
+            draft = service.GetDocument();
+            draft.Items["resolution"] = draft.Items["resolution"] with { Enabled = false };
+        }
         await service.SaveAsync(draft);
         using var json = JsonDocument.Parse(wire.Saved!); var root = json.RootElement;
         Assert.Equal(7, root.GetProperty("future").GetInt32()); Assert.Equal(9, root.GetProperty("style").GetProperty("futureLook").GetInt32());
         Assert.Equal(revision >= 25 ? 2 : 1.25, root.GetProperty("style").GetProperty("size").GetDouble());
         var config = root.GetProperty("items").GetProperty("resolution");
         Assert.Equal(8, config.GetProperty("futureItem").GetInt32());
+        Assert.Equal(revision >= 25, config.GetProperty("enabled").GetBoolean());
         Assert.Equal(revision >= 25 ? wire.Ref : "stored.webp", config.GetProperty("image").GetString());
         Assert.Equal(7, config.GetProperty("valueImages").GetProperty("future").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("style")]
+    [InlineData("preset")]
+    [InlineData("image")]
+    [InlineData("value-image")]
+    public async Task DraftFromANewerManifestIsNotReportedSavedOnceTheManifestCannotStoreIt(string edit)
+    {
+        using var wire = new Wire { Document = """{"version":2,"preset":"classic","style":{"size":1.25},"items":{"resolution":{"enabled":true,"image":"stored.webp"}}}""" };
+        var service = await wire.LoadAsync(); var draft = service.GetDocument();
+        if (edit == "style") draft = draft with { Style = draft.Style! with { Size = 2 } };
+        else if (edit == "preset") draft = draft with { Preset = "band" };
+        else draft.Items["resolution"] = edit == "image" ? draft.Items["resolution"] with { Image = wire.Ref }
+            : draft.Items["resolution"] with { ValueImages = new Dictionary<string, string> { ["2160p"] = wire.Ref } };
+        // The server now advertises revision 24, and reconnect catch-up makes the save ask again.
+        wire.Revision = 24;
+        Assert.True(wire.Client.TryInvalidateAccessContext(wire.Client.CaptureContext(), out _, transportCatchUp: true));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync(draft));
+        Assert.Contains("server manifest does not support", error.Message);
+        Assert.Null(wire.Saved);
+        Assert.Equal(24, service.ManifestRevision);
     }
 
     [Theory]

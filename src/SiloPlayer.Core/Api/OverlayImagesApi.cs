@@ -22,8 +22,18 @@ public partial class SiloApiClient
     public async Task<byte[]?> GetOverlayImageAsync(string reference, ApiRequestContext context, CancellationToken ct = default)
     {
         if (!IsOverlayImageRef(reference)) throw new ArgumentException("Invalid overlay image reference.", nameof(reference));
-        if (!IsCurrentContext(context)) throw new OperationCanceledException("The selected profile changed.", ct);
-        using var request = CreateContextBoundRequest(context, HttpMethod.Get, "/api/v2/overlay-images/" + reference, null);
+        ApiIdentityContext owner;
+        HttpRequestMessage bound;
+        // Starting the read takes current request authority. Reconnect catch-up can retire
+        // that authority mid-read without changing whose image this is, so the finished
+        // read answers to the account/profile captured together with the request.
+        lock (_authStateGate)
+        {
+            if (!IsCurrentContext(context)) throw new OperationCanceledException("The selected profile changed.", ct);
+            owner = CaptureIdentityContext();
+            bound = CreateContextBoundRequest(context, HttpMethod.Get, "/api/v2/overlay-images/" + reference, null);
+        }
+        using var request = bound;
         using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode) throw new HttpRequestException("Overlay image unavailable.", null, response.StatusCode);
@@ -38,7 +48,7 @@ public partial class SiloApiClient
             if (buffer.Length + count > MaxOverlayImageBytes) throw new InvalidDataException("Overlay image exceeds the byte limit.");
             buffer.Write(block, 0, count);
         }
-        if (!IsCurrentContext(context)) throw new OperationCanceledException("The selected profile changed.", ct);
+        if (!IsCurrentIdentityContext(owner)) throw new OperationCanceledException("The selected profile changed.", ct);
         var bytes = buffer.ToArray();
         if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(reference[..64], StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Overlay image content does not match its reference.");

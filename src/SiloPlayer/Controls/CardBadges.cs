@@ -212,18 +212,26 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
             if (item.Status is "pending" or "unmatched" or "ambiguous")
             {
                 var label = item.Status switch { "pending" => "SCANNING", "unmatched" => "UNMATCHED", _ => "AMBIGUOUS" };
-                badges.Add(new(OverlayPosition.TopLeft, label, "status", new OverlayItemConfig(true, OverlayPosition.TopLeft), "classic", scale));
+                badges.Add(new(OverlayPosition.TopLeft, label, "status", new OverlayItemConfig(true, OverlayPosition.TopLeft), service.Preset, scale, service.Style));
                 return badges;
             }
             if (item.Type == "manga")
             {
-                if (!string.IsNullOrWhiteSpace(item.ShowStatus))
-                    badges.Add(new(OverlayPosition.TopLeft, item.ShowStatus, "show_status", new OverlayItemConfig(true, OverlayPosition.TopLeft), service.Preset, scale));
+                // Manga always shows its status top-left, but through the registry and the
+                // stored entry, so the label, look and assigned images match other cards.
+                var mangaData = OverlayData.FromMediaItem(item);
+                var status = OverlayRegistry.All.First(def => def.Id == "show_status").GetValue(mangaData);
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    var stored = service.GetPrefs()?.GetValueOrDefault("show_status") ?? new OverlayItemConfig(true, OverlayPosition.TopLeft);
+                    badges.Add(new(OverlayPosition.TopLeft, status, "show_status", stored with { Enabled = true, Position = OverlayPosition.TopLeft }, service.Preset, scale,
+                        service.Style, OverlayRegistry.ValueKey("show_status", mangaData), service));
+                }
                 var counts = new List<string>();
                 if (item.MangaVolumeCount > 0) counts.Add($"{item.MangaVolumeCount} Vol");
                 if (item.MangaChapterCount > 0) counts.Add($"{item.MangaChapterCount} Ch");
                 if (counts.Count > 0)
-                    badges.Add(new(service.DisplayPosition(OverlayPosition.TopRight), string.Join(" · ", counts), "manga_counts", new OverlayItemConfig(true, service.DisplayPosition(OverlayPosition.TopRight)), service.Preset, scale));
+                    badges.Add(new(service.DisplayPosition(OverlayPosition.TopRight), string.Join(" · ", counts), "manga_counts", new OverlayItemConfig(true, service.DisplayPosition(OverlayPosition.TopRight)), service.Preset, scale, service.Style));
                 return badges;
             }
         }
@@ -241,7 +249,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
                     "finale" => "Finale",
                     _ => badge,
                 };
-                badges.Add(new(OverlayPosition.TopLeft, label, "upcoming_event", new OverlayItemConfig(true, OverlayPosition.TopLeft), "classic", scale));
+                badges.Add(new(OverlayPosition.TopLeft, label, "upcoming_event", new OverlayItemConfig(true, OverlayPosition.TopLeft), service.Preset, scale, service.Style));
             }
         }
 

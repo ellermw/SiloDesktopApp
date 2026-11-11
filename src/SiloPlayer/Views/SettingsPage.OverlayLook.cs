@@ -17,7 +17,12 @@ public sealed partial class SettingsPage
         void Set(Func<OverlayStyle, OverlayStyle> change)
         {
             if (_cardOverlayDraft is null || !IsCurrentCardOverlayDraft() || !_cardOverlayService.AdvancedAvailable || !_cardOverlayService.IsCurrentImageOwner(owner)) return;
-            _cardOverlayDraft = _cardOverlayDraft with { Style = change(_cardOverlayDraft.Style ?? new()) };
+            var style = _cardOverlayDraft.Style ?? new();
+            var next = change(style);
+            // WinUI raises TextChanged for a colour box's initial text. An unchanged
+            // look must not save and turn server defaults into a profile override.
+            if (next == style) return;
+            _cardOverlayDraft = _cardOverlayDraft with { Style = next };
             UpdateCardOverlayPreview(); ScheduleCardOverlaySave();
         }
         AdvancedOverlayLookHost.Children.Add(new TextBlock { Text = "Customize look", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
