@@ -304,6 +304,13 @@ public class ViewerActionsParityTests
         Assert.Contains("UndoDismissalAsync", catalog);
         Assert.Contains("AutoHideUndoBannerAsync", catalog);
         Assert.Contains("ClearUndoState", catalog);
+        // An Undo accepted on the dedicated page tells Home, whose rows the dismissal emptied.
+        Assert.Contains("WeakReferenceMessenger.Default.Send(new HomeDismissalUndone(surface, itemId, owner))", catalog);
+        var home = Source("SiloPlayer", "ViewModels", "HomeViewModel.cs");
+        Assert.Contains("IRecipient<HomeDismissalUndone>", home);
+        Assert.Contains("WeakReferenceMessenger.Default.Register<HomeDismissalUndone>(this)", home);
+        Assert.Contains("_progressRemovals.Remove(message.ItemId)", home);
+        Assert.Contains("QueueRealtimeRefresh(\"home_dismissal_undo\", message.Context)", home);
         var catalogXaml = Source("SiloPlayer", "Views", "CatalogPage.xaml");
         Assert.Contains("x:Name=\"UndoBanner\"", catalogXaml);
         Assert.Contains("x:Name=\"UndoButton\"", catalogXaml);

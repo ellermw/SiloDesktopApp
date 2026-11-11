@@ -13,6 +13,7 @@ public partial class HomeViewModel : ObservableObject,
     IRecipient<MediaSurfaceChanged>,
     IRecipient<HomePreferenceChanged>,
     IRecipient<HomeDismissalApplied>,
+    IRecipient<HomeDismissalUndone>,
     IRecipient<NotInterestedChange>,
     IRecipient<PlaybackProgressUpdated>
 {
@@ -41,6 +42,7 @@ public partial class HomeViewModel : ObservableObject,
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
         WeakReferenceMessenger.Default.Register<HomePreferenceChanged>(this);
         WeakReferenceMessenger.Default.Register<HomeDismissalApplied>(this);
+        WeakReferenceMessenger.Default.Register<HomeDismissalUndone>(this);
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this);
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
     }
@@ -118,6 +120,32 @@ public partial class HomeViewModel : ObservableObject,
                 : "Removed from Continue Watching";
             ShowUndoBanner = true;
             _ = AutoHideUndoBannerAsync();
+        });
+    }
+
+    public void Receive(HomeDismissalUndone message)
+    {
+        _ = RunOnUiThreadAsync(() =>
+        {
+            if (!_homeApi.IsCurrentContext(message.Context) || _loadedContext != message.Context) return;
+            if (_lastDismissedSurface == message.Surface && _lastDismissedItemId == message.ItemId
+                && _dismissContext == message.Context)
+            {
+                // This surface still offers the same Undo: finish it as its own Undo does.
+                RestoreDismissedItem();
+                ShowUndoBanner = false;
+                ClearDismissState();
+            }
+            else
+            {
+                // Responses read before the Undo describe the dismissed state.
+                _sectionLoadCts?.Cancel();
+                _sectionLoadCts?.Dispose();
+                _sectionLoadCts = new CancellationTokenSource();
+                ++_sectionLoadGeneration;
+                _progressRemovals.Remove(message.ItemId);
+            }
+            QueueRealtimeRefresh("home_dismissal_undo", message.Context);
         });
     }
 

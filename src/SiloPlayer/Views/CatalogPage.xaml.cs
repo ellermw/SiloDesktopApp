@@ -463,6 +463,10 @@ public sealed partial class CatalogPage : Page,
                 if (!Current())
                     App.Services.GetRequiredService<ToastService>().Error("Could not undo. The title is still removed.");
             }
+            // Home emptied its own rows for this dismissal and re-reads them only when told.
+            // Like the DELETE, this belongs to the captured owner, not to this visit.
+            if (failure == null && _api.IsCurrentContext(owner))
+                WeakReferenceMessenger.Default.Send(new HomeDismissalUndone(surface, itemId, owner));
             if (!Current()) return;
             // Banner expiry/replacement is independent from accepting this mutation's
             // result. Requery the authoritative prefix, including offscreen show members,
