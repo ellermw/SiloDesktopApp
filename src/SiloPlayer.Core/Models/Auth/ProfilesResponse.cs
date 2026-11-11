@@ -3,6 +3,7 @@ public class ProfilesResponse
 {
     [System.Text.Json.Serialization.JsonPropertyName("items")]
     public List<Profile> Profiles { get; set; } = [];
+    public int? MaxProfiles { get; set; }
     public bool AvatarUploadEnabled { get; set; }
     public bool MaxAdvisoryAgeSupported { get; set; }
     public bool RequireAdvisoryAgeSupported { get; set; }

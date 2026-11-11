@@ -2244,6 +2244,7 @@
                         </StackPanel>
                     </Button>
                 </Grid>
+                <TextBlock x:Name="ProfileLimitText" TextWrapping="Wrap" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" />
                 <StackPanel x:Name="HouseholdStreamsPanel" Spacing="8" />
                 <StackPanel x:Name="ProfileCardsPanel" Spacing="8" />
                 <TextBlock x:Name="NoProfilesText" Text="No profiles yet&#x0a;Create a profile to manage access and playback identity."

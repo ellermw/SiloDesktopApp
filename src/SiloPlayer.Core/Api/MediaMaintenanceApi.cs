@@ -66,6 +66,17 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         return (images, current, errors);
     }
 
+    public async Task<ItemMatchHints> GetMatchHintsAsync(ApiRequestContext context, string itemId, int? libraryId, CancellationToken ct = default)
+    {
+        EnsureSecureBaseUrl();
+        RequireCurrent(context, ct);
+        var result = await client.SendRequestAsync<ItemMatchHints>(context, HttpMethod.Get,
+            $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/match/hints" +
+            (libraryId.HasValue ? $"?library_id={libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}" : ""), null, ct);
+        RequireCurrent(context, ct);
+        return result;
+    }
+
     public Task<ItemMatchSearchResponse> SearchMatchesAsync(
         string itemId,
         ItemMatchSearchRequest request,

@@ -1,3 +1,13 @@
+# Server alignment — profiles and metadata (November 10, 2026)
+
+Base: freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`; stamps remain pipeline-owned. Official Server/WebUI reviewed at `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039` (additional WebUI localization only).
+
+Aligns primary/first-profile restrictions and household profile limits, season/episode metadata locks/reset, and scope-safe Match Item hints. Independent review corrections remove an admin-only hints gate, preserve parent image locks, restore default Switch Profile visibility while a fresh read is pending/failed, and refresh refused Add flows.
+
+Final verification: 69 focused tests, Release self-contained win-x64 publish, and four targeted native routes passed. App DLL SHA256 `A5CBF4076C0FFB8A84ACD6625B93DADF1F643B8D0B33631A168A8F0235F583A6`; all 738 authored app PDB documents match current source. Receipts, source and artifact manifests, original failed runs and corrected fixture evidence are retained at `D:/SiloPlayer/.codex-tmp/server-review-nov10/profiles-review-fixes/`; review/correction notes are adjacent.
+
+Synthetic fixtures do not establish live-server persistence or complete visual parity. The installed player remained open and untouched. Beta pipeline owns combined-source verification and packaging.
+
 # Current source identity — native Chapters and compact More (PR #91)
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.

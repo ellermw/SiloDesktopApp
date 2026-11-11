@@ -50,3 +50,11 @@ public sealed class ItemMatchApplyRequest
     public Dictionary<string, string> ProviderIds { get; set; } = new();
     public int? LibraryId { get; set; }
 }
+
+public sealed class ItemMatchHints
+{
+    public string Title { get; set; } = "";
+    public int Year { get; set; }
+    public Dictionary<string, string> ProviderIds { get; set; } = [];
+}
+

@@ -225,7 +225,7 @@ public sealed partial class ProfileSelectPage : Page
     {
         if (ViewModel.Profiles.Count > 0) { await StartManagementAsync(true); return; }
         var result = await Dialogs.ProfileEditorDialog.ShowWithContextAsync(XamlRoot, profile: null);
-        if (result.Profile == null) return;
+        if (result.Profile == null) { await ViewModel.LoadProfilesCommand.ExecuteAsync(null); return; }
 
         await ViewModel.SelectProfileCommand.ExecuteAsync(result.Profile);
         if (!ViewModel.IsPinRequired) return;

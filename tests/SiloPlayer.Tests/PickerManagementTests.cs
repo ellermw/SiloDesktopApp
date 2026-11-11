@@ -157,6 +157,23 @@ public sealed class PickerManagementTests
         if (stage == "create") Assert.Equal(0, f.Wire.Avatars);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(2, false)]
+    [InlineData(1, false)]
+    [InlineData(3, true)]
+    public async Task PickerAndManagementRecomputeLimitFromTheCurrentList(int? max, bool expected)
+    {
+        using var f = new Fixture(false); f.Wire.MaxProfiles = max;
+        await f.Vm.LoadProfilesCommand.ExecuteAsync(null);
+        Assert.Equal(expected, f.Vm.PickerCards.Any(card => card.IsAdd));
+        await f.Vm.BeginManagementAsync(true);
+        Assert.Equal(expected, f.Vm.AddSession != null);
+        f.Vm.CancelManagement(); f.Wire.MaxProfiles = null;
+        await f.Vm.LoadProfilesCommand.ExecuteAsync(null);
+        Assert.True(f.Vm.PickerCards.Any(card => card.IsAdd));
+    }
+
     private sealed class Fixture : IDisposable
     {
         public readonly Wire Wire; public readonly SiloApiClient Client; public readonly AuthService Auth;
@@ -178,6 +195,7 @@ public sealed class PickerManagementTests
 
     private sealed class Wire(bool hasPin) : HttpMessageHandler
     {
+        public int? MaxProfiles;
         public int Creates, Avatars, Libraries; public bool FailAvatar, TimeoutLibraries;
         public HttpStatusCode CreateStatus = HttpStatusCode.OK;
         public string Hold = "";
@@ -200,7 +218,7 @@ public sealed class PickerManagementTests
             {
                 "profiles" => Reply(new { items = Creates == 0
                     ? new[] { new { id = "primary", name = "Primary", is_primary = true, has_pin = hasPin }, new { id = "viewer", name = "Viewer", is_primary = false, has_pin = false } }
-                    : new[] { new { id = "primary", name = "Primary", is_primary = true, has_pin = hasPin }, new { id = "viewer", name = "Viewer", is_primary = false, has_pin = false }, new { id = "created", name = "New", is_primary = false, has_pin = false } }, avatar_upload_enabled = true }),
+                    : new[] { new { id = "primary", name = "Primary", is_primary = true, has_pin = hasPin }, new { id = "viewer", name = "Viewer", is_primary = false, has_pin = false }, new { id = "created", name = "New", is_primary = false, has_pin = false } }, avatar_upload_enabled = true, max_profiles = MaxProfiles }),
                 "pin" => Reply(new { valid = true, profile_token = "synthetic-proof" }),
                 "libraries" => Reply(new { items = new[] { new { id = "1", name = "Movies" } } }),
                 _ => Reply(new { id = "created", name = "New" })
