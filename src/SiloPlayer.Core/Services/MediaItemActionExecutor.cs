@@ -8,14 +8,23 @@ namespace SiloPlayer.Core.Services;
 /// </summary>
 public static class MediaItemActionExecutor
 {
-    public static Task<bool> ToggleWatchedAsync(
+    public static async Task<bool> ToggleWatchedAsync(
         MediaItem item,
         Func<bool, Task> persistAsync)
-        => ToggleAsync(
-            item,
-            item.UserState?.Played == true,
-            MediaItemStateUpdater.SetWatched,
-            persistAsync);
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        var watched = item.UserState?.WatchedCount ?? 0;
+        var unplayed = item.UserState?.UnplayedCount ?? 0;
+        try
+        {
+            return await ToggleAsync(item, item.UserState?.Played == true, MediaItemStateUpdater.SetWatched, persistAsync);
+        }
+        catch
+        {
+            if (item.UserState is { } state) { state.WatchedCount = watched; state.UnplayedCount = unplayed; }
+            throw;
+        }
+    }
 
     public static Task<bool> ToggleFavoriteAsync(
         MediaItem item,

@@ -117,6 +117,8 @@
             <StackPanel x:Name="OverlayTopRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="8" />
             <StackPanel x:Name="OverlayBottomLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="8" IsHitTestVisible="False" />
             <StackPanel x:Name="OverlayBottomRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="8" IsHitTestVisible="False" />
+            <StackPanel x:Name="OverlayLeftEdge" Spacing="4" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="8" IsHitTestVisible="False" />
+            <StackPanel x:Name="OverlayRightEdge" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8" IsHitTestVisible="False" />
 
             <Border
                 x:Name="HoverDim"

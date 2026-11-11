@@ -36,9 +36,10 @@ public static class MediaItemStateUpdater
     public static bool SetWatched(MediaItem item, bool value)
     {
         var state = EnsureUserState(item);
-        if (state.Played == value) return false;
+        var changed = state.Played != value || state.WatchedCount != 0 || state.UnplayedCount != 0;
         state.Played = value;
-        return true;
+        state.WatchedCount = state.UnplayedCount = 0;
+        return changed;
     }
 
     public static bool SetPlaybackProgress(
