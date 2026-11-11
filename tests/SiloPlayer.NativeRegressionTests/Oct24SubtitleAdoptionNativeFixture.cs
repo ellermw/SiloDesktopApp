@@ -123,6 +123,51 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     "An unchanged-transport inventory refresh reopened mpv or replaced the active subtitle SID.");
                 Require(wire.Replans.Count == 2 && wire.PreferenceWrites == writes && manager.CaptureLocalSubtitleIntent() == intent,
                     "Invalid optional track metadata did not recover through an intent-preserving authoritative replan.");
+                // Retire the transport snapshot after publication but before
+                // the native cache remap. The retry's valid track object must
+                // not bypass the outstanding application of the new inventory.
+                var beforeRemap = manager.CurrentSession!;
+                var remapFile = Get(service, "_fileLoadGeneration");
+                var remapSid = mpv.GetPropertyDouble("sid");
+                var remapFiles = (Dictionary<int, string>)Get(service, "_prefetchedSubtitleFiles")!;
+                var remapPath = remapFiles[0];
+                wire.ReindexReadyInventory = true;
+                wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var reordered = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    session_id = "fixture", file_id = 42, subtitle_id = 77,
+                    track = new { track_id = "downloaded:77", stored_subtitle_id = 77, combined_index = 0,
+                        source = "downloaded", delivery = "sidecar", url = subtitles.Origin + "/ita.srt" },
+                }));
+                var remapping = Task.Run(() => (Task)Call(service, "ApplySubtitleReadyAsync", reordered.RootElement, "fixture")!);
+                try
+                {
+                    await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    lock (Get(service, "_subtitleSyncGate")!)
+                    {
+                        wire.HoldReplan.TrySetResult();
+                        Require(SpinWait.SpinUntil(() => !ReferenceEquals(beforeRemap, manager.CurrentSession), TimeSpan.FromSeconds(4)),
+                            "The inventory replacement was not published while native application was held.");
+                        Set(service, "_seekRestartGeneration", (long)Get(service, "_seekRestartGeneration")! + 1);
+                    }
+                    await remapping.WaitAsync(TimeSpan.FromSeconds(6));
+                    await Until(() => service.ActiveSubtitleServerIndex == 4 && NativeSidMatches(4) &&
+                        ((SemaphoreSlim)Get(service, "_subtitleReadyGuard")!).CurrentCount == 1);
+                    Require(remapFiles.GetValueOrDefault(4) == remapPath && !remapFiles.ContainsKey(0) &&
+                        mpv.GetPropertyDouble("sid") == remapSid && Equals(remapFile, Get(service, "_fileLoadGeneration")) &&
+                        manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77).Index == 0 &&
+                        manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes && service.IsPaused && mpv.IsPaused,
+                        "A post-publication seek lost the native remap or reused another subtitle's ordinal on retry.");
+                }
+                finally
+                {
+                    wire.HoldReplan.TrySetResult();
+                    wire.HoldReplan = null; wire.ReplanEntered = null; wire.ReindexReadyInventory = false;
+                }
+                await manager.ReplanQualityAsync("720p", 0); await Load(0, 0);
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+
                 // Both announcements must survive a plan frozen before either
                 // addition. Valid metadata must not merge into the outgoing plan.
                 wire.DownloadedAvailable = false;
@@ -583,6 +628,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         public bool DownloadedAvailable;
         public bool AdditionalDownloadedAvailable;
         public bool ReverseDownloadedOrder;
+        public bool ReindexReadyInventory;
         public TaskCompletionSource? HoldReplan, ReplanEntered;
         private string SubtitleId => _subtitle == 2 ? "downloaded:77" : $"sub:{_file}:{_subtitle}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -604,6 +650,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             // subtitles announced while that request was in flight.
             var downloadedAvailable = DownloadedAvailable;
             var additionalDownloadedAvailable = AdditionalDownloadedAvailable;
+            var reindexReadyInventory = ReindexReadyInventory;
             if (path.EndsWith("/start"))
             {
                 _file = int.Parse(body.GetProperty("file_id").GetString()!);
@@ -615,7 +662,8 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 Replans.Add(body.Clone());
                 ReplanEntered?.TrySetResult();
                 if (HoldReplan != null) await HoldReplan.Task.WaitAsync(ct);
-                if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selection)) _subtitle = selection.GetProperty("index").GetInt32();
+                if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selection))
+                    _subtitle = selection.GetProperty("id").GetString() == $"sub:{_file}:0" ? 0 : selection.GetProperty("index").GetInt32();
                 else if (body.GetProperty("operation").GetString() == "track_change") _subtitle = -1;
             }
             return Json(JsonSerializer.Serialize(new
@@ -625,12 +673,12 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                 {
                     plan_id = $"plan-{_file}-{Replans.Count}", plan_attempt_key = "key", session_id = "fixture", effective_media_file_id = _file,
                     delivery = "original_http", stream = new { url = origin + "/media.wav" }, timeline = new { can_seek_anywhere = true }, source = new { duration_seconds = 60 },
-                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = SubtitleId, index = _subtitle } },
+                    selected_tracks = new { audio = new { id = $"file:{_file}:audio:0", index = 0 }, subtitle = _subtitle < 0 ? null : new { id = SubtitleId, index = reindexReadyInventory && _subtitle == 0 ? 4 : _subtitle } },
                     subtitle = new { mode = _subtitle < 0 ? "off" : "sidecar", track_id = _subtitle < 0 ? null : SubtitleId,
-                        inventory = Version(_file).SubtitleTracks!.Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, source = "external", url = origin + $"/{t.Language}.srt", label = t.Language })
+                        inventory = Version(_file).SubtitleTracks!.Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = reindexReadyInventory && t.Index == 0 ? 4 : t.Index, language = t.Language, codec = t.Codec, source = "external", url = origin + $"/{t.Language}.srt", label = t.Language })
                             .Cast<object>().Concat(downloadedAvailable ? new object[]
                             {
-                                new { track_id = "downloaded:77", stored_subtitle_id = 77, sync_key = "stored-77", combined_index = 2, language = "ita", codec = "subrip", source = "downloaded", delivery = "sidecar", url = origin + "/ita.srt", label = "Italian downloaded" },
+                                new { track_id = "downloaded:77", stored_subtitle_id = 77, sync_key = "stored-77", combined_index = reindexReadyInventory ? 0 : 2, language = "ita", codec = "subrip", source = "downloaded", delivery = "sidecar", url = origin + "/ita.srt", label = "Italian downloaded" },
                             } : []).Concat(additionalDownloadedAvailable ? new object[]
                             {
                                 new { track_id = "downloaded:78", stored_subtitle_id = 78, sync_key = "stored-78", combined_index = 3, language = "spa", codec = "subrip", source = "downloaded", delivery = "sidecar", url = origin + "/spa.srt", label = "New translation" },

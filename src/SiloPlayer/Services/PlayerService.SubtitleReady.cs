@@ -10,6 +10,11 @@ public partial class PlayerService
     private readonly SemaphoreSlim _subtitleReadyGuard = new(1, 1);
     private readonly object _subtitleReadyRefreshLock = new();
     private readonly HashSet<Action> _pendingSubtitleReadyRefreshes = [];
+    // Publication can precede native application. Retries on the same loaded
+    // file must still compare/remap from the inventory mpv actually uses.
+    private sealed record PendingSubtitleInventoryApplication(SubtitleOperationOwner Owner,
+        PlaybackStartResponse Session, long NativeFile, long File);
+    private PendingSubtitleInventoryApplication? _pendingSubtitleInventoryApplication;
 
     private void RetirePendingSubtitleReadyRefresh()
     {
@@ -187,7 +192,13 @@ public partial class PlayerService
                 DeferSubtitleReadyRefresh(payload, owner, session.SessionId, fileId);
                 return;
             }
-            if (payload.TryGetProperty("track", out var value) && value.ValueKind == JsonValueKind.Object)
+            var pendingApplication = _pendingSubtitleInventoryApplication;
+            if (pendingApplication != null && (!pendingApplication.Owner.IsCurrentForAi ||
+                pendingApplication.NativeFile != nativeFile || pendingApplication.File != file))
+                _pendingSubtitleInventoryApplication = pendingApplication = null;
+            var appliedSession = pendingApplication?.Session ?? session;
+            // Optional metadata cannot complete an outstanding reload/cache remap.
+            if (pendingApplication == null && payload.TryGetProperty("track", out var value) && value.ValueKind == JsonValueKind.Object)
             {
                 PlaybackSubtitleInventoryV3? track = null;
                 try { track = value.Deserialize<PlaybackSubtitleInventoryV3>(SubtitleReadyJson); }
@@ -231,12 +242,14 @@ public partial class PlayerService
                 candidate => Current() && SameTransport() && !SubtitleReadyRefreshIsBusy && ReferenceEquals(candidate, session),
                 (previous, next) => next.MediaFileId == fileId && SameTransport() && !SubtitleReadyRefreshIsBusy && owner.TryAdoptSession(previous, next), token)
                 .ConfigureAwait(false);
+            if (replacement != null)
+                _pendingSubtitleInventoryApplication ??= new(owner, appliedSession, nativeFile, file);
             if (replacement == null || !Current() || !SameTransport())
             {
                 RetryIfSuperseded();
                 return;
             }
-            if (!SubtitleInventoryRequiresTransportReload(session, replacement))
+            if (!SubtitleInventoryRequiresTransportReload(appliedSession, replacement))
             {
                 lock (_subtitleSyncGate)
                 lock (_subtitleTrackStateLock)
@@ -247,7 +260,8 @@ public partial class PlayerService
                         RetryIfSuperseded();
                         return;
                     }
-                    AdoptSubtitleInventoryInPlace(session, replacement);
+                    AdoptSubtitleInventoryInPlace(appliedSession, replacement);
+                    _pendingSubtitleInventoryApplication = null;
                 }
                 AdoptBufferingQualityPlan();
                 SendSubtitleListToOsc();
@@ -270,8 +284,9 @@ public partial class PlayerService
             }
             PlayMethod = replacement.PlayMethod;
             ApplyPreparedTransport(prepared);
-            PrepareSubtitleFileForReload(session, replacement, manager.SubtitleSelectionForLoad);
+            PrepareSubtitleFileForReload(appliedSession, replacement, manager.SubtitleSelectionForLoad);
             BeginMpvLoad(prepared, CaptureUserPausedState());
+            _pendingSubtitleInventoryApplication = null;
             SendSubtitleListToOsc();
             await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
         }
