@@ -341,14 +341,16 @@ public class ViewerActionsParityTests
         Assert.Contains("UpcomingBadgePresentation.Label(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
         Assert.Contains("UpcomingBadgePresentation.FixedPalette(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
         Assert.Contains("EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId)", Source("SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
-        // Smart collection editor and wizard both gate preview and save on the server's predicate.
+        // Both editors gate previews and creation, while allowing existing metadata edits.
         var editor = Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(RuleDefinition)", editor);
         Assert.Contains("if (SmartNeedsRule) { ClearPreview(); return; }", Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.Preview.cs"));
         var wizard = Source("SiloPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(_previewQuery)", wizard);
-        Assert.Contains("if (NeedsRule)", wizard);
-        Assert.Contains("!ViewModel.NeedsRule", Source("SiloPlayer", "Views", "SmartCollectionWizardPage.xaml.cs"));
+        Assert.Contains("if (NeedsRuleForSave)", wizard);
+        Assert.Contains("!IsEditing && NeedsRule", wizard);
+        Assert.Contains("!IsEditing && SmartNeedsRule", editor);
+        Assert.Contains("!ViewModel.NeedsRuleForSave", Source("SiloPlayer", "Views", "SmartCollectionWizardPage.xaml.cs"));
         // Trending worldwide offers the Show choice that writes the optional filter_type.
         var recipes = Source("SiloPlayer", "Views", "Dialogs", "RecipeGalleryDialog.cs");
         Assert.Contains("case \"trending_discover\":", recipes);

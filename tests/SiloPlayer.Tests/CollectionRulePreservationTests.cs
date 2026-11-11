@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 
@@ -8,6 +9,43 @@ namespace SiloPlayer.Tests;
 
 public sealed class CollectionRulePreservationTests
 {
+    [Theory]
+    [InlineData(false, "null")]
+    [InlineData(true, "null")]
+    [InlineData(false, "{\"groups\":[]}")]
+    [InlineData(true, "{\"groups\":[]}")]
+    [InlineData(false, "{\"match\":\"any\",\"future_option\":true,\"groups\":[{\"match\":\"any\",\"rules\":[{\"field\":\"genre\",\"op\":\"is\",\"value\":\"\"}]}]}")]
+    [InlineData(true, "{\"match\":\"any\",\"future_option\":true,\"groups\":[{\"match\":\"any\",\"rules\":[{\"field\":\"genre\",\"op\":\"is\",\"value\":\"\"}]}]}")]
+    public async Task ExistingRulelessCollectionAllowsMetadataSaveWithoutChangingStoredQuery(bool wizard, string storedQuery)
+    {
+        using var wire = new Wire { QueryOverride = storedQuery };
+        var client = new SiloApiClient(new HttpClient(wire)); client.SetBaseUrl("https://collection-fixture.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("fixture");
+        if (wizard)
+        {
+            var vm = new SmartCollectionWizardViewModel(new CatalogApi(client), new CollectionsApi(client), new AuthApi(client), auth);
+            await vm.ConfigureAsync(new(CollectionId: "fixture")); Assert.Null(vm.ErrorMessage);
+            Assert.True(vm.IsEditing); Assert.True(vm.NeedsRule); Assert.False(vm.NeedsRuleForSave);
+            vm.Title = "Renamed"; vm.IsShared = true;
+            await vm.PreviewAsync(); await vm.SaveAsync(); Assert.Null(vm.ErrorMessage);
+        }
+        else
+        {
+            var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth);
+            await vm.LoadExistingCommand.ExecuteAsync("fixture"); Assert.Null(vm.ErrorMessage);
+            Assert.True(vm.IsEditing); Assert.True(vm.SmartNeedsRule); Assert.False(vm.SmartNeedsRuleForSave);
+            vm.Name = "Renamed"; vm.IsShared = true;
+            await vm.RefreshPreviewAsync(); await vm.SaveCommand.ExecuteAsync(null); Assert.Null(vm.ErrorMessage);
+        }
+        Assert.Equal(0, wire.Previews);
+        var patch = Assert.IsType<JsonElement>(wire.Patch);
+        Assert.Equal("Renamed", patch.GetProperty("name").GetString());
+        Assert.True(patch.GetProperty("is_shared").GetBoolean());
+        var original = JsonSerializer.Deserialize<QueryDefinition>(storedQuery, V2Json.Options);
+        if (original == null) Assert.False(patch.TryGetProperty("query_definition", out _));
+        else Assert.Equal(JsonSerializer.Serialize(original, V2Json.Options), patch.GetProperty("query_definition").GetRawText());
+    }
+
     [Fact]
     public async Task ManualCollectionSavesItsVisibleBrowseAndLibraryPreferences()
     {
@@ -71,9 +109,12 @@ public sealed class CollectionRulePreservationTests
     private sealed class Wire : HttpMessageHandler
     {
         public bool Imported, Manual;
+        public string? QueryOverride;
+        public int Previews;
         public JsonElement? Patch;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            if (request.RequestUri!.AbsolutePath is "/api/v2/catalog" or "/api/v2/collections/preview") Previews++;
             if (request.Method == HttpMethod.Patch) Patch = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement.Clone();
             var json = request.RequestUri!.AbsolutePath.EndsWith("/collections/fixture")
                 ? """{"id":"fixture","creator_profile_id":"fixture","name":"Old name","collection_type":"smart","query_definition":{"media_scope":null,"match":"any","future_query_option":true,"groups":[{"match":"all","rules":[{"field":"year","op":"between","value":[2020,2026]},{"field":"hdr","op":"is","value":false}]},{"match":"any","future_group_option":3,"rules":[{"field":"genre","op":"is","value":"Drama"}]}],"sort":{"field":"title","order":"asc"},"limit":null}}"""
@@ -82,6 +123,8 @@ public sealed class CollectionRulePreservationTests
                 json = """{"id":"fixture","creator_profile_id":"fixture","name":"List","collection_type":"tmdb","source_url":"123","source_config":{"mode":"tmdb_list"}}""";
             if (Manual && request.RequestUri!.AbsolutePath.EndsWith("/collections/fixture"))
                 json = """{"id":"fixture","creator_profile_id":"fixture","name":"Manual","collection_type":"manual"}""";
+            if (QueryOverride != null && request.RequestUri!.AbsolutePath.EndsWith("/collections/fixture"))
+                json = JsonSerializer.Serialize(new { id = "fixture", creator_profile_id = "fixture", name = "Legacy smart", collection_type = "smart", query_definition = JsonSerializer.Deserialize<JsonElement>(QueryOverride) });
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
             response.Headers.ETag = new("\"fixture-version\""); return response;
         }

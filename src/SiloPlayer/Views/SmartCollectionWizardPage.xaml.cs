@@ -37,7 +37,7 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading
         && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title) && _rulesEditor?.IsValid != false
-        && !ViewModel.NeedsRule;
+        && !ViewModel.NeedsRuleForSave;
     public string PreviewCountText
         => ViewModel.PreviewTotal > 0
             ? $"{ViewModel.PreviewTotal:N0} matched"
@@ -405,11 +405,11 @@ public sealed partial class SmartCollectionWizardPage : Page
         if (RuleNeededText != null)
         {
             RuleNeededText.Text = SmartCollectionWizardViewModel.RuleNeededMessage;
-            RuleNeededText.Visibility = ViewModel.NeedsRule && !ViewModel.IsReadOnly
+            RuleNeededText.Visibility = ViewModel.NeedsRuleForSave && !ViewModel.IsReadOnly
                 ? Visibility.Visible : Visibility.Collapsed;
         }
         if (ContinueButton == null) return;
-        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && !ViewModel.NeedsRule;
+        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && !ViewModel.NeedsRuleForSave;
     }
 
     private async void PreviewScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)

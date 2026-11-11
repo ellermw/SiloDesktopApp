@@ -24,6 +24,9 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     private readonly AuthApi _authApi;
     private readonly AuthService _authService;
     private string? _collectionId;
+    private QueryDefinition? _storedQueryDefinition;
+    private string? _initialQueryDefinition;
+    public bool IsEditing => !string.IsNullOrWhiteSpace(_collectionId);
 
     public SmartCollectionWizardViewModel(
         CatalogApi catalogApi,
@@ -87,6 +90,8 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         ErrorMessage = null;
         StatusMessage = null;
         _collectionId = args?.CollectionId;
+        _storedQueryDefinition = null;
+        _initialQueryDefinition = null;
 
         try
         {
@@ -135,6 +140,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
                 Title = collection.Name;
                 Description = collection.Description;
+                _storedQueryDefinition = collection.QueryDefinition;
                 RuleDefinition = QueryEditing.Clone(collection.QueryDefinition);
                 MediaScope = collection.QueryDefinition?.MediaScope ?? "";
                 MatchMode = collection.QueryDefinition?.Match ?? "all";
@@ -158,6 +164,9 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
             if (Rules.Count == 0)
                 AddRule();
+            // Capture the editor's normalized defaults separately from the stored
+            // definition so metadata-only saves can resend that definition unchanged.
+            _initialQueryDefinition = JsonSerializer.Serialize(BuildQueryDefinition());
         }
         catch (Exception ex)
         {
@@ -222,10 +231,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     public const string RuleNeededMessage = "Add at least one rule with a field, an operator and a value.";
 
     /// <summary>
-    /// The rules this wizard would send hold no rule complete enough to filter, so the
-    /// query would match every title and the server refuses to save it.
+    /// The rules hold no rule complete enough to filter, so previewing would match
+    /// every title. Creation requires a rule; existing metadata edits remain available.
     /// </summary>
     public bool NeedsRule => !QueryEditing.HasCompleteRule(RuleDefinition);
+
+    public bool NeedsRuleForSave => !IsEditing && NeedsRule;
 
     public async Task PreviewAsync(CancellationToken ct = default)
     {
@@ -303,7 +314,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
             return;
         }
 
-        if (NeedsRule)
+        if (NeedsRuleForSave)
         {
             ErrorMessage = RuleNeededMessage;
             return;
@@ -344,7 +355,8 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
                     AllowedProfileIds = IsShared ? [.. AllowedProfileIds] : [],
                     IncludeInServerCollections = IncludeInServerCollections,
                     PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim(),
-                    QueryDefinition = query
+                    QueryDefinition = JsonSerializer.Serialize(query) == _initialQueryDefinition
+                        ? _storedQueryDefinition : query
                 };
                 if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
                     await _collectionsApi.UpdateCollectionAsync(_collectionId, update, PosterFileName, poster, PosterContentType, ct);

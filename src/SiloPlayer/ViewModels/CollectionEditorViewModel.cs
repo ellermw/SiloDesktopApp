@@ -336,9 +336,9 @@ public partial class CollectionEditorViewModel : ObservableObject
             ErrorMessage = "Collection name is required.";
             return;
         }
-        // The server answers 422 for a Smart collection with no complete rule, and the
-        // editor never offers a save it would refuse.
-        if (SmartNeedsRule)
+        // New Smart collections need a rule. Existing collections must still allow
+        // metadata edits; any server-side update validation is reported below.
+        if (SmartNeedsRuleForSave)
         {
             ErrorMessage = SmartRuleNeededMessage;
             return;
@@ -364,7 +364,11 @@ public partial class CollectionEditorViewModel : ObservableObject
 
                 if (CollectionType == "smart")
                 {
-                    request.QueryDefinition = BuildQueryDefinition();
+                    // Metadata-only edits must not sanitize the stored query, including
+                    // legacy definitions with no complete rule.
+                    request.QueryDefinition = LoadedCollection is { } loaded
+                        && JsonSerializer.Serialize(RuleDefinition) == JsonSerializer.Serialize(QueryEditing.Clone(loaded.QueryDefinition))
+                            ? loaded.QueryDefinition : BuildQueryDefinition();
                     if (_clearSmartDefaultSort && Capabilities?.CollectionDefaultSort == true &&
                         (_storedSortConfig.ContainsKey("field") || _storedSortConfig.ContainsKey("order")))
                         request.SortConfig = _storedSortConfig.Where(pair => pair.Key is not ("field" or "order")).ToDictionary(pair => pair.Key, pair => pair.Value);
@@ -791,6 +795,8 @@ public partial class CollectionEditorViewModel : ObservableObject
     /// <summary>A Smart collection waits for a rule with a field, an operator and a value.</summary>
     public bool SmartNeedsRule => CollectionType == "smart"
         && !SiloPlayer.Core.Services.QueryEditing.HasCompleteRule(RuleDefinition);
+
+    public bool SmartNeedsRuleForSave => !IsEditing && SmartNeedsRule;
 
     private QueryDefinition BuildQueryDefinition()
     {

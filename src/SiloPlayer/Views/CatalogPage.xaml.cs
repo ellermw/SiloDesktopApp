@@ -277,8 +277,7 @@ public sealed partial class CatalogPage : Page,
     }
 
     // A Continue Watching / Next Up dismissal drops the show from both rows, so the dedicated
-    // page removes its cards like Home does and keeps the count and paging offset in step with
-    // the server's now shorter row.
+    // page reloads the shortened live row, including its count and paging offset.
     private void RemoveDismissedSectionCards(MediaSurfaceChanged message)
     {
         if (_source != "section") return;
@@ -289,26 +288,12 @@ public sealed partial class CatalogPage : Page,
             .ToList();
         if (removed.Count == 0 && !_items.Any(candidate =>
             candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp)) return;
-        // A section is paged from live row membership. A pending seek belongs to the
-        // old row, whether the server read it before or after this dismissal.
-        var resumePaging = _loading;
-        if (resumePaging)
-        {
-            Interlocked.Increment(ref _loadGeneration);
-            _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new CancellationTokenSource();
-            _loading = false;
-        }
-        _snapshot = null;
-        foreach (var card in removed) _items.Remove(card);
-        _selectedIds.ExceptWith(removed.Select(card => card.ContentId));
-        _offset = Math.Max(0, _offset - removed.Count);
-        // The show may also have cards beyond the loaded prefix. Hide the old count
-        // and read the live row even if no continuation was pending; only the server
-        // knows its new total. The next window retains the corrected prefix offset.
+        // A continuation may already have appended a window from the shortened row
+        // before this queued message arrived. Its offset can then hide a gap even
+        // though no load is pending. Reset the whole window (and retire any pending
+        // generation) rather than treating that suffix as a stable prefix.
         CountPanel.Visibility = Visibility.Collapsed;
-        EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        UpdateSelectionUi();
-        _ = LoadAsync(false);
+        _ = LoadAsync(true);
     }
 
     public void Receive(PlaybackProgressUpdated message)

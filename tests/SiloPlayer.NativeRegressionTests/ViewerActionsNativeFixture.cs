@@ -14,6 +14,7 @@ using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Messaging;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -70,9 +71,10 @@ internal static class ViewerActionsNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 800)); window.AppWindow.Show(false);
             await Task.Delay(200);
             if (Wants("dismissal")) await DedicatedPageRemovalAsync(frame, wire);
-            if (Wants("paging")) await DismissalPagingAsync(frame, wire);
+            if (Wants("paging")) await DismissalPagingAsync(frame, wire, home);
             if (Wants("smart-editor")) await SmartEditorAsync(frame, wire);
             if (Wants("smart-wizard")) await SmartWizardAsync(frame, wire);
+            if (Wants("smart-metadata")) await RulelessSmartMetadataAsync(frame, wire);
             if (Wants("trending")) await TrendingShowAsync(parent);
             if (Wants("calendar")) await CalendarBadgesAsync(frame, calendarModel);
             if (Wants("sync")) await FailedSyncRefreshAsync(client, collections, catalog, settings, auth, wire);
@@ -180,7 +182,7 @@ internal static class ViewerActionsNativeFixture
         }
     }
 
-    private static async Task DismissalPagingAsync(Frame frame, Wire wire)
+    private static async Task DismissalPagingAsync(Frame frame, Wire wire, HomeApi home)
     {
         foreach (var before in new[] { true, false })
         {
@@ -216,6 +218,36 @@ internal static class ViewerActionsNativeFixture
                 $"{section} complete unique window: rows={actual.Length}, unique={actual.Distinct().Count()}, missing={string.Join(',', expected.Except(actual))}");
             Check(((TextBlock)page.FindName("CountText")).Text == "129", "paging total after dismissal");
             Program.Log($"PASS: {section} all 129 remaining titles appear exactly once.");
+        }
+
+        // The server applies the dismissal, then a continuation reads the shortened
+        // row and completes before the page receives the dismissal notification.
+        {
+            const string section = "race-completed";
+            wire.ContinuationHeld = false; wire.ReadBeforeDismissal = false;
+            wire.ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Continue Watching", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            ObservableCollection<MediaItem> Items() => Field<ObservableCollection<MediaItem>>(page, "_items");
+            await Until(() => !Field<bool>(page, "_loading") && Items().Count == 60, "completed-race first sixty");
+            var continuation = (Task)Call(page, "LoadAsync", false)!;
+            try
+            {
+                await Until(() => wire.ContinuationHeld, "completed-race held continuation");
+                // HomeApi does not publish a surface message; deliver it explicitly below.
+                await home.DismissItemAsync("continue_watching", section + "-001", new { progress_updated_at = "2026-11-09T10:00:00Z" });
+            }
+            finally { wire.ReleaseContinuation.TrySetResult(); }
+            await continuation;
+            Check(!Field<bool>(page, "_loading") && Items().Count == 120
+                && Items().All(item => item.ContentId != section + "-061"), "shortened continuation completed before notification, leaving the expected gap");
+            page.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, section + "-001", context: home.CaptureContext()));
+            await Until(() => !Field<bool>(page, "_loading") && Items().All(item => item.ContentId != section + "-001"), "completed-race dismissal refresh");
+            for (var i = 0; i < 5 && Field<bool>(page, "_hasMore"); i++)
+                await (Task)Call(page, "LoadAsync", false)!;
+            var expected = Enumerable.Range(2, 129).Select(index => $"{section}-{index:000}");
+            Check(Items().Select(item => item.ContentId).SequenceEqual(expected), "completed-before-message dismissal keeps all 129 titles exactly once and in order");
+            Check(((TextBlock)page.FindName("CountText")).Text == "129", "completed-before-message total after dismissal");
         }
 
         foreach (var surface in new[] { "cw", "nu" })
@@ -392,6 +424,69 @@ internal static class ViewerActionsNativeFixture
         using (var created = JsonDocument.Parse(wire.Creates[^1]))
             CheckOnlyRule(created.RootElement.GetProperty("query_definition").GetProperty("groups"), "genre", "contains", "Drama");
         Program.Log("PASS: smart wizard previews and saves only with a complete rule (zero/false valid, blank and open ranges invalid).");
+    }
+
+    private static async Task RulelessSmartMetadataAsync(Frame frame, Wire wire)
+    {
+        foreach (var wizard in new[] { false, true })
+        {
+            await Task.Delay(600); // Let any prior save finish its queued navigation.
+            frame.BackStack.Clear();
+            var previews = wire.Previews.Count + wire.CatalogQueries.Count;
+            var updates = wire.Updates.Count;
+            Button save;
+            Func<bool> isSaving;
+            if (wizard)
+            {
+                frame.Navigate(typeof(SmartCollectionWizardPage), new SmartCollectionWizardNavigationArgs(CollectionId: "ruleless"));
+                var page = (SmartCollectionWizardPage)frame.Content;
+                isSaving = () => page.ViewModel.IsSaving;
+                await Until(() => Field<bool>(page, "_loaded") && !page.ViewModel.IsLoading
+                    && page.ViewModel.Title == "Legacy smart" && Field<QueryFilterEditor?>(page, "_rulesEditor") != null, "ruleless wizard load");
+                page.ViewModel.Title = "Renamed legacy"; page.ViewModel.IsShared = true;
+                var next = (Button)page.FindName("ContinueButton");
+                Check(next.IsEnabled, "an existing ruleless collection can reach Details");
+                Invoke(next);
+                save = (Button)page.FindName("SaveButton");
+                await Until(() => save.Visibility == Visibility.Visible
+                    && ((FrameworkElement)page.FindName("DetailsStepPanel")).Visibility == Visibility.Visible, "ruleless wizard reaches Details");
+                Check(save.Visibility == Visibility.Visible && save.IsEnabled, "ruleless Details permits a metadata save");
+                Check(((TextBlock)page.FindName("RuleNeededText")).Visibility == Visibility.Collapsed, "ruleless metadata edits have no create-time rule warning");
+                wire.RejectRulelessUpdate = true;
+                try
+                {
+                    Invoke(save);
+                    await Until(() => wire.Updates.Count == updates + 1 && !page.ViewModel.IsSaving, "ruleless update rejection");
+                    Check(page.ViewModel.ErrorMessage?.StartsWith("Failed to save smart collection:") == true
+                        && save.IsEnabled, "server validation is reported and metadata save remains retryable");
+                }
+                finally { wire.RejectRulelessUpdate = false; }
+                updates++;
+            }
+            else
+            {
+                frame.Navigate(typeof(CollectionEditorPage), "ruleless");
+                var page = (CollectionEditorPage)frame.Content;
+                isSaving = () => page.ViewModel.IsSaving;
+                await Until(() => page.ViewModel.CollectionId == "ruleless" && !page.ViewModel.IsLoading
+                    && Field<QueryRulesEditor?>(page, "_rulesEditor") != null, "ruleless editor load");
+                page.ViewModel.Name = "Renamed legacy"; page.ViewModel.IsShared = true;
+                save = (Button)page.FindName("SaveButton");
+                await Until(() => save.IsEnabled, "ruleless editor metadata save enabled");
+                Check(!Field<TextBlock>(page, "_editorFooterStatus").Text.Contains("Add a rule"), "existing metadata edits do not show the create-time footer warning");
+            }
+            await Task.Delay(900);
+            Check(wire.Previews.Count + wire.CatalogQueries.Count == previews, "ruleless existing collections still send no preview");
+            Invoke(save);
+            await Until(() => wire.Updates.Count == updates + 1 && !isSaving(), "ruleless metadata update");
+            using var patch = JsonDocument.Parse(wire.Updates[^1]);
+            Check(patch.RootElement.GetProperty("name").GetString() == "Renamed legacy"
+                && patch.RootElement.GetProperty("is_shared").GetBoolean(), "ruleless metadata changes are sent");
+            var query = patch.RootElement.GetProperty("query_definition");
+            Check(query.GetProperty("groups").GetArrayLength() == 0 && query.GetProperty("match").GetString() == "any"
+                && query.GetProperty("future_option").GetBoolean() && !query.TryGetProperty("sort", out _)
+                && !query.TryGetProperty("limit", out _), "metadata update resends the stored ruleless query without editor defaults");
+        }
     }
 
     // ----- G5 -----
@@ -578,9 +673,10 @@ internal static class ViewerActionsNativeFixture
     {
         internal bool ContinuationHeld, ReadBeforeDismissal;
         internal bool FailCatalogPreview;
+        internal bool RejectRulelessUpdate;
         internal TaskCompletionSource ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<(string Path, string Body)> Dismissals = [];
-        internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [];
+        internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [], Updates = [];
         internal string SyncState = "ok"; internal bool FailSync = true;
         internal TaskCompletionSource? HoldCollectionRead; internal int CollectionReadsHeld;
         private readonly HashSet<string> _dismissed = [];
@@ -659,6 +755,19 @@ internal static class ViewerActionsNativeFixture
             {
                 Creates.Add(text ?? "");
                 body = new { id = "created", name = "Created", collection_type = "smart", creator_profile_id = "fixture" };
+            }
+            else if (path == "/api/v2/collections/ruleless")
+            {
+                if (request.Method == HttpMethod.Patch)
+                {
+                    Updates.Add(text ?? "");
+                    if (RejectRulelessUpdate) return new(HttpStatusCode.UnprocessableEntity)
+                    {
+                        Content = new StringContent("{\"code\":\"validation_error\",\"message\":\"Add at least one rule.\"}")
+                    };
+                }
+                body = new { id = "ruleless", name = "Legacy smart", collection_type = "smart", creator_profile_id = "fixture",
+                    query_definition = new { match = "any", groups = Array.Empty<object>(), future_option = true } };
             }
             else if (path == "/api/v2/collections/capabilities") body = new { imports = true, import_sources = new[] { "mdblist" }, item_reorder = true };
             else if (path == "/api/v2/collections/synced/sync")
