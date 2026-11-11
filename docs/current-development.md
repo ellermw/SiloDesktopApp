@@ -1,3 +1,11 @@
+# November 11, 2026 — device-login session binding
+
+Official Server/WebUI reviewed at 4a9e527a432e8ef3a15dcd568802a45c15169039; fresh Beta base 3f098c88ca4770db6f71e84e0e2290df42f8ec2c, unchanged version 1.2.970. Native login negotiates session binding with one random in-memory setup secret, uses the exact SHA256/base64url start and poll fields, retires changed owners, and preserves manual approval and temporary SiloCast handoff behavior. Secrets are neither persisted nor exposed in transport diagnostics.
+
+Verification: 59 focused and 5,315 full unit tests passed; fresh Release publish and actual LoginPage native flows passed. App DLL SHA256 459C6BF489734F0D1FFB13204AEA6621B8DACECC9551718D1BB177816BAC40DA. All 739 authored app and 181 native-test PDB documents match source. Lead rechecked 2,131 source inputs, the DLL and native completion sentinel before submission; this documentation note was added afterward and does not change compiled inputs. Independent Claude review found no high/medium findings; an advisory notes a harmless extra retirement delay in a narrow cancellation race.
+
+Evidence: this worktree's ignored .codex-tmp/device-binding, plus D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-device-binding-implementation.md and reopened-device-binding-review.md. Earlier intermittent failures and fixture bring-up failures remain documented. Synthetic native/API evidence does not certify real-phone/server interoperability or complete visual parity. Installed player untouched; Beta pipeline owns downstream review, QA, merge and packaging.
+
 # Server alignment — profiles and metadata (November 10, 2026)
 
 Base: freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`; stamps remain pipeline-owned. Official Server/WebUI reviewed at `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039` (additional WebUI localization only).

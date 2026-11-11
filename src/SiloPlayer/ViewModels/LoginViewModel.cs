@@ -145,6 +145,7 @@ public partial class LoginViewModel : ObservableObject
     private string _deviceStatusMessage = "";
 
     private CancellationTokenSource? _deviceLoginCts;
+    private DeviceLoginSetup? _deviceSetup;
     private int _deviceAttempt;
     private string? _deviceServer;
     private bool _deviceCompleted;
@@ -337,28 +338,39 @@ public partial class LoginViewModel : ObservableObject
         {
             _deviceLoginCts = new CancellationTokenSource();
             var ct = _deviceLoginCts.Token;
-            var session = await _authApi.DeviceStartAsync(
-                server,
+            var setup = new DeviceLoginSetup(_authApi, server, () => attempt == _deviceAttempt &&
+                _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration);
+            _deviceSetup = setup;
+            var session = await setup.StartAsync(
                 $"{Environment.MachineName} Silo Desktop",
                 "Windows",
                 ct);
-            if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context))
-            { _ = CancelAbandonedDeviceAsync(server, session.DeviceCode); return; }
+            if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context) || authGeneration != _authService.SessionGeneration)
+            {
+                _ = CancelAbandonedDeviceAsync(server, session.DeviceCode);
+                setup.Dispose();
+                if (attempt == _deviceAttempt) CancelDeviceLogin(clearSession: true);
+                return;
+            }
             DeviceSession = session;
             ShowDeviceFallback = false;
             DeviceStatusMessage = "Waiting for approval on your phone...";
             var image = await CreateQrImageAsync(session.VerificationUriComplete);
-            if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context)) return;
+            if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context) || authGeneration != _authService.SessionGeneration)
+            { if (attempt == _deviceAttempt) CancelDeviceLogin(clearSession: true); return; }
             DeviceQrImage = image;
-            _ = PollDeviceLoginAsync(session, server, context, authGeneration, attempt, ct);
+            _ = PollDeviceLoginAsync(setup, session, server, context, authGeneration, attempt, ct);
         }
-        catch (OperationCanceledException) { }
-        catch (Exception ex)
+        catch (OperationCanceledException)
         {
-            if (attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context)) return;
-            DeviceStatusMessage = "";
-            ErrorMessage = $"Couldn't start phone sign-in: {ex.Message}";
+            if (attempt == _deviceAttempt) CancelDeviceLogin(clearSession: true);
+        }
+        catch (Exception)
+        {
+            if (attempt != _deviceAttempt) return;
+            var current = _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration;
             CancelDeviceLogin(clearSession: true);
+            if (current) ErrorMessage = "Couldn't start phone sign-in. Try again.";
         }
         finally
         {
@@ -372,6 +384,7 @@ public partial class LoginViewModel : ObservableObject
         if (!_deviceCompleted && _deviceServer is { } server && DeviceSession is { } session)
             _ = CancelAbandonedDeviceAsync(server, session.DeviceCode);
         _deviceServer = null; _deviceCompleted = false;
+        _deviceSetup?.Dispose(); _deviceSetup = null;
         var cts = _deviceLoginCts;
         _deviceLoginCts = null;
         try { cts?.Cancel(); } catch { }
@@ -392,20 +405,24 @@ public partial class LoginViewModel : ObservableObject
         catch { /* Abandonment is best effort and never masks a new sign-in attempt. */ }
     }
 
-    private async Task PollDeviceLoginAsync(DeviceLoginStartResponse session, string server,
+    private async Task PollDeviceLoginAsync(DeviceLoginSetup setup, DeviceLoginStartResponse session, string server,
         ApiRequestContext context, long authGeneration, int attempt, CancellationToken ct)
     {
         var interval = TimeSpan.FromSeconds(Math.Max(1, session.Interval > 0 ? session.Interval : 3));
         try
         {
-            while (!ct.IsCancellationRequested && ReferenceEquals(DeviceSession, session))
+            while (!ct.IsCancellationRequested && attempt == _deviceAttempt && ReferenceEquals(DeviceSession, session))
             {
+                if (!_apiClient.IsCurrentContext(context) || authGeneration != _authService.SessionGeneration)
+                { CancelDeviceLogin(clearSession: true); return; }
                 IsDevicePolling = true;
                 DeviceLoginPollResponse result;
-                try { result = await _authApi.DevicePollAsync(server, session.DeviceCode, ct); }
-                catch (Exception) when (!ct.IsCancellationRequested)
+                try { result = await setup.PollAsync(session.DeviceCode, ct); }
+                catch (Exception ex) when (!ct.IsCancellationRequested && (ex is HttpRequestException or OperationCanceledException || ex is ApiException { StatusCode: 429 or >= 500 }))
                 { await Task.Delay(interval, ct); continue; }
-                if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context) || !ReferenceEquals(DeviceSession, session)) return;
+                if (ct.IsCancellationRequested || attempt != _deviceAttempt || !ReferenceEquals(DeviceSession, session)) return;
+                if (!_apiClient.IsCurrentContext(context) || authGeneration != _authService.SessionGeneration)
+                { CancelDeviceLogin(clearSession: true); return; }
                 IsDevicePolling = false;
 
                 if (string.Equals(result.Status, "approved", StringComparison.OrdinalIgnoreCase)
@@ -415,7 +432,8 @@ public partial class LoginViewModel : ObservableObject
                 {
                     var response = new LoginResponse { AccessToken = result.AccessToken, RefreshToken = result.RefreshToken,
                         ExpiresIn = result.ExpiresIn.GetValueOrDefault(), User = result.User };
-                    if (!_authService.CompleteRecoveryLogin(response, authGeneration, server)) return;
+                    if (!_authService.CompleteRecoveryLogin(response, authGeneration, server))
+                    { CancelDeviceLogin(clearSession: true); return; }
                     _deviceCompleted = true;
 
                     DeviceStatusMessage = "Signed in. Loading profiles...";
@@ -439,11 +457,19 @@ public partial class LoginViewModel : ObservableObject
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (!ct.IsCancellationRequested && attempt == _deviceAttempt && _apiClient.IsCurrentContext(context))
-                DeviceStatusMessage = $"Phone sign-in failed: {ex.Message}";
+            if (!ct.IsCancellationRequested && attempt == _deviceAttempt)
+            {
+                var current = _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration;
+                CancelDeviceLogin(clearSession: true);
+                if (current) ErrorMessage = ex is ApiException { ErrorCode: "device_binding_mismatch" }
+                    ? "Phone sign-in could not verify this setup. Start a new code to try again."
+                    : "Phone sign-in failed. Start a new code to try again.";
+            }
         }
         finally
         {
+            setup.Dispose();
+            if (ReferenceEquals(_deviceSetup, setup)) _deviceSetup = null;
             if (attempt == _deviceAttempt) IsDevicePolling = false;
         }
     }
