@@ -11,8 +11,8 @@ public enum UpdatePanelPhase { Working, Ready, Deferred, Finishing, Failed }
 public sealed class UpdatePanelModel
 {
     public const string ReadyTitle = "Update ready";
-    public const string ReadyText = "Restart Silo to finish updating.";
-    public const string DeferredText = "The update will finish automatically the next time you start Silo.";
+    public const string ReadyText = "The update is installed. Restart Silo to use it.";
+    public const string DeferredText = "The installed update will be used the next time you start Silo.";
     public const string ExpandGlyph = "", CollapseGlyph = ""; // ChevronDown, ChevronUp
 
     public UpdatePanelPhase Phase { get; private set; } = UpdatePanelPhase.Working;
@@ -33,10 +33,10 @@ public sealed class UpdatePanelModel
         return DetailsExpanded;
     }
 
-    /// <summary>Everything is downloaded: the panel asks Restart now or Later.</summary>
+    /// <summary>Installation is staged and verified: the panel asks Restart now or Later.</summary>
     public void Ready() { if (Phase == UpdatePanelPhase.Working) Phase = UpdatePanelPhase.Ready; }
-    /// <summary>Restart now continues installation in the same panel.</summary>
-    public void Restart() { if (Phase == UpdatePanelPhase.Ready) Phase = UpdatePanelPhase.Working; }
+    /// <summary>Restart now only closes and activates the installed version.</summary>
+    public void Restart() { if (Phase == UpdatePanelPhase.Ready) Phase = UpdatePanelPhase.Finishing; }
     public void Defer() { if (Phase == UpdatePanelPhase.Ready) Phase = UpdatePanelPhase.Deferred; }
     public void Finish() { if (Phase is UpdatePanelPhase.Working or UpdatePanelPhase.Ready) Phase = UpdatePanelPhase.Finishing; }
     public void Fail() => Phase = UpdatePanelPhase.Failed;
@@ -78,13 +78,13 @@ public static class UpdatePanelPlacement
 
     /// <summary>
     /// The panel stays visible with Silo regardless of focus. Native z-order tracking keeps it above
-    /// Silo while normal foreground applications can cover it. Playback and minimization hide it.
+    /// Silo while normal foreground applications can cover it. Only minimization hides it.
     /// Once Silo closes to restart, the final status stays visible.
     /// </summary>
     public static bool ShouldShow(bool ownerAlive, bool ownerMinimized, bool playback, bool? foregroundIsSilo, bool visibleNow)
     {
         if (!ownerAlive) return true;
-        if (ownerMinimized || playback) return false;
+        if (ownerMinimized) return false;
         return true;
     }
 }

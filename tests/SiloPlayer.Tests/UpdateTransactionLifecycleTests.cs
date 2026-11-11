@@ -63,6 +63,43 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
         Assert.DoesNotContain(env.Sent, message => message.Kind == "activated");
     }
 
+    [Fact]
+    public void LaterKeepsInstalledTargetAndResumesWithoutInstallingAgain()
+    {
+        using var env = Create();
+        env.CloseFailure = "defer";
+        var deferred = Run(env);
+        Assert.True(deferred.Succeeded, deferred.Error?.ToString());
+        Assert.False(deferred.Activated);
+        Assert.True(env.ParentAlive);
+        AssertOldActive();
+        Assert.Equal(0, env.HeldLocks);
+        Assert.Equal(new[] { true, false }, env.RestartWaitStates);
+        Assert.Contains(env.Sent, frame => frame.Kind == "deferred");
+        Assert.True(File.Exists(Path.Combine(Root, "versions", NewVersion, "SiloPlayer.dll")));
+        env.ResetForRetry();
+        var resumed = Run(env, restart: false);
+        Assert.True(resumed.Succeeded, resumed.Error?.ToString());
+        Assert.True(resumed.Activated);
+        Assert.Equal(deferred.TransactionId, resumed.TransactionId);
+        Assert.DoesNotContain(env.Sent, frame => frame.Kind == "progress" && frame.Text == "Installing alongside current version");
+    }
+
+    [Fact]
+    public void ADeferredInstallationIsReverifiedBeforeItCanActivate()
+    {
+        using var env = Create();
+        env.CloseFailure = "defer";
+        Assert.True(Run(env).Succeeded);
+        File.WriteAllText(Path.Combine(Root, "versions", NewVersion, "SiloPlayer.dll"), "changed after preparation");
+        env.ResetForRetry();
+        var result = Run(env, restart:false);
+        Assert.False(result.Succeeded);
+        Assert.False(result.Activated);
+        Assert.True(env.ParentAlive);
+        AssertOldActive();
+    }
+
     [Theory]
     [InlineData("cancel")]
     [InlineData("disconnected")]
@@ -399,6 +436,8 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
         private string? transaction;
         public Exception? ValidateError;
         public string VisibleKind = "visible", CloseFailure = "", ReadyFailure = "", PreparationFailure = "";
+        public List<bool> RestartWaitStates { get; } = [];
+        public void SetAwaitingRestartChoice(bool waiting) => RestartWaitStates.Add(waiting);
         public string CleanupInventory = "free";
         public bool WaitReturnsWhileAlive, LaunchNewClient = true, LoseConfirmation;
         public Action? OnStaged, OnVisible;
@@ -477,7 +516,7 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
             {
                 Assert.True(ParentAlive); Assert.Equal(sourceVersion, SideBySideInstallation.ReadState(root)!.ActiveVersion);
                 if (CloseFailure == "disconnected") throw new EndOfStreamException();
-                var kind = CloseFailure == "cancel" ? "cancel" : "close"; ReceivedKinds.Add(kind);
+                var kind = CloseFailure is "cancel" or "defer" ? CloseFailure : "close"; ReceivedKinds.Add(kind);
                 return new(kind, CloseFailure == "wrong-transaction" ? new string('0', 32) : transaction);
             }
             Assert.Equal(0, HeldLocks);

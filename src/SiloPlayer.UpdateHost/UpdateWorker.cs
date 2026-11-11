@@ -18,11 +18,11 @@ internal static class UpdateWorker
         UpdatePipeIdentity.Authenticate(pipe,false,options.BrokerPid,options.BrokerStart,Environment.ProcessPath!);
         var root=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!,machineOnly:true)??throw new InvalidOperationException("Use the registered machine installation.");
         var directory=Directory.GetParent(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))!.FullName;
-        using var environment=new WindowsTransactionEnvironment(options,root,directory,pipe);
+        using var environment=new WindowsTransactionEnvironment(options,root,directory,pipe,timeout);
         var result=UpdateTransactionRunner.Run(new(root,Path.GetFileName(directory),options.Tag,options.Restart),environment,timeout.Token);
         return result.Succeeded ? 0 : 1;
     }
-    private sealed class WindowsTransactionEnvironment(HostOptions options,string root,string directory,PipeStream pipe) : IUpdateTransactionEnvironment,IDisposable
+    private sealed class WindowsTransactionEnvironment(HostOptions options,string root,string directory,PipeStream pipe,CancellationTokenSource operationTimeout) : IUpdateTransactionEnvironment,IDisposable
     {
         private Process? parent;
         public void ValidateCallerAndParent()
@@ -71,6 +71,7 @@ internal static class UpdateWorker
             UpdateHostProtocol.WriteAsync(pipe,message,deadline.Token).GetAwaiter().GetResult();
         }
         public UpdateHostMessage Receive(CancellationToken ct)=>UpdateHostProtocol.ReadAsync(pipe,ct).GetAwaiter().GetResult();
+        public void SetAwaitingRestartChoice(bool waiting)=>operationTimeout.CancelAfter(waiting ? Timeout.InfiniteTimeSpan : TimeSpan.FromMinutes(20));
         public void WaitForParentExit(CancellationToken ct)=>parent!.WaitForExitAsync(ct).GetAwaiter().GetResult();
         public bool HasParentExited=>parent?.HasExited==true;
         public void VerifyNoOtherClient()

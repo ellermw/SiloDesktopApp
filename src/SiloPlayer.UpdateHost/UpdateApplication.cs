@@ -85,29 +85,7 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
                     if(frame.Kind=="cancel"){closeAllowed=true;window!.Close();return;}
                     throw new UpdateClientFailure(frame.Kind=="failed" ? frame.Text : null);
                 }
-                if(options.ConfirmRestart)
-                {
-                    // Waiting for an answer has no deadline: during playback the panel stays hidden
-                    // until the user is back. Silo writes nothing until "close", so a completed read
-                    // here means Silo closed or abandoned the update.
-                    deadline.CancelAfter(Timeout.InfiniteTimeSpan);
-                    appFrame=UpdateHostProtocol.ReadAsync(app,ct);
-                    var choice=view!.AskRestartAsync(ct);
-                    if(await Task.WhenAny(choice,appFrame)==appFrame){_=appFrame.Exception;closeAllowed=true;window!.Close();return;}
-                    if(!await choice)
-                    {
-                        await UpdateHostProtocol.WriteAsync(app,new("later"),ct);
-                        // Silo keeps the download and finishes the update on its next start. If it
-                        // could not record Later it says so, and the panel shows that instead of closing.
-                        closeAllowed=true;
-                        await Task.WhenAny(appFrame,Task.Delay(TimeSpan.FromSeconds(10),lifetime.Token));
-                        if(appFrame.IsCompletedSuccessfully && appFrame.Result.Kind=="failed"){view!.ShowFailure(appFrame.Result.Text??"Silo could not save Later. Update again from Silo when ready.");return;}
-                        _=appFrame.Exception;window!.Close();return;
-                    }
-                    await UpdateHostProtocol.WriteAsync(app,new("restart"),ct);
-                }
-                deadline.CancelAfter(TimeSpan.FromMinutes(20));
-                view!.Apply(new("progress",Text:"Preparing your update…"));
+                view!.Apply(new("progress",Text:"Installing update…"));
             }
             worker=UpdatePipeIdentity.CreateServer(options.WorkerPipe,allowElevation:true);
             using var current=Process.GetCurrentProcess();
@@ -117,17 +95,43 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
             await worker.WaitForConnectionAsync(ct);
             UpdatePipeIdentity.Authenticate(worker,true,elevated.Id,UpdatePipeIdentity.InspectProcess(elevated.Id).StartUtcTicks,hostImage);
             await UpdateHostProtocol.WriteAsync(worker,new("visible"),ct);
-            UpdateHostMessage message;
-            do
+            var decision=await UpdateStagingGate.PrepareAndChooseAsync(
+                token=>UpdateHostProtocol.ReadAsync(worker,token),
+                async (progress,token)=>{Render(progress);await UpdateHostProtocol.WriteAsync(app,progress,token);},
+                async (staged,token)=>
+                {
+                    if(!options.ConfirmRestart)return true;
+                    await UpdateHostProtocol.WriteAsync(app,new("prepared",staged.TransactionId,staged.Text),token);
+                    deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+                    appFrame=UpdateHostProtocol.ReadAsync(app,token);
+                    var choice=view!.AskRestartAsync(token);
+                    if(await Task.WhenAny(choice,appFrame)==appFrame)
+                        throw new OperationCanceledException("Silo abandoned the prepared update.");
+                    var restart=await choice;
+                    if(restart)
+                    {
+                        await UpdateHostProtocol.WriteAsync(app,new("restart",staged.TransactionId,staged.Text),token);
+                        deadline.CancelAfter(TimeSpan.FromMinutes(20));
+                    }
+                    return restart;
+                },ct);
+            var transaction=decision.Staged.TransactionId!;
+            if(!decision.Restart)
             {
-                message=await UpdateHostProtocol.ReadAsync(worker,ct);
-                Render(message);
-                await UpdateHostProtocol.WriteAsync(app,message,ct);
-                if(message.Kind=="failed")throw new IOException(message.Text);
-            }while(message.Kind!="staged");
-            var transaction=message.TransactionId!;
+                await UpdateHostProtocol.WriteAsync(worker,new("defer",transaction),ct);
+                var deferred=await UpdateHostProtocol.ReadAsync(worker,ct);
+                if(deferred.Kind!="deferred" || deferred.TransactionId!=transaction)
+                    throw new IOException("The completed update could not be preserved.");
+                await UpdateHostProtocol.WriteAsync(app,new("later",transaction,decision.Staged.Text),ct);
+                var saved=await appFrame!.WaitAsync(TimeSpan.FromSeconds(10),ct);
+                if(saved.Kind!="deferred" || saved.TransactionId!=transaction)
+                    throw new UpdateClientFailure(saved.Text??"Silo could not save Later. The current version remains open.");
+                closeAllowed=true;window!.Close();return;
+            }
+            await UpdateHostProtocol.WriteAsync(app,decision.Staged,ct);
             var close=await (appFrame??UpdateHostProtocol.ReadAsync(app,ct));
             if(close.Kind!="close" || close.TransactionId!=transaction)throw new OperationCanceledException();
+            UpdateHostMessage message;
             committed=true;view!.ShowFinishing(options.Restart ? "Finishing and restarting Silo…" : "Finishing the update…");
             await UpdateHostProtocol.WriteAsync(worker,close,ct);
             message=await UpdateHostProtocol.ReadAsync(worker,ct);Render(message);

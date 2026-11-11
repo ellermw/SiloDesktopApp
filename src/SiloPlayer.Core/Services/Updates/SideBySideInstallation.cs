@@ -166,6 +166,29 @@ public static partial class SideBySideInstallation
         }
     }
 
+    /// <summary>Reuse a deliberately deferred, protected installation only against fresh release authority.</summary>
+    public static StagedUpdate? TryResumeStaged(string root, PreparedUpdatePackage package, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        root = CanonicalRoot(root);
+        using var rootLease = LockDirectories(root);
+        var journal = ReadJournal(root);
+        if (journal is not { Phase: "staged" }) return null;
+        var manifest = ReadPreparedManifest(package);
+        ValidateManifest(manifest);
+        if (!JsonSerializer.Serialize(journal.Manifest).Equals(JsonSerializer.Serialize(manifest), StringComparison.Ordinal)) return null;
+        var state = ReadState(root) ?? throw new InvalidDataException("Missing installation state.");
+        if (state.ActiveVersion != journal.PriorVersion || state.PendingVersion is not null)
+            throw new InvalidDataException("The installation changed after preparation.");
+        VerifyBootstrapCompatible(root, manifest);
+        VerifyOwnedVersion(root, journal.Version);
+        var versionDirectory = VersionPath(root, journal.Version);
+        var bootstrapDirectory = Metadata(root, "staging/" + journal.TransactionId + "/bootstrap");
+        VerifyTree(versionDirectory, manifest.Files.Where(file => file.Area == "client"), ct);
+        VerifyTree(bootstrapDirectory, manifest.Files.Where(file => file.Area == "bootstrap"), ct);
+        return new(root, journal.TransactionId, journal.Version, versionDirectory, bootstrapDirectory, manifest);
+    }
+
     public static void Activate(StagedUpdate update)
     {
         var root = CanonicalRoot(update.InstallationRoot);
