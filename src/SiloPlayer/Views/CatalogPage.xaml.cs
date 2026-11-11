@@ -71,6 +71,7 @@ public sealed partial class CatalogPage : Page,
     private object? _undoOperation;
     private bool _undoBusy => _undoOperation != null;
     private bool _undoResetPending;
+    private bool _sectionPrefixStale;
     private long _sectionMutationRevision;
     private readonly Dictionary<string, HomeDismissalApplied> _pendingUndoDismissals = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sortPreferenceGate = new();
@@ -322,10 +323,14 @@ public sealed partial class CatalogPage : Page,
         _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
         _loading = false;
         _snapshot = null;
+        // The server row is changing under the loaded cards: nothing may append to them
+        // until a read from the start of the row confirms or replaces them.
+        _sectionPrefixStale = true;
     }
 
-    // The paired surface message removes cards once and reads the live total, including
-    // show members outside the loaded prefix. Only a matched removal assigns Undo state.
+    // The paired surface message removes cards once, then re-reads the live row from its
+    // start so the server decides the offset and total, including show members outside the
+    // loaded prefix. Only a matched removal assigns Undo state.
     private void RemoveDismissedSectionCards(MediaSurfaceChanged message, HomeDismissalApplied? undo = null)
     {
         if (_source != "section" || _navigationCts?.IsCancellationRequested != false) return;
@@ -341,7 +346,8 @@ public sealed partial class CatalogPage : Page,
         RetireSectionPaging();
         foreach (var card in removed) _items.Remove(card);
         _selectedIds.ExceptWith(removed.Select(card => card.ContentId));
-        _offset = Math.Max(0, _offset - removed.Count);
+        // Provisional and hidden until the live read: the server may drop more or fewer
+        // rows than the cards removed here.
         _totalItems = Math.Max(0, _totalItems - removed.Count);
         UpdateSectionCount();
         CountPanel.Visibility = Visibility.Collapsed;
@@ -355,7 +361,40 @@ public sealed partial class CatalogPage : Page,
             _undoRemovedCount = removed.Count;
             ShowUndoBanner();
         }
-        if (!_undoBusy) _ = LoadAsync(false);
+        if (!_undoBusy) _ = RefreshSectionAfterDismissalAsync();
+    }
+
+    private async Task RefreshSectionAfterDismissalAsync()
+    {
+        var generation = Volatile.Read(ref _loadGeneration);
+        bool Current() => generation == Volatile.Read(ref _loadGeneration);
+        _loadCts ??= new CancellationTokenSource();
+        _loading = true;
+        LoadingRing.IsActive = true;
+        LoadingRing.Visibility = Visibility.Visible;
+        ErrorText.Visibility = Visibility.Collapsed;
+        CatalogErrorPanel.Visibility = Visibility.Collapsed;
+        try { await ReconcileSectionAfterUndoAsync(Math.Max(PageSize, _items.Count), Current, _loadCts.Token); }
+        catch (Exception ex)
+        {
+            // A retired load was cancelled on purpose; a timeout while it is current failed.
+            if (Current()) ShowSectionRefreshFailure(ex, "CatalogPage.RefreshSectionAfterDismissalAsync");
+        }
+        finally { if (Current()) _loading = false; }
+    }
+
+    // The cards stay marked stale, so Retry reads the row again from its start.
+    private void ShowSectionRefreshFailure(Exception ex, string operation)
+    {
+        LocalLog.AppendException("errors.txt", ex, operation);
+        CatalogErrorTitle.Text = "Could not refresh catalog results.";
+        ErrorText.Text = "Please retry to refresh this row.";
+        ErrorText.Visibility = Visibility.Visible;
+        CatalogErrorPanel.Visibility = Visibility.Visible;
+        CatalogRetryButton.Visibility = Visibility.Visible;
+        EmptyText.Visibility = Visibility.Collapsed;
+        LoadingRing.IsActive = false; LoadingRing.Visibility = Visibility.Collapsed;
+        _hasMore = false;
     }
 
     private void UpdateSectionCount()
@@ -427,18 +466,13 @@ public sealed partial class CatalogPage : Page,
             if (!Current()) return;
             Conclude();
         }
-        catch (OperationCanceledException) { if (Current()) Conclude(); }
         catch (Exception ex)
         {
+            // A read that times out while this visit is current is cancelled like a retired
+            // one, but it failed: the row was not re-read, so it is never a finished Undo.
             if (Current())
             {
-                LocalLog.AppendException("errors.txt", ex, "CatalogPage.ReconcileUndoAsync");
-                CatalogErrorTitle.Text = "Could not refresh catalog results.";
-                ErrorText.Text = "Please retry to refresh this row.";
-                ErrorText.Visibility = Visibility.Visible;
-                CatalogErrorPanel.Visibility = Visibility.Visible;
-                CatalogRetryButton.Visibility = Visibility.Visible;
-                _hasMore = false;
+                ShowSectionRefreshFailure(ex, "CatalogPage.ReconcileUndoAsync");
                 // A failed DELETE stays retryable even though the follow-up read failed too.
                 Conclude();
             }
@@ -487,9 +521,16 @@ public sealed partial class CatalogPage : Page,
                 hasMore = response.Items.Count > 0 && (response.HasMore || items.Count < total);
             } while (hasMore && items.Count < target);
             if (revision != _sectionMutationRevision || _undoResetPending) continue;
-            _items.Clear();
-            foreach (var item in items) _items.Add(item);
+            // Cards already shown in the server's order stay realized and only the rows after
+            // them are added; any other difference replaces the window.
+            var shown = items.Count >= _items.Count && !_items.Where((item, index) =>
+                !string.Equals(item.ContentId, items[index].ContentId, StringComparison.OrdinalIgnoreCase)).Any();
+            if (!shown) _items.Clear();
+            foreach (var item in items.Skip(_items.Count)) _items.Add(item);
             _offset = items.Count; _snapshot = snapshot; _totalItems = total; _hasMore = hasMore;
+            _sectionPrefixStale = false;
+            ErrorText.Visibility = Visibility.Collapsed;
+            CatalogErrorPanel.Visibility = Visibility.Collapsed;
             _selectedIds.IntersectWith(items.Select(item => item.ContentId));
             CountPanel.Visibility = exact ? Visibility.Visible : Visibility.Collapsed;
             UpdateSectionCount();
@@ -616,12 +657,16 @@ public sealed partial class CatalogPage : Page,
             return;
         }
         if (_loading && !reset) return;
+        // A dismissal or Undo whose follow-up read failed left cards that no longer match
+        // the server row: read it again from the start instead of appending to them.
+        if (_sectionPrefixStale) reset = true;
         if (reset)
         {
             ClearUndoState();
             Interlocked.Increment(ref _loadGeneration);
             _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new CancellationTokenSource();
             _offset = 0; _snapshot = null; _items.Clear();
+            _sectionPrefixStale = false;
             _selectedIds.Clear();
             UpdateSelectionUi();
         }

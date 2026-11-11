@@ -303,11 +303,34 @@ internal static class ViewerActionsNativeFixture
             // No scroll or explicit continuation: the second episode was at position 90.
             await Until(() => Items().All(item => item.ContentId != section + "-001") && !Field<bool>(page, "_loading"), "show total refresh");
             Check(((TextBlock)page.FindName("CountText")).Text == "128", "server total includes the unloaded dismissed episode");
-            Check(Field<int>(page, "_offset") == Items().Count, "only loaded removals adjust the prefix offset");
+            Check(Field<int>(page, "_offset") == Items().Count, "the live row decides the prefix offset");
             for (var i = 0; i < 5 && Field<bool>(page, "_hasMore"); i++)
                 await (Task)Call(page, "LoadAsync", false)!;
             var expected = Enumerable.Range(1, 130).Where(index => index is not (1 or 90)).Select(index => $"{section}-{index:000}");
             Check(Items().Select(item => item.ContentId).SequenceEqual(expected), "show dismissal keeps every remaining title exactly once");
+        }
+
+        {
+            // This server drops only the dismissed episode's row while the page removes both loaded
+            // cards of the show: the live row, not the number of removed cards, sets the window.
+            const string section = "one-row-cw";
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Progress", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            ObservableCollection<MediaItem> Items() => Field<ObservableCollection<MediaItem>>(page, "_items");
+            await Until(() => !Field<bool>(page, "_loading") && Items().Count == 60, "one-row first sixty");
+            PosterCard? first = null;
+            await Until(() => (first = Descendants<PosterCard>(page).FirstOrDefault(card => card.MediaItem?.ContentId == section + "-001")) != null, "one-row first card");
+            Invoke((Button)first!.FindName("MoreButton"));
+            await Until(() => OpenMenuItems(first).Any(item => item.Text.StartsWith("Remove from")), "one-row removal menu");
+            Invoke(OpenMenuItems(first).Single(item => item.Text.StartsWith("Remove from")));
+            await Until(() => Items().All(item => item.ContentId != section + "-001") && !Field<bool>(page, "_loading"), "one-row live row read");
+            Check(((TextBlock)page.FindName("CountText")).Text == "129", "the server total counts the one dropped row");
+            Check(Field<int>(page, "_offset") == Items().Count, "the live row decides the offset when the server drops fewer rows");
+            for (var i = 0; i < 5 && Field<bool>(page, "_hasMore"); i++)
+                await (Task)Call(page, "LoadAsync", false)!;
+            var expected = Enumerable.Range(2, 129).Select(index => $"{section}-{index:000}");
+            Check(Items().Select(item => item.ContentId).SequenceEqual(expected), "a one-row dismissal keeps every server title exactly once");
+            Program.Log("PASS: a dismissal that drops fewer server rows than removed cards still pages every title once.");
         }
     }
 
@@ -421,7 +444,7 @@ internal static class ViewerActionsNativeFixture
             var held = await OpenAsync(section);
             await DismissAsync(held, section + "-001");
             wire.ContinuationHeld = false; wire.ReadBeforeDismissal = readBefore;
-            // The dismissal's live-count read filled through seek119. Hold the next
+            // The dismissal's live read re-read the first sixty. Hold the next
             // continuation, then begin Undo while it is still in flight.
             wire.HoldAnyContinuation = true; wire.ContinuationHeld = false;
             wire.ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -439,6 +462,18 @@ internal static class ViewerActionsNativeFixture
         var next = await OpenAsync("nu"); await DismissAsync(next, "nu-ep", "next_up"); StartUndo(next); await SettledAsync(next);
         Check(wire.Undos.Single().EndsWith("/next_up/nu-ep") && Items(next).Select(item => item.ContentId).SequenceEqual(["nu-ep", "nu-orphan"]), "Next Up endpoint, order and total restored");
         Program.Log("PASS: Next Up episode Undo restores its original row.");
+
+        var stale = await OpenAsync("race-stale"); await DismissAsync(stale, "race-stale-002");
+        wire.FailSectionReads = true; StartUndo(stale);
+        var errorPanel = (FrameworkElement)stale.FindName("CatalogErrorPanel");
+        await Until(() => errorPanel.Visibility == Visibility.Visible && Field<string?>(stale, "_undoSurface") == null, "failed post-Undo read reported");
+        Check(wire.Undos.Count == 1 && !Field<bool>(stale, "_hasMore"), "an accepted Undo whose re-read failed stops paging the stale cards");
+        wire.FailSectionReads = false;
+        Call(stale, "CatalogRetry_Click", stale.FindName("CatalogRetryButton"), new RoutedEventArgs());
+        await Until(() => !Field<bool>(stale, "_loading") && Items(stale).Count == 60 && Items(stale)[1].ContentId == "race-stale-002", "Retry reloads the row from its start");
+        while (Field<bool>(stale, "_hasMore")) await (Task)Call(stale, "LoadAsync", false)!;
+        Check(Items(stale).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 130).Select(i => $"race-stale-{i:000}")), "Retry after a failed post-Undo read shows every title once");
+        Program.Log("PASS: Retry after an accepted Undo with a failed re-read reloads the row instead of appending to stale cards.");
 
         var access = await OpenAsync("cw"); await DismissAsync(access, "film");
         wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(access);
@@ -764,7 +799,7 @@ internal static class ViewerActionsNativeFixture
         internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [];
         internal string SyncState = "ok"; internal bool FailSync = true;
         internal int SyncUnmatched;
-        internal TaskCompletionSource? HoldUndo; internal bool FailUndo;
+        internal TaskCompletionSource? HoldUndo; internal bool FailUndo, FailSectionReads;
         internal TaskCompletionSource? HoldCollectionRead; internal int CollectionReadsHeld;
         private readonly HashSet<string> _dismissed = [];
         internal void ClearDismissed() => _dismissed.Clear();
@@ -805,8 +840,9 @@ internal static class ViewerActionsNativeFixture
             if (path == "/api/v2/catalog")
             {
                 if (query.Contains("source=query")) CatalogQueries.Add(query);
+                if (FailSectionReads) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"Try again\"}") };
                 var section = Query(query, "section_id");
-                if (section.StartsWith("race-") || section.StartsWith("off-prefix-"))
+                if (section.StartsWith("race-") || section.StartsWith("off-prefix-") || section.StartsWith("one-row-"))
                 {
                     var seek = int.Parse(Query(query, "seek")); var limit = int.Parse(Query(query, "limit"));
                     string[] Row() => Enumerable.Range(1, 130).Select(index => $"{section}-{index:000}").Where(id => !_dismissed.Contains(id)).ToArray();
@@ -818,9 +854,10 @@ internal static class ViewerActionsNativeFixture
                         await ReleaseContinuation.Task;
                         if (!ReadBeforeDismissal) row = Row();
                     }
-                    var show = section.StartsWith("off-prefix-");
-                    var window = row.Skip(seek).Take(limit).Select(id => Card(id, show ? "episode" : "movie", id,
-                        show ? (id.EndsWith("-001") || id.EndsWith("-090") ? section + "-show" : id + "-show") : null,
+                    var show = section.StartsWith("off-prefix-"); var pair = section.StartsWith("one-row-");
+                    var window = row.Skip(seek).Take(limit).Select(id => Card(id, show || pair ? "episode" : "movie", id,
+                        show ? (id.EndsWith("-001") || id.EndsWith("-090") ? section + "-show" : id + "-show")
+                            : pair ? (id.EndsWith("-001") || id.EndsWith("-002") ? section + "-show" : id + "-show") : null,
                         section.EndsWith("-nu") ? "next_up" : "in_progress", "2026-11-09T10:00:00Z")).ToArray();
                     return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items = window, total = row.Length, has_more = seek + window.Length < row.Length, total_exact = true, snapshot = "fixture" }, Snake)) };
                 }
