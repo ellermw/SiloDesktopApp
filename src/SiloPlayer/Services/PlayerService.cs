@@ -1254,10 +1254,17 @@ public partial class PlayerService : IDisposable
             while (true)
             {
                 var readLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
+                var readInitialization = Volatile.Read(ref _loadedMediaInitCts);
+                var readSidecarGeneration = CurrentSubtitleSidecarGeneration();
                 var readSession = manager?.CurrentSession;
                 var readOutcome = await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentPreflightChoice);
                 if (!CurrentPreflightChoice()) return false;
+                // FILE_LOADED releases the busy flags before it publishes its
+                // initializer, so a waiting pick can resume inside that
+                // generation and have this read retired by LoadSubtitles. That
+                // cleanup is not a failed viewer choice here either.
                 if (readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||
+                    readInitialization != null && readSidecarGeneration != CurrentSubtitleSidecarGeneration() ||
                     !ReferenceEquals(readSession, manager?.CurrentSession))
                 {
                     // Cancel the old file/grant read, retaining the latest
