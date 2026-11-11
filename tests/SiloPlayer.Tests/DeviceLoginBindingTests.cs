@@ -98,7 +98,9 @@ public sealed class DeviceLoginBindingTests
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
         using var setup = new DeviceLoginSetup(new AuthApi(new SiloApiClient(http)), "http://device-contract.invalid");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => setup.StartAsync("Fixture", "Windows"));
+        await Assert.ThrowsAsync<DeviceLoginRequiresHttpsException>(() => setup.StartAsync("Fixture", "Windows"));
+        await Assert.ThrowsAsync<DeviceLoginRequiresHttpsException>(() => setup.PollAsync("fixture-device"));
+        Assert.Equal(1, wire.Capabilities);
         Assert.Empty(wire.Hashes); Assert.Empty(wire.Secrets);
     }
 

@@ -365,12 +365,14 @@ public partial class LoginViewModel : ObservableObject
         {
             if (attempt == _deviceAttempt) CancelDeviceLogin(clearSession: true);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             if (attempt != _deviceAttempt) return;
             var current = _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration;
             CancelDeviceLogin(clearSession: true);
-            if (current) ErrorMessage = "Couldn't start phone sign-in. Try again.";
+            if (current) ErrorMessage = ex is DeviceLoginRequiresHttpsException
+                ? "Phone sign-in requires a secure (HTTPS) server connection."
+                : "Couldn't start phone sign-in. Try again.";
         }
         finally
         {

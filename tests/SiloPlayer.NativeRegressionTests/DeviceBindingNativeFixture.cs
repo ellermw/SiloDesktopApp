@@ -103,6 +103,25 @@ internal static class DeviceBindingNativeFixture
             }
             Program.Log("PASS native capability false/absent/404/405 compatibility and 5xx/transport/malformed failure policy");
 
+            Reset(); wire.CapabilityMode = "positive";
+            client.SetBaseUrl("http://device-binding-fixture.invalid");
+            var httpStarts = wire.Starts.Count; var httpPolls = wire.Polls.Count;
+            for (var retry = 0; retry < 2; ++retry)
+            {
+                await Start();
+                Check(vm.ErrorMessage == "Phone sign-in requires a secure (HTTPS) server connection.",
+                    "Plain HTTP binding refusal did not explain the non-retryable HTTPS requirement");
+                Check(wire.Starts.Count == httpStarts && wire.Polls.Count == httpPolls &&
+                    vm.DeviceSession is null && vm.DeviceQrImage is null && !vm.IsDevicePolling && vm.CanStartAuthentication,
+                    "Plain HTTP binding refusal sent bootstrap requests or left an active setup");
+                page.UpdateLayout();
+                Check(All<TextBlock>(page).Any(t => t.Text == vm.ErrorMessage) &&
+                    ((Border)page.FindName("ErrorBorder")).Visibility == Visibility.Visible,
+                    "The native login page did not display the HTTPS requirement");
+            }
+            client.SetBaseUrl(Wire.Server);
+            Program.Log("PASS native plain HTTP binding refusal displays HTTPS guidance without retry copy or downgrade");
+
             Reset(); wire.CapabilityMode = "positive"; wire.CapabilityGate = Gate();
             Click(Button("Show QR code")); await Until(() => vm.IsStartingDeviceLogin);
             vm.CancelDeviceLogin(true); var before = wire.Starts.Count;

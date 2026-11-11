@@ -4,6 +4,12 @@ using SiloPlayer.Core.Models.Auth;
 
 namespace SiloPlayer.Core.Services;
 
+/// <summary>A non-retryable setup failure until the server connection uses HTTPS.</summary>
+public sealed class DeviceLoginRequiresHttpsException : InvalidOperationException
+{
+    public DeviceLoginRequiresHttpsException() : base("Phone sign-in session binding requires HTTPS.") { }
+}
+
 /// <summary>
 /// Owns one phone sign-in setup. Its secret stays in memory and is shared by all
 /// requests/retries in this setup; replacing or finishing the setup disposes it.
@@ -63,7 +69,7 @@ public sealed class DeviceLoginSetup(AuthApi api, string server, Func<bool>? isC
         // unsupported-capability answer and must not silently start unbound.
         catch (ApiException ex) when (ex.StatusCode is 404 or 405) { bound = false; }
         if (bound && (!Uri.TryCreate(server, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps))
-            throw new InvalidOperationException("Phone sign-in session binding requires HTTPS.");
+            throw new DeviceLoginRequiresHttpsException();
         return bound;
     }
 
