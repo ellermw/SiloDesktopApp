@@ -30,7 +30,7 @@ internal static class RequestRemovalNativeFixture
     {
         // SILO_NATIVE_REQUEST_REMOVAL_CASE=links|removal narrows a run (for example to reproduce one half against an earlier publish).
         var only = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REMOVAL_CASE");
-        if (only != "links") { await RemovalAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalRouteRefreshAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
+        if (only != "links") { await RemovalAsync(parent); await DetailCancellationAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalRouteRefreshAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
         if (only == "removal") { Program.Log("PASS: REQUEST_REMOVAL_ONLY_COMPLETED"); return; }
         await RowLinksAsync(parent);
         await DetailLinkAsync(parent);
@@ -62,6 +62,7 @@ internal static class RequestRemovalNativeFixture
         // Re-enter the handler directly so modal input routing cannot hide duplicate activations.
         InvokePrivate(rig.Requests, "RemoveRequest_Click", Remove(rig.Requests, "Failed one"), new RoutedEventArgs());
         InvokePrivate(rig.Requests, "RemoveRequest_Click", Remove(rig.Requests, "Failed two"), new RoutedEventArgs());
+        InvokePrivate(rig.Requests, "CancelRequest_Click", Descendants(rig.Requests).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Cancel request for Retryable"), new RoutedEventArgs());
         await Task.Delay(150);
         if (!ReferenceEquals(rig.Dialog(), dialog) || wire.Writes.Count != 0)
             throw new InvalidOperationException("A second activation while confirmation is open replaced the dialog or sent a mutation.");
@@ -107,7 +108,20 @@ internal static class RequestRemovalNativeFixture
 
         // Cancellation remains its own POST and never DELETE.
         var deletes = wire.Writes.Count(write => write.Method == "DELETE");
-        Click(Descendants(rig.Requests).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Cancel request for Retryable"));
+        var cancel = Descendants(rig.Requests).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Cancel request for Retryable");
+        var writes = wire.Writes.Count;
+        Click(cancel);
+        dialog = await rig.DialogAsync();
+        InvokePrivate(rig.Requests, "CancelRequest_Click", cancel, new RoutedEventArgs());
+        InvokePrivate(rig.Requests, "CancelRequest_Click", Descendants(rig.Requests).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Cancel request for Failed one"), new RoutedEventArgs());
+        InvokePrivate(rig.Requests, "RemoveRequest_Click", Remove(rig.Requests, "Failed three"), new RoutedEventArgs());
+        await Task.Delay(150);
+        if (!ReferenceEquals(rig.Dialog(), dialog) || wire.Writes.Count != writes)
+            throw new InvalidOperationException("A second Cancel or Remove activation replaced the cancel confirmation or sent a mutation.");
+        Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == "Keep request"));
+        await Until(() => rig.Dialog() == null);
+        await Task.Delay(120);
+        Click(cancel);
         Primary(await rig.DialogAsync());
         await Until(() => wire.Writes.Any(write => write.Path == "/api/v2/requests/r1/cancel"));
         if (wire.Writes.Count(write => write.Method == "DELETE") != deletes || wire.Writes.Single(write => write.Path.EndsWith("/cancel")).Method != "POST")
@@ -124,6 +138,30 @@ internal static class RequestRemovalNativeFixture
         if (rig.ToastTexts().Any(text => text.Contains("Request removed")) || wire.MineReads != reads)
             throw new InvalidOperationException("A removal started by the old profile reported success or refreshed lists for the new owner.");
         Program.Log("PASS: Remove request Keep/pending/duplicate/409/transient/success/cancel separation/profile retirement on the actual Requests page.");
+    }
+
+    private static async Task DetailCancellationAsync(StackPanel parent)
+    {
+        using var rig = new Rig(parent, remove: true);
+        rig.Wire.DetailRequest = "{\"requestable\":false,\"requested_by_viewer\":true,\"request_id\":\"r1\",\"status\":\"pending\"}";
+        rig.Navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("movie", 7));
+        var page = (RequestDetailPage)rig.Frame.Content;
+        Button? cancel = null;
+        await Until(() => (cancel = Descendants(page).OfType<Button>().FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == "cancel")) != null);
+        // Keeping the first dialog must release the guard for the next activation.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            Click(cancel!);
+            var dialog = await rig.DialogAsync();
+            Click(cancel!);
+            await Task.Delay(150);
+            if (!ReferenceEquals(rig.Dialog(), dialog) || rig.Wire.Writes.Count != 0)
+                throw new InvalidOperationException("Repeated detail cancellation replaced its confirmation or sent a mutation.");
+            Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == "Keep request"));
+            await Until(() => rig.Dialog() == null);
+            await Task.Delay(120);
+        }
+        Program.Log("PASS: Request detail cancellation ignores repeated activation and releases its confirmation guard after Keep.");
     }
 
     private static async Task RemovalReadInvalidationAsync(StackPanel parent)
@@ -505,6 +543,7 @@ internal static class RequestRemovalNativeFixture
     internal sealed class Wire : HttpMessageHandler
     {
         internal bool RemoveSupported = true; internal string? DetailLibrary;
+        internal string DetailRequest = "{\"requestable\":false,\"status\":\"\"}";
         internal readonly SortedDictionary<string, string> Mine = new(StringComparer.Ordinal);
         internal HttpStatusCode DeleteMode = HttpStatusCode.NoContent; internal TaskCompletionSource? DeleteGate; internal Action<string>? OnDelete;
         internal readonly List<Write> Writes = []; internal int MineReads, DiscoverReads;
@@ -554,7 +593,9 @@ internal static class RequestRemovalNativeFixture
                     DiscoverReads++;
                     return Json("{\"items\":[]}");
                 case "/api/v2/requests/detail/movie/7":
-                    return Json($"{{\"media_type\":\"movie\",\"tmdb_id\":7,\"title\":\"Linked title\",\"availability\":\"available\",\"library_content_id\":\"{DetailLibrary}\",\"request\":{{\"requestable\":false,\"status\":\"\"}}}}");
+                    return Json($"{{\"media_type\":\"movie\",\"tmdb_id\":7,\"title\":\"Linked title\",\"availability\":\"available\",\"library_content_id\":\"{DetailLibrary}\",\"request\":{DetailRequest}}}");
+                case "/api/v2/requests/r1":
+                    return Json(Mine["r1"]);
             }
             return Json("{\"items\":[]}");
         }

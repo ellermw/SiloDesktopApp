@@ -31,6 +31,7 @@ public sealed partial class RequestDetailPage : Page
     private ApiRequestContext? _downloadRefreshContext;
     private bool _downloadRefreshBusy;
     private readonly HashSet<string> _pendingActions = [];
+    private bool _requestConfirmationOpen;
 
     public RequestDetailPage()
     {
@@ -311,8 +312,13 @@ public sealed partial class RequestDetailPage : Page
             var cancel = SecondaryAction("cancel", "Cancel request", "x");
             cancel.Click += async (_, _) =>
             {
+                if (_requestConfirmationOpen) return;
                 var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "Cancel this request?", Content = $"Cancel your request for {item.Title}?", PrimaryButtonText = "Cancel request", CloseButtonText = "Keep request", DefaultButton = ContentDialogButton.Close };
-                if (await confirmation.ShowAsync() != ContentDialogResult.Primary || _item != item || _lifetime.IsCancellationRequested) return;
+                ContentDialogResult choice;
+                _requestConfirmationOpen = true;
+                try { choice = await confirmation.ShowAsync(); }
+                finally { _requestConfirmationOpen = false; }
+                if (choice != ContentDialogResult.Primary || _item != item || _lifetime.IsCancellationRequested) return;
                 await MutateAsync(cancel, () => _api.CancelAsync(request.Id, _lifetime.Token));
             };
             ApplyPendingAction(cancel); ActionsPanel.Children.Add(cancel);

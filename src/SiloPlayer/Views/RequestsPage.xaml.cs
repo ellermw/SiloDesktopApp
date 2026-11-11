@@ -33,7 +33,7 @@ public sealed partial class RequestsPage : Page
     private CancellationTokenSource? _libraryCheckOwner;
     private readonly HashSet<string> _libraryChecks = new(StringComparer.Ordinal);
     private TextBlock? _failedStatusGuide;
-    private bool _removalConfirmationOpen;
+    private bool _requestConfirmationOpen;
 
     public RequestsPage()
     {
@@ -627,7 +627,7 @@ public sealed partial class RequestsPage : Page
 
     private async void CancelRequest_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: MediaRequest request }) return;
+        if (sender is not Button { Tag: MediaRequest request } || _requestConfirmationOpen) return;
         var confirmation = new ContentDialog
         {
             Title = "Cancel this request?", Content = $"Your request for \"{request.Title}\" will be withdrawn before it is sent to the download automation.",
@@ -635,14 +635,18 @@ public sealed partial class RequestsPage : Page
             DefaultButton = ContentDialogButton.Close,
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
         };
-        if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
+        ContentDialogResult choice;
+        _requestConfirmationOpen = true;
+        try { choice = await confirmation.ShowAsync(); }
+        finally { _requestConfirmationOpen = false; }
+        if (choice != ContentDialogResult.Primary) return;
         await ViewModel.CancelRequestCommand.ExecuteAsync(request);
         Render();
     }
 
     private async void RemoveRequest_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: MediaRequest request } button || _removalConfirmationOpen || ViewModel.IsRemovingRequest(request.Id) ||
+        if (sender is not Button { Tag: MediaRequest request } button || _requestConfirmationOpen || ViewModel.IsRemovingRequest(request.Id) ||
             _libraryCheckOwner is not { IsCancellationRequested: false } pageOwner) return;
         // The account that sees this row owns the deletion, even if the confirmation is open while profiles change.
         var visit = pageOwner.Token;
@@ -659,9 +663,9 @@ public sealed partial class RequestsPage : Page
         };
         // ContentDialog permits only one open dialog, even when another row is activated.
         ContentDialogResult choice;
-        _removalConfirmationOpen = true;
+        _requestConfirmationOpen = true;
         try { choice = await confirmation.ShowAsync(); }
-        finally { _removalConfirmationOpen = false; }
+        finally { _requestConfirmationOpen = false; }
         if (choice != ContentDialogResult.Primary) return;
         // Read invalidation does not revoke this identity's confirmation. The view model rechecks the
         // current row, and the server's guarded DELETE remains authoritative if the request changed.
