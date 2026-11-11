@@ -33,6 +33,7 @@ public partial class ProfileSelectViewModel : ObservableObject
     public async Task BeginManagementAsync(bool adding)
     {
         CancelManagement();
+        if (adding && !ProfileLimits.CanAdd(Profiles.Count, _capabilities.MaxProfiles)) return;
         ++_pinRevision;
         ErrorMessage = null; PinErrorMessage = null; Pin = "";
         var primary = Profiles.FirstOrDefault(profile => profile.IsPrimary);
@@ -113,7 +114,7 @@ public partial class ProfileSelectViewModel : ObservableObject
         {
             PickerCards.Clear();
             foreach (var profile in Profiles) PickerCards.Add(new(profile));
-            PickerCards.Add(new(null));
+            if (ProfileLimits.CanAdd(Profiles.Count, _capabilities.MaxProfiles)) PickerCards.Add(new(null));
         };
     }
 
