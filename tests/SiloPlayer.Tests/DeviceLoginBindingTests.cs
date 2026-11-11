@@ -129,6 +129,22 @@ public sealed class DeviceLoginBindingTests
         Assert.Equal(1, wire.AcceptedPolls);
     }
 
+    [Theory]
+    [InlineData(400)]
+    [InlineData(422)]
+    public async Task RefusedBoundStartIsDistinctAndNeverRetriedUnbound(int status)
+    {
+        using var wire = new Wire { StartFailureStatus = (HttpStatusCode)status }; using var http = new HttpClient(wire);
+        using var setup = new DeviceLoginSetup(new AuthApi(new SiloApiClient(http)), Wire.Server);
+        var error = await Assert.ThrowsAsync<ApiException>(() => setup.StartAsync("Fixture", "Windows"));
+        Assert.Equal("device_binding_rejected", error.ErrorCode); Assert.Equal(status, error.StatusCode);
+        Assert.True(Assert.Single(wire.Hashes) is { Length: 43 }); Assert.Empty(wire.Secrets);
+        using var legacyWire = new Wire { Mode = "negative", StartFailureStatus = (HttpStatusCode)status }; using var legacyHttp = new HttpClient(legacyWire);
+        using var legacy = new DeviceLoginSetup(new AuthApi(new SiloApiClient(legacyHttp)), Wire.Server);
+        error = await Assert.ThrowsAsync<ApiException>(() => legacy.StartAsync("Fixture", "Windows"));
+        Assert.NotEqual("device_binding_rejected", error.ErrorCode); Assert.Null(Assert.Single(legacyWire.Hashes));
+    }
+
     [Fact]
     public async Task EchoedTransportExceptionDoesNotPersistTheSecret()
     {
@@ -195,7 +211,7 @@ public sealed class DeviceLoginBindingTests
         internal string Mode = "positive", Query = "";
         internal int Capabilities, Decisions, AcceptedPolls;
         internal bool Authenticated, Refuse, EchoCode, EnforceBinding, TransportEcho;
-        internal HttpStatusCode? PollFailureStatus;
+        internal HttpStatusCode? PollFailureStatus, StartFailureStatus;
         internal List<string?> Hashes = [], Secrets = [];
         internal List<string> Hosts = [];
         internal TaskCompletionSource<HttpResponseMessage>? CapabilityGate;
@@ -222,6 +238,7 @@ public sealed class DeviceLoginBindingTests
                 Authenticated |= request.Headers.Authorization is not null;
                 Hashes.Add(body.TryGetProperty("binding", out var hash) ? hash.GetString() : null);
                 Assert.Equal(Hashes[^1] is null ? 2 : 3, body.EnumerateObject().Count());
+                if (StartFailureStatus is { } refused) return Reply(new { type = "https://siloserver.org/docs/api/v2/problems/validation_failed" }, refused);
                 return Reply(new { device_code = "fixture-device", interval = 1 });
             }
             if (path.EndsWith("/poll"))

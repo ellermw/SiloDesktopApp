@@ -363,12 +363,15 @@ public partial class LoginViewModel : ObservableObject
         }
         // A user cancel or replacement advances the attempt, so a cancellation that
         // reaches the current attempt is a stalled response (HTTP timeout), not a cancel.
-        catch (Exception)
+        catch (Exception ex)
         {
             if (attempt != _deviceAttempt) return;
             var current = _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration;
             CancelDeviceLogin(clearSession: true);
-            if (current) ErrorMessage = "Couldn't start phone sign-in. Try again.";
+            // Retrying cannot help when the server refuses the bound setup itself.
+            if (current) ErrorMessage = ex is ApiException { ErrorCode: "device_binding_rejected" }
+                ? "This server did not accept phone sign-in from this app. Sign in another way, or update the app and server."
+                : "Couldn't start phone sign-in. Try again.";
         }
         finally
         {

@@ -32,7 +32,11 @@ public sealed class DeviceLoginSetup(AuthApi api, string server, Func<bool>? isC
             if (isCurrent?.Invoke() == false) throw new OperationCanceledException("Device sign-in setup changed.", ct);
             started = api.DeviceStartAsync(server, deviceName, devicePlatform, bound ? Encode(SHA256.HashData(_secret)) : null, ct);
         }
-        return await started;
+        try { return await started; }
+        // A server that advertised binding yet refuses the bound start as invalid
+        // does not accept this setup. Report that distinctly; never retry unbound.
+        catch (ApiException ex) when (bound && ex.StatusCode is 400 or 422)
+        { throw new ApiException("device_binding_rejected", "The server did not accept this device sign-in setup.", ex.StatusCode, retryAfterSeconds: ex.RetryAfterSeconds); }
     }
 
     public async Task<DeviceLoginPollResponse> PollAsync(string deviceCode, CancellationToken ct = default)
