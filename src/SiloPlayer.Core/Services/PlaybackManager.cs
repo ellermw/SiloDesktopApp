@@ -439,7 +439,7 @@ public partial class PlaybackManager : IDisposable
             failure: null,
             ct);
 
-    /// <summary>A no-change track replan refreshes authoritative inventory without claiming a viewer choice.</summary>
+    /// <summary>A no-change replan refreshes authoritative inventory without claiming a viewer choice.</summary>
     public async Task<PlaybackStartResponse?> RefreshSubtitleInventoryForOwnerAsync(double positionSeconds,
         Func<PlaybackStartResponse, bool> canUseSession,
         Func<PlaybackStartResponse, PlaybackStartResponse, bool> tryAdoptSession, CancellationToken ct = default)
@@ -451,7 +451,8 @@ public partial class PlaybackManager : IDisposable
             if (session == null || !canUseSession(session)) return null;
             EnsureBufferingReplanOwner();
             return await ReplanCoreForOwnerAsync("track_change", positionSeconds, _qualityPreferenceV3,
-                _ => { }, null, ct, () => canUseSession(session), replacement => tryAdoptSession(session, replacement))
+                _ => { }, null, ct, () => canUseSession(session), replacement => tryAdoptSession(session, replacement),
+                preserveUnresolvedSubtitleGrant: true)
                 .ConfigureAwait(false);
         }
         finally { _replanGuard.Release(); }
@@ -754,7 +755,7 @@ public partial class PlaybackManager : IDisposable
     private async Task<PlaybackStartResponse> ReplanCoreForOwnerAsync(string operation, double positionSeconds,
         string qualityPreference, Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
         PlaybackFailureV3? failure, CancellationToken ct, Func<bool>? currentOwner,
-        Func<PlaybackStartResponse, bool>? tryAdopt)
+        Func<PlaybackStartResponse, bool>? tryAdopt, bool preserveUnresolvedSubtitleGrant = false)
     {
         if (currentOwner?.Invoke() == false) throw new OperationCanceledException("Subtitle owner retired.", ct);
         var plan = _currentPlanV3
@@ -797,9 +798,20 @@ public partial class PlaybackManager : IDisposable
                 Index = subtitleGrant.Index,
             },
         };
-        var subtitleRevision = ApplyLocalSubtitleIntent(selectedTracks, operation);
-        var audioRevision = ApplyLocalAudioIntent(selectedTracks, operation);
-        mutateSelectedTracks(selectedTracks);
+        long subtitleRevision, audioRevision;
+        lock (_trackIntentGate)
+        {
+            subtitleRevision = ApplyLocalSubtitleIntent(selectedTracks, operation);
+            audioRevision = ApplyLocalAudioIntent(selectedTracks, operation);
+            mutateSelectedTracks(selectedTracks);
+            // An unresolved grant cannot be expressed by a track_change: omission
+            // means Off. Refresh at the same quality instead, where omission preserves
+            // the server grant. A pending viewer Off must still use track_change.
+            if (preserveUnresolvedSubtitleGrant && operation == "track_change" &&
+                subtitleGrant == null && selectedTracks.Subtitle == null &&
+                !string.IsNullOrWhiteSpace(CurrentSession?.SelectedSubtitleTrackId) && !NeedsExplicitSubtitleOff())
+                operation = "quality_change";
+        }
 
         var recoveryAttempt = failure == null
             ? null

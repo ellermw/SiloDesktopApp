@@ -153,8 +153,9 @@ public partial class PlayerService
                 await RefreshSubtitlesAfterAiForOwnerAsync(fileId, null, owner, isCurrent: Current).ConfigureAwait(false);
                 return;
             }
-            // v3 has no inventory GET. A no-change track_change carries the
-            // existing grant/retained intent and returns canonical delivery facts.
+            // v3 has no inventory GET. A no-change replan carries the existing
+            // grant/retained intent (preserving unresolved grants via quality_change)
+            // and returns canonical delivery facts.
             if (_switchingContent || IsLoading)
             {
                 // A plan may have frozen its inventory before the subtitle was

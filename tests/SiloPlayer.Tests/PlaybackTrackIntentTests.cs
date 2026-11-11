@@ -155,6 +155,39 @@ public sealed class PlaybackTrackIntentTests
         Assert.Equal("burn_in", replacement.SubtitleMode);
     }
 
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(true, null)]
+    [InlineData(false, -1)]
+    [InlineData(true, -1)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    public async Task SubtitleReadyInventoryRefreshPreservesAnUnresolvedGrantUnlessTheViewerChangesIt(bool duplicate, int? choice)
+    {
+        using var scope = new Fixture(); scope.Wire.GrantOnlyInSubtitle = scope.Wire.BurnInSubtitles = true;
+        if (!duplicate) scope.Wire.MissingSubtitleIndex = 0;
+        var session = await scope.Manager.StartSessionAsync(42);
+        Assert.Null(session.SelectedSubtitleTrackIndex);
+        Assert.Equal("sub:42:0", session.SelectedSubtitleTrackId);
+        if (duplicate) session.SubtitleUrls.Add(new() { TrackId = session.SelectedSubtitleTrackId, Index = 9 });
+        if (choice.HasValue) scope.Manager.RecordLocalSubtitleSelection(choice < 0 ? null : choice);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+
+        var replacement = await scope.Manager.RefreshSubtitleInventoryForOwnerAsync(8,
+            candidate => ReferenceEquals(candidate, session), (_, _) => true);
+
+        Assert.NotNull(replacement);
+        var body = Assert.Single(scope.Wire.Replans);
+        Assert.Equal(choice.HasValue ? "track_change" : "quality_change", body.GetProperty("operation").GetString());
+        var tracks = body.GetProperty("selected_tracks");
+        if (choice == 1) Assert.Equal(1, tracks.GetProperty("subtitle").GetProperty("index").GetInt32());
+        else Assert.False(tracks.TryGetProperty("subtitle", out _));
+        Assert.Same(replacement, scope.Manager.CurrentSession);
+        Assert.Equal(choice == -1 ? null : $"sub:42:{choice ?? 0}", replacement.SelectedSubtitleTrackId);
+        Assert.Equal(choice == -1 ? "off" : "burn_in", replacement.SubtitleMode);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
     [Fact]
     public async Task StoredIdWireAdoptionAndCanonicalAnnouncementRetainIdentityAndChoice()
     {
