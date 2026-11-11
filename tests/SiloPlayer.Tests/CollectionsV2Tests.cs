@@ -98,14 +98,16 @@ public sealed class CollectionsV2Tests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ItemOrderPutConflictAllowsAnExplicitRetryWithTheCurrentRevision(bool cachedRevision)
+    public async Task ItemOrderPutConflictRequiresReloadBeforeRetry(bool cachedRevision)
     {
         var changed = false;
         var tags = new List<string>();
         var api = Api(request =>
         {
             if (request.RequestUri!.AbsolutePath.EndsWith("/items"))
-                return Json("""{"items":[{"media_item_id":"a","position":0},{"media_item_id":"b","position":1}]}""");
+                return Json(changed
+                    ? """{"items":[{"media_item_id":"b","position":0},{"media_item_id":"a","position":1}]}"""
+                    : """{"items":[{"media_item_id":"a","position":0},{"media_item_id":"b","position":1}]}""");
             if (request.Method == HttpMethod.Get)
             {
                 var response = Json(changed ? """{"ordered_ids":["b","a"]}""" : """{"ordered_ids":["a","b"]}""");
@@ -126,8 +128,81 @@ public sealed class CollectionsV2Tests
         var conflict = await Assert.ThrowsAsync<ApiException>(() => api.ReorderCollectionItemsAsync("c1", ["a", "b"]));
         Assert.Equal(412, conflict.StatusCode);
         Assert.Equal(cachedRevision ? new[] { "\"A\"" } : Array.Empty<string>(), tags);
+        for (var retry = 0; retry < 2; retry++)
+        {
+            conflict = await Assert.ThrowsAsync<ApiException>(() => api.ReorderCollectionItemsAsync("c1", ["a", "b"]));
+            Assert.Equal(412, conflict.StatusCode);
+        }
+        Assert.Equal(cachedRevision ? new[] { "\"A\"" } : Array.Empty<string>(), tags);
+        await api.GetCollectionItemsAsync("c1");
         await api.ReorderCollectionItemsAsync("c1", ["a", "b"]);
         Assert.Equal(cachedRevision ? new[] { "\"A\"", "\"B\"" } : new[] { "\"B\"" }, tags);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LatestWallBaselineAllowsFirstWriteAfterAStaleHeaderRevision(bool delete)
+    {
+        var changed = false;
+        var tags = new List<string>();
+        var api = Api(request =>
+        {
+            var item = new { id = "c1", name = changed ? "Current" : "Original" };
+            if (request.RequestUri!.AbsolutePath == "/api/v2/collections")
+                return Json(JsonSerializer.Serialize(new { items = new[] { item }, groups = Array.Empty<object>() }));
+            var tag = changed ? "\"B\"" : "\"A\"";
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = Json(JsonSerializer.Serialize(item));
+                response.Headers.ETag = new(tag);
+                return response;
+            }
+            Assert.Equal(delete ? HttpMethod.Delete : HttpMethod.Patch, request.Method);
+            tags.Add(request.Headers.IfMatch.Single().Tag);
+            if (tags[^1] != tag)
+                return new(HttpStatusCode.PreconditionFailed) { Content = new StringContent("{\"status\":412,\"detail\":\"Changed elsewhere\"}") };
+            return delete ? new(HttpStatusCode.NoContent) : Json(JsonSerializer.Serialize(item));
+        });
+        Task Write() => delete ? api.DeleteCollectionAsync("c1") : api.UpdateCollectionAsync("c1", new() { Name = "Saved" });
+        await api.GetCollectionAsync("c1");
+        changed = true;
+        await api.GetCollectionsAsync();   // the wall observes the change and retires the header's ETag A
+        await Write();
+        Assert.Equal(["\"B\""], tags);   // the first write uses the current revision, with no rejected write or retry
+    }
+
+    [Theory]
+    [InlineData("patch")]
+    [InlineData("put")]
+    [InlineData("delete")]
+    public async Task ServerWriteConflictsUseTheActionableReloadMessage(string method)
+    {
+        var writes = 0;
+        var api = Api(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = Json(method == "put" ? """{"ordered_ids":[]}""" : """{"id":"c1"}""");
+                response.Headers.ETag = new("\"revision\"");
+                return response;
+            }
+            writes++;
+            return new(HttpStatusCode.PreconditionFailed)
+            {
+                Content = new StringContent("""{"status":412,"detail":"Raw server conflict"}"""),
+            };
+        });
+        var conflict = await Assert.ThrowsAsync<ApiException>(() => method switch
+        {
+            "patch" => api.UpdateCollectionAsync("c1", new() { IsShared = true }),
+            "put" => api.ReorderCollectionGroupsAsync([]),
+            _ => api.DeleteCollectionAsync("c1"),
+        });
+        Assert.Equal(412, conflict.StatusCode);
+        Assert.Equal("precondition_failed", conflict.ErrorCode);
+        Assert.Equal("Collections changed elsewhere. Reload before saving.", conflict.Message);
+        Assert.Equal(1, writes);   // conflicts are never retried automatically
     }
 
     [Fact]

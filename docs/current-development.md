@@ -1,3 +1,15 @@
+# November 11 ? collection wall, hero and actions for Beta
+
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Source remains **1.2.970**; the Beta pipeline owns integration, stamps and publication.
+
+Collections now use one responsive poster wall with ownership/library filters and loaded-only empty states, plus a backdrop hero with description, ownership, Shuffle, Edit/Add Home and More actions. Owner Sync now/Delete share policy and confirmation with the wall cards; shared/server collections offer library-page placement. Delete carries the revision. Pending actions retire on navigation or authority changes. Administrator collection management, including Open in, remains outside Desktop's available access.
+
+Independent Claude review found no correctness issue. Final source: **5,330/5,330 full unit tests**, **222 focused tests**, Release publish and six scoped native runs (presentation/actions, owner menu, ownership, server, layout, creation), each with the completion sentinel. The final app DLL SHA256 is `9C3196BD27FDB6145AF18D6EFCA380E3E4A8C312FA21F46B95380D3140D9A587`; all 30 changed-source hashes rechecked. Earlier full5,316 and other native runs predate the actions follow-up and remain historical.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/collections{,-actions}-implementation.md`, `collections-review.md`, `collections/evidence/collections/lead-final-full`, `act-presentation-seven`, and `collections-lead-binding.json`. Baseline browse-parity/ImportedDraft failures are preserved separately. No live-server persistence or complete visual parity certified; wall pagination retains Load more, and backdrop effects use native approximations. No installer or installed-player changes.
+
+---
+
 # Overlay review corrections — November 10, 2026
 
 Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.

@@ -33,7 +33,7 @@ public sealed partial class CollectionsPage
     {
         var focused = XamlRoot == null ? null : Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) as Button;
         var focusedName = focused != null && DescendantButtons(CollectionsGrid).Contains(focused) ? AutomationProperties.GetName(focused) : null;
-        EmptyState.Visibility = AddGroupButton.Visibility = AddGroupEditor.Visibility = Visibility.Collapsed;
+        EmptyState.Visibility = Visibility.Collapsed;
         var profileId = App.Services.GetRequiredService<AuthService>().SelectedProfileId;
         var partition = PersonalCollectionOwnership.Split(ViewModel.Collections, profileId, ViewModel.Profiles.ToArray());
         // Only a successfully read one-profile account gets the short subtitle. Names never hide cards.
@@ -41,6 +41,8 @@ public sealed partial class CollectionsPage
         CollectionsSubtitle.Text = multiple ? "Yours, the ones other profiles share with you, and the server's." : "Yours and the server's.";
         var shared = partition.Shared.SelectMany(group => group.Collections.Select(collection => (Collection: collection, Owner: group.Name))).ToArray();
         var libraries = ViewModel.ServerLibraries.ToArray();
+        var personalIds = partition.Own.Select(collection => collection.Id).Concat(shared.Select(entry => entry.Collection.Id))
+            .ToHashSet(StringComparer.Ordinal);
 
         var loading = new CollectionsWall.Loading(ViewModel.IsLoading, ViewModel.IsLoadingProfiles, ViewModel.IsLoadingServerCollections);
         _show = CollectionsWall.Resolve(_requestedShow, libraries, shared.Length, loading);
@@ -50,8 +52,11 @@ public sealed partial class CollectionsPage
         var showServer = CollectionsWall.ShowsServer(_show);
         var personalLoading = (showMine || _show == CollectionsWall.Shared) && ViewModel.IsLoading;
         var serverLoading = showServer && ViewModel.IsLoadingServerCollections;
+        var canAddGroup = showMine && ViewModel.PersonalLoaded && !string.IsNullOrEmpty(profileId);
+        if (!canAddGroup) AddGroupEditor.Visibility = Visibility.Collapsed;
+        AddGroupButton.Visibility = canAddGroup && AddGroupEditor.Visibility != Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
 
-        BuildFilterPills(libraries, partition.Own.Count, shared.Length);
+        BuildFilterPills(libraries, partition.Own.Count, shared.Length, personalIds);
         var empty = CollectionsWall.EmptyMessage(_show, ViewModel.PersonalLoaded, ViewModel.ProfilesLoaded, ViewModel.ServerLoaded,
             partition.Own.Count, shared.Length, picked?.TotalCount ?? CollectionsWall.ServerCount(libraries));
         CollectionsEmptyLine.Text = empty ?? "";
@@ -61,17 +66,31 @@ public sealed partial class CollectionsPage
         ServerCollectionsLoadingRows.Visibility = serverLoading && !personalLoading ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetName(CollectionsWallPanel, CollectionsWall.Label(_show, picked));
 
+        CollectionsGrid.Children.Clear();
         var cards = new List<FrameworkElement>();
         if (!personalLoading)
         {
-            if (showMine) cards.AddRange(partition.Own.Select(BuildCollectionCard));
+            if (showMine && ViewModel.Groups.Count > 0)
+            {
+                // Keep existing personal groups editable, using the same responsive posters as the wall.
+                foreach (var group in ViewModel.Groups.OrderBy(group => group.SortOrder))
+                    CollectionsGrid.Children.Add(BuildCollectionGroupSection(group, group.Name,
+                        partition.Own.Where(collection => collection.GroupId == group.Id).OrderBy(collection => collection.SortOrder).ToArray()));
+                var ungrouped = partition.Own.Where(collection => !ViewModel.Groups.Any(group => group.Id == collection.GroupId))
+                    .OrderBy(collection => collection.SortOrder).ToArray();
+                CollectionsGrid.Children.Add(BuildCollectionGroupSection(null, "Ungrouped", ungrouped));
+            }
+            else if (showMine) cards.AddRange(partition.Own.Select(BuildCollectionCard));
             if (showShared) cards.AddRange(shared.Select(entry => (FrameworkElement)BuildSharedCollectionCard(entry.Collection, entry.Owner)));
         }
         if (showServer)
-            cards.AddRange(ViewModel.GetServerCollectionCards(picked?.LibraryId).Select(card => (FrameworkElement)BuildServerCollectionCard(card.Library, card.Collection)));
-        CollectionsGrid.Children.Clear();
+            cards.AddRange(ViewModel.GetServerCollectionCards(picked?.LibraryId)
+                // In All, keep the personal card (including its owner actions) instead of a second server card.
+                // While personal cards load, the server cards remain independently available.
+                .Where(card => _show != CollectionsWall.All || personalLoading || !personalIds.Contains(card.Collection.Id))
+                .Select(card => (FrameworkElement)BuildServerCollectionCard(card.Library, card.Collection)));
         CollectionsGrid.Children.Add(BuildPosterBoard(cards));
-        BuildWallStatus(showServer ? (picked == null ? libraries : [picked]) : [], picked);
+        BuildWallStatus(showServer ? (picked == null ? libraries : [picked]) : [], picked, showServer);
 
         CollectionsReorderHint.Visibility = _show == CollectionsWall.Mine && ViewModel.Capabilities?.ItemReorder == true && partition.Own.Count > 1
             ? Visibility.Visible : Visibility.Collapsed;
@@ -80,12 +99,12 @@ public sealed partial class CollectionsPage
         QueueWallAdmission();
     }
 
-    private void BuildFilterPills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount)
+    private void BuildFilterPills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount, IReadOnlyCollection<string> personalIds)
     {
         CollectionsFilterPills.Children.Clear();
         CollectionsFilterScroll.Visibility = CollectionsWall.ShowPills(libraries, sharedCount) ? Visibility.Visible : Visibility.Collapsed;
         if (CollectionsFilterScroll.Visibility == Visibility.Collapsed) return;
-        foreach (var pill in CollectionsWall.Pills(libraries, ownCount, sharedCount))
+        foreach (var pill in CollectionsWall.Pills(libraries, ownCount, sharedCount, personalIds))
         {
             if (pill.Separated)
                 CollectionsFilterPills.Children.Add(new Border { Width = 1, Height = 16, Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center, Background = (Brush)Application.Current.Resources["BorderBrush"] });
@@ -121,9 +140,18 @@ public sealed partial class CollectionsPage
     /// Under the wall: a library's rest on its way, a failed list with Retry and a link to that library's
     /// Collections tab (the first 20 stay), and the control that loads more of the server's collections.
     /// </summary>
-    private void BuildWallStatus(IReadOnlyList<ServerCollectionsLibrary> shown, ServerCollectionsLibrary? picked)
+    private void BuildWallStatus(IReadOnlyList<ServerCollectionsLibrary> shown, ServerCollectionsLibrary? picked, bool showServer)
     {
         ServerCollectionsRows.Children.Clear();
+        if (showServer && ViewModel.ServerCollectionsErrorMessage is { } serverError)
+        {
+            var message = new TextBlock { Text = serverError, TextWrapping = TextWrapping.Wrap, FontSize = 13, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] };
+            AutomationProperties.SetLiveSetting(message, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+            ServerCollectionsRows.Children.Add(message);
+            var retry = new Button { Content = "Retry server collections", Command = ViewModel.LoadCollectionsCommand, HorizontalAlignment = HorizontalAlignment.Left };
+            AutomationProperties.SetName(retry, "Retry server collections");
+            ServerCollectionsRows.Children.Add(retry);
+        }
         foreach (var library in shown)
         {
             if (ViewModel.IsServerLibraryLoading(library.LibraryId))
