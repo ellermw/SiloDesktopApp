@@ -1,3 +1,13 @@
+# Personal profile data transfer — November 11, 2026
+
+Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`; version remains 1.2.970, with stamps and packaging owned by the Beta pipeline.
+
+Settings now offers Your Data export/import through the capability-gated v2 profile endpoints. PIN verification remains bound to the initiating authority, proof adoption checks and returns the full request context atomically, and navigation/authority retirement dismisses pending dialogs and drops late completions. Imports enforce the size limit before and during file reading, invalidate dependent caches, and reload imported customization before publishing Changed. Export preserves exact server bytes, avoiding Unicode expansion beyond the reimport limit.
+
+Final integrated product source `035036d9`: 50 focused transfer tests and 5,409/5,409 full units passed; fresh self-contained win-x64 Release publish; all 15 actual Your Data native scenarios passed with exit 0 and the completion sentinel. App SHA256 `86AEB0F75713F64D94B7060D9100DBE2CFBD6E68C5787F4A81C255DADFD74FA8`. Final app/native/unit/Core/Player PE/PDB identity and authored-source checks: 743/182/423/362/15 documents, zero mismatches. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/profile-transfer-lead-corrections/`.
+
+The independent final review found two P2s; the lead reproduced both before fixing them. `lead-red-proof` rejects the old same-profile proof behavior; `lead-red-native` detects stale imported customization. Final tests verify owner retirement before adoption and after adoption, and native cache-refresh requires automatic reload without a fixture EnsureLoaded call. Earlier passing fixtures and worker full-suite claims retain their original limits; final receipts replace them for submission. No live-account/server persistence, real file-picker interaction or complete visual-parity certification is claimed. Installed player and real settings/accounts remain untouched.
+
 # Overlay review corrections — November 10, 2026
 
 Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.
