@@ -118,6 +118,18 @@ public class RequestsApi(SiloApiClient client)
     public Task<MediaRequest> CancelAsync(string id, CancellationToken ct = default)
         => client.PostAsync<MediaRequest>($"/api/v2/requests/{Uri.EscapeDataString(id)}/cancel", new Dictionary<string, object?>(), ct);
 
+    /// <summary>
+    /// Deletes the viewer's failed, undelivered request (<c>removeFailedRequest</c>). Distinct from
+    /// <see cref="CancelAsync"/>: this is a bodyless DELETE answering 204, and the server refuses
+    /// with 409 when the request was retried, completed or delivered a copy before failing. The
+    /// request is bound to the initiating account/profile so a switch cannot re-author the deletion.
+    /// </summary>
+    public Task RemoveFailedAsync(string id, ApiIdentityContext owner, CancellationToken ct = default)
+        => client.SendIdentityBoundNoContentAsync(owner, HttpMethod.Delete, $"/api/v2/requests/{Uri.EscapeDataString(id)}", null, ct);
+
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
+
     private static string BuildListQuery(string? status, string? outcome)
     {
         var qs = new List<string>();

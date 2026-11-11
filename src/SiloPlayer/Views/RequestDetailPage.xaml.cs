@@ -469,7 +469,24 @@ public sealed partial class RequestDetailPage : Page
         RecommendationsSection.Visibility = RecommendationsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void OpenLibrary_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: string id }) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id); }
+    private bool _libraryChecking;
+    // The server's library match is global, not proof this profile can open it (official LibraryItemLink): read the
+    // item first, stay with a notice on an authoritative not-found, and drop the check once the page, profile or
+    // navigation that asked has moved on. Any other failure navigates, because the item page answers it itself.
+    private async void OpenLibrary_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id } || _libraryChecking || _lifetime.IsCancellationRequested) return;
+        _libraryChecking = true;
+        var viewer = _api.CaptureContext();
+        try
+        {
+            var access = await RequestLibraryLinks.CheckAsync(id, App.Services.GetRequiredService<ItemDetailPrefetchCache>(),
+                () => !_lifetime.IsCancellationRequested && IsLoaded && _api.IsCurrentContext(viewer), _lifetime.Token);
+            if (access == RequestLibraryAccess.Open) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id);
+            else if (access == RequestLibraryAccess.Unavailable) App.Services.GetService<ToastService>()?.Error(RequestLibraryLinks.UnavailableNotice);
+        }
+        finally { _libraryChecking = false; }
+    }
     private async void ExternalLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string url } && Uri.TryCreate(url, UriKind.Absolute, out var uri))

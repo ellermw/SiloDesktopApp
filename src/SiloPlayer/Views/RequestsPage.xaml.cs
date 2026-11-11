@@ -28,6 +28,11 @@ public sealed partial class RequestsPage : Page
     private readonly DispatcherTimer _downloadRefreshTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private CancellationTokenSource? _downloadRefreshOwner;
     private bool _downloadTickInProgress;
+    // Owns library-access checks started from this mounted page; retired on departure so a slow read cannot
+    // pull the viewer back into a library item after they navigated elsewhere.
+    private CancellationTokenSource? _libraryCheckOwner;
+    private readonly HashSet<string> _libraryChecks = new(StringComparer.Ordinal);
+    private TextBlock? _failedStatusGuide;
 
     public RequestsPage()
     {
@@ -70,6 +75,7 @@ public sealed partial class RequestsPage : Page
             StatusGuideGrid.RowDefinitions.Add(new() { Height = GridLength.Auto });
             var badge = SiloPlayer.Controls.ExternalTitleCard.StatusBadge(descriptions[i].Item1); badge.VerticalAlignment = VerticalAlignment.Top;
             var text = new TextBlock { Text = descriptions[i].Item2, FontSize = 12, LineHeight = 20, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") };
+            if (descriptions[i].Item1 == "Failed") _failedStatusGuide = text;
             Grid.SetRow(badge, i); Grid.SetRow(text, i); Grid.SetColumn(text, 1); StatusGuideGrid.Children.Add(badge); StatusGuideGrid.Children.Add(text);
         }
         StatusGuide.Padding = new Thickness(0); StatusGuide.BorderThickness = new Thickness(0);
@@ -102,7 +108,7 @@ public sealed partial class RequestsPage : Page
         var customization = App.Services.GetService<SiloPlayer.Services.UICustomizationService>();
         _downloadRefreshTimer.Tick += DownloadRefresh_Tick;
         Loaded += (_, _) => { if (customization != null) { customization.Changed -= CardPresentationChanged; customization.Changed += CardPresentationChanged; } };
-        Unloaded += (_, _) => { StopDownloadRefresh(); if (customization != null) customization.Changed -= CardPresentationChanged; };
+        Unloaded += (_, _) => { StopDownloadRefresh(); RetireLibraryChecks(); if (customization != null) customization.Changed -= CardPresentationChanged; };
         NavigationCacheMode = NavigationCacheMode.Required;
     }
 
@@ -117,6 +123,8 @@ public sealed partial class RequestsPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         StopDownloadRefresh();
+        RetireLibraryChecks();
+        _libraryCheckOwner = new CancellationTokenSource();
         ViewModel.PropertyChanged += RequestsStateChanged;
         _downloadRefreshOwner = new CancellationTokenSource();
         _downloadRefreshTimer.Start();
@@ -136,8 +144,16 @@ public sealed partial class RequestsPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         StopDownloadRefresh();
+        RetireLibraryChecks();
         ViewModel.CancelSearch();
         base.OnNavigatedFrom(e);
+    }
+
+    private void RetireLibraryChecks()
+    {
+        var owner = Interlocked.Exchange(ref _libraryCheckOwner, null);
+        owner?.Cancel(); owner?.Dispose();
+        _libraryChecks.Clear();
     }
 
     private void StopDownloadRefresh()
@@ -303,6 +319,8 @@ public sealed partial class RequestsPage : Page
     private void BuildMyRequests()
     {
         MyRequestsList.Children.Clear(); MineSummaryPanel.Children.Clear(); StatusGuide.Visibility = Visibility.Visible;
+        if (_failedStatusGuide != null)
+            _failedStatusGuide.Text = "Silo or the download automation hit an error." + (ViewModel.Features.RemoveFailedSupported ? " You can remove it if nothing was delivered." : "");
         MineErrorPanel.Visibility = string.IsNullOrWhiteSpace(ViewModel.MineError) ? Visibility.Collapsed : Visibility.Visible;
         MineEmptyPanel.Visibility = ViewModel.MyRequests.Count == 0 && string.IsNullOrWhiteSpace(ViewModel.MineError) ? Visibility.Visible : Visibility.Collapsed;
         if (!string.IsNullOrWhiteSpace(ViewModel.MineError)) return;
@@ -572,7 +590,8 @@ public sealed partial class RequestsPage : Page
             var library = new Button { Content = label, FontSize = 14, Height = 32, MinHeight = 0,
                 Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
             AutomationProperties.SetName(library, "Open " + request.Title + " in library");
-            library.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id);
+            // The server's library match is global, not proof this profile can open it: read the item first.
+            library.Click += async (_, _) => await OpenLibraryAsync(id);
             actions.Children.Add(library);
         }
         if (SiloPlayer.Core.Services.RequestViewerPolicy.CanCancel(request))
@@ -581,6 +600,14 @@ public sealed partial class RequestsPage : Page
                 Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
             AutomationProperties.SetName(cancel, "Cancel request for " + request.Title);
             cancel.Click += CancelRequest_Click; actions.Children.Add(cancel);
+        }
+        if (ViewModel.CanRemoveRequest(request))
+        {
+            var remove = new Button { Content = "Remove request", Tag = request, FontSize = 14, Height = 32, MinHeight = 0,
+                Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
+            AutomationProperties.SetName(remove, "Remove request for " + request.Title);
+            if (ViewModel.IsRemovingRequest(request.Id)) { remove.IsEnabled = false; remove.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 }; }
+            remove.Click += RemoveRequest_Click; actions.Children.Add(remove);
         }
         if (actions.Children.Count > 0)
         {
@@ -619,6 +646,55 @@ public sealed partial class RequestsPage : Page
         if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
         await ViewModel.CancelRequestCommand.ExecuteAsync(request);
         Render();
+    }
+
+    private async void RemoveRequest_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: MediaRequest request } button || ViewModel.IsRemovingRequest(request.Id) ||
+            _libraryCheckOwner is not { IsCancellationRequested: false } pageOwner) return;
+        // The account that sees this row owns the deletion, even if the confirmation is open while profiles change.
+        var visit = pageOwner.Token;
+        var owner = ViewModel.CaptureRemovalOwner();
+        var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
+        var readOwner = api.CaptureContext();
+        bool IsCurrent() => !visit.IsCancellationRequested && ReferenceEquals(_libraryCheckOwner, pageOwner) && IsLoaded &&
+            api.IsCurrentIdentityContext(owner) && api.IsCurrentContext(readOwner);
+        var confirmation = new ContentDialog
+        {
+            Title = "Remove this request?", Content = $"Your failed request for \"{request.Title}\" will be deleted. You can request the title again later.",
+            PrimaryButtonText = "Remove request", CloseButtonText = "Keep request", XamlRoot = XamlRoot,
+            DefaultButton = ContentDialogButton.Close,
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+        };
+        if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
+        if (!IsCurrent()) return;
+        button.IsEnabled = false; button.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 };
+        // The view model publishes pending state (rebuilding this row disabled) and the refreshed lists.
+        var result = await ViewModel.RemoveFailedRequestAsync(request, owner, visit);
+        if (!IsCurrent()) return;
+        Render();
+        var toast = App.Services.GetService<SiloPlayer.Services.ToastService>();
+        switch (result.Outcome)
+        {
+            case RequestRemovalOutcome.Removed: toast?.Success("Request removed"); break;
+            case RequestRemovalOutcome.Refused or RequestRemovalOutcome.Failed:
+                toast?.Error(string.IsNullOrWhiteSpace(result.Error) ? "Failed to remove request" : result.Error); break;
+        }
+    }
+
+    private async Task OpenLibraryAsync(string contentId)
+    {
+        if (_libraryCheckOwner is not { } owner || owner.IsCancellationRequested || !_libraryChecks.Add(contentId)) return;
+        var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
+        var viewer = api.CaptureContext();
+        try
+        {
+            var access = await RequestLibraryLinks.CheckAsync(contentId, App.Services.GetRequiredService<ItemDetailPrefetchCache>(),
+                () => !owner.IsCancellationRequested && IsLoaded && api.IsCurrentContext(viewer), owner.Token);
+            if (access == RequestLibraryAccess.Open) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(contentId);
+            else if (access == RequestLibraryAccess.Unavailable) App.Services.GetService<SiloPlayer.Services.ToastService>()?.Error(RequestLibraryLinks.UnavailableNotice);
+        }
+        finally { if (ReferenceEquals(_libraryCheckOwner, owner)) _libraryChecks.Remove(contentId); }
     }
 
     private static TextBlock TitleText(string text) => new()

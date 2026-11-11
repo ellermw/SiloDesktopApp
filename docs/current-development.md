@@ -1,3 +1,13 @@
+# November 10 — request removal and library-link alignment (Beta candidate)
+
+Deliberate base: Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`. Reviewed official Silo main through `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`; the fresh `4a9e527a432e8ef3a15dcd568802a45c15169039` follow-up changes WebUI localization without request/server contract changes. The commit containing this record binds the scoped source; version assignment, review, QA, merge and packaging remain with the Beta pipeline.
+
+My Requests now confirms and removes failed, undelivered requests only when the server advertises support, using bodyless DELETE/204 separately from cancellation. Explicit request-to-library links check the current viewer's read access before navigating. Independent review found three ownership/duplicate-submit issues; corrected continuations retain the initiating identity, access and page visit through refresh and feedback, and hold the pending id until refresh settles.
+
+Final correction verification: **62 focused unit tests**, fresh x64 Release publish and the expanded **request-removal** actual-control route pass. The native route covers confirmation departure, post-DELETE refresh departure/profile change, retained duplicate guard, and retired access reads on both pages. Final DLL SHA256: `0E0DAECE6DA66917FFF19B3A8F7AE52BB087311CB4B5671242D2CC953F385B68`. Earlier implementation verification (5,300 unit tests and four request native routes) applies to the earlier candidate, before these final guard corrections. No full native suite or live-server certification is claimed.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/requests-implementation.md`, `requests-review.md`, `requests-review-fixes-green.log` and `request-review-fixes/`. The pre-existing media-parity/request-actions failure was reproduced on baseline and kept separate; the shared ExternalTitleCard chip remains outside this change. Existing 403-as-inaccessible policy is retained. No installer, release, installed-player restart or real account/settings action occurred.
+
 # Current source identity — native Chapters and compact More (PR #91)
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.

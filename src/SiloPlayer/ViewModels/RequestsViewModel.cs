@@ -59,7 +59,9 @@ public partial class RequestsViewModel : ObservableObject
     [ObservableProperty] private int _dataVersion;
 
     [RelayCommand]
-    private async Task LoadAsync()
+    private Task LoadAsync() => LoadForVisitAsync(() => true);
+
+    private async Task LoadForVisitAsync(Func<bool> isCurrentVisit)
     {
         var context = _requestsApi.CaptureContext();
         if (_loadInProgress && _loadingContext == context) return;
@@ -80,7 +82,7 @@ public partial class RequestsViewModel : ObservableObject
         try
         {
             var status = await _requestsApi.GetStatusAsync();
-            if (revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
+            if (!isCurrentVisit() || revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
             Features = status;
             RequestsEnabled = status.RequestsEnabled;
             if (!RequestsEnabled)
@@ -105,7 +107,7 @@ public partial class RequestsViewModel : ObservableObject
             // must not hide completed account requests or brand results.
             IsLoading = false;
             await Task.WhenAll(mineTask, discoveryTask, brandsTask);
-            if (revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
+            if (!isCurrentVisit() || revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
 
             StatusMessage = MyRequests.Count > 0 ? $"{MyRequests.Count:N0} request(s) loaded." : "";
             _lastLoadedAt = DateTime.UtcNow;
@@ -114,7 +116,7 @@ public partial class RequestsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
+            if (!isCurrentVisit() || revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
             ErrorMessage = $"Failed to load requests: {ex.Message}";
             StatusMessage = "";
         }
@@ -369,7 +371,83 @@ public partial class RequestsViewModel : ObservableObject
         }
     }
 
+    private readonly HashSet<string> _removingRequests = new(StringComparer.Ordinal);
+    public bool IsRemovingRequest(string id) => _removingRequests.Contains(id);
+
+    /// <summary>Removal is offered for the viewer's failed, undelivered requests when the server advertises it.</summary>
+    public bool CanRemoveRequest(MediaRequest request) => RequestViewerPolicy.CanRemove(Features, request);
+
+    /// <summary>The account/profile that sees a row owns its removal, even if a confirmation outlives a profile change.</summary>
+    public ApiIdentityContext CaptureRemovalOwner() => _requestsApi.CaptureIdentityContext();
+
+    /// <summary>
+    /// Deletes a failed request that delivered nothing. This is not cancellation. The server's guarded DELETE
+    /// stays authoritative: a retry or library completion that wins the race answers 409, and either way the
+    /// account list, title discovery state and any active search are read again so they show the outcome.
+    /// </summary>
+    public async Task<RequestRemovalResult> RemoveFailedRequestAsync(MediaRequest confirmed, ApiIdentityContext owner, CancellationToken visit = default)
+    {
+        var readOwner = _requestsApi.CaptureContext();
+        bool IsCurrent() => !visit.IsCancellationRequested && _requestsApi.IsCurrentIdentityContext(owner) && _requestsApi.IsCurrentContext(readOwner);
+        // The viewer confirmed a row that may have been replaced or changed since: act on the current account row.
+        var request = MyRequests.FirstOrDefault(row => row.Id == confirmed.Id);
+        if (request == null || !IsCurrent() || !CanRemoveRequest(request) ||
+            !_removingRequests.Add(request.Id)) return new(RequestRemovalOutcome.Skipped);
+        DataVersion++;
+        try
+        {
+            RequestRemovalResult result;
+            try
+            {
+                await _requestsApi.RemoveFailedAsync(request.Id, owner, visit);
+                result = new(RequestRemovalOutcome.Removed);
+            }
+            catch (OperationCanceledException) { return new(RequestRemovalOutcome.Retired); }
+            catch (ApiException ex) when (ex.StatusCode is 404 or 409) { result = new(RequestRemovalOutcome.Refused, ex.Message); }
+            catch (Exception ex) { result = new(RequestRemovalOutcome.Failed, ex.Message); }
+            if (!IsCurrent()) return new(RequestRemovalOutcome.Retired);
+            await RefreshAfterRequestChangeAsync(IsCurrent);
+            return IsCurrent() ? result : new(RequestRemovalOutcome.Retired);
+        }
+        finally
+        {
+            _removingRequests.Remove(request.Id);
+            if (_requestsApi.IsCurrentIdentityContext(owner)) DataVersion++;
+        }
+    }
+
+    // A refused or failed removal still refreshes (the official WebUI's onSettled): an admin may have retried the
+    // request, and the row should show what happened. A load already in flight predates the mutation.
+    private async Task RefreshAfterRequestChangeAsync(Func<bool> isCurrent)
+    {
+        var loadWasRunning = _loadInProgress;
+        InvalidateCache();
+        await LoadForVisitAsync(isCurrent);
+        if (!isCurrent()) return;
+        if (loadWasRunning) await Task.WhenAll(LoadMineAsync(), LoadDiscoveryAsync(brandsPreloaded: true));
+        if (!isCurrent()) return;
+        if (!string.IsNullOrWhiteSpace(SearchQuery)) await SearchAsync();
+        if (!isCurrent()) return;
+        DataVersion++;
+    }
+
     public void InvalidateCache() => _lastLoadedAt = DateTime.MinValue;
     public async Task RetryMineAsync() { await LoadMineAsync(); DataVersion++; }
     public async Task RetryDiscoveryAsync() { await LoadDiscoveryAsync(); DataVersion++; }
 }
+
+public enum RequestRemovalOutcome
+{
+    /// <summary>The server deleted the request (204).</summary>
+    Removed,
+    /// <summary>The server refused (409: retried, completed or delivered; 404: already gone). Lists were refreshed.</summary>
+    Refused,
+    /// <summary>A transport or server failure. The request is still listed and removal can be retried.</summary>
+    Failed,
+    /// <summary>Not eligible, unsupported by the server, or already pending.</summary>
+    Skipped,
+    /// <summary>The initiating account/profile changed; nothing is reported or refreshed for the old owner.</summary>
+    Retired,
+}
+
+public sealed record RequestRemovalResult(RequestRemovalOutcome Outcome, string? Error = null);
