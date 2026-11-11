@@ -162,13 +162,14 @@ public partial class RequestsViewModel : ObservableObject
     public async Task RefreshDownloadsAsync(CancellationToken ct)
     {
         if (IsLoadingMine || _downloadRefreshInProgress || !RequestsEnabled || !HasDownloadingRequests) return;
+        var context = _requestsApi.CaptureContext();
         _downloadRefreshInProgress = true;
         var revision = ++_mineReadRevision;
         try
         {
             var response = await _requestsApi.GetMineAsync(limit: 100, ct: ct);
             ct.ThrowIfCancellationRequested();
-            if (revision != _mineReadRevision) return;
+            if (revision != _mineReadRevision || !_requestsApi.IsCurrentContext(context)) return;
             if (System.Text.Json.JsonSerializer.Serialize(MyRequests) ==
                 System.Text.Json.JsonSerializer.Serialize(response.Requests)) return;
             Replace(MyRequests, response.Requests);

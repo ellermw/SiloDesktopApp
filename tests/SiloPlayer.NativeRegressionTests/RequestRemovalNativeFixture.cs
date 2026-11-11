@@ -30,7 +30,7 @@ internal static class RequestRemovalNativeFixture
     {
         // SILO_NATIVE_REQUEST_REMOVAL_CASE=links|removal narrows a run (for example to reproduce one half against an earlier publish).
         var only = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REMOVAL_CASE");
-        if (only != "links") { await RemovalAsync(parent); await DetailCancellationAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalRouteRefreshAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
+        if (only != "links") { await RemovalAsync(parent); await DetailCancellationAsync(parent); await DetailCancellationRefreshAsync(parent); await RemovalReadInvalidationAsync(parent); await RemovalRouteRefreshAsync(parent); await RemovalFinalizationAsync(parent); await OlderServerAsync(parent); }
         if (only == "removal") { Program.Log("PASS: REQUEST_REMOVAL_ONLY_COMPLETED"); return; }
         await RowLinksAsync(parent);
         await DetailLinkAsync(parent);
@@ -162,6 +162,46 @@ internal static class RequestRemovalNativeFixture
             await Task.Delay(120);
         }
         Program.Log("PASS: Request detail cancellation ignores repeated activation and releases its confirmation guard after Keep.");
+    }
+
+    private static async Task DetailCancellationRefreshAsync(StackPanel parent)
+    {
+        foreach (var state in new[] { "eligible", "ineligible", "replaced" })
+        {
+            using var rig = new Rig(parent, remove: true);
+            var wire = rig.Wire;
+            wire.Mine["r1"] = Row("r1", "Retryable", status: "approved", outcome: "active");
+            wire.DetailRequest = "{\"requestable\":false,\"requested_by_viewer\":true,\"request_id\":\"r1\",\"status\":\"approved\",\"download\":{\"percent\":42}}";
+            rig.Navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("movie", 7));
+            var page = (RequestDetailPage)rig.Frame.Content;
+            Button? cancel = null;
+            await Until(() => page.IsLoaded && (cancel = Descendants(page).OfType<Button>().FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == "cancel")) != null);
+            Click(cancel!);
+            var dialog = await rig.DialogAsync();
+            if (state == "ineligible")
+                wire.Mine["r1"] = Row("r1", "Retryable", status: "approved", outcome: "active", targets: "[{\"status\":\"downloading\"}]");
+            if (state == "replaced") wire.DetailRequest = wire.DetailRequest.Replace("\"r1\"", "\"r2\"");
+            var itemField = typeof(RequestDetailPage).GetField("_item", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var before = itemField.GetValue(page);
+            // Drive the same refresh as the 30-second timer while confirmation is still open.
+            await (Task)InvokePrivate(page, "RefreshDownloadAsync")!;
+            if (ReferenceEquals(before, itemField.GetValue(page)) || !ReferenceEquals(dialog, rig.Dialog()))
+                throw new InvalidOperationException("The detail poll did not replace its item while retaining the cancellation confirmation.");
+            Primary(dialog);
+            if (state == "eligible")
+            {
+                await Until(() => wire.Writes.Count == 1);
+                if (wire.Writes.Single() is not { Method: "POST", Path: "/api/v2/requests/r1/cancel" })
+                    throw new InvalidOperationException("Confirmed cancellation after a poll did not send the original request's cancel POST.");
+            }
+            else
+            {
+                await rig.ToastAsync("This request has changed and can no longer be cancelled.");
+                if (wire.Writes.Count != 0) throw new InvalidOperationException("A changed or ineligible request was cancelled after polling.");
+            }
+            await Until(() => cancel!.IsEnabled && cancel.Content is not ProgressRing && rig.Dialog() == null);
+        }
+        Program.Log("PASS: detail cancellation survives download polling, while changed or ineligible requests explain why cancellation was not sent.");
     }
 
     private static async Task RemovalReadInvalidationAsync(StackPanel parent)
