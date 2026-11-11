@@ -83,6 +83,9 @@ public partial class CollectionsViewModel : ObservableObject
             var first = library.Collections.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
             _serverRest[libraryId] = response.Collections.Select(c => new ServerCollectionSummary { Id = c.Id, Title = c.Title, PosterUrl = c.PosterUrl,
                 PosterThumbhash = c.PosterThumbhash, ItemCount = c.ItemCount, Featured = c.Featured })
+                .Concat(response.Groups.SelectMany(group => group.Collections).Concat(response.Ungrouped?.Collections ?? [])
+                    .Select(c => new ServerCollectionSummary { Id = c.Id, Title = c.Title, PosterUrl = c.PosterUrl,
+                        PosterThumbhash = c.PosterThumbhash, ItemCount = c.ItemCount, Featured = c.Featured }))
                 .Where(c => !first.Contains(c.Id)).DistinctBy(c => c.Id).ToList();
         }
         catch (OperationCanceledException)

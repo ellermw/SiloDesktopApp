@@ -151,6 +151,32 @@ public sealed class CollectionPageHeaderTests
         Assert.Equal(2, wire.PersonalReads);   // the dialog's retry reads a fresh revision without reopening the page
     }
 
+    [Fact]
+    public async Task HeaderLoadThenServerChangeAllowsSharingRetryWithTheCurrentRevision()
+    {
+        using var wire = new Wire
+        {
+            Personal = """{"id":"p1","creator_profile_id":"me","name":"Weekly","collection_type":"mdblist","updated_at":"A"}""",
+            PersonalETag = "\"A\"",
+            Capabilities = "{\"imports\":true}",
+        };
+        var client = wire.Client();
+        var collections = new CollectionsApi(client);
+        var header = await CollectionPageHeaderLoader.LoadAsync(collections, new CatalogApi(client), new AuthApi(client),
+            "p1", true, null, "me", CancellationToken.None);
+        Assert.Equal(CollectionPageAccessKind.Manage, header.Access.Kind);
+
+        wire.Personal = """{"id":"p1","creator_profile_id":"me","name":"Weekly","collection_type":"mdblist","updated_at":"B"}""";
+        wire.PersonalETag = "\"B\"";
+        var conflict = await Assert.ThrowsAsync<ApiException>(() => collections.UpdateCollectionAsync("p1", new() { IsShared = true }));
+        Assert.Equal(412, conflict.StatusCode);
+        Assert.Equal(["\"A\""], wire.PatchTags);   // the conflict stays visible; there is no automatic retry
+
+        await collections.UpdateCollectionAsync("p1", new() { IsShared = true });
+        Assert.Equal(["\"A\"", "\"B\""], wire.PatchTags);
+        Assert.Equal(2, wire.PersonalReads);   // retry retires both the header's revision and its old baseline
+    }
+
     private const string ThreeLibraries = "{\"items\":[{\"id\":1,\"name\":\"Movies\"},{\"id\":2,\"name\":\"Shows\"},{\"id\":3,\"name\":\"Kids\"}]}";
 
     [Fact]
@@ -257,6 +283,7 @@ public sealed class CollectionPageHeaderTests
         public string? PersonalETag;
         public int PersonalReads;
         public readonly List<string> DeleteTags = [];
+        public readonly List<string> PatchTags = [];
         public bool FailPersonal, FailProfiles, FailTabs, FailServerList, FailLibraries, FailCapabilities;
         public int LibraryReads, CapabilityReads;
         public readonly Dictionary<int, string> Tab = [];
@@ -289,7 +316,14 @@ public sealed class CollectionPageHeaderTests
                         ? new HttpResponseMessage(HttpStatusCode.NoContent)
                         : new HttpResponseMessage(HttpStatusCode.PreconditionFailed) { Content = new StringContent("{\"status\":412,\"detail\":\"Changed elsewhere\"}") });
                 }
-                Interlocked.Increment(ref PersonalReads);
+                if (request.Method == HttpMethod.Patch && PersonalETag != null)
+                {
+                    var tag = request.Headers.IfMatch.Single().Tag;
+                    PatchTags.Add(tag);
+                    if (tag != PersonalETag)
+                        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.PreconditionFailed) { Content = new StringContent("{\"status\":412,\"detail\":\"Changed elsewhere\"}") });
+                }
+                if (request.Method == HttpMethod.Get) Interlocked.Increment(ref PersonalReads);
                 var response = FailPersonal ? Fail() : Ok(Personal ?? "{}");
                 if (PersonalETag != null) response.Headers.ETag = new(PersonalETag);
                 return Task.FromResult(response);

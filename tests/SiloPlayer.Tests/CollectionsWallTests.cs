@@ -119,12 +119,30 @@ public sealed class CollectionsWallTests
         Assert.Null(CollectionsWall.EmptyMessage("all", true, true, false, 0, 0, count));
         Assert.Null(CollectionsWall.EmptyMessage("server", true, true, false, 0, 0, count));
 
-        // Multiple libraries may overlap: their combined count remains unknown, not zero.
-        var unknown = CollectionsWall.ServerCount([libraries[0], Library(2, "Shows", 0)]);
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("library:1", false, false, true, 0, 0, libraries[0].TotalCount));
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void SeveralEmptyLibrariesShowTheLoadedEmptyLine(int libraryCount)
+    {
+        var libraries = Enumerable.Range(1, libraryCount).Select(id => Library(id, "Library " + id, 0)).ToArray();
+        var count = CollectionsWall.ServerCount(libraries);
+        Assert.Equal(0, count);   // overlap cannot make an empty union non-empty
+        var pills = CollectionsWall.Pills(libraries, 0, 0);
+        Assert.Equal(0, pills.Single(pill => pill.Value == "all").Count);
+        Assert.Equal(0, pills.Single(pill => pill.Value == "server").Count);
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("all", true, true, true, 0, 0, count));
+        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("server", false, false, true, 2, 1, count));
+        Assert.Null(CollectionsWall.EmptyMessage("all", true, true, false, 0, 0, count));
+        Assert.Null(CollectionsWall.EmptyMessage("server", true, true, false, 0, 0, count));
+
+        // A non-empty set still has an unknown combined count when libraries may overlap.
+        var unknown = CollectionsWall.ServerCount([libraries[0], Library(99, "Shows", 1)]);
         Assert.Null(unknown);
         Assert.Null(CollectionsWall.EmptyMessage("all", true, true, true, 0, 0, unknown));
         Assert.Null(CollectionsWall.EmptyMessage("server", true, true, true, 0, 0, unknown));
-        Assert.Equal(CollectionsWall.EmptyAll, CollectionsWall.EmptyMessage("library:1", false, false, true, 0, 0, libraries[0].TotalCount));
     }
 
     [Theory]

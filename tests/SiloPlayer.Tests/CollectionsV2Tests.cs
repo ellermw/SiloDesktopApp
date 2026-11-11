@@ -95,6 +95,41 @@ public sealed class CollectionsV2Tests
         Assert.Equal(0, writes);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ItemOrderPutConflictAllowsAnExplicitRetryWithTheCurrentRevision(bool cachedRevision)
+    {
+        var changed = false;
+        var tags = new List<string>();
+        var api = Api(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/items"))
+                return Json("""{"items":[{"media_item_id":"a","position":0},{"media_item_id":"b","position":1}]}""");
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = Json(changed ? """{"ordered_ids":["b","a"]}""" : """{"ordered_ids":["a","b"]}""");
+                response.Headers.ETag = new(changed ? "\"B\"" : "\"A\"");
+                return response;
+            }
+            Assert.Equal(HttpMethod.Put, request.Method);
+            var tag = request.Headers.IfMatch.Single().Tag;
+            tags.Add(tag);
+            if (tag == "\"B\"") return Json("{}");
+            return new(HttpStatusCode.PreconditionFailed) { Content = new StringContent("{\"status\":412,\"detail\":\"Changed elsewhere\"}") };
+        });
+        await api.GetCollectionItemsAsync("c1");
+        if (cachedRevision) Assert.True(await api.IsCompleteItemOrderAsync("c1", ["a", "b"]));
+        changed = true;
+
+        // A cached ETag conflicts at the server; an uncached one conflicts against the displayed baseline.
+        var conflict = await Assert.ThrowsAsync<ApiException>(() => api.ReorderCollectionItemsAsync("c1", ["a", "b"]));
+        Assert.Equal(412, conflict.StatusCode);
+        Assert.Equal(cachedRevision ? new[] { "\"A\"" } : Array.Empty<string>(), tags);
+        await api.ReorderCollectionItemsAsync("c1", ["a", "b"]);
+        Assert.Equal(cachedRevision ? new[] { "\"A\"", "\"B\"" } : new[] { "\"B\"" }, tags);
+    }
+
     [Fact]
     public async Task PosterUrlEditUsesMultipartArtworkOperationAfterMetadataPatch()
     {

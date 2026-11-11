@@ -150,6 +150,44 @@ public sealed class CollectionsWallLoadingTests
         Assert.Equal(1, wire.LibraryTabReads);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LibraryRestIncludesGroupedAndUngroupedCollectionsInOrderWithoutDuplicates(bool includeFlat)
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":4,"collections":[{"id":"s1","title":"Teaser"}]},{"library_id":2,"library_name":"Shows","total_count":0,"collections":[]}]}""",
+            LibraryTabBody = """
+                {"library_id":1,"groups":[
+                    {"id":"g1","collections":[{"id":"s1","title":"Repeated teaser"},{"id":"s2","title":"Repeated flat"},
+                        {"id":"s3","title":"Grouped","poster_url":"https://images.invalid/group.jpg","poster_thumbhash":"GROUP","item_count":8,"featured":true}]},
+                    {"id":"g2","collections":[{"id":"s3","title":"Repeated group"}]}],
+                 "ungrouped":{"collections":[{"id":"s3","title":"Repeated grouped"},
+                    {"id":"s4","title":"Ungrouped","poster_url":"https://images.invalid/other.jpg","poster_thumbhash":"OTHER","item_count":5,"featured":false}]}}
+                """,
+        };
+        if (includeFlat)
+            wire.LibraryTabBody = wire.LibraryTabBody.Replace("\"library_id\":1,", "\"library_id\":1,\"collections\":[{\"id\":\"s2\",\"title\":\"Flat\"}],");
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(["s1"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Null(vm.ServerLibraryError(1)); Assert.True(vm.HasServerLibraryRest(1));
+        var cards = vm.GetServerCollectionCards(1);
+        Assert.Equal(["s1", "s2", "s3", "s4"], cards.Select(card => card.Collection.Id));
+        Assert.Equal(["Teaser", includeFlat ? "Flat" : "Repeated flat", "Grouped", "Ungrouped"], cards.Select(card => card.Collection.Title));
+        Assert.Equal(cards.Select(card => card.Collection.Id), vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.All(cards, card => Assert.Equal(1, card.Library!.LibraryId));
+        var grouped = cards[2].Collection;
+        Assert.Equal("https://images.invalid/group.jpg", grouped.PosterUrl); Assert.Equal("GROUP", grouped.PosterThumbhash);
+        Assert.Equal(8, grouped.ItemCount); Assert.True(grouped.Featured);
+        var ungrouped = cards[3].Collection;
+        Assert.Equal("https://images.invalid/other.jpg", ungrouped.PosterUrl); Assert.Equal("OTHER", ungrouped.PosterThumbhash);
+        Assert.Equal(5, ungrouped.ItemCount); Assert.False(ungrouped.Featured);
+        Assert.Equal(1, wire.LibraryTabReads);
+    }
+
     private static CollectionsViewModel Vm(SiloApiClient client)
         => new(new CollectionsApi(client), new CatalogApi(client), new AuthApi(client), client);
 
@@ -163,6 +201,7 @@ public sealed class CollectionsWallLoadingTests
     {
         public string ServerBody = "{\"libraries\":[]}";
         public string PersonalBody = "{\"items\":[],\"groups\":[]}";
+        public string LibraryTabBody = "{\"library_id\":1,\"collections\":[],\"groups\":[]}";
         public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles;
         public int LibraryTabReads;
         public TaskCompletionSource PersonalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -186,7 +225,7 @@ public sealed class CollectionsWallLoadingTests
             if (path.EndsWith("/collections") && path.StartsWith("/api/v2/library/"))
             {
                 Interlocked.Increment(ref LibraryTabReads);
-                return Task.FromResult(FailLibraryTab ? Fail() : Ok("{\"library_id\":1,\"collections\":[],\"groups\":[]}"));
+                return Task.FromResult(FailLibraryTab ? Fail() : Ok(LibraryTabBody));
             }
             if (path == "/api/v2/collections")
             {

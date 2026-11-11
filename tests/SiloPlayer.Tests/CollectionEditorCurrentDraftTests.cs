@@ -100,6 +100,30 @@ public sealed class CollectionEditorCurrentDraftTests
     }
 
     [Theory]
+    [InlineData("mdblist")]
+    [InlineData("tmdb")]
+    [InlineData("tmdb_list")]
+    public async Task SyncedCollectionRenamePreservesNumericStringLibraryIds(string kind)
+    {
+        using var wire = new Wire
+        {
+            Kind = kind,
+            SourceConfig = new() { ["library_ids"] = new object[] { "3", 7, "3", "invalid", "0", -1, "2147483648", null! } },
+        };
+        var client = wire.Client(); using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("mine");
+        var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth);
+        await vm.LoadExistingCommand.ExecuteAsync("created");
+        Assert.Null(vm.ErrorMessage); Assert.False(vm.IsReadOnly);
+        Assert.Equal([3, 7], vm.SelectedLibraryIds);
+        vm.Name = "Renamed";
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Null(vm.ErrorMessage); Assert.Equal(1, wire.PatchCount);
+        var patch = wire.LastPatch!.Value;
+        Assert.Equal("Renamed", patch.GetProperty("name").GetString());
+        Assert.Equal([3, 7], patch.GetProperty("library_ids").EnumerateArray().Select(value => value.GetInt32()));
+    }
+
+    [Theory]
     [InlineData(true, "title:desc")]
     [InlineData(true, "year:asc")]
     [InlineData(true, "")]
@@ -158,6 +182,7 @@ public sealed class CollectionEditorCurrentDraftTests
     {
         public bool FailFirstPatch; public string Kind = "smart"; public int CreateCount, PatchCount, DeletePosterCount; public JsonElement? LastPatch; public int? RestoredPosition;
         public bool? CollectionDefaultSort = true;
+        public Dictionary<string, object>? SourceConfig;
         public Dictionary<string, object>? SortConfig = new() { ["field"] = "title", ["order"] = "asc", ["mode"] = "manual_pins" };
         public SiloApiClient Client() { var client = new SiloApiClient(new HttpClient(this)); client.SetBaseUrl("https://collection-draft.invalid"); return client; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -171,7 +196,7 @@ public sealed class CollectionEditorCurrentDraftTests
                 PatchCount++; LastPatch = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)).RootElement.Clone();
                 if (FailFirstPatch && PatchCount == 1) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"metadata unavailable\"}") };
             }
-            var json = path == "/api/v2/collections" || path == "/api/v2/collections/created" ? JsonSerializer.Serialize(new { id = "created", creator_profile_id = "mine", name = "Draft", collection_type = Kind, source_url = "https://mdblist.com/lists/fixture/saved/", poster_url = "https://artwork.invalid/poster.jpg", sync_schedule = "0 0 * * *", sync_cadence = "daily", sort_config = SortConfig }) : "{}";
+            var json = path == "/api/v2/collections" || path == "/api/v2/collections/created" ? JsonSerializer.Serialize(new { id = "created", creator_profile_id = "mine", name = "Draft", collection_type = Kind, source_config = SourceConfig, source_url = Kind == "tmdb_list" ? "https://www.themoviedb.org/list/123" : "https://mdblist.com/lists/fixture/saved/", poster_url = "https://artwork.invalid/poster.jpg", sync_schedule = "0 0 * * *", sync_cadence = "daily", sort_config = SortConfig }) : "{}";
             if (path == "/api/v2/collections/capabilities")
                 json = CollectionDefaultSort is { } supported ? JsonSerializer.Serialize(new { collection_default_sort = supported }) : "{}";
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) }; response.Headers.ETag = new("\"draft-revision\""); return response;

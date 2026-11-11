@@ -303,19 +303,38 @@ public class CollectionsApi(SiloApiClient client)
     }
     private async Task<T> PatchAsync<T>(string path, object body, CancellationToken ct)
     {
-        var context = client.CaptureContext();
-        var tag = await RevisionAsync(path, ct);
-        var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
-        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-        _revisions.TryRemove(path, out _);
-        if (result.ETag != null) _revisions[path] = (context, result.ETag);
-        RememberBaseline(path, result.Body!, context);
-        return result.Body;
+        try
+        {
+            var context = client.CaptureContext();
+            var tag = await RevisionAsync(path, ct);
+            var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
+            if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+            _revisions.TryRemove(path, out _);
+            if (result.ETag != null) _revisions[path] = (context, result.ETag);
+            RememberBaseline(path, result.Body!, context);
+            return result.Body;
+        }
+        catch (ApiException ex) when (ex.StatusCode == 412)
+        {
+            // Surface the conflict, then let an explicit retry read the current revision.
+            _revisions.TryRemove(path, out _);
+            _baselines.TryRemove(path, out _);
+            throw;
+        }
     }
     private async Task PutAsync(string path, object body, CancellationToken ct)
     {
-        var tag = await RevisionAsync(path, ct);
-        await client.PutWithETagAsync<JsonElement>(path, V2Json.Body(body), tag, ct);
+        try
+        {
+            var tag = await RevisionAsync(path, ct);
+            await client.PutWithETagAsync<JsonElement>(path, V2Json.Body(body), tag, ct);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 412)
+        {
+            _revisions.TryRemove(path, out _);
+            _baselines.TryRemove(path, out _);
+            throw;
+        }
         _revisions.TryRemove(path, out _);
     }
     private async Task DeleteAsync(string path, CancellationToken ct)

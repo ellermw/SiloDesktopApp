@@ -28,14 +28,14 @@ public static class CollectionsWall
 
     public static bool IsLibrary(string show) => show.StartsWith(LibraryPrefix, StringComparison.Ordinal);
 
-    /// <summary>Only a lone library has a known combined server collection count; several may overlap.</summary>
+    /// <summary>A lone library or an entirely empty set has a known count; non-empty libraries may overlap.</summary>
     public static int? ServerCount(IReadOnlyList<ServerCollectionsLibrary> libraries)
-        => libraries.Count > 1 ? null : libraries.Count == 1 ? libraries[0].TotalCount : 0;
+        => libraries.All(library => library.TotalCount == 0) ? 0 : libraries.Count == 1 ? libraries[0].TotalCount : null;
 
     /// <summary>
     /// The pills. All, Mine, then Shared and Server when the account has them, then one pill per
     /// library once there is more than one. Totals are per library and a collection can be in
-    /// several, so only a lone library's total counts the server's collections.
+    /// several, so the combined count is known only for a lone library or when all totals are zero.
     /// </summary>
     public static IReadOnlyList<Pill> Pills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount)
     {
