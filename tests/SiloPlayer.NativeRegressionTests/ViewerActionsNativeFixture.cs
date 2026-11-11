@@ -85,9 +85,13 @@ internal static class ViewerActionsNativeFixture
         finally
         {
             foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(frame.XamlRoot)) popup.IsOpen = false;
-            frame.Content = null; await Task.Delay(1500);
-            field.SetValue(null, previous);
+            frame.Content = null; frame.BackStack.Clear(); frame.ForwardStack.Clear();
+            window.Content = null;
             window.Close();
+            // Closing the owned Window raises deferred Unloaded callbacks. Drain them
+            // while fixture services are still installed, before the host disposes DI.
+            await Task.Delay(1500);
+            field.SetValue(null, previous);
         }
     }
 
