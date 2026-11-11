@@ -20,7 +20,7 @@ using SiloPlayer.Views;
 
 internal static class MediaInteractionsNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent)
+    internal static async Task RunAsync(StackPanel parent, bool policyOnly = false)
     {
         var appServices = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var original = (IServiceProvider)appServices.GetValue(null)!;
@@ -31,6 +31,7 @@ internal static class MediaInteractionsNativeFixture
         appServices.SetValue(null, fixture);
         try
         {
+            if (policyOnly) { await PartyPolicyAsync(parent, handler, client); return; }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_INTERACTION_CASE") is "recent-unknown")
             { await RecentAndPasteAsync(parent, handler, client, auth); Program.Log("PASS: MEDIA_RECENT_UNKNOWN_COMPLETED"); return; }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_INTERACTION_CASE") is "candidate")
@@ -46,6 +47,64 @@ internal static class MediaInteractionsNativeFixture
             Program.Log("PASS: MEDIA_INTERACTIONS_COMPLETED all four awaited acceptance groups.");
         }
         finally { appServices.SetValue(null, original); }
+    }
+
+    private static async Task PartyPolicyAsync(StackPanel parent, Handler handler, SiloApiClient client)
+    {
+        foreach (var test in new[]
+        {
+            ("saved-on", "guest_play_pause", true, (bool?)null, false, false),
+            ("saved-off", "host_only", false, (bool?)null, false, false),
+            ("explicit-off", "guest_play_pause", true, (bool?)false, false, true),
+            ("read-failed", (string?)null, true, (bool?)null, false, false),
+            ("patch-failed", "guest_play_pause", true, (bool?)false, true, true),
+            ("save-explicit-after-unread", (string?)null, false, (bool?)true, false, true),
+            ("reopen-changed-elsewhere", "host_only", true, (bool?)null, false, true),
+        })
+        {
+            handler.SavedPolicy = test.Item2; handler.RoomPolicy = test.Item3 ? "guest_play_pause" : "host_only";
+            handler.FailPolicy = test.Item5; handler.Policy = null; handler.PolicyCalls = 0; handler.Stages = 0;
+            handler.RevokeAfterStage = true;
+            var page = new ItemDetailPage { Width = 900, Height = 720 }; parent.Children.Add(page);
+            using var navigation = new CancellationTokenSource();
+            try
+            {
+                page.ViewModel.Item = new MediaItemDetail { ContentId = "fixture-movie", Type = "movie", Title = test.Item1 };
+                Set(page, "_navigationCts", navigation); Set(page, "_currentContentId", "fixture-movie"); Set(page, "_playableContentId", "fixture-movie");
+                await LayoutAsync(page);
+                var opening = (Task)Invoke(page, "ShowStartPartyAsync")!;
+                ContentDialog? dialog = null; await UntilAsync(() => (dialog = OpenDialog(parent)) != null);
+                var pause = Descendants(dialog!).OfType<ToggleSwitch>().Single();
+                if (pause.IsOn != (test.Item2 == "guest_play_pause")) throw new InvalidOperationException(test.Item1 + ": switch did not show freshly read policy.");
+                if (test.Item4.HasValue) pause.IsOn = test.Item4.Value;
+                if (test.Item1 == "explicit-off") await MediaParityNativeFixture.CaptureAsync(dialog!, "party-policy-explicit-off.png");
+                ClickPrimary(dialog!); await UntilAsync(() => handler.Stages == 1);
+                if (handler.PolicyCalls != (test.Item6 ? 1 : 0)) throw new InvalidOperationException(test.Item1 + ": incorrect policy write count.");
+                if (test.Item6 && handler.Policy != (test.Item4 ?? test.Item2 == "guest_play_pause" ? "guest_play_pause" : "host_only"))
+                    throw new InvalidOperationException(test.Item1 + ": incorrect PATCH body.");
+                if (pause.IsOn != (handler.RoomPolicy == "guest_play_pause")) throw new InvalidOperationException(test.Item1 + ": switch misrepresented returned room.");
+                dialog!.Hide(); await opening;
+                Program.Log("PASS: actual Start Party policy " + test.Item1);
+            }
+            finally { Set(page, "_navigationCts", null); parent.Children.Remove(page); client.SetProfile("host"); }
+        }
+        // A held setting read cannot mount a sheet under a replacement owner.
+        handler.HoldSettings = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        handler.SettingsEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stalePage = new ItemDetailPage { Width = 900, Height = 720 }; parent.Children.Add(stalePage);
+        using var lifetime = new CancellationTokenSource();
+        try
+        {
+            stalePage.ViewModel.Item = new MediaItemDetail { ContentId = "fixture-movie", Type = "movie", Title = "Stale" };
+            Set(stalePage, "_navigationCts", lifetime); Set(stalePage, "_currentContentId", "fixture-movie"); Set(stalePage, "_playableContentId", "fixture-movie");
+            await LayoutAsync(stalePage);
+            var opening = (Task)Invoke(stalePage, "ShowStartPartyAsync")!;
+            await handler.SettingsEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            client.SetProfile("replacement"); handler.HoldSettings.TrySetResult(); await opening;
+            if (OpenDialog(parent) != null) throw new InvalidOperationException("Retired setting read opened a policy sheet.");
+            Program.Log("PASS: policy read retired on owner replacement; each open re-read its effective setting.");
+        }
+        finally { handler.HoldSettings.TrySetResult(); Set(stalePage, "_navigationCts", null); parent.Children.Remove(stalePage); }
     }
 
     private static async Task StartPartyAsync(StackPanel parent, Handler handler, SiloApiClient client)
@@ -251,6 +310,7 @@ internal static class MediaInteractionsNativeFixture
         {
             if (type == typeof(SiloApiClient)) return client;
             if (type == typeof(PlaybackApi)) return api;
+            if (type == typeof(SettingsApi)) return new SettingsApi(client);
             if (type == typeof(CatalogApi)) return new CatalogApi(client);
             if (type == typeof(HomeApi)) return new HomeApi(client);
             if (type == typeof(AuthService)) return auth;
@@ -262,15 +322,26 @@ internal static class MediaInteractionsNativeFixture
     }
     private sealed class Handler : HttpMessageHandler
     {
+        internal string? SavedPolicy = "host_only";
+        internal string RoomPolicy = "host_only";
+        internal bool FailPolicy;
+        internal int PolicyCalls;
+        internal TaskCompletionSource? HoldSettings, SettingsEntered;
         internal SiloApiClient Client = null!; internal bool RevokeAfterStage, FailStage, FailSuggestion; internal int Stages, StartCalls, SuggestionCalls; internal string? StageBody, Policy, JoinCode, JoinToken; internal TaskCompletionSource? DelayMemberState;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
             var body = request.Content == null ? null : await request.Content.ReadAsStringAsync(ct);
+            if (path == "/api/v2/settings/values/effective")
+            {
+                SettingsEntered?.TrySetResult();
+                if (HoldSettings != null) await HoldSettings.Task.WaitAsync(ct);
+                return SavedPolicy == null ? Failure(HttpStatusCode.ServiceUnavailable) : Response(new { items = new[] { new { key = "watch_party.guest_control_policy", value = SavedPolicy, source = "profile" } } });
+            }
             if (path.EndsWith("/capabilities")) return Response(new WatchTogetherCapabilities { State = "available", Allowed = true, StagedSelection = true, LobbyReady = true, MemberState = true, Picker = true, SelectionModeSwitch = true });
             if (path.Contains("/catalog/series/") && path.EndsWith("/episodes")) return Response(new { items = new[] { new Episode { ContentId = "fixture-episode-1", EpisodeNumber = 1, Title = "First" }, new Episode { ContentId = "fixture-episode-2", EpisodeNumber = 2, Title = "Second" } } });
             if (path.EndsWith("/staged-selection")) { Stages++; StageBody = body; if (FailStage) return Failure(); if (RevokeAfterStage) Client.SetProfile("fixture-revoked"); return Response(new WatchTogetherRoomResponse { Room = Snapshot(), RoomAccessToken = "fixture-proof" }); }
-            if (path.EndsWith("/policy")) { using var document = JsonDocument.Parse(body!); Policy = document.RootElement.GetProperty("guest_control_policy").GetString(); return Response(new WatchTogetherRoomResponse { Room = Snapshot() }); }
+            if (path.EndsWith("/policy")) { PolicyCalls++; using var document = JsonDocument.Parse(body!); Policy = document.RootElement.GetProperty("guest_control_policy").GetString(); if (FailPolicy) return Failure(); SavedPolicy = RoomPolicy = Policy!; var room = Snapshot(); room.GuestControlPolicy = RoomPolicy; return Response(new WatchTogetherRoomResponse { Room = room }); }
             if (path.EndsWith("/playback/start")) { StartCalls++; return Response(new WatchTogetherRoomResponse { Room = Snapshot() }); }
             if (path.EndsWith("/join")) { using var document = JsonDocument.Parse(body!); if (document.RootElement.TryGetProperty("code", out var code)) JoinCode = code.GetString(); if (document.RootElement.TryGetProperty("join_token", out var token)) JoinToken = token.GetString(); return Response(new WatchTogetherRoomResponse { Room = Snapshot(), RoomAccessToken = "fixture-proof" }); }
             if (path.EndsWith("/member-state")) { if (DelayMemberState != null) await DelayMemberState.Task.WaitAsync(ct); return Response(new WatchTogetherMemberStateResponse { Members = Snapshot().Members, Items = [new() { ContentId = "fixture-episode-2", Members = [new() { UserId = 2, ProfileId = "guest", State = "unseen" }] }] }); }
@@ -278,7 +349,7 @@ internal static class MediaInteractionsNativeFixture
             if (path.EndsWith("/picker")) return Response(new WatchTogetherPickerResponse());
             if (path.Contains("/home/layout")) return Response(new { sections = Array.Empty<object>() });
             if (path == "/api/v2/catalog") return Response(new { items = Array.Empty<object>() });
-            if (path == "/api/v2/watch-together/rooms") return Response(new WatchTogetherRoomResponse { Room = Snapshot(), RoomAccessToken = "fixture-proof" });
+            if (path == "/api/v2/watch-together/rooms") { var room = Snapshot(); room.GuestControlPolicy = RoomPolicy; return Response(new WatchTogetherRoomResponse { Room = room, RoomAccessToken = "fixture-proof" }); }
             if (path.Contains("/catalog/items/")) return Response(new MediaItemDetail { ContentId = "fixture-episode-1", Title = "The Fixture Episode", Type = "episode" });
             if (path.Contains("/rooms/")) { var id = path.Split('/').Last(); if (id == "forbidden") return Failure(HttpStatusCode.Forbidden); if (id == "unavailable") return Failure(HttpStatusCode.BadGateway); var room = Snapshot(); if (id == "ended") room.Phase = "ended"; return Response(new WatchTogetherRoomResponse { Room = room }); }
             throw new InvalidOperationException("Unexpected isolated media route " + path);

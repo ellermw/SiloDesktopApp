@@ -404,6 +404,7 @@ public partial class PlaybackManager : IDisposable
             },
             SubtitleUrls = plan.Subtitle.Inventory.Select(track => new SubtitleTrackInfo
             {
+                Id = track.StoredSubtitleId,
                 StreamIndex = track.StreamIndex,
                 ContainerTrackId = track.ContainerTrackId,
                 NativeSelectable = track.NativeSelectable,
@@ -437,6 +438,66 @@ public partial class PlaybackManager : IDisposable
             selectedTracks => { },
             failure: null,
             ct);
+
+    /// <summary>A no-change track replan refreshes authoritative inventory without claiming a viewer choice.</summary>
+    public async Task<PlaybackStartResponse?> RefreshSubtitleInventoryForOwnerAsync(double positionSeconds,
+        Func<PlaybackStartResponse, bool> canUseSession,
+        Func<PlaybackStartResponse, PlaybackStartResponse, bool> tryAdoptSession, CancellationToken ct = default)
+    {
+        await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var session = CurrentSession;
+            if (session == null || !canUseSession(session)) return null;
+            EnsureBufferingReplanOwner();
+            return await ReplanCoreForOwnerAsync("track_change", positionSeconds, _qualityPreferenceV3,
+                _ => { }, null, ct, () => canUseSession(session), replacement => tryAdoptSession(session, replacement))
+                .ConfigureAwait(false);
+        }
+        finally { _replanGuard.Release(); }
+    }
+
+    /// <summary>Accept a session-scoped announcement without selecting it or inventing a file ordinal.</summary>
+    public bool TryApplySubtitleTrack(PlaybackStartResponse session, PlaybackSubtitleInventoryV3 track)
+    {
+        lock (_trackIntentGate)
+        {
+            if (!ReferenceEquals(session, CurrentSession) || _currentPlanV3 == null ||
+                track.CombinedIndex < 0 || string.IsNullOrWhiteSpace(track.TrackId) || string.IsNullOrWhiteSpace(track.Delivery)) return false;
+            var matches = session.SubtitleUrls.Where(row => row.TrackId == track.TrackId ||
+                track.StoredSubtitleId is > 0 && row.Id == track.StoredSubtitleId ||
+                !string.IsNullOrWhiteSpace(track.SyncKey) && row.SyncKey == track.SyncKey).ToArray();
+            // Reordering/collisions need a complete inventory, including remapping
+            // the native caches. Never evict another identity at a reused ordinal.
+            if (matches.Length > 1 || matches.Length == 1 && matches[0].Index != track.CombinedIndex ||
+                session.SubtitleUrls.Any(row => row.Index == track.CombinedIndex && !matches.Contains(row))) return false;
+            if (matches.Length == 1 &&
+                (track.StoredSubtitleId is > 0 && matches[0].Id > 0 && matches[0].Id != track.StoredSubtitleId ||
+                 !string.IsNullOrWhiteSpace(track.SyncKey) && !string.IsNullOrWhiteSpace(matches[0].SyncKey) && matches[0].SyncKey != track.SyncKey))
+                return false;
+            var row = matches.SingleOrDefault() ?? new SubtitleTrackInfo();
+            var granted = matches.Length == 1 && (!string.IsNullOrWhiteSpace(session.SelectedSubtitleTrackId)
+                ? session.SelectedSubtitleTrackId == row.TrackId : session.SelectedSubtitleTrackIndex == row.Index);
+            row.Id = track.StoredSubtitleId ?? row.Id; row.TrackId = track.TrackId; row.SyncKey = track.SyncKey;
+            row.Index = track.CombinedIndex; row.MediaFileId = session.MediaFileId;
+            row.StreamIndex = track.StreamIndex; row.ContainerTrackId = track.ContainerTrackId;
+            row.NativeSelectable = track.NativeSelectable; row.Unplayable = track.Unplayable;
+            row.Language = track.Language ?? ""; row.Codec = track.Codec; row.NativeTitle = track.Label;
+            row.Label = string.IsNullOrWhiteSpace(track.Label) ? track.Language ?? "Subtitle" : track.Label;
+            row.Source = track.Source; row.Url = track.Url ?? ""; row.FontBundleUrl = track.FontBundleUrl;
+            row.Delivery = track.Delivery; row.Forced = track.Forced; row.HearingImpaired = track.HearingImpaired;
+            if (granted)
+            {
+                session.SelectedSubtitleTrackId = track.TrackId;
+                if (_currentPlanV3.SelectedTracks.Subtitle is { } selected) selected.Id = track.TrackId;
+                _currentPlanV3.Subtitle.TrackId = track.TrackId;
+            }
+            if (matches.Length == 0) session.SubtitleUrls = [.. session.SubtitleUrls, row];
+            _currentPlanV3.Subtitle.Inventory.RemoveAll(item => item.CombinedIndex == track.CombinedIndex);
+            _currentPlanV3.Subtitle.Inventory.Add(track);
+            return true;
+        }
+    }
 
     public Task<PlaybackStartResponse> ReplanAudioAsync(
         int audioTrackIndex,

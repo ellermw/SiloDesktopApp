@@ -910,11 +910,99 @@ public sealed partial class MpvOscRuntimeTests
             """, rawAss: true, resultProperty: "user-data/probe-result");
         Assert.Equal("true:true:true:true", result);
     }
+    [Theory]
+    [InlineData("stats_visible")]
+    [InlineData("compact_menu_visible")]
+    [InlineData("watch_party_end_confirm")]
+    public void EscapeClosesAnOpenSurfaceBeforeDismissingTimedIntro(string surface)
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            state.visible = true; state.intro_mode = 'ask'; state.marker_content_id = 'episode'
+            state.intro_start = 0; state.intro_end = 30; state.time_pos = 5
+            osc_test_check(); state['{{surface}}'] = true
+            keys['silo-menu-escape']()
+            local closed = not state['{{surface}}'] and state.skip_visible and not state.intro_prompt_resolved
+            keys['silo-menu-escape']()
+            mp.set_property('user-data/probe-result', tostring(closed)..':'..tostring(not state.skip_visible))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            keys = {}
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            """);
+        Assert.Equal("true:true", result);
+    }
+
+    [Fact]
+    public void ExpiredAskOfferFollowsControlsWithoutRenewingTimerOrCapturingSpaceAndFocus()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.visible = false; state.intro_mode = 'ask'; state.marker_content_id = 'episode'
+            state.intro_start = 0; state.intro_end = 30; state.time_pos = 5
+            osc_test_check(); state.intro_prompt_remaining = 0; osc_test_check()
+            local hidden = not state.skip_visible
+            state.controller_focus_name = 'btn_audio'; state.visible = true; osc_test_check()
+            local offered = state.skip_visible and state.skip_label == 'Skip Intro' and state.intro_prompt_remaining == 0
+                and state.skip_rect.y + state.skip_rect.h < state.layout.seek_bar.y
+            keys['silo-play-pause-space']()
+            local normal_input = state.controller_focus_name == 'btn_audio' and commands[#commands] == 'silo-pause-toggle'
+            state.visible = false; osc_test_check(); local hidden_again = not state.skip_visible
+            state.visible = true; osc_test_check()
+            local untimed = state.skip_visible and state.intro_prompt_remaining == 0
+            state.time_pos = 35; osc_test_check(); local left = not state.skip_visible and state.intro_expired_key == nil
+            state.time_pos = 5; osc_test_check(); local fresh = state.skip_visible and state.intro_prompt_remaining > 0
+            keys['silo-menu-escape'](); state.visible = false; osc_test_check(); state.visible = true; osc_test_check()
+            local dismissed = not state.skip_visible
+            handlers['osc-set-markers']('{"content_id":"next","intro_start":0,"intro_end":30}')
+            osc_test_check()
+            mp.set_property('user-data/probe-result', table.concat({tostring(hidden),tostring(offered),tostring(normal_input),tostring(hidden_again),tostring(untimed),tostring(left),tostring(fresh),tostring(dismissed),tostring(state.skip_visible)}, ':'))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers, keys, commands = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' then table.insert(commands, args[2]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("true:true:true:true:true:true:true:true:true", result);
+    }
+
+    [Fact]
+    public void IntroReofferCannotOutliveMarkerReplacementOrExplicitResolution()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.visible = true; state.intro_mode = 'ask'; state.marker_content_id = 'episode'
+            state.intro_start = 0; state.intro_end = 30; state.time_pos = 5
+            osc_test_check(); state.intro_prompt_remaining = 0; osc_test_check()
+            state.intro_resolved_keys[state.intro_prompt_key] = true; osc_test_check()
+            local resolved = not state.skip_visible
+            handlers['osc-set-markers']('{"content_id":"episode","intro_start":10,"intro_end":40}')
+            osc_test_check(); local replaced = not state.skip_visible and state.intro_expired_key == nil
+            state.time_pos = 15; osc_test_check()
+            local fresh = state.skip_visible and state.intro_prompt_remaining > 0
+            handlers['osc-set-intro-mode']('never'); osc_test_check()
+            mp.set_property('user-data/probe-result', tostring(resolved)..':'..tostring(replaced)..':'..tostring(fresh)..':'..tostring(not state.skip_visible))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true:true:true:true", result);
+    }
+
     [Fact]
     public void ExpiredAskOfferReturnsOnReentryWithoutPretendingTheIntroWasSkipped()
     {
         var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
             local state = osc_test_state
+            state.visible = false
             state.intro_mode = 'ask'; state.marker_content_id = 'episode'; state.intro_start = 0; state.intro_end = 30
             state.time_pos = 5; osc_test_check()
             state.intro_prompt_remaining = 0; osc_test_check()

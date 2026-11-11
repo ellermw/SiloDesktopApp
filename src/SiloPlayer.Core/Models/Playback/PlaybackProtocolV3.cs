@@ -240,6 +240,7 @@ public sealed class PlaybackSubtitleArtifactV3
 
 public sealed class PlaybackSubtitleInventoryV3
 {
+    public long? StoredSubtitleId { get; set; }
     public int? StreamIndex { get; set; }
     public string? ContainerTrackId { get; set; }
     public bool? NativeSelectable { get; set; }

@@ -48,6 +48,71 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         try
         {
             await Load(0, 0);
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_READY_ONLY") == "1")
+            {
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                var session = manager.CurrentSession!;
+                var intent = manager.CaptureLocalSubtitleIntent();
+                var writes = wire.PreferenceWrites;
+                var sid = mpv.GetPropertyDouble("sid");
+                using var announcement = JsonDocument.Parse("""
+                    {"session_id":"fixture","file_id":42,"subtitle_id":77,"track":{"track_id":"downloaded:77","stored_subtitle_id":77,"combined_index":9,"source":"downloaded","language":"ita","label":"Canonical bitmap","codec":"pgs","delivery":"burn_in_only","unplayable":true}}
+                    """);
+                await (Task)Call(service, "ApplySubtitleReadyAsync", announcement.RootElement)!;
+                var added = manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77);
+                Require(added.Index == 9 && added.TrackId == "downloaded:77" && added.Delivery == "burn_in_only" && added.Unplayable && added.Url == "",
+                    "Canonical announcement lost its stored ID, assigned ordinal or delivery restrictions.");
+                Require(SubtitleSyncPolicy.Key(added) == null, "A stored row ID invented timing-sync support.");
+                Require(manager.CaptureLocalSubtitleIntent() == intent && mpv.GetPropertyDouble("sid") == sid && wire.PreferenceWrites == writes,
+                    "Another viewer's added subtitle changed the native choice or saved preferences.");
+                wire.DownloadedAvailable = true;
+                await service.RefreshSubtitlesAfterAiAsync(42);
+                await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, null, null, null, null)!;
+                Require(ReferenceEquals(added, manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77)) &&
+                    added.Index == 9 && added.Delivery == "burn_in_only" && added.Unplayable && added.Label == "Canonical bitmap" && added.Url == "",
+                    "A stored-list refresh downgraded canonical metadata or replaced its row identity.");
+                using var stale = JsonDocument.Parse("""{"session_id":"old-session","file_id":42,"subtitle_id":77}""");
+                await (Task)Call(service, "ApplySubtitleReadyAsync", stale.RootElement)!;
+                Require(wire.Replans.Count == 0, "A stale session announcement replanned current playback.");
+                using var unresolved = JsonDocument.Parse("""{"session_id":"fixture","file_id":42,"subtitle_id":77}""");
+                service.SetPaused(true);
+                Set(service, "_switchingContent", true);
+                await (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement)!;
+                Require(wire.Replans.Count == 0, "An inventory refresh interrupted an active native load.");
+                await Load(0, 0); // Actual FILE_LOADED releases the deferred inventory read.
+                await Until(() => wire.Replans.Count == 1 && !service.IsLoading && Get(service, "_loadedMediaInitCts") == null && service.ActiveSubtitleServerIndex == 0);
+                Require(wire.Replans.Count == 1 && wire.Replans[0].GetProperty("operation").GetString() == "track_change" &&
+                    wire.Replans[0].GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32() == 0 &&
+                    manager.CurrentSession!.SubtitleUrls.Single(row => row.Id == 77).Index == 2 && service.IsPaused && mpv.IsPaused &&
+                    manager.CaptureLocalSubtitleIntent() == intent && wire.PreferenceWrites == writes,
+                    "No-track inventory refresh did not retain choice/pause or adopt authoritative combined index.");
+                using var invalid = JsonDocument.Parse("""{"session_id":"fixture","file_id":42,"subtitle_id":77,"track":{"combined_index":"invalid"}}""");
+                await (Task)Call(service, "ApplySubtitleReadyAsync", invalid.RootElement)!;
+                await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null);
+                Require(wire.Replans.Count == 2 && wire.PreferenceWrites == writes && manager.CaptureLocalSubtitleIntent() == intent,
+                    "Invalid optional track metadata did not recover through an intent-preserving authoritative replan.");
+                var accepted = manager.CurrentSession;
+                var nativeFile = Get(service, "_fileLoadGeneration");
+                wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var held = (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement)!;
+                await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                await Load(0, 0); // A native reload supersedes the outgoing announcement owner.
+                await Until(() => Get(service, "_loadedMediaInitCts") == null);
+                nativeFile = Get(service, "_fileLoadGeneration");
+                wire.HoldReplan.TrySetResult(); await held;
+                Require(ReferenceEquals(accepted, manager.CurrentSession) && Equals(nativeFile, Get(service, "_fileLoadGeneration")),
+                    "An announcement refreshed a replaced native file.");
+                wire.HoldReplan = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReplanEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                held = (Task)Call(service, "ApplySubtitleReadyAsync", unresolved.RootElement)!;
+                await wire.ReplanEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                api.SetProfile("replacement"); wire.HoldReplan.TrySetResult(); await held;
+                Require(ReferenceEquals(accepted, manager.CurrentSession) && Equals(nativeFile, Get(service, "_fileLoadGeneration")),
+                    "A retired announcement owner adopted or loaded its late refresh.");
+                Program.Log("PASS: canonical subtitle_ready identity/delivery, no-select native SID/preferences, metadata non-downgrade, session guard, authoritative no-track replan and late-owner retirement.");
+                return;
+            }
             var spanish = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
             await service.SetSubtitleTrackAndPersistAsync(2, "spa", spanish);
             await Until(() => service.ActiveSubtitleServerIndex == 1 && mpv.GetPropertyDouble("sid") > 0);
@@ -287,8 +352,10 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     HttpListenerContext request;
                     try { request = await _listener.GetContextAsync(); } catch (Exception) when (!_listener.IsListening) { break; }
                     Interlocked.Increment(ref Requests);
-                    var bytes = Encoding.UTF8.GetBytes("1\n00:00:00,000 --> 00:00:59,000\nNative subtitle adoption fixture\n");
-                    request.Response.ContentType = "application/x-subrip"; request.Response.ContentLength64 = bytes.Length;
+                    var media = request.Request.Url!.AbsolutePath == "/media.wav";
+                    var bytes = media ? File.ReadAllBytes(Path.Combine(Program.ResultDirectory, "oct24-subtitle-adoption.wav"))
+                        : Encoding.UTF8.GetBytes("1\n00:00:00,000 --> 00:00:59,000\nNative subtitle adoption fixture\n");
+                    request.Response.ContentType = media ? "audio/wav" : "application/x-subrip"; request.Response.ContentLength64 = bytes.Length;
                     await request.Response.OutputStream.WriteAsync(bytes); request.Response.Close();
                 }
             });
@@ -302,6 +369,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         public int PreferenceWrites;
         public int? AutomaticSubtitleSelection;
         public bool DownloadedAvailable;
+        public TaskCompletionSource? HoldReplan, ReplanEntered;
         private string SubtitleId => _subtitle == 2 ? "downloaded:77" : $"sub:{_file}:{_subtitle}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -323,6 +391,8 @@ internal static class Oct24SubtitleAdoptionNativeFixture
             else
             {
                 Replans.Add(body.Clone());
+                ReplanEntered?.TrySetResult();
+                if (HoldReplan != null) await HoldReplan.Task.WaitAsync(ct);
                 if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selection)) _subtitle = selection.GetProperty("index").GetInt32();
                 else if (body.GetProperty("operation").GetString() == "track_change") _subtitle = -1;
             }
@@ -338,7 +408,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                         inventory = Version(_file).SubtitleTracks!.Select(t => new { track_id = $"sub:{_file}:{t.Index}", combined_index = t.Index, language = t.Language, codec = t.Codec, source = "external", url = origin + $"/{t.Language}.srt", label = t.Language })
                             .Cast<object>().Concat(DownloadedAvailable ? new object[]
                             {
-                                new { track_id = "downloaded:77", sync_key = "stored-77", combined_index = 2, language = "ita", codec = "subrip", source = "downloaded", url = origin + "/ita.srt", label = "Italian downloaded" },
+                                new { track_id = "downloaded:77", stored_subtitle_id = 77, sync_key = "stored-77", combined_index = 2, language = "ita", codec = "subrip", source = "downloaded", delivery = "sidecar", url = origin + "/ita.srt", label = "Italian downloaded" },
                             } : []) },
                 },
             }));

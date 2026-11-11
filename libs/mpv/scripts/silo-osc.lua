@@ -3750,6 +3750,15 @@ local function update_skip_button_rect()
     local btn_h = math.floor(36 * sc)
     local btn_x = W - btn_w - math.floor(24 * sc)
     local btn_y = H - math.floor(96 * sc) - btn_h
+    -- The untimed Ask offer lives alongside the visible native HUD. Its
+    -- taller seek hit area must remain separate from the marker action.
+    if state.visible and state.intro_mode == "ask" and state.intro_expired_key
+        and state.skip_label == "Skip Intro" then
+        compute_layout()
+        if state.layout.seek_bar then
+            btn_y = math.min(btn_y, state.layout.seek_bar.y - math.floor(12 * sc) - btn_h)
+        end
+    end
 
     state.skip_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
     return state.skip_rect
@@ -4143,6 +4152,7 @@ check_skip_markers = function()
     local key = tostring(state.marker_content_id or "") .. ":" .. tostring(state.intro_start) .. ":" .. tostring(state.intro_end)
     if state.intro_prompt_key ~= key and not state.intro_pending and not state.intro_undo_origin then
         state.intro_prompt_key = key
+        state.intro_expired_key = nil
         state.intro_prompt_remaining = 5
         state.intro_resolved_keys = state.intro_resolved_keys or {}
         state.intro_prompt_resolved = state.intro_resolved_keys[key] == true
@@ -4165,6 +4175,7 @@ check_skip_markers = function()
         end
     end
     local in_intro = pos >= state.intro_start and pos < state.intro_end and state.intro_end > state.intro_start
+    if not in_intro or state.intro_mode ~= "ask" then state.intro_expired_key = nil end
     if state.intro_mode == "ask" and in_intro and not state.intro_was_inside and not state.intro_resolved_keys[key] then
         state.intro_prompt_remaining = 5
         state.intro_prompt_resolved = false
@@ -4177,6 +4188,9 @@ check_skip_markers = function()
     state.intro_prompt_tick = now
     if state.intro_prompt_remaining == 0 then
         state.intro_prompt_resolved = true
+        if state.intro_mode == "ask" and in_intro and not state.intro_resolved_keys[key] then
+            state.intro_expired_key = key
+        end
         if state.intro_undo_origin then state.intro_resolved_keys[state.intro_prompt_key] = true end
         state.intro_undo_origin = nil
     end
@@ -4221,7 +4235,9 @@ check_skip_markers = function()
     -- end > start to mean "marker present with duration"; earlier code
     -- also required start > 0, which wrongly hid Skip Intro whenever
     -- the intro began at position 0 (common on streaming-first shows).
-    if state.intro_mode ~= "never" and not state.intro_prompt_resolved and state.intro_end > state.intro_start then
+    local untimed_intro = state.intro_mode == "ask" and state.visible and state.intro_expired_key == key
+        and not state.intro_resolved_keys[key] and not state.intro_pending
+    if state.intro_mode ~= "never" and (not state.intro_prompt_resolved or untimed_intro) and state.intro_end > state.intro_start then
         if pos >= state.intro_start and pos < state.intro_end then
             state.skip_visible = true
             state.skip_label = "Skip Intro"
@@ -6008,6 +6024,7 @@ local function observe_properties()
         state.intro_pending = nil
         state.intro_undo_origin = nil
         state.intro_prompt_key = nil
+        state.intro_expired_key = nil
         state.intro_prompt_remaining = 5
         state.intro_prompt_resolved = false
         state.intro_was_inside = false
@@ -6571,15 +6588,18 @@ local function setup_key_bindings()
         move_controller_focus("right")
     end)
     mp.add_forced_key_binding("ESC", "silo-menu-escape", function()
-        if native_menu_input("cancel") then return end
-        if state.playback_failure_visible then
-            invoke_playback_failure_action("exit")
+        if close_keyboard_surface() then return end
+        if state.skip_visible and (state.skip_label == "Skip Intro" or state.skip_label == "Watch Intro")
+            and not state.intro_expired_key then
+            state.intro_resolved_keys[state.intro_prompt_key] = true
+            state.intro_prompt_resolved = true
+            state.intro_undo_origin = nil
+            state.skip_visible = false
+            render_skip_button()
             return
         end
         if buffering_quality_action("keep") then return end
-        if not close_keyboard_surface() then
-            mp.commandv("script-message", "silo-escape-unhandled")
-        end
+        mp.commandv("script-message", "silo-escape-unhandled")
     end)
     -- M = mute toggle
     mp.add_forced_key_binding("m", "silo-mute-toggle", function()

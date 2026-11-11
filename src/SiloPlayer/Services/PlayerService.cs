@@ -8810,6 +8810,7 @@ public partial class PlayerService : IDisposable
 
     public void Dispose()
     {
+        RetirePendingSubtitleReadyRefresh();
         RetireNativeMenus();
         ResetVideoPlaybackRateSession();
         _volumePersistenceDisposed = true;
@@ -8971,8 +8972,7 @@ public partial class PlayerService : IDisposable
                 ApplySubtitleTranslationFailed(ev.Payload);
                 break;
             case "subtitle_ready":
-                if (TryGetPayloadInt(ev.Payload, "file_id", out var readyFileId))
-                    _ = RefreshSubtitlesAfterAiForOwnerAsync(readyFileId, null, null);
+                _ = ApplySubtitleReadyAsync(ev.Payload);
                 break;
         }
     }
@@ -9340,18 +9340,29 @@ public partial class PlayerService : IDisposable
                 var previousDownloads = previousInventory
                     .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
                 var existing = previousInventory.Except(previousDownloads).ToList();
-                var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
+                var reserved = previousDownloads.Where(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
+                    !string.IsNullOrWhiteSpace(track.Delivery)).Concat(existing).ToArray();
+                var baseIndex = reserved.Length == 0 ? 0 : reserved.Max(track => track.Index) + 1;
                 downloaded = response.Subtitles.Select((entry, offset) =>
                 {
                     var syncKey = "stored-" + entry.Id;
-                    var matches = previousDownloads.Where(track => track.Id == entry.Id || track.SyncKey == syncKey).Take(2).ToArray();
+                    var unique = entry.Id > 0 && response.Subtitles.Count(item => item.Id == entry.Id) == 1;
+                    var matches = previousDownloads.Where(track => unique && (track.Id == entry.Id || track.SyncKey == syncKey)).Take(2).ToArray();
                     var previous = matches.Length == 1 ? matches[0] : null;
+                    // The stored-list response cannot downgrade canonical
+                    // identity, ordinal, URL or delivery facts from a plan/event.
+                    if (previous != null && !string.IsNullOrWhiteSpace(previous.TrackId) &&
+                        !string.IsNullOrWhiteSpace(previous.Delivery))
+                    {
+                        previous.Id ??= entry.Id;
+                        return previous;
+                    }
                     return new SubtitleTrackInfo
                     {
                         TrackId = previous?.TrackId,
                         SyncKey = previous?.SyncKey ?? syncKey,
                         Id = entry.Id,
-                        Unplayable = previous?.Unplayable ?? false,
+                        Unplayable = !unique || (previous?.Unplayable ?? false),
                         Delivery = previous?.Delivery,
                         Index = baseIndex + offset,
                         MediaFileId = mediaFileId,
@@ -9408,7 +9419,8 @@ public partial class PlayerService : IDisposable
                     track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
                 foreach (var retained in previousDownloads.Where(track => UnknownDownload(track)))
                 {
-                    retained.Index = baseIndex + downloaded.Count;
+                    if (string.IsNullOrWhiteSpace(retained.TrackId) || string.IsNullOrWhiteSpace(retained.Delivery))
+                        retained.Index = baseIndex + downloaded.Count;
                     downloaded.Add(retained);
                 }
 

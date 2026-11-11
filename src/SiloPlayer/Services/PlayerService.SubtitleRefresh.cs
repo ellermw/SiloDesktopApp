@@ -43,7 +43,10 @@ public partial class PlayerService
             var previousDownloads = previousInventory
                 .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
             var existing = previousInventory.Except(previousDownloads).ToList();
-            var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
+            var reserved = previousDownloads.Where(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
+                !string.IsNullOrWhiteSpace(track.Delivery)).Concat(existing).ToArray();
+            var baseIndex = reserved.Length == 0 ? 0 : reserved.Max(track => track.Index) + 1;
+            var canonicalStoredIds = new Dictionary<SubtitleTrackInfo, long>();
             var downloaded = response.Subtitles.Select((entry, offset) =>
             {
                 var syncKey = "stored-" + entry.Id;
@@ -51,6 +54,13 @@ public partial class PlayerService
                 var matches = previousDownloads.Where(track => unique &&
                     (track.Id == entry.Id || track.SyncKey == syncKey)).Take(2).ToArray();
                 var previous = matches.Length == 1 ? matches[0] : null;
+                // A stored-list response cannot downgrade canonical plan/event facts.
+                if (previous != null && !string.IsNullOrWhiteSpace(previous.TrackId) &&
+                    !string.IsNullOrWhiteSpace(previous.Delivery))
+                {
+                    canonicalStoredIds[previous] = entry.Id;
+                    return previous;
+                }
                 return new SubtitleTrackInfo
                 {
                     TrackId = previous?.TrackId,
@@ -76,6 +86,7 @@ public partial class PlayerService
             lock (manager.SubtitleInventorySyncRoot)
             {
                 if (!Current()) return;
+                foreach (var entry in canonicalStoredIds) entry.Key.Id ??= entry.Value;
 
                 // Keep row objects for uniquely identified downloads. Awaiting
                 // selections follow that identity (including a changed Index),
