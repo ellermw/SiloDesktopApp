@@ -4014,14 +4014,14 @@ local function update_next_episode_button_rect()
         return nil
     end
 
-    update_osd_dimensions()
+    compute_layout()
     local W = state.osd_width
-    local H = state.osd_height
     local sc = ui_scale()
     local btn_w = math.floor(180 * sc)
     local btn_h = math.floor(44 * sc)
     local btn_x = W - btn_w - 40
-    local btn_y = H - math.floor(96 * sc) - btn_h
+    -- Clear the whole seek pointer target, not just the thin visible rail.
+    local btn_y = state.layout.seek_bar.y - math.floor(12 * sc) - btn_h
 
     if state.skip_visible then
         btn_y = btn_y - (btn_h + 12)
@@ -4506,7 +4506,7 @@ render_translation_buffering = function()
 end
 
 -- Draw a pill "Next Episode ▶" button in the bottom-right corner above
--- the progress bar, offset left of the Skip button if both are visible.
+-- the seek target, stacked above the Skip button if both are visible.
 render_next_episode_button = function()
     if state.osc_disabled or not state.next_ep_visible then
         if state.next_ep_overlay then

@@ -4,6 +4,57 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Fact]
+    public void NextEpisodeStaysAboveSeekTargetAndBothActionsRemainClickableAfterResize()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            osc_test_layout()
+            state.duration, state.time_pos, state.next_ep_available = 100, 90, true
+            osc_test_check_next()
+            assert(not state.next_ep_visible, 'Next Episode appeared before the end threshold')
+            local native = mp.get_property_native
+            local dimensions
+            mp.get_property_native = function(name, fallback)
+                if name == 'osd-dimensions' then return dimensions end
+                return native(name, fallback)
+            end
+            for _, size in ipairs({{1920,1080}, {960,550}, {640,360}, {3840,2160}, {1280,720}, {1920,1080}}) do
+                dimensions = {w=size[1], h=size[2]}
+                state.time_pos, state.next_ep_available = 96, true
+                osc_test_check_next()
+                osc_test_render_next()
+                local button, seek = state.next_ep_rect, state.layout.seek_bar
+                assert(button and state.next_ep_overlay.data:find('Next Episode', 1, true), 'Next Episode was not rendered')
+                assert(button.y + button.h + 8 <= seek.y, 'Next Episode overlaps the timeline seek target')
+                assert(button.x >= 0 and button.y >= 0 and button.x + button.w <= dimensions.w, 'Next Episode left the viewport')
+                state.mouse_x, state.mouse_y = button.x + button.w / 2, seek.y + 1
+                osc_test_mouse_down()
+                assert(state.dragging_seek and next_intents == 0, 'Timeline click advanced the episode instead of seeking')
+                state.dragging_seek = false
+                state.mouse_x, state.mouse_y = button.x + button.w / 2, button.y + button.h - 1
+                osc_test_mouse_down()
+                assert(next_intents == 1 and not state.dragging_seek, 'Next Episode bottom edge did not advance exactly once')
+                assert(not state.next_ep_available and not state.next_ep_visible, 'Next Episode did not retire after advancing')
+                next_intents = 0
+            end
+            mp.set_property('user-data/next-episode-placement', 'six layouts: seek and next clicks passed')
+            """, rawAss: true, resultProperty: "user-data/next-episode-placement", beforeScript: """
+            next_intents = 0
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-next-episode' then
+                    next_intents = next_intents + 1
+                    return
+                end
+                return command(...)
+            end
+            """);
+        Assert.Equal("six layouts: seek and next clicks passed", result);
+    }
+
     // Match the application's P/Invoke library lifetime. Keep the module loaded
     // while still creating and destroying a fresh mpv context for every case.
     private static readonly Lazy<IntPtr> SharedLibrary = new(() =>
@@ -1267,7 +1318,7 @@ public sealed partial class MpvOscRuntimeTests
             {{beforeScript}}
             local source = assert(io.open([[{{script}}]], 'r'))
             local code = source:read('*a'); source:close()
-            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc'))()
+            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_check_next = check_next_episode_button; osc_test_render_next = render_next_episode_button; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc'))()
             mp.add_timeout(0.05, function()
                 local ok, err = pcall(function()
                     {{setup}}
