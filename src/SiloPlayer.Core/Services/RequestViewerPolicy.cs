@@ -31,6 +31,18 @@ public static class RequestViewerPolicy
     public static bool CanCancel(MediaRequest request) => request.Outcome == "active" &&
         (request.Status == "pending" || request.Status == "approved" && (request.Targets?.Count ?? 0) == 0);
 
+    /// <summary>
+    /// Mirrors the official WebUI's <c>canRemoveOwnRequest</c>: the request failed and no target delivered a
+    /// copy. Removal deletes the request; it is never a cancellation. Callers must already know the viewer
+    /// owns it (the My Requests list), and the server stays authoritative through its guarded DELETE.
+    /// </summary>
+    public static bool CanRemove(MediaRequest request) => request.Outcome == "failed" &&
+        !(request.Targets ?? []).Any(target => target.Status == "completed");
+
+    /// <summary>Removal is offered only when the connected server advertises <c>remove_failed_supported</c>.</summary>
+    public static bool CanRemove(RequestFeatureStatus features, MediaRequest request) =>
+        features.RemoveFailedSupported && CanRemove(request);
+
     public static bool CanFollow(RequestFeatureStatus features, RequestState request) =>
         features.FollowSupported && request.Reason == "already_requested" && request.RequestedByViewer == false &&
         (!string.IsNullOrEmpty(request.Status) || !string.IsNullOrEmpty(request.State)) && Label(request.Status, null, request.State) != "Available";

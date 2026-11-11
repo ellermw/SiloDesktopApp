@@ -96,7 +96,7 @@ public sealed partial class CollectionEditorPage
         _editorFooter.Visibility = !ViewModel.IsReadOnly && !_initializingEditor && !ViewModel.IsLoading && !ViewModel.IsNotFound && !ViewModel.IsLoadUnavailable && (!ViewModel.IsEditing || dirty > 0 || ViewModel.ErrorMessage != null) ? Visibility.Visible : Visibility.Collapsed;
         _editorFooter.Width = Math.Max(0, Math.Min(768, ActualWidth - (phone ? 32 : ActualWidth < 1024 ? 48 : 80)));
         _editorFooter.Margin = new(0, 0, 0, ActualWidth < 1024 ? 12 : 18);
-        var needsRule = ViewModel.SmartNeedsRule;
+        var needsRule = ViewModel.SmartNeedsRuleForSave;
         _editorFooterStatus.Text = ViewModel.ErrorMessage ?? (needsRule ? (ViewModel.IsEditing ? SiloPlayer.ViewModels.CollectionEditorViewModel.SmartRuleNeededMessage : phone ? "Add a rule" : "Not created yet   Add a rule, then create it.")
             : ViewModel.IsEditing ? $"{dirty} unsaved change{(dirty == 1 ? "" : "s")}" : phone ? "Not created yet" : _newSynced ? "Not created yet   Pick a list, then create it." : "Not created yet   Name it, then create it.");
         EditorActions.Spacing = 8;

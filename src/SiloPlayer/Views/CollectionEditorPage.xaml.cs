@@ -542,7 +542,7 @@ public sealed partial class CollectionEditorPage : Page
         // Disable the editor as a whole. Re-enabling every child overrides
         // source-specific locks and capability-disabled choices.
         EditorEditGuard.IsEnabled = editable && !ViewModel.IsLoading && !ViewModel.IsSaving;
-        SaveButton.IsEnabled = editable && !ViewModel.SmartNeedsRule;
+        SaveButton.IsEnabled = editable && !ViewModel.SmartNeedsRuleForSave;
 
         // Editing never permits changing the collection's fundamental type,
         // and only MDBList sources expose an editable source URL.

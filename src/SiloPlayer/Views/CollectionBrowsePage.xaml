@@ -25,8 +25,12 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Header: back button + title + item count -->
-        <Grid x:Name="CollectionHeaderGrid" Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Center" Margin="40,24,40,20" RowSpacing="12">
+        <!-- Hero backdrop: runs edge to edge behind the title and the filter bar and fades into the page.
+             Collapsed (the plain page) for a collection without a backdrop. -->
+        <controls:CollectionHeroBackdrop x:Name="HeroBackdrop" Grid.Row="0" Grid.RowSpan="2" Margin="0,0,0,-96" />
+
+        <!-- Header (pinned WebUI CollectionPageHero): back, eyebrow, title, byline, description, then Shuffle and the owner/Home actions. -->
+        <Grid x:Name="CollectionHeaderGrid" Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Stretch" Margin="40,24,40,20" RowSpacing="16" ColumnSpacing="16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -44,18 +48,28 @@
                 Background="Transparent"
                 BorderThickness="0"
                 Padding="8"
-                Margin="0,0,16,0"
-                VerticalAlignment="Center"
+                Margin="0,0,0,0"
+                VerticalAlignment="Top"
                 ToolTipService.ToolTip="Back">
                 <FontIcon Glyph="&#xE76B;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
             </Button>
 
-            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+            <StackPanel x:Name="CollectionTitleStack" Grid.Column="1" Spacing="0" MaxWidth="768" HorizontalAlignment="Left" VerticalAlignment="Center">
+                <TextBlock
+                    x:Name="CollectionEyebrow"
+                    Text="COLLECTION"
+                    FontSize="11.5"
+                    FontWeight="SemiBold"
+                    CharacterSpacing="220"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    Margin="0,0,0,14" />
                 <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                     <TextBlock
                         x:Name="TitleText"
                         FontSize="{StaticResource FontSizeDisplayLarge}"
-                        FontWeight="Bold"
+                        FontWeight="ExtraBold"
+                        CharacterSpacing="-40"
+                        TextWrapping="Wrap"
                         Foreground="{StaticResource PrimaryTextBrush}"
                         VerticalAlignment="Center" />
 
@@ -78,42 +92,53 @@
                         </StackPanel>
                     </Button>
                 </StackPanel>
-                <TextBlock
-                    x:Name="SubtitleText"
-                    FontSize="14"
-                    Foreground="{StaticResource SecondaryTextBrush}" />
+
+                <!-- "by Name · Read-only" under someone else's shared collection. -->
+                <TextBlock x:Name="CollectionByline" Visibility="Collapsed" FontSize="14" Margin="0,12,0,0"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
+                <!-- The curated description, three lines with More. It stays empty while the header loads. -->
+                <controls:ExpandableDescription x:Name="CollectionDescription" Visibility="Collapsed" Margin="0,12,0,0" />
+                <!-- The outcome of Sync now or a failed action from More actions; polite live region. -->
+                <TextBlock x:Name="CollectionActionStatus" Visibility="Collapsed" FontSize="13" TextWrapping="Wrap" Margin="0,12,0,0"
+                           Foreground="{StaticResource SecondaryTextBrush}" AutomationProperties.LiveSetting="Polite" />
             </StackPanel>
 
-            <Border
-                Grid.Column="2"
-                x:Name="CountPanel"
-                Background="Transparent"
-                BorderBrush="{StaticResource BorderBrush}"
-                BorderThickness="1,0,0,0"
-                CornerRadius="0"
-                Padding="20,0,0,0"
-                VerticalAlignment="Center"
-                Visibility="Collapsed">
-                <StackPanel Orientation="Horizontal" Spacing="7" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <Button x:Name="CollectionShuffleButton" Content="Shuffle" Click="CollectionShuffle_Click"
-                            Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999" Margin="0,0,12,0" VerticalAlignment="Center" />
-                    <TextBlock
-                        x:Name="ItemCountText"
-                        FontSize="30"
-                        FontWeight="ExtraLight"
-                        Foreground="{StaticResource PrimaryTextBrush}"
-                        VerticalAlignment="Center" />
-                    <TextBlock
-                        x:Name="ItemCountLabel"
-                        FontSize="12"
-                        FontWeight="Medium"
-                        CharacterSpacing="110"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
-                </StackPanel>
-            </Border>
+            <controls:WrapPanel x:Name="CollectionActionsPanel" Grid.Column="2" HorizontalSpacing="12" VerticalSpacing="12" VerticalAlignment="Bottom" HorizontalAlignment="Right">
+                <Button x:Name="CollectionShuffleButton" Click="CollectionShuffle_Click" Visibility="Collapsed"
+                        Style="{StaticResource AccentButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="22,10"
+                        AutomationProperties.Name="Shuffle">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE8B1;" FontSize="14" />
+                        <TextBlock Text="Shuffle" FontWeight="Bold" />
+                    </StackPanel>
+                </Button>
+                <!-- The collection's owner changes it; everyone else can add it to their own Home. -->
+                <Button x:Name="CollectionEditButton" Click="CollectionEdit_Click" Visibility="Collapsed"
+                        Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="20,10"
+                        Background="#1FFFFFFF" AutomationProperties.Name="Edit">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE70F;" FontSize="14" />
+                        <TextBlock Text="Edit" FontWeight="Bold" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="CollectionAddToHomeButton" Click="CollectionAddToHome_Click" Visibility="Collapsed"
+                        Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="20,10"
+                        Background="#1FFFFFFF" AutomationProperties.Name="Add to my Home">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE80F;" FontSize="14" />
+                        <TextBlock Text="Add to my Home" FontWeight="Bold" />
+                    </StackPanel>
+                </Button>
+                <!-- More actions: Sync now / Delete… for the owner, Add to my library page for everyone else. Collapsed when it would be empty. -->
+                <Button x:Name="CollectionMoreButton" Visibility="Collapsed" Width="44" Height="44" Padding="0"
+                        Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999"
+                        Background="#1FFFFFFF" AutomationProperties.Name="More actions" ToolTipService.ToolTip="More actions">
+                    <FontIcon Glyph="&#xE712;" FontSize="16" />
+                </Button>
+            </controls:WrapPanel>
         </Grid>
 
-        <Grid x:Name="CollectionToolbar" Grid.Row="1" MaxWidth="1400" HorizontalAlignment="Center" Margin="40,0,40,16" ColumnSpacing="10">
+        <Grid x:Name="CollectionToolbar" Grid.Row="1" MaxWidth="1400" HorizontalAlignment="Stretch" Margin="40,0,40,16" ColumnSpacing="10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
@@ -229,7 +254,7 @@
         <!-- Content grid -->
         <ScrollViewer Grid.Row="2" x:Name="ContentScroll" Padding="40,0,40,24"
                       ViewChanged="ContentScroll_ViewChanged">
-            <StackPanel Spacing="16" MaxWidth="1400" HorizontalAlignment="Center">
+            <StackPanel Spacing="16" MaxWidth="1400" HorizontalAlignment="Stretch">
                 <ItemsRepeater x:Name="PosterRepeater" ElementPrepared="PosterRepeater_ElementPrepared">
                     <ItemsRepeater.Layout>
                         <UniformGridLayout

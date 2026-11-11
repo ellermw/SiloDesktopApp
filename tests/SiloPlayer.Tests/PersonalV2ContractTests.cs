@@ -15,7 +15,7 @@ public sealed class PersonalV2ContractTests
     public async Task DownloadsCreationUsesGuardStringFileIdAndItemsEnvelope()
     {
         using var server = new Server(new Reply("download_create_single"));
-        var download = await new DownloadsApi(server.Client).CreateDownloadAsync(new DownloadRequest { ContentId = "movie", FileId = 42 });
+        var download = await new DownloadsApi(server.Client).CreateDownloadAsync(new DownloadRequest { ContentId = "movie", FileId = 42, ExpectedRevision = 0 });
         Assert.Equal("entry", download.Id);
         Assert.Equal(42, download.MediaFileId);
         var sent = server.Requests.Single();

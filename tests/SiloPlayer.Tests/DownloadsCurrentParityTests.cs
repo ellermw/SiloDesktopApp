@@ -51,6 +51,9 @@ public sealed class DownloadsCurrentParityTests
         Assert.Contains("SaveDirectDownloadAsync", itemPage);
         Assert.Contains("Choose a file to download", itemPage);
         Assert.Contains("CanCurrentUserDownload", itemPage);
+        Assert.Contains("ShowBatchDownloadDialogAsync", itemPage);
+        Assert.Contains("Download Series", itemPage);
+        Assert.Contains("Download Season", itemPage);
         Assert.DoesNotContain("MediaFileId = _selectedVersion.FileId", itemPage);
         Assert.Contains("dl.EffectiveQuality", downloadsPage);
         Assert.Contains("dl.DeliveryFormat", downloadsPage);

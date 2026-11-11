@@ -145,7 +145,7 @@ internal static class Oct24UiControlsNativeFixture
         await Until(() => Cards(page) == 45);
         wire.ExtraCollections = 1; catalog.InvalidateLibraryCache();
         await Until(() => Cards(page) == 47);
-        await MediaParityNativeFixture.CaptureAsync((FrameworkElement)page.FindName("ServerCollectionsSection"), "oct24-collections-full-grid.png");
+        await MediaParityNativeFixture.CaptureAsync((FrameworkElement)page.FindName("CollectionsWallPanel"), "oct24-collections-full-grid.png");
         parent.Children.Remove(page); attached.Remove(page);
         await Task.Delay(60); var reads = wire.AggregateReads;
         wire.ExtraCollections = 2; catalog.InvalidateLibraryCache(); await Task.Delay(100);

@@ -37,7 +37,7 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading
         && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title) && _rulesEditor?.IsValid != false
-        && !ViewModel.NeedsRule;
+        && !ViewModel.NeedsRuleForSave;
     public string PreviewCountText
         => ViewModel.PreviewTotal > 0
             ? $"{ViewModel.PreviewTotal:N0} matched"
@@ -61,6 +61,7 @@ public sealed partial class SmartCollectionWizardPage : Page
                 or nameof(ViewModel.IsLoading)
                 or nameof(ViewModel.IsPreviewing)
                 or nameof(ViewModel.PreviewTotal)
+                or nameof(ViewModel.PreviewScopeNote)
                 or nameof(ViewModel.IsReadOnly)
                 or nameof(ViewModel.Title))
             {
@@ -153,6 +154,9 @@ public sealed partial class SmartCollectionWizardPage : Page
         sortOptions.Add(("Progress", "progress"));
         sortOptions.Add(("Date Viewed", "date_viewed"));
         sortOptions.Add(("Plays", "plays"));
+        // Rendering a saved sort must not silently rewrite it, including future fields.
+        if (sortOptions.All(option => option.Value != ViewModel.SortField))
+            sortOptions.Add((QueryRulesEditor.Label(ViewModel.SortField), ViewModel.SortField));
         AddComboItems(SortFieldCombo, sortOptions, ViewModel.SortField);
         _wizardSortChoices = CatalogSortChoices.Capture(SortFieldCombo);
         RefreshSortChoices();
@@ -332,7 +336,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             ? Visibility.Visible
             : Visibility.Collapsed;
         NextSummaryText.Text = ViewModel.PreviewTotal > 0
-            ? $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")} match these filters"
+            ? $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")} {(ViewModel.PreviewScopeNote == null ? "match these filters" : "match in the previewed library")}"
             : "Choose filters to preview matching titles";
         UpdateContinueState();
     }
@@ -405,11 +409,11 @@ public sealed partial class SmartCollectionWizardPage : Page
         if (RuleNeededText != null)
         {
             RuleNeededText.Text = SmartCollectionWizardViewModel.RuleNeededMessage;
-            RuleNeededText.Visibility = ViewModel.NeedsRule && !ViewModel.IsReadOnly
+            RuleNeededText.Visibility = ViewModel.NeedsRuleForSave && !ViewModel.IsReadOnly
                 ? Visibility.Visible : Visibility.Collapsed;
         }
         if (ContinueButton == null) return;
-        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && (ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0);
+        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && !ViewModel.NeedsRuleForSave;
     }
 
     private async void PreviewScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)

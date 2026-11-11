@@ -77,15 +77,74 @@ public class ViewerActionsParityTests
     }
 
     [Fact]
-    public void WizardPopulationKeepsAnOpenRangeIncompleteBecauseOnlyBlankTextIsDropped()
+    public void PopulationDropsUnfilledDraftValues()
     {
-        var query = Rule("year", "between", new object[] { 1990d, "" });
-        query.Groups = QueryEditing.PopulatedGroups(query);
-        Assert.False(QueryEditing.HasCompleteRule(query));
-        var blank = Rule("genre", "contains", "");
-        blank.Groups = QueryEditing.PopulatedGroups(blank);
-        Assert.Empty(blank.Groups);
-        Assert.False(QueryEditing.HasCompleteRule(blank));
+        // An editor writes plain values, so these are drafts that filter nothing yet.
+        foreach (var value in new object?[] { "", "  ", Array.Empty<object>(),
+            new object[] { 1990d, "" }, new object?[] { 1990d, null }, new object[] { Array.Empty<object>() } })
+        {
+            var query = Rule("genre", "contains", value);
+            query.Groups = QueryEditing.PopulatedGroups(query);
+            Assert.Empty(query.Groups);
+            Assert.False(QueryEditing.HasCompleteRule(query));
+        }
+    }
+
+    [Theory]
+    [InlineData("exists")]
+    [InlineData("not_exists")]
+    [InlineData("future_operator")]
+    public void PopulationKeepsStoredRulesWhateverTheirValue(string op)
+    {
+        // A loaded value is decoded JSON, or missing for an operator that takes none. An
+        // unrelated edit must not delete such a rule from the saved collection.
+        Assert.Single(Assert.Single(QueryEditing.PopulatedGroups(Rule("status", op, null))).Rules);
+        foreach (var json in new[] { "{\"field\":\"status\",\"op\":\"" + op + "\"}", "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":null}",
+            "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":\"\"}", "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":[]}",
+            "{\"field\":\"status\",\"op\":\"" + op + "\",\"value\":[1990,\"\"]}" })
+        {
+            var received = JsonSerializer.Deserialize<QueryDefinition>("{\"groups\":[{\"match\":\"all\",\"rules\":[" + json + "]}]}", V2Json.Options)!;
+            foreach (var stored in new[] { received, QueryEditing.Clone(received) })
+            {
+                var rule = Assert.Single(Assert.Single(QueryEditing.PopulatedGroups(stored)).Rules);
+                Assert.Equal("status", rule.Field);
+                Assert.Equal(op, rule.Op);
+            }
+        }
+    }
+
+    [Fact]
+    public void PopulationKeepsFilledRulesAndGroupMetadataWithoutChangingTheDraft()
+    {
+        var draft = Rule("genre", "contains", "");
+        draft.Match = "any";
+        draft.Groups[0].Match = "any";
+        draft.Groups[0].AdditionalProperties = new() { ["future_group_option"] = JsonSerializer.SerializeToElement(3) };
+        draft.Groups[0].Rules.AddRange([
+            new() { Field = "year", Op = "gte", Value = 0 },
+            new() { Field = "watched", Op = "is", Value = false },
+            new() { Field = "year", Op = "between", Value = new[] { 1990, 1999 } },
+            new() { Field = "future_field", Op = "future_operator", Value = "filled",
+                AdditionalProperties = new() { ["future_rule_option"] = JsonSerializer.SerializeToElement(true) } }
+        ]);
+        draft.Groups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = "  " }] });
+        // As both editors build a query: populate the draft, then detach the result.
+        var query = QueryEditing.Clone(draft);
+        query.Groups = QueryEditing.Clone(new QueryDefinition { Groups = QueryEditing.PopulatedGroups(draft) }).Groups;
+        var group = Assert.Single(query.Groups);
+        Assert.Equal("any", query.Match);
+        Assert.Equal("any", group.Match);
+        Assert.Equal(3, group.AdditionalProperties!["future_group_option"].GetInt32());
+        Assert.Equal(4, group.Rules.Count);
+        Assert.Equal(0, Assert.IsType<JsonElement>(group.Rules[0].Value).GetInt32());
+        Assert.False(Assert.IsType<JsonElement>(group.Rules[1].Value).GetBoolean());
+        Assert.Equal("[1990,1999]", Assert.IsType<JsonElement>(group.Rules[2].Value).GetRawText());
+        Assert.Equal("future_operator", group.Rules[3].Op);
+        Assert.True(group.Rules[3].AdditionalProperties!["future_rule_option"].GetBoolean());
+        Assert.True(QueryEditing.HasCompleteRule(query));
+        Assert.Equal(2, draft.Groups.Count);
+        Assert.Equal(5, draft.Groups[0].Rules.Count);
+        Assert.Equal("", draft.Groups[0].Rules[0].Value);
     }
 
     // ----- G1: dedicated Continue Watching / Next Up page -----
@@ -321,15 +380,17 @@ public class ViewerActionsParityTests
         Assert.Contains("UpcomingBadgePresentation.Label(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
         Assert.Contains("UpcomingBadgePresentation.FixedPalette(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
         Assert.Contains("EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId)", Source("SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
-        // Smart collection editor and wizard both gate preview and save on the server's predicate.
+        // Both editors gate previews and creation, while allowing existing metadata edits.
         var editor = Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(RuleDefinition)", editor);
         Assert.Contains("SyncSkippedTitles = null", editor);
         Assert.Contains("if (SmartNeedsRule) { ClearPreview(); return; }", Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.Preview.cs"));
         var wizard = Source("SiloPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(_previewQuery)", wizard);
-        Assert.Contains("if (NeedsRule)", wizard);
-        Assert.Contains("!ViewModel.NeedsRule", Source("SiloPlayer", "Views", "SmartCollectionWizardPage.xaml.cs"));
+        Assert.Contains("if (NeedsRuleForSave)", wizard);
+        Assert.Contains("!IsEditing && NeedsRule", wizard);
+        Assert.Contains("!IsEditing && SmartNeedsRule", editor);
+        Assert.Contains("!ViewModel.NeedsRuleForSave", Source("SiloPlayer", "Views", "SmartCollectionWizardPage.xaml.cs"));
         // Trending worldwide offers the Show choice that writes the optional filter_type.
         var recipes = Source("SiloPlayer", "Views", "Dialogs", "RecipeGalleryDialog.cs");
         Assert.Contains("case \"trending_discover\":", recipes);
