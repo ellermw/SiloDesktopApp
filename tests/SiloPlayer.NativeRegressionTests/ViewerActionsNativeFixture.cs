@@ -290,9 +290,17 @@ internal static class ViewerActionsNativeFixture
         await vm.SaveCommand.ExecuteAsync(null);
         Check(wire.Creates.Count == posts && vm.ErrorMessage == "Add at least one rule.", "an incomplete smart collection is not posted: " + vm.ErrorMessage);
         await Fill("genre", "is", "Drama", "restored");
+        vm.RuleDefinition.Groups[0].Rules.Add(new() { Field = "year", Op = "gte", Value = "" });
+        vm.RuleDefinition.Groups[0].Rules.Add(new() { Field = "year", Op = "between", Value = new object[] { 1990, "" } });
+        await vm.RefreshPreviewAsync();
+        using (var preview = JsonDocument.Parse(wire.Previews[^1]))
+            CheckOnlyRule(preview.RootElement.GetProperty("query_definition").GetProperty("groups"), "genre", "is", "Drama");
+        Check(vm.RuleDefinition.Groups[0].Rules.Count == 3, "preview sanitization keeps the editor draft intact");
         await vm.SaveCommand.ExecuteAsync(null);
         Check(wire.Creates.Count == posts + 1 && wire.Creates[^1].Contains("\"collection_type\":\"smart\"") && wire.Creates[^1].Contains("Drama"),
             "a complete smart collection is created with its rule: " + (wire.Creates.Count > posts ? wire.Creates[^1] : "(none)"));
+        using (var created = JsonDocument.Parse(wire.Creates[^1]))
+            CheckOnlyRule(created.RootElement.GetProperty("query_definition").GetProperty("groups"), "genre", "is", "Drama");
         Program.Log("PASS: smart editor sends no preview or save until a rule is complete; zero, false and closed ranges count, blank and open ranges do not.");
     }
 
@@ -307,10 +315,12 @@ internal static class ViewerActionsNativeFixture
         await Task.Delay(900);
         var vm = page.ViewModel; var queries = () => wire.CatalogQueries.Count;
         var save = (Button)page.FindName("SaveButton");
+        var next = (Button)page.FindName("ContinueButton");
         var ruleNeeded = (TextBlock)page.FindName("RuleNeededText");
         vm.Title = "Wizard fixture"; await Task.Delay(100);
         Check(queries() == 0, "an untouched wizard sends no catalog preview: " + queries());
         Check(!page.CanSave, "Create Collection is not available without a rule");
+        Check(!next.IsEnabled, "Next: Details is unavailable without a rule");
         Check(!save.IsEnabled && ruleNeeded.Visibility == Visibility.Visible
             && ruleNeeded.Text == SmartCollectionWizardViewModel.RuleNeededMessage,
             "the disabled Save control explains the missing rule");
@@ -326,9 +336,21 @@ internal static class ViewerActionsNativeFixture
             await (Task)Call(page, "RunPreviewAsync", false)!; await Task.Delay(200);
             Check(save.IsEnabled == page.CanSave, "the actual Save control follows rule validity");
         }
+        async Task ReachDetails(string scenario)
+        {
+            Check(next.Visibility == Visibility.Visible && next.IsEnabled, scenario + " permits Next: Details");
+            Invoke(next);
+            await Until(() => save.Visibility == Visibility.Visible && ((FrameworkElement)page.FindName("DetailsStepPanel")).Visibility == Visibility.Visible,
+                scenario + " reaches Details");
+            Check(save.IsEnabled, scenario + " exposes an enabled Save control");
+        }
         await Preview("genre", "contains", "Drama");
         Check(queries() == 1 && page.CanSave, "a complete rule previews once and enables Create: queries " + queries());
         Check(save.IsEnabled && ruleNeeded.Visibility == Visibility.Collapsed, "a complete rule enables the Save control and clears its guidance");
+        Check(vm.PreviewTotal == 0 && !vm.IsPreviewing && vm.ErrorMessage == null, "the successful preview has zero matches");
+        await ReachDetails("a zero-match preview");
+        Invoke((Button)page.FindName("BackToFiltersButton"));
+        await Until(() => next.Visibility == Visibility.Visible, "back to Filters");
         vm.Title = "";
         Check(!save.IsEnabled, "clearing the title disables the Save control");
         vm.Title = "Wizard fixture";
@@ -342,15 +364,33 @@ internal static class ViewerActionsNativeFixture
         Check(queries() == 3 && page.CanSave, "false is a value in the wizard: queries " + queries());
         await Preview("year", "between", new object[] { 1990, "" });
         Check(queries() == 3 && !page.CanSave, "an open range sends nothing and blocks Create: queries " + queries());
+        Check(!next.IsEnabled, "an incomplete range blocks Next: Details");
         await Preview("genre", "contains", "");
         Check(queries() == 3 && !page.CanSave, "a blank rule sends nothing: queries " + queries());
+        Check(!next.IsEnabled, "a blank rule blocks Next: Details");
 
         var posts = wire.Creates.Count;
         await vm.SaveAsync();
         Check(wire.Creates.Count == posts && !string.IsNullOrEmpty(vm.ErrorMessage), "saving without a rule posts nothing: " + vm.ErrorMessage);
-        await Preview("genre", "contains", "Drama");
-        await vm.SaveAsync();
+        // Guided filters for a different field leave the wizard's initial empty genre row behind.
+        vm.RuleDefinition.Groups[0].Rules.Add(new() { Field = "genre", Op = "contains", Value = "" });
+        await Preview("year", "gte", 2000);
+        var groupsJson = Uri.UnescapeDataString(wire.CatalogQueries[^1].Split("&groups=", 2)[1].Split('&')[0]);
+        using (var preview = JsonDocument.Parse(groupsJson))
+            CheckOnlyRule(preview.RootElement, "year", "gte", "2000");
+        Check(vm.RuleDefinition.Groups[0].Rules.Count == 2, "preview sanitization keeps the wizard draft intact");
+
+        wire.FailCatalogPreview = true;
+        try { await Preview("genre", "contains", "Drama"); }
+        finally { wire.FailCatalogPreview = false; }
+        Check(vm.PreviewTotal == 0 && !vm.IsPreviewing && vm.ErrorMessage?.StartsWith("Preview failed:") == true,
+            "the preview failure leaves zero matches and an error");
+        await ReachDetails("a failed preview");
+        Invoke(save);
+        await Until(() => wire.Creates.Count == posts + 1 && !vm.IsSaving, "wizard collection created from Details");
         Check(wire.Creates.Count == posts + 1 && wire.Creates[^1].Contains("Drama"), "a complete wizard rule is posted: " + (wire.Creates.Count > posts ? wire.Creates[^1] : "(none)"));
+        using (var created = JsonDocument.Parse(wire.Creates[^1]))
+            CheckOnlyRule(created.RootElement.GetProperty("query_definition").GetProperty("groups"), "genre", "contains", "Drama");
         Program.Log("PASS: smart wizard previews and saves only with a complete rule (zero/false valid, blank and open ranges invalid).");
     }
 
@@ -496,6 +536,15 @@ internal static class ViewerActionsNativeFixture
 
     // ----- helpers -----
 
+    private static void CheckOnlyRule(JsonElement groups, string field, string op, string value)
+    {
+        Check(groups.GetArrayLength() == 1, "only the populated group is sent");
+        var rules = groups[0].GetProperty("rules");
+        Check(rules.GetArrayLength() == 1, "blank and incomplete rows are not sent alongside a complete rule");
+        Check(rules[0].GetProperty("field").GetString() == field && rules[0].GetProperty("op").GetString() == op
+            && rules[0].GetProperty("value").ToString() == value, "the filled rule survives sanitization");
+    }
+
     private static string Describe(object? value) => value switch { null => "null", string text => "'" + text + "'", _ => value.ToString() ?? "?" };
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException("Viewer actions: " + message); }
     private static async Task Until(Func<bool> ready, string what)
@@ -528,6 +577,7 @@ internal static class ViewerActionsNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal bool ContinuationHeld, ReadBeforeDismissal;
+        internal bool FailCatalogPreview;
         internal TaskCompletionSource ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<(string Path, string Body)> Dismissals = [];
         internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [];
@@ -557,7 +607,14 @@ internal static class ViewerActionsNativeFixture
             }
             if (path == "/api/v2/catalog")
             {
-                if (query.Contains("source=query")) CatalogQueries.Add(query);
+                if (query.Contains("source=query"))
+                {
+                    CatalogQueries.Add(query);
+                    if (FailCatalogPreview) return new(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new StringContent("{\"code\":\"dependency_unavailable\",\"message\":\"Preview unavailable\"}")
+                    };
+                }
                 var section = Query(query, "section_id");
                 if (section.StartsWith("race-") || section.StartsWith("off-prefix-"))
                 {

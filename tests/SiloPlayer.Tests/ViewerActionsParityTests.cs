@@ -76,16 +76,53 @@ public class ViewerActionsParityTests
         Assert.Equal(expected, QueryEditing.HasCompleteRule(QueryEditing.Clone(received)));
     }
 
-    [Fact]
-    public void WizardPopulationKeepsAnOpenRangeIncompleteBecauseOnlyBlankTextIsDropped()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PopulationDropsUnfilledValuesBeforeAndAfterCloning(bool clone)
     {
-        var query = Rule("year", "between", new object[] { 1990d, "" });
+        foreach (var value in new object?[] { "", "  ", null, Array.Empty<object>(),
+            new object[] { 1990d, "" }, new object?[] { 1990d, null }, new object[] { Array.Empty<object>() } })
+        {
+            var query = Rule("genre", "contains", value);
+            if (clone) query = QueryEditing.Clone(query);
+            query.Groups = QueryEditing.PopulatedGroups(query);
+            Assert.Empty(query.Groups);
+            Assert.False(QueryEditing.HasCompleteRule(query));
+        }
+    }
+
+    [Fact]
+    public void PopulationKeepsFilledRulesAndGroupMetadataWithoutChangingTheDraft()
+    {
+        var draft = Rule("genre", "contains", "");
+        draft.Match = "any";
+        draft.Groups[0].Match = "any";
+        draft.Groups[0].AdditionalProperties = new() { ["future_group_option"] = JsonSerializer.SerializeToElement(3) };
+        draft.Groups[0].Rules.AddRange([
+            new() { Field = "year", Op = "gte", Value = 0 },
+            new() { Field = "watched", Op = "is", Value = false },
+            new() { Field = "year", Op = "between", Value = new[] { 1990, 1999 } },
+            new() { Field = "future_field", Op = "future_operator", Value = "filled",
+                AdditionalProperties = new() { ["future_rule_option"] = JsonSerializer.SerializeToElement(true) } }
+        ]);
+        draft.Groups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = null }] });
+        var query = QueryEditing.Clone(draft);
         query.Groups = QueryEditing.PopulatedGroups(query);
-        Assert.False(QueryEditing.HasCompleteRule(query));
-        var blank = Rule("genre", "contains", "");
-        blank.Groups = QueryEditing.PopulatedGroups(blank);
-        Assert.Empty(blank.Groups);
-        Assert.False(QueryEditing.HasCompleteRule(blank));
+        var group = Assert.Single(query.Groups);
+        Assert.Equal("any", query.Match);
+        Assert.Equal("any", group.Match);
+        Assert.Equal(3, group.AdditionalProperties!["future_group_option"].GetInt32());
+        Assert.Equal(4, group.Rules.Count);
+        Assert.Equal(0, Assert.IsType<JsonElement>(group.Rules[0].Value).GetInt32());
+        Assert.False(Assert.IsType<JsonElement>(group.Rules[1].Value).GetBoolean());
+        Assert.Equal("[1990,1999]", Assert.IsType<JsonElement>(group.Rules[2].Value).GetRawText());
+        Assert.Equal("future_operator", group.Rules[3].Op);
+        Assert.True(group.Rules[3].AdditionalProperties!["future_rule_option"].GetBoolean());
+        Assert.True(QueryEditing.HasCompleteRule(query));
+        Assert.Equal(2, draft.Groups.Count);
+        Assert.Equal(5, draft.Groups[0].Rules.Count);
+        Assert.Equal("", draft.Groups[0].Rules[0].Value);
     }
 
     // ----- G1: dedicated Continue Watching / Next Up page -----

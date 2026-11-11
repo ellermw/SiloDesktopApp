@@ -795,6 +795,7 @@ public partial class CollectionEditorViewModel : ObservableObject
     private QueryDefinition BuildQueryDefinition()
     {
         var query = SiloPlayer.Core.Services.QueryEditing.Clone(RuleDefinition);
+        query.Groups = SiloPlayer.Core.Services.QueryEditing.PopulatedGroups(query);
         if (query.MediaScope == "all") query.MediaScope = null;
         return query;
     }

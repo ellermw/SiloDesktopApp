@@ -409,7 +409,7 @@ public sealed partial class SmartCollectionWizardPage : Page
                 ? Visibility.Visible : Visibility.Collapsed;
         }
         if (ContinueButton == null) return;
-        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && (ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0);
+        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && !ViewModel.NeedsRule;
     }
 
     private async void PreviewScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)

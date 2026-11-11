@@ -75,7 +75,8 @@ public static class QueryEditing
         {
             Match = group.Match,
             AdditionalProperties = group.AdditionalProperties,
-            // Only newly added empty text drafts are omitted. Stored null/unknown operators survive unrelated edits.
-            Rules = group.Rules.Where(rule => rule.Value is not string text || !string.IsNullOrWhiteSpace(text)).ToList()
+            // Cloned and loaded values are JsonElements. Omit unfilled drafts in either
+            // representation, while retaining filled values and unknown operators.
+            Rules = group.Rules.Where(rule => IsFilledValue(rule.Value)).ToList()
         }).Where(group => group.Rules.Count > 0).ToList();
 }
