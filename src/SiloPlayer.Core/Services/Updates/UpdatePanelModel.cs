@@ -77,15 +77,14 @@ public static class UpdatePanelPlacement
     }
 
     /// <summary>
-    /// The panel is part of Silo's window: it shows while Silo (or the panel) is in front and no
-    /// video is playing over it. Once Silo's window is gone (it closed to restart), the panel stays
-    /// visible so the final status is never lost. An unknown foreground (secure desktop during
-    /// administrator approval) keeps the current state.
+    /// The panel stays visible with Silo regardless of focus. Native ownership keeps it above
+    /// Silo while normal foreground applications can cover it. Playback and minimization hide it.
+    /// Once Silo closes to restart, the final status stays visible.
     /// </summary>
     public static bool ShouldShow(bool ownerAlive, bool ownerMinimized, bool playback, bool? foregroundIsSilo, bool visibleNow)
     {
         if (!ownerAlive) return true;
         if (ownerMinimized || playback) return false;
-        return foregroundIsSilo ?? visibleNow;
+        return true;
     }
 }

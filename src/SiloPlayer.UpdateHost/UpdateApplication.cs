@@ -32,7 +32,7 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         Resources.MergedDictionaries.Add(new XamlControlsResources());
-        view=new UpdateProgressWindow(options.Restart,options.Owner);window=view;
+        view=new UpdateProgressWindow(options.Restart,options.Owner,options.AwaitPresentation);window=view;
         cancel=view.Cancel;
         cancel.Click+=(_,_)=>{if(closeAllowed)window.Close();else if(!committed)lifetime.Cancel();};
         window.AppWindow.Closing+=(_,e)=>{if(!closeAllowed){e.Cancel=true;if(!committed)lifetime.Cancel();}};
@@ -49,6 +49,7 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
         using var app=new NamedPipeClientStream(".",options.AppPipe,PipeDirection.InOut,PipeOptions.Asynchronous);
         NamedPipeServerStream? worker=null;
         Task<UpdateHostMessage>? appFrame=null;
+        var presentationAccepted=!options.AwaitPresentation;
         try
         {
             var hostImage=Environment.ProcessPath!;
@@ -59,7 +60,10 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
             using var mutationMutex=UpdatePipeIdentity.CreateMutationMutex(root);
             await app.ConnectAsync(ct);
             UpdatePipeIdentity.Authenticate(app,false,options.ParentPid,options.ParentStart,oldImage);
-            await UpdateHostProtocol.WriteAsync(app,new("visible"),ct);
+            if(options.AwaitPresentation)
+                await UpdatePresentationHandoff.OfferAsync(app,WinRT.Interop.WindowNative.GetWindowHandle(view!).ToInt64(),()=>
+                {presentationAccepted=true;view!.StartTracking();},ct);
+            else await UpdateHostProtocol.WriteAsync(app,new("visible"),ct);
             if(options.AwaitDownload)
             {
                 // Show the client's download here, then request elevation only for a complete package.
@@ -99,7 +103,7 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
             using var current=Process.GetCurrentProcess();
             var start=new ProcessStartInfo(hostImage){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden,WorkingDirectory=Path.GetDirectoryName(hostImage)!};
             foreach(var arg in options.Arguments(true,current.Id,current.StartTime.ToUniversalTime().Ticks))start.ArgumentList.Add(arg);
-            using var elevated=Process.Start(start)??throw new IOException("The update helper could not start.");
+            using var elevated=await Task.Run(()=>Process.Start(start)??throw new IOException("The update helper could not start."));
             await worker.WaitForConnectionAsync(ct);
             UpdatePipeIdentity.Authenticate(worker,true,elevated.Id,UpdatePipeIdentity.InspectProcess(elevated.Id).StartUtcTicks,hostImage);
             await UpdateHostProtocol.WriteAsync(worker,new("visible"),ct);
@@ -142,6 +146,8 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
         }
         catch(Exception ex)
         {
+            // A canceled/failed hidden handoff belongs to the client's safe view. Never create an orphan failure panel.
+            if(!presentationAccepted){closeAllowed=true;window!.Close();return;}
             try{if(app.IsConnected)await UpdateHostProtocol.WriteAsync(app,new("failed",Text:ex is System.ComponentModel.Win32Exception{NativeErrorCode:1223}?"Administrator approval was canceled. Silo remains open.":"The update could not finish. Silo's previous version is preserved."),CancellationToken.None);}catch{}
             view?.ShowFailure(committed ? "Silo has not confirmed startup yet. Your previous version is preserved; launch Silo again to recover if the new version exited. No running app will be closed."
                 : ex is UpdateClientFailure{Message.Length:>0} client ? client.Message
