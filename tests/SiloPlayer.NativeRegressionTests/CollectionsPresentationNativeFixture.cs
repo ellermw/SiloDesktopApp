@@ -542,6 +542,12 @@ internal static class CollectionsPresentationNativeFixture
             {
                 Border Card() => Descendants<Border>(Board(page)).First(border => border.Tag is SiloPlayer.Core.Models.Collections.Collection { Name: "Weekend picks 1" });
                 await Until(() => Names(page).Contains("Weekend picks 1") && Card().ContextFlyout is MenuFlyout menu && Entries(menu).Any(item => item.Text == "Sync now"), () => string.Join(",", Names(page)));
+                page.ViewModel.ServerLibraries.Add(new()
+                {
+                    LibraryId = 1, LibraryName = "Movies", TotalCount = 1,
+                    Collections = [new() { Id = "own-1", Title = "Included own" }],
+                });
+                await Until(() => PillCount(page, "Server") == "1");
                 wire.SyncStatus = "failed"; wire.SyncMessage = "No key";
                 Choose(Entries((MenuFlyout)Card().ContextFlyout).Single(item => item.Text == "Sync now"));
                 await Until(() => wire.SyncRequests.Count == 1 && page.ViewModel.ErrorMessage == "Collection sync failed: No key", () => "error=" + page.ViewModel.ErrorMessage);
@@ -566,6 +572,9 @@ internal static class CollectionsPresentationNativeFixture
                 Invoke(primary);
                 await Until(() => !Dialogs(page.XamlRoot).Any() && !Names(page).Contains("Weekend picks 1"), () => string.Join(",", Names(page)));
                 Check(wire.DeleteRequests.Count == 2 && wire.DeleteRequests[1] == "/api/v2/collections/own-1 if-match=\"rev-1\"", "The card delete carried the revision: " + string.Join(",", wire.DeleteRequests));
+                Check(!Names(page).Contains("Included own") && PillCount(page, "Server") == "0"
+                    && page.ViewModel.GetServerCollectionCards().All(card => card.Collection.Id != "own-1"),
+                    "Deleting an included personal collection also removes its server card and count.");
             }
             finally { foreach (var open in Dialogs(page.XamlRoot).ToList()) open.Hide(); parent.Children.Remove(frame); }
             Log("PASS: Collections card menu Sync now failure text and Delete… confirmation (text, cancel, refusal, confirm) share the hero's policy.");
@@ -1072,7 +1081,9 @@ internal static class CollectionsPresentationNativeFixture
             else if (path.StartsWith("/api/v2/collections/") && request.Method == HttpMethod.Get && !path.Contains("/preferences"))
             {
                 Interlocked.Increment(ref SnapshotReads);
-                var snapshot = Reply(PersonalSnapshot ?? new { id = path.Split('/').Last(), creator_profile_id = "me", name = "Snapshot" });
+                var id = Uri.UnescapeDataString(path.Split('/').Last());
+                var listed = Personal().FirstOrDefault(item => JsonSerializer.SerializeToElement(item).GetProperty("id").GetString() == id);
+                var snapshot = Reply(PersonalSnapshot ?? listed ?? new { id, creator_profile_id = "me", name = "Snapshot" });
                 snapshot.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"rev-1\"");
                 return snapshot;
             }

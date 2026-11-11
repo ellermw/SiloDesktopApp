@@ -256,6 +256,98 @@ public sealed class CollectionsV2Tests
     }
 
     [Theory]
+    [InlineData("group", false)]
+    [InlineData("group", true)]
+    [InlineData("group-order", false)]
+    [InlineData("collection-order", false)]
+    [InlineData("grouped-order", false)]
+    [InlineData("personal-order", false)]
+    public async Task LateOlderListPreservesGroupAndOrderWriteBaselines(string operation, bool withETag)
+    {
+        var grouped = operation == "grouped-order";
+        var originalIds = operation == "group-order" ? new[] { "g1", "g2" } : new[] { "a", "b" };
+        var reorderedIds = originalIds.Reverse().ToArray();
+        object Group(string id, string name, int sort) => new { id, name, slug = id, default_sort_mode = "manual", sort_order = sort };
+        string ListBody(bool changed) => JsonSerializer.Serialize(new
+        {
+            items = (changed && operation != "group" && operation != "group-order" ? reorderedIds : new[] { "a", "b" })
+                .Select((id, sort) => new { id, group_id = grouped ? "g1" : null, sort_order = sort }).ToArray(),
+            groups = new[]
+            {
+                Group("g1", changed && operation == "group" ? "Renamed" : "Original", changed && operation == "group-order" ? 1 : 0),
+                Group("g2", "Other", changed && operation == "group-order" ? 0 : 1),
+            },
+        });
+        var olderList = ListBody(false);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var listReads = 0;
+        var revisionReads = 0;
+        var writes = 0;
+        var client = new SiloApiClient(new HttpClient(new AsyncHandler(async request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/v2/collections")
+            {
+                if (++listReads == 2)
+                {
+                    started.TrySetResult();
+                    return await release.Task;
+                }
+                return Json(ListBody(writes > 0));
+            }
+            var isGroup = operation == "group";
+            var expectedPath = isGroup ? "/api/v2/collections/groups/g1"
+                : operation == "group-order" ? "/api/v2/collections/groups/order" : "/api/v2/collections/order";
+            Assert.Equal(expectedPath, request.RequestUri.AbsolutePath);
+            if (request.Method == HttpMethod.Get)
+            {
+                revisionReads++;
+                Assert.Equal(grouped ? "?group_id=g1" : "", request.RequestUri.Query);
+                var response = Json(isGroup
+                    ? JsonSerializer.Serialize(Group("g1", writes > 0 ? "Renamed" : "Original", 0))
+                    : JsonSerializer.Serialize(new { ordered_ids = writes > 0 ? reorderedIds : originalIds }));
+                response.Headers.ETag = new(writes > 0 ? "\"B\"" : "\"A\"");
+                return response;
+            }
+            Assert.Equal(isGroup ? HttpMethod.Patch : HttpMethod.Put, request.Method);
+            Assert.Equal("", request.RequestUri.Query);
+            Assert.Equal(writes > 0 ? "\"B\"" : "\"A\"", request.Headers.IfMatch.Single().Tag);
+            writes++;
+            var result = Json(isGroup ? JsonSerializer.Serialize(Group("g1", "Renamed", 0)) : "{}");
+            if (isGroup && withETag) result.Headers.ETag = new("\"B\"");
+            return result;
+        })));
+        client.SetBaseUrl("https://fixture.invalid");
+        var api = new CollectionsApi(client);
+        Task Write() => operation switch
+        {
+            "group" => api.UpdateCollectionGroupAsync("g1", "Renamed"),
+            "group-order" => api.ReorderCollectionGroupsAsync(reorderedIds),
+            _ => api.ReorderCollectionsAsync(reorderedIds, grouped ? "g1" : null),
+        };
+        await api.GetCollectionsAsync();
+        var lateRead = api.GetCollectionsAsync();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (operation == "personal-order")
+                await api.ReorderPersonalCollectionsAsync(await api.PreparePersonalOrderAsync(originalIds), reorderedIds);
+            else
+                await Write();
+            release.SetResult(Json(olderList));
+            await lateRead;
+            await Write();
+            Assert.Equal(2, writes);
+            Assert.Equal(withETag ? 1 : 2, revisionReads);
+        }
+        finally
+        {
+            release.TrySetResult(Json(olderList));
+            await lateRead;
+        }
+    }
+
+    [Theory]
     [InlineData("patch")]
     [InlineData("put")]
     [InlineData("delete")]

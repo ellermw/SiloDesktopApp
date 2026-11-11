@@ -1012,7 +1012,9 @@ public sealed partial class CollectionsPage : Page
         => await CollectionDeleteDialog.ShowAsync(XamlRoot, collection.Name, collection.IsShared, async () =>
         {
             await ViewModel.DeleteCollectionCommand.ExecuteAsync(collection.Id);
-            return ViewModel.Collections.All(candidate => candidate.Id != collection.Id) ? null : ViewModel.ErrorMessage ?? "The collection could not be deleted.";
+            return ViewModel.Collections.All(candidate => candidate.Id != collection.Id)
+                && ViewModel.GetServerCollectionCards().All(card => card.Collection.Id != collection.Id)
+                ? null : ViewModel.ErrorMessage ?? "The collection could not be deleted.";
         });
 }
 
