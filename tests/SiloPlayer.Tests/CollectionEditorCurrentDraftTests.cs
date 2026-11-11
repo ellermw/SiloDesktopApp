@@ -147,7 +147,9 @@ public sealed class CollectionEditorCurrentDraftTests
         Assert.Null(vm.ErrorMessage); Assert.Equal(1, wire.PatchCount);
         var patch = wire.LastPatch!.Value;
         Assert.Equal("Renamed", patch.GetProperty("name").GetString());
-        Assert.Equal([3, 7], patch.GetProperty("library_ids").EnumerateArray().Select(value => value.GetInt32()));
+        // The v2 write contract uses string IDs, even when legacy source_config
+        // mixes numeric and numeric-string values. Invalid IDs stay filtered out.
+        Assert.Equal(["3", "7"], patch.GetProperty("library_ids").EnumerateArray().Select(value => value.GetString()));
     }
 
     [Theory]

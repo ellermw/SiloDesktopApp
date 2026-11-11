@@ -17,6 +17,53 @@ public sealed partial class CollectionBrowsePage
 {
     private CancellationTokenSource? _headerCts;
     private CollectionPageHeader _header = CollectionPageHeader.Empty;
+    private Microsoft.UI.Composition.SpriteVisual? _collectionTitleShadow;
+    private Microsoft.UI.Composition.DropShadow? _collectionTextShadow;
+    private bool _heroEffectsInitialized;
+
+    private void InitializeHeroEffects()
+    {
+        if (_heroEffectsInitialized) return;
+        _heroEffectsInitialized = true;
+        foreach (var button in new[] { CollectionEditButton, CollectionAddToHomeButton, CollectionMoreButton })
+        {
+            button.Background = new SiloPlayer.Controls.CollectionGlassBrush();
+            button.Template = (ControlTemplate)Resources["CollectionGlassButtonTemplate"];
+        }
+        TitleText.SizeChanged += (_, _) => UpdateCollectionTitleShadow();
+        TitleText.Loaded += (_, _) => UpdateCollectionTitleShadow();
+        TitleText.Unloaded += (_, _) => ClearCollectionTitleShadow();
+    }
+
+    private void ClearCollectionTitleShadow()
+    {
+        Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetElementChildVisual(CollectionTitleShadow, null);
+        _collectionTitleShadow?.Dispose(); _collectionTitleShadow = null;
+        _collectionTextShadow?.Dispose(); _collectionTextShadow = null;
+    }
+
+    private void UpdateCollectionTitleShadow()
+    {
+        if (!_header.HasBackdrop || !TitleText.IsLoaded || TitleText.ActualWidth <= 0 || TitleText.ActualHeight <= 0)
+        {
+            ClearCollectionTitleShadow();
+            return;
+        }
+        if (_collectionTitleShadow == null)
+        {
+            var compositor = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(TitleText).Compositor;
+            _collectionTextShadow = compositor.CreateDropShadow();
+            _collectionTextShadow.Color = Microsoft.UI.Colors.Black;
+            _collectionTextShadow.Opacity = .45f;
+            _collectionTextShadow.BlurRadius = 50;
+            _collectionTextShadow.Offset = new System.Numerics.Vector3(0, 18, 0);
+            _collectionTitleShadow = compositor.CreateSpriteVisual();
+            _collectionTitleShadow.Shadow = _collectionTextShadow;
+            Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetElementChildVisual(CollectionTitleShadow, _collectionTitleShadow);
+        }
+        _collectionTextShadow!.Mask = TitleText.GetAlphaMask();
+        _collectionTitleShadow.Size = new System.Numerics.Vector2((float)TitleText.ActualWidth, (float)TitleText.ActualHeight);
+    }
 
     private async Task LoadHeaderAsync(NavArgs args, int navigationGeneration, bool refresh = false)
     {
@@ -42,6 +89,7 @@ public sealed partial class CollectionBrowsePage
 
     private void ApplyHeader(CollectionPageHeader header)
     {
+        InitializeHeroEffects();
         _header = header;
         if (header.HasBackdrop && _currentArgs is { } args) HeroBackdrop.Show(header.BackdropUrl, header.BackdropThumbhash, "collection-" + args.CollectionId);
         else HeroBackdrop.Clear();
@@ -64,6 +112,7 @@ public sealed partial class CollectionBrowsePage
         CollectionAddToHomeButton.Visibility = header.Access.Kind == CollectionPageAccessKind.ReadOnly ? Visibility.Visible : Visibility.Collapsed;
         UpdateMoreMenu(header.Access);
         UpdateHeroLayout(new Windows.Foundation.Size(ActualWidth, ActualHeight));
+        UpdateCollectionTitleShadow();
     }
 
     /// <summary>The hero's responsive layout: title size, eyebrow, minimum height with a backdrop, and where the actions sit.</summary>

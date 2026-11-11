@@ -11,7 +11,60 @@ namespace SiloPlayer.Tests;
 /// </summary>
 public sealed class CollectionsWallLoadingTests
 {
+    [Fact]
+    public async Task LoneLibraryRestWaitsForActualViewportOrExplicitAdmission()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1","title":"One"}]}]}""" };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(0, wire.LibraryTabReads);
+        Assert.Equal(1, vm.NextServerLibrary?.LibraryId);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(1, wire.LibraryTabReads);
+    }
+
     private const string OneLibrary = "{\"libraries\":[{\"library_id\":1,\"library_name\":\"Movies\",\"total_count\":1,\"collections\":[{\"id\":\"s1\",\"title\":\"Server one\"}]}]}";
+
+    [Fact]
+    public async Task HeldRestDeduplicatesAndSerializesLibraries()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""", HoldLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        var first = vm.LoadServerLibraryAsync(1);
+        await Until(() => wire.LibraryTabReads == 1);
+        await vm.LoadServerLibraryAsync(1);
+        await vm.LoadServerLibraryAsync(2);
+        Assert.Equal(1, wire.LibraryTabReads);
+        wire.LibraryTab.SetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s2"}]}"""));
+        await first;
+        Assert.Equal(["s1", "t1", "s2"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Equal(2, vm.NextServerLibrary?.LibraryId);
+    }
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData("profile")]
+    [InlineData("access")]
+    [InlineData("admission")]
+    public async Task RetiredHeldRestCannotAppendOrKeepCancelledLibraryAdmitted(string retirement)
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""", HoldLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        var admitted = true;
+        var first = vm.LoadServerLibraryAsync(1, isCurrent: () => admitted);
+        await Until(() => wire.LibraryTabReads == 1);
+        if (retirement == "profile") client.SetProfile("new-owner");
+        else if (retirement == "access") client.InvalidateAccessContext();
+        else if (retirement == "admission") admitted = false;
+        else vm.CancelServerCollectionLoads();
+        wire.LibraryTab.SetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"stale"}]}"""));
+        await first;
+        Assert.False(vm.HasServerLibraryRest(1));
+        if (retirement == "cancel") Assert.Equal(1, vm.NextServerLibrary?.LibraryId);
+        else if (retirement != "admission") Assert.False(vm.HasCurrentServerCollections);
+    }
 
     [Fact]
     public async Task EveryReadSucceedingMarksTheViewLoadedEvenWhenEmpty()
@@ -203,6 +256,8 @@ public sealed class CollectionsWallLoadingTests
         public string PersonalBody = "{\"items\":[],\"groups\":[]}";
         public string LibraryTabBody = "{\"library_id\":1,\"collections\":[],\"groups\":[]}";
         public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles;
+        public bool HoldLibraryTab;
+        public TaskCompletionSource<HttpResponseMessage> LibraryTab { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int LibraryTabReads;
         public TaskCompletionSource PersonalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ProfilesStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -225,6 +280,7 @@ public sealed class CollectionsWallLoadingTests
             if (path.EndsWith("/collections") && path.StartsWith("/api/v2/library/"))
             {
                 Interlocked.Increment(ref LibraryTabReads);
+                if (HoldLibraryTab) return LibraryTab.Task;
                 return Task.FromResult(FailLibraryTab ? Fail() : Ok(LibraryTabBody));
             }
             if (path == "/api/v2/collections")

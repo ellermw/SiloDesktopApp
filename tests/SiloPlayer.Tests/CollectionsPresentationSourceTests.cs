@@ -41,8 +41,10 @@ public sealed class CollectionsPresentationSourceTests
         var wall = Read("src", "SiloPlayer", "Views", "CollectionsPage.Wall.cs");
         var vm = Read("src", "SiloPlayer", "ViewModels", "CollectionsViewModel.cs");
         Assert.Contains("ViewModel.GetServerCollectionCards(picked?.LibraryId)", wall);
-        Assert.Contains("\"Load more server collections\"", wall);
-        Assert.Contains("ViewModel.NextServerLibrary", wall);
+        var loading = Read("src", "SiloPlayer", "Views", "CollectionsPage.Loading.cs");
+        Assert.Contains("\"Load more server collections\"", loading);
+        Assert.Contains("ViewModel.NextServerLibrary", loading);
+        Assert.Contains("CollectionsScrollViewer.ViewportHeight + 600", loading);
         Assert.Contains("BuildSharedCollectionCard(entry.Collection, entry.Owner)", wall);
         Assert.Contains("PersonalCollectionOwnership.Split(", wall);
         Assert.Contains("_loadGeneration", vm);

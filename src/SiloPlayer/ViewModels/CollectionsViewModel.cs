@@ -58,21 +58,25 @@ public partial class CollectionsViewModel : ObservableObject
     public bool IsServerLibraryLoading(int libraryId) => _loadingServerLibraries.Contains(libraryId);
     public string? ServerLibraryError(int libraryId) => _serverCollectionErrors.GetValueOrDefault(libraryId);
     public bool HasServerLibraryRest(int libraryId) => _serverRest.ContainsKey(libraryId);
+    public bool HasCurrentServerCollections => _requestClient == null || _displayContext == _requestClient.CaptureContext();
+    public bool IsLoadingServerLibraryRest => _loadingServerLibraries.Count > 0;
     public ServerCollectionsLibrary? NextServerLibrary => ServerLibraries.FirstOrDefault(l => l.TotalCount > l.Collections.Count && !_requestedServerLibraries.Contains(l.LibraryId));
     private void ServerCollectionsChanged() { ServerCollectionRevision++; OnPropertyChanged(nameof(ServerCollectionRevision)); }
     public void CancelServerCollectionLoads()
     {
         _serverCollectionOwner.Cancel(); _serverCollectionOwner.Dispose(); _serverCollectionOwner = new();
+        foreach (var libraryId in _loadingServerLibraries)
+            if (!_serverRest.ContainsKey(libraryId)) _requestedServerLibraries.Remove(libraryId);
         _loadingServerLibraries.Clear();
     }
-    public async Task LoadServerLibraryAsync(int libraryId, CancellationToken ct = default)
+    public async Task LoadServerLibraryAsync(int libraryId, CancellationToken ct = default, Func<bool>? isCurrent = null)
     {
-        if (_requestClient != null && _displayContext != _requestClient.CaptureContext()) return;
-        if (_loadingServerLibraries.Contains(libraryId)) return;
+        if (!HasCurrentServerCollections || isCurrent?.Invoke() == false) return;
+        if (IsLoadingServerLibraryRest) return;
         var library = ServerLibraries.FirstOrDefault(l => l.LibraryId == libraryId);
         if (library == null || library.TotalCount <= library.Collections.Count) return;
         var owner = _serverCollectionOwner; var context = _requestClient?.CaptureContext(); var generation = _loadGeneration;
-        bool Current() => owner == _serverCollectionOwner && !owner.IsCancellationRequested && generation == _loadGeneration &&
+        bool Current() => owner == _serverCollectionOwner && !owner.IsCancellationRequested && generation == _loadGeneration && isCurrent?.Invoke() != false &&
             (context == null || _requestClient!.IsCurrentContext(context.Value));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, ct);
         _requestedServerLibraries.Add(libraryId); _loadingServerLibraries.Add(libraryId); _serverCollectionErrors.Remove(libraryId); ServerCollectionsChanged();
@@ -218,7 +222,6 @@ public partial class CollectionsViewModel : ObservableObject
                     ServerLoaded = true;
                     var requested = _requestedServerLibraries.ToArray();
                     foreach (var libraryId in _serverRest.Keys.Where(id => !ServerLibraries.Any(l => l.LibraryId == id)).ToArray()) _serverRest.Remove(libraryId);
-                    if (ServerLibraries.Count == 1) requested = requested.Append(ServerLibraries[0].LibraryId).Distinct().ToArray();
                     foreach (var libraryId in requested) { if (!Current()) break; await LoadServerLibraryAsync(libraryId); }
                     if (Current()) ServerCollectionsChanged();
                 }

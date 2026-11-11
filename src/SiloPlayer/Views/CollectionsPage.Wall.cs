@@ -31,6 +31,8 @@ public sealed partial class CollectionsPage
 
     private void BuildWall()
     {
+        var focused = XamlRoot == null ? null : Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) as Button;
+        var focusedName = focused != null && DescendantButtons(CollectionsGrid).Contains(focused) ? AutomationProperties.GetName(focused) : null;
         EmptyState.Visibility = AddGroupButton.Visibility = AddGroupEditor.Visibility = Visibility.Collapsed;
         var profileId = App.Services.GetRequiredService<AuthService>().SelectedProfileId;
         var partition = PersonalCollectionOwnership.Split(ViewModel.Collections, profileId, ViewModel.Profiles.ToArray());
@@ -73,13 +75,9 @@ public sealed partial class CollectionsPage
 
         CollectionsReorderHint.Visibility = _show == CollectionsWall.Mine && ViewModel.Capabilities?.ItemReorder == true && partition.Own.Count > 1
             ? Visibility.Visible : Visibility.Collapsed;
-        // A library asked for by navigation loads its rest straight away, as a pill press does.
-        if (picked != null && _autoLoadedLibrary != picked.LibraryId && !ViewModel.IsServerLibraryLoading(picked.LibraryId)
-            && !ViewModel.HasServerLibraryRest(picked.LibraryId) && ViewModel.ServerLibraryError(picked.LibraryId) == null)
-        {
-            _autoLoadedLibrary = picked.LibraryId;
-            _ = ViewModel.LoadServerLibraryAsync(picked.LibraryId);
-        }
+        if (focusedName != null) DescendantButtons(CollectionsGrid).FirstOrDefault(button => AutomationProperties.GetName(button) == focusedName)?.Focus(FocusState.Programmatic);
+        UpdateWallLoadAction();
+        QueueWallAdmission();
     }
 
     private void BuildFilterPills(IReadOnlyList<ServerCollectionsLibrary> libraries, int ownCount, int sharedCount)
@@ -112,6 +110,7 @@ public sealed partial class CollectionsPage
 
     private void ChangeShow(string value)
     {
+        ResetWallAdmission();
         _requestedShow = value;
         _autoLoadedLibrary = null;
         // A picked library loads its rest straight away: BuildWall starts that read once.
@@ -147,8 +146,7 @@ public sealed partial class CollectionsPage
                 ServerCollectionsRows.Children.Add(actions);
             }
         }
-        if (picked == null && ViewModel.NextServerLibrary is { } next && shown.Count > 0) ServerCollectionsRows.Children.Add(LoadButton(next, "Load more server collections"));
-        else if (picked != null && picked.TotalCount > picked.Collections.Count && !ViewModel.HasServerLibraryRest(picked.LibraryId) && ViewModel.ServerLibraryError(picked.LibraryId) == null)
+        if (picked != null && picked.TotalCount > picked.Collections.Count && !ViewModel.HasServerLibraryRest(picked.LibraryId) && ViewModel.ServerLibraryError(picked.LibraryId) == null)
             ServerCollectionsRows.Children.Add(LoadButton(picked, "Load all " + picked.LibraryName + " collections"));
     }
 
@@ -159,14 +157,7 @@ public sealed partial class CollectionsPage
         AutomationProperties.SetName(more, label);
         more.Click += async (_, _) =>
         {
-            var before = CollectionsGrid.Children.OfType<Grid>().FirstOrDefault()?.Children.Count ?? 0;
-            await ViewModel.LoadServerLibraryAsync(library.LibraryId);
-            // The rebuild replaces the pressed button. Keep keyboard focus in the wall: on the first card
-            // the press added, or on the failure's own controls when nothing arrived.
-            BuildWall();
-            var board = CollectionsGrid.Children.OfType<Grid>().FirstOrDefault();
-            var target = board != null && board.Children.Count > before ? DescendantButtons(board.Children[before]).FirstOrDefault() : DescendantButtons(ServerCollectionsRows).FirstOrDefault();
-            target?.Focus(FocusState.Programmatic);
+            await LoadWallLibraryAsync(library.LibraryId, true);
         };
         return more;
     }

@@ -42,6 +42,7 @@ public sealed partial class CollectionsPage : Page
 
         ViewModel.PropertyChanged += (_, args) =>
         {
+            if (args.PropertyName == nameof(ViewModel.IsLoadingServerCollections) && ViewModel.IsLoadingServerCollections) ResetWallAdmission();
             if (args.PropertyName == nameof(ViewModel.IsEmpty))
                 DispatcherQueue.TryEnqueue(UpdateEmptyState);
             else if (args.PropertyName is nameof(ViewModel.IsLoadingServerCollections) or nameof(ViewModel.IsLoading) or nameof(ViewModel.IsLoadingProfiles)
@@ -51,19 +52,28 @@ public sealed partial class CollectionsPage : Page
             else if (args.PropertyName == nameof(ViewModel.ServerCollectionRevision)) BuildServerCollectionRows();
         };
         SizeChanged += CollectionsPage_SizeChanged;
+        CollectionsScrollViewer.ViewChanged += (_, _) => QueueWallAdmission();
+        CollectionsScrollViewer.SizeChanged += (_, _) => QueueWallAdmission();
+        CollectionsPageShell.SizeChanged += (_, _) => QueueWallAdmission();
+        CollectionsLoadMore.LostFocus += (_, _) => UpdateWallLoadAction();
         Loaded += (_, _) =>
         {
+            ResetWallAdmission();
+            _wallActive = true;
+            QueueWallAdmission();
             // Subscribe through captured instances so Unloaded can always unsubscribe, even after the app's container is gone.
+            if (_libraryEvents != null) _libraryEvents.LibraryCacheInvalidated -= CollectionsLibraryInvalidated;
             _libraryEvents = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>(); _libraryEvents.LibraryCacheInvalidated += CollectionsLibraryInvalidated;
             if (_presentationEvents != null) _presentationEvents.Changed -= PosterSizeChanged;
             _presentationEvents = App.Services.GetService<SiloPlayer.Services.UICustomizationService>(); if (_presentationEvents != null) _presentationEvents.Changed += PosterSizeChanged;
         };
         Unloaded += (_, _) =>
         {
+            _wallActive = false;
+            ResetWallAdmission();
             if (_libraryEvents != null) _libraryEvents.LibraryCacheInvalidated -= CollectionsLibraryInvalidated; _libraryEvents = null;
             if (_presentationEvents != null) _presentationEvents.Changed -= PosterSizeChanged; _presentationEvents = null;
             ++_collectionsPageGeneration; _libraryRefreshPending = _libraryRefreshQueued = false;
-            ViewModel.CancelServerCollectionLoads();
         };
     }
 
@@ -75,6 +85,7 @@ public sealed partial class CollectionsPage : Page
         DispatcherQueue.TryEnqueue(async () =>
         {
             if (!Current()) return;
+            ResetWallAdmission();
             _libraryRefreshPending = true;
             if (_libraryRefreshQueued) return;
             _libraryRefreshQueued = true;
@@ -120,6 +131,8 @@ public sealed partial class CollectionsPage : Page
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        ResetWallAdmission();
+        _wallActive = true;
         // A fresh visit starts at All (the WebUI link carries no filter); returning keeps the viewer's choice.
         if (e.NavigationMode == Microsoft.UI.Xaml.Navigation.NavigationMode.New) _requestedShow = null;
         if (e.Parameter is CollectionsNavigationArgs args)
