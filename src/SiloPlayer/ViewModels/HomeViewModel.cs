@@ -1136,20 +1136,25 @@ public partial class HomeViewModel : ObservableObject,
     private async Task UndoDismissalAsync()
     {
         if (_lastDismissedSurface == null || _lastDismissedItemId == null) return;
-        if (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value)) { ClearDismissState(); ShowUndoBanner = false; return; }
+        // Bind the DELETE to the dismissal's owner: a profile, access or server change that
+        // lands after this check refuses the request instead of sending it under the replacement.
+        var owner = _dismissContext ?? _homeApi.CaptureContext();
+        if (!_homeApi.IsCurrentContext(owner)) { ClearDismissState(); ShowUndoBanner = false; return; }
         var generation = _undoGeneration;
 
         ShowUndoBanner = false;
 
         try
         {
-            await _homeApi.UndoDismissalAsync(_lastDismissedSurface, _lastDismissedItemId);
+            await _homeApi.UndoDismissalAsync(owner, _lastDismissedSurface, _lastDismissedItemId);
             if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
             RestoreDismissedItem();
             QueueRealtimeRefresh("home_dismissal_undo", _loadedContext);
         }
         catch (Exception ex)
         {
+            // A retired owner was refused, not failed: nothing here is left to retry.
+            if (!_homeApi.IsCurrentContext(owner)) { if (generation == _undoGeneration) ClearDismissState(); return; }
             LocalLog.AppendException("errors.txt", ex, "HomeViewModel.UndoDismissalAsync");
             if (generation == _undoGeneration) { ErrorMessage = "Could not undo the dismissal. Try again."; ShowUndoBanner = true; }
             return;

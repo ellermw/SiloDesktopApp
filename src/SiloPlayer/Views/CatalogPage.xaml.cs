@@ -388,7 +388,9 @@ public sealed partial class CatalogPage : Page,
         var visit = _navigationCts;
         bool Current() => visit != null && !visit.IsCancellationRequested && visit == _navigationCts && _api.IsCurrentContext(owner);
         if (!Current()) { ClearUndoState(); return; }
-        var opportunity = _undoGeneration;
+        // Retire the banner's pending auto-hide: its expiry mid-request must not discard
+        // this Undo's target or the retry feedback for a DELETE that fails late.
+        var opportunity = ++_undoGeneration;
         var surface = _undoSurface;
         var itemId = _undoItemId;
         var target = Math.Max(PageSize, _items.Count + _undoRemovedCount);
@@ -399,6 +401,16 @@ public sealed partial class CatalogPage : Page,
         // Retire before DELETE: server membership can change before its response arrives.
         RetireSectionPaging();
         Exception? failure = null;
+        // The DELETE's own result decides the banner, unless a newer dismissal or a reset
+        // has already replaced this opportunity.
+        void Conclude()
+        {
+            if (opportunity != _undoGeneration) return;
+            if (failure == null) { ClearUndoState(); return; }
+            UndoBannerText.Text = "Could not undo. Try again.";
+            UndoBanner.Visibility = Visibility.Visible;
+            _ = AutoHideUndoBannerAsync(); // a fresh five-second retry opportunity
+        }
         try
         {
             try { await _homeApi.UndoDismissalAsync(owner, surface, itemId, visit!.Token); }
@@ -413,18 +425,9 @@ public sealed partial class CatalogPage : Page,
             // instead of adding a stale snapshot/count to possibly newer paging data.
             await ReconcileSectionAfterUndoAsync(target, Current, visit!.Token);
             if (!Current()) return;
-            if (opportunity == _undoGeneration)
-            {
-                if (failure == null) ClearUndoState();
-                else
-                {
-                    UndoBannerText.Text = "Could not undo. Try again.";
-                    UndoBanner.Visibility = Visibility.Visible;
-                    _ = AutoHideUndoBannerAsync(); // a fresh five-second retry opportunity
-                }
-            }
+            Conclude();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { if (Current()) Conclude(); }
         catch (Exception ex)
         {
             if (Current())
@@ -436,7 +439,8 @@ public sealed partial class CatalogPage : Page,
                 CatalogErrorPanel.Visibility = Visibility.Visible;
                 CatalogRetryButton.Visibility = Visibility.Visible;
                 _hasMore = false;
-                if (opportunity == _undoGeneration) ClearUndoState();
+                // A failed DELETE stays retryable even though the follow-up read failed too.
+                Conclude();
             }
         }
         finally

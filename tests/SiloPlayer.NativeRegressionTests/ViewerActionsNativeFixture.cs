@@ -383,6 +383,19 @@ internal static class ViewerActionsNativeFixture
         Check(Items(retry).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "retry restores once");
         Program.Log("PASS: DELETE failure remains retryable with coherent server count.");
 
+        var slow = await OpenAsync("cw"); await DismissAsync(slow, "film"); wire.FailUndo = true;
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(slow);
+        await Until(() => wire.Undos.Count == 1, "slow failing Undo dispatched");
+        await Task.Delay(5500); // the dismissal banner's own five seconds end while the DELETE is pending
+        wire.HoldUndo.TrySetResult();
+        await Until(() => ((Border)slow.FindName("UndoBanner")).Visibility == Visibility.Visible
+            && ((TextBlock)slow.FindName("UndoBannerText")).Text == "Could not undo. Try again.", "late failure feedback");
+        Check(Field<string?>(slow, "_undoItemId") == "film" && Items(slow).All(item => item.ContentId != "film"), "expired banner timer cannot discard a pending Undo");
+        await Until(() => ((Button)slow.FindName("UndoButton")).IsEnabled, "late retry enabled");
+        wire.HoldUndo = null; wire.FailUndo = false; StartUndo(slow); await SettledAsync(slow);
+        Check(Items(slow).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "late failure retry restores once");
+        Program.Log("PASS: DELETE failure after the banner's five seconds still reports and remains retryable.");
+
         var departed = await OpenAsync("cw"); await DismissAsync(departed, "film");
         wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(departed);
         await Until(() => wire.Undos.Count == 1, "departing Undo dispatched");
@@ -772,7 +785,11 @@ internal static class ViewerActionsNativeFixture
                 if (request.Method == HttpMethod.Delete)
                 {
                     Undos.Add(path);
-                    if (FailUndo) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"Try again\"}") };
+                    if (FailUndo)
+                    {
+                        if (HoldUndo != null) await HoldUndo.Task;
+                        return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"Try again\"}") };
+                    }
                     var undoId = path[(path.LastIndexOf('/') + 1)..]; _dismissed.Remove(undoId);
                     if (undoId.StartsWith("show-")) { _dismissed.Remove("show-a"); _dismissed.Remove("show-b"); }
                     if (HoldUndo != null) await HoldUndo.Task;
