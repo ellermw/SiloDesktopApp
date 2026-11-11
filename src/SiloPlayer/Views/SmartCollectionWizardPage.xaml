@@ -221,6 +221,8 @@
                     <StackPanel x:Name="FiltersStepPreviewPanel" Grid.Column="1" Visibility="Collapsed" />
                 </Grid>
 
+                <TextBlock x:Name="RuleNeededText" Visibility="Collapsed" TextWrapping="Wrap"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
                     <Button x:Name="WizardDeleteButton" Content="Delete collection" Click="DeleteCollection_Click" Visibility="Collapsed" Style="{StaticResource DestructiveButtonStyle}" />
                     <Button
@@ -238,7 +240,7 @@
                         x:Name="SaveButton"
                         Visibility="Collapsed"
                         Style="{StaticResource AccentButtonStyle}"
-                        IsEnabled="{x:Bind CanSave, Mode=OneTime}"
+                        IsEnabled="False"
                         Click="Save_Click">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <ProgressRing
