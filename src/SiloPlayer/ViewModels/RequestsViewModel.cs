@@ -394,8 +394,11 @@ public partial class RequestsViewModel : ObservableObject
         // Each reconciliation read captures fresh authority for this same account/profile.
         bool IsCurrentOwner() => _requestsApi.IsCurrentIdentityContext(owner);
         bool IsCurrent() => !visit.IsCancellationRequested && IsCurrentOwner();
-        // The viewer confirmed a row that may have been replaced or changed since: act on the current account row.
+        // Prefer the current row, but a same-identity reload can temporarily clear the list while confirmation
+        // stays open. In that window, let the guarded DELETE decide whether the confirmed row is still removable.
         var request = MyRequests.FirstOrDefault(row => row.Id == confirmed.Id);
+        if (request == null && _loadInProgress && _loadingContext == _requestsApi.CaptureContext() && _loadingVisit())
+            request = confirmed;
         if (request == null || !IsCurrent() || !CanRemoveRequest(request) ||
             !_removingRequests.Add(request.Id)) return new(RequestRemovalOutcome.Skipped);
         DataVersion++;

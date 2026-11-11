@@ -161,7 +161,7 @@ internal static class RequestRemovalNativeFixture
     private static async Task RemovalRouteRefreshAsync(StackPanel parent)
     {
         foreach (var catchUp in new[] { false, true })
-        foreach (var phase in new[] { "confirmation", "missing-row", "delete", "refresh" })
+        foreach (var phase in new[] { "confirmation", "confirmation-pending", "missing-row", "delete", "refresh" })
         foreach (var status in new[] { HttpStatusCode.NoContent, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
         {
             if (phase == "missing-row" && status != HttpStatusCode.NoContent) continue;
@@ -192,21 +192,26 @@ internal static class RequestRemovalNativeFixture
                 }
                 else rig.Client.InvalidateAccessContext();
                 var mineReads = wire.MineReads;
+                if (phase == "confirmation-pending") wire.MineGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 // Exercise the route refresh used by MainWindow, not just the API generation change.
                 if (!rig.Navigation.RefreshCurrentEntry() || !ReferenceEquals(page, rig.Frame.Content))
                     throw new InvalidOperationException("Shell refresh retired the Requests visit during " + phase + ".");
-                if (phase is "confirmation" or "missing-row")
+                if (phase is "confirmation" or "confirmation-pending" or "missing-row")
                 {
-                    await Until(() => wire.MineReads > mineReads && !vm.LoadCommand.IsRunning);
+                    await Until(() => wire.MineReads > mineReads &&
+                        (phase == "confirmation-pending" ? vm.IsLoadingMine : !vm.LoadCommand.IsRunning));
                     if (!ReferenceEquals(confirmation, rig.Dialog()) || wire.Writes.Count != 0)
                         throw new InvalidOperationException("Shell refresh dismissed or submitted the open removal confirmation.");
                     Primary(confirmation);
+                    // Confirm before the reload can repopulate MyRequests: its temporary absence is not a vanished row.
+                    if (phase == "confirmation-pending") await Until(() => wire.Writes.Count == 1);
                 }
             }
             finally
             {
                 wire.DeleteGate?.TrySetResult();
                 wire.StatusGate?.TrySetResult();
+                wire.MineGate?.TrySetResult();
             }
             var expected = phase == "missing-row" ? "Could not remove the request - the list changed, try again"
                 : status == HttpStatusCode.NoContent ? "Request removed"
@@ -222,7 +227,7 @@ internal static class RequestRemovalNativeFixture
                 (!removed && !Remove(page, "Failed one").IsEnabled))
                 throw new InvalidOperationException("Shell refresh left incorrect removal state during " + phase + ".");
         }
-        Program.Log("PASS: shell route refresh during confirmation, DELETE and reconciliation preserves success/refusal/failure feedback; a vanished row explains why no DELETE was sent.");
+        Program.Log("PASS: shell route refresh during confirmation (including a pending mine read), DELETE and reconciliation preserves success/refusal/failure feedback; a vanished row explains why no DELETE was sent.");
     }
 
     private static async Task RemovalFinalizationAsync(StackPanel parent)
@@ -481,6 +486,7 @@ internal static class RequestRemovalNativeFixture
             foreach (var gate in Wire.Gates.Values) gate.TrySetResult();
             Wire.DeleteGate?.TrySetResult();
             Wire.StatusGate?.TrySetResult();
+            Wire.MineGate?.TrySetResult();
             Navigation.NavigationRequestHandler = null;
             try { Frame.Content = null; } catch { }
             _parent.Children.Remove(Frame); Navigation.Frame = null; Toasts.Unregister(); _parent.Children.Remove(_toast);
@@ -502,7 +508,7 @@ internal static class RequestRemovalNativeFixture
         internal readonly SortedDictionary<string, string> Mine = new(StringComparer.Ordinal);
         internal HttpStatusCode DeleteMode = HttpStatusCode.NoContent; internal TaskCompletionSource? DeleteGate; internal Action<string>? OnDelete;
         internal readonly List<Write> Writes = []; internal int MineReads, DiscoverReads;
-        internal int StatusReads; internal TaskCompletionSource? StatusGate;
+        internal int StatusReads; internal TaskCompletionSource? StatusGate, MineGate;
         internal readonly Dictionary<string, TaskCompletionSource> Gates = [];
         internal readonly Dictionary<string, HttpStatusCode> CatalogStatus = new() { ["lib-404"] = HttpStatusCode.NotFound, ["lib-500"] = HttpStatusCode.InternalServerError };
         private readonly Dictionary<string, int> _catalogReads = [];
@@ -542,6 +548,7 @@ internal static class RequestRemovalNativeFixture
                     return Json($"{{\"requests_enabled\":true,\"allowed\":true,\"remove_failed_supported\":{RemoveSupported.ToString().ToLowerInvariant()}}}");
                 case "/api/v2/requests/mine":
                     MineReads++;
+                    if (MineGate is { } mineGate) await mineGate.Task.WaitAsync(ct);
                     return Json("{\"items\":[" + string.Join(",", Mine.Values) + "]}");
                 case "/api/v2/requests/discover":
                     DiscoverReads++;
