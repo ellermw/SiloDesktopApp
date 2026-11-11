@@ -487,6 +487,56 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void UnpublishedSubtitleInventoryRefreshIsRetriedWithBackoffInsteadOfDroppingItsAnnouncement()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the failure route here: a
+        // replan that fails or times out before publication re-defers its
+        // announcement after a delay, within the same bounded budget.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var retry = Between(ready, "void RetryUnpublishedSubtitleInventory()", "void RecoverUnappliedSubtitleInventory()");
+        Assert.Contains("!entered || refreshed || token.IsCancellationRequested || _pendingSubtitleInventoryApplication != null", retry);
+        var budget = retry.IndexOf("if (++unpublished.Failures > SubtitleInventoryApplicationRetries) return;", StringComparison.Ordinal);
+        var delay = retry.IndexOf("Task.Delay(SubtitleInventoryApplicationRetryDelay * unpublished.Failures, token)", StringComparison.Ordinal);
+        var defer = retry.IndexOf("DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);", StringComparison.Ordinal);
+        Assert.True(budget >= 0 && delay > budget && defer > delay);
+        // The retry must never replay immediately from the failing attempt.
+        Assert.DoesNotContain("DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);", retry);
+        // Published inventory renews the budget and retires the pending retries.
+        var publish = ready.IndexOf("_pendingSubtitleInventoryApplication ??= new(owner, appliedSession, nativeFile, file);", StringComparison.Ordinal);
+        Assert.True(publish >= 0 && ready.IndexOf("_unpublishedSubtitleInventoryRefresh = null;", publish, StringComparison.Ordinal) > publish);
+        // A request timeout is a cancellation that superseded nothing.
+        Assert.Contains("catch (OperationCanceledException) { if (!RetryIfSuperseded()) RetryUnpublishedSubtitleInventory(); }", ready);
+        var failure = ready[ready.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
+        Assert.Contains("RetryUnpublishedSubtitleInventory();", failure);
+    }
+
+    [Fact]
+    public void LoadedSidecarCachesRemainASelectionRouteForARowWhoseUrlARefreshBlanked()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a row kept
+        // playable for its loaded SID/bytes stays selectable in the published
+        // menus and the picker, and service caches are read before the
+        // manager's inventory gate.
+        var service = Read("PlayerService.cs");
+        var cached = Between(service, "private HashSet<int> CachedSubtitleSidecarIndices()", "private static bool HasSubtitleSelectionRoute(");
+        Assert.Contains("_loadedExternalSubtitleSids.Keys.Where(index => !_staleExternalSubtitleIndices.Contains(index))", cached);
+        Assert.Contains(".Concat(_prefetchedSubtitleFiles.Keys)", cached);
+        Assert.Contains("pair.Value.FileGeneration == fileLoadGeneration", cached);
+        var menu = Between(service, "internal SubtitleMenuSnapshot? CaptureSubtitleMenuSnapshot()", "private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track)");
+        var state = menu.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var inventory = menu.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        var union = menu.IndexOf("routes.SidecarIndices.UnionWith(CachedSubtitleSidecarIndices());", StringComparison.Ordinal);
+        Assert.True(state >= 0 && inventory > state && union > inventory);
+        var route = Between(service, "private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track)", "private HashSet<int> CachedSubtitleSidecarIndices()");
+        state = route.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var loaded = route.IndexOf("if (!track.Unplayable && CachedSubtitleSidecarIndices().Contains(track.Index)) return true;", StringComparison.Ordinal);
+        inventory = route.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        Assert.True(state >= 0 && loaded > state && inventory > loaded);
+        Assert.Contains("lock (_subtitleTrackStateLock) sidecarIndices.UnionWith(CachedSubtitleSidecarIndices());",
+            Read("PlayerService.NativeSubtitles.cs"));
+    }
+
+    [Fact]
     public void BothStoredListRefreshesRetainDownloadsWithoutStoredIdentityByOneRule()
     {
         // The public and owner-scoped refreshes read the same stored list. A

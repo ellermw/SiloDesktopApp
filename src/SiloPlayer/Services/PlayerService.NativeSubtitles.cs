@@ -86,6 +86,8 @@ public partial class PlayerService
         var sidecarIndices = _playbackManager.GetSubtitleUrls()
             .Where(pair => Uri.TryCreate(pair.FullUrl, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
             .Select(pair => pair.Track.Index).ToHashSet();
+        // A SID or bytes already loaded stay a route for a row whose URL a refresh blanked.
+        lock (_subtitleTrackStateLock) sidecarIndices.UnionWith(CachedSubtitleSidecarIndices());
         var useNative = CanUseNativeEmbeddedSubtitleTrack() && tracks.Any(track =>
             !track.Unplayable && string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase));
         IReadOnlyList<NativeSubtitleTrack> nativeTracks = useNative ? owner.Mpv.GetEmbeddedSubtitleTracks() : [];

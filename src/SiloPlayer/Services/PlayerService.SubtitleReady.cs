@@ -18,6 +18,14 @@ public partial class PlayerService
         public int Failures;
     }
     private PendingSubtitleInventoryApplication? _pendingSubtitleInventoryApplication;
+    // A replan can also fail before it publishes anything. Nothing is then
+    // outstanding except the announcement itself; its retries share one budget
+    // per loaded file, renewed by the next published inventory.
+    private sealed record UnpublishedSubtitleInventoryRefresh(long NativeFile, long File)
+    {
+        public int Failures;
+    }
+    private UnpublishedSubtitleInventoryRefresh? _unpublishedSubtitleInventoryRefresh;
     private const int SubtitleInventoryApplicationRetries = 2;
     private static readonly TimeSpan SubtitleInventoryApplicationRetryDelay = TimeSpan.FromSeconds(2);
 
@@ -186,6 +194,7 @@ public partial class PlayerService
         }
         var token = _authorityLifetimeCts.Token;
         var entered = false;
+        var refreshed = false;
         var nativeFile = Volatile.Read(ref _fileLoadGeneration);
         var file = Volatile.Read(ref _playbackFileGeneration);
         var busyRevision = Volatile.Read(ref _playbackBusyRevision);
@@ -193,14 +202,41 @@ public partial class PlayerService
         bool SameFile() => nativeFile == Volatile.Read(ref _fileLoadGeneration) && file == Volatile.Read(ref _playbackFileGeneration);
         bool SameTransport() => SameFile() && busyRevision == Volatile.Read(ref _playbackBusyRevision) &&
             seekRevision == Volatile.Read(ref _seekRestartGeneration);
-        void RetryIfSuperseded()
+        bool RetryIfSuperseded()
         {
             // A guard wait or a later busy claim may replace our exact plan.
             // Keep the announcement for this file lifetime, not that response.
             if (!token.IsCancellationRequested && owner.IsCurrentForAi && manager.CurrentSession is { } current &&
                 current.SessionId == eventSessionId && current.MediaFileId == fileId &&
                 (SubtitleReadyRefreshIsBusy || !ReferenceEquals(current, session) || !SameTransport()))
+            {
                 DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);
+                return true;
+            }
+            return false;
+        }
+        void RetryUnpublishedSubtitleInventory()
+        {
+            // A replan that failed before publication changed nothing, so only
+            // this announcement still records the new subtitle. Re-defer it with
+            // the same bounded backoff instead of dropping it. An outstanding
+            // application is retried by its own budget below.
+            if (!entered || refreshed || token.IsCancellationRequested || _pendingSubtitleInventoryApplication != null ||
+                !owner.IsCurrentForAi || manager.CurrentSession is not { } current ||
+                current.SessionId != eventSessionId || current.MediaFileId != fileId) return;
+            var unpublished = _unpublishedSubtitleInventoryRefresh;
+            if (unpublished == null || unpublished.NativeFile != Volatile.Read(ref _fileLoadGeneration) ||
+                unpublished.File != Volatile.Read(ref _playbackFileGeneration))
+                _unpublishedSubtitleInventoryRefresh = unpublished =
+                    new(Volatile.Read(ref _fileLoadGeneration), Volatile.Read(ref _playbackFileGeneration));
+            if (++unpublished.Failures > SubtitleInventoryApplicationRetries) return;
+            // The event's document may be disposed before the delay elapses.
+            var announcement = payload.Clone();
+            _ = Task.Delay(SubtitleInventoryApplicationRetryDelay * unpublished.Failures, token).ContinueWith(_ =>
+            {
+                if (ReferenceEquals(unpublished, _unpublishedSubtitleInventoryRefresh))
+                    DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);
+            }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
         }
         void RecoverUnappliedSubtitleInventory()
         {
@@ -306,7 +342,12 @@ public partial class PlayerService
                 (previous, next) => next.MediaFileId == fileId && SameTransport() && !SubtitleReadyRefreshIsBusy && owner.TryAdoptSession(previous, next), token)
                 .ConfigureAwait(false);
             if (replacement != null)
+            {
                 _pendingSubtitleInventoryApplication ??= new(owner, appliedSession, nativeFile, file);
+                // Published inventory answers every announcement that failed before it.
+                refreshed = true;
+                _unpublishedSubtitleInventoryRefresh = null;
+            }
             if (replacement == null || !Current() || !SameTransport())
             {
                 RetryIfSuperseded();
@@ -359,11 +400,13 @@ public partial class PlayerService
             SendSubtitleListToOsc();
             await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { RetryIfSuperseded(); }
+        // A request timeout also surfaces as a cancellation that superseded nothing.
+        catch (OperationCanceledException) { if (!RetryIfSuperseded()) RetryUnpublishedSubtitleInventory(); }
         catch (Exception ex)
         {
             LogToFile("state_trace.txt", $"Subtitle announcement refresh failed: {ex.Message}");
             RecoverUnappliedSubtitleInventory();
+            RetryUnpublishedSubtitleInventory();
         }
         finally { if (entered) _subtitleReadyGuard.Release(); }
     }

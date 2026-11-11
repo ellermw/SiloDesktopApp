@@ -398,7 +398,24 @@ internal static class Oct24SubtitleAdoptionNativeFixture
                     Require(manager.CaptureLocalSubtitleIntent() == playingIntent && wire.PreferenceWrites == playingWrites &&
                         Equals(playingFile, Get(service, "_fileLoadGeneration")) && service.IsPaused && mpv.IsPaused,
                         "Re-indexing a playing download changed playback intent, preferences or transport.");
+                    var menu = Call(service, "CaptureSubtitleMenuSnapshot")!;
+                    Require(((IReadOnlyList<(SubtitleTrackInfo Track, bool CanSelect)>)menu.GetType().GetProperty("Entries")!.GetValue(menu)!)
+                        .Single(row => ReferenceEquals(row.Track, playingDownload)).CanSelect,
+                        "A playing download kept for its loaded SID/bytes was published as unavailable.");
                 }
+                // Those loaded bytes are now the row's only route. Off and back must
+                // reuse the cached SID without a replan or another download.
+                var playingReplans = wire.Replans.Count;
+                Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", -1, true)!,
+                    "Subtitles could not be turned off while a re-indexed download was playing.");
+                await Until(() => service.ActiveSubtitleServerIndex == -1 && mpv.GetPropertyDouble("sid") <= 0);
+                Require(await (Task<bool>)Call(service, "SelectSubtitleByServerIndexAsync", 4, true)!,
+                    "A download kept for its loaded SID/bytes could not be selected again.");
+                await Until(() => service.ActiveSubtitleServerIndex == 4 && NativeSidMatches(4));
+                Require(mpv.GetPropertyDouble("sid") == playingSid && files.GetValueOrDefault(4) == playingPath &&
+                    ReferenceEquals(playingDownload, Get(service, "_executedSubtitleTrack")) &&
+                    wire.Replans.Count == playingReplans && Equals(playingFile, Get(service, "_fileLoadGeneration")),
+                    "Re-selecting a cached download replanned, reloaded or replaced its loaded SID/bytes.");
                 wire.ReverseDownloadedOrder = false;
                 wire.AdditionalDownloadedAvailable = false;
                 manager.RecordLocalSubtitleSelection(0);

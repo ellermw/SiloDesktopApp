@@ -6799,11 +6799,14 @@ public partial class PlayerService : IDisposable
     {
         var manager = _playbackManager;
         if (manager == null) return null;
+        // Observe the service caches before taking the manager's inventory gate.
+        lock (_subtitleTrackStateLock)
         lock (manager.SubtitleInventorySyncRoot)
         {
             if (!ReferenceEquals(manager, _playbackManager) || manager.CurrentSession is not { } session) return null;
             var tracks = session.SubtitleUrls.ToArray();
             var routes = CaptureSubtitleSelectionRoutes(tracks);
+            routes.SidecarIndices.UnionWith(CachedSubtitleSidecarIndices());
             return new(session, tracks.Select(track => (track, HasSubtitleSelectionRoute(track, routes))).ToArray(),
                 manager.GetSubtitleUrls(tracks).Select(pair => pair.Track).ToArray());
         }
@@ -6813,8 +6816,23 @@ public partial class PlayerService : IDisposable
     {
         var manager = _playbackManager;
         if (manager == null) return false;
+        // Observe the service caches before taking the manager's inventory gate.
+        lock (_subtitleTrackStateLock)
+            if (!track.Unplayable && CachedSubtitleSidecarIndices().Contains(track.Index)) return true;
         lock (manager.SubtitleInventorySyncRoot)
             return HasSubtitleSelectionRoute(track, CaptureSubtitleSelectionRoutes());
+    }
+
+    // Called under the subtitle state lock. A stored-list refresh can blank an
+    // uncertain positional URL while keeping the row for the SID or bytes it
+    // already loaded. Those caches remain its route, without another download.
+    private HashSet<int> CachedSubtitleSidecarIndices()
+    {
+        var fileLoadGeneration = Volatile.Read(ref _fileLoadGeneration);
+        return _loadedExternalSubtitleSids.Keys.Where(index => !_staleExternalSubtitleIndices.Contains(index))
+            .Concat(_prefetchedSubtitleFiles.Keys)
+            .Concat(_prefetchedSubtitleSids.Where(pair => pair.Value.FileGeneration == fileLoadGeneration).Select(pair => pair.Key))
+            .ToHashSet();
     }
 
     private static bool HasSubtitleSelectionRoute(SubtitleTrackInfo track, SubtitleRouteSnapshot routes)
