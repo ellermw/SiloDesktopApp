@@ -41,12 +41,12 @@
         <ScrollViewer
             IsScrollInertiaEnabled="True">
 
+            <!-- Full width, like the WebUI wall: the poster-size setting decides the columns, not a fixed shell. -->
             <StackPanel
                 x:Name="CollectionsPageShell"
-                MaxWidth="1080"
-                HorizontalAlignment="Center"
+                HorizontalAlignment="Stretch"
                 Padding="40,24,40,40"
-                Spacing="28">
+                Spacing="24">
 
                 <!-- ===== Header ===== -->
                 <Grid x:Name="CollectionsHeaderGrid" RowSpacing="0">
@@ -106,20 +106,27 @@
                     </StackPanel>
                 </Grid>
 
-                <StackPanel x:Name="CollectionsLoadingShell" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
-                <Grid ColumnSpacing="16" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
+                <!-- Show: All, Mine, Shared and Server when there are any, then one pill per library. -->
+                <ScrollViewer
+                    x:Name="CollectionsFilterScroll"
+                    Visibility="Collapsed"
+                    HorizontalScrollMode="Enabled"
+                    HorizontalScrollBarVisibility="Hidden"
+                    VerticalScrollMode="Disabled"
+                    VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="CollectionsFilterPills" Orientation="Horizontal" Spacing="4" AutomationProperties.Name="Show" />
+                </ScrollViewer>
+
+                <!-- A view with nothing in it says so in one line, once what it shows has loaded. -->
                 <TextBlock
-                    x:Name="PersonalCollectionsHeading"
-                    Text="Your collections"
-                    FontSize="24"
-                    FontWeight="SemiBold"
-                    Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock x:Name="PersonalCollectionsCount" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                    </StackPanel>
-                    <TextBlock x:Name="PersonalCollectionsNote" Grid.Column="1" Text="Only you can change these" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                </Grid>
+                    x:Name="CollectionsEmptyLine"
+                    Visibility="Collapsed"
+                    FontSize="13"
+                    TextWrapping="Wrap"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    AutomationProperties.LiveSetting="Polite" />
+
+                <StackPanel x:Name="CollectionsLoadingShell" Visibility="Collapsed" />
 
                 <!-- ===== Empty State ===== -->
                 <Border
@@ -173,8 +180,14 @@
                 </Border>
 
                 <!-- ===== Collections Grid ===== -->
-                <StackPanel x:Name="CollectionsGrid" Spacing="0" Margin="0,-12,0,0" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
-                <StackPanel x:Name="SharedCollectionsPanel" Spacing="16" Visibility="Collapsed" />
+                <!-- The wall: your collections, the ones other profiles share, then the server's, in one poster grid. -->
+                <StackPanel x:Name="CollectionsWallPanel" Spacing="16">
+                    <StackPanel x:Name="CollectionsGrid" Spacing="0" />
+                    <StackPanel x:Name="ServerCollectionsRows" Spacing="12" />
+                </StackPanel>
+                <StackPanel x:Name="ServerCollectionsLoadingRows" Visibility="Collapsed" />
+                <TextBlock x:Name="CollectionsReorderHint" Visibility="Collapsed" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"
+                           Text="Drag a poster to change the order, or focus its handle and press Space, then the arrow keys." />
 
                 <Button
                     x:Name="AddGroupButton"
@@ -207,23 +220,6 @@
                         Content="Cancel"
                         Style="{StaticResource GhostButtonStyle}"
                         Click="AddGroupCancel_Click" />
-                </StackPanel>
-
-                <StackPanel x:Name="ServerCollectionsSection" Spacing="16" Visibility="Collapsed" Margin="0,8,0,0">
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <TextBlock
-                            x:Name="ServerCollectionsHeading" Text="Server collections"
-                            FontSize="24"
-                            FontWeight="SemiBold"
-                            Foreground="{StaticResource PrimaryTextBrush}" />
-                        <StackPanel x:Name="ServerCollectionsHeaderActions" Grid.Column="1" VerticalAlignment="Center" />
-                    </Grid>
-                    <StackPanel x:Name="ServerCollectionsLoadingRows" Visibility="{x:Bind ViewModel.IsLoadingServerCollections, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
-                    <StackPanel
-                        x:Name="ServerCollectionsRows"
-                        Spacing="16"
-                        Visibility="{x:Bind ViewModel.IsLoadingServerCollections, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
                 </StackPanel>
 
             </StackPanel>

@@ -62,6 +62,7 @@ public sealed partial class CollectionBrowsePage : Page
     private IReadOnlySet<string> _shownRatingSources = new HashSet<string>();
     private int _navigationGeneration;
     private bool _isNavigated;
+    private bool _countKnown;
 
     public CollectionBrowsePage()
     {
@@ -90,12 +91,13 @@ public sealed partial class CollectionBrowsePage : Page
         if (e.Parameter is not NavArgs args) return;
 
         _currentArgs = args;
+        // The header (description, backdrop, owner actions) loads beside the first page; neither waits for the other.
+        _ = LoadHeaderAsync(args, navigationGeneration);
         var context = _apiClient.CaptureContext();
         _shownRatingSources = await CatalogSortChoices.LoadShownSourcesAsync(_catalogApi);
         if (!_isNavigated || navigationGeneration != _navigationGeneration || _currentArgs != args || context != _apiClient.CaptureContext()) return;
         RefreshSortChoices();
         TitleText.Text = args.Title;
-        SubtitleText.Text = "Refine the archive by type, era, rating, or genre.";
 
         // Pinning is exposed on the library collection cards, matching the
         // WebUI. The catalog result header itself has no extra pin control.
@@ -131,7 +133,7 @@ public sealed partial class CollectionBrowsePage : Page
             foreach (var item in response.Items) _items.Add(item);
             _total = response.Total > 0 ? response.Total : _items.Count;
             _hasMore = response.Page != null ? response.HasMore : _items.Count < _total;
-            UpdateCountDisplay();
+            _countKnown = true; UpdateCountDisplay();
             if (_items.Count == 0) ShowEmpty();
             else ShowContent();
         }
@@ -181,7 +183,7 @@ public sealed partial class CollectionBrowsePage : Page
             _nextOffset += response.Items.Count;
             if (response.Total > 0) _total = response.Total;
             _hasMore = response.Page != null ? response.HasMore : _items.Count < _total && response.Items.Count > 0;
-            UpdateCountDisplay();
+            _countKnown = true; UpdateCountDisplay();
             ErrorText.Visibility = Visibility.Collapsed;
         }
         catch (OperationCanceledException)
@@ -209,14 +211,10 @@ public sealed partial class CollectionBrowsePage : Page
     private void UpdateCountDisplay()
     {
         var count = _total > 0 ? _total : _items.Count;
-        ItemCountText.Text = count.ToString("N0");
-        ItemCountLabel.Text = count == 1 ? "RESULT" : "RESULTS";
         CollectionShuffleButton.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        CountPanel.Visibility = count > 0 || ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
-        ItemCountText.Visibility = ItemCountLabel.Visibility = ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
-        LoadedCountText.Text = _hasMore
-            ? $"Showing {_items.Count:N0} of {count:N0}"
-            : $"{count:N0} {(count == 1 ? "item" : "items")}";
+        // The hero has no count of its own: the filter bar says "N titles" (the WebUI's collection count).
+        LoadedCountText.Text = $"{count:N0} {(count == 1 ? "title" : "titles")}";
+        LoadedCountText.Visibility = _countKnown ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void ContentScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
@@ -477,6 +475,7 @@ public sealed partial class CollectionBrowsePage : Page
         LoadingSkeleton.Padding = new Thickness(gutter, 0, gutter, 24);
         UpdateCountDisplay();
         ReflowToolbar(e.NewSize.Width);
+        UpdateHeroLayout(e.NewSize);
         UpdateCatalogGridLayout(e.NewSize.Width, gutter);
     }
 
@@ -539,6 +538,9 @@ public sealed partial class CollectionBrowsePage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _shuffleLaunch?.Cancel();
+        _headerCts?.Cancel(); _headerCts?.Dispose(); _headerCts = null;
+        ClearHeroActions();
+        HeroBackdrop.Clear();
         _isNavigated = false;
         ++_navigationGeneration;
         _uiCustomizationService.Changed -= UICustomization_Changed;
@@ -571,7 +573,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowLoading()
     {
-        CollectionShuffleButton.Visibility = Visibility.Collapsed;
+        _countKnown = false; CollectionShuffleButton.Visibility = LoadedCountText.Visibility = Visibility.Collapsed;
         LoadingSkeleton.Visibility = Visibility.Visible;
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Collapsed;
@@ -596,7 +598,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowError(string message)
     {
-        CollectionShuffleButton.Visibility = Visibility.Collapsed;
+        _countKnown = false; CollectionShuffleButton.Visibility = LoadedCountText.Visibility = Visibility.Collapsed;
         LoadingSkeleton.Visibility = Visibility.Collapsed;
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Collapsed;
