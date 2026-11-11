@@ -128,7 +128,7 @@ internal static class ViewerActionsNativeFixture
         Check(filmMenu.Contains("Remove from Continue Watching"), "a Continue Watching card with progress offers Remove from Continue Watching: " + string.Join("|", filmMenu));
         var remove = OpenMenuItems(await CardAsync(page, "film")).Single(item => item.Text == "Remove from Continue Watching");
         Invoke(remove);
-        await Until(() => wire.Dismissals.Count == 1 && Items(page).All(item => item.ContentId != "film"), "movie dismissal");
+        await Until(() => wire.Dismissals.Count == 1 && !Field<bool>(page, "_loading") && Items(page).All(item => item.ContentId != "film"), "movie dismissal");
         Check(wire.Dismissals[0].Path == "/api/v2/home/dismissals/continue_watching/film"
             && wire.Dismissals[0].Body == """{"progress_updated_at":"2026-11-09T10:00:00Z"}""", "movie removal sends the progress timestamp: " + wire.Dismissals[0]);
         Check(Count(page) == "3", "the removed movie leaves the count: " + Count(page));
@@ -140,7 +140,7 @@ internal static class ViewerActionsNativeFixture
 
         await MenuAsync(await CardAsync(page, "show-a"));
         Invoke(OpenMenuItems(await CardAsync(page, "show-a")).Single(item => item.Text == "Remove from Continue Watching"));
-        await Until(() => wire.Dismissals.Count == 2 && Items(page).All(item => item.SeriesId != "show"), "episode dismissal drops the whole show");
+        await Until(() => wire.Dismissals.Count == 2 && !Field<bool>(page, "_loading") && Items(page).All(item => item.SeriesId != "show"), "episode dismissal drops the whole show");
         Check(wire.Dismissals[1].Path == "/api/v2/home/dismissals/continue_watching/show-a"
             && wire.Dismissals[1].Body == """{"progress_updated_at":"2026-11-09T11:00:00Z"}""", "episode removal sends its progress timestamp: " + wire.Dismissals[1]);
         Check(Items(page).Select(item => item.ContentId).SequenceEqual(["no-stamp"]) && Count(page) == "1",
@@ -168,6 +168,20 @@ internal static class ViewerActionsNativeFixture
         Check(!plain.Any(text => text.StartsWith("Remove from")), "an ordinary section card offers no Continue Watching removal: " + string.Join("|", plain));
         CloseMenus(page);
         Program.Log("PASS: ordinary section pages keep their existing menu.");
+
+        foreach (var type in new[] { "audiobook", "ebook", "manga" })
+        {
+            page = await OpenAsync("books-" + type, "Continue Reading");
+            var firstId = type + "-one";
+            await MenuAsync(await CardAsync(page, firstId));
+            var removals = wire.Dismissals.Count;
+            Invoke(OpenMenuItems(await CardAsync(page, firstId)).Single(item => item.Text.StartsWith("Remove from Continue")));
+            await Until(() => wire.Dismissals.Count == removals + 1 && !Field<bool>(page, "_loading")
+                && Items(page).All(item => item.ContentId != firstId), type + " dismissal");
+            Check(Items(page).Select(item => item.ContentId).SequenceEqual([type + "-two"]) && Count(page) == "1",
+                type + " dismissal keeps the sibling with the same SeriesId");
+            CloseMenus(page);
+        }
     }
 
     private static async Task DedicatedPageUndoAsync(Frame frame, Wire wire)
@@ -268,6 +282,29 @@ internal static class ViewerActionsNativeFixture
             Check(((TextBlock)page.FindName("CountText")).Text == "129", "paging total after dismissal");
             Program.Log($"PASS: {section} all 129 remaining titles appear exactly once.");
         }
+
+        foreach (var surface in new[] { "cw", "nu" })
+        {
+            var section = "off-prefix-" + surface;
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Progress", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            ObservableCollection<MediaItem> Items() => Field<ObservableCollection<MediaItem>>(page, "_items");
+            await Until(() => !Field<bool>(page, "_loading") && Items().Count == 60, "show first sixty");
+            Check(((TextBlock)page.FindName("CountText")).Text == "130", "show total before dismissal");
+            PosterCard? first = null;
+            await Until(() => (first = Descendants<PosterCard>(page).FirstOrDefault(card => card.MediaItem?.ContentId == section + "-001")) != null, "show first card");
+            Invoke((Button)first!.FindName("MoreButton"));
+            await Until(() => OpenMenuItems(first).Any(item => item.Text.StartsWith("Remove from")), "show removal menu");
+            Invoke(OpenMenuItems(first).Single(item => item.Text.StartsWith("Remove from")));
+            // No scroll or explicit continuation: the second episode was at position 90.
+            await Until(() => Items().All(item => item.ContentId != section + "-001") && !Field<bool>(page, "_loading"), "show total refresh");
+            Check(((TextBlock)page.FindName("CountText")).Text == "128", "server total includes the unloaded dismissed episode");
+            Check(Field<int>(page, "_offset") == Items().Count, "only loaded removals adjust the prefix offset");
+            for (var i = 0; i < 5 && Field<bool>(page, "_hasMore"); i++)
+                await (Task)Call(page, "LoadAsync", false)!;
+            var expected = Enumerable.Range(1, 130).Where(index => index is not (1 or 90)).Select(index => $"{section}-{index:000}");
+            Check(Items().Select(item => item.ContentId).SequenceEqual(expected), "show dismissal keeps every remaining title exactly once");
+        }
     }
 
 
@@ -290,18 +327,19 @@ internal static class ViewerActionsNativeFixture
             await home.DismissItemAsync(surface, id, new { progress_updated_at = item.ProgressUpdatedAt });
             page.Receive(new HomeDismissalApplied(surface, item, context));
             page.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, id, item.SeriesId, context: context));
-            await Until(() => Items(page).All(item => item.ContentId != id), "race dismissal applied");
+            await Until(() => !Field<bool>(page, "_loading") && Items(page).All(item => item.ContentId != id), "race dismissal and live count applied");
         }
         void StartUndo(CatalogPage page) => Call(page, "UndoButton_Click", page.FindName("UndoButton"), new RoutedEventArgs());
         async Task SettledAsync(CatalogPage page) => await Until(() => Field<string?>(page, "_undoSurface") == null && !Field<bool>(page, "_loading"), "race Undo settled");
         var paging = await OpenAsync("race-undo");
         await DismissAsync(paging, "race-undo-001");
+        var frozenCount = Items(paging).Count;
         wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously);
         StartUndo(paging);
         await Until(() => wire.Undos.Count == 1, "server undrop before DELETE response");
         StartUndo(paging); // duplicate activation, including direct event invocation, must be inert
         await (Task)Call(paging, "LoadAsync", false)!;
-        Check(Items(paging).Count == 59, "paging stays frozen before Undo response");
+        Check(Items(paging).Count == frozenCount, "paging stays frozen before Undo response");
         wire.HoldUndo.TrySetResult();
         await SettledAsync(paging);
         for (var i = 0; i < 5 && Field<bool>(paging, "_hasMore"); i++) await (Task)Call(paging, "LoadAsync", false)!;
@@ -350,10 +388,11 @@ internal static class ViewerActionsNativeFixture
         Program.Log("PASS: navigation retires pending Undo and its queued UI completion.");
 
         var reset = await OpenAsync("race-reset"); await DismissAsync(reset, "race-reset-001");
+        var resetCount = Items(reset).Count;
         wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(reset);
         await Until(() => wire.Undos.Count == 1, "reset Undo dispatched");
         await (Task)Call(reset, "LoadAsync", true)!;
-        Check(Items(reset).Count == 59, "reset deferred until mutation settles");
+        Check(Items(reset).Count == resetCount, "reset deferred until mutation settles");
         wire.HoldUndo.TrySetResult();
         await Until(() => Field<int>(reset, "_totalItems") == 130 && Items(reset).Count == 60, "reset authoritative window");
         Check(Items(reset).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 60).Select(i => $"race-reset-{i:000}")), "reset cannot mix old prefix with restored rows");
@@ -365,9 +404,8 @@ internal static class ViewerActionsNativeFixture
             var held = await OpenAsync(section);
             await DismissAsync(held, section + "-001");
             wire.ContinuationHeld = false; wire.ReadBeforeDismissal = readBefore;
-            // Existing dismissed row begins at seek59. Hold the following continuation
-            // at seek119, then begin Undo while it is still in flight.
-            await (Task)Call(held, "LoadAsync", false)!;
+            // The dismissal's live-count read filled through seek119. Hold the next
+            // continuation, then begin Undo while it is still in flight.
             wire.HoldAnyContinuation = true; wire.ContinuationHeld = false;
             wire.ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var continuation = (Task)Call(held, "LoadAsync", false)!;
@@ -460,19 +498,36 @@ internal static class ViewerActionsNativeFixture
         await Until(() => Field<bool>(page, "_loaded") && !page.ViewModel.IsLoading && page.ViewModel.Rules.Count > 0, "wizard load");
         await Task.Delay(900);
         var vm = page.ViewModel; var queries = () => wire.CatalogQueries.Count;
+        var save = (Button)page.FindName("SaveButton");
+        var ruleNeeded = (TextBlock)page.FindName("RuleNeededText");
         vm.Title = "Wizard fixture"; await Task.Delay(100);
         Check(queries() == 0, "an untouched wizard sends no catalog preview: " + queries());
         Check(!page.CanSave, "Create Collection is not available without a rule");
+        Check(!save.IsEnabled && ruleNeeded.Visibility == Visibility.Visible
+            && ruleNeeded.Text == SmartCollectionWizardViewModel.RuleNeededMessage,
+            "the disabled Save control explains the missing rule");
         var empty = (TextBlock)page.FindName("PreviewEmptyTitle");
         Check(empty.Text == "Add a rule to see what it matches", "the wizard asks for a rule: " + empty.Text);
 
         async Task Preview(string field, string op, object? value)
         {
             var rule = vm.Rules[0]; rule.Field = field; rule.Op = op; rule.Value = value;
+            var editor = Field<QueryFilterEditor>(page, "_rulesEditor");
+            ((Action?)typeof(QueryFilterEditor).GetField("Changed", Private)!.GetValue(editor))?.Invoke();
+            Field<DispatcherTimer?>(page, "_previewDebounceTimer")?.Stop();
             await (Task)Call(page, "RunPreviewAsync", false)!; await Task.Delay(200);
+            Check(save.IsEnabled == page.CanSave, "the actual Save control follows rule validity");
         }
         await Preview("genre", "contains", "Drama");
         Check(queries() == 1 && page.CanSave, "a complete rule previews once and enables Create: queries " + queries());
+        Check(save.IsEnabled && ruleNeeded.Visibility == Visibility.Collapsed, "a complete rule enables the Save control and clears its guidance");
+        vm.Title = "";
+        Check(!save.IsEnabled, "clearing the title disables the Save control");
+        vm.Title = "Wizard fixture";
+        Check(save.IsEnabled, "restoring the title enables the Save control");
+        vm.IsSaving = true;
+        Check(!save.IsEnabled, "saving disables the Save control");
+        vm.IsSaving = false;
         await Preview("year", "gte", 0);
         Check(queries() == 2 && page.CanSave, "zero is a value in the wizard: queries " + queries());
         await Preview("watched", "is", false);
@@ -722,25 +777,30 @@ internal static class ViewerActionsNativeFixture
                 Dismissals.Add((path, text ?? ""));
                 var itemId = path[(path.LastIndexOf('/') + 1)..]; _dismissed.Add(itemId);
                 if (itemId.StartsWith("show-")) { _dismissed.Add("show-a"); _dismissed.Add("show-b"); }
+                if (itemId.StartsWith("off-prefix-") && itemId.EndsWith("-001"))
+                    _dismissed.Add(itemId[..^3] + "090");
                 return new(HttpStatusCode.NoContent);
             }
             if (path == "/api/v2/catalog")
             {
                 if (query.Contains("source=query")) CatalogQueries.Add(query);
                 var section = Query(query, "section_id");
-                if (section.StartsWith("race-"))
+                if (section.StartsWith("race-") || section.StartsWith("off-prefix-"))
                 {
                     var seek = int.Parse(Query(query, "seek")); var limit = int.Parse(Query(query, "limit"));
                     string[] Row() => Enumerable.Range(1, 130).Select(index => $"{section}-{index:000}").Where(id => !_dismissed.Contains(id)).ToArray();
                     var row = Row();
-                    if ((seek == 60 || (HoldAnyContinuation && seek > 0)) && !ContinuationHeld)
+                    if (section.StartsWith("race-") && (seek == 60 || (HoldAnyContinuation && seek > 0)) && !ContinuationHeld)
                     {
                         ContinuationHeld = true;
                         // Intentionally ignore cancellation so acceptance must retire the generation too.
                         await ReleaseContinuation.Task;
                         if (!ReadBeforeDismissal) row = Row();
                     }
-                    var window = row.Skip(seek).Take(limit).Select(id => Card(id, "movie", id, null, "in_progress", "2026-11-09T10:00:00Z")).ToArray();
+                    var show = section.StartsWith("off-prefix-");
+                    var window = row.Skip(seek).Take(limit).Select(id => Card(id, show ? "episode" : "movie", id,
+                        show ? (id.EndsWith("-001") || id.EndsWith("-090") ? section + "-show" : id + "-show") : null,
+                        section.EndsWith("-nu") ? "next_up" : "in_progress", "2026-11-09T10:00:00Z")).ToArray();
                     return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items = window, total = row.Length, has_more = seek + window.Length < row.Length, total_exact = true, snapshot = "fixture" }, Snake)) };
                 }
                 object[] items = section switch
@@ -751,10 +811,17 @@ internal static class ViewerActionsNativeFixture
                         Card("no-stamp", "movie", "No stamp", null, "in_progress", null)],
                     "nu" => [Card("nu-ep", "episode", "Next episode", "nu-show", "next_up"), Card("nu-orphan", "episode", "Orphan episode", null, "next_up")],
                     "plain" => [Card("plain-film", "movie", "Plain film")],
+                    _ when section.StartsWith("books-") => [
+                        Card(section[6..] + "-one", section[6..], "First book", "books", "in_progress", "2026-11-09T10:00:00Z"),
+                        Card(section[6..] + "-two", section[6..], "Second book", "books", "in_progress", "2026-11-09T10:00:00Z")],
                     _ => [],
                 };
                 items = items.Where(item => !_dismissed.Contains(JsonSerializer.SerializeToElement(item, Snake).GetProperty("content_id").GetString()!)).ToArray();
-                body = new { items, total = items.Length, has_more = false, total_exact = true, snapshot = "fixture" };
+                var total = items.Length;
+                var offset = int.TryParse(Query(query, "seek"), out var parsedOffset) ? parsedOffset : 0;
+                var pageSize = int.TryParse(Query(query, "limit"), out var parsedLimit) ? parsedLimit : 60;
+                items = items.Skip(offset).Take(pageSize).ToArray();
+                body = new { items, total, has_more = offset + items.Length < total, total_exact = true, snapshot = "fixture" };
             }
             else if (path == "/api/v2/collections/preview") { Previews.Add(text ?? ""); body = new { items = Array.Empty<object>(), total = 0 }; }
             else if (path == "/api/v2/collections" && request.Method == HttpMethod.Post)

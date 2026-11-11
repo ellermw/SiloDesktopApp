@@ -36,8 +36,16 @@ public static class HomeDismissalPolicy
     public static bool CanDismiss(MediaItem item) => item.ItemSource switch
     {
         ContinueWatching => !string.IsNullOrWhiteSpace(item.ProgressUpdatedAt),
-        NextUp => !string.IsNullOrWhiteSpace(item.SeriesId),
+        NextUp => !string.IsNullOrWhiteSpace(SeriesIdentity(item)),
         _ => false,
+    };
+
+    /// <summary>Only TV episodes and series dismiss a whole show; book series are unrelated.</summary>
+    public static string? SeriesIdentity(MediaItem item) => item.Type switch
+    {
+        "episode" => item.SeriesId,
+        "series" => item.ContentId,
+        _ => null,
     };
 
     /// <summary>

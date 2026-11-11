@@ -72,6 +72,7 @@ public sealed partial class CatalogPage : Page,
     private bool _undoBusy => _undoOperation != null;
     private bool _undoResetPending;
     private long _sectionMutationRevision;
+    private readonly Dictionary<string, HomeDismissalApplied> _pendingUndoDismissals = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sortPreferenceGate = new();
     private Task _sortPreferenceTail = Task.CompletedTask;
 
@@ -209,6 +210,7 @@ public sealed partial class CatalogPage : Page,
         ClearUndoState();
         _undoOperation = null;
         _undoResetPending = false;
+        _pendingUndoDismissals.Clear();
         Interlocked.Exchange(ref _queryOptionsOwner, null)?.Cancel();
         StopWatchlistTitles();
         Interlocked.Increment(ref _loadGeneration);
@@ -262,7 +264,8 @@ public sealed partial class CatalogPage : Page,
             if (visit == null || visit.IsCancellationRequested || visit != _navigationCts) return;
             if (message.Kind == MediaSurfaceChangeKind.HomeDismissed)
             {
-                RemoveDismissedSectionCards(message);
+                _pendingUndoDismissals.Remove(message.ContentId, out var applied);
+                RemoveDismissedSectionCards(message, applied != null && message.Context == applied.Context ? applied : null);
                 return;
             }
 
@@ -306,10 +309,10 @@ public sealed partial class CatalogPage : Page,
         {
             if (visit == null || visit.IsCancellationRequested || visit != _navigationCts
                 || _source != "section" || !_api.IsCurrentContext(message.Context)) return;
-            // The endpoint and visible opportunity are assigned together, only after this
-            // event actually removes a card. Unloaded/other-surface events cannot replace it.
-            RemoveDismissedSectionCards(new(MediaSurfaceChangeKind.HomeDismissed,
-                message.Item.ContentId, message.Item.SeriesId, context: message.Context), message);
+            // MediaItemMenu emits this followed immediately by HomeDismissed. Stage the
+            // opportunity by ID so either completion ordering can pair its own endpoint
+            // with the actual removal, without processing the same dismissal twice.
+            _pendingUndoDismissals[message.Item.ContentId] = message;
         });
     }
 
@@ -321,8 +324,8 @@ public sealed partial class CatalogPage : Page,
         _snapshot = null;
     }
 
-    // A show dismissal affects both rows. The paired MediaSurfaceChanged message is
-    // harmless after HomeDismissalApplied has already removed the matching cards.
+    // The paired surface message removes cards once and reads the live total, including
+    // show members outside the loaded prefix. Only a matched removal assigns Undo state.
     private void RemoveDismissedSectionCards(MediaSurfaceChanged message, HomeDismissalApplied? undo = null)
     {
         if (_source != "section" || _navigationCts?.IsCancellationRequested != false) return;
@@ -331,17 +334,18 @@ public sealed partial class CatalogPage : Page,
             .Where(candidate => candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp
                 && HomeDismissalPolicy.IsRemovedBy(candidate, message.ContentId, message.SeriesId))
             .ToList();
-        if (removed.Count == 0) return;
+        if (removed.Count == 0 && !_items.Any(candidate =>
+            candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp)) return;
         var positions = removed.Select(item => (_items.IndexOf(item), item)).OrderBy(pair => pair.Item1).ToList();
         _sectionMutationRevision++;
-        var resumePaging = _loading;
         RetireSectionPaging();
         foreach (var card in removed) _items.Remove(card);
         _selectedIds.ExceptWith(removed.Select(card => card.ContentId));
         _offset = Math.Max(0, _offset - removed.Count);
         _totalItems = Math.Max(0, _totalItems - removed.Count);
         UpdateSectionCount();
-        if (undo != null)
+        CountPanel.Visibility = Visibility.Collapsed;
+        if (undo != null && removed.Count > 0)
         {
             _undoGeneration++;
             _undoSurface = undo.Surface;
@@ -351,7 +355,7 @@ public sealed partial class CatalogPage : Page,
             _undoRemovedCount = removed.Count;
             ShowUndoBanner();
         }
-        if (resumePaging && !_undoBusy) _ = LoadAsync(false);
+        if (!_undoBusy) _ = LoadAsync(false);
     }
 
     private void UpdateSectionCount()
