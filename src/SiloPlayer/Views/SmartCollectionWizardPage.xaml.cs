@@ -61,6 +61,7 @@ public sealed partial class SmartCollectionWizardPage : Page
                 or nameof(ViewModel.IsLoading)
                 or nameof(ViewModel.IsPreviewing)
                 or nameof(ViewModel.PreviewTotal)
+                or nameof(ViewModel.PreviewScopeNote)
                 or nameof(ViewModel.IsReadOnly)
                 or nameof(ViewModel.Title))
             {
@@ -332,7 +333,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             ? Visibility.Visible
             : Visibility.Collapsed;
         NextSummaryText.Text = ViewModel.PreviewTotal > 0
-            ? $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")} match these filters"
+            ? $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")} {(ViewModel.PreviewScopeNote == null ? "match these filters" : "match in the previewed library")}"
             : "Choose filters to preview matching titles";
         UpdateContinueState();
     }

@@ -55,6 +55,27 @@ public sealed class BrowseParityBehaviorTests
         Assert.Single(wire.CatalogPaths);
     }
 
+    [Fact]
+    public async Task WizardPreviewOfSeveralLibrariesSaysItCoversOnlyTheFirst()
+    {
+        using var wire = new Wire(); var client = wire.Client();
+        using var auth = new AuthService(client, new AuthApi(client));
+        var vm = new SmartCollectionWizardViewModel(new CatalogApi(client), new CollectionsApi(client), new AuthApi(client), auth);
+        vm.Libraries.Add(new() { Id = 11, Name = "Films" }); vm.Libraries.Add(new() { Id = 22, Name = "Shows" });
+        vm.SelectedLibraryIds.Add(11);
+        vm.AddRule("genre", "contains", "Drama");
+        await vm.PreviewAsync();
+        Assert.Null(vm.PreviewScopeNote); // one library: the preview is the whole collection
+        vm.SelectedLibraryIds.Add(22);
+        await vm.PreviewAsync();
+        Assert.Contains("library_id=11", wire.CatalogPaths[^1]);
+        Assert.Equal("Preview and count cover Films only. The saved collection also includes matches from the other selected library.", vm.PreviewScopeNote);
+        Assert.Equal(new[] { 11, 22 }, vm.BuildQueryDefinition().LibraryIds);
+        vm.Rules[0].Value = ""; // nothing is previewed, so there is no scope to describe
+        await vm.PreviewAsync();
+        Assert.Null(vm.PreviewScopeNote);
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         public List<string> CatalogPaths { get; } = [];

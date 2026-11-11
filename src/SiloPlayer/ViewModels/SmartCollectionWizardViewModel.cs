@@ -78,6 +78,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     [ObservableProperty] private string? _currentPosterUrl;
     [ObservableProperty] private bool _isReadOnly;
     [ObservableProperty] private int _previewTotal;
+    [ObservableProperty] private string? _previewScopeNote;
 
     public byte[]? PosterFileBytes { get; private set; }
     public string? PosterFileName { get; private set; }
@@ -249,9 +250,22 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         {
             // Sends nothing; an empty rule set would list the whole catalog.
             PreviewTotal = 0; IsPreviewing = false; ErrorMessage = null; _failedPreviewContinuation = false;
+            PreviewScopeNote = null;
             return;
         }
+        PreviewScopeNote = DescribePreviewScope(_previewQuery);
         await LoadPreviewWindowAsync(_previewQuery, reset: true, generation, ct);
+    }
+
+    // The catalog preview reads one library, while the saved collection covers every selected
+    // library. With several selected, say which one the cards and the count describe.
+    private string? DescribePreviewScope(QueryDefinition query)
+    {
+        if (query.LibraryIds.Count < 2 || query.LibraryIds[0] <= 0) return null;
+        var name = Libraries.FirstOrDefault(library => library.Id == query.LibraryIds[0])?.Name;
+        var others = query.LibraryIds.Count - 1;
+        return $"Preview and count cover {(string.IsNullOrWhiteSpace(name) ? "the first selected library" : name)} only. "
+            + $"The saved collection also includes matches from the other {(others == 1 ? "selected library" : $"{others} selected libraries")}.";
     }
 
     public Task RetryPreviewAsync(CancellationToken ct = default)

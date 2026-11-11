@@ -181,6 +181,9 @@
                                 <TextBlock x:Name="PreviewCountTextBlock" Text="Loading items…" FontSize="13"
                                            Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </controls:WrapPanel>
+                            <TextBlock x:Name="PreviewScopeText" Text="{x:Bind ViewModel.PreviewScopeNote, Mode=OneWay}" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       Visibility="{x:Bind ViewModel.PreviewScopeNote, Mode=OneWay, Converter={StaticResource NullToVis}}" />
 
                             <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}"
                                     BorderThickness="1" CornerRadius="14" Padding="18,14">
