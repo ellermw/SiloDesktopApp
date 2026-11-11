@@ -154,6 +154,9 @@ public sealed partial class SmartCollectionWizardPage : Page
         sortOptions.Add(("Progress", "progress"));
         sortOptions.Add(("Date Viewed", "date_viewed"));
         sortOptions.Add(("Plays", "plays"));
+        // Rendering a saved sort must not silently rewrite it, including future fields.
+        if (sortOptions.All(option => option.Value != ViewModel.SortField))
+            sortOptions.Add((QueryRulesEditor.Label(ViewModel.SortField), ViewModel.SortField));
         AddComboItems(SortFieldCombo, sortOptions, ViewModel.SortField);
         _wizardSortChoices = CatalogSortChoices.Capture(SortFieldCombo);
         RefreshSortChoices();

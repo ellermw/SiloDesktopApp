@@ -4,7 +4,7 @@ Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; offici
 
 Source version: `1.2.973-beta.1`; numeric version: `1.2.972.1`.
 
-These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps.
+These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
 Dedicated Continue Watching/Next Up pages remove eligible cards and update counts. Complete-rule validation gates smart editor/wizard previews and saves; Trending has a Show selector. Calendar labels/palettes, library sidebar icon aliases, failed-sync status refresh with draft preservation and episode library scope match current upstream. Dismissal retires any pending continuation and re-seeks the shortened live row while preserving the already-loaded prefix.
 
@@ -14,13 +14,15 @@ Independent Codex review confirmed the dismissal/paging race. The fix cancels an
 
 App DLL SHA256: `FA7601A51FB4EAEC8B361154DCDF107ADA3D0751265797D094A45B03CD9A6A84`; all 741 authored app PDB documents match final source. Selected native DLL/PDB identities and source documents also match. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/viewer-actions/review-final-binding`, the original `viewer-actions-implementation.md`/review, and `viewer-actions-review-fixes-note.md`.
 
+Later QA fix, not built or run in that pass (pipeline verification pending; the suite count, DLL hash and PDB binding above predate it): the smart-collection wizard now offers a stored sort field that its own list does not name, so a metadata-only save resends the stored sort; the viewer-actions `smart-metadata` route gains that case.
+
 Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline and candidate; four icon assertions before that failure passed, so no completed sidebar route is claimed. Existing skipped-sync-count retention remains a nonblocking pre-existing gap. Dedicated page has no Home-style Undo. SVG visual parity and live-server interoperability are unverified. Installed player remains running and untouched.
 
 ---
 
 # November 11 ? collection wall, hero and actions for Beta
 
-Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Source remains **1.2.970**; the Beta pipeline owns integration, stamps and publication.
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Historical: source was **1.2.970** when this entry was written (current stamps are in the newest entry above); the Beta pipeline owns integration, stamps and publication.
 
 Collections now use one responsive poster wall with ownership/library filters and loaded-only empty states, plus a backdrop hero with description, ownership, Shuffle, Edit/Add Home and More actions. Owner Sync now/Delete share policy and confirmation with the wall cards; shared/server collections offer library-page placement. Delete carries the revision. Pending actions retire on navigation or authority changes. Administrator collection management, including Open in, remains outside Desktop's available access.
 
@@ -32,7 +34,7 @@ Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/collections{,-actions}-i
 
 # November 11 ? Show update preparation immediately and retain panel visibility (Beta candidate)
 
-Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Source remains **1.2.970**; the Beta pipeline owns integration, versioning and publication.
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Historical: source was **1.2.970** when this entry was written (current stamps are in the newest entry above); the Beta pipeline owns integration, versioning and publication.
 
 Update Now paints the corner panel immediately with Preparing? and animated indeterminate progress, then atomically transfers presentation to the authenticated helper and normal update progress. Ordinary owned-window stacking keeps the panel above Silo on focus loss, allows other apps to cover it and follows minimize/restore. Restart now/Later stay until selected. The helper retains ownership while Silo may survive staging; elevation launch runs off the UI thread.
 

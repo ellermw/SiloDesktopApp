@@ -75,6 +75,7 @@ internal static class ViewerActionsNativeFixture
             if (Wants("smart-editor")) await SmartEditorAsync(frame, wire);
             if (Wants("smart-wizard")) await SmartWizardAsync(frame, wire);
             if (Wants("smart-metadata")) await RulelessSmartMetadataAsync(frame, wire);
+            if (Wants("smart-metadata")) await WizardStoredSortAsync(frame, wire);
             if (Wants("trending")) await TrendingShowAsync(parent);
             if (Wants("calendar")) await CalendarBadgesAsync(frame, calendarModel);
             if (Wants("sync")) await FailedSyncRefreshAsync(client, collections, catalog, settings, auth, wire);
@@ -534,6 +535,31 @@ internal static class ViewerActionsNativeFixture
         }
     }
 
+    // A stored sort field the wizard does not list stays selected, so a rename resends it unchanged.
+    private static async Task WizardStoredSortAsync(Frame frame, Wire wire)
+    {
+        await Task.Delay(600); // Let any prior save finish its queued navigation.
+        frame.BackStack.Clear();
+        var updates = wire.Updates.Count;
+        frame.Navigate(typeof(SmartCollectionWizardPage), new SmartCollectionWizardNavigationArgs(CollectionId: "future-sort"));
+        var page = (SmartCollectionWizardPage)frame.Content;
+        var sort = (ComboBox)page.FindName("SortFieldCombo");
+        await Until(() => Field<bool>(page, "_loaded") && !page.ViewModel.IsLoading
+            && page.ViewModel.Title == "Future sort" && sort.Items.Count > 0, "future-sort wizard load");
+        await Task.Delay(900);
+        Check(page.ViewModel.SortField == "future_score" && (sort.SelectedItem as ComboBoxItem)?.Tag as string == "future_score",
+            "the wizard keeps a stored sort field it does not list: " + page.ViewModel.SortField);
+        page.ViewModel.Title = "Renamed future sort";
+        await page.ViewModel.SaveAsync();
+        Check(wire.Updates.Count == updates + 1, "the renamed collection is saved: " + page.ViewModel.ErrorMessage);
+        using var patch = JsonDocument.Parse(wire.Updates[^1]);
+        var stored = patch.RootElement.GetProperty("query_definition").GetProperty("sort");
+        Check(patch.RootElement.GetProperty("name").GetString() == "Renamed future sort"
+            && stored.GetProperty("field").GetString() == "future_score" && stored.GetProperty("order").GetString() == "asc",
+            "a rename resends the stored sort: " + stored);
+        Program.Log("PASS: the wizard keeps a stored sort field it does not list and a rename resends it unchanged.");
+    }
+
     // ----- G5 -----
 
     private static async Task TrendingShowAsync(StackPanel parent)
@@ -813,6 +839,13 @@ internal static class ViewerActionsNativeFixture
                 }
                 body = new { id = "ruleless", name = "Legacy smart", collection_type = "smart", creator_profile_id = "fixture",
                     query_definition = new { match = "any", groups = Array.Empty<object>(), future_option = true } };
+            }
+            else if (path == "/api/v2/collections/future-sort")
+            {
+                if (request.Method == HttpMethod.Patch) Updates.Add(text ?? "");
+                body = new { id = "future-sort", name = "Future sort", collection_type = "smart", creator_profile_id = "fixture",
+                    query_definition = new { match = "all", groups = new[] { new { match = "all", rules = new[] { new { field = "genre", op = "contains", value = "Drama" } } } },
+                        sort = new { field = "future_score", order = "asc" } } };
             }
             else if (path == "/api/v2/collections/capabilities") body = new { imports = true, import_sources = new[] { "mdblist" }, item_reorder = true };
             else if (path == "/api/v2/collections/synced/sync")
