@@ -168,6 +168,8 @@ public static class MediaItemCollectionReconciler
         ReferenceEquals(left, right)
         || (left is not null && right is not null
             && left.Played == right.Played
+            && left.WatchedCount == right.WatchedCount
+            && left.UnplayedCount == right.UnplayedCount
             && left.IsInProgress == right.IsInProgress
             && left.IsFavorite == right.IsFavorite
             && left.InWatchlist == right.InWatchlist

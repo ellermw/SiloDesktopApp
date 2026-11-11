@@ -1885,6 +1885,7 @@ _webhookPlexAuthCts?.Cancel();
     private IReadOnlySet<string> _overlayShownRatings = new HashSet<string>();
     private bool OverlayOffered(string id) => id switch
     {
+        "resolution_hdr_audio" => _cardOverlayService.OffersOverlay(id),
         "rating_imdb" or "imdb_top_250" => _overlayShownRatings.Contains("imdb"),
         "rating_tmdb" => _overlayShownRatings.Contains("tmdb"),
         "rating_rt" or "rt_certified_fresh" => _overlayShownRatings.Contains("rt_critic"),
@@ -1972,7 +1973,7 @@ _webhookPlexAuthCts?.Cancel();
     private static readonly (string Title, string Description, string[] Ids)[] OverlayGroups =
     [
         ("Technical", "Video, audio, format, and release details.",
-            ["resolution", "hdr", "resolution_hdr", "audio", "audio_channels", "video_codec", "container", "aspect_ratio", "release_type", "edition", "multi_audio", "multi_sub"]),
+            ["resolution", "hdr", "resolution_hdr", "resolution_hdr_audio", "audio", "audio_channels", "video_codec", "container", "aspect_ratio", "release_type", "edition", "multi_audio", "multi_sub"]),
         ("Ratings", "IMDb, TMDB, Rotten Tomatoes, and age-rating badges.",
             ["rating_imdb", "rating_tmdb", "rating_rt", "rating_rt_audience", "content_rating", "advisory_age"]),
         ("Metadata", "Year, runtime, language, studio, and network context.",
@@ -2058,9 +2059,9 @@ _webhookPlexAuthCts?.Cancel();
             TextWrapping = TextWrapping.Wrap,
         });
         var suppressed = initial.Enabled && _cardOverlayDraft is not null &&
-            OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, _cardOverlayDraft.Items);
+            _cardOverlayService.SuppressesStandalone(definition.Id, _cardOverlayDraft.Items);
         var hint = suppressed
-            ? "Hidden while the combined Resolution + HDR badge is enabled."
+            ? "Hidden while a combined badge is enabled."
             : OverlayAvailabilityNote(definition.Id);
         if (!string.IsNullOrWhiteSpace(hint))
         {
@@ -2104,7 +2105,12 @@ _webhookPlexAuthCts?.Cancel();
             selectedAccent is null ? "Default accent" : $"Accent: {selectedAccent}");
 
         var position = new ComboBox { Width = 130 };
-        var positions = new[]
+        var positions = _cardOverlayService.ManifestRevision >= 25 ? new[]
+        {
+            (OverlayPosition.TopLeft, "Top left"),
+            (OverlayPosition.LeftEdge, "Left edge"), (OverlayPosition.RightEdge, "Right edge"),
+            (OverlayPosition.BottomLeft, "Bottom left"), (OverlayPosition.BottomRight, "Bottom right"),
+        } : new[]
         {
             (OverlayPosition.TopLeft, "Top left"), (OverlayPosition.TopRight, "Top right"),
             (OverlayPosition.BottomLeft, "Bottom left"), (OverlayPosition.BottomRight, "Bottom right"),
@@ -2156,6 +2162,7 @@ _webhookPlexAuthCts?.Cancel();
         var items = _cardOverlayDraft.Items.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         items[id] = config;
         _cardOverlayDraft = _cardOverlayDraft with { Items = items };
+        if (id is "resolution_hdr" or "resolution_hdr_audio") BuildCardOverlayControls();
         UpdateCardOverlayPreview();
         ScheduleCardOverlaySave();
     }
@@ -2375,10 +2382,12 @@ _webhookPlexAuthCts?.Cancel();
         OverlayPreviewTopRight.Children.Clear();
         OverlayPreviewBottomLeft.Children.Clear();
         OverlayPreviewBottomRight.Children.Clear();
+        OverlayPreviewLeftEdge.Children.Clear();
+        OverlayPreviewRightEdge.Children.Clear();
         if (_cardOverlayDraft is null) return;
         var sampleValues = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["resolution"] = "4K", ["hdr"] = "HDR10", ["resolution_hdr"] = "4K HDR",
+            ["resolution"] = "4K", ["hdr"] = "HDR10", ["resolution_hdr"] = "4K HDR", ["resolution_hdr_audio"] = "4K HDR Atmos",
             ["audio"] = "Atmos", ["audio_channels"] = "7.1", ["video_codec"] = "HEVC",
             ["container"] = "MKV", ["aspect_ratio"] = "2.39:1", ["release_type"] = "Remux",
             ["edition"] = "Director's Cut", ["multi_audio"] = "Multi-Audio", ["multi_sub"] = "CC",
@@ -2401,17 +2410,21 @@ _webhookPlexAuthCts?.Cancel();
         foreach (var definition in definitions)
         {
             if (!OverlayOffered(definition.Id) || !_cardOverlayDraft.Items.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-            if (OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, _cardOverlayDraft.Items)) continue;
+            if (_cardOverlayService.SuppressesStandalone(definition.Id, _cardOverlayDraft.Items)) continue;
             if (!sampleValues.TryGetValue(definition.Id, out var value) || string.IsNullOrEmpty(value)) continue;
-            if (counts.GetValueOrDefault(config.Position) >= 3) continue;
-            counts[config.Position] = counts.GetValueOrDefault(config.Position) + 1;
+            var displayPosition = _cardOverlayService.DisplayPosition(config.Position);
+            var limit = displayPosition is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3;
+            if (counts.GetValueOrDefault(displayPosition) >= limit) continue;
+            counts[displayPosition] = counts.GetValueOrDefault(displayPosition) + 1;
             var badge = global::SiloPlayer.Controls.PosterCard.BuildBadge(value, definition.Id, config, _cardOverlayDraft.Preset);
-            var host = config.Position switch
+            var host = displayPosition switch
             {
                 OverlayPosition.TopLeft => OverlayPreviewTopLeft,
                 OverlayPosition.TopRight => OverlayPreviewTopRight,
                 OverlayPosition.BottomLeft => OverlayPreviewBottomLeft,
                 OverlayPosition.BottomRight => OverlayPreviewBottomRight,
+                OverlayPosition.LeftEdge => OverlayPreviewLeftEdge,
+                OverlayPosition.RightEdge => OverlayPreviewRightEdge,
                 _ => OverlayPreviewTopLeft,
             };
             badge.MaxWidth = 76;
@@ -2424,6 +2437,7 @@ _webhookPlexAuthCts?.Cancel();
         "resolution" => "Video resolution (4K, 1080p, 720p, etc.)",
         "hdr" => "Dynamic range format (HDR10, DV, HLG)",
         "resolution_hdr" => "Single badge combining resolution and dynamic range (e.g. \"4K DV\", \"1080p HDR\")",
+        "resolution_hdr_audio" => "Single badge combining resolution, dynamic range, and audio (e.g. \"4K DV Atmos\")",
         "audio" => "Audio codec (Atmos, DTS-HD, TrueHD, etc.)",
         "audio_channels" => "Channel layout (Stereo, 5.1, 7.1)",
         "video_codec" => "Video codec (H.264, H.265, AV1)",

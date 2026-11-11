@@ -10,6 +10,7 @@ public readonly record struct CardOverlayGeometry(
     double StackGap)
 {
     public const double PosterReferenceWidth = 185;
+    public double WatchStatusSize => 22 * Scale;
 
     public static CardOverlayGeometry ForPoster(double cardWidth, string preset = "classic")
     {

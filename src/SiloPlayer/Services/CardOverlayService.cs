@@ -6,7 +6,7 @@ using SiloPlayer.Core.Models.Home;
 namespace SiloPlayer.Services;
 
 /// <summary>
-/// Four corners a card overlay badge can live in. Mirrors the WebUI
+/// Corners and vertically centred edge rails. Mirrors the WebUI
 /// OverlayPosition type in web/src/lib/overlays.
 /// </summary>
 public enum OverlayPosition
@@ -15,6 +15,8 @@ public enum OverlayPosition
     TopRight,
     BottomLeft,
     BottomRight,
+    LeftEdge,
+    RightEdge,
 }
 
 /// <summary>
@@ -119,6 +121,8 @@ public static class OverlayRegistry
         new("resolution",         "Resolution",       OverlayPosition.TopLeft,     true,  d => FormatResolution(d.Resolution)),
         new("hdr",                "HDR / Dolby Vision", OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Hdr) ? null : d.Hdr),
         new("resolution_hdr",     "Resolution + HDR (combined)", OverlayPosition.TopLeft, false, d => FormatResolutionHdr(d.Resolution, d.Hdr)),
+        new("resolution_hdr_audio", "Resolution + HDR + Audio (combined)", OverlayPosition.TopLeft, false,
+            d => JoinParts(FormatResolution(d.Resolution), FormatHdr(d.Hdr), d.Audio)),
         new("audio",              "Audio Codec",      OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Audio) ? null : d.Audio),
         new("audio_channels",     "Audio Channels",   OverlayPosition.TopLeft,     false, d => string.IsNullOrEmpty(d.AudioChannels) ? null : d.AudioChannels),
         new("video_codec",        "Video Codec",      OverlayPosition.TopLeft,     false, d => string.IsNullOrEmpty(d.VideoCodec) ? null : d.VideoCodec),
@@ -146,8 +150,11 @@ public static class OverlayRegistry
     public static Dictionary<string, OverlayItemConfig> DefaultPrefs =>
         All.ToDictionary(def => def.Id, def => new OverlayItemConfig(def.DefaultEnabled, def.DefaultPosition));
 
-    public static bool SuppressesStandaloneOverlays(string overlayId, IReadOnlyDictionary<string, OverlayItemConfig> prefs)
+    public static bool SuppressesStandaloneOverlays(string overlayId, IReadOnlyDictionary<string, OverlayItemConfig> prefs, int manifestRevision = int.MaxValue)
     {
+        if (manifestRevision >= 26 && overlayId is "resolution" or "hdr" or "audio" or "resolution_hdr" &&
+            prefs.TryGetValue("resolution_hdr_audio", out var allCombined) && allCombined.Enabled)
+            return true;
         return (overlayId == "resolution" || overlayId == "hdr") &&
             prefs.TryGetValue("resolution_hdr", out var combined) &&
             combined.Enabled;
@@ -168,8 +175,18 @@ public static class OverlayRegistry
         var res = FormatResolution(resolution);
         if (res == null) return null;
         if (string.IsNullOrWhiteSpace(hdr)) return res;
-        var suffix = hdr.Contains("DV", StringComparison.OrdinalIgnoreCase) ? "DV" : "HDR";
+        var suffix = FormatHdr(hdr);
         return $"{res} {suffix}";
+    }
+
+    private static string? FormatHdr(string? value) => string.IsNullOrWhiteSpace(value) ? null
+        : value.Contains("DV", StringComparison.OrdinalIgnoreCase) || value.Contains("Dolby Vision", StringComparison.OrdinalIgnoreCase) ? "DV"
+        : value.Contains("HDR10+", StringComparison.OrdinalIgnoreCase) ? "HDR10+" : "HDR";
+
+    private static string? JoinParts(params string?[] parts)
+    {
+        var value = string.Join(" ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+        return value.Length == 0 ? null : value;
     }
 
     private static string? FormatRuntime(int? minutes)
@@ -228,20 +245,46 @@ public class CardOverlayService
     public CardOverlayPrefs GetDocument() => _document with
     {
         Order = _document.Order.ToArray(),
-        Items = _document.Items.ToDictionary(pair => pair.Key, pair => pair.Value)
+        Items = _document.Items.ToDictionary(pair => pair.Key, pair => pair.Value with { Position = DisplayPosition(pair.Value.Position) })
     };
     public int ManifestRevision { get; private set; }
+    private bool _manifestUnavailable;
+    private ApiRequestContext? _manifestContext;
+
+    public OverlayPosition DisplayPosition(OverlayPosition position) => _manifestUnavailable ? position : PositionForRevision(position, ManifestRevision);
+
+    public static OverlayPosition PositionForRevision(OverlayPosition position, int revision) => position switch
+    {
+        OverlayPosition.TopRight when revision >= 25 => OverlayPosition.RightEdge,
+        OverlayPosition.LeftEdge when revision < 25 => OverlayPosition.TopLeft,
+        OverlayPosition.RightEdge when revision < 25 => OverlayPosition.TopRight,
+        _ => position,
+    };
+
+    public bool OffersOverlay(string id) => _manifestUnavailable || ManifestRevision >= IntroducedInRevision(id);
+
+    public bool SuppressesStandalone(string id, IReadOnlyDictionary<string, OverlayItemConfig> prefs) =>
+        OverlayRegistry.SuppressesStandaloneOverlays(id, prefs, _manifestUnavailable ? int.MaxValue : ManifestRevision);
+
+    private static int IntroducedInRevision(string id) => id switch
+    {
+        "request_status" => 15,
+        "advisory_age" => 13,
+        "resolution_hdr_audio" => 26,
+        _ => 0,
+    };
 
     public IReadOnlyList<OverlayDef> GetOrderedDefinitions()
     {
         if (_document.Order.Count == 0)
-            return OverlayRegistry.All;
+            return OverlayRegistry.All.Where(d => OffersOverlay(d.Id)).ToArray();
 
         var configuredOrder = _document.Order
             .Select((id, index) => (id, index))
             .GroupBy(pair => pair.id, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First().index, StringComparer.Ordinal);
         return OverlayRegistry.All
+            .Where(d => OffersOverlay(d.Id))
             .Select((definition, registryIndex) => (definition, registryIndex))
             .OrderBy(pair => configuredOrder.TryGetValue(pair.definition.Id, out var index) ? index : int.MaxValue)
             .ThenBy(pair => pair.registryIndex)
@@ -260,9 +303,11 @@ public class CardOverlayService
             if (_initialized) return;
 
             var enabled = true;
-            try { ManifestRevision = (await _settingsApi.GetContractCapabilitiesAsync(ct)).Revision; }
+            var manifestRevision = 0;
+            var manifestUnavailable = false;
+            try { manifestRevision = (await _settingsApi.GetContractCapabilitiesAsync(context, ct)).Revision; }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch { ManifestRevision = 0; }
+            catch { manifestUnavailable = true; }
             var document = BuildDefaultDocument();
             try
             {
@@ -297,17 +342,21 @@ public class CardOverlayService
             var generalAvailable = false;
             try
             {
-                var keys = ManifestRevision >= 8 ? new[] { "ui.card_quick_actions_enabled", "ui.card_quick_actions", "ui.card_overlays_enabled", "ui.card_overlays" } : new[] { "ui.card_overlays" };
+                var keys = manifestRevision >= 8 ? new[] { "ui.card_quick_actions_enabled", "ui.card_quick_actions", "ui.card_overlays_enabled", "ui.card_overlays" } : new[] { "ui.card_overlays" };
                 var effective = await _settingsApi.GetContractEffectiveSettingsAsync(keys, ct: ct);
                 profileEnabled = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_overlays_enabled")?.Value.ValueKind != JsonValueKind.False;
                 quickEnabled = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_quick_actions_enabled")?.Value.ValueKind != JsonValueKind.False;
                 quickMode = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_quick_actions")?.Value.GetString() ?? "both";
                 hasOverride = effective.Settings.FirstOrDefault(entry => entry.Key == "ui.card_overlays")?.Scope == "profile";
-                generalAvailable = ManifestRevision >= 8;
+                generalAvailable = manifestRevision >= 8;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { }
+            ct.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _loadGeneration) || !_settingsApi.IsCurrentContext(context)) return;
+            ManifestRevision = manifestRevision;
+            _manifestUnavailable = manifestUnavailable;
+            _manifestContext = manifestUnavailable ? null : context;
             _enabled = enabled;
             _document = document;
             ProfileBadgesEnabled = profileEnabled;
@@ -327,6 +376,9 @@ public class CardOverlayService
     {
         Interlocked.Increment(ref _loadGeneration);
         _initialized = false;
+        _manifestUnavailable = false;
+        _manifestContext = null;
+        ManifestRevision = 0;
         _enabled = true;
         _document = BuildDefaultDocument();
         ProfileBadgesEnabled = QuickActionsEnabled = true;
@@ -337,18 +389,56 @@ public class CardOverlayService
 
     public async Task SaveAsync(CardOverlayPrefs prefs, CancellationToken ct = default)
     {
-        var normalized = NormalizeDocument(prefs);
-        if (ManifestRevision < 15 && !(normalized.OriginalDocument is JsonElement original &&
-            original.TryGetProperty("items", out var originalItems) && originalItems.TryGetProperty("request_status", out _)))
-            normalized.Items.Remove("request_status");
-        if (ManifestRevision < 13 && !(normalized.OriginalDocument is JsonElement ageOriginal &&
-            ageOriginal.TryGetProperty("items", out var ageItems) && ageItems.TryGetProperty("advisory_age", out _)))
-            normalized.Items.Remove("advisory_age");
-        await _settingsApi.PutSettingAsync("card_overlays", SerializePrefs(normalized), ct);
-        Interlocked.Increment(ref _loadGeneration);
-        _document = normalized;
-        _initialized = true;
-        HasProfileOverride = true;
+        var context = _settingsApi.CaptureContext();
+        var generation = Volatile.Read(ref _loadGeneration);
+        // Finish any preference reload before replacing its document, so its
+        // general preferences and manifest are not left at invalidation defaults.
+        await EnsureLoadedAsync(ct);
+        await _initLock.WaitAsync(ct);
+        try
+        {
+            void RequireCurrentLoad()
+            {
+                ct.ThrowIfCancellationRequested();
+                if (generation != Volatile.Read(ref _loadGeneration) || !_settingsApi.IsCurrentContext(context))
+                    throw new OperationCanceledException("Card overlay preferences changed. Reload before saving.", ct);
+            }
+
+            var manifestRevision = ManifestRevision;
+            RequireCurrentLoad();
+            if (_manifestContext != context)
+            {
+                // Unknown or unavailable is not proof of an older contract.
+                var capabilities = await _settingsApi.GetContractCapabilitiesAsync(context, ct);
+                RequireCurrentLoad();
+                manifestRevision = capabilities.Revision;
+                ManifestRevision = manifestRevision;
+                _manifestUnavailable = false;
+                _manifestContext = context;
+            }
+            var normalized = NormalizeDocument(prefs);
+            foreach (var definition in OverlayRegistry.All)
+            {
+                // An unavailable manifest can expose a badge the server cannot
+                // write. Do not report success after dropping its enablement.
+                if (manifestRevision < IntroducedInRevision(definition.Id) &&
+                    normalized.Items[definition.Id].Enabled != _document.Items[definition.Id].Enabled)
+                    throw new InvalidOperationException($"The server manifest does not support changing {definition.Label}. Reload card overlay settings before saving.");
+            }
+            var json = SerializeForRevision(normalized, manifestRevision);
+            RequireCurrentLoad();
+            await _settingsApi.SetContractSettingValueAsync(context, "ui.card_overlays", "profile",
+                JsonSerializer.Deserialize<JsonElement>(json), ct: ct);
+            RequireCurrentLoad();
+            Interlocked.Increment(ref _loadGeneration);
+            _document = ParsePrefs(json)!;
+            _initialized = true;
+            HasProfileOverride = true;
+        }
+        finally
+        {
+            _initLock.Release();
+        }
         Changed?.Invoke();
     }
 
@@ -442,6 +532,8 @@ public class CardOverlayService
         "top-right" => OverlayPosition.TopRight,
         "bottom-left" => OverlayPosition.BottomLeft,
         "bottom-right" => OverlayPosition.BottomRight,
+        "left-edge" => OverlayPosition.LeftEdge,
+        "right-edge" => OverlayPosition.RightEdge,
         _ => null,
     };
 
@@ -451,6 +543,8 @@ public class CardOverlayService
         OverlayPosition.TopRight => "top-right",
         OverlayPosition.BottomLeft => "bottom-left",
         OverlayPosition.BottomRight => "bottom-right",
+        OverlayPosition.LeftEdge => "left-edge",
+        OverlayPosition.RightEdge => "right-edge",
         _ => "top-left",
     };
 
@@ -459,9 +553,9 @@ public class CardOverlayService
 
     private static CardOverlayPrefs NormalizeDocument(CardOverlayPrefs prefs)
     {
-        var preset = prefs.Preset is "minimal" or "classic" or "vibrant" or "pill" or "square"
-            ? prefs.Preset
-            : "classic";
+        // Rendering falls back to classic for unknown presets; saving must not
+        // replace a newer server's preset (including plate and band).
+        var preset = string.IsNullOrWhiteSpace(prefs.Preset) ? "classic" : prefs.Preset;
         var items = OverlayRegistry.DefaultPrefs;
         foreach (var def in OverlayRegistry.All)
         {
@@ -477,6 +571,9 @@ public class CardOverlayService
     }
 
     private static string SerializePrefs(CardOverlayPrefs prefs)
+        => SerializeForRevision(prefs, int.MaxValue);
+
+    private static string SerializeForRevision(CardOverlayPrefs prefs, int manifestRevision)
     {
         var root = prefs.OriginalDocument is JsonElement original ? JsonNode.Parse(original.GetRawText()) as JsonObject ?? new() : new JsonObject();
         var items = root["items"] as JsonObject ?? new JsonObject();
@@ -484,20 +581,25 @@ public class CardOverlayService
         {
             // Older manifests reject newly introduced IDs. Preserve any stored
             // entry, but don't invent one until that manifest is supported.
-            if (def.Id == "request_status" && !prefs.Items.ContainsKey(def.Id)) continue;
-            if (def.Id == "advisory_age" && !prefs.Items.ContainsKey(def.Id)) continue;
-            var config = prefs.Items[def.Id];
+            if (manifestRevision < IntroducedInRevision(def.Id)) continue;
+            if (!prefs.Items.TryGetValue(def.Id, out var config)) continue;
             var item = items[def.Id] as JsonObject ?? new JsonObject();
             item["enabled"] = config.Enabled;
-            item["position"] = FormatPosition(config.Position);
-            item["accentColor"] = config.AccentColor;
-            item["showIcon"] = config.ShowIcon;
+            item["position"] = FormatPosition(PositionForRevision(config.Position, manifestRevision));
+            if (config.AccentColor is null) item.Remove("accentColor");
+            else item["accentColor"] = config.AccentColor;
+            if (config.ShowIcon is null) item.Remove("showIcon");
+            else item["showIcon"] = config.ShowIcon;
             items[def.Id] = item;
         }
         root["version"] = prefs.Version;
-        root["preset"] = prefs.Preset;
-        root["order"] = JsonSerializer.SerializeToNode(prefs.Order);
-        if (root["items"] == null) root["items"] = items;
+        // Preserve stored newer fields, but do not introduce rev-25 presets to
+        // servers that cannot accept them.
+        root["preset"] = manifestRevision < 25 && prefs.Preset is "plate" or "band"
+            ? root["preset"]?.GetValue<string>() ?? "classic" : prefs.Preset;
+        root["order"] = JsonSerializer.SerializeToNode(prefs.Order.Where(id =>
+            manifestRevision >= IntroducedInRevision(id) || items.ContainsKey(id)));
+        if (root["items"] is not JsonObject) root["items"] = items;
         return root.ToJsonString();
     }
 
