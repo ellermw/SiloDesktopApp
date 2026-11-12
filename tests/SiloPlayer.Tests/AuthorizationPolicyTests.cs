@@ -5,6 +5,21 @@ namespace SiloPlayer.Tests;
 
 public sealed class AuthorizationPolicyTests
 {
+    [Theory]
+    [InlineData("admin", true, false, true)]
+    [InlineData("user", true, false, true)]
+    [InlineData("admin", false, false, false)]
+    [InlineData("user", false, false, false)]
+    [InlineData("admin", false, true, true)]
+    [InlineData("user", false, true, false)]
+    public void HouseholdManagementRequiresPrimaryOrServerCheckedProfilelessAdmin(string role, bool primary, bool profileless, bool expected)
+        => Assert.Equal(expected, AuthorizationPolicy.CanManageHousehold(new UserInfo { Role = role },
+            profileless ? null : new Profile { IsPrimary = primary }, !profileless));
+
+    [Fact]
+    public void HouseholdManagementFailsClosedForUnresolvedProfile()
+        => Assert.False(AuthorizationPolicy.CanManageHousehold(new UserInfo { Role = "admin" }, null, true));
+
     [Fact]
     public void AdminUsesAdminPowersOnlyWithoutProfileOrOnPrimaryProfile()
     {

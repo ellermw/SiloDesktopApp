@@ -121,6 +121,7 @@ internal static class CurrentCaptionMetadataNativeFixture
         {
             await Until(() => dialog.IsLoaded, "Metadata dialog did not open.");
             var reset = (Button)Get(dialog, "_reset")!;
+            await Until(() => reset.IsEnabled, "Reset capability did not settle.");
             Click(reset);
             var flyout = (Flyout)reset.Flyout;
             await Until(() => ((FrameworkElement)flyout.Content).IsLoaded, "Reset confirmation did not open.");
