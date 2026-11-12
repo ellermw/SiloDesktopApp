@@ -48,6 +48,13 @@
 - [ ] Implement complete native behavior and applicable HUD layout, using owned images/loads and cancellation. Keep thumbnail/first-frame/error/rebuffer states distinct and preserve retry/pause/track intent.
 - [ ] Run focused and full units, publish and native playback/production-Lua routes. Inspect images against the pinned reference, document remaining true platform differences, self-review and commit.
 
+**Completion pass (worker returned partial `efce4e60`, not task approval):**
+
+- [ ] Implement the applicable desktop Playing Next composition with finishing episode beside the next, credits-card episode still respecting spoiler preferences, chapter segments/lamp-lit seek styling and compact native speed picker.
+- [ ] Port HUD accent contrast adjustment, show catch-up/reconnect labels only for those waits, fade the OSC loading image over500ms without excessive allocation, and request an appropriate screen-sized watch backdrop (update exact URL expectations rather than omitting the query).
+- [ ] Add end-to-end native/synthetic playback-manager coverage for manual versus automatic starts and both advance boundaries, including failure/retirement/shuffle/Watch Party. Existing policy/Lua tests alone do not prove the full wiring.
+- [ ] Verify actual native small/large/loading/post-roll/menu/hit regions against the pinned official reference, then independent review of the entire Task2 change. Phone-only layout and physical display/live-server claims remain outside scope.
+
 ### Task 3: Content-sized Featured hero
 
 **Files:** `Controls/HeroCarousel.xaml`, `HeroCarousel.xaml.cs`, existing hero policies/fixtures; affected Home/Library layout only as necessary.
