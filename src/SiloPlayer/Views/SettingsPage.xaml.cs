@@ -551,6 +551,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         "Profiles" => ProfilesTab,
         "Account" or "Password" => AccountPasswordTab,
         "Sessions" or "SignedInSessions" => SessionsTab,
+        "YourData" => YourDataTab,
         _ => null,
     };
 
@@ -565,6 +566,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         ViewModel.DeactivateTitleArt();
         ViewModel.DeactivateInheritedPreferences();
         DeactivateAccountSignIn();
+        DeactivateYourData();
         ++_overlayLoadGeneration;
         _requestSettingGeneration++;
         _accountPassword.Deactivate();
@@ -1023,6 +1025,7 @@ _webhookPlexAuthCts?.Cancel();
                 ("NotificationsSettings", "Notifications", "New-episode alerts by email, Discord, push, or webhook.", "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
                 ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
                 ("Account", "Account", "Manage the shared account password.", "\uE72E", "account password credential sign in security"),
+                ("YourData", "Your Data", "Export and import this profile's data.", "\uEBC3", "export import profile data backup transfer history ratings favorites"),
                 ("Sessions", "Signed-in sessions", "See active sign-ins and sign out a browser or app.", "\uE7F4", "sessions active client device last seen sign out revoke security"),
             ]),
         };
@@ -1157,6 +1160,7 @@ _webhookPlexAuthCts?.Cancel();
     {
         DeactivateDevices();
         DeactivateLoginSessions();
+        DeactivateYourData();
         ViewModel.DeactivateTitleArt();
         DeactivateAccountSignIn();
         ++_overlayLoadGeneration;
@@ -1246,6 +1250,7 @@ _webhookPlexAuthCts?.Cancel();
             (ConnectAppsTab, "connect apps silo jellyfin compatible infuse swiftfin jellycon findroid sign in login server address username password pin"),
             (ProfilesTab, "profiles profile names pin access rules primary household library create delete"),
             (AccountPasswordTab, "account password credential sign in security"),
+            (YourDataTab, "your data export import profile backup transfer history ratings favorites collections preferences"),
             (SessionsTab, "signed-in sessions active client device last seen sign out revoke security"),
         };
 
@@ -1273,7 +1278,7 @@ _webhookPlexAuthCts?.Cancel();
         ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
-        AccountNavGroup.Visibility = new[] { SessionsTab, AccountPasswordTab, ProfilesTab, NotificationsSettingsTab }
+        AccountNavGroup.Visibility = new[] { SessionsTab, AccountPasswordTab, ProfilesTab, NotificationsSettingsTab, YourDataTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1291,7 +1296,7 @@ _webhookPlexAuthCts?.Cancel();
             return;
 
         if (tag == "CardOverlays") { SelectSettingsSection("Interface"); return; }
-        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, SessionsTab };
+        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, YourDataTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -1324,6 +1329,8 @@ _webhookPlexAuthCts?.Cancel();
         if (tag != "Devices") DeactivateDevices();
         ConnectAppsPanel.Visibility = tag == "ConnectApps" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
+        YourDataPanel.Visibility = tag == "YourData" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag != "YourData") DeactivateYourData();
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "Sessions") DeactivateLoginSessions();
         if (tag != "WebhookSync") _webhookRefreshTimer?.Stop();
@@ -1342,7 +1349,11 @@ _webhookPlexAuthCts?.Cancel();
             StartHouseholdSessionsPolling();
         }
 
-        if (tag == "Sessions")
+        if (tag == "YourData")
+        {
+            _ = LoadYourDataAsync();
+        }
+        else if (tag == "Sessions")
         {
             _ = LoadSessionsAsync();
         }

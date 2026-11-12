@@ -36,6 +36,7 @@ public partial class SiloApiClient
     public Services.LocalizedMediaReads LocalizedReads { get; } = new();
     public const string DefaultClientName = "Silo for Windows";
     public const string ClientFamily = "desktop";
+    public event Action? ContextInvalidated;
 
     private static readonly HttpRequestOptionsKey<long> AuthenticationGenerationOption =
         new("SiloPlayer.AuthenticationGeneration");
@@ -127,12 +128,15 @@ public partial class SiloApiClient
     /// <summary>Retire reads authorized by old account access without changing credentials or the selected PIN grant.</summary>
     public ApiRequestContext InvalidateAccessContext()
     {
+        ApiRequestContext result;
         lock (_authStateGate)
         {
             _requestContextGeneration++;
             _accessGeneration++;
-            return CaptureContext();
+            result = CaptureContext();
         }
+        ContextInvalidated?.Invoke();
+        return result;
     }
 
     public bool TryInvalidateAccessContext(ApiRequestContext expected, out ApiRequestContext updated, bool transportCatchUp = false)
@@ -145,8 +149,9 @@ public partial class SiloApiClient
             // Reconnect catch-up retires requests, not the catalog's access authority.
             if (!transportCatchUp) _accessGeneration++;
             updated = CaptureContext();
-            return true;
         }
+        ContextInvalidated?.Invoke();
+        return true;
     }
 
     public HttpRequestMessage CreateAuthenticatedRequest(HttpMethod method, string path)
@@ -447,6 +452,18 @@ public partial class SiloApiClient
         get { lock (_authStateGate) return _profileToken; }
     }
 
+    public ApiRequestContext AdoptProfileProof(ApiRequestContext owner, string profileToken)
+    {
+        lock (_authStateGate)
+        {
+            if (!IsCurrentContext(owner)) throw new OperationCanceledException("The profile authority changed.");
+            if (string.IsNullOrWhiteSpace(profileToken)) throw new ArgumentException("A verified profile proof is required.", nameof(profileToken));
+            _requestContextGeneration++;
+            _profileToken = profileToken;
+            return CaptureContext();
+        }
+    }
+
     private string BuildUrl(string path)
     {
         lock (_authStateGate)
@@ -649,6 +666,23 @@ public partial class SiloApiClient
         using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
         return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<byte[]> SendRawBytesRequestAsync(ApiRequestContext context, HttpMethod method, string path, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, null);
+        using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
+        return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Sends an already-serialized JSON document unchanged instead of re-materializing it.</summary>
+    public async Task<T> SendRawJsonRequestAsync<T>(ApiRequestContext context, HttpMethod method, string path, byte[] json, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, null);
+        request.Content = new ByteArrayContent(json);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        return await SendAsync<T>(request, ct).ConfigureAwait(false);
     }
 
     public async Task<ApiResponse<T>> GetWithETagAsync<T>(string path, CancellationToken ct = default)
