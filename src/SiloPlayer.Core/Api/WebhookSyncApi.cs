@@ -12,11 +12,21 @@ public sealed class WebhookSyncApi(SiloApiClient client)
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(owner)) throw new OperationCanceledException("Webhook Sync authority changed.", ct);
     }
+    // Transport catch-up retires reads only. A write the server has already
+    // committed stays publishable while its manager and access are unchanged.
+    private void RequireCommitted(ApiIdentityContext identity, ApiRequestContext owner, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!client.IsCurrentIdentityContext(identity) || client.CaptureContext().AccessGeneration != owner.AccessGeneration)
+            throw new OperationCanceledException("Webhook Sync authority changed.", ct);
+    }
     private async Task<T> Send<T>(ApiRequestContext owner, HttpMethod method, string path, object? body, CancellationToken ct)
     {
+        // Captured before the owner check: identity cannot change without retiring the owner.
+        var identity = client.CaptureIdentityContext();
         RequireCurrent(owner, ct);
         var result = await client.SendRequestAsync<T>(owner, method, path, body, ct).ConfigureAwait(false);
-        RequireCurrent(owner, ct);
+        if (method == HttpMethod.Get) RequireCurrent(owner, ct); else RequireCommitted(identity, owner, ct);
         return result;
     }
 
@@ -60,9 +70,10 @@ public sealed class WebhookSyncApi(SiloApiClient client)
         => DeleteConnectionAsync(client.CaptureContext(), id, ct);
     public async Task DeleteConnectionAsync(ApiRequestContext owner, string id, CancellationToken ct = default)
     {
+        var identity = client.CaptureIdentityContext();
         RequireCurrent(owner, ct);
         await client.SendNoContentRequestAsync(owner, HttpMethod.Delete, $"{Base}/{Uri.EscapeDataString(id)}", null, ct).ConfigureAwait(false);
-        RequireCurrent(owner, ct);
+        RequireCommitted(identity, owner, ct);
     }
 
     public Task<RotateWebhookSyncResponse> RotateWebhookAsync(string id, CancellationToken ct = default)

@@ -5192,7 +5192,12 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            if (!CurrentWebhook(owner) || ex is OperationCanceledException) return;
+            // Transport catch-up retires a dispatched read, not its manager;
+            // read again instead of leaving the loading state behind.
+            var retiredRead = ex is OperationCanceledException && !_webhookClient.IsCurrentContext(owner.Context);
+            if (!CurrentWebhook(owner)) return;
+            if (retiredRead) { await LoadWebhookConnectionsAsync(); return; }
+            if (ex is OperationCanceledException) return;
             WebhookFailure(owner, ex);
             NoConnectionsText.Text = "Could not load webhook connections: " + AuthorizationPolicy.HouseholdManagementGuidance(ex);
             NoConnectionsText.Visibility = Visibility.Visible;
@@ -5453,7 +5458,14 @@ _webhookPlexAuthCts?.Cancel();
             _webhookEventsPage = 0;
             BuildWebhookEvents();
         }
-        catch (Exception ex) { if (detailGeneration == _webhookDetailGeneration) WebhookFailure(owner, ex); }
+        catch (Exception ex)
+        {
+            if (detailGeneration != _webhookDetailGeneration) return;
+            // As above: reload details whose reads a transport catch-up retired.
+            var retiredRead = ex is OperationCanceledException && !_webhookClient.IsCurrentContext(owner.Context);
+            if (retiredRead && CurrentWebhook(owner)) await SelectWebhookConnectionAsync(connection);
+            else WebhookFailure(owner, ex);
+        }
     }
 
     private void BuildWebhookActors(WebhookSyncProfileMappingsResponse response)

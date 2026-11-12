@@ -154,7 +154,9 @@ public sealed class EditMetadataDialog : ContentDialog
             catch (ApiException ex) when (capability.AtomicReset && ex.StatusCode == 422)
             { if (CurrentOwner) Toast().Error(ex, "This server does not support atomic metadata reset. Nothing was changed."); }
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
-            finally { _pending = false; confirm.IsEnabled = CanSubmitReset; reset.IsEnabled = CanSubmitReset; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; } };
+            // Only _reset opens this flyout and the click re-checks CanSubmitReset, so the confirmation
+            // must not stay disabled while a reconnect is still reloading the capability.
+            finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = CanSubmitReset; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;
         var auth = App.Services.GetRequiredService<AuthService>();

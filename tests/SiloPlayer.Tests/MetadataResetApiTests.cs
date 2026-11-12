@@ -99,6 +99,28 @@ public sealed class MetadataResetApiTests
         Assert.Equal(boundary == "capability" ? 1 : boundary == "unlock" ? 2 : 2, wire.Requests.Count);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TransportCatchUpCannotDiscardAcceptedResetOrStrandLegacyUnlock(bool atomic)
+    {
+        using var wire = new Wire { SupportsReset = atomic }; var client = Client(wire);
+        wire.Completed = stage => { if (stage != "capability") Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true)); };
+        var receipt = await new MediaMaintenanceApi(client).ResetToProviderAsync("movie");
+        Assert.Equal("queued", receipt.Status);
+        Assert.Equal(atomic ? "reset" : "quick", Assert.Single(wire.Modes));
+        Assert.Equal(atomic ? 2 : 3, wire.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AccessChangeDuringResetCannotPublishReceipt()
+    {
+        using var wire = new Wire(); var client = Client(wire);
+        wire.Completed = stage => { if (stage == "refresh") client.InvalidateAccessContext(); };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("movie"));
+        Assert.Equal(2, wire.Requests.Count);
+    }
+
     [Fact]
     public async Task CancellationAfterCapabilityReadCannotDispatchWrite()
     {
