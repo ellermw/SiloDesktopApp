@@ -1301,6 +1301,62 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Contains("mutual_excl:true", output);
     }
 
+    [Fact]
+    public void TransportReloadingHidesThePauseBadgeAndTracksTheHostPauseIntent()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            local results = {}
+            local function badge()
+                return state.pause_indicator_overlay ~= nil and #state.pause_indicator_overlay.data > 0
+            end
+
+            -- 1. A pause outside a reload keeps its centre Play badge and mpv's own state
+            state.pause = true
+            handlers['osc-set-transport-reloading']('false')
+            table.insert(results, 'idle_badge:' .. tostring(badge()))
+            handlers['osc-set-transport-reload-pause']('false')
+            table.insert(results, 'idle_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 2. The load freeze pauses mpv: no badge under the spinner, host intent kept
+            handlers['osc-set-transport-reloading']('true')
+            table.insert(results, 'reload_badge:' .. tostring(badge()))
+            handlers['osc-set-transport-reload-pause']('false')
+            table.insert(results, 'reload_intent:' .. tostring(state.transport_reload_paused))
+            handlers['osc-set-transport-reload-pause']('true')
+            table.insert(results, 'reload_paused_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 3. First output retires the reload and its intent; the pause badge returns
+            handlers['osc-set-transport-reloading']('false')
+            table.insert(results, 'retired_badge:' .. tostring(badge()))
+            table.insert(results, 'retired_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 4. An opaque startup cover also retires the reload's intent
+            handlers['osc-set-transport-reloading']('true')
+            handlers['osc-set-transport-reload-pause']('true')
+            handlers['osc-set-loading']('true')
+            table.insert(results, 'cover_intent:' .. tostring(state.transport_reload_paused))
+
+            handlers['osc-set-loading']('false')
+            state.pause = false
+
+            mp.set_property('user-data/transport-reload-pause-test', table.concat(results, ','))
+            """, beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """, resultProperty: "user-data/transport-reload-pause-test");
+        Assert.Contains("idle_badge:true", output);
+        Assert.Contains("idle_intent:nil", output);
+        Assert.Contains("reload_badge:false", output);
+        Assert.Contains("reload_intent:false", output);
+        Assert.Contains("reload_paused_intent:true", output);
+        Assert.Contains("retired_badge:true", output);
+        Assert.Contains("retired_intent:nil", output);
+        Assert.Contains("cover_intent:nil", output);
+    }
+
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,

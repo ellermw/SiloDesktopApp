@@ -616,6 +616,9 @@ public partial class PlayerService : IDisposable
     public void RequestUserPauseToggle()
     {
         var paused = !(IsWatchTogetherPlayback ? IsPaused : _subtitleReplanPauseIntent ?? IsPaused);
+        // A continuing reload's freeze is not the viewer's pause state.
+        if (!IsWatchTogetherPlayback && !_subtitleReplanPauseIntent.HasValue && TransportReloadPauseIntent is bool pending)
+            paused = !pending;
         if (IsWatchTogetherPlayback)
             RoomTransportRequested?.Invoke(paused ? "pause" : "play", CurrentMediaPosition, paused);
         else SetPaused(paused);
@@ -653,6 +656,10 @@ public partial class PlayerService : IDisposable
         mpv.SendScriptMessage("osc-set-transport-reloading", "true");
         return true;
     }
+    // A submitted load freezes mpv until FILE_LOADED. In a framed session the
+    // state it will restore, not that freeze, is what the viewer sees and toggles.
+    private bool? TransportReloadPauseIntent =>
+        _sessionHasFramed && (_switchingContent || IsLoading) ? _restorePausedAfterLoad : null;
     private double? _transportStartPosition;
     private double PlaybackRecoveryPosition => !_transportHasFirstOutput && _transportStartPosition is { } start
         ? start : CurrentMediaPosition;
@@ -728,6 +735,8 @@ public partial class PlayerService : IDisposable
     /// <summary>Pause / resume the local mpv player.</summary>
     public void SetPaused(bool paused)
     {
+        // During a continuing reload the OSC shows this choice, not the load freeze.
+        _mpv?.SendScriptMessage("osc-set-transport-reload-pause", paused ? "true" : "false");
         // A subtitle replan's temporary native pause is not viewer intent.
         if (_subtitleReplanPauseIntent.HasValue) _subtitleReplanPauseIntent = paused;
         lock (_liveSubtitleLock)
@@ -769,7 +778,10 @@ public partial class PlayerService : IDisposable
         if (_switchingContent || IsLoading)
         {
             RecordTransportPauseIntent(paused);
-            _restorePausedAfterLoad = paused;
+            // Only a submitted load restores this at FILE_LOADED. Before one
+            // exists the busy-scoped intent carries the choice into the load,
+            // so a busy state that ends without one leaves nothing behind.
+            if (_restorePausedAfterLoad.HasValue) _restorePausedAfterLoad = paused;
         }
         else ClearTransportPauseIntent();
         if (paused) _mpv.Pause();
@@ -3335,6 +3347,8 @@ public partial class PlayerService : IDisposable
             if (_sessionHasFramed)
             {
                 mpv.SendScriptMessage("osc-set-transport-reloading", "true");
+                // The freeze below is not a viewer pause; publish what this load restores.
+                mpv.SendScriptMessage("osc-set-transport-reload-pause", _restorePausedAfterLoad == true ? "true" : "false");
             }
             else
             {

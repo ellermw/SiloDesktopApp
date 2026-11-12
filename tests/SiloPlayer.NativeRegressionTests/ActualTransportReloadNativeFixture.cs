@@ -88,8 +88,10 @@ internal static class ActualTransportReloadNativeFixture
                 render_playback_wait()
                 local r = state.layout["btn_" .. (state.actual_reload_kind or "audio")] or {}
                 local wait = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+                local badge = state.pause_indicator_overlay and state.pause_indicator_overlay.data or ''
                 mp.commandv('script-message', 'silo-actual-reload-state', request, require('mp.utils').format_json({
                     loading=state.playback_loading or false, reloading=state.transport_reloading or false,
+                    badge=#badge > 0, intent=tostring(state.transport_reload_paused),
                     black=wait:find('1c&H000000&', 1, true) ~= nil, overlay=#wait > 10,
                     scope=state['native_' .. (state.actual_reload_kind or 'audio') .. '_scope'] or '', sequence=(state.native_menu_request or {}).sequence or 0,
                     x=r.cx or 0, y=r.cy or 0, width=r.w or 0}))
@@ -180,6 +182,10 @@ internal static class ActualTransportReloadNativeFixture
             }
             var reload = await Query("held-output");
             Require(reload.GetProperty("reloading").GetBoolean() && !reload.GetProperty("loading").GetBoolean() && !reload.GetProperty("black").GetBoolean() && reload.GetProperty("overlay").GetBoolean(), "Framed production seek did not show a transparent spinner while output was held.");
+            // The load freeze is not a viewer pause: no Play badge under the spinner, and the transport shows what the load restores.
+            Require(!reload.GetProperty("badge").GetBoolean(), "Framed production reload drew the paused Play badge under its spinner.");
+            Require(Get(service, "_restorePausedAfterLoad") is bool restores && reload.GetProperty("intent").GetString() == (restores ? "true" : "false"),
+                "Framed production reload presented the load freeze instead of the pause state its load restores.");
             if (scenario == "menus-output") await OpenAudio("held-output");
             if (scenario.EndsWith("-output", StringComparison.Ordinal) && scenario is not "menus-output" and not "pause-output" and not "resume-output") await OpenControl(scenario.Split('-')[0], "held-output");
             if (scenario == "resume-output") { service.SetPaused(false); await Until(() => !mpv.IsPaused, "Resume awaiting output did not apply."); }
