@@ -799,7 +799,13 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             {
                 wire.RejectTrackChanges = false;
                 var requestedTrack = manager.CurrentSession!.SubtitleUrls.FirstOrDefault(t => t.Index == requested);
-                await service.SetSubtitleTrackAndPersistAsync(requested + 1, requestedTrack?.Language, requestedTrack);
+                // Leaving the previous iteration's burn-in grant reloads the
+                // transport, and FILE_LOADED releases the busy flags before its
+                // initializer exists. Await that load's own subtitle epoch, or
+                // the version switch below retires this pick mid-execution.
+                if (manager.CurrentSession.IsSubtitleBurnedIn)
+                    await Loaded(() => service.SetSubtitleTrackAndPersistAsync(requested + 1, requestedTrack?.Language, requestedTrack));
+                else await service.SetSubtitleTrackAndPersistAsync(requested + 1, requestedTrack?.Language, requestedTrack);
                 await Until(() => !service.IsLoading && Get(service, "_loadedMediaInitCts") == null &&
                     service.ActiveSubtitleServerIndex == requested);
                 service.SetPaused(true);
