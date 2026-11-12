@@ -25,12 +25,13 @@ public enum DeviceLoginBinding
 /// <remarks>
 /// When bound, the start sends <c>binding</c>, the unpadded base64url SHA-256 of the
 /// secret, and every poll sends <c>binding_secret</c>, the unpadded base64url secret
-/// itself. The server is expected to hash the presented secret and compare it with the
-/// stored binding, so the two encodings differ on purpose and must only change together.
-/// These names and encodings are unverified against a pinned server revision (see "QA
-/// contract status" in docs/current-development.md). A server that advertises binding
-/// but ignores the fields is not detected here, and one that compares them verbatim
-/// refuses every poll with <c>device_binding_mismatch</c>.
+/// itself. The server decodes the presented secret, hashes it and compares the result with
+/// the stored binding, so the two encodings differ on purpose and must only change together.
+/// Confirmed against official Silo Server main 0b579aa6192d49d7e8e0921dde5e955ac29ce302:
+/// <c>deviceLoginBindingMatches</c> in internal/auth/device_login.go, and the
+/// <c>session_binding</c>, <c>binding</c> and <c>binding_secret</c> fields of
+/// <c>GET/POST /api/v2/auth/device/*</c> in internal/apiv2/device_login.go (see "Server
+/// contract" in docs/current-development.md).
 /// </remarks>
 public sealed class DeviceLoginSetup(AuthApi api, string server, Func<bool>? isCurrent = null) : IDisposable
 {
