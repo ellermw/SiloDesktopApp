@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "id": "dl-ep3",
+      "content_id": "series-1",
+      "episode_id": "ep-3",
+      "batch_id": "test-batch",
+      "media_file_id": "103",
+      "file_size": 4800000000,
+      "bytes_sent": 0,
+      "kind": "episode",
+      "status": "preparing",
+      "quality": "original",
+      "effective_quality": "original",
+      "delivery_format": "original",
+      "target_bitrate_kbps": 0,
+      "revision": 1,
+      "created_at": "2026-11-10T12:00:02Z"
+    }
+  ],
+  "batch_id": "test-batch",
+  "skipped": [
+    {
+      "content_id": "series-1",
+      "episode_id": "ep-4",
+      "reason": "No downloadable file for this episode."
+    }
+  ],
+  "page": {
+    "has_more": false
+  }
+}

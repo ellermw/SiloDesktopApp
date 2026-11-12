@@ -30,6 +30,17 @@ public static class MediaItemMenu
         NextUp,
     }
 
+    /// <summary>
+    /// The menu surface a card's row implies. Cards on Home and on a dedicated Continue Watching /
+    /// Next Up page share the Home row vocabulary in <see cref="MediaItem.ItemSource"/>.
+    /// </summary>
+    public static Surface SurfaceFor(MediaItem item) => item.ItemSource switch
+    {
+        HomeDismissalPolicy.ContinueWatching => Surface.ContinueWatching,
+        HomeDismissalPolicy.NextUp => Surface.NextUp,
+        _ => Surface.Default,
+    };
+
     public static MenuFlyout Build(
         MediaItem item,
         Surface surface = Surface.Default,
@@ -270,9 +281,10 @@ public static class MediaItemMenu
                 if (root != null && AuthorizationPolicy.IsActingAdmin(authService)) await new SiloPlayer.Views.Dialogs.PlayHistoryDialog(item.ContentId) { XamlRoot = root }.ShowAsync();
             }));
 
+        var dismissalSeriesId = HomeDismissalPolicy.SeriesIdentity(item);
         var canDismiss = surface == Surface.ContinueWatching
             ? !string.IsNullOrWhiteSpace(item.ProgressUpdatedAt)
-            : surface == Surface.NextUp && !string.IsNullOrWhiteSpace(item.SeriesId);
+            : surface == Surface.NextUp && !string.IsNullOrWhiteSpace(dismissalSeriesId);
         if (canDismiss)
         {
             if (flyout.Items.Count > 0)
@@ -300,7 +312,7 @@ public static class MediaItemMenu
                     var context = homeApi.CaptureContext();
                     object body = surfaceKey == "continue_watching"
                         ? new { progress_updated_at = item.ProgressUpdatedAt }
-                        : (object)new { series_id = item.SeriesId! };
+                        : (object)new { series_id = dismissalSeriesId! };
                     await homeApi.DismissItemAsync(surfaceKey, item.ContentId, body);
                     serverAccepted = true;
                     stage = "context_check";
@@ -314,7 +326,7 @@ public static class MediaItemMenu
                     stage = "surface_update";
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                         MediaSurfaceChangeKind.HomeDismissed, item.ContentId,
-                        item.SeriesId ?? (item.Type == "series" ? item.ContentId : null), context: context));
+                        dismissalSeriesId, context: context));
                     stage = "success_toast";
                     toast.Success(dropsShow ? "Removed from Continue Watching and Next Up" : label);
                     LocalLog.AppendLine("home_actions.txt",

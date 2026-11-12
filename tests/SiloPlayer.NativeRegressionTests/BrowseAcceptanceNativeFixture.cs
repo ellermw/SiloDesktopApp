@@ -188,18 +188,19 @@ internal static class BrowseAcceptanceNativeFixture
                 page.ViewModel.ServerLibraries.Add(new() { LibraryId = 1, LibraryName = "First library", TotalCount = 20, Collections = [new() { Id = "same", Title = "Repeated collection" }] });
                 page.ViewModel.ServerLibraries.Add(new() { LibraryId = 2, LibraryName = "Second library", TotalCount = 30, Collections = [new() { Id = "same", Title = "Repeated collection" }, new() { Id = "different", Title = "Different collection" }] });
                 Call(page, "BuildServerCollectionRows"); await Layout(page, 900, 750);
-                var rows = (StackPanel)page.FindName("ServerCollectionsRows");
-                if (Descendants<TextBlock>(rows).Count(text => text.Text == "Repeated collection" && text.FontSize == 13) != 1)
+                // The server's collections share the one wall with the profile's own; library pills pick one library's.
+                var wall = (StackPanel)page.FindName("CollectionsGrid");
+                if (Descendants<TextBlock>(wall).Count(text => text.Text == "Repeated collection" && text.FontSize == 13) != 1)
                     throw new InvalidOperationException("All libraries duplicates collections that appear in more than one library.");
-                var second = Descendants<Button>(rows).Single(button => AutomationProperties.GetName(button) == "Second library");
+                var pills = (StackPanel)page.FindName("CollectionsFilterPills");
+                var second = Descendants<Button>(pills).Single(button => AutomationProperties.GetName(button) == "Second library");
                 ((IInvokeProvider)new ButtonAutomationPeer(second).GetPattern(PatternInterface.Invoke)).Invoke(); await Layout(page, 900, 750);
-                var headerActions = (StackPanel)page.FindName("ServerCollectionsHeaderActions");
-                var seeAll = Descendants<Button>(headerActions).Single(button => Equals(button.Content, "See all 30"));
-                if (Descendants<Button>(rows).Any(button => Equals(button.Content, "See all 30"))) throw new InvalidOperationException("Selecting a server library placed See all inside the board instead of its heading.");
-                Type? target = null; object? route = null; navigation.Frame = new Frame(); navigation.NavigationRequestHandler = (type, parameter) => { target = type; route = parameter; return true; };
-                ((IInvokeProvider)new ButtonAutomationPeer(seeAll).GetPattern(PatternInterface.Invoke)).Invoke();
-                if (target != typeof(LibraryPage) || route is not LibraryPage.NavigationArgs libraryRoute || libraryRoute.Library.Id != 2 || libraryRoute.InitialTab != "Collections") throw new InvalidOperationException("Actual server See all did not preserve its library collections route.");
-                Program.Log("PASS: COLLECTIONS_SERVER_COMPLETED All deduplicates and library selection offers the complete See all count."); return;
+                if (!Descendants<TextBlock>(wall).Any(text => text.Text == "Different collection" && text.FontSize == 13) || Descendants<TextBlock>(wall).Count(text => text.Text == "Repeated collection" && text.FontSize == 13) != 1)
+                    throw new InvalidOperationException("Selecting a server library did not show that library's collections in the wall.");
+                if (Descendants<Button>((StackPanel)page.FindName("ServerCollectionsRows")).Any(button => button.Content is string label && label.StartsWith("See all", StringComparison.Ordinal)))
+                    throw new InvalidOperationException("See all belongs only to a library whose list failed to load.");
+                Program.Log("PASS: COLLECTIONS_SERVER_COMPLETED All deduplicates in one wall and a library pill shows that library's collections.");
+                return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_LAYOUT") == "1")
             {
@@ -208,16 +209,18 @@ internal static class BrowseAcceptanceNativeFixture
                 page.ViewModel.Collections.Add(new() { Id = "own", CreatorProfileId = "acceptance", Name = "My collection", CollectionType = "manual" });
                 page.ViewModel.Collections.Add(new() { Id = "shared", CreatorProfileId = "other", Name = "Other collection", CollectionType = "smart", IsShared = true });
                 Call(page, "BuildCollectionCards"); await Layout(page, 900, 750);
-                if (!Descendants<TextBlock>(page).Any(text => text.Text == "Shared with me") || !Descendants<TextBlock>(page).Any(text => text.Text == "by Other profile" || string.Concat(text.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Select(run => run.Text)) == "by Other profile"))
-                    throw new InvalidOperationException("Personal collections do not separate owned posters from read-only owner groups.");
-                if (Descendants<TextBlock>(page).Any(text => text.Text == "Ungrouped")) throw new InvalidOperationException("Legacy personal-group header is still shown.");
+                var pillRow = (StackPanel)page.FindName("CollectionsFilterPills");
+                if (!Descendants<Button>(pillRow).Any(button => AutomationProperties.GetName(button) == "Shared") || !Descendants<TextBlock>(page).Any(text => text.Text == "by Other profile" || string.Concat(text.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Select(run => run.Text)) == "by Other profile"))
+                    throw new InvalidOperationException("The one wall does not separate owned posters from read-only shared ones naming their owner.");
+                if (Descendants<TextBlock>(page).Any(text => text.Text is "Ungrouped" or "Shared with me" or "Your collections")) throw new InvalidOperationException("Stacked section or personal-group headings are still shown.");
                 var title = Descendants<TextBlock>(page).Single(text => text.Text == "My collection" && text.FontSize == 13);
                 if (title.FontSize != 13 || title.FontWeight.Weight != 600) throw new InvalidOperationException("Collection poster caption does not follow the shared current card.");
                 var pageTitle = (TextBlock)page.FindName("CollectionsTitle");
                 if (pageTitle.FontSize != 36 || pageTitle.FontWeight.Weight != 800 || pageTitle.CharacterSpacing != -50) throw new InvalidOperationException("Collection page title does not follow current CalmPage clamp/weight/tracking.");
                 var ownOpen = Descendants<Button>(page).Single(button => AutomationProperties.GetName(button) == "Open My collection");
-                if (((TextBlock)page.FindName("PersonalCollectionsCount")).Text != "1" || !Descendants<Border>(ownOpen).Any(border => border.CornerRadius.TopLeft == 16 && border.BorderThickness == new Thickness(1))) throw new InvalidOperationException("Collection count/current owned poster frame is missing.");
-                Program.Log("PASS: COLLECTIONS_LAYOUT_COMPLETED personal poster sections split by ownership and name their read-only owners."); return;
+                var mine = Descendants<Button>(pillRow).Single(button => AutomationProperties.GetName(button) == "Mine");
+                if (Descendants<TextBlock>(mine).Skip(1).Single().Text != "1" || !Descendants<Border>(ownOpen).Any(border => border.CornerRadius.TopLeft == 16 && border.BorderThickness == new Thickness(1))) throw new InvalidOperationException("Mine pill count/current owned poster frame is missing.");
+                Program.Log("PASS: COLLECTIONS_LAYOUT_COMPLETED personal posters share one wall with Show pills and name read-only owners."); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_CREATION") == "1" || Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_SYNCED_CREATION") == "1")
             {

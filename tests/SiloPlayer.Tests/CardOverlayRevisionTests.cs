@@ -108,7 +108,14 @@ public sealed class CardOverlayRevisionTests
         using var wire = new OverlayWire(24, "{\"version\":2,\"preset\":\"classic\",\"items\":{}}");
         var service = await wire.LoadAsync();
         var draft = service.GetDocument() with { Preset = "plate", Order = ["resolution_hdr_audio", "year"] };
-        await service.SaveAsync(draft);
+        // A preset the manifest cannot store is reported, not replaced behind a successful save.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync(draft));
+        Assert.Contains("server manifest does not support", error.Message);
+        Assert.Contains("plate", error.Message);
+        Assert.Null(wire.Saved);
+        Assert.Equal("classic", service.GetDocument().Preset);
+
+        await service.SaveAsync(draft with { Preset = "classic" });
         using var saved = JsonDocument.Parse(wire.Saved!);
         Assert.Equal("classic", saved.RootElement.GetProperty("preset").GetString());
         Assert.Equal(new[] { "year" }, saved.RootElement.GetProperty("order").EnumerateArray().Select(id => id.GetString()));
@@ -269,6 +276,44 @@ public sealed class CardOverlayRevisionTests
             Assert.True(saved.RootElement.GetProperty("items").GetProperty("resolution_hdr_audio").GetProperty("enabled").GetBoolean());
             Assert.True(service.GetDocument().Items["resolution_hdr_audio"].Enabled);
         }
+    }
+
+    [Theory]
+    [InlineData("position")]
+    [InlineData("accent")]
+    [InlineData("icon")]
+    [InlineData("image")]
+    [InlineData("value-image")]
+    public async Task ProvisionalBadgeEditsOtherThanEnablementAlsoReportUnsupportedManifest(string edit)
+    {
+        using var wire = new OverlayWire(25, "{\"version\":2,\"preset\":\"classic\",\"items\":{}}")
+            { FailCapabilities = true };
+        var service = await wire.LoadAsync();
+        Assert.True(service.OffersOverlay("resolution_hdr_audio"));
+        var draft = service.GetDocument();
+        var stored = draft.Items["resolution_hdr_audio"];
+        draft.Items["resolution_hdr_audio"] = edit switch
+        {
+            "position" => stored with { Position = OverlayPosition.BottomLeft },
+            "accent" => stored with { AccentColor = "#123456" },
+            "icon" => stored with { ShowIcon = true },
+            "image" => stored with { Image = "badge.webp" },
+            _ => stored with { ValueImages = new Dictionary<string, string> { ["2160p DV Atmos"] = "value.webp" } },
+        };
+        wire.FailCapabilities = false;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SaveAsync(draft));
+        Assert.Contains("server manifest does not support", error.Message);
+        Assert.Contains("Resolution + HDR + Audio", error.Message);
+        Assert.Null(wire.Saved);
+        Assert.Equal(stored, service.GetDocument().Items["resolution_hdr_audio"]);
+
+        // The untouched badge still saves alongside an edit the manifest supports.
+        var supported = service.GetDocument();
+        supported.Items["year"] = supported.Items["year"] with { Enabled = true };
+        await service.SaveAsync(supported);
+        using var saved = JsonDocument.Parse(wire.Saved!);
+        Assert.True(saved.RootElement.GetProperty("items").GetProperty("year").GetProperty("enabled").GetBoolean());
+        Assert.False(saved.RootElement.GetProperty("items").TryGetProperty("resolution_hdr_audio", out _));
     }
 
     [Fact]

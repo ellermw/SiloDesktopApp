@@ -142,7 +142,7 @@ public sealed partial class SettingsPage
         if (!Current()) return;
         var catalog = await LoadAllowedRecipeCatalogAsync();
         if (!Current()) return;
-        var draft = new SettingsSectionEntry { SectionType = "collection", IsCustom = true, Title = args.Name, ItemLimit = 20, Config = new() { ["user_collection_id"] = args.CollectionId } };
+        var draft = new SettingsSectionEntry { SectionType = "collection", IsCustom = true, Title = args.Name, ItemLimit = 20, Config = new() { [args.ServerCollection ? "library_collection_id" : "user_collection_id"] = args.CollectionId } };
         var configured = await SiloPlayer.Views.Dialogs.RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, draft, CurrentHomePageLabel());
         if (configured == null || !Current()) return;
         ViewModel.AddHomeSection(new SettingsSectionEntry
