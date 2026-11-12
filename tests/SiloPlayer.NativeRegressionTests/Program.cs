@@ -162,6 +162,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-popup-layout")
+            {
+                await PlaybackPopupLayoutNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "video-speed")
             {
                 await VideoPlaybackRateNativeFixture.RunAsync();
@@ -395,6 +400,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 if (string.IsNullOrEmpty(reviewCase))
                     await OscHudStatesNativeFixture.RunAsync(_window);
                 await OscHudStatesNativeFixture.RunAsync(_window, reviewCase ?? "all");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "watch-party-policy")
+            {
+                await MediaInteractionsNativeFixture.RunAsync(parent, policyOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "intro-reoffer")
+            {
+                await OscHudStatesNativeFixture.RunAsync(_window, introOnly: true);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
@@ -936,6 +951,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-revisions")
             {
                 await CardOverlayRevisionNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "advanced-overlays")
+            {
+                await AdvancedOverlayNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")

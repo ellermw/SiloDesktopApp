@@ -34,13 +34,15 @@ public partial class PlaybackManager
         KeptBufferingEstimateKbps = null;
         if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
     }
-    private void ConfigureConnectionReplan(PlaybackReplanRequestV3 request)
+    private void ConfigureConnectionReplan(PlaybackReplanRequestV3 request, bool inventoryRefresh = false)
     {
         request.ClientFeatures.AddRange(new[] { "buffering_quality_v1", "connection_speed_v1", "playback_plan_summary_v1" }.Where(_connectionFeatures.Contains));
         if (!_connectionFeatures.Contains("buffering_quality_v1")) return;
-        var intent = request.Operation == "quality_change" ? _bufferingReplanIntent.Value : null;
+        // Inventory discovery must not consume buffering intent or kept estimates,
+        // but must still honor the viewer's learned-limit opt-out.
+        var intent = !inventoryRefresh && request.Operation == "quality_change" ? _bufferingReplanIntent.Value : null;
         request.LearnedLimit = BufferingQualityMode == "never" || IgnoreConnectionMeasurements ? "ignore" : intent?.LearnedLimit;
-        if (IgnoreConnectionMeasurements || request.Operation == "seek_reanchor") return;
+        if (inventoryRefresh || IgnoreConnectionMeasurements || request.Operation == "seek_reanchor") return;
         request.BandwidthEstimateKbps = intent?.BandwidthEstimateKbps ?? (request.QualityPreference == "auto" ? KeptBufferingEstimateKbps : null);
         request.BandwidthEstimateSource = intent?.BandwidthEstimateSource;
         request.ObservedThroughputKbps = intent?.ObservedThroughputKbps;

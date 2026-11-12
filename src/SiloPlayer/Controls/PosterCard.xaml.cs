@@ -61,6 +61,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         OverlayBottomLeft.Margin = new Thickness(edge);
         OverlayBottomRight.Margin = new Thickness(edge);
         OverlayLeftEdge.Margin = OverlayRightEdge.Margin = new Thickness(edge);
+        // Shown rail badges keep the inset their hosts chose; quick actions reset geometry without a rebind.
+        _badges?.UpdateRailInset();
         WatchStatus.Update(MediaItem?.UserState, _overlayGeometry);
         if (WatchStatus.Visibility == Visibility.Visible)
             OverlayTopLeft.MaxWidth = Math.Max(0, Width - 2 * edge - WatchStatus.ReservedWidth - _overlayGeometry.StackGap);
@@ -538,162 +540,12 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
     /// earlier resolution-only accent style meant HDR/Audio/Release/etc.
     /// were invisible on light backdrops.
     /// </summary>
-    internal static Border BuildBadge(
-        string text,
-        string overlayId,
-        Services.OverlayItemConfig config,
-        string preset,
-        double scale = 1)
-    {
-        scale = double.IsFinite(scale) && scale > 0 ? scale : 1;
-        var accent = ParseOverlayColor(config.AccentColor ?? DefaultOverlayAccent(overlayId));
-        var background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBackgroundBrush"];
-        var borderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBorderBrush"];
-        var foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
-        var radius = 9999d;
-        var padding = new Thickness(8, 2, 8, 2);
-        var fontSize = 10d;
-        var borderThickness = new Thickness(1);
+    internal static Border BuildBadge(string text, string overlayId, Services.OverlayItemConfig config, string preset, double scale = 1)
+        => OverlayBadgeRenderer.Build(text, overlayId, config, preset, scale);
 
-        switch (preset)
-        {
-            case "minimal":
-                background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
-                borderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
-                foreground = accent ?? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(217, 255, 255, 255));
-                radius = 8;
-                padding = new Thickness(4, 0, 4, 0);
-                fontSize = 9;
-                borderThickness = new Thickness(0);
-                break;
-            case "vibrant":
-                background = accent ?? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(242, 220, 220, 220));
-                borderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
-                foreground = accent is null
-                    ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black)
-                    : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
-                radius = 10;
-                borderThickness = new Thickness(0);
-                break;
-            case "pill":
-                background = accent is null
-                    ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(179, 20, 20, 30))
-                      : MixOverlayAccent(accent.Color, Microsoft.UI.ColorHelper.FromArgb(179, 20, 20, 30), .20);
-                padding = new Thickness(10, 4, 10, 4);
-                break;
-            case "square":
-                background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(204, 0, 0, 0));
-                foreground = accent ?? foreground;
-                radius = 8;
-                padding = new Thickness(6, 2, 6, 2);
-                fontSize = 9;
-                borderBrush = accent ?? borderBrush;
-                borderThickness = accent is null ? new Thickness(0) : new Thickness(2, 0, 0, 0);
-                break;
-            default:
-                if (accent is not null)
-                      background = MixOverlayAccent(accent.Color, Microsoft.UI.ColorHelper.FromArgb(153, 0, 0, 0), .28);
-                break;
-        }
-
-        var content = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 4 * scale,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var preferIcon = preset is "vibrant" or "pill";
-        if ((config.ShowIcon ?? preferIcon) && OverlayGlyph(overlayId) is { } glyph)
-        {
-            content.Children.Add(new FontIcon
-            {
-                Glyph = glyph,
-                  FontSize = (preset is "vibrant" or "pill" ? 12 : fontSize + 1) * scale,
-                  Width = (preset is "vibrant" or "pill" ? 12 : fontSize + 1) * scale,
-                  Height = (preset is "vibrant" or "pill" ? 12 : fontSize + 1) * scale,
-                Foreground = foreground,
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-        }
-        content.Children.Add(new TextBlock
-        {
-            Text = text.ToUpperInvariant(),
-            FontSize = fontSize * scale,
-            FontWeight = preset is "vibrant" or "square" ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.SemiBold,
-            CharacterSpacing = preset is "minimal" or "square" ? 100 : 25,
-            LineHeight = fontSize * scale,
-            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Foreground = foreground,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-
-        return RoundedBadge.Apply(new Border
-        {
-            Background = background,
-            BorderBrush = borderBrush,
-            BorderThickness = new Thickness(
-                borderThickness.Left * scale,
-                borderThickness.Top * scale,
-                borderThickness.Right * scale,
-                borderThickness.Bottom * scale),
-            CornerRadius = new CornerRadius(radius * scale),
-            Padding = new Thickness(
-                padding.Left * scale,
-                padding.Top * scale,
-                padding.Right * scale,
-                padding.Bottom * scale),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = content,
-        }, radius * scale);
-    }
-
-    private static Microsoft.UI.Xaml.Media.SolidColorBrush MixOverlayAccent(Windows.UI.Color accent, Windows.UI.Color basis, double accentWeight)
-    {
-        var baseWeight = 1 - accentWeight;
-        var alpha = accent.A * accentWeight + basis.A * baseWeight;
-        byte Channel(byte first, byte second) => (byte)Math.Round(
-            (first * accent.A * accentWeight + second * basis.A * baseWeight) / alpha);
-        return new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb((byte)Math.Round(alpha),
-            Channel(accent.R, basis.R), Channel(accent.G, basis.G), Channel(accent.B, basis.B)));
-    }
-
-    private static Microsoft.UI.Xaml.Media.SolidColorBrush? ParseOverlayColor(string? value)
-    {
-        if (value is not { Length: 7 } || value[0] != '#' || !value.Skip(1).All(Uri.IsHexDigit))
-            return null;
-        return new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(
-            255,
-            Convert.ToByte(value.Substring(1, 2), 16),
-            Convert.ToByte(value.Substring(3, 2), 16),
-            Convert.ToByte(value.Substring(5, 2), 16)));
-    }
-
-    private static string? DefaultOverlayAccent(string overlayId) => overlayId switch
-    {
-        "rating_imdb" => "#f5c518",
-        "rating_tmdb" => "#01b4e4",
-        "rating_rt" => "#fa320a",
-        "rating_rt_audience" => "#fa6400",
-        _ => null,
-    };
-
-    private static string? OverlayGlyph(string overlayId) => overlayId switch
-    {
-        "resolution" or "resolution_hdr" or "resolution_hdr_audio" or "hdr" or "video_codec" => "\uE7F4",
-        "audio" or "audio_channels" => "\uE767",
-        "multi_audio" or "original_language" => "\uE8C1",
-        "multi_sub" => "\uED1E",
-        "rating_imdb" or "rating_tmdb" or "rating_rt" or "rating_rt_audience" => "\uE734",
-        "runtime" => "\uE823",
-        "year" => "\uE787",
-        "studio" or "network" => "\uE80F",
-        "content_rating" => "\uE72E",
-        "show_status" => "\uE735",
-        "container" or "release_type" or "edition" => "\uE8B7",
-        "aspect_ratio" => "\uE740",
-        _ => null,
-    };
+    internal static Border BuildAdvancedBadge(string text, string overlayId, Services.OverlayItemConfig config, string preset, double scale = 1,
+        OverlayStyle? style = null, string? valueKey = null, CardOverlayService? images = null)
+        => OverlayBadgeRenderer.Build(text, overlayId, config, preset, scale, style, valueKey, images);
 
     // Global BitmapImage instantiation lock. The NATIVE decoder invoked by
     // BitmapImage(UriSource) appears to serialize on a shared mutex inside

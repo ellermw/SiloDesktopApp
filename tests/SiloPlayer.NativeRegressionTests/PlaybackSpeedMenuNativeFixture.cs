@@ -275,7 +275,7 @@ internal static class PlaybackSpeedMenuNativeFixture
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1","plan_active_quality_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start")) return Json("{\"outcome\":\"applied\"}");
             using var start = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
-            var fileId = start.RootElement.GetProperty("file_id").GetInt32();
+            var fileId = int.Parse(start.RootElement.GetProperty("file_id").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
             var sessionId = "speed-session-" + fileId;
             return Json(JsonSerializer.Serialize(new { protocol_version = 3, outcome = "playable", session_id = sessionId,
                 server_features = new[] { "plan_active_quality_v1" }, playback_plan = new {
