@@ -645,6 +645,14 @@ public partial class PlayerService : IDisposable
     private NativeOutputOwner? _nativeOutputOwner;
     private bool OwnsNativeOutput(NativeOutputOwner owner) => ReferenceEquals(owner, _nativeOutputOwner) &&
         owner.FileGeneration == Volatile.Read(ref _playbackFileGeneration) && owner.SessionCurrent();
+    // A continuing reload is busy from its server round trip, before any load
+    // exists to show the spinner. Unframed sessions keep their opaque cover.
+    private bool ShowTransportReloading(MpvPlayer mpv)
+    {
+        if (!_sessionHasFramed) return false;
+        mpv.SendScriptMessage("osc-set-transport-reloading", "true");
+        return true;
+    }
     private double? _transportStartPosition;
     private double PlaybackRecoveryPosition => !_transportHasFirstOutput && _transportStartPosition is { } start
         ? start : CurrentMediaPosition;
@@ -880,6 +888,7 @@ public partial class PlayerService : IDisposable
         var reconcileSubtitles = false;
         PlaybackManager? manager = null;
         PlaybackStartResponse? survivingSession = null;
+        MpvPlayer? reloadingPlayer = null;
         try
         {
             await _transportRestartGate.WaitAsync(ct).ConfigureAwait(false);
@@ -903,7 +912,11 @@ public partial class PlayerService : IDisposable
 
             SetSwitchingContent(true);
             IsLoading = true;
-            if (!_sessionHasFramed && loadingOwner != null)
+            // The replan round trip precedes the load; a framed session shows
+            // its transparent spinner for the whole reload, not only the load.
+            if (ShowTransportReloading(mpv))
+                reloadingPlayer = mpv;
+            else if (loadingOwner != null)
                 App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
             var seekPaused = forceResume ? false : wasPaused;
             manager.UpdatePosition(ToSessionPosition(mediaPosition), seekPaused);
@@ -990,6 +1003,10 @@ public partial class PlayerService : IDisposable
         }
         finally
         {
+            // An exit that submitted no load retires its spinner before the
+            // gate admits the next restart's claim.
+            if (!loadStarted)
+                reloadingPlayer?.SendScriptMessage("osc-set-transport-reloading", "false");
             if (gateEntered)
                 _transportRestartGate.Release();
             if (ReferenceEquals(Interlocked.CompareExchange(ref _seekRestartCts, null, ownerCts), ownerCts))
@@ -1025,6 +1042,9 @@ public partial class PlayerService : IDisposable
     {
         _idleRemuxResume.Reset();
         Interlocked.Increment(ref _seekRestartGeneration);
+        // A retired seek restart submits no load; its spinner retires with it.
+        if (Volatile.Read(ref _seekRestartCts) != null)
+            _mpv?.SendScriptMessage("osc-set-transport-reloading", "false");
         var cts = Interlocked.Exchange(ref _seekRestartCts, null);
         if (cts == null)
             return;
@@ -3906,7 +3926,11 @@ public partial class PlayerService : IDisposable
         if (restartSession != null)
             ClearPlaybackTerminalState();
 
-        if (!_sessionHasFramed && loadingOwner != null)
+        // A framed session keeps its picture while recovery replans; any load
+        // submitted from here inherits the spinner this claims.
+        var reloadingPlayer = ShowTransportReloading(_mpv) ? _mpv : null;
+        var reloadingFile = Volatile.Read(ref _playbackFileGeneration);
+        if (reloadingPlayer == null && loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
 
         try
@@ -4040,6 +4064,12 @@ public partial class PlayerService : IDisposable
             CancelPendingFileLoadTimeout();
             LogToFile("player_recovery_error.txt", ex.ToString());
             EnterPlaybackTerminalState(ex, resumePosition, reason, restorePaused, manager.CurrentSession ?? session);
+        }
+        finally
+        {
+            // An exit that submitted no load retires the spinner it claimed.
+            if (reloadingFile == Volatile.Read(ref _playbackFileGeneration))
+                reloadingPlayer?.SendScriptMessage("osc-set-transport-reloading", "false");
         }
     }
 

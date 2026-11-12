@@ -314,6 +314,17 @@ public sealed class PlayerServiceSourceTests
         Assert.True(beginOwnedMpvLoad >= 0 && transportReloadingInLoad > beginOwnedMpvLoad && loadingInLoad > beginOwnedMpvLoad,
             "BeginOwnedMpvLoad must distinguish startup loading from transport reloading within a framed session.");
 
+        // A framed seek or recovery is busy from its server round trip, before any load can show the spinner.
+        var seekRestart = service.IndexOf("private async Task RestartTransportForSeekAsync(", StringComparison.Ordinal);
+        var seekClaim = service.IndexOf("ShowTransportReloading(mpv)", seekRestart, StringComparison.Ordinal);
+        var seekReplan = service.IndexOf("manager.ReplanSeekAsync(", seekRestart, StringComparison.Ordinal);
+        var recovery = service.IndexOf("private async Task RecoverInterruptedStreamCoreAsync(", StringComparison.Ordinal);
+        var recoveryClaim = service.IndexOf("ShowTransportReloading(_mpv)", recovery, StringComparison.Ordinal);
+        var recoveryReplan = service.IndexOf("manager.RecoverPlaybackFailureAsync(", recovery, StringComparison.Ordinal);
+        Assert.True(seekRestart >= 0 && seekClaim > seekRestart && seekReplan > seekClaim &&
+            recovery >= 0 && recoveryClaim > recovery && recoveryReplan > recoveryClaim,
+            "Framed seek and recovery replans must claim the transparent spinner before awaiting the server.");
+
         var nativeMenus = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.NativeMenus.cs"));
         Assert.Contains("!_sessionHasFramed", nativeMenus, StringComparison.Ordinal);
         var busyActionLine = nativeMenus.IndexOf("var busyAction", StringComparison.Ordinal);

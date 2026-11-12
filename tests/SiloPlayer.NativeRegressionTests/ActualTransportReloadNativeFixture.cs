@@ -142,7 +142,9 @@ internal static class ActualTransportReloadNativeFixture
             else service.SeekTo(10);
             await wire.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(8));
             Require(service.IsLoading && (bool)Get(service, "_switchingContent")!, "Public remux seek bypassed the actual replan busy path.");
-            await Query("held-response");
+            var held = await Query("held-response");
+            // A seek replan owns the spinner for its whole round trip; an audio change claims it at load submission.
+            Require(scenario == "audio-selection" || (held.GetProperty("reloading").GetBoolean() && !held.GetProperty("loading").GetBoolean() && !held.GetProperty("black").GetBoolean() && held.GetProperty("overlay").GetBoolean()), "Framed production seek showed no transparent spinner while its replan response was held.");
             if (scenario == "menus-response") await OpenAudio("held-response");
             if (scenario.EndsWith("-response", StringComparison.Ordinal) && scenario is not "menus-response" and not "pause-response" and not "resume-response") await OpenControl(scenario.Split('-')[0], "held-response");
             if (scenario == "audio-selection") await OpenAudio("held-audio-change");
