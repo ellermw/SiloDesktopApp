@@ -19,7 +19,14 @@ public static partial class SideBySideInstallation
         if (ReadJournal(root) is { } transaction)
         {
             if (transaction.Phase == "pending") Rollback(root, transaction.TransactionId);
-            else RecoverInterruptedTransaction(root);
+            else if (transaction.Phase == "confirmed") RecoverInterruptedTransaction(root);
+            else
+            {
+                // A deferred (Later) or interrupted update can own the directory the installer just
+                // filled. Recover it as usual, but its inventory must not delete this version's payload.
+                Rollback(root, transaction.TransactionId);
+                CleanupOwnedVersions(root, directory => Path.GetFileName(directory) == manifest.Version || IsVersionDirectoryInUse(directory));
+            }
             previous = ReadState(root);
         }
         var directory = VersionPath(root, manifest.Version);

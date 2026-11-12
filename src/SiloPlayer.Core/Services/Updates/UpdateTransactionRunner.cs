@@ -103,9 +103,20 @@ public static class UpdateTransactionRunner
             environment.Send(new("staged", staged.TransactionId, staged.Version), ct);
 
             ct.ThrowIfCancellationRequested();
+            // Nothing is mutated until the broker answers, and Restart now / Later can wait for hours.
+            // Free the gate meanwhile so the launcher, activations and the full installer still work.
+            // Activate re-verifies the journal, state and installed files once the gate is held again.
+            installationLock.Dispose();
+            installationLock = null;
             UpdateHostMessage close;
             environment.SetAwaitingRestartChoice(true);
             try { close = environment.Receive(ct); }
+            catch
+            {
+                // A lost broker is recovered below, and recovery needs the gate.
+                installationLock = environment.AcquireInstallationLock(CancellationToken.None);
+                throw;
+            }
             finally { environment.SetAwaitingRestartChoice(false); }
             if (close.Kind == "defer" && close.TransactionId == staged.TransactionId)
             {
@@ -113,6 +124,7 @@ public static class UpdateTransactionRunner
                 environment.Send(new("deferred", staged.TransactionId, staged.Version), ct);
                 return new(true, false, false, staged.TransactionId, staged.Version);
             }
+            installationLock = environment.AcquireInstallationLock(ct);
             if (close.Kind != "close" || close.TransactionId != staged.TransactionId)
                 throw new OperationCanceledException("The update was deferred before restart.");
             environment.WaitForParentExit(ct);

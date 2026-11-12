@@ -25,6 +25,9 @@ internal static class UpdateWorker
     private sealed class WindowsTransactionEnvironment(HostOptions options,string root,string directory,PipeStream pipe,CancellationTokenSource operationTimeout) : IUpdateTransactionEnvironment,IDisposable
     {
         private Process? parent;
+        // The runner frees the gate while it waits for the broker's answer. Keep the named object alive
+        // so recovery can take it again even after the broker, which created it, has gone.
+        private Mutex? gate;
         public void ValidateCallerAndParent()
         {
             using var identity=WindowsIdentity.GetCurrent();
@@ -41,6 +44,7 @@ internal static class UpdateWorker
         public IDisposable AcquireInstallationLock(CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
+            gate??=MutexAcl.OpenExisting(SideBySideInstallation.GetMutexName(root),MutexRights.Synchronize);
             var mutex=MutexAcl.OpenExisting(SideBySideInstallation.GetMutexName(root),MutexRights.Synchronize|MutexRights.Modify);
             var held=false;
             try
@@ -104,7 +108,7 @@ internal static class UpdateWorker
             catch{return true;}
         }
         public void RetireUnusedAuthorization(string versionDirectory)=>UpdateFirewall.Retire(Path.Combine(versionDirectory,"SiloPlayer.exe"));
-        public void Dispose()=>parent?.Dispose();
+        public void Dispose(){parent?.Dispose();gate?.Dispose();}
     }
     private sealed class MutationLease(Mutex mutex) : IDisposable
     {

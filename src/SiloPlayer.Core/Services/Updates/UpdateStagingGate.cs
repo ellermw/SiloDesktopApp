@@ -25,4 +25,17 @@ public static class UpdateStagingGate
             return (frame, await chooseRestart(frame, ct));
         }
     }
+
+    /// <summary>
+    /// Silo writes nothing while Restart now or Later is open, so a completed client read means Silo
+    /// closed or abandoned the update. That is not a failure: null tells the broker to keep the staged
+    /// installation as Later would. Otherwise true is Restart now and false is Later.
+    /// </summary>
+    public static async Task<bool?> AnswerOrAbandonAsync(Task<bool> choice, Task client, CancellationToken ct)
+    {
+        var first = await Task.WhenAny(choice, client);
+        ct.ThrowIfCancellationRequested();
+        if (first != choice) return null;
+        return await choice;
+    }
 }

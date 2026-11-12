@@ -50,6 +50,7 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
         NamedPipeServerStream? worker=null;
         Task<UpdateHostMessage>? appFrame=null;
         var presentationAccepted=!options.AwaitPresentation;
+        var abandoned=false;
         try
         {
             var hostImage=Environment.ProcessPath!;
@@ -105,14 +106,11 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
                     deadline.CancelAfter(Timeout.InfiniteTimeSpan);
                     appFrame=UpdateHostProtocol.ReadAsync(app,token);
                     var choice=view!.AskRestartAsync(token);
-                    if(await Task.WhenAny(choice,appFrame)==appFrame)
-                        throw new OperationCanceledException("Silo abandoned the prepared update.");
-                    var restart=await choice;
-                    if(restart)
-                    {
-                        await UpdateHostProtocol.WriteAsync(app,new("restart",staged.TransactionId,staged.Text),token);
-                        deadline.CancelAfter(TimeSpan.FromMinutes(20));
-                    }
+                    var answer=await UpdateStagingGate.AnswerOrAbandonAsync(choice,appFrame,token);
+                    deadline.CancelAfter(TimeSpan.FromMinutes(20));
+                    // Closing Silo while the panel asks counts as Later: the installation is kept, not failed.
+                    if(answer is not { } restart){abandoned=true;return false;}
+                    if(restart)await UpdateHostProtocol.WriteAsync(app,new("restart",staged.TransactionId,staged.Text),token);
                     return restart;
                 },ct);
             var transaction=decision.Staged.TransactionId!;
@@ -122,6 +120,8 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
                 var deferred=await UpdateHostProtocol.ReadAsync(worker,ct);
                 if(deferred.Kind!="deferred" || deferred.TransactionId!=transaction)
                     throw new IOException("The completed update could not be preserved.");
+                // Silo records Later itself when it closes on the question, so there is nobody left to tell.
+                if(abandoned){closeAllowed=true;window!.Close();return;}
                 await UpdateHostProtocol.WriteAsync(app,new("later",transaction,decision.Staged.Text),ct);
                 var saved=await appFrame!.WaitAsync(TimeSpan.FromSeconds(10),ct);
                 if(saved.Kind!="deferred" || saved.TransactionId!=transaction)
@@ -162,6 +162,8 @@ internal sealed class UpdateApplication : Application, IXamlMetadataProvider
         {
             // A canceled/failed hidden handoff belongs to the client's safe view. Never create an orphan failure panel.
             if(!presentationAccepted){closeAllowed=true;window!.Close();return;}
+            // Silo left while the question was open: a failure panel outliving it would be an orphan too.
+            if(abandoned){closeAllowed=true;window!.Close();return;}
             try{if(app.IsConnected)await UpdateHostProtocol.WriteAsync(app,new("failed",Text:ex is System.ComponentModel.Win32Exception{NativeErrorCode:1223}?"Administrator approval was canceled. Silo remains open.":"The update could not finish. Silo's previous version is preserved."),CancellationToken.None);}catch{}
             view?.ShowFailure(committed ? "Silo has not confirmed startup yet. Your previous version is preserved; launch Silo again to recover if the new version exited. No running app will be closed."
                 : ex is UpdateClientFailure{Message.Length:>0} client ? client.Message

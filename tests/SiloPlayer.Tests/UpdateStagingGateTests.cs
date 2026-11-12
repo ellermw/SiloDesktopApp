@@ -57,4 +57,47 @@ public sealed class UpdateStagingGateTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
         Assert.False(offered);
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClosingSiloWhileTheChoiceIsOpenIsAbandonmentNotAFailureOrAnAnswer(bool pipeBroke)
+    {
+        var choice = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new TaskCompletionSource<UpdateHostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = UpdateStagingGate.AnswerOrAbandonAsync(choice.Task, client.Task, default);
+        Assert.False(pending.IsCompleted);
+        // Silo's exit closes its pipe; any frame it wrote instead still means it stopped waiting.
+        if (pipeBroke) client.SetException(new EndOfStreamException());
+        else client.SetResult(new("cancel"));
+        Assert.Null(await pending);
+        Assert.False(choice.Task.IsCompleted);
+        _ = client.Task.Exception;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnAnswerIsReturnedWhileSiloStaysConnected(bool restart)
+    {
+        var choice = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new TaskCompletionSource<UpdateHostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = UpdateStagingGate.AnswerOrAbandonAsync(choice.Task, client.Task, default);
+        Assert.False(pending.IsCompleted);
+        choice.SetResult(restart);
+        Assert.Equal<bool?>(restart, await pending);
+    }
+
+    [Fact]
+    public async Task CancellationWhileTheChoiceIsOpenIsNeitherAnAnswerNorAbandonment()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var choice = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new TaskCompletionSource<UpdateHostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = UpdateStagingGate.AnswerOrAbandonAsync(choice.Task, client.Task, cancellation.Token);
+        // The broker's token cancels its client read too; that must not be mistaken for Silo closing.
+        cancellation.Cancel();
+        client.SetCanceled(cancellation.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
 }

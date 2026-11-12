@@ -100,6 +100,29 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
         AssertOldActive();
     }
 
+    [Fact]
+    public void RootGateIsFreeForLauncherAndInstallerWhileTheBrokerAwaitsRestartNowOrLater()
+    {
+        using var env = Create();
+        var free = false;
+        env.OnAwaitingChoice = () =>
+        {
+            // The launcher and the full installer probe this gate with WaitOne(0). A mutex is
+            // reentrant on its owning thread, so probe from another one.
+            var probe = new Thread(() =>
+            {
+                using var gate = new Mutex(false, SideBySideInstallation.GetMutexName(Root));
+                if (!gate.WaitOne(0)) return;
+                free = true; gate.ReleaseMutex();
+            });
+            probe.Start(); probe.Join();
+        };
+        var result = Run(env);
+        Assert.True(free);
+        Assert.True(result.Succeeded, result.Error?.ToString()); Assert.True(result.Activated); Assert.True(result.Confirmed);
+        Assert.Equal(0, env.HeldLocks);
+    }
+
     [Theory]
     [InlineData("cancel")]
     [InlineData("disconnected")]
@@ -130,7 +153,8 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
         var result = Run(env);
         Assert.True(result.Succeeded, result.Error?.ToString()); Assert.True(result.Activated); Assert.True(result.Confirmed);
         Assert.False(env.ParentAlive); Assert.True(env.NewClientAlive);
-        Assert.Equal(2, env.LockAcquisitions);
+        // Staging, activation after the close wait, and confirmation each hold the gate separately.
+        Assert.Equal(3, env.LockAcquisitions);
         Assert.All(env.LockThreadIds, id => Assert.Equal(thread, id));
         Assert.Equal(0, env.HeldLocks);
         Assert.Equal(new[] { "visible", "close", "ready" }, env.ReceivedKinds);
@@ -150,7 +174,8 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
         Assert.True(result.Succeeded); Assert.True(result.Activated); Assert.False(result.Confirmed);
         Assert.False(env.ParentAlive); Assert.False(env.NewClientAlive);
         Assert.Equal(new[] { "visible", "close" }, env.ReceivedKinds);
-        Assert.Equal(1, env.LockAcquisitions);
+        // The gate is released while waiting for "close" and taken again to activate.
+        Assert.Equal(2, env.LockAcquisitions);
         Assert.Equal(NewVersion, SideBySideInstallation.ReadState(Root)!.PendingVersion);
         Assert.DoesNotContain(env.Sent, message => message.Kind == "confirmed");
     }
@@ -437,10 +462,10 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
         public Exception? ValidateError;
         public string VisibleKind = "visible", CloseFailure = "", ReadyFailure = "", PreparationFailure = "";
         public List<bool> RestartWaitStates { get; } = [];
-        public void SetAwaitingRestartChoice(bool waiting) => RestartWaitStates.Add(waiting);
+        public void SetAwaitingRestartChoice(bool waiting) { RestartWaitStates.Add(waiting); if (waiting) OnAwaitingChoice?.Invoke(); }
         public string CleanupInventory = "free";
         public bool WaitReturnsWhileAlive, LaunchNewClient = true, LoseConfirmation;
-        public Action? OnStaged, OnVisible;
+        public Action? OnStaged, OnVisible, OnAwaitingChoice;
         public Func<string, bool>? AdditionalVersionUse;
         public bool StagedObserved;
         public int AuthorityCalls, AuthorityRequests, LockAcquisitions, HeldLocks;
@@ -515,6 +540,7 @@ public sealed class UpdateTransactionLifecycleTests : IDisposable
             if (reads == 2)
             {
                 Assert.True(ParentAlive); Assert.Equal(sourceVersion, SideBySideInstallation.ReadState(root)!.ActiveVersion);
+                Assert.Equal(0, HeldLocks);
                 if (CloseFailure == "disconnected") throw new EndOfStreamException();
                 var kind = CloseFailure is "cancel" or "defer" ? CloseFailure : "close"; ReceivedKinds.Add(kind);
                 return new(kind, CloseFailure == "wrong-transaction" ? new string('0', 32) : transaction);
