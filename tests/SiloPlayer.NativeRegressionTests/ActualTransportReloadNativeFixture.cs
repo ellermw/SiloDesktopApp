@@ -27,7 +27,7 @@ internal static class ActualTransportReloadNativeFixture
         string[] scenarios = ["cover-reload", "menus-response", "menus-output", "pause-response", "pause-output",
             "superseding-seek", "owner-retirement", "navigation", "replan-error",
             "quality-response", "quality-output", "chapters-response", "chapters-output", "party-response", "party-output",
-            "resume-response", "resume-output", "failed-pause-next-load", "audio-selection", "replacement-session"];
+            "resume-response", "resume-output", "failed-pause-next-load", "audio-selection", "replacement-session", "room-toggle"];
         var selected = Environment.GetEnvironmentVariable("SILO_NATIVE_RELOAD_CASE");
         if (!string.IsNullOrEmpty(selected)) { Require(scenarios.Contains(selected), "Unknown scenario."); scenarios = [selected]; }
         var results = new List<object>(); var failures = new List<string>();
@@ -124,6 +124,13 @@ internal static class ActualTransportReloadNativeFixture
             var firstFile = (long)Get(service, "_playbackFileGeneration")!;
             if (scenario.StartsWith("resume-", StringComparison.Ordinal))
             { service.SetPaused(true); await Until(() => mpv.IsPaused && service.IsPaused, "Initial pause did not settle."); }
+            string? roomRequest = null;
+            if (scenario == "room-toggle")
+            {
+                service.RoomTransportRequested += (command, _, _) => roomRequest = command;
+                service.SetWatchTogetherPlayback(true); service.SetPaused(false);
+                await Until(() => !mpv.IsPaused && !service.IsPaused, "Playing room did not settle.");
+            }
             Task? audioSwitch = null;
             if (scenario == "replacement-session")
             {
@@ -186,6 +193,14 @@ internal static class ActualTransportReloadNativeFixture
             Require(!reload.GetProperty("badge").GetBoolean(), "Framed production reload drew the paused Play badge under its spinner.");
             Require(Get(service, "_restorePausedAfterLoad") is bool restores && reload.GetProperty("intent").GetString() == (restores ? "true" : "false"),
                 "Framed production reload presented the load freeze instead of the pause state its load restores.");
+            if (scenario == "room-toggle")
+            {
+                // The freeze has paused mpv, yet the room is playing and its transport shows Pause.
+                await Until(() => mpv.IsPaused && service.IsPaused, "Load freeze did not pause the room's native player.");
+                Require(reload.GetProperty("intent").GetString() == "false", "Framed room reload did not present the room's playing state.");
+                service.RequestUserPauseToggle();
+                Require(roomRequest == "pause", "Room pause toggle during a framed reload followed the load freeze instead of the room's playing state.");
+            }
             if (scenario == "menus-output") await OpenAudio("held-output");
             if (scenario.EndsWith("-output", StringComparison.Ordinal) && scenario is not "menus-output" and not "pause-output" and not "resume-output") await OpenControl(scenario.Split('-')[0], "held-output");
             if (scenario == "resume-output") { service.SetPaused(false); await Until(() => !mpv.IsPaused, "Resume awaiting output did not apply."); }

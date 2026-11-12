@@ -619,6 +619,9 @@ public partial class PlayerService : IDisposable
         // A continuing reload's freeze is not the viewer's pause state.
         if (!IsWatchTogetherPlayback && !_subtitleReplanPauseIntent.HasValue && TransportReloadPauseIntent is bool pending)
             paused = !pending;
+        // A room's transport shows the room state over that freeze; toggle the same value.
+        else if (IsWatchTogetherPlayback && TransportReloadPauseIntent.HasValue)
+            paused = !_roomPlaybackPaused;
         if (IsWatchTogetherPlayback)
             RoomTransportRequested?.Invoke(paused ? "pause" : "play", CurrentMediaPosition, paused);
         else SetPaused(paused);
