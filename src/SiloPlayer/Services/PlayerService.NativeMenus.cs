@@ -200,14 +200,22 @@ public partial class PlayerService
         bool InventoryCurrent() => owner.IsCurrent() && ActiveVersion?.AudioTracks is { } current && current.SequenceEqual(tracks);
         var current = _playbackManager?.CurrentSession?.AudioTrackIndex ?? -1;
         bool TransportIdle() => !IsLoading && !_switchingContent;
+        // Rows opened during a continuing reload say why they cannot be chosen;
+        // the presentation retires on the busy/idle transition, like Quality.
+        var openedIdle = TransportIdle();
         return new PlaybackAudioMenu(owner.Video, request.Anchor,
-            tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current)).ToArray(),
-            () => InventoryCurrent() && (_playbackManager?.CurrentSession?.AudioTrackIndex ?? -1) == current && (TransportIdle() || _sessionHasFramed) && _nativeMenuGate.IsCurrent(request),
+            tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current) with
+            {
+                IsEnabled = openedIdle, DisabledReason = openedIdle ? "" : "A playback change is already in progress."
+            }).ToArray(),
+            () => InventoryCurrent() && (_playbackManager?.CurrentSession?.AudioTrackIndex ?? -1) == current &&
+                (openedIdle || _sessionHasFramed) && openedIdle == TransportIdle() && _nativeMenuGate.IsCurrent(request),
             index =>
             {
                 if (InventoryCurrent() && TransportIdle() && index >= 0 && index < tracks.Length && index != current)
                     _ = SelectNativeAudioAsync(owner, index, InventoryCurrent);
-            }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
+            }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root),
+            allowDisabledTraversal: !openedIdle);
     }
 
     private async Task SelectNativeAudioAsync(NativeMenuOwner owner, int sourceIndex, Func<bool> current)

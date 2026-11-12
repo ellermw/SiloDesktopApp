@@ -322,6 +322,12 @@ public sealed class PlayerServiceSourceTests
         var busyGuard = nativeMenus[busyActionLine..busyActionEnd];
         Assert.True(busyGuard.Contains("_sessionHasFramed"),
             "Native menu admission must allow menus during transport reloading when the session has framed.");
+        var audioMenuStart = nativeMenus.IndexOf("private PlaybackChoiceMenu? CreateNativeAudioMenu(", StringComparison.Ordinal);
+        var audioMenuEnd = nativeMenus.IndexOf("private async Task SelectNativeAudioAsync(", StringComparison.Ordinal);
+        Assert.True(audioMenuStart >= 0 && audioMenuEnd > audioMenuStart, "Native Audio menu factory must exist.");
+        var audioMenu = nativeMenus[audioMenuStart..audioMenuEnd];
+        Assert.True(audioMenu.Contains("IsEnabled = openedIdle") && audioMenu.Contains("openedIdle == TransportIdle()"),
+            "Audio rows opened during a continuing reload must be disabled with a reason and retire on the busy/idle transition.");
 
 
     }

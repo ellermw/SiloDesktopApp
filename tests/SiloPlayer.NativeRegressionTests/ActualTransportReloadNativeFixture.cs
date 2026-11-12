@@ -264,6 +264,12 @@ internal static class ActualTransportReloadNativeFixture
             mpv.SendScriptMessage("osc-mouse-down", horizontal, vertical); mpv.SendScriptMessage("osc-mouse-up", horizontal, vertical); mpv.SendScriptMessage("osc-video-click", horizontal, vertical);
             await Until(() => Get(service, "_nativeMenu") is { } menu && ((ListView)Get(menu, "_list")!).XamlRoot != null, "Actual OSC Audio gesture could not open a usable native menu during " + label + ".");
             Require(((ListView)Get(Get(service, "_nativeMenu")!, "_list")!).Items.Count == 2, "Real Audio menu lost its synthetic inventory.");
+            if (!label.StartsWith("held-", StringComparison.Ordinal)) return;
+            // A continuing reload must say why a track cannot be chosen, never drop the pick silently.
+            var audioRows = ((System.Collections.IEnumerable)Get(Get(service, "_nativeMenu")!, "_choices")!).Cast<object>().ToArray();
+            Require(audioRows.All(choice => !(bool)choice.GetType().GetProperty("IsEnabled")!.GetValue(choice)! &&
+                ((string)choice.GetType().GetProperty("DisabledReason")!.GetValue(choice)!).Length > 0),
+                "Audio rows stayed selectable without a reason during " + label + ".");
         }
     }
     private sealed class Wire(string origin, string scenario) : HttpMessageHandler
