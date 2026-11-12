@@ -32,6 +32,9 @@ public class WatchDetailResponse
     public bool? EffectiveVersionHdr { get; set; }
     public string? EffectiveVersionCodecVideo { get; set; }
     public string? EffectiveVersionEditionKey { get; set; }
+    /// <summary>The item's backdrop (an episode's series backdrop), for the loading cover.</summary>
+    public string? BackdropUrl { get; set; }
+    public string? BackdropThumbhash { get; set; }
 }
 
 public class FileVersion

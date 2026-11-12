@@ -67,5 +67,8 @@ public class AppSettings
     public string UiTextScale { get; set; } = "default";
     public string UiTextWeight { get; set; } = "default";
     public bool UiHighContrast { get; set; }
+    /// <summary>Client-local `player.passout_threshold`: automatic episode advances
+    /// before Silo waits for the viewer. Null uses the default; 0 never asks.</summary>
+    public int? StillWatchingThreshold { get; set; }
     public Dictionary<string, string> ThemeOverrides { get; set; } = [];
 }

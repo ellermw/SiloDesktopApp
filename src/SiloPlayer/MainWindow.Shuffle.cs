@@ -54,7 +54,7 @@ public sealed partial class MainWindow
                 PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
                 PlayingNextCountdownRing.Value = _playingNextRemaining;
                 UpdateShufflePostRoll();
-                if (_playingNextAutoPlay && _playerService.HasNextEpisodeForCurrentPlayback && _playerService.IsPostRollVideoEnded) StartPlayingNextCountdown();
+                if (PlayingNextCountdownAllowed && _playerService.HasNextEpisodeForCurrentPlayback && _playerService.IsPostRollVideoEnded) StartPlayingNextCountdown();
             }
         }
     }

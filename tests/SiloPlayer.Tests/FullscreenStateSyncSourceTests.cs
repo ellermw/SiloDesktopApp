@@ -57,12 +57,12 @@ public sealed class FullscreenStateSyncSourceTests
             transitionPrefix.IndexOf("SetSwitchingContent(true);", StringComparison.Ordinal) <
             transitionPrefix.IndexOf("PrepareEpisodeNavigationForContent(contentId);", StringComparison.Ordinal));
 
-        var continueStart = service.IndexOf("public async Task ContinuePlayingNextAsync()", StringComparison.Ordinal);
+        var continueStart = service.IndexOf("public async Task ContinuePlayingNextAsync(PlaybackStartTrigger trigger = PlaybackStartTrigger.Viewer)", StringComparison.Ordinal);
         var previousStart = service.IndexOf("public Task PlayPreviousEpisodeAsync()", continueStart, StringComparison.Ordinal);
         var continueMethod = service[continueStart..previousStart];
         Assert.DoesNotContain("ClearNextEpisodeHint();", continueMethod);
         Assert.Contains("await PlayAsync(nextId, libraryId: ActiveLibraryId, authority: authority, cancellationToken: ownerToken);", continueMethod);
-        Assert.Contains("await ContinueShuffleAsync();", continueMethod);
+        Assert.Contains("await ContinueShuffleAsync(trigger);", continueMethod);
     }
 
     [Fact]

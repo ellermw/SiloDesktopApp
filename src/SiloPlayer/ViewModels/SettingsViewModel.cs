@@ -472,6 +472,35 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _autoPlayNext = true;
 
+    /// <summary>Options for the client-local still-watching prompt; the index is the threshold.</summary>
+    public IReadOnlyList<string> StillWatchingChoices { get; } = Enumerable
+        .Range(StillWatchingThreshold.Minimum, StillWatchingThreshold.Maximum - StillWatchingThreshold.Minimum + 1)
+        .Select(StillWatchingThreshold.ChoiceLabel).ToArray();
+
+    /// <summary>
+    /// `player.passout_threshold` (#3917): stored on this device only, never through
+    /// the server settings API, and applied to the current viewing session at once.
+    /// </summary>
+    public int StillWatchingPrompt
+    {
+        get => StillWatchingThreshold.Normalize(_settingsService.Load().StillWatchingThreshold);
+        set
+        {
+            if (value < StillWatchingThreshold.Minimum || value > StillWatchingThreshold.Maximum || value == StillWatchingPrompt) return;
+            PlayerService? player = null;
+            try { player = App.Services.GetService<PlayerService>(); }
+            catch (InvalidOperationException) { /* Hosts without the app container save locally. */ }
+            if (player != null) player.SetStillWatchingThreshold(value);
+            else
+            {
+                var settings = _settingsService.Load();
+                settings.StillWatchingThreshold = value;
+                _settingsService.Save(settings);
+            }
+            OnPropertyChanged();
+        }
+    }
+
     [ObservableProperty]
     private string _maxPlaybackQuality = "";
 

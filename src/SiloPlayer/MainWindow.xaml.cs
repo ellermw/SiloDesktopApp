@@ -193,6 +193,8 @@ public sealed partial class MainWindow : Window
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
         // Activate() is never called, so the subscription lives here now.
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
+        _playerService.StillWatchingChanged += OnStillWatchingChanged;
+        _playerService.LoadingBackdropChanged += OnLoadingBackdropChanged;
         _playerService.PositionChanged += OnPlaybackPositionForPlayingNext;
         _playerService.PostRollReturnRequested += OnPostRollReturnRequested;
         _playerService.ShuffleChanged += OnShuffleChanged;
@@ -514,6 +516,8 @@ public sealed partial class MainWindow : Window
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
+        _playerService.StillWatchingChanged -= OnStillWatchingChanged;
+        _playerService.LoadingBackdropChanged -= OnLoadingBackdropChanged;
         _playerService.PositionChanged -= OnPlaybackPositionForPlayingNext;
         _playerService.PostRollReturnRequested -= OnPostRollReturnRequested;
         _playerService.ShuffleChanged -= OnShuffleChanged;
@@ -576,7 +580,7 @@ public sealed partial class MainWindow : Window
                 _playerService.FinishPostRollPreview();
                 UpdatePlayingNextAutoPlayVisuals();
                 if (_playerService.HasNextEpisodeForCurrentPlayback &&
-                    _playingNextAutoPlay)
+                    PlayingNextCountdownAllowed)
                 {
                     StartPlayingNextCountdown();
                 }
@@ -642,7 +646,7 @@ public sealed partial class MainWindow : Window
 
             // Match the current WebUI: entering post-roll early does not start
             // autoplay while the episode is still visibly playing.
-            if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)
+            if (playbackHasEnded && hasNextEpisode && PlayingNextCountdownAllowed)
                 StartPlayingNextCountdown();
             else if (playbackHasEnded && !hasNextEpisode)
                 StartFinishedAutoClose();
@@ -738,10 +742,20 @@ public sealed partial class MainWindow : Window
         if (_playingNextRemaining <= 0)
         {
             StopPlayingNextCountdown();
+            // A gate or duplicate boundary that appeared since the countdown began
+            // leaves the card up, waiting for the viewer.
+            if (!_playerService.CanAdvanceAutomatically)
+            {
+                _playingNextRemaining = PlayingNextCountdownSeconds;
+                PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+                PlayingNextCountdownRing.Value = _playingNextRemaining;
+                UpdatePlayingNextAutoPlayVisuals();
+                return;
+            }
             PlayingNextOverlay.Visibility = Visibility.Collapsed;
             try
             {
-                await _playerService.ContinuePlayingNextAsync();
+                await _playerService.ContinuePlayingNextAsync(Core.Services.PlaybackStartTrigger.Automatic);
             }
             catch (Exception ex)
             {
@@ -790,7 +804,7 @@ public sealed partial class MainWindow : Window
         UpdatePlayingNextAutoPlayVisuals();
         if (_playerService.IsPostRollVideoEnded &&
             _playerService.HasNextEpisodeForCurrentPlayback &&
-            autoPlay &&
+            autoPlay && !_playerService.IsStillWatchingGated &&
             _playingNextTimer == null)
         {
             _playingNextRemaining = PlayingNextCountdownSeconds;
@@ -819,7 +833,7 @@ public sealed partial class MainWindow : Window
         PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
         PlayingNextCountdownRing.Value = _playingNextRemaining;
 
-        if (_playingNextAutoPlay &&
+        if (PlayingNextCountdownAllowed &&
             _playerService.IsPostRollVideoEnded &&
             PlayingNextOverlay.Visibility == Visibility.Visible)
             StartPlayingNextCountdown();
@@ -829,7 +843,7 @@ public sealed partial class MainWindow : Window
     {
         var hasNextEpisode = _playerService.HasNextEpisodeForCurrentPlayback;
         PlayingNextCountdownPanel.Visibility = hasNextEpisode &&
-            _playingNextAutoPlay &&
+            PlayingNextCountdownAllowed &&
             _playerService.IsPostRollVideoEnded
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -2895,6 +2909,9 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Visible;
             ErrorState.Visibility = Visibility.Collapsed;
+            // The loading cover is black in every theme (upstream PlayerLoadingCover).
+            RetireLoadingBackdropUnlessOwnedBy(currentOwner);
+            LoadingOverlay.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black);
             LoadingOverlay.Visibility = Visibility.Visible;
         });
     }
@@ -2911,6 +2928,7 @@ public sealed partial class MainWindow : Window
             {
                 if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
                 LoadingOverlay.Visibility = Visibility.Collapsed;
+                ClearLoadingBackdrop();
             });
         });
     }
@@ -2927,6 +2945,8 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Collapsed;
             ErrorState.Visibility = Visibility.Visible;
+            ClearLoadingBackdrop();
+            LoadingOverlay.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"];
             ErrorTitle.Text = title;
             ErrorDetail.Text = detail;
             LoadingOverlay.Visibility = Visibility.Visible;
@@ -2937,6 +2957,7 @@ public sealed partial class MainWindow : Window
     {
         Interlocked.Exchange(ref _loadingOverlayOwner, null);
         LoadingOverlay.Visibility = Visibility.Collapsed;
+        ClearLoadingBackdrop();
     }
 
     private static void LogState(string msg)

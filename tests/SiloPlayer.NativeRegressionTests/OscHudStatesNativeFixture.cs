@@ -130,28 +130,41 @@ internal static class OscHudStatesNativeFixture
             }
             if (size.Item1 >= 1920 && reviewCase is "all" or "fit")
             {
-                var fit = await Query("btn_fill");
-                Require(fit.W > 0, "Fit fixture needs the desktop utility rail.");
+                // #3993 groups Fit with Picture in picture and Playback info in More.
+                var more = await Query("btn_more");
+                Require(more.W > 0, "Fit fixture needs the desktop More button.");
                 player.SetProperty("panscan", "0");
                 player.Play(); await Until(() => !player.IsPaused);
-                var fx = (fit.X + fit.W / 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
-                var fy = (fit.Y + fit.H / 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
-                player.SendScriptMessage("osc-mouse-move", fx, fy);
-                player.SendScriptMessage("osc-mouse-down", fx, fy);
-                player.SendScriptMessage("osc-mouse-up", fx, fy);
+                async Task ClickFitThroughMore()
+                {
+                    var mx = (more.X + more.W / 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var my = (more.Y + more.H / 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    player.SendScriptMessage("osc-mouse-move", mx, my);
+                    player.SendScriptMessage("osc-mouse-down", mx, my);
+                    player.SendScriptMessage("osc-mouse-up", mx, my);
+                    await Task.Delay(150);
+                    var fit = await Query("overflow_btn_fill");
+                    Require(fit.W > 0, "More did not offer Fit.");
+                    var fx = (fit.X + fit.W / 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var fy = (fit.Y + fit.H / 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    player.SendScriptMessage("osc-mouse-move", fx, fy);
+                    player.SendScriptMessage("osc-mouse-down", fx, fy);
+                    player.SendScriptMessage("osc-mouse-up", fx, fy);
+                }
+                await ClickFitThroughMore();
+                await Task.Delay(100);
+                Require(player.GetPropertyDouble("panscan") > 0, "Fit from More did not change the video fit.");
                 player.SendScriptMessage("osc-mouse-move", "400", "200");
                 await Task.Delay(3600);
-                var hidden = await Query("btn_fill");
+                var hidden = await Query("btn_more");
                 await Capture($"{size.Item1}-{shade}-fit-autohide.png");
                 Program.Log($"Fit native normal timer: focus={hidden.Focus}, target={hidden.Target}, alpha={hidden.Alpha}.");
                 Require(hidden.Focus == "" && hidden.Target == 0 && hidden.Alpha < .1,
                     "Native Fit pointer gesture stranded controller focus and prevented actual auto-hide.");
                 player.SendScriptMessage("osc-show"); await Task.Delay(250);
-                player.SendScriptMessage("osc-mouse-move", fx, fy);
-                player.SendScriptMessage("osc-mouse-down", fx, fy);
-                player.SendScriptMessage("osc-mouse-up", fx, fy);
+                await ClickFitThroughMore();
                 player.SendScriptMessage("osc-mouse-leave"); await Task.Delay(850);
-                hidden = await Query("btn_fill");
+                hidden = await Query("btn_more");
                 Require(hidden.Focus == "" && hidden.Target == 0 && hidden.Alpha < .1,
                     "Native Fit pointer leave stranded the HUD.");
                 observations.Add(new { size.Item1, shade, fitNormalAndLeaveHide = true });

@@ -123,7 +123,8 @@ public sealed partial class MpvOscRuntimeTests
             dims = {w=1920,h=1080}
             osc_test_layout()
             assert(not s.compact_menu_visible and s.controller_focus_name == nil)
-            assert(#s.compact_menu_items == 0 and s.layout.btn_more == nil)
+            -- #3993: full rails keep a More anchor, but the compact sheet is retired.
+            assert(#s.compact_menu_items == 0 and s.layout.btn_more ~= nil)
             for name in pairs(s.layout) do assert(name:sub(1, 9) ~= 'overflow_', 'Stale sheet rectangle') end
             -- The first video click after resizing must not dismiss an invisible sheet.
             hud_time = 11
@@ -133,7 +134,7 @@ public sealed partial class MpvOscRuntimeTests
             assert(table.concat(intents, ',') == 'silo-pause-toggle')
             osc_test_render_hud()
             local normal = s.osc_overlay.data
-            r = assert(s.layout.btn_fill)
+            r = assert(s.layout.btn_fullscreen)
             handlers['osc-mouse-move'](tostring(r.cx), tostring(r.cy))
             osc_test_render_hud()
             assert(s.osc_overlay.data ~= normal, 'Desktop controls must regain hover feedback')
@@ -142,10 +143,6 @@ public sealed partial class MpvOscRuntimeTests
             if {{leave.ToString().ToLowerInvariant()}} then handlers['osc-mouse-leave'](); assert(leave_check)()
             else assert(hide_check)() end
             assert(s.target_alpha == 0, 'Resized HUD must auto-hide')
-            -- Even a stale flag cannot retain a sheet with no drawable anchor.
-            s.compact_menu_visible = true
-            handlers['osc-show']()
-            assert(hide_check)()
             mp.set_property('user-data/hud-result', tostring(s.target_alpha)..':'..tostring(s.compact_menu_visible))
             """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe + """
 
@@ -345,11 +342,17 @@ public sealed partial class MpvOscRuntimeTests
             s.osc_disabled, s.pause = false, false
             s.visible, s.current_alpha, s.target_alpha = true,1,1
             osc_test_layout()
-            local r = assert(s.layout.btn_fill)
+            -- #3993: Fit lives in More; reach it with the pointer through the sheet.
+            local more = assert(s.layout.btn_more)
             mp.set_property_number('panscan',0)
-            handlers['osc-mouse-move'](tostring(r.cx),tostring(r.cy))
-            handlers['osc-mouse-down'](tostring(r.cx),tostring(r.cy))
-            handlers['osc-mouse-up'](tostring(r.cx),tostring(r.cy))
+            handlers['osc-mouse-move'](tostring(more.cx),tostring(more.cy))
+            handlers['osc-mouse-down'](tostring(more.cx),tostring(more.cy))
+            handlers['osc-mouse-up'](tostring(more.cx),tostring(more.cy))
+            osc_test_render_hud()
+            local r = assert(s.layout.overflow_btn_fill, 'Fit row missing from More')
+            handlers['osc-mouse-move'](tostring(r.x + r.w / 2),tostring(r.y + r.h / 2))
+            handlers['osc-mouse-down'](tostring(r.x + r.w / 2),tostring(r.y + r.h / 2))
+            handlers['osc-mouse-up'](tostring(r.x + r.w / 2),tostring(r.y + r.h / 2))
             local pointer_only = s.controller_focus_name == nil
             handlers['osc-mouse-move']('400','200')
             if {{leave.ToString().ToLowerInvariant()}} then handlers['osc-mouse-leave'](); assert(leave_check)()

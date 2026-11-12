@@ -620,11 +620,20 @@
 
         <!-- Layer 2: Loading overlay (shown while preparing playback) -->
         <Grid x:Name="LoadingOverlay" Visibility="Collapsed" Background="{StaticResource AppBackgroundBrush}">
+            <!-- PlayerLoadingCover (Silo Server #3993): black, with the title's
+                 backdrop dimmed under the spinner. The thumbhash paints first and
+                 the picture fades in over it once loaded. -->
+            <Grid x:Name="LoadingBackdropLayer" Visibility="Collapsed" Background="Black" IsHitTestVisible="False">
+                <Image x:Name="LoadingBackdropPlaceholder" Stretch="UniformToFill" Opacity="0.22"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Image x:Name="LoadingBackdropImage" Stretch="UniformToFill" Opacity="0"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
             <!-- Loading state -->
             <StackPanel x:Name="LoadingState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
-                <ProgressRing IsActive="True" Width="48" Height="48" />
-                <TextBlock Text="Preparing playback..." FontSize="16"
-                           Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
+                <!-- The cover is a status: its label is spoken, not shown (upstream aria-label). -->
+                <ProgressRing x:Name="LoadingProgressRing" IsActive="True" Width="36" Height="36"
+                              Foreground="#F5F3EF" AutomationProperties.Name="Preparing playback" />
             </StackPanel>
             <!-- Error state -->
             <StackPanel x:Name="ErrorState" Visibility="Collapsed"
