@@ -52,6 +52,8 @@ public sealed partial class CollectionsPage
             if (!_wallActive || !IsLoaded || _wallLoading || ViewModel.IsLoadingServerLibraryRest
                 || ViewModel.IsLoadingServerCollections || !ViewModel.ServerLoaded || !ViewModel.HasCurrentServerCollections
                 || !CollectionsWall.ShowsServer(_show)) return;
+            // A refresh re-reads the loaded rests first; admission is queued again when it ends.
+            if (ViewModel.IsRefreshingServerCollections) return;
             var picked = CollectionsWall.Picked(_show, ViewModel.ServerLibraries.ToArray());
             if (picked != null)
             {
@@ -78,6 +80,7 @@ public sealed partial class CollectionsPage
     private async Task LoadWallLibraryAsync(int libraryId, bool moveFocus)
     {
         if (!_wallActive || !IsLoaded || _wallLoading || ViewModel.IsLoadingServerLibraryRest || !ViewModel.HasCurrentServerCollections) return;
+        if (ViewModel.IsRefreshingServerCollections) return;
         var generation = _wallGeneration;
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var context = client.CaptureContext();

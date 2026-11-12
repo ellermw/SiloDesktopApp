@@ -50,6 +50,8 @@ public sealed partial class CollectionsPage : Page
                 DispatcherQueue.TryEnqueue(BuildServerCollectionRows);
             else if (args.PropertyName == nameof(ViewModel.Capabilities)) QueueCollectionBuild();
             else if (args.PropertyName == nameof(ViewModel.ServerCollectionRevision)) BuildServerCollectionRows();
+            // A read the wall held back for a refresh is admitted once the refresh's own re-reads are done.
+            else if (args.PropertyName == nameof(ViewModel.IsRefreshingServerCollections) && !ViewModel.IsRefreshingServerCollections) QueueWallAdmission();
         };
         SizeChanged += CollectionsPage_SizeChanged;
         CollectionsScrollViewer.ViewChanged += (_, _) => QueueWallAdmission();

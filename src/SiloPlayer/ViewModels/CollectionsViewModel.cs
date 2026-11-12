@@ -73,6 +73,11 @@ public partial class CollectionsViewModel : ObservableObject
     }
     public async Task LoadServerLibraryAsync(int libraryId, CancellationToken ct = default, Func<bool>? isCurrent = null)
     {
+        // A refresh re-reads every loaded rest itself. A read admitted meanwhile would hold the gate below and drop one of them.
+        if (!IsRefreshingServerCollections) await ReadServerLibraryAsync(libraryId, ct, isCurrent);
+    }
+    private async Task ReadServerLibraryAsync(int libraryId, CancellationToken ct = default, Func<bool>? isCurrent = null)
+    {
         if (!HasCurrentServerCollections || isCurrent?.Invoke() == false) return;
         if (IsLoadingServerLibraryRest) return;
         var library = ServerLibraries.FirstOrDefault(l => l.LibraryId == libraryId);
@@ -123,6 +128,11 @@ public partial class CollectionsViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isLoadingServerCollections;
+
+    // Set for the whole server read and the re-reads of loaded rests that follow it. A refresh leaves
+    // IsLoadingServerCollections false, so this is what holds the wall's own library reads back.
+    [ObservableProperty]
+    private bool _isRefreshingServerCollections;
 
     [ObservableProperty]
     private bool _isEmpty;
@@ -189,6 +199,7 @@ public partial class CollectionsViewModel : ObservableObject
         // navigation makes the route look as though it was torn down.
         IsLoading = !PersonalLoaded;
         IsLoadingServerCollections = !ServerLoaded;
+        IsRefreshingServerCollections = true;
         ErrorMessage = null;
         ServerCollectionsErrorMessage = null;
         var referenceTask = LoadViewerReferencesAsync();
@@ -235,7 +246,7 @@ public partial class CollectionsViewModel : ObservableObject
                     // A library whose total now fits its teaser has no rest: what an earlier read left for it is stale.
                     foreach (var library in ServerLibraries.Where(l => l.TotalCount <= l.Collections.Count))
                     { _serverRest.Remove(library.LibraryId); _requestedServerLibraries.Remove(library.LibraryId); _serverCollectionErrors.Remove(library.LibraryId); }
-                    foreach (var libraryId in requested) { if (!Current()) break; await LoadServerLibraryAsync(libraryId); }
+                    foreach (var libraryId in requested) { if (!Current()) break; await ReadServerLibraryAsync(libraryId); }
                     if (Current()) ServerCollectionsChanged();
                 }
             }
@@ -248,6 +259,8 @@ public partial class CollectionsViewModel : ObservableObject
             finally
             {
                 if (Current()) IsLoadingServerCollections = false;
+                // The re-reads are over, or this read failed: the wall may admit a library's rest again.
+                if (generation == _loadGeneration) IsRefreshingServerCollections = false;
             }
         }
 

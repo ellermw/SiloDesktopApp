@@ -125,6 +125,55 @@ public sealed class CollectionsWallLoadingTests
     }
 
     [Fact]
+    public async Task RefreshReReadsALoadedRestWhenTheWallAsksForAnotherLibraryMeanwhile()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.False(vm.IsRefreshingServerCollections);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(["s1", "t1", "s2", "s3"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+
+        // The rest of Movies changed on the server; the refresh that would show it is still on the wire.
+        wire.LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s4"}]}""";
+        wire.HoldServer = true;
+        var refresh = vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await Until(() => wire.ServerReads == 2);
+        Assert.True(vm.IsRefreshingServerCollections); Assert.False(vm.IsLoadingServerCollections);
+        // The viewport reaches Load more now: Shows must not take the single read the refresh needs for Movies.
+        await vm.LoadServerLibraryAsync(2, isCurrent: () => true);
+        Assert.Equal(1, wire.LibraryTabReads); Assert.False(vm.IsLoadingServerLibraryRest);
+
+        wire.Server.SetResult(Wire.Ok(wire.ServerBody));
+        await refresh;
+        Assert.False(vm.IsRefreshingServerCollections);
+        Assert.Equal(2, wire.LibraryTabReads);
+        Assert.Equal(["s1", "t1", "s4"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Null(vm.ServerLibraryError(1));
+        // Shows was only held back: it is still the next library, and its read goes through once the refresh ends.
+        Assert.Equal(2, vm.NextServerLibrary?.LibraryId);
+        await vm.LoadServerLibraryAsync(2);
+        Assert.Equal(3, wire.LibraryTabReads); Assert.True(vm.HasServerLibraryRest(2));
+    }
+
+    [Fact]
+    public async Task FailedRefreshStopsHoldingLibraryReadsBack()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""" };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        wire.FailServer = true;
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.NotNull(vm.ServerCollectionsErrorMessage); Assert.False(vm.IsRefreshingServerCollections);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(1, wire.LibraryTabReads);
+    }
+
+    [Fact]
     public async Task AllPillCountsTheWallOnceALibrarysRestHasLoaded()
     {
         using var wire = new Wire
@@ -441,7 +490,9 @@ public sealed class CollectionsWallLoadingTests
         public string LibraryTabBody = "{\"library_id\":1,\"collections\":[],\"groups\":[]}";
         public string PersonalSnapshotBody = "{}";
         public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles, FailDelete;
-        public bool HoldLibraryTab, TimeOutLibraryTab;
+        public bool HoldLibraryTab, TimeOutLibraryTab, HoldServer;
+        public TaskCompletionSource<HttpResponseMessage> Server { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ServerReads;
         public TaskCompletionSource<HttpResponseMessage> LibraryTab { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int LibraryTabReads, DeleteRequests;
         public TaskCompletionSource PersonalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -454,7 +505,12 @@ public sealed class CollectionsWallLoadingTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
-            if (path == "/api/v2/collections/server") return Task.FromResult(FailServer ? Fail() : Ok(ServerBody));
+            if (path == "/api/v2/collections/server")
+            {
+                Interlocked.Increment(ref ServerReads);
+                if (HoldServer) return Server.Task;
+                return Task.FromResult(FailServer ? Fail() : Ok(ServerBody));
+            }
             if (path == "/api/v2/collections/capabilities") return Task.FromResult(Ok("{\"item_reorder\":true,\"imports\":true}"));
             if (path == "/api/v2/profiles")
             {

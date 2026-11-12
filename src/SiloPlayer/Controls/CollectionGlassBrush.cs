@@ -54,7 +54,7 @@ public sealed class CollectionGlassBrush : XamlCompositionBrushBase
         ClearBrush();
         if (_settings?.AdvancedEffectsEnabled != true) return;
         var foreground = ((SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]).Color;
-        var compositor = CompositionTarget.GetCompositorForCurrentThread();
+        var compositor = Microsoft.UI.Xaml.Media.CompositionTarget.GetCompositorForCurrentThread();
         using var blur = new GaussianBlurEffect { BlurAmount = 8, BorderMode = EffectBorderMode.Hard,
             Source = new CompositionEffectSourceParameter("backdrop") };
         using var tint = new ColorSourceEffect { Color = Color.FromArgb((byte)Math.Round(Math.Clamp(TintOpacity, 0, 1) * 255), foreground.R, foreground.G, foreground.B) };
