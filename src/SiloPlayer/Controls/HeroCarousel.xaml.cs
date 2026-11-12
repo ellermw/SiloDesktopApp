@@ -141,15 +141,15 @@ public sealed partial class HeroCarousel : UserControl
 
     private void UpdateHeightFromWindow()
     {
-        // Current WebUI contracts:
-        // Home:    h-[54vh] min-h-[380px] max-h-[760px] lg:h-[66vh]
-        // Library: h-[60vh] min-h-[420px] max-h-[760px] lg:h-[72vh]
+        // WebUI's clamp is a minimum, not a content cap. The content's top
+        // and bottom margins participate in native measure so wrapped titles,
+        // translated actions and text scaling can grow beyond even 760px.
         if (XamlRoot?.Content is FrameworkElement root && root.ActualHeight > 0)
         {
             var heightRatio = IsTall
                 ? root.ActualWidth >= 1024 ? 0.72 : 0.60
                 : root.ActualWidth >= 1024 ? 0.66 : 0.54;
-            Height = IsTall
+            MinHeight = IsTall
                 ? Math.Clamp(root.ActualHeight * heightRatio, 420, 760)
                 : Math.Clamp(root.ActualHeight * heightRatio, 380, 760);
             var width = root.ActualWidth;
@@ -168,11 +168,17 @@ public sealed partial class HeroCarousel : UserControl
                 : width >= 640 ? 24d
                 : 16d;
             var bottom = width >= 1024 ? 64d : width >= 640 ? 48d : 40d;
-            HeroContent.Margin = new Thickness(gutter, 0, gutter, bottom);
-            HeroContent.MaxWidth = Math.Min(768, Math.Max(280, width - (gutter * 2)));
+            var top = IsTall ? width >= 1024 ? 128d : width >= 640 ? 112d : 136d : 64d;
+            // At narrow widths the Library counter starts below its marquee;
+            // reserve its 28px target plus a gap before the title. On wider
+            // layouts leave the bottom controls their own band above the fade.
+            if (width >= 640 && SlideControlsPanel.Visibility == Visibility.Visible)
+                bottom = Math.Max(bottom, (width >= 1024 ? 32 : 24) + 28 + 12);
+            HeroContent.Margin = new Thickness(gutter, top, gutter, bottom);
+            var contentWidth = ActualWidth > 0 ? ActualWidth : width;
+            HeroContent.MaxWidth = Math.Min(768, Math.Max(0, contentWidth - (gutter * 2)));
             _titleAvailableWidth = HeroContent.MaxWidth;
             BalanceTitle();
-            HeroEyebrow.Visibility = width >= 640 ? Visibility.Visible : Visibility.Collapsed;
             HeroOverview.FontSize = width >= 640 ? 16 : 14;
             HeroOverview.MaxLines = width >= 640 ? 3 : 2;
 
@@ -239,7 +245,13 @@ public sealed partial class HeroCarousel : UserControl
         HeroLeftTransparent.Color = WithAlpha(0);
     }
 
-    // Height is managed by UpdateHeightFromWindow, no SizeChanged needed
+    // The host viewport owns the minimum/breakpoints; our own width can be
+    // smaller (for example, beside an open navigation pane).
+    private void Hero_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width != e.PreviousSize.Width)
+            UpdateHeightFromWindow();
+    }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
@@ -390,9 +402,6 @@ public sealed partial class HeroCarousel : UserControl
         HeroOverview.Visibility = string.IsNullOrEmpty(item.Overview) || HideHeroOverview(item) ? Visibility.Collapsed : Visibility.Visible;
         UpdatePrimaryAction(item);
 
-        // Eyebrow: "FEATURED — No. 01"
-        HeroEyebrow.Text = $"FEATURED \u2014 No. {(_currentIndex + 1):D2}";
-
         // Slide counter: "01 / 04"
         SlideCounterText.Text = $"{(_currentIndex + 1):D2} / {_items.Count:D2}";
         SlideCounterCurrent.Text = $"{(_currentIndex + 1):D2}";
@@ -441,6 +450,7 @@ public sealed partial class HeroCarousel : UserControl
         SlideControlsPanel.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         PrevButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         NextButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateHeightFromWindow();
 
         UpdateDots();
 
