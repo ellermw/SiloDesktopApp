@@ -1,3 +1,15 @@
+# November 12 — Playback HUD final Beta stamp refresh
+
+Verified source commit: `88a9041bd2ec020b5f3fc1e5ea57c8f27049eec7` on `codex/player-hud-server-nov12`, merged with Beta `1a341042bb2e64ee37f6a065726776af08acf285` (including #143 and the pipeline stamp), after preserving #138 transport controls and #141 updater staging. Source **1.2.1007-beta.1**, numeric **1.2.1006.1**, inherited unchanged. Final documentation/PR head is bound in `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-1a341042/delivery-receipt.json`.
+
+The native HUD now keeps the finishing video beside Playing Next, uses segmented chapter rails and a readable lamp accent, compact owned Speed controls, spoiler-aware credits stills, condition-specific wait labels, a 500ms loading-cover fade, screen-sized watch backdrops and a configurable unattended-autoplay gate across credits/EOF/shuffle. Beta continuing reload remains transparent and controllable with owned pause intent and native event guards; updater stages before Restart. Official runtime reference `0b579aa6` plus narrow `d9a6cbb9` #4033 marker palette update. Contract/hero changes match Beta and are outside this HUD diff. Localization foundation/screen work remains separate; message-key/template seams and English fallbacks remain.
+
+Final verification: **6067/6067 serialized full units**, **477 focused tests**, **107 current source/API/runner guards**, fresh self-contained x64 Release, and **18 actual native groups including all 23 real transport-reload cases**, zero failures/skips in these final runs. **1901 tracked inputs** match; app/Core/Player/native/unit PE/PDB/source bindings have zero mismatches. App SHA256 `D7DC32AAEB36546C10712B55B8DC91CC8813181797578D3B3D3D832DD8864577`. Exact receipts, captures, source hashes and retained original failures: `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-1a341042`; detailed report: `.codex-tmp/server-align-nov12/task-2-completion-report.md`.
+
+Independent Task2 approval applies to c28705ac (no P0–P2); the refreshed delivery enters pipeline review. Nonblocking Speed text scaling, fade I/O/refade, reconnect cosmetics, still debug URL, post-roll/EOF and late-Next advisories remain in the report, along with historical full Audio/Chapters/Speed fixture limits. Scoped checks do not certify full parity, physical DPI, live accounts/server persistence or real room/phone interoperability. Versioning and packaging remain pipeline-owned; the installed player and production controls were untouched.
+
+---
+
 # November 12 — Playback HUD and unattended autoplay Beta submission
 
 Verified source commit: `c9504d1fb30b19bed90c3c19270362da6c717711` on `codex/player-hud-server-nov12`, merged with Beta `f22764d957e7e07401a06a9dc60311d838942c5c` (#143), after preserving #138 transport controls and #141 updater staging. Source **1.2.1003-beta.1**, numeric **1.2.1002.1**, inherited unchanged. Final documentation/PR head is bound in `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-f227/delivery-receipt.json`.
