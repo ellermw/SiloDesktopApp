@@ -309,10 +309,16 @@ public static class MediaItemMenu
                 try
                 {
                     var homeApi = App.Services.GetRequiredService<HomeApi>();
-                    // Read before the context: while this identity stays current, every request
-                    // context since, including the one the PUT is bound to, has belonged to it.
-                    var identity = homeApi.CaptureIdentityContext();
                     var context = homeApi.CaptureContext();
+                    // The card's id and stamp belong to the identity this menu was built for. Checked
+                    // after the context: while that identity stays current, every request context
+                    // since Build, including the one the PUT is bound to, has belonged to it.
+                    if (!client.IsCurrentIdentityContext(menuOwner))
+                    {
+                        LocalLog.AppendLine("home_actions.txt", $"dismissal action={actionId} surface={surfaceKey} stage=owner_retired serverAccepted=false elapsedMs={elapsed.ElapsedMilliseconds}");
+                        toast.Error(new InvalidOperationException("This item is no longer available from this card. Open its menu again."));
+                        return;
+                    }
                     object body = surfaceKey == "continue_watching"
                         ? new { progress_updated_at = item.ProgressUpdatedAt }
                         : (object)new { series_id = dismissalSeriesId! };
@@ -322,7 +328,7 @@ public static class MediaItemMenu
                     if (!homeApi.IsCurrentContext(context))
                     {
                         var current = homeApi.CaptureContext();
-                        if (!homeApi.IsCurrentIdentityContext(identity))
+                        if (!client.IsCurrentIdentityContext(menuOwner))
                         {
                             LocalLog.AppendLine("home_actions.txt", $"dismissal action={actionId} surface={surfaceKey} stage=context_retired serverAccepted=true elapsedMs={elapsed.ElapsedMilliseconds}");
                             return;
