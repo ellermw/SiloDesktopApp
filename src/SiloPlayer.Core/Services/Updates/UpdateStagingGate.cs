@@ -38,4 +38,24 @@ public static class UpdateStagingGate
         if (first != choice) return null;
         return await choice;
     }
+
+    /// <summary>
+    /// Silo writes nothing while the worker installs either, so the same client read completing before
+    /// the question also means Silo closed or abandoned the update. A read canceled together with the
+    /// broker is not that, and a broker that does not watch Silo (null) never sees it leave.
+    /// </summary>
+    public static bool ClientLeft(Task? client) => client is { IsCompleted: true, IsCanceled: false };
+
+    /// <summary>
+    /// Sends one frame to Silo while the worker installs. False means Silo has gone, shown by its
+    /// completed read or by this write failing: the broker stops writing to it and lets the worker
+    /// finish, so the staged installation is kept as Later would. Without a watched read a failed
+    /// write stays a failure.
+    /// </summary>
+    public static async Task<bool> ForwardOrAbandonAsync(Task? client, Func<Task> forward)
+    {
+        if (ClientLeft(client)) return false;
+        try { await forward(); return true; }
+        catch (Exception ex) when (client is not null && ex is (IOException or InvalidOperationException)) { return false; }
+    }
 }
