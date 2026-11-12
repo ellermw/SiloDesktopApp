@@ -32,10 +32,10 @@
 
 **Interfaces:** Consume existing captured `ApiRequestContext`/authorization policy. Produce capability-aware `ResetToProviderAsync` without changing callers' completion contract, and reusable household-management availability used by every Webhook Sync entry point.
 
-- [ ] Add failing behavior cases for secondary-profile/deep-link/search refusal, owner retirement and locked-primary refusal guidance; capability-supported reset emits only refresh `mode:reset`, old-server path emits no unsupported mode, outage cannot be preceded by unlock.
-- [ ] Run focused tests and relevant native regression against base; record expected failures.
-- [ ] Implement gate/retirement and capability reset, updating all confirmation semantics without restoring locks after a job.
-- [ ] Run focused/full tests, Release publish and actual-control Webhook/metadata cases. Self-review, commit scoped files and write worker receipt.
+- [x] Add failing behavior cases for secondary-profile/deep-link/search refusal, owner retirement and locked-primary refusal guidance; capability-supported reset emits only refresh `mode:reset`, old-server path emits no unsupported mode, outage cannot be preceded by unlock.
+- [x] Run focused tests and relevant native regression against base; record expected failures.
+- [x] Implement gate/retirement and capability reset, updating all confirmation semantics without restoring locks after a job.
+- [x] Run focused/full tests, Release publish and actual-control Webhook/metadata cases. Self-review, commit scoped files and write worker receipt.
 
 ### Task 2: Autoplay protection and current native playback presentation
 
