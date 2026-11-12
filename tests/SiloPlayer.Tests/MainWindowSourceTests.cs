@@ -421,7 +421,8 @@ public sealed class MainWindowSourceTests
 
         Assert.Contains("NavigationCacheMode.Required", collectionsPage);
         Assert.Contains("NavigationCacheMode.Required", downloadsPage);
-        Assert.Contains("IsLoading = Collections.Count == 0 && Groups.Count == 0", collectionsVm);
+        // Skeletons only until the first successful read (a loaded empty account does not flash them again).
+        Assert.Contains("IsLoading = !PersonalLoaded", collectionsVm);
         Assert.Contains("IsLoading = Downloads.Count == 0", downloadsVm);
         Assert.Contains("_loadInProgress", collectionsVm);
         Assert.Contains("_loadInProgress", downloadsVm);

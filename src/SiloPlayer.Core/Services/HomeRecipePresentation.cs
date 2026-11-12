@@ -49,7 +49,9 @@ public static class HomeRecipePresentation
                 var window = Text("window") switch { "24h" => "24 hours", "7d" => "7 days", "30d" => "30 days", _ => "" };
                 return $"Most played {(onLibrary ? "here" : "on this server")} {(window == "" ? "lately" : "in the last " + window)}";
             case "most_watched": return $"Watched most often here this {(Text("window") == "month" ? "month" : "week")}";
-            case "trending_discover": return $"Trending on TMDB {(Text("window") == "day" ? "today" : "this week")}, from what you have";
+            case "trending_discover":
+                var trendingKind = Text("filter_type") switch { "movie" => "Movies trending", "series" => "TV shows trending", _ => "Trending" };
+                return $"{trendingKind} on TMDB {(Text("window") == "day" ? "today" : "this week")}, from what you have";
             case "profile_activity_feed": return "What other profiles just watched";
             case "mood_collection": return "Mood pick";
             case "seasonal_themed":

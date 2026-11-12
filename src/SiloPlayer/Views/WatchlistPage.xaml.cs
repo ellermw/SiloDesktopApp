@@ -80,8 +80,10 @@ public sealed partial class WatchlistPage : Page
         {
             var badge = SiloPlayer.Controls.PosterCard.BuildBadge(status.Badge, "request_status", badgeConfig, overlays.Preset);
             badge.Margin = new Thickness(7);
-            badge.HorizontalAlignment = badgeConfig.Position is OverlayPosition.TopRight or OverlayPosition.BottomRight ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-            badge.VerticalAlignment = badgeConfig.Position is OverlayPosition.BottomLeft or OverlayPosition.BottomRight ? VerticalAlignment.Bottom : VerticalAlignment.Top;
+            var position = overlays.DisplayPosition(badgeConfig.Position);
+            badge.HorizontalAlignment = position is OverlayPosition.TopRight or OverlayPosition.BottomRight or OverlayPosition.RightEdge ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            badge.VerticalAlignment = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? VerticalAlignment.Center
+                : position is OverlayPosition.BottomLeft or OverlayPosition.BottomRight ? VerticalAlignment.Bottom : VerticalAlignment.Top;
             poster.Children.Add(badge);
             if (RequestViewerPolicy.DownloadPercent(title.Request.Download) is int percent)
                 poster.Children.Add(new ProgressBar { Value = Math.Clamp(percent, 0, 100), Maximum = 100, Height = 3, VerticalAlignment = VerticalAlignment.Bottom });

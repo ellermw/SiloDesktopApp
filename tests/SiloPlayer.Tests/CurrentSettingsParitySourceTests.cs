@@ -116,7 +116,6 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("[\"accentColor\"]", service);
         Assert.Contains("[\"showIcon\"]", service);
         Assert.Contains("public async Task SaveAsync(CardOverlayPrefs", service);
-        Assert.Contains("minimal\" or \"classic\" or \"vibrant\" or \"pill\" or \"square", service);
         Assert.Contains("OverlayAccentOptions", page);
         Assert.Contains("BuildCardOverlayPresetCards", page);
         Assert.Contains("BuildCardOverlayAccentFlyout", page);

@@ -16,6 +16,8 @@ public class RequestFeatureStatus
     public bool WatchlistTitlesSupported { get; set; }
     public bool WatchlistRequests { get; set; }
     public bool DiscoverRowsSupported { get; set; }
+    /// <summary>Advertises DELETE /api/v2/requests/{id}; older servers omit it, so removal stays hidden.</summary>
+    public bool RemoveFailedSupported { get; set; }
 }
 
 public class RequestState

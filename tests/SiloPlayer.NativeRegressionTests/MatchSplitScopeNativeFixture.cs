@@ -170,7 +170,7 @@ internal static class MatchSplitScopeNativeFixture
         var dialog = Split(owner, 2); var showing = dialog.ShowAsync(); await Task.Delay(140);
         try
         {
-            await Until(() => Search(dialog).IsEnabled); File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
+            await Until(() => SearchReady(dialog)); File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
             var commits = wire.Commits; wire.Root = "/rescanned";
             var submit = (Task)typeof(SplitVersionsDialog).GetMethod("SubmitAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!; await submit;
             Check(wire.Commits == commits && !dialog.HasSaved && !dialog.IsPrimaryButtonEnabled, "Split commits preview accepted before path/root inventory update");
@@ -294,7 +294,7 @@ internal static class MatchSplitScopeNativeFixture
             await Until(() => wire.DetailReads > reads);
             if (apply)
             {
-                await Until(() => PopupMatch(root) != null); var dialog = active = PopupMatch(root)!; await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog);
+                await Until(() => PopupMatch(root) != null); var dialog = active = PopupMatch(root)!; await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog);
                 wire.ApplyGate = new(TaskCreationOptions.RunContinuationsAsynchronously); var writes = wire.Count("apply"); Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton")); await Until(() => wire.Count("apply") > writes);
             }
             root.Children.Remove(surface); await Task.Delay(80); root.Children.Add(surface); await Task.Delay(80);
@@ -340,7 +340,13 @@ internal static class MatchSplitScopeNativeFixture
     private static bool ActionBusy(ItemScopedDialog dialog) => (bool)typeof(ItemScopedDialog).GetField("Busy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
     private static void Admin(AuthService auth) => auth.SetCurrentUser(new() { Id = "fixture", Role = "admin" });
     private static ComboBox Libraries(DependencyObject dialog) => All<ComboBox>(dialog).Single(box => AutomationProperties.GetName(box) == "Identity search library");
-    private static Button Search(DependencyObject dialog) => All<Button>(dialog).Single(button => button.Name == "SearchButton" || button.Content as string == "Search");
+    private static Button Search(DependencyObject dialog) => dialog is MatchItemDialog match
+        ? (Button)match.FindName("SearchButton")
+        : dialog is SplitVersionsDialog split
+            ? (Button)typeof(SplitVersionsDialog).GetField("_search", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(split)!
+            : All<Button>(dialog).Single(button => button.Name == "SearchButton" || button.Content as string == "Search");
+    private static bool SearchReady(DependencyObject dialog) => Search(dialog).IsLoaded && Search(dialog).IsEnabled
+        && (dialog is not ItemScopedDialog scoped || (bool)typeof(ItemScopedDialog).GetField("Ready", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scoped)!);
     private static Button Candidate(DependencyObject dialog) => All<Button>(dialog).Single(button => AutomationProperties.GetName(button) == "Scoped candidate");
     private static Button Refresh(DependencyObject dialog) => All<Button>(dialog).Single(button => AutomationProperties.GetName(button) == "Refresh item libraries");
     private static void Pick(DependencyObject dialog, int library) => Libraries(dialog).SelectedItem = Libraries(dialog).Items.OfType<ComboBoxItem>().Single(item => (int)item.Tag == library);
@@ -362,7 +368,7 @@ internal static class MatchSplitScopeNativeFixture
             Check(dialog.SelectedCandidate == null && !All<Button>(dialog).Any(button => AutomationProperties.GetName(button) == "Scoped candidate"), "Library choice retains candidates");
             Invoke(retired); Check(dialog.SelectedCandidate == null, "Retired Match candidate callback still selects");
             wire.SearchGate = new(TaskCreationOptions.RunContinuationsAsynchronously); var count = wire.Count("search"); Invoke(Search(dialog)); await Until(() => wire.Count("search") > count);
-            Pick(dialog, 7); wire.SearchGate.SetResult(); wire.SearchGate = null; await Until(() => Search(dialog).IsEnabled);
+            Pick(dialog, 7); wire.SearchGate.SetResult(); wire.SearchGate = null; await Until(() => SearchReady(dialog));
             Check(!All<Button>(dialog).Any(button => AutomationProperties.GetName(button) == "Scoped candidate"), "Delayed old-library Match results reappear");
             await SearchAndChooseAsync(dialog); Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton"));
             await Until(() => dialog.HasAppliedMatch); await showing;
@@ -375,7 +381,7 @@ internal static class MatchSplitScopeNativeFixture
         wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); var showing = dialog.ShowAsync(); await Task.Delay(140);
         try
         {
-            await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog);
+            await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog);
             Check(wire.Last("search").Body.GetProperty("library_id").GetString() == "2", "Single-library Match is not inferred");
             wire.Files = [("1", 7), ("2", 7)]; var writes = wire.Count("apply"); Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton"));
             await Until(() => dialog.SelectedCandidate == null); Check(wire.Count("apply") == writes, "Changed inventory is applied before scope revalidation");
@@ -389,7 +395,7 @@ internal static class MatchSplitScopeNativeFixture
         }
         finally { dialog.Hide(); await showing; }
         wire.Files = []; dialog = Match(owner); showing = dialog.ShowAsync(); await Task.Delay(140);
-        try { await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog); Check(!wire.Last("search").Body.TryGetProperty("library_id", out _), "Empty successful inventory invents a Match library"); }
+        try { await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog); Check(!wire.Last("search").Body.TryGetProperty("library_id", out _), "Empty successful inventory invents a Match library"); }
         finally { dialog.Hide(); await showing; }
     }
     private static async Task UnreadableInventoryAsync(FrameworkElement owner, Wire wire)
@@ -426,7 +432,7 @@ internal static class MatchSplitScopeNativeFixture
             wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); var showing = dialog.ShowAsync();
             try
             {
-                await Until(() => Search(dialog).IsEnabled);
+                await Until(() => SearchReady(dialog));
                 await (Task)typeof(MatchItemDialog).GetMethod("DoSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
                 if (apply) { Invoke(Candidate(dialog)); await Until(() => dialog.SelectedCandidate != null); }
                 var writes = wire.Count("apply"); wire.DenyInventory = !timeout; wire.TimeoutInventory = timeout;
@@ -435,7 +441,7 @@ internal static class MatchSplitScopeNativeFixture
                 await Until(() => All<TextBlock>(dialog).Any(text => text.Name == "ApplyStatusText" && text.Visibility == Visibility.Visible && text.Text == message));
                 Check(wire.Count("apply") == writes && dialog.SelectedCandidate == null && !dialog.HasAppliedMatch, "Failed Match preflight dispatches a write or retains a candidate");
                 Check(!Search(dialog).IsEnabled && Refresh(dialog).IsEnabled, "Failed Match inventory leaves unsafe actions enabled or disables retry");
-                wire.DenyInventory = wire.TimeoutInventory = false; Invoke(Refresh(dialog)); await Until(() => Search(dialog).IsEnabled);
+                wire.DenyInventory = wire.TimeoutInventory = false; Invoke(Refresh(dialog)); await Until(() => SearchReady(dialog));
                 await SearchAndChooseAsync(dialog);
                 Check(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton").IsEnabled, "A pre-dispatch failure permanently disarms Match after recovery");
             }
@@ -449,7 +455,7 @@ internal static class MatchSplitScopeNativeFixture
             wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); var showing = dialog.ShowAsync();
             try
             {
-                await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog);
+                await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog);
                 var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
                 var ids = new[] { "fixture", "fixture-target", "unrelated" };
                 var cached = await Task.WhenAll(ids.Select(id => cache.GetAsync(id, default)));
@@ -516,7 +522,7 @@ internal static class MatchSplitScopeNativeFixture
         wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
         try
         {
-            await Until(() => Search(dialog).IsEnabled); wire.TimeoutSearch = true;
+            await Until(() => SearchReady(dialog)); wire.TimeoutSearch = true;
             await (Task)typeof(SplitVersionsDialog).GetMethod("SearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
             Check(ActionStatus(dialog).Visibility == Visibility.Visible && ActionStatus(dialog).Text.Contains("Synthetic search timeout"), "Split hides a non-lifetime search timeout");
             Check(Search(dialog).IsEnabled && !dialog.IsPrimaryButtonEnabled, "Split search timeout does not restore safe commands");
@@ -574,7 +580,7 @@ internal static class MatchSplitScopeNativeFixture
             Task SearchAsync() => (Task)typeof(SplitVersionsDialog).GetMethod("SearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
             try
             {
-                await Until(() => Search(dialog).IsEnabled);
+                await Until(() => SearchReady(dialog));
                 if (phase == "candidate") await SearchAsync();
                 if (phase == "after-search")
                 {
@@ -591,7 +597,7 @@ internal static class MatchSplitScopeNativeFixture
                 await Until(() => ActionStatus(dialog).Text == (timeout ? "Synthetic inventory timeout" : "HTTP 403"));
                 Check(ActionStatus(dialog).Visibility == Visibility.Visible && !Search(dialog).IsEnabled && !dialog.IsPrimaryButtonEnabled
                     && Refresh(dialog).IsEnabled && !All<Button>(dialog).Any(button => AutomationProperties.GetName(button) == "Scoped candidate"), "Split hides its search/candidate inventory read error or leaves stale actions armed");
-                wire.DenyInventory = wire.TimeoutInventory = false; Invoke(Refresh(dialog)); await Until(() => Search(dialog).IsEnabled);
+                wire.DenyInventory = wire.TimeoutInventory = false; Invoke(Refresh(dialog)); await Until(() => SearchReady(dialog));
                 await SearchAndChooseAsync(dialog);
             }
             finally { wire.DenyInventory = wire.TimeoutInventory = false; wire.SearchGate?.TrySetResult(); wire.SearchGate = null; dialog.Hide(); await showing; }
@@ -704,7 +710,7 @@ internal static class MatchSplitScopeNativeFixture
             wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
             try
             {
-                await Until(() => Search(dialog).IsEnabled); File(dialog, "1").IsChecked = true;
+                await Until(() => SearchReady(dialog)); File(dialog, "1").IsChecked = true;
                 if (unmatched) All<CheckBox>(dialog).Single(box => box.Content as string == "Detach as unmatched (identify later)").IsChecked = true;
                 else await SearchAndChooseAsync(dialog);
                 await Until(() => dialog.IsPrimaryButtonEnabled);
@@ -713,7 +719,7 @@ internal static class MatchSplitScopeNativeFixture
                 await Until(() => !ActionBusy(dialog) && !string.IsNullOrEmpty(ActionStatus(dialog).Text));
                 Check(ActionStatus(dialog).Text == "HTTP 403", "Failed Split preflight overwrites the inventory read error with drift guidance");
                 Check(wire.Commits == commits && !dialog.HasSaved && !dialog.IsPrimaryButtonEnabled && Refresh(dialog).IsEnabled, "Failed inventory read commits Split or disables its retry");
-                wire.DenyInventory = false; Invoke(Refresh(dialog)); await Until(() => Search(dialog).IsEnabled);
+                wire.DenyInventory = false; Invoke(Refresh(dialog)); await Until(() => SearchReady(dialog));
                 if (!unmatched) await SearchAndChooseAsync(dialog);
                 await Until(() => dialog.IsPrimaryButtonEnabled);
             }
@@ -730,7 +736,7 @@ internal static class MatchSplitScopeNativeFixture
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(notice, (recipient, message) => ((MatchNotice)recipient).Context = message.Context);
         try
         {
-            await Until(() => Search(dialog).IsEnabled); File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
+            await Until(() => SearchReady(dialog)); File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
             wire.TimeoutCommit = true; Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
             await Until(() => !ActionBusy(dialog) && ActionStatus(dialog).Text.Contains("Reload the item"));
             Check(!dialog.HasSaved && ActionStatus(dialog).Text.Contains("Split could not be confirmed"), "Lost Split response silently reports completion or an owner change");
@@ -749,7 +755,7 @@ internal static class MatchSplitScopeNativeFixture
         wire.Files = [("1", 2), ("2", 7)]; var dialog = Match(owner, 2); var showing = dialog.ShowAsync(); await Task.Delay(140);
         try
         {
-            await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog);
+            await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog);
             wire.Files = [("1", 7), ("2", 9)]; Invoke(Refresh(dialog)); await Until(() => dialog.SelectedCandidate == null);
             Check(!Search(dialog).IsEnabled, "Explicit departed page scope falls back to another item library");
         }
@@ -759,7 +765,7 @@ internal static class MatchSplitScopeNativeFixture
         {
             Check(!Search(dialog).IsEnabled, "Failed inventory read is treated as successful empty inventory");
             wire.DenyInventory = false; Invoke(Refresh(dialog)); await Until(() => Libraries(dialog).Items.Count == 2);
-            Check(!Search(dialog).IsEnabled, "Recovered multi-library inventory skips choice"); Pick(dialog, 9); await Until(() => Search(dialog).IsEnabled);
+            Check(!Search(dialog).IsEnabled, "Recovered multi-library inventory skips choice"); Pick(dialog, 9); await Until(() => SearchReady(dialog));
         }
         finally { wire.DenyInventory = false; dialog.Hide(); await showing; }
     }
@@ -769,13 +775,13 @@ internal static class MatchSplitScopeNativeFixture
         var reads = wire.FileReads; var dialog = Match(owner, 7); var showing = dialog.ShowAsync(); await Task.Delay(140);
         try
         {
-            await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog);
+            await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog);
             Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton")); await Until(() => dialog.HasAppliedMatch); await showing;
             Check(wire.FileReads == reads, "Curator Match fetches administrator inventory"); Check(wire.Last("apply").Body.GetProperty("library_id").GetString() == "7", "Scoped curator Match loses scope");
         }
         finally { dialog.Hide(); await showing; }
         dialog = Match(owner); showing = dialog.ShowAsync(); await Task.Delay(140);
-        try { await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog); Check(!wire.Last("search").Body.TryGetProperty("library_id", out _), "Unscoped curator Match invents scope"); }
+        try { await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog); Check(!wire.Last("search").Body.TryGetProperty("library_id", out _), "Unscoped curator Match invents scope"); }
         finally { dialog.Hide(); await showing; }
         var split = Split(owner); var splitShowing = split.ShowAsync(); await Task.Delay(140);
         try { await Task.Delay(100); Check(wire.FileReads == reads && !split.IsPrimaryButtonEnabled, "Curator can load administrator-only Split inventory"); }
@@ -811,7 +817,7 @@ internal static class MatchSplitScopeNativeFixture
             await Until(() => Libraries(dialog).Items.Count == 2); File(dialog, "1").IsChecked = true; File(dialog, "2").IsChecked = true;
             Check(!Search(dialog).IsEnabled, "Cross-library Split without page scope skips choice"); Pick(dialog, 7);
             wire.SearchGate = new(TaskCreationOptions.RunContinuationsAsynchronously); var searches = wire.Count("search"); Invoke(Search(dialog)); await Until(() => wire.Count("search") > searches);
-            File(dialog, "2").IsChecked = false; wire.SearchGate.SetResult(); wire.SearchGate = null; await Until(() => Search(dialog).IsEnabled);
+            File(dialog, "2").IsChecked = false; wire.SearchGate.SetResult(); wire.SearchGate = null; await Until(() => SearchReady(dialog));
             Check(!All<Button>(dialog).Any(button => AutomationProperties.GetName(button) == "Scoped candidate"), "Delayed Split search survives selected-files change");
             wire.PreviewGate = new(TaskCreationOptions.RunContinuationsAsynchronously); await SearchAndChooseAsync(dialog); var previews = wire.Count("split"); await Until(() => wire.Count("split") > previews);
             wire.Files = [("1", 7), ("2", 7), ("3", 2)]; Invoke(Refresh(dialog)); await Until(() => !All<Button>(dialog).Any(button => AutomationProperties.GetName(button) == "Scoped candidate"));
@@ -830,7 +836,7 @@ internal static class MatchSplitScopeNativeFixture
             Admin(auth); client.ClearProfile(); wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); using var navigation = new CancellationTokenSource(); dialog.BindNavigation(navigation.Token); var showing = dialog.ShowAsync(); await Task.Delay(140);
             try
             {
-                await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog);
+                await Until(() => SearchReady(dialog)); await SearchAndChooseAsync(dialog);
                 wire.ApplyGate = new(TaskCreationOptions.RunContinuationsAsynchronously); var writes = wire.Count("apply"); Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton")); await Until(() => wire.Count("apply") > writes);
                 if (departure == "profile") client.SetProfile("other");
                 else if (departure == "account") auth.SetCurrentUser(new() { Id = "other", Role = "admin" });
@@ -906,6 +912,7 @@ internal static class MatchSplitScopeNativeFixture
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath; string json;
+            if (path == "/api/v2/admin/catalog/capabilities") return new(HttpStatusCode.OK) { Content = new StringContent("{}") };
             if (path == "/api/v2/catalog/items/fixture") { DetailReads++; if (DetailGate != null) await DetailGate.Task; return new(HttpStatusCode.OK) { Content = new StringContent("{\"content_id\":\"fixture\",\"title\":\"Fixture\",\"type\":\"movie\",\"user_state\":{}}") }; }
             if (path.EndsWith("/files") && DenyInventory) { FileReads++; return new(HttpStatusCode.Forbidden) { Content = new StringContent("{\"error\":\"forbidden\"}") }; }
             if (path.EndsWith("/files"))

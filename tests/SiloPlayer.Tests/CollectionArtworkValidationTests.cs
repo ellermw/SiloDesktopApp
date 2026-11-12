@@ -37,6 +37,7 @@ public sealed class CollectionArtworkValidationTests
     {
         using var wire = new Wire(); var client = wire.Client(); using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("mine");
         var vm = Editor(client, auth); vm.Name = "New draft";
+        vm.AddRuleCommand.Execute(null); vm.RuleDefinition.Groups[0].Rules[0].Value = "Drama"; // a smart collection needs a complete rule
         vm.SetPosterFile("broken.png", [1, 2, 3], "image/png");
         await vm.SaveCommand.ExecuteAsync(null);
         Assert.NotNull(vm.ErrorMessage); Assert.Equal("created", vm.CollectionId); Assert.True(vm.IsEditing);

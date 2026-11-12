@@ -109,7 +109,7 @@ public partial class HomeViewModel : ObservableObject,
             _lastDismissedSurface = message.Surface; _lastDismissedItemId = message.Item.ContentId;
             _dismissContext = message.Context;
             _dismissSnapshot = HomeDismissalSnapshot.Capture(FeaturedSections.Concat(Sections), message.Item.ContentId,
-                message.Item.SeriesId ?? (message.Item.Type == "series" ? message.Item.ContentId : null));
+                HomeDismissalPolicy.SeriesIdentity(message.Item));
             UndoMessage = message.Item.Type is "episode" or "series"
                 ? "Removed from Continue Watching and Next Up"
                 : message.Surface == "next_up" ? "Removed from Next Up"
@@ -1081,6 +1081,8 @@ public partial class HomeViewModel : ObservableObject,
             _ => null
         };
         if (surface == null) return;
+        var dismissalSeriesId = HomeDismissalPolicy.SeriesIdentity(request.Item);
+        if (surface == "next_up" && string.IsNullOrWhiteSpace(dismissalSeriesId)) return;
 
         // Save undo state
         _lastDismissedSurface = surface;
@@ -1108,7 +1110,7 @@ public partial class HomeViewModel : ObservableObject,
         {
             var body = surface == "continue_watching"
                 ? new { progress_updated_at = request.Item.ProgressUpdatedAt }
-                : (object)new { series_id = request.Item.SeriesId ?? request.Item.ContentId };
+                : (object)new { series_id = dismissalSeriesId! };
 
             if (surface == "continue_watching" && string.IsNullOrWhiteSpace(request.Item.ProgressUpdatedAt))
                 throw new InvalidOperationException("Continue-watching item is missing its progress timestamp.");

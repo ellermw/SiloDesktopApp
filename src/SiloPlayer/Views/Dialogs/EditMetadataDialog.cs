@@ -121,15 +121,27 @@ public sealed class EditMetadataDialog : ContentDialog
         _reset = new Button { Content = "Reset to Provider", FontSize = 13, Height = 32, MinHeight = 0,
             Padding = new Thickness(12, 4, 12, 4), Foreground = Brush("SecondaryTextBrush"),
             Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left };
-        _reset.Visibility = item.Type is "movie" or "series" ? Visibility.Visible : Visibility.Collapsed;
+        _reset.Visibility = item.Type is "movie" or "series" or "season" or "episode" ? Visibility.Visible : Visibility.Collapsed;
         var reset = _reset;
         var confirmation = new StackPanel { Spacing = 12, MaxWidth = 340 };
         confirmation.Children.Add(new TextBlock { Text = "Reset to Provider Metadata?", FontWeight = FontWeights.SemiBold });
-        confirmation.Children.Add(new TextBlock { Text = "This will re-fetch metadata from the provider. Your manual edits may be replaced.", TextWrapping = TextWrapping.Wrap });
+        confirmation.Children.Add(new TextBlock { Text = item.Type switch
+        {
+            "series" => "This will unlock all fields on this series and refresh metadata from your providers. Any manual edits to the series will be overwritten. Locked seasons and episodes keep their edits.",
+            "season" => "This will unlock this season's title, overview and air date and refresh metadata from your providers. Any manual edits to them will be overwritten. Artwork you picked stays locked.",
+            "episode" => "This will unlock this episode's title, overview, runtime and air date and refresh metadata from your providers. Any manual edits to them will be overwritten.",
+            _ => "This will re-fetch metadata from the provider. Your manual edits may be replaced.",
+        }, TextWrapping = TextWrapping.Wrap });
         var confirm = new Button { Content = "Reset", Style = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
         var flyout = new Flyout { Content = confirmation }; reset.Flyout = flyout; confirmation.Children.Add(confirm);
         confirm.Click += async (_, _) => { if (_pending || _imagePending) return; _pending = true; confirm.IsEnabled = false; reset.IsEnabled = false; IsPrimaryButtonEnabled = false;
-            try { await _api.ResetToProviderAsync(_item.ContentId, _lifetime.Token); HasSaved = true; Changed(); flyout.Hide(); Hide(); }
+            try
+            {
+                var locksToKeep = _item.Type is "season" or "episode"
+                    ? _state.EffectiveLocks(_item.LockedFields).Except(_state.FieldLockMap.Values).Order().ToArray()
+                    : Array.Empty<int>();
+                await _api.ResetToProviderAsync(_item.ContentId, locksToKeep, _lifetime.Token); HasSaved = true; Changed(); flyout.Hide(); Hide();
+            }
             catch (Exception ex) { Toast().Error(ex); } finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = !_imagePending; IsPrimaryButtonEnabled = !_imagePending; } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;
@@ -227,7 +239,7 @@ public sealed class EditMetadataDialog : ContentDialog
     private Grid Label(string key, string text)
     {
         var row = new Grid(); row.Children.Add(new TextBlock { Text = text, FontSize = 12, Height = 12, LineHeight = 12, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("SecondaryTextBrush"), FontWeight = FontWeights.Medium });
-        if (_item.Type is "movie" or "series" && MetadataEditState.LockMap.TryGetValue(key, out var field))
+        if (_state.FieldLockMap.TryGetValue(key, out var field))
         {
             var button = new Button { Padding = new Thickness(4, 0, 4, 0), Height = 18, MinHeight = 0, MinWidth = 0, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
             button.Click += (_, _) => { _state.SetLock(field, !_state.EffectiveLocks(_item.LockedFields).Contains(field)); RefreshLocks(); };
@@ -239,10 +251,10 @@ public sealed class EditMetadataDialog : ContentDialog
     {
         var locks = _state.EffectiveLocks(_item.LockedFields);
         _lockedCount.Text = $"{locks.Count} locked";
-        _lockedCount.Visibility = _item.Type is "movie" or "series" && locks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _lockedCount.Visibility = _state.FieldLockMap.Count > 0 && locks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var (field, button) in _lockButtons)
         {
-            var locked = locks.Contains(MetadataEditState.LockMap[field]);
+            var locked = locks.Contains(_state.FieldLockMap[field]);
             button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Children =
                 { WebUiIcon.Create(locked ? "lock-keyhole" : "lock-keyhole-open", 12, Brush(locked ? "WarningBrush" : "SecondaryTextBrush")),
                   new TextBlock { Text = locked ? "locked" : "", FontSize = 10, Foreground = Brush(locked ? "WarningBrush" : "SecondaryTextBrush") } } };

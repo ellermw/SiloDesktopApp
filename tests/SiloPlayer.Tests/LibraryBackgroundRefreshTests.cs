@@ -602,17 +602,24 @@ public sealed class LibraryBackgroundRefreshTests
             wire.Titles.Insert(450, ("new-title", "Brand New"));
             wire.ChangeSnapshotAt = 560;
             wire.SnapshotChangesRemaining = changes;
+            // A completed retry starts an independent exact-count read. Hold it so
+            // the retained-extent assertion cannot race the correct new total.
+            wire.HoldCount = true;
             var requests = wire.Requests.Count;
             Reconnect(wire);
-            Assert.Equal(changes == 1 ? LibraryViewModel.CatalogRefreshResult.Completed : LibraryViewModel.CatalogRefreshResult.Deferred,
-                await model.RefreshInPlaceAsync(500, 60));
-            var freshViewportReads = wire.Requests.Skip(requests)
-                .Where(read => read.ContainsKey("skip_total") && read.GetValueOrDefault("seek") == "500").ToList();
-            Assert.Equal(2, freshViewportReads.Count);
-            Assert.All(freshViewportReads, read => Assert.False(read.ContainsKey("cursor")));
-            Assert.Null(model.ErrorMessage);
-            Assert.DoesNotContain(0, totals);
-            Assert.Equal(1000, model.TotalCount);
+            try
+            {
+                Assert.Equal(changes == 1 ? LibraryViewModel.CatalogRefreshResult.Completed : LibraryViewModel.CatalogRefreshResult.Deferred,
+                    await model.RefreshInPlaceAsync(500, 60));
+                var freshViewportReads = wire.Requests.Skip(requests)
+                    .Where(read => read.ContainsKey("skip_total") && read.GetValueOrDefault("seek") == "500").ToList();
+                Assert.Equal(2, freshViewportReads.Count);
+                Assert.All(freshViewportReads, read => Assert.False(read.ContainsKey("cursor")));
+                Assert.Null(model.ErrorMessage);
+                Assert.DoesNotContain(0, totals);
+                Assert.Equal(1000, model.TotalCount);
+            }
+            finally { wire.ReleaseCount.TrySetResult(); }
             if (changes == 1)
             {
                 Assert.All(held, index => Assert.NotNull(model.GetWindowItem(index)));
@@ -630,10 +637,11 @@ public sealed class LibraryBackgroundRefreshTests
                     Assert.Null(model.GetRenderableWindowItem(index)));
                 // An ordinary foreground read establishes the fresh snapshot.
                 await model.LoadWindowAsync(500, 60);
-                await wire.Idle();
                 Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
                 Assert.False(model.RequiresCatalogRefresh);
             }
+            await wire.Idle();
+            Assert.Equal(1001, model.TotalCount);
         }
     }
 

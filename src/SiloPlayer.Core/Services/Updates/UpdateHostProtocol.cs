@@ -25,7 +25,7 @@ public static class UpdateHostProtocol
     // client downloads the package that the window then installs. "restart" and "later" travel
     // back: the user's answer once everything is downloaded. Client and window are one build.
     private static readonly HashSet<string> Kinds = ["visible", "progress", "staged", "close", "cancel", "activated", "ready", "confirmed", "failed",
-        "download", "downloaded", "restart", "later"];
+        "download", "downloaded", "restart", "later", "presentation-ready", "present"];
     public static async Task WriteAsync(Stream stream, UpdateHostMessage message, CancellationToken ct)
     {
         Validate(message);

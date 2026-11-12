@@ -227,6 +227,8 @@ public sealed partial class MainWindow : Window
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
     {
         _isWindowActive = args.WindowActivationState != WindowActivationState.Deactivated;
+        if (_isWindowActive && CanExposeAuthenticatedNavigation && _hydratedShellKey is {} profileShellKey)
+            _ = RunShellWorkAsync("profile_limits_focus", () => UpdateProfileDisplayAsync(profileShellKey, _shellHydrationCts?.Token ?? CancellationToken.None));
         if (_isWindowActive && CanExposeAuthenticatedNavigation)
             _ = RunShellWorkAsync("shared_appearance_focus", () =>
                 _themeService.RefreshSharedAppearanceIfStaleAsync(
@@ -409,6 +411,8 @@ public sealed partial class MainWindow : Window
 
     private void ProfileFooterFlyout_Opening(object sender, object e)
     {
+        if (CanExposeAuthenticatedNavigation && _hydratedShellKey is {} profileShellKey)
+            _ = RunShellWorkAsync("profile_limits_open", () => UpdateProfileDisplayAsync(profileShellKey, _shellHydrationCts?.Token ?? CancellationToken.None));
         // Keep the user's pane state unchanged while presenting the profile
         // menu beside a compact rail or above an expanded sidebar.
         ProfileFooterFlyout.Placement =
@@ -2466,10 +2470,20 @@ public sealed partial class MainWindow : Window
         string shellKey,
         CancellationToken cancellationToken)
     {
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return Task.CompletedTask;
+        ResetProfileSwitchPresentation();
         var profileId = _authService.SelectedProfileId;
         if (!string.IsNullOrEmpty(profileId))
             return LoadProfileNameAsync(profileId, shellKey, cancellationToken);
         return Task.CompletedTask;
+    }
+
+    private int _profilePresentationRevision;
+
+    private void ResetProfileSwitchPresentation()
+    {
+        ProfileSwitchButton.Visibility = Visibility.Visible;
+        SettingsSidebarProfile.IsEnabled = true;
     }
 
     private async Task LoadProfileNameAsync(
@@ -2477,10 +2491,14 @@ public sealed partial class MainWindow : Window
         string shellKey,
         CancellationToken cancellationToken)
     {
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+        ResetProfileSwitchPresentation();
         try
         {
+            var revision = ++_profilePresentationRevision;
             var authApi = App.Services.GetRequiredService<Core.Api.AuthApi>();
             var response = await authApi.GetProfilesAsync(cancellationToken);
+            if (revision != _profilePresentationRevision) return;
             if (!IsCurrentShellHydration(shellKey, cancellationToken))
                 return;
             var profile = response.Profiles.FirstOrDefault(p => p.Id == profileId);
@@ -2490,6 +2508,11 @@ public sealed partial class MainWindow : Window
                 {
                     if (!IsCurrentShellHydration(shellKey, cancellationToken))
                         return;
+                    if (revision != _profilePresentationRevision) return;
+                    var canSwitch = Core.Services.ProfileLimits.CanSwitch(response.Profiles.Count, response.MaxProfiles, profile.HasPin);
+                    ProfileSwitchButton.Visibility = canSwitch ? Visibility.Visible : Visibility.Collapsed;
+                    // Profile management remains available even when there is nobody to switch to.
+                    SettingsSidebarProfile.IsEnabled = true;
                     ProfileNameText.Text = profile.Name;
                     ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
                         ? profile.Name[0].ToString().ToUpperInvariant()
@@ -3048,13 +3071,7 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private static string LibraryNavigationIconName(string type) => type switch
-    {
-        "movies" => "film",
-        "series" => "tv",
-        "audiobook" or "audiobooks" => "book-headphones",
-        _ => "library",
-    };
+    private static string LibraryNavigationIconName(string type) => SiloPlayer.Core.Services.LibraryTypeIcons.IconName(type);
 
     public void UpdateLibraryNavItems() => QueueSidebarPublication();
 
