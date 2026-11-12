@@ -142,6 +142,10 @@ internal static class CardOverlayRevisionNativeFixture
         typeof(PosterCard).GetMethod("UpdateQuickActionState", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(poster, [item, false]);
         typeof(LibraryGridCard).GetMethod("UpdateQuickActionState", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(library, [item]);
         Check(posterRow.MaxWidth < posterWidth && libraryRow.MaxWidth < libraryWidth, "quick action refresh recomputes remaining-count reservations");
+        var posterRail = (StackPanel)poster.FindName("OverlayRightEdge");
+        var libraryRail = (StackPanel)Get(library, "_overlayRightEdge")!;
+        Check(posterRail.Children.Count > 0 && posterRail.Margin.Right == 0 && libraryRail.Children.Count > 0 && libraryRail.Margin.Right == 0,
+            "quick action refresh keeps classic rail badges flush with the card edge");
         typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, 24);
         poster.RefreshState(); library.RefreshState();
         item.UserState.WatchedCount = item.UserState.UnplayedCount = 0;

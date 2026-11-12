@@ -94,6 +94,8 @@ public sealed partial class CollectionsPage
         var profile = App.Services.GetRequiredService<AuthService>().SelectedProfileId;
         if (!PersonalCollectionOwnership.IsOwn(collection, profile)) { card.ContextFlyout = new MenuFlyout(); return card; }
         var menu = new MenuFlyout();
+        var allowanceVisit = _collectionsPageGeneration;
+        CollectionAllowanceMenu.Attach(menu, card, collection, () => IsLoaded && allowanceVisit == _collectionsPageGeneration);
         var edit = new MenuFlyoutItem { Text = "Edit collection" }; edit.Click += (_, _) => NavigateToCollectionEditor(collection); menu.Items.Add(edit);
         if (ViewModel.Capabilities?.Imports == true && CanSyncCollection(collection))
         { var sync = new MenuFlyoutItem { Text = "Sync now" }; sync.Click += async (_, _) => await ViewModel.SyncCollectionCommand.ExecuteAsync(collection.Id); menu.Items.Add(sync); menu.Opened += (_, _) => { sync.IsEnabled = !ViewModel.IsCollectionMutationPending; sync.Text = ViewModel.SyncCollectionCommand.IsRunning ? "Syncing…" : "Sync now"; }; }

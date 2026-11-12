@@ -1,8 +1,26 @@
+# November 11 — Fit OSC popups to content and remove native frames
+
+Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
+
+Source version: `1.2.981-beta.1`; numeric version: `1.2.980.1`.
+
+These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
+
+The shared native OSC popup now measures its real wrapped rows and visible footer instead of reserving 102 pixels per choice. Quality's collapsed error footer no longer selects the taller Subtitle cap. Loaded typography and live list-size changes trigger coalesced placement; the existing playback/work-area clamp remains in force. Residual classic window-frame styles and the DWM outline are removed, leaving the app's single rounded outline. A two-choice popup shrank from 256 to 163 pixels, and the unwanted 3-pixel frame is absent.
+
+Verification: fresh Release app/helper, **99/99 focused unit tests**, and five native groups passed with exit 0 and the completion marker: eight-case popup layout/frame matrix, actual OSC Quality, actual Subtitle selection/footer, live menu growth, and resize/wheel selection. Matrix covers 1/2/7/24 choices, 460×300 playback, 1.25× text, and a partially offscreen owner. App/helper/native/unit PE/PDB/source bindings have zero mismatches. Independent Claude review found no actionable issues in the product and popup fixture. A later one-line Speed fixture correction reads the current string-ID wire contract; the lead verified it.
+
+Verification limit: the extra Speed regression stopped first on its outdated numeric-ID fixture; after that test-only correction, its same-owner version/pause assertion fails identically against both untouched Beta and the corrected app. Neither run is counted as passing. The full unit suite was not rerun for this scoped UI change. No installed-player, live account/settings, physical input or system DPI changes occurred; 1.25× is text scaling, not simulated monitor DPI.
+
+Receipts, original failures, baseline comparison, screenshots and review: `D:/SiloPlayer/.codex-tmp/playback-popup-nov11/`. App DLL SHA256 `3D77C5B39E32DF2986C9FE43EF0782DA78BEA53B37BFDFD2F09B900C40C59626`. The existing isolated checkout was reused; no new worktree was created. Beta pipeline owns integration and packaging.
+
+---
+
 # November 11 — Align viewer actions and smart collection behavior with Server main (Beta candidate)
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.976-beta.1`; numeric version: `1.2.975.1`.
+Source version: `1.2.981-beta.1`; numeric version: `1.2.980.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -30,6 +48,22 @@ The two intermediate native failures remain failed: the group fixture assumed fi
 
 ---
 
+# November 11 ? Preserve playback intent across policy and subtitle updates (Beta candidate)
+
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Historical: source was **1.2.970** when this entry was written (current stamps are in the newest entry above); the Beta pipeline owns integration, versioning and publication.
+
+Watch Party creation reads the remembered guest-control policy and writes it only for an explicit change. Session-scoped subtitle announcements preserve canonical stored identity without selecting additions, falling back to an authoritative replan on ordinal collisions. Expired Skip Intro offers return with controls without restarting the timer; Escape closes an open menu before dismissing the timed prompt.
+
+Verification: 635/635 focused tests; fresh Release publish; four final native routes: remembered party policy, canonical subtitle-ready, unrestricted subtitle adoption and intro reoffer. All include the completion sentinel. Two stored-identity regression cases and three corrected Lua menu-priority cases fail against the respective earlier implementations and pass after the fixes.
+
+Independent Claude review identified the positional TrackId collision and Escape precedence; both were resolved. The first Lua regression fixture interpolated braces into state keys; corrected fixtures were rerun RED against frozen pre-review Lua, then GREEN. An inherited subtitle-only environment flag narrowed review-native-adoption; review-native-adoption-unrestricted explicitly clears it and runs the original adoption scope. Earlier failures and receipts remain preserved.
+
+App DLL SHA256: `5EA2E5BA5A9A9A94E96B4FFF860F6C81E572C2FEC207106A6B5DDAD67ED9092B`; all 738 authored app PDB documents match final source. Selected native DLL/PDB identities and source documents also match. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/playback-worker-2239/review-final-binding-b`, the original `playback-implementation.md`/review, and `playback-review-fixes-note.md`.
+
+Limits: Synthetic API, real libmpv/Lua and native controls verified. No live server/room, subtitle-provider persistence, physical input or complete visual parity certified. No full unit/native suite or installer run claimed. Installed player remains running and untouched.
+
+---
+
 ## November 11 — version-aware batch download candidate
 
 Native series, season and Specials download actions now support official batch-version templates and optional bulk quality. Aggregate items need no Versions list: templates come from readable episode versions, with automatic per-episode selection available. Cursor creation retains one batch id and owner; closing the picker cancels future pages, duplicate activation is single flight, and effective capability refusals remain authoritative. A partial failure directs the viewer to Downloads for reconciliation.
@@ -39,6 +73,22 @@ Source is Beta `3f098c88ca4770db6f71e84e0e2290df42f8ec2c`, version 1.2.970, comp
 Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-batch-fixes/`, `reopened-batch-corrections.md`, `reopened-batch-final-review.md`. The reviewer’s pending-full-suite note is superseded by `full-final-a`; its table incorrectly marks `native-green-a` as passing—the preserved run failed on a WinRT callback defect, corrected before publish-c/native-green-b. The native route checks real More-menu availability and invokes the picker method; it does not certify physical pointer/keyboard input or live-server interoperability. No installed player, account, settings, installer or version stamp was changed. Beta pipeline owns subsequent QA and delivery.
 
 ---
+
+# November 11, 2026 — device-login session binding
+
+Official Server/WebUI reviewed at 4a9e527a432e8ef3a15dcd568802a45c15169039; fresh Beta base 3f098c88ca4770db6f71e84e0e2290df42f8ec2c, unchanged version 1.2.970. Native login negotiates session binding with one random in-memory setup secret, uses the exact SHA256/base64url start and poll fields, retires changed owners, and preserves manual approval and temporary SiloCast handoff behavior. Secrets are neither persisted nor exposed in transport diagnostics.
+
+QA correction: native phone sign-in retains support for configured plain-HTTP servers, including servers advertising session binding. Bound start/poll requests use the same setup secret on either transport without downgrading; binding protects setup ownership, not the transport. HTTPS remains necessary to protect credentials and tokens from network observers. Legacy servers without binding retain the existing unbound behavior; password login and temporary SiloCast handoff are unchanged. Transient poll responses (408/425/429/5xx) retain the setup and retry no sooner than the poll interval or Retry-After, whichever is longer; terminal refusals still retire it. Pending polls now pace the next poll from the server's `poll_after` when present, as the SiloCast handoff does, and every server pacing value (start interval, `poll_after`, Retry-After) is bounded to 300 seconds so an oversized hint keeps the setup instead of overflowing the wait and ending sign-in. A capability/start response that stalls into an HTTP timeout on the current attempt now reports that phone sign-in could not start instead of returning silently to idle; user cancels and replaced or changed owners stay silent. Unit coverage checks HTTP binding, stable secrets and retry metadata, and native coverage checks actual retries, Retry-After, `poll_after` pacing, an oversized Retry-After and HTTP QR/code setup rotation. This correction was source-inspected only; builds and tests are deferred to the pipeline. The verification receipts below predate this correction.
+
+Server contract (confirmed November 12, 2026 against official Silo Server main 0b579aa6192d49d7e8e0921dde5e955ac29ce302, which implements binding): `GET /api/v2/auth/device/capability` reports the boolean `session_binding` (`DeviceLoginCapability` in `internal/apiv2/device_login.go`); `POST /api/v2/auth/device/start` takes `binding`, "base64url without padding of SHA-256 of a 32-byte secret the device keeps" (pattern `^[A-Za-z0-9_-]{43}$`); every poll of a bound request sends that secret as `binding_secret`, base64url without padding. `deviceLoginBindingMatches` in `internal/auth/device_login.go` decodes `binding_secret`, takes SHA-256 of the raw bytes, encodes it as unpadded base64url and compares it with the stored binding in constant time; a missing or different secret is 403 `device_binding_mismatch`. `DeviceLoginSetup` matches this exactly (32 random bytes; start `Encode(SHA256.HashData(secret))`; poll `Encode(secret)`; snake_case JSON). The QA note below predates this check; its "unverified" reading is superseded.
+
+QA contract status (superseded by "Server contract" above): the binding wire contract is not established by QA's pinned upstream. The names and encoding used here (capability `session_binding`; start `binding` = unpadded base64url SHA-256 of the 32-byte setup secret; poll `binding_secret` = unpadded base64url of that secret) come from the review cited above and were not confirmed against the audit's pinned Server revision 3543933a11bf80d721a354ae7751b91e373457dd: its `internal/api/handlers/auth_device.go` start, poll, lookup and capability types carry none of these fields, and the handler or schema that would define them was not available to QA. Read "the exact SHA256/base64url start and poll fields" above as the desktop's implementation, not a verified server contract, and do not treat setup-ownership protection as established until the fields are confirmed against the revision that implements them. As implemented: a server that does not advertise `session_binding` (the pinned revision, or one that names the capability differently) still gets the existing unbound flow with no binding protection, but no longer silently: the sign-in panel states that the server does not support setup binding and that the sign-in is not tied to this app, and `DeviceLoginSetup.Binding` keeps an absent flag (or a 404/405 capability route) apart from an explicit `false`; a server that advertises binding and then refuses the bound start as invalid (400/422) ends the attempt with a distinct "did not accept phone sign-in from this app" message instead of the generic retry prompt; a bound poll refused with `device_binding_mismatch` keeps its distinct terminal message. No bound request is retried unbound; whether any downgrade is acceptable remains an owner decision. The unit and native fixtures encode the desktop's own names and encoding and cannot detect a server mismatch. This note, the start-refusal message and its unit check, and the unbound notice with its unit and native checks, were source-inspected only.
+
+QA correction: an `approved` poll opens a session only when it carries both tokens, a positive `expires_in` and a nonblank account id. An omitted `user` deserializes as an empty account, so the earlier non-null check accepted it and opened a session with no account identity and no scheduled refresh. An incomplete approval now ends the attempt with the generic "Phone sign-in failed" message instead of signing in or polling on. The unit check on the poll model and the native incomplete-approval cases were source-inspected only.
+
+Verification: 59 focused and 5,315 full unit tests passed; fresh Release publish and actual LoginPage native flows passed. App DLL SHA256 459C6BF489734F0D1FFB13204AEA6621B8DACECC9551718D1BB177816BAC40DA. All 739 authored app and 181 native-test PDB documents match source. Lead rechecked 2,131 source inputs, the DLL and native completion sentinel before submission; this documentation note was added afterward and does not change compiled inputs. Independent Claude review found no high/medium findings; an advisory notes a harmless extra retirement delay in a narrow cancellation race.
+
+Evidence: this worktree's ignored .codex-tmp/device-binding, plus D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-device-binding-implementation.md and reopened-device-binding-review.md. Earlier intermittent failures and fixture bring-up failures remain documented. Synthetic native/API evidence does not certify real-phone/server interoperability or complete visual parity. Installed player untouched; Beta pipeline owns downstream review, QA, merge and packaging.
 
 # November 11 ? collection wall, hero and actions for Beta
 
@@ -80,6 +130,27 @@ Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/requests-implementation.
 
 ---
 
+# Advanced overlays Beta submission branch
+
+This branch starts directly at fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`; only the scoped advanced overlay commit is applied. The earlier dependency-base verification below remains historical. Delivery-branch full suite passed5,396/5,396; after the final NumberBox callback correction,143 affected evaluator/wire/revision/source tests and the fresh Release advanced-overlays native route pass. Border width uses integer steps and normalizes typed fractions in the original callback because WinUI suppresses reentrant ValueChanged. Final app745/native182 authored PDB documents match with zero mismatches. App DLL SHA2569C59435CF7059A4E00480F3910C94D316D53BBB85D19ADDD8E3585C1350554D9. Receipts: D:/SiloPlayer/.codex-tmp/server-review-nov10/advanced-overlays-beta/normalization-*; prior failed boundary/binding runs are preserved, not counted green. Version remains 1.2.970. Installed app untouched.
+
+# Reopened A1 — advanced card overlays (November 11, 2026)
+
+Local uncommitted candidate in `t3/complete-a1-card-overlays`, deliberately retaining dependency base `90aa029a3d2969be7b10ef25c0b12dd52f6dd279`. Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Source stamps remain **1.2.970** / **1.2.970.0**; no rebase onto the lead's newer fetched Beta or delivery action occurred.
+
+Completes the earlier deferred plate/band/source-chip rendering, style overrides, uploaded source/value images, shared bottom-row wrapping and previews across all card hosts. Native editor verification now mounts the actual controls and awaits TextChanged; the previous unmounted fill assertion and interrupted run remain preserved. All seven preset buttons, complete look controls/reset, image selection, raw-value assignment, fallback and stale-owner behavior are exercised. Image wire coverage includes profile/account/server replacement and fresh-read recovery. Revision, opaque-field preservation, capability failure and existing watched rollback remain covered.
+
+Final verification: **5,475 full unit tests passed**, zero failed/skipped; expanded **advanced-overlays native route passed with exit 0 and the literal completion sentinel**, including existing overlay-revisions and pill checks. Inspected representative plate/band/host/settings/fallback captures. The existing successful Release publish was reused after all **1,112 product inputs** matched unchanged, avoiding duplicate payloads. App DLL SHA256 **D443BCBC12A9F74DC5381FC36DCCD8E8172FDDBD62DACD57882AAC9200A862EE**. Actual DLL/PDB identities and authored documents match final source: app749, native183, unit424, unit Core366, unit Player15; zero mismatches. All .NET/native/build/binding operations were serialized under `SiloOct18Build` with the pinned engine and explicit PowerShell7.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-advanced-overlays/` (`units-resumed-final`, `native-editor-controls`, `binding-resumed-final`, original `release-verified`). Full files, commands, failure history and limits: adjacent `reopened-advanced-overlays-implementation.md`. This synthetic evidence does not certify live-server persistence, physical input or complete WebUI pixel parity; the unrelated historical default-native detail fixture limitation was not exercised or fixed. Installed player/settings/accounts remain untouched. No install, restart, version change, commit, push or PR; lead owns independent review, Beta reconciliation and delivery.
+
+
+# Household title allowances for Beta
+
+Official Server/WebUI reviewed at `4a9e527a432e8ef3a15dcd568802a45c15169039`. The verified title-allowance implementation is integrated with current Beta `97cc284a53f94adc7d1f675a6294fda828c41640`; version remains 1.2.970. All nine v2 operations, household-primary authority, movie/series and owned-collection menus, immediate-save dialogs, and limited-profile Access management are implemented. Unknown standing fails closed; captured authority/navigation owns requests and publication. One-time collection copy is never automatically repeated after an uncertain outcome.
+
+Original candidate checks:45 focused and5,327 full units, fresh Release and native dialogs/menus, independently reviewed with zero P0-P2 findings. Those receipts predate this Beta integration. Final integrated verification is recorded under `.codex-tmp/title-allowances-beta/review-fixed-*`: 5,387/5,387 full units, fresh Release, native route exit0 with completion sentinel (including held-read revoke/add/collection races), and matching app749/native183 authored PDB documents with zero mismatches. App DLL SHA256 A027FDCAA6BEAF4A88E388205440B94F52DB20D5478116D3F0CB0F517A7C0485. The post-write read ownership correction is independently source-accepted; its earlier native red reproduction is preserved. Reports: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-title-allowances-{implementation,review}.md`. Evidence is synthetic; live persistence and complete visual parity are not certified. Installed app and real settings/accounts untouched; pipeline owns versioning and release.
+
 # Overlay review corrections — November 10, 2026
 
 Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.
@@ -108,53 +179,11 @@ Final verification: 69 focused tests, Release self-contained win-x64 publish, an
 
 Synthetic fixtures do not establish live-server persistence or complete visual parity. The installed player remained open and untouched. Beta pipeline owns combined-source verification and packaging.
 
-# Overlay review corrections — November 10, 2026
-
-Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.
-
-Final source: 107 focused tests, 5,306 full unit tests, Release publish, expanded overlay-revisions and artwork-first-mount native routes passed. The expanded route covers external cards at revisions 24/25/26 and quick-action geometry; it also has a new isolated receipt retaining the exact fixture host, app and fixture source hashes. App DLL SHA256 `FBBE856CEC8D76E081D9F0DE3819AC71E3563899B7F5D3CF66D2F88A538535D5`; all 739 authored app PDB documents match. Evidence: worktree `.codex-tmp/overlay-revisions/review-*` and `D:/SiloPlayer/.codex-tmp/server-review-nov10/overlay-review-fixes/`. Original failure receipts remain; `review-fixes-red` predates the new tests and is not red evidence. `review-regressions-red`, `review-external-red-b` and `review-quick-red` reproduce the review findings. The first external native attempt failed on a missing fixture NavigationService, then the corrected fixture reproduced the product issue.
-
-The deferred rendering/style/image/bottom-row items below remain disclosed. No live-server or complete visual-parity claim, version stamps, installation or installed-player changes.
-
-# November 10 — card overlays revisions 25/26 (local, uncommitted candidate)
-
-Base: Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, branch `t3/card-overlay-revisions`. Source remains `1.2.970` / `1.2.970.0`, targeting .NET 10; no version, README or installer stamps changed. Official Silo main is `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, confirmed directly with GitHub `git ls-remote` and against the supplied read-only official clone. No commit, push, PR, release, installer, installed-player or production action occurred.
-
-Desktop saves retain plate/band/future presets and opaque root/item fields, style and uploaded-image references. Revision-aware positions preserve legacy writes below 25 and migrate top-right badges to centered right-edge rails from 25. Rails hold four badges, corners three. The editor and preview use the same revision semantics. Revision 26 offers the combined resolution/HDR/audio badge, with duplicate standalone badges suppressed without changing their saved enabled flags. Poster and Library cards show an independent watched/remaining-episodes status corner, reserve its measured width, and retain quick actions. The catalog state now carries watched/unplayed counts and count changes invalidate mounted-card comparisons. Episode/detail and external watchlist badge hosts also honor edge positions.
-
-Verified with SDK `10.0.403`, x64, engine-pin checks and `SiloOct18Build`: **35 new unit cases**, **104 focused tests**, **5,303 full unit tests**, all passing with zero skipped; fresh Release publish; passing actual-control `overlay-revisions`, existing `overlay-pill` and `artwork-first-mount` native groups, all with the completion sentinel. Final app DLL SHA256: `AF7A94A29DA6F8ECA61BF7EBE9BB574732584E0E1C26E31901C068E8F69FE21A`. Native screenshots were inspected. Commands, red/green evidence, source/artifact bindings and native receipts are under this worktree's `.codex-tmp/overlay-revisions/`; see `report.md` there. Existing compiler/analyzer warnings remain.
-
-Dedicated plate/band rendering, style override rendering and uploaded badge images remain outside this candidate; those values survive saves and plate/band currently use the classic look. Shared bottom-corner row wrapping is not implemented. This synthetic fixture evidence does not certify complete visual parity or physical pointer interaction. The unrelated historical default-native `DetailPresentationNativeFixture.cs:55` limitation is not fixed by this task.
-# November 11 ? Align viewer actions and smart collection behavior with Server main (Beta candidate)
-
-Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Source remains **1.2.970**; the Beta pipeline owns integration, versioning and publication.
-
-Dedicated Continue Watching/Next Up pages remove eligible cards and update counts. Complete-rule validation gates smart editor/wizard previews and saves; Trending has a Show selector. Calendar labels/palettes, library sidebar icon aliases, failed-sync status refresh with draft preservation and episode library scope match current upstream. Dismissal retires any pending continuation and re-seeks the shortened live row while preserving the already-loaded prefix.
-
-Verification: Final full unit suite 5,352/5,352; fresh Release publish; expanded viewer-actions native route passes every scoped scenario. Both paging response orderings retain all 129 remaining titles exactly once and the correct count. The race-after native case reproduces a missing title/duplicate against the frozen earlier candidate.
-
-Independent Codex review confirmed the dismissal/paging race. The fix cancels and retires the old load generation, clears its snapshot and resumes at the corrected prefix offset; cancellation-ignoring held responses cannot append. The initial test-edit command failed before saving, but the corrected source was saved before the queued red fixture compiled; its result records the expected race-after defect. Earlier worker source/test-manifest mismatch is superseded by final PDB binding and source manifests.
-
-App DLL SHA256: `FA7601A51FB4EAEC8B361154DCDF107ADA3D0751265797D094A45B03CD9A6A84`; all 741 authored app PDB documents match final source. Selected native DLL/PDB identities and source documents also match. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/viewer-actions/review-final-binding`, the original `viewer-actions-implementation.md`/review, and `viewer-actions-review-fixes-note.md`.
-
-Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline and candidate; four icon assertions before that failure passed, so no completed sidebar route is claimed. Existing skipped-sync-count retention remains a nonblocking pre-existing gap. Dedicated page has no Home-style Undo. SVG visual parity and live-server interoperability are unverified. Installed player remains running and untouched.
-# November 11 ? collection wall, hero and actions for Beta
-
-Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039` (previous verified reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`). Source remains **1.2.970**; the Beta pipeline owns integration, stamps and publication.
-
-Collections now use one responsive poster wall with ownership/library filters and loaded-only empty states, plus a backdrop hero with description, ownership, Shuffle, Edit/Add Home and More actions. Owner Sync now/Delete share policy and confirmation with the wall cards; shared/server collections offer library-page placement. Delete carries the revision. Pending actions retire on navigation or authority changes. Administrator collection management, including Open in, remains outside Desktop's available access.
-
-Independent Claude review found no correctness issue. Final source: **5,330/5,330 full unit tests**, **222 focused tests**, Release publish and six scoped native runs (presentation/actions, owner menu, ownership, server, layout, creation), each with the completion sentinel. The final app DLL SHA256 is `9C3196BD27FDB6145AF18D6EFCA380E3E4A8C312FA21F46B95380D3140D9A587`; all 30 changed-source hashes rechecked. Earlier full5,316 and other native runs predate the actions follow-up and remain historical.
-
-Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/collections{,-actions}-implementation.md`, `collections-review.md`, `collections/evidence/collections/lead-final-full`, `act-presentation-seven`, and `collections-lead-binding.json`. Baseline browse-parity/ImportedDraft failures are preserved separately. No live-server persistence or complete visual parity certified; wall pagination retains Load more, and backdrop effects use native approximations. No installer or installed-player changes.
-
----
-
 # Current source identity — native Chapters and compact More (PR #91)
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.976-beta.1`; numeric version: `1.2.975.1`.
+Source version: `1.2.981-beta.1`; numeric version: `1.2.980.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -162,7 +191,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.976-beta.1`; numeric version: `1.2.975.1`.
+Source version: `1.2.981-beta.1`; numeric version: `1.2.980.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -170,7 +199,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.976-beta.1`; numeric version: `1.2.975.1`.
+Source version: `1.2.981-beta.1`; numeric version: `1.2.980.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -200,7 +229,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.976-beta.1`; numeric version: `1.2.975.1`.
+Source version: `1.2.981-beta.1`; numeric version: `1.2.980.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

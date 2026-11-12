@@ -363,6 +363,8 @@ public sealed partial class CollectionsPage : Page
         // Right-click context menu
         var menuFlyout = new MenuFlyout();
         if (!canManage) { card.ContextFlyout = menuFlyout; return card; }
+        var allowanceVisit = _collectionsPageGeneration;
+        SiloPlayer.Controls.CollectionAllowanceMenu.Attach(menuFlyout, card, collection, () => IsLoaded && allowanceVisit == _collectionsPageGeneration);
 
         if (canManage && CanSyncCollection(collection))
         {

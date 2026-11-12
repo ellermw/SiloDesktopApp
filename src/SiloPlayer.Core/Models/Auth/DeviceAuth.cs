@@ -1,7 +1,13 @@
 namespace SiloPlayer.Core.Models.Auth;
 
+public sealed class DeviceLoginCapability
+{
+    /// <summary>Null when the answer does not mention binding, which is not an explicit refusal.</summary>
+    public bool? SessionBinding { get; set; }
+}
+
 /// <summary>
-/// Response from <c>POST /api/v1/auth/device/start</c> — kicks off a device login
+/// Response from <c>POST /api/v2/auth/device/start</c> — kicks off a device login
 /// flow where device A displays a short code that the user enters on device B
 /// (this client, when acting as the approver).
 /// </summary>
@@ -22,12 +28,14 @@ public class DeviceLoginStartResponse
 }
 
 /// <summary>
-/// Response from <c>GET /api/v1/auth/device?token=|code=</c> — describes a pending
+/// Response from <c>GET /api/v2/auth/device?token=|code=</c> — describes a pending
 /// device login request so the approver can review the device details before
 /// approving or denying.
 /// </summary>
 public class DeviceLoginLookupResponse
 {
+    /// <summary>Public setup hash; manual approvers still compare every request's code.</summary>
+    public string? Binding { get; set; }
     /// <summary>One of: pending, approved, denied, expired, consumed.</summary>
     public string Status { get; set; } = "";
     public string? UserCode { get; set; }
@@ -41,8 +49,8 @@ public class DeviceLoginLookupResponse
 }
 
 /// <summary>
-/// Request body for <c>POST /api/v1/auth/device/approve</c> and
-/// <c>POST /api/v1/auth/device/deny</c>. Exactly one of Token (browser_code)
+/// Request body for <c>POST /api/v2/auth/device/approve</c> and
+/// <c>POST /api/v2/auth/device/deny</c>. Exactly one of Token (browser_code)
 /// or Code (user_code) should be provided — matches the webui payload.
 /// </summary>
 public class DeviceDecisionRequest
@@ -54,9 +62,9 @@ public class DeviceDecisionRequest
 }
 
 /// <summary>
-/// Response from <c>POST /api/v1/auth/device/poll</c> — the originating device
+/// Response from <c>POST /api/v2/auth/device/poll</c> — the originating device
 /// polls this to collect its tokens once an approver has accepted the request.
-/// Included here for completeness even though the Desktop player is the approver.
+/// Used by desktop phone sign-in and the separate temporary SiloCast handoff.
 /// </summary>
 public class DeviceLoginPollResponse
 {
@@ -71,6 +79,14 @@ public class DeviceLoginPollResponse
     public int? ExpiresIn => Tokens?.ExpiresIn;
     [System.Text.Json.Serialization.JsonIgnore]
     public UserInfo? User => Tokens?.User;
+    /// <summary>
+    /// True when the tokens can open a session: both tokens, a positive lifetime to
+    /// schedule the refresh from, and an account id. An omitted <c>user</c> still
+    /// deserializes as an empty account, so a non-null <see cref="User"/> proves nothing.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasUsableTokens => !string.IsNullOrWhiteSpace(AccessToken) && !string.IsNullOrWhiteSpace(RefreshToken)
+        && ExpiresIn > 0 && !string.IsNullOrWhiteSpace(User?.Id);
     public string? ProfileId { get; set; }
     public string? ProfileToken { get; set; }
     public bool Temporary { get; set; }
