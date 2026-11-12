@@ -5486,7 +5486,7 @@ public partial class PlayerService : IDisposable
             var output = _nativeOutputOwner;
             if (output != null)
             {
-                if (!OwnsNativeOutput(output) || _mpv?.GetPropertyText("path") != output.Url) return;
+                if (!OwnsNativeOutput(output) || _mpv?.IsCurrentInput(output.Url) != true) return;
                 output.FileLoaded = true;
             }
             var loadBusyRevision = Volatile.Read(ref _mpvLoadBusyRevision);
@@ -5593,7 +5593,7 @@ public partial class PlayerService : IDisposable
             // Native events order FILE_LOADED before PLAYBACK_RESTART. An old
             // restart cannot frame a submitted load that has not loaded yet.
             if (output == null || !output.FileLoaded || !OwnsNativeOutput(output) ||
-                _mpv?.GetPropertyText("path") != output.Url) return;
+                _mpv?.IsCurrentInput(output.Url) != true) return;
             var loadingOwner = Volatile.Read(ref _mpvLoadingOverlayOwner);
             _transportHasFirstOutput = true;
             _framedSession = output.SessionCurrent;
