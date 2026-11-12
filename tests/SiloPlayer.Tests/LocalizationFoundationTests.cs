@@ -467,6 +467,24 @@ public sealed class AppLanguagePreferenceTests
     }
 
     [Fact]
+    public async Task DeviceClearRetryDoesNotRepeatTheProfileWriteAndRejectsARetiredOwner()
+    {
+        var wire = new SettingsWire { DeviceDeleteStatus = HttpStatusCode.ServiceUnavailable };
+        var (preference, client) = Create(wire);
+        var owner = preference.CaptureSettingsOwner();
+        Assert.False((await preference.SaveAsync(preference.CaptureContext(), "ar")).DeviceValueCleared);
+        wire.Requests.Clear();
+        wire.DeviceDeleteStatus = HttpStatusCode.NoContent;
+        Assert.True((await preference.ClearDeviceValueAsync(owner)).DeviceValueCleared);
+        Assert.Single(wire.Requests);
+        Assert.StartsWith("DELETE ", wire.Requests.Single());
+        wire.Requests.Clear();
+        client.SetProfile("profile-b");
+        Assert.False((await preference.ClearDeviceValueAsync(owner)).DeviceValueCleared);
+        Assert.Empty(wire.Requests);
+    }
+
+    [Fact]
     public async Task OwnerChangeAfterTheWriteSkipsTheDeviceDelete()
     {
         var wire = new SettingsWire();
@@ -555,6 +573,33 @@ public sealed class AppLanguagePreferenceTests
         Assert.True(await coordinator.RefreshAsync());
         first.SetResult();
         Assert.False(await stale);
+        Assert.Equal("ja", locales.Current.Language);
+    }
+
+    [Fact]
+    public async Task SupersedingAQueuedApplyCompletesTheOldRefreshWithoutFaulting()
+    {
+        var posts = new System.Collections.Concurrent.ConcurrentQueue<Action>();
+        var queued = new SemaphoreSlim(0);
+        var wire = new SettingsWire { EffectiveValue = "\"fr\"" };
+        var (preference, _) = Create(wire);
+        var locales = new LocaleService();
+        using var directory = new TemporaryDirectory();
+        var coordinator = new AppLocaleCoordinator(preference, locales, new SettingsService(directory.Path),
+            () => ["en-US"], "en-US", action => { posts.Enqueue(action); queued.Release(); return true; });
+
+        var first = coordinator.RefreshAsync();
+        Assert.True(await queued.WaitAsync(TimeSpan.FromSeconds(5)));
+        wire.EffectiveValue = "\"ja\"";
+        var second = coordinator.RefreshAsync();
+        Assert.True(await queued.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(posts.TryDequeue(out var stale));
+        stale();
+        Assert.False(await first);
+        Assert.Equal("en", locales.Current.Language);
+        Assert.True(posts.TryDequeue(out var current));
+        current();
+        Assert.True(await second);
         Assert.Equal("ja", locales.Current.Language);
     }
 

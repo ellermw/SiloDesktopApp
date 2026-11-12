@@ -755,7 +755,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await CalendarDateOct20NativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "app-language")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "app-language-catch-up")
+            {
+                await EpisodeQuickPlayNativeFixture.VerifyAppLanguageCatchUpAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "app-language" or "app-language-review")
             {
                 await AppLanguageNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;

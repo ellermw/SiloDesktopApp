@@ -25,6 +25,7 @@ public sealed class AppLanguagePreference(SettingsApi settings)
         => capabilities is { ApiVersion: 1, SupportsBatchedEffective: true } && capabilities.Revision >= IntroducedInRevision;
 
     public ApiRequestContext CaptureContext() => settings.CaptureContext();
+    public SettingsIdentityContext CaptureSettingsOwner() => settings.CaptureSettingsIdentityContext();
     public bool IsCurrentContext(ApiRequestContext context) => settings.IsCurrentContext(context);
 
     /// <summary>
@@ -69,12 +70,20 @@ public sealed class AppLanguagePreference(SettingsApi settings)
     public async Task<AppLanguageSaveResult> SaveAsync(ApiRequestContext context, string? tag, CancellationToken ct = default)
     {
         if (tag != null && AppLanguageMatcher.Canonicalize(tag) == null) throw new ArgumentException("Not a language tag.", nameof(tag));
+        var owner = settings.CaptureSettingsIdentityContext();
         await settings.SetContractSettingValueAsync(context, SettingKey, "profile", tag, ct: ct).ConfigureAwait(false);
         settings.NotifyLocalizedSettingChanged(SettingKey);
         if (!settings.IsCurrentContext(context)) return new AppLanguageSaveResult(false);
+        return await ClearDeviceValueAsync(owner, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Retry only the unfinished device step; never overwrite a newer profile choice.</summary>
+    public async Task<AppLanguageSaveResult> ClearDeviceValueAsync(SettingsIdentityContext owner, CancellationToken ct = default)
+    {
+        if (settings.CaptureSettingsContext(owner) is not { } context) return new(false);
         try
         {
-            await settings.DeleteContractSettingValueAsync(context, SettingKey, "profile_device", ct: ct).ConfigureAwait(false);
+            await settings.DeleteContractSettingValueAsync(context.Request, SettingKey, "profile_device", deviceId: context.DeviceId, ct: ct).ConfigureAwait(false);
         }
         catch (ApiException ex) when (ex.StatusCode == 404) { }
         catch (Exception ex) when (ex is ApiException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
@@ -82,6 +91,17 @@ public sealed class AppLanguagePreference(SettingsApi settings)
             return new AppLanguageSaveResult(false);
         }
         return new AppLanguageSaveResult(true);
+    }
+
+    /// <summary>Confirm the device row is absent; read failures do not imply it was cleared.</summary>
+    public async Task<bool> HasDeviceValueAsync(ApiRequestContext context, CancellationToken ct = default)
+    {
+        try
+        {
+            await settings.GetContractStoredSettingAsync(context, SettingKey, "profile_device", ct: ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (ApiException ex) when (ex.StatusCode == 404) { return false; }
     }
 
     /// <summary>Whether a realtime settings event changes the selected profile's app language.</summary>

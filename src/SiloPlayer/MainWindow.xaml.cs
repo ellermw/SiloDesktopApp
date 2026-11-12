@@ -1536,6 +1536,7 @@ public sealed partial class MainWindow : Window
         void Refresh()
         {
             if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            RefreshAppLanguageForOwner(catchUp: true);
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();
@@ -1556,6 +1557,7 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_windowClosed || !_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            RefreshAppLanguageForOwner(catchUp: true);
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();

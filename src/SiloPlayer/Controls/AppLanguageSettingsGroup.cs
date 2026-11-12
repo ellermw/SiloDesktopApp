@@ -32,6 +32,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
     private readonly TextBlock _status = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly Button _retry = new() { Visibility = Visibility.Collapsed };
     private ApiRequestContext? _owner;
+    private SettingsIdentityContext? _deviceClearOwner;
     private string? _storedTag;
     private bool _populating;
     private bool _saving;
@@ -46,7 +47,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         _coordinator = coordinator;
         Picker = new ComboBox { MinWidth = 256, HorizontalAlignment = HorizontalAlignment.Left };
         Picker.SelectionChanged += OnSelectionChanged;
-        _retry.Click += async (_, _) => await SaveAsync(_storedTag);
+        _retry.Click += async (_, _) => await SaveAsync(_storedTag, clearDeviceOnly: true);
         var secondary = Application.Current.Resources.TryGetValue("SecondaryTextBrush", out var brush) ? brush as Brush : null;
         _description.Foreground = secondary;
         _unavailable.Foreground = secondary;
@@ -83,27 +84,43 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
     private async Task LoadAsync(ApiRequestContext context)
     {
         var generation = ++_loadGeneration;
+        var settingsOwner = _preference.CaptureSettingsOwner();
+        if (_deviceClearOwner != settingsOwner) _deviceClearOwner = null;
         _owner = null;
         if (context.ProfileId == null) { Visibility = Visibility.Collapsed; return; }
         (bool Supported, string? ProfileTag) state;
-        try { state = await _preference.ReadPickerAsync(context); }
+        try
+        {
+            state = await _preference.ReadPickerAsync(context);
+            if (_deviceClearOwner == settingsOwner && !await _preference.HasDeviceValueAsync(context)
+                && generation == _loadGeneration && _preference.IsCurrentContext(context)) _deviceClearOwner = null;
+        }
         catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException)
         {
-            if (generation == _loadGeneration) Visibility = Visibility.Collapsed;
+            if (generation == _loadGeneration)
+            {
+                if (_deviceClearOwner == settingsOwner && _preference.IsCurrentContext(context))
+                {
+                    _owner = context;
+                    ShowStatus(DeviceClearFailedEnglish, retry: true);
+                }
+                else Visibility = Visibility.Collapsed;
+            }
             return;
         }
         if (generation != _loadGeneration || !_preference.IsCurrentContext(context)) return;
         _owner = context;
         Visibility = state.Supported ? Visibility.Visible : Visibility.Collapsed;
         _storedTag = state.ProfileTag;
-        HideStatus();
+        if (_deviceClearOwner == settingsOwner) ShowStatus(DeviceClearFailedEnglish, retry: true);
+        else HideStatus();
         Populate();
     }
 
     private void OnCoordinatorLoaded(object? sender, AppLanguageRead read)
     {
         // Another device or a realtime change updated the setting: show the stored value again.
-        if (_owner is { } owner && owner == read.Context && !_saving) _ = LoadAsync(owner);
+        if (!_saving && _preference.IsCurrentContext(read.Context)) _ = LoadAsync(read.Context);
     }
 
     private void Populate()
@@ -154,21 +171,27 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
     {
         if (_populating || Picker.SelectedItem is not ComboBoxItem item) return;
         var tag = item.Tag as string;
-        if (tag == _storedTag) return;
+        if (tag == _storedTag && _deviceClearOwner == null) return;
         await SaveAsync(tag);
     }
 
-    private async Task SaveAsync(string? tag)
+    private async Task SaveAsync(string? tag, bool clearDeviceOnly = false)
     {
         // One save at a time: two in flight could land in either order.
         if (_saving || _owner is not { } context) return;
         if (!_preference.IsCurrentContext(context)) { _ = EnsureLoadedAsync(); return; }
+        var settingsOwner = _preference.CaptureSettingsOwner();
+        if (clearDeviceOnly && _deviceClearOwner != settingsOwner) return;
         _saving = true;
         Picker.IsEnabled = false;
         HideStatus();
         try
         {
-            var result = await _preference.SaveAsync(context, tag);
+            var result = clearDeviceOnly
+                ? await _preference.ClearDeviceValueAsync(settingsOwner)
+                : await _preference.SaveAsync(context, tag);
+            if (_preference.CaptureSettingsOwner() != settingsOwner) return;
+            _deviceClearOwner = result.DeviceValueCleared ? null : settingsOwner;
             if (!_preference.IsCurrentContext(context)) return;
             _storedTag = tag;
             Populate();
@@ -178,13 +201,15 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException or ArgumentException)
         {
             if (!_preference.IsCurrentContext(context)) return;
-            ShowStatus(AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed"), retry: false);
+            if (_deviceClearOwner == settingsOwner) ShowStatus(DeviceClearFailedEnglish, retry: true);
+            else ShowStatus(AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed"), retry: false);
             Populate();
         }
         finally
         {
             _saving = false;
             Picker.IsEnabled = true;
+            if (!_preference.IsCurrentContext(context)) _ = EnsureLoadedAsync();
         }
     }
 

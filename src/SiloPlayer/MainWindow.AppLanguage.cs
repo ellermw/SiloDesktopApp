@@ -34,17 +34,17 @@ public sealed partial class MainWindow
         _appLocaleCoordinator?.Retire();
     }
 
-    /// <summary>A new account/profile owner reads its own setting; the same owner keeps the loaded value.</summary>
-    private void RefreshAppLanguageForOwner()
+    /// <summary>Read again when the request authority changes, retaining the applied presentation during catch-up.</summary>
+    private void RefreshAppLanguageForOwner(bool catchUp = false)
     {
         if (_appLocaleCoordinator is not { } coordinator) return;
         var context = _apiClient.CaptureContext();
         if (context.ProfileId == null) { coordinator.Retire(); return; }
-        if (coordinator.LoadedOwner is { } loaded && SameLanguageOwner(loaded, context)) return;
+        if (!catchUp && coordinator.LoadedOwner is { } loaded && loaded == context) return;
         // Profile and shell events often arrive together; one read per owner is enough.
-        if (_appLanguageRequestedOwner is { } requested && SameLanguageOwner(requested, context)
+        if (_appLanguageRequestedOwner is { } requested && requested == context
             && _appLanguageRefresh is { IsCompleted: false }) return;
-        coordinator.Retire();
+        if (coordinator.LoadedOwner is { } previous && !SameLanguageOwner(previous, context)) coordinator.Retire();
         _appLanguageRequestedOwner = context;
         _appLanguageRefresh = RefreshAppLanguageAsync(coordinator);
     }

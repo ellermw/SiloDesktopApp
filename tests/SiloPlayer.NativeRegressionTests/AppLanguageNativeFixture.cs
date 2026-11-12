@@ -68,6 +68,46 @@ internal static class AppLanguageNativeFixture
         {
             await Settle(shell);
 
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "app-language-review")
+            {
+                if (Environment.GetEnvironmentVariable("SILO_APP_LANGUAGE_REVIEW") == "date")
+                {
+                    locales.Apply(locales.Create(AppLocaleResolution.Resolve("ja", ["en-US"], "en-US")));
+                    var reviewDate = DateTimeDisplay.FormatDate(new DateTimeOffset(2026, 11, 12, 12, 0, 0, TimeSpan.Zero), medium: true);
+                    Require(reviewDate == "2026年11月12日", "Japanese medium date retains English ordering: " + reviewDate);
+                    Program.Log("PASS: app-language review exact Japanese date order.");
+                    return;
+                }
+                wire.Stored = "en";
+                wire.DeviceStored = "en";
+                wire.DeviceDeleteFails = true;
+                await group.EnsureLoadedAsync();
+                group.Picker.SelectedIndex = group.OfferedTags.ToList().IndexOf("ar");
+                await WaitFor(() => wire.Stored == "ar" && group.Picker.IsEnabled, "partial save did not finish");
+                Require(group.StatusText.Visibility == Visibility.Visible, "partial-save warning missing");
+                // A delayed event from the successful profile PUT arrives after the save callback.
+                await coordinator.RefreshAsync();
+                await Settle(shell);
+                Require(group.StatusText.Visibility == Visibility.Visible && group.StatusText.Text.Contains("this device"),
+                    "delayed settings event hid the unfinished device-clear warning");
+                wire.DeviceReadFails = true;
+                await coordinator.RefreshAsync();
+                await Settle(shell);
+                Require(group.StatusText.Visibility == Visibility.Visible, "failed confirmation read hid pending recovery");
+                wire.DeviceReadFails = false;
+                var writes = wire.Writes.Count;
+                wire.DeviceDeleteFails = false;
+                var retry = ((StackPanel)group.Group.Child).Children.OfType<Button>().Single();
+                Require(retry.Visibility == Visibility.Visible, "device-clear retry disappeared");
+                var peer = new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(retry);
+                ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)peer.GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+                await WaitFor(() => locales.Current.Language == "ar" && group.Picker.IsEnabled, "device-clear retry did not apply Arabic");
+                Require(wire.Writes.Skip(writes).Single().StartsWith("DELETE "), "retry repeated the already successful profile PUT");
+                Require(group.StatusText.Visibility == Visibility.Collapsed, "recovered save still shows a warning");
+                Program.Log("PASS: app-language review delayed settings event preserves partial-save recovery; retry only clears the device override.");
+                return;
+            }
+
             // Unknown stored tag: offered by name, selected, never replaced by Match device.
             await group.EnsureLoadedAsync();
             await Settle(shell);
@@ -116,7 +156,7 @@ internal static class AppLanguageNativeFixture
             await WaitFor(() => group.Picker.SelectedIndex == group.OfferedTags.ToList().IndexOf("ja"), "picker did not show the changed stored value");
             await Settle(shell);
             var date = DateTimeDisplay.FormatDate(new DateTimeOffset(2026, 11, 12, 12, 0, 0, TimeSpan.Zero), medium: true);
-            Require(locales.Current.FormatCulture.Name == "ja" && date.Contains('月'), "Japanese display date: " + date);
+            Require(locales.Current.FormatCulture.Name == "ja" && date == "2026年11月12日", "Japanese display date: " + date);
             Require(directionRoot.FlowDirection == FlowDirection.LeftToRight && title.Text == locales.Current.Get("home.section.recentlyAddedIn", new Dictionary<string, object?> { ["library"] = "Movies" }),
                 "Japanese title/direction: " + title.Text);
             Program.Log($"PASS: app-language realtime change applies Japanese text, direction and display date ({date}).");
@@ -201,6 +241,9 @@ internal static class AppLanguageNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public string? Stored { get; set; }
+        public string? DeviceStored { get; set; }
+        public bool DeviceDeleteFails { get; set; }
+        public bool DeviceReadFails { get; set; }
         public Task? Hold { get; set; }
         public List<string> Requests { get; } = [];
         public List<string> Writes => Requests.Where(request => !request.StartsWith("GET", StringComparison.Ordinal)).ToList();
@@ -216,15 +259,23 @@ internal static class AppLanguageNativeFixture
                 return Json("""{"api_version":1,"manifest_revision":28,"supports_batched_effective":true}""");
             if (uri.AbsolutePath == "/api/v2/settings/values/effective")
             {
-                var value = Value();
+                var value = DeviceStored == null ? Value() : "\"" + DeviceStored + "\"";
                 if (Hold is { } hold) await hold.WaitAsync(ct);
                 return Json($$"""{"items":[{"key":"ui.app_language","value":{{value}},"source":"profile"}],"revision":1}""");
             }
             if (uri.AbsolutePath == "/api/v2/settings/values/ui.app_language")
             {
                 if (request.Method == HttpMethod.Get)
+                {
+                    if (uri.Query.Contains("scope=profile_device"))
+                    {
+                        if (DeviceReadFails) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                        return DeviceStored == null ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                            : Json($$"""{"key":"ui.app_language","stored_value":"{{DeviceStored}}","source":"profile_device"}""");
+                    }
                     return Stored == null ? new HttpResponseMessage(HttpStatusCode.NotFound)
                         : Json($$"""{"key":"ui.app_language","value":{{Value()}},"stored_value":{{Value()}},"source":"profile"}""");
+                }
                 if (request.Method == HttpMethod.Put)
                 {
                     using var document = System.Text.Json.JsonDocument.Parse(body);
@@ -232,7 +283,12 @@ internal static class AppLanguageNativeFixture
                     Stored = value.ValueKind == System.Text.Json.JsonValueKind.String ? value.GetString() : null;
                     return Json($$"""{"key":"ui.app_language","value":{{Value()}},"source":"profile"}""");
                 }
-                if (request.Method == HttpMethod.Delete) return new HttpResponseMessage(HttpStatusCode.NotFound);
+                if (request.Method == HttpMethod.Delete)
+                {
+                    if (DeviceDeleteFails) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                    DeviceStored = null;
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
             }
             throw new InvalidOperationException("Unexpected fixture route " + uri.PathAndQuery);
         }

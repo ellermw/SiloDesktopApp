@@ -15,21 +15,7 @@ public static class DateTimeDisplay
     {
         var local = value.ToLocalTime();
         var preference = App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat;
-        if (medium) return preference switch
-        {
-            "DD/MM/YYYY" => local.ToString("d MMM yyyy", AppStrings.FormatCulture),
-            "MM/DD/YYYY" => local.ToString("MMM d, yyyy", AppStrings.FormatCulture),
-            "YYYY-MM-DD" => local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            // Match the WebUI's medium date contract: abbreviated month, numeric day, and year.
-            _ => local.ToString("MMM d, yyyy", AppStrings.FormatCulture)
-        };
-        return preference switch
-        {
-            "DD/MM/YYYY" => local.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
-            "MM/DD/YYYY" => local.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture),
-            "YYYY-MM-DD" => local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            _ => local.ToString("d", AppStrings.FormatCulture)
-        };
+        return DisplayDateFormatting.Date(local.DateTime, preference, AppStrings.FormatCulture, AppStrings.Current.LocalizedFormats, medium);
     }
 
     public static string FormatTime(DateTimeOffset value, bool seconds = false)
@@ -50,15 +36,8 @@ public static class DateTimeDisplay
     public static string FormatShortDateTime(DateTimeOffset value)
     {
         var preference = App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat;
-        // A pinned English regional order yields to the interface language when dates are localized (as the web does).
-        var culture = preference switch
-        {
-            _ when AppStrings.Current.LocalizedFormats => AppStrings.FormatCulture,
-            "DD/MM/YYYY" => CultureInfo.GetCultureInfo("en-GB"),
-            "MM/DD/YYYY" => CultureInfo.GetCultureInfo("en-US"),
-            _ => AppStrings.FormatCulture,
-        };
-        var day = value.ToLocalTime().ToString(preference == "DD/MM/YYYY" ? "d MMM" : "MMM d", culture);
+        var day = DisplayDateFormatting.MonthNameDate(value.ToLocalTime().DateTime, preference,
+            AppStrings.FormatCulture, AppStrings.Current.LocalizedFormats, year: false);
         return $"{day}, {FormatTime(value)}";
     }
 }

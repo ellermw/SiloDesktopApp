@@ -66,54 +66,67 @@ public sealed class AppLocaleCoordinator
     public async Task<bool> RefreshAsync(CancellationToken ct = default)
     {
         CancellationTokenSource scope;
+        CancellationToken token;
         long generation;
         lock (_gate)
         {
             _refresh?.Cancel();
-            _refresh?.Dispose();
             _refresh = scope = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            token = scope.Token;
             generation = ++_refreshGeneration;
         }
-        var context = _preference.CaptureContext();
-        if (context.ProfileId == null) return false;
-        AppLanguageRead read;
         try
         {
-            read = await _preference.ReadEffectiveAsync(context, scope.Token).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException)
-        {
-            return false;
-        }
-        if (!IsCurrent(context, generation, scope.Token)) return false;
-        // An older server has nowhere to store the choice: keep the cached
-        // language, exactly as before its settings could load.
-        var locale = read.Supported ? _locales.Create(Resolve(read.Tag)) : null;
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var posted = _post(() =>
-        {
+            var context = _preference.CaptureContext();
+            if (context.ProfileId == null) return false;
+            AppLanguageRead read;
             try
             {
-                if (!IsCurrent(context, generation, scope.Token)) { completion.TrySetResult(false); return; }
-                LoadedOwner = context;
-                ServerSupportsSetting = read.Supported;
-                if (locale != null)
-                {
-                    var settings = _localSettings.Load();
-                    if (settings.LastAppLanguageOverride != read.Tag)
-                    {
-                        settings.LastAppLanguageOverride = read.Tag;
-                        _localSettings.Save(settings);
-                    }
-                    _locales.Apply(locale);
-                }
-                Loaded?.Invoke(this, read);
-                completion.TrySetResult(true);
+                read = await _preference.ReadEffectiveAsync(context, token).ConfigureAwait(false);
             }
-            catch (Exception ex) { completion.TrySetException(ex); }
-        });
-        if (!posted) return false;
-        return await completion.Task.ConfigureAwait(false);
+            catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException)
+            {
+                return false;
+            }
+            if (!IsCurrent(context, generation, token)) return false;
+            // An older server has nowhere to store the choice: keep the cached
+            // language, exactly as before its settings could load.
+            var locale = read.Supported ? _locales.Create(Resolve(read.Tag)) : null;
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var cancellation = token.Register(() => completion.TrySetResult(false));
+            var posted = _post(() =>
+            {
+                try
+                {
+                    if (!IsCurrent(context, generation, token)) { completion.TrySetResult(false); return; }
+                    LoadedOwner = context;
+                    ServerSupportsSetting = read.Supported;
+                    if (locale != null)
+                    {
+                        var settings = _localSettings.Load();
+                        if (settings.LastAppLanguageOverride != read.Tag)
+                        {
+                            settings.LastAppLanguageOverride = read.Tag;
+                            _localSettings.Save(settings);
+                        }
+                        _locales.Apply(locale);
+                    }
+                    Loaded?.Invoke(this, read);
+                    completion.TrySetResult(true);
+                }
+                catch (Exception ex) { completion.TrySetException(ex); }
+            });
+            if (!posted) return false;
+            return await completion.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_refresh, scope)) _refresh = null;
+                scope.Dispose();
+            }
+        }
     }
 
     /// <summary>
