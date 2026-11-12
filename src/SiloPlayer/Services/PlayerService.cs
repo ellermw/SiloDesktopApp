@@ -1263,8 +1263,12 @@ public partial class PlayerService : IDisposable
                 // initializer, so a waiting pick can resume inside that
                 // generation and have this read retired by LoadSubtitles. That
                 // cleanup is not a failed viewer choice here either.
+                // LoadSubtitles cancels the read before it advances the sidecar
+                // generation, and the initializer's own read of the grant it
+                // reapplies replaces this one without advancing it at all.
                 if (readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||
                     readInitialization != null && readSidecarGeneration != CurrentSubtitleSidecarGeneration() ||
+                    readInitialization != null && readOutcome == SubtitlePrefetchOutcome.Retired ||
                     !ReferenceEquals(readSession, manager?.CurrentSession))
                 {
                     // Cancel the old file/grant read, retaining the latest
@@ -1389,8 +1393,11 @@ public partial class PlayerService : IDisposable
                 // LoadSubtitles also retires reads within an already published
                 // initializer generation. That cleanup is not a failed viewer
                 // choice: retain the draft until this file finishes initializing.
+                // The same holds when that initializer retires the read without a
+                // new sidecar generation, as its read of the prior grant does.
                 if (readGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||
                     readInitialization != null && readSidecarGeneration != CurrentSubtitleSidecarGeneration() ||
+                    readInitialization != null && readOutcome == SubtitlePrefetchOutcome.Retired ||
                     !ReferenceEquals(readSession, manager?.CurrentSession))
                 {
                     while (CurrentReadChoice() && (_switchingContent || IsLoading || Volatile.Read(ref _loadedMediaInitCts) != null))
