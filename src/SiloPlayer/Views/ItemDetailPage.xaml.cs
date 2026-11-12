@@ -3407,13 +3407,32 @@ public sealed partial class ItemDetailPage : Page
                 panel.Children.Add(targetChoice);
             }
             var mode = new ComboBox { Header = "How to pick", SelectedIndex = 0, Items = { "Host picks · Stage this for the room", "Everyone votes · Add this as a suggestion" }, HorizontalAlignment = HorizontalAlignment.Stretch };
-            var pause = new ToggleSwitch { Header = "Guests can pause", IsOn = false };
+            const string policyKey = "watch_party.guest_control_policy";
+            string? savedPolicy = null;
+            try
+            {
+                var settings = await App.Services.GetRequiredService<SettingsApi>()
+                    .GetContractEffectiveSettingsAsync(authority, [policyKey], ct: navigation?.Token ?? default);
+                var value = settings.Settings.FirstOrDefault(entry => entry.Key == policyKey)?.Value;
+                if (value is { ValueKind: System.Text.Json.JsonValueKind.String })
+                    savedPolicy = value.Value.GetString();
+                if (savedPolicy is not ("host_only" or "guest_play_pause")) savedPolicy = null;
+            }
+            catch { /* An unread fallback must never become a saved choice. */ }
+            if (!Current()) return;
+            bool? pauseChoice = null;
+            var reflectingPolicy = false;
+            var pause = new ToggleSwitch { Header = "Guests can pause", IsOn = savedPolicy == "guest_play_pause" };
+            pause.Toggled += (_, _) => { if (!reflectingPolicy) pauseChoice = pause.IsOn; };
+            var policyNotice = new TextBlock { Text = savedPolicy == null ? "Saved guest controls could not be read. The room will use its saved policy unless you change this switch." : "", TextWrapping = TextWrapping.Wrap };
             var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], Visibility = Visibility.Collapsed };
-            panel.Children.Add(mode); panel.Children.Add(pause); panel.Children.Add(error);
+            panel.Children.Add(mode); panel.Children.Add(pause); panel.Children.Add(policyNotice); panel.Children.Add(error);
             var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Start a party with this", Content = panel, PrimaryButtonText = "Create room", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
             dialog.PrimaryButtonClick += async (_, args) =>
             {
                 args.Cancel = true; var deferral = args.GetDeferral(); dialog.IsPrimaryButtonEnabled = false;
+                pause.IsEnabled = false;
+                mode.IsEnabled = targetChoice.IsEnabled = false;
                 try
                 {
                     if (!Current())
@@ -3425,8 +3444,32 @@ public sealed partial class ItemDetailPage : Page
                     target = targetChoice.SelectedItem is ComboBoxItem { Tag: string chosen } ? chosen : target;
                     var response = await api.CreateWatchTogetherRoomAsync(mode.SelectedIndex == 1 ? "vote" : "host_pick");
                     if (!client.IsCurrentContext(authority) || response.RoomAccessToken == null) return;
-                    try { if (pause.IsOn) await api.UpdateWatchTogetherRoomPolicyAsync(response.Room.RoomId, "guest_play_pause"); }
-                    catch { App.Services.GetRequiredService<ToastService>().Error("Room created. Guest pause could not be enabled; change it from the room."); }
+                    var policy = pause.IsOn ? "guest_play_pause" : "host_only";
+                    if (pauseChoice.HasValue &&
+                        (response.Room.GuestControlPolicy != policy || savedPolicy != policy))
+                    {
+                        try
+                        {
+                            var updated = await api.UpdateWatchTogetherRoomPolicyAsync(authority, response.Room.RoomId, policy);
+                            if (!client.IsCurrentContext(authority)) return;
+                            response.Room = updated.Room;
+                            if (response.Room.GuestControlPolicy != policy)
+                                App.Services.GetRequiredService<ToastService>().Error("Room created. Guest controls could not be changed; the room shows its actual policy.");
+                        }
+                        catch
+                        {
+                            if (!client.IsCurrentContext(authority)) return;
+                            App.Services.GetRequiredService<ToastService>().Error("Room created. Guest controls could not be changed; the room shows its actual policy.");
+                        }
+                    }
+                    if (!client.IsCurrentContext(authority)) return;
+                    // Reflect the server's actual result without turning this
+                    // programmatic update into another explicit preference.
+                    if (savedPolicy == null && !pauseChoice.HasValue)
+                        App.Services.GetRequiredService<ToastService>().Info(response.Room.GuestControlPolicy == "guest_play_pause" ? "Room created. Guests can pause." : "Room created. Only the host can pause.");
+                    reflectingPolicy = true;
+                    try { pause.IsOn = response.Room.GuestControlPolicy == "guest_play_pause"; }
+                    finally { reflectingPolicy = false; }
                     try
                     {
                         if (target != null)
@@ -3440,7 +3483,7 @@ public sealed partial class ItemDetailPage : Page
                     DispatcherQueue.TryEnqueue(() => App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs { RoomId = response.Room.RoomId, RoomAccessToken = response.RoomAccessToken }));
                 }
                 catch (Exception ex) { error.Text = ex.Message; error.Visibility = Visibility.Visible; }
-                finally { dialog.IsPrimaryButtonEnabled = true; deferral.Complete(); }
+                finally { dialog.IsPrimaryButtonEnabled = true; pause.IsEnabled = mode.IsEnabled = targetChoice.IsEnabled = true; deferral.Complete(); }
             };
             await dialog.ShowAsync();
         }

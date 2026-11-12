@@ -20,6 +20,22 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 ---
 
+# November 11 ? Preserve playback intent across policy and subtitle updates (Beta candidate)
+
+Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. Historical: source was **1.2.970** when this entry was written (current stamps are in the newest entry above); the Beta pipeline owns integration, versioning and publication.
+
+Watch Party creation reads the remembered guest-control policy and writes it only for an explicit change. Session-scoped subtitle announcements preserve canonical stored identity without selecting additions, falling back to an authoritative replan on ordinal collisions. Expired Skip Intro offers return with controls without restarting the timer; Escape closes an open menu before dismissing the timed prompt.
+
+Verification: 635/635 focused tests; fresh Release publish; four final native routes: remembered party policy, canonical subtitle-ready, unrestricted subtitle adoption and intro reoffer. All include the completion sentinel. Two stored-identity regression cases and three corrected Lua menu-priority cases fail against the respective earlier implementations and pass after the fixes.
+
+Independent Claude review identified the positional TrackId collision and Escape precedence; both were resolved. The first Lua regression fixture interpolated braces into state keys; corrected fixtures were rerun RED against frozen pre-review Lua, then GREEN. An inherited subtitle-only environment flag narrowed review-native-adoption; review-native-adoption-unrestricted explicitly clears it and runs the original adoption scope. Earlier failures and receipts remain preserved.
+
+App DLL SHA256: `5EA2E5BA5A9A9A94E96B4FFF860F6C81E572C2FEC207106A6B5DDAD67ED9092B`; all 738 authored app PDB documents match final source. Selected native DLL/PDB identities and source documents also match. Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/playback-worker-2239/review-final-binding-b`, the original `playback-implementation.md`/review, and `playback-review-fixes-note.md`.
+
+Limits: Synthetic API, real libmpv/Lua and native controls verified. No live server/room, subtitle-provider persistence, physical input or complete visual parity certified. No full unit/native suite or installer run claimed. Installed player remains running and untouched.
+
+---
+
 ## November 11 — version-aware batch download candidate
 
 Native series, season and Specials download actions now support official batch-version templates and optional bulk quality. Aggregate items need no Versions list: templates come from readable episode versions, with automatic per-episode selection available. Cursor creation retains one batch id and owner; closing the picker cancels future pages, duplicate activation is single flight, and effective capability refusals remain authoritative. A partial failure directs the viewer to Downloads for reconciliation.
