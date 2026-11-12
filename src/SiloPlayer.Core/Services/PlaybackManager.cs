@@ -490,10 +490,13 @@ public partial class PlaybackManager : IDisposable
                 (track.StoredSubtitleId is > 0 && row.Id > 0 && row.Id != track.StoredSubtitleId ||
                  !string.IsNullOrWhiteSpace(track.SyncKey) && !string.IsNullOrWhiteSpace(row.SyncKey) && row.SyncKey != track.SyncKey ||
                  hasStoredIdentity && announcesStoredIdentity && !sharesStoredIdentity)) return false;
+            // A stored-list placeholder holds no canonical route yet. Its withheld
+            // or positional one must not outlive the delivery facts announced here.
+            var canonical = !string.IsNullOrWhiteSpace(row.TrackId) && !string.IsNullOrWhiteSpace(row.Delivery);
             // Optional announcement fields overlay canonical metadata, never erase it.
             track.StoredSubtitleId = track.StoredSubtitleId is > 0 ? track.StoredSubtitleId : row.Id;
             if (string.IsNullOrWhiteSpace(track.SyncKey)) track.SyncKey = row.SyncKey;
-            if (string.IsNullOrWhiteSpace(track.Url)) track.Url = row.Url;
+            if (canonical && string.IsNullOrWhiteSpace(track.Url)) track.Url = row.Url;
             if (track.Delivery == "sidecar" && string.IsNullOrWhiteSpace(track.Url)) return false;
             if (string.IsNullOrWhiteSpace(track.Language)) track.Language = row.Language;
             if (string.IsNullOrWhiteSpace(track.Codec)) track.Codec = row.Codec;
@@ -501,7 +504,7 @@ public partial class PlaybackManager : IDisposable
             track.StreamIndex ??= row.StreamIndex;
             if (string.IsNullOrWhiteSpace(track.ContainerTrackId)) track.ContainerTrackId = row.ContainerTrackId;
             track.NativeSelectable ??= row.NativeSelectable;
-            if (!track.UnplayableSpecified) track.Unplayable = row.Unplayable;
+            if (!track.UnplayableSpecified) track.Unplayable = canonical && row.Unplayable;
             if (!track.ForcedSpecified) track.Forced = row.Forced;
             if (!track.HearingImpairedSpecified) track.HearingImpaired = row.HearingImpaired;
             if (string.IsNullOrWhiteSpace(track.FontBundleUrl)) track.FontBundleUrl = row.FontBundleUrl;

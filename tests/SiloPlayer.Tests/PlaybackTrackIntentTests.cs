@@ -123,6 +123,44 @@ public sealed class PlaybackTrackIntentTests
         }
     }
 
+    [Fact]
+    public async Task AnnouncementForAStoredListPlaceholderDoesNotInheritItsWithheldOrPositionalRoute()
+    {
+        using var scope = new Fixture(); await scope.Manager.StartSessionAsync(42);
+        var session = scope.Manager.CurrentSession!;
+        // The rows a stored-list refresh adds: no canonical TrackId or Delivery,
+        // and a route its layout withheld or addressed by position alone.
+        session.SubtitleUrls.Add(new() { Id = 77, SyncKey = "stored-77", Index = 9, Language = "ita", Source = "downloaded", Unplayable = true, Url = "" });
+        session.SubtitleUrls.Add(new() { Id = 78, SyncKey = "stored-78", Index = 10, Language = "spa", Source = "downloaded", Url = "/stream/session/subtitles/10" });
+        var withheld = session.SubtitleUrls.Single(row => row.Id == 77);
+        var positional = session.SubtitleUrls.Single(row => row.Id == 78);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+        // The omitted flag defaults as it does in a plan: the announced route is playable.
+        Assert.True(scope.Manager.TryApplySubtitleTrack(session, new()
+        {
+            StoredSubtitleId = 77, TrackId = "downloaded:77", CombinedIndex = 9,
+            Source = "downloaded", Delivery = "sidecar", Url = "/captions.srt",
+        }));
+        Assert.Same(withheld, session.SubtitleUrls.Single(row => row.Id == 77));
+        Assert.False(withheld.Unplayable);
+        Assert.Equal("downloaded:77", withheld.TrackId); Assert.Equal("sidecar", withheld.Delivery);
+        Assert.Equal("/captions.srt", withheld.Url);
+        // Now canonical, the row keeps an explicit restriction a later partial update omits.
+        withheld.Unplayable = true;
+        Assert.True(scope.Manager.TryApplySubtitleTrack(session, new()
+        {
+            StoredSubtitleId = 77, TrackId = "downloaded:77", CombinedIndex = 9, Source = "downloaded", Delivery = "sidecar",
+        }));
+        Assert.True(withheld.Unplayable); Assert.Equal("/captions.srt", withheld.Url);
+        // A positional URL is not a canonical one: a sidecar without its own needs a replan.
+        Assert.False(scope.Manager.TryApplySubtitleTrack(session, new()
+        {
+            StoredSubtitleId = 78, TrackId = "downloaded:78", CombinedIndex = 10, Source = "downloaded", Delivery = "sidecar",
+        }));
+        Assert.NotEqual("downloaded:78", positional.TrackId); Assert.Equal("/stream/session/subtitles/10", positional.Url);
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
     [Theory]
     [InlineData("quality", false)]
     [InlineData("quality", true)]

@@ -724,6 +724,71 @@ public sealed class SubtitleReviewRegressionTests
     }
 
     [Fact]
+    public void StoredPickFallbackWaitsForItsDeferredAnnouncementAndNeverAdoptsAnUnrelatedReplan()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a fallback
+        // announcement that deferred itself behind a seek restart, or scheduled a
+        // retry, applied nothing yet but still owes the pick its inventory. The
+        // refresh stays registered for it without a notice, and a response a seek
+        // published meanwhile is never taken for that inventory.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var defer = Between(ready, "private void DeferSubtitleReadyRefresh(", "private DeferredSubtitleReadyAnnouncement BeginSubtitleReadyDeferral(");
+        var owed = defer.IndexOf("var deferral = BeginSubtitleReadyDeferral(sessionId, fileId);", StringComparison.Ordinal);
+        Assert.True(owed >= 0 && defer.IndexOf("DeferUntilSubtitleReadyIdle(() =>", StringComparison.Ordinal) > owed);
+        // The deferral ends only once its replay has applied, deferred again or been dropped.
+        Assert.Contains(".ContinueWith(_ => EndSubtitleReadyDeferral(deferral), TaskScheduler.Default);", defer);
+        Assert.Contains("else EndSubtitleReadyDeferral(deferral);", defer);
+        foreach (var retry in new[]
+        {
+            Between(ready, "void RetryUnpublishedSubtitleInventory()", "void RecoverUnappliedSubtitleInventory()"),
+            Between(ready, "void RecoverUnappliedSubtitleInventory()", "// Serialize even in-place merges against inventory publication."),
+        })
+        {
+            var scheduled = retry.IndexOf("var deferral = BeginSubtitleReadyDeferral(eventSessionId, fileId);", StringComparison.Ordinal);
+            var delay = retry.IndexOf("Task.Delay(SubtitleInventoryApplicationRetryDelay", StringComparison.Ordinal);
+            Assert.True(scheduled >= 0 && delay > scheduled &&
+                retry.IndexOf("EndSubtitleReadyDeferral(deferral);", delay, StringComparison.Ordinal) > delay);
+        }
+        // An applied inventory answers every announcement deferred for it, under
+        // the lock and before the registered refreshes are read.
+        var restart = Between(ready, "private void RestartSupersededSubtitleListRefreshes(", "foreach (var superseded in reading) superseded(applied);");
+        var applied = restart.IndexOf("_appliedSubtitleInventory = applied;", StringComparison.Ordinal);
+        var settled = restart.IndexOf("_deferredSubtitleReadyAnnouncements.RemoveWhere(deferral =>", StringComparison.Ordinal);
+        var read = restart.IndexOf("reading = _storedSubtitleListRefreshes.ToArray();", StringComparison.Ordinal);
+        Assert.True(applied >= 0 && settled > applied && read > settled);
+        // Only an inventory an announcement applied during the request answers the pick.
+        var request = Between(ready, "private async Task<PlaybackStartResponse?> ReplanForStoredSubtitlePickAsync(",
+            "private static bool SubtitleInventoryRequiresTransportReload(");
+        var before = request.IndexOf("var answered = _appliedSubtitleInventory;", StringComparison.Ordinal);
+        var asked = request.IndexOf("await ApplySubtitleReadyAsync(", StringComparison.Ordinal);
+        Assert.True(before >= 0 && asked > before &&
+            request.IndexOf("return !ReferenceEquals(_appliedSubtitleInventory, answered) &&", asked, StringComparison.Ordinal) > asked);
+        // An owner's refresh is registered under the lock that settles the deferral.
+        var waits = Between(ready, "private bool AwaitsDeferredSubtitleReadyAnnouncement(", "private void DeferUntilSubtitleReadyIdle(");
+        var locked = waits.IndexOf("lock (_subtitleReadyRefreshLock)", StringComparison.Ordinal);
+        Assert.True(locked >= 0 &&
+            waits.IndexOf("if (unregistered != null) _storedSubtitleListRefreshes.Add(unregistered);", locked, StringComparison.Ordinal) > locked);
+
+        var publicRefresh = Between(Read("PlayerService.SubtitleRefresh.cs"), "public async Task RefreshSubtitlesAfterAiAsync(",
+            "private static void RetainDownloadsAnnouncedDuringRead(");
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var refresh in new[] { publicRefresh, ownedRefresh })
+        {
+            var replan = refresh.IndexOf("await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false)", StringComparison.Ordinal);
+            var waiting = refresh.IndexOf("deferred = AwaitsDeferredSubtitleReadyAnnouncement(session", replan, StringComparison.Ordinal);
+            var notice = refresh.IndexOf("if (!deferred && Current()) ShowSubtitleSelectionUnavailable();", replan, StringComparison.Ordinal);
+            Assert.True(replan >= 0 && waiting > replan && notice > waiting);
+            // The refresh that ends on a deferral keeps its registration.
+            Assert.True(refresh.IndexOf("var awaiting = !handedOver && (deferred || AwaitsSubtitleInventoryApplication(manager, session));",
+                notice, StringComparison.Ordinal) > notice);
+        }
+        Assert.Contains("deferred = AwaitsDeferredSubtitleReadyAnnouncement(session, currentOwner != null ? superseded : null);", ownedRefresh);
+        // Started over, an owner's refresh keeps its owner.
+        Assert.Contains("_ = RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent);", ownedRefresh);
+    }
+
+    [Fact]
     public void SubtitleInventoryTransportReloadChecksOwnershipUnderTheRestartGateBeforeStoppingTheOutgoingProxies()
     {
         // PlayerService requires WinUI/libmpv. Guard the route here: preparing a

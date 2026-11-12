@@ -77,6 +77,8 @@ public partial class PlayerService
         var ended = false;
         // The pick was executed or queued. Nothing is left to start over.
         var handedOver = false;
+        // The pick's fallback announcement deferred itself: its inventory is still owed.
+        var deferred = false;
         superseded = applied =>
         {
             if (ReferenceEquals(applied, session)) return;
@@ -379,10 +381,14 @@ public partial class PlayerService
             else if (preferred == null && uncertainPick && preferredSubtitleId is long requested && Current())
             {
                 // Only an authoritative inventory can route that entry. Its
-                // application starts this refresh over. When none is applied, or
-                // the list cannot place the entry there either, tell the viewer.
-                if (await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false) == null && Current())
-                    ShowSubtitleSelectionUnavailable();
+                // application starts this refresh over, also once an announcement
+                // that deferred itself is replayed. When none is applied or owed,
+                // or the list cannot place the entry there either, tell the viewer.
+                if (await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false) == null)
+                {
+                    deferred = AwaitsDeferredSubtitleReadyAnnouncement(session);
+                    if (!deferred && Current()) ShowSubtitleSelectionUnavailable();
+                }
             }
         }
         catch (Exception ex)
@@ -394,7 +400,7 @@ public partial class PlayerService
             // A replan can publish its inventory, retiring this response, before
             // that inventory is applied. Ending on it is not ending the pick: stay
             // registered so the application still starts this refresh over.
-            var awaiting = !handedOver && AwaitsSubtitleInventoryApplication(manager, session);
+            var awaiting = !handedOver && (deferred || AwaitsSubtitleInventoryApplication(manager, session));
             lock (_subtitleReadyRefreshLock)
             {
                 ended = awaiting;

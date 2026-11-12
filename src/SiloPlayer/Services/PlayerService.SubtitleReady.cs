@@ -10,6 +10,16 @@ public partial class PlayerService
     private readonly SemaphoreSlim _subtitleReadyGuard = new(1, 1);
     private readonly object _subtitleReadyRefreshLock = new();
     private readonly HashSet<Action> _pendingSubtitleReadyRefreshes = [];
+    // An announcement that deferred itself until idle, or scheduled a retry,
+    // still owes its session and file an applied inventory.
+    private sealed class DeferredSubtitleReadyAnnouncement(string sessionId, int fileId)
+    {
+        public string SessionId { get; } = sessionId;
+        public int FileId { get; } = fileId;
+    }
+    private readonly HashSet<DeferredSubtitleReadyAnnouncement> _deferredSubtitleReadyAnnouncements = [];
+    // The inventory an announcement last applied in place of the response it read.
+    private PlaybackStartResponse? _appliedSubtitleInventory;
     // Publication can precede native application. Retries on the same loaded
     // file must still compare/remap from the inventory mpv actually uses.
     private sealed record PendingSubtitleInventoryApplication(SubtitleOperationOwner Owner,
@@ -35,6 +45,7 @@ public partial class PlayerService
         {
             foreach (var pending in _pendingSubtitleReadyRefreshes) ContentLoaded -= pending;
             _pendingSubtitleReadyRefreshes.Clear();
+            _deferredSubtitleReadyAnnouncements.Clear();
         }
     }
 
@@ -51,12 +62,46 @@ public partial class PlayerService
     private void DeferSubtitleReadyRefresh(JsonElement payload, SubtitleOperationOwner owner, string sessionId, int fileId)
     {
         var announcement = payload.Clone();
+        var deferral = BeginSubtitleReadyDeferral(sessionId, fileId);
         DeferUntilSubtitleReadyIdle(() =>
         {
+            // Replayed, the announcement applies its inventory, defers again or
+            // is dropped. Only then is this deferral over.
             if (owner.IsCurrentForAi && _playbackManager?.CurrentSession is { } current &&
                 current.SessionId == sessionId && current.MediaFileId == fileId)
-                _ = ApplySubtitleReadyAsync(announcement, sessionId);
+                _ = ApplySubtitleReadyAsync(announcement, sessionId)
+                    .ContinueWith(_ => EndSubtitleReadyDeferral(deferral), TaskScheduler.Default);
+            else EndSubtitleReadyDeferral(deferral);
         });
+    }
+
+    private DeferredSubtitleReadyAnnouncement BeginSubtitleReadyDeferral(string sessionId, int fileId)
+    {
+        var deferral = new DeferredSubtitleReadyAnnouncement(sessionId, fileId);
+        lock (_subtitleReadyRefreshLock) _deferredSubtitleReadyAnnouncements.Add(deferral);
+        return deferral;
+    }
+
+    private void EndSubtitleReadyDeferral(DeferredSubtitleReadyAnnouncement deferral)
+    {
+        lock (_subtitleReadyRefreshLock) _deferredSubtitleReadyAnnouncements.Remove(deferral);
+    }
+
+    // A stored pick whose fallback announcement deferred itself, or scheduled a
+    // retry, has no inventory yet, but is still owed one: its refresh stays
+    // registered for that application instead of reporting the pick unavailable.
+    // An owner's refresh holds no registration. It is taken here, under the lock
+    // the application settles the deferral with, so the restart cannot miss it.
+    private bool AwaitsDeferredSubtitleReadyAnnouncement(PlaybackStartResponse session,
+        Action<PlaybackStartResponse>? unregistered = null)
+    {
+        lock (_subtitleReadyRefreshLock)
+        {
+            if (!_deferredSubtitleReadyAnnouncements.Any(deferral =>
+                deferral.SessionId == session.SessionId && deferral.FileId == session.MediaFileId)) return false;
+            if (unregistered != null) _storedSubtitleListRefreshes.Add(unregistered);
+            return true;
+        }
     }
 
     private void DeferUntilSubtitleReadyIdle(Action resume)
@@ -88,7 +133,15 @@ public partial class PlayerService
     private void RestartSupersededSubtitleListRefreshes(PlaybackStartResponse applied)
     {
         Action<PlaybackStartResponse>[] reading;
-        lock (_subtitleReadyRefreshLock) reading = _storedSubtitleListRefreshes.ToArray();
+        lock (_subtitleReadyRefreshLock)
+        {
+            // This inventory answers every announcement still deferred for its
+            // session and file. Settle them before the registrations are read.
+            _appliedSubtitleInventory = applied;
+            _deferredSubtitleReadyAnnouncements.RemoveWhere(deferral =>
+                deferral.SessionId == applied.SessionId && deferral.FileId == applied.MediaFileId);
+            reading = _storedSubtitleListRefreshes.ToArray();
+        }
         foreach (var superseded in reading) superseded(applied);
     }
 
@@ -123,17 +176,22 @@ public partial class PlayerService
     // the list's layout withheld the requested subtitle's route. Only v3 has an
     // authoritative inventory to ask for: the no-change replan an announcement
     // without track metadata makes. Returns that response once it is applied in
-    // place of the one the list was read under.
+    // place of the one the list was read under. An announcement that deferred
+    // itself applies nothing yet; see AwaitsDeferredSubtitleReadyAnnouncement.
     private async Task<PlaybackStartResponse?> ReplanForStoredSubtitlePickAsync(PlaybackManager manager,
         PlaybackStartResponse session, long subtitleId)
     {
         lock (_subtitleReadyRefreshLock)
             if (session.ProtocolVersion < 3 || _replannedStoredSubtitlePicks is { } picks &&
                 ReferenceEquals(picks.Session, session) && picks.SubtitleIds.Contains(subtitleId)) return null;
+        // A seek or quality replan can replace the read response as well. Only an
+        // inventory an announcement applied since then is this pick's answer.
+        var answered = _appliedSubtitleInventory;
         await ApplySubtitleReadyAsync(
             JsonSerializer.SerializeToElement(new { file_id = session.MediaFileId, subtitle_id = subtitleId }),
             session.SessionId).ConfigureAwait(false);
-        return manager.CurrentSession is { } applied && !ReferenceEquals(applied, session) &&
+        return !ReferenceEquals(_appliedSubtitleInventory, answered) &&
+            manager.CurrentSession is { } applied && !ReferenceEquals(applied, session) &&
             applied.SessionId == session.SessionId && applied.MediaFileId == session.MediaFileId &&
             _pendingSubtitleInventoryApplication == null ? applied : null;
     }
@@ -296,10 +354,12 @@ public partial class PlayerService
             if (++unpublished.Failures > SubtitleInventoryApplicationRetries) return;
             // The event's document may be disposed before the delay elapses.
             var announcement = payload.Clone();
+            var deferral = BeginSubtitleReadyDeferral(eventSessionId, fileId);
             _ = Task.Delay(SubtitleInventoryApplicationRetryDelay * unpublished.Failures, token).ContinueWith(_ =>
             {
                 if (ReferenceEquals(unpublished, _unpublishedSubtitleInventoryRefresh))
                     DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);
+                EndSubtitleReadyDeferral(deferral);
             }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
         }
         void RecoverUnappliedSubtitleInventory()
@@ -318,10 +378,12 @@ public partial class PlayerService
             if (++unapplied.Failures > SubtitleInventoryApplicationRetries) return;
             // The event's document may be disposed before the delay elapses.
             var announcement = payload.Clone();
+            var deferral = BeginSubtitleReadyDeferral(eventSessionId, fileId);
             _ = Task.Delay(SubtitleInventoryApplicationRetryDelay * unapplied.Failures, token).ContinueWith(_ =>
             {
                 if (ReferenceEquals(unapplied, _pendingSubtitleInventoryApplication))
                     DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);
+                EndSubtitleReadyDeferral(deferral);
             }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
         }
         try

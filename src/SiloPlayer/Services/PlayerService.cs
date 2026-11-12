@@ -9350,13 +9350,17 @@ public partial class PlayerService : IDisposable
         var readInventory = session.SubtitleUrls;
         // Without an owner this refresh cannot follow an accepted plan. When an
         // announcement's inventory replaces its response, start over on that
-        // inventory once it is applied instead of dropping the selection.
+        // inventory once it is applied instead of dropping the selection. An
+        // owner cannot follow an inventory its deferred announcement still owes
+        // either, and is registered for that application alone.
         Action<PlaybackStartResponse> superseded = null!;
         // Set under the refresh lock when this refresh ends while the inventory
         // that replaced its response is still to be applied; see finally.
         var ended = false;
         // The pick was executed or queued. Nothing is left to start over.
         var handedOver = false;
+        // The pick's fallback announcement deferred itself: its inventory is still owed.
+        var deferred = false;
         superseded = applied =>
         {
             if (ReferenceEquals(applied, session)) return;
@@ -9381,7 +9385,7 @@ public partial class PlayerService : IDisposable
                     liveJobId == (_liveSubtitleFileId == mediaFileId ? Volatile.Read(ref _liveSubtitleJobId) : 0) &&
                     manager.CurrentSession is { } current &&
                     current.SessionId == applied.SessionId && current.MediaFileId == mediaFileId)
-                    _ = RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, null, mayActivate, isCurrent);
+                    _ = RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent);
             });
         };
         if (currentOwner == null && preferredSubtitleId.HasValue)
@@ -9710,12 +9714,15 @@ public partial class PlayerService : IDisposable
             {
                 // Only an authoritative inventory can route that entry. Without an
                 // owner its application starts this refresh over; an owner follows
-                // the plan itself. When none is applied, or the list cannot place
-                // the entry there either, tell the viewer.
+                // the plan itself. An announcement that deferred itself still owes
+                // that inventory: its application starts either refresh over. When
+                // none is applied or owed, or the list cannot place the entry there
+                // either, tell the viewer.
                 var published = await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false);
                 if (published == null)
                 {
-                    if (Current()) ShowSubtitleSelectionUnavailable();
+                    deferred = AwaitsDeferredSubtitleReadyAnnouncement(session, currentOwner != null ? superseded : null);
+                    if (!deferred && Current()) ShowSubtitleSelectionUnavailable();
                 }
                 else if (currentOwner != null && Current())
                 {
@@ -9733,7 +9740,7 @@ public partial class PlayerService : IDisposable
             // A replan can publish its inventory, retiring this response, before
             // that inventory is applied. Ending on it is not ending the pick: stay
             // registered so the application still starts this refresh over.
-            var awaiting = !handedOver && AwaitsSubtitleInventoryApplication(manager, session);
+            var awaiting = !handedOver && (deferred || AwaitsSubtitleInventoryApplication(manager, session));
             lock (_subtitleReadyRefreshLock)
             {
                 ended = awaiting;
