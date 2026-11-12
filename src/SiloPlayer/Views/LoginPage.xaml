@@ -302,6 +302,10 @@
                                 <TextBlock Text="{x:Bind ViewModel.DeviceStatusMessage, Mode=OneWay}"
                                            FontSize="13" TextAlignment="Center" TextWrapping="Wrap"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Text="{x:Bind ViewModel.DeviceBindingNotice, Mode=OneWay}"
+                                           FontSize="12" TextAlignment="Center" TextWrapping="Wrap"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           Visibility="{x:Bind ViewModel.DeviceBindingNotice, Mode=OneWay, Converter={StaticResource NullToVis}}" />
                             </StackPanel>
                         </Border>
                         </StackPanel>

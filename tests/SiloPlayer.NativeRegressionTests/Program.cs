@@ -162,6 +162,17 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-transfer-final")
+            {
+                await ProfileTransferFinalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-transfer-blocker")
+            {
+                Environment.SetEnvironmentVariable("SILO_NATIVE_PERSONAL_CASE", "notification-construction");
+                await PersonalListsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-popup-layout")
             {
                 await PlaybackPopupLayoutNativeFixture.RunAsync(_window);
@@ -394,6 +405,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", selectedAudioCase); }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "transport-reload-actual")
+            {
+                await ActualTransportReloadNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "transport-reload-controls")
+            {
+                await TransportReloadControlsNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")
             {
                 var reviewCase = Environment.GetEnvironmentVariable("SILO_HUD_REVIEW_CASE");
@@ -508,6 +529,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profiles-metadata")
             {
                 await ProfilesMetadataNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "title-allowances" or "title-allowances-header")
+            {
+                await TitleAllowancesNativeFixture.RunAsync(parent);
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "title-allowances")
+                {
+                    await ProfilesMetadataNativeFixture.RunAsync(parent);
+                    await MediaMoreActionsNativeFixture.RunAsync(parent);
+                }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "current-caption-metadata")
@@ -1048,6 +1079,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-latest")
             {
+                if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE") == "device-binding")
+                {
+                    await DeviceBindingNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE") == "network-login")
                 {
                     await NetworkAuthNativeFixture.RunAsync(parent);

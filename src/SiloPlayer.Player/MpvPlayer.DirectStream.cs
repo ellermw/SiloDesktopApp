@@ -46,6 +46,17 @@ public sealed partial class MpvPlayer
         return request.Key;
     }
 
+    /// <summary>
+    /// True while mpv's current file is the input submitted for <paramref name="url"/>.
+    /// A signed direct load reaches mpv as its per-load silo-direct key, never the URL.
+    /// </summary>
+    public bool IsCurrentInput(string url)
+    {
+        var request = Volatile.Read(ref _directRequest);
+        var input = request != null && request.Url == url ? request.Key : url;
+        return GetPropertyText("path") == input;
+    }
+
     private int OpenDirect(IntPtr userData, IntPtr uri, IntPtr info)
     {
         try

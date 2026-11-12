@@ -29,7 +29,7 @@ internal static class PersonalListsNativeFixture
             .AddSingleton(new PlayerService(new PlaybackApi(client), catalog, outer.GetRequiredService<AuthService>(), client,
                 outer.GetRequiredService<SettingsService>(), new SettingsApi(client)))
             .AddSingleton(catalog).AddSingleton(requests).AddSingleton(new CollectionsApi(client))
-            .AddSingleton(watchlist).AddSingleton(notifications).AddSingleton(navigation)
+            .AddSingleton(watchlist).AddSingleton(notifications).AddSingleton(new NotificationsApi(client)).AddSingleton(navigation)
             .AddSingleton(new UICustomizationService(new SettingsApi(client)))
             .AddSingleton(new CardOverlayService(new SettingsApi(client)))
             .AddSingleton(outer.GetRequiredService<AuthService>())
@@ -42,6 +42,15 @@ internal static class PersonalListsNativeFixture
         AppDomain.CurrentDomain.FirstChanceException += trace;
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_PERSONAL_CASE") == "notification-construction")
+            {
+                var control = new SiloPlayer.Controls.NotificationSeriesControl();
+                parent.Children.Add(control);
+                await Task.Delay(80);
+                parent.Children.Remove(control);
+                Program.Log("PASS: published NotificationSeriesControl constructed with fixture NotificationsApi registration.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_PERSONAL_CASE") is "notification-states" or "notification-realtime" or "notification-pages")
             {
                 await NotificationStatesNativeFixture.RunAsync(parent);

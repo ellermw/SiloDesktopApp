@@ -16,11 +16,12 @@ public static class HomeDismissalPolicy
 
     /// <summary>
     /// The Home-row vocabulary for a section-browse card's server <c>item_source</c>, or null when
-    /// the card belongs to a row that offers no removal.
+    /// the card belongs to a row that offers no removal. A card already tagged with the row type
+    /// (the spelling Home rows and the dismissal route use) keeps its surface.
     /// </summary>
     public static string? SurfaceForServerItemSource(string? serverItemSource) => serverItemSource switch
     {
-        "in_progress" => ContinueWatching,
+        "in_progress" or ContinueWatching => ContinueWatching,
         NextUp => NextUp,
         _ => null,
     };

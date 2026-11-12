@@ -24,7 +24,7 @@ using Windows.Storage;
 // Actual CollectionsPage and CollectionBrowsePage controls over synthetic HTTP: the one poster wall with Show pills,
 // the viewer's poster size, loaded-only empty lines and incremental server pages; the collection page hero with its
 // description, backdrop, byline and owner/Home actions, and its More actions menu (Sync now, Delete… with confirmation, library pages for a read-only viewer). Screenshots are written to the result directory.
-internal static class CollectionsPresentationNativeFixture
+internal static partial class CollectionsPresentationNativeFixture
 {
     private const string SampleThumbhash = "1QcSHQRnh493V4dIh4eXh1h4kJUI";
 
@@ -51,6 +51,7 @@ internal static class CollectionsPresentationNativeFixture
         var fixture = new Run(parent, wire, presentation, navigation, catalog);
         try
         {
+            await fixture.ViewportAdmissionAsync();
             await fixture.WallFullWidthAndPosterSizeAsync();
             await fixture.ShowPillsAsync();
             await fixture.IncludedPersonalCollectionsAsync();
@@ -64,7 +65,7 @@ internal static class CollectionsPresentationNativeFixture
         finally { parent.Children.Clear(); await Task.Delay(100); serviceField.SetValue(null, previous); }
     }
 
-    private sealed class Run(StackPanel parent, Wire wire, UICustomizationService presentation, NavigationService navigation, CatalogApi catalog)
+    private sealed partial class Run(StackPanel parent, Wire wire, UICustomizationService presentation, NavigationService navigation, CatalogApi catalog)
     {
         // ===== The wall =====
         internal async Task WallFullWidthAndPosterSizeAsync()
@@ -74,9 +75,10 @@ internal static class CollectionsPresentationNativeFixture
             {
                 await presentation.SaveCardPresentationAsync(new() { PosterSize = size, Caption = "title_metadata" });
                 var (frame, page) = await OpenWall(width, 900);
-                var board = (Grid)((StackPanel)page.FindName("CollectionsGrid")).Children.Single();
-                await Until(() => OpenButtons(board).Count() == 14 + 1 + 3);
+                await Until(() => OpenButtons(Board(page)).Count() >= 14 + 1 + 3);
                 await Task.Delay(150);
+                await Until(() => Board(page).ActualWidth > 0 && !page.ViewModel.IsLoadingServerLibraryRest);
+                var board = Board(page);
                 var gutter = width < 640 ? 16 : width < 1024 ? 24 : 40; var contentWidth = width - gutter * 2;
                 var columns = presentation.GetPosterColumnCount(contentWidth); var gap = size == "large" ? 16d : 12d;
                 Check(Math.Abs(board.ActualWidth - contentWidth) < 2, $"Collections wall {size}/{width} is {board.ActualWidth}px wide, not the full {contentWidth}px (the 1000px shell cap must be gone).");
@@ -101,12 +103,13 @@ internal static class CollectionsPresentationNativeFixture
             try
             {
                 var names = () => Names(page);
-                await Until(() => Pills(page).Length == 6 && OpenButtons(Board(page)).Count() == 3 + 1 + 3);
+                await Until(() => Pills(page).Length == 6 && OpenButtons(Board(page)).Count() == 3 + 1 + 4 && page.ViewModel.ProfilesLoaded && PillCount(page, "Mine") == "3");
                 Check(Pills(page).Select(Auto.GetName).SequenceEqual(["All", "Mine", "Shared", "Server", "Movies", "Shows"]), "Show pills are All, Mine, Shared, Server, then one per library.");
-                Check(PillCount(page, "All") == null && PillCount(page, "Server") == null && PillCount(page, "Mine") == "3" && PillCount(page, "Shared") == "1" && PillCount(page, "Movies") == "3" && PillCount(page, "Shows") == "1",
-                    "Pills count only what they can know: no combined count for several libraries.");
+                // The short wall has already read Movies' rest, so every library's cards are present and All counts them once.
+                Check(PillCount(page, "All") == "8" && PillCount(page, "Server") == null && PillCount(page, "Mine") == "3" && PillCount(page, "Shared") == "1" && PillCount(page, "Movies") == "3" && PillCount(page, "Shows") == "1",
+                    $"Pills count only what they can know: All once every library's cards are loaded, no combined Server count for several libraries (All={PillCount(page, "All")}).");
                 Check(Auto.GetItemStatus(Pill(page, "All")) == "Selected", "All starts selected.");
-                Check(names().Distinct().Count() == 7 && names().Contains("Family movie night") && names().Contains("Weekend picks 1") && names().Contains("Criterion"), "All shows yours, shared and the server's in one grid.");
+                Check(names().Distinct().Count() == 8 && names().Contains("Family movie night") && names().Contains("Weekend picks 1") && names().Contains("Criterion"), "All shows yours, shared and the server's in one grid, continuing a short wall automatically.");
                 await Capture(page, "collections-wall-pills-all-1280.png");
 
                 await Press(Pill(page, "Mine"));
@@ -120,9 +123,8 @@ internal static class CollectionsPresentationNativeFixture
                 Check(!Descendants<Button>(Board(page)).Any(b => Auto.GetName(b).StartsWith("More for ")), "A shared (read-only) card offers no owner menu.");
 
                 await Press(Pill(page, "Server"));
-                Check(names().SequenceEqual(["Criterion", "A24", "Anime"]), "Server shows every library's collections, the first of each before any rest.");
-                Check(ServerRows(page).Any(b => Auto.GetName(b) == "Load more server collections"), "The default server view offers Load more.");
-                Check(wire.TabReads(1) == 0, "Opening the default server view reads only the capped answer.");
+                Check(names().SequenceEqual(["Criterion", "A24", "Anime", "Studio Ghibli"]), "Server preserves first-of-each ordering before the automatically loaded rest.");
+                Check(wire.TabReads(1) == 1, "The short default wall reads the rest once without a library pick.");
 
                 await Press(Pill(page, "Movies"));
                 await Until(() => wire.TabReads(1) == 1 && names().Count == 3, () => $"tabReads={wire.TabReads(1)} names=[{string.Join("; ", names())}] paths={string.Join(" , ", wire.Paths.Where(p => p.Contains("library")).ToArray())}");
@@ -272,11 +274,11 @@ internal static class CollectionsPresentationNativeFixture
             var (serverFirstFrame, serverFirst) = await OpenWall(1280, 800);
             try
             {
-                await Until(() => OpenButtons(Board(serverFirst)).Count() == 3);
-                Check(Names(serverFirst).SequenceEqual(["Criterion", "A24", "Anime"]) && ((StackPanel)serverFirst.FindName("CollectionsLoadingShell")).Visibility == Visibility.Visible,
+                await Until(() => OpenButtons(Board(serverFirst)).Count() >= 3);
+                Check(Names(serverFirst).Take(3).SequenceEqual(["Criterion", "A24", "Anime"]) && ((StackPanel)serverFirst.FindName("CollectionsLoadingShell")).Visibility == Visibility.Visible,
                     "The server's cards show while the personal ones are still loading.");
                 wire.PersonalGate.SetResult(true);
-                await Until(() => OpenButtons(Board(serverFirst)).Count() == 5);
+                await Until(() => OpenButtons(Board(serverFirst)).Count() == 6);
                 Check(Names(serverFirst).Take(2).All(name => name.StartsWith("Weekend")), "Personal cards come first once they arrive.");
             }
             finally { parent.Children.Remove(serverFirstFrame); }
@@ -289,7 +291,7 @@ internal static class CollectionsPresentationNativeFixture
                 Check(((StackPanel)personalFirst.FindName("ServerCollectionsLoadingRows")).Visibility == Visibility.Visible && ((TextBlock)personalFirst.FindName("CollectionsEmptyLine")).Visibility == Visibility.Collapsed,
                     "Personal cards show with a server skeleton while the server's read is pending.");
                 wire.ServerGate.SetResult(true);
-                await Until(() => OpenButtons(Board(personalFirst)).Count() == 5 && ((StackPanel)personalFirst.FindName("ServerCollectionsLoadingRows")).Visibility == Visibility.Collapsed);
+                await Until(() => OpenButtons(Board(personalFirst)).Count() == 6 && ((StackPanel)personalFirst.FindName("ServerCollectionsLoadingRows")).Visibility == Visibility.Collapsed);
             }
             finally { parent.Children.Remove(personalFirstFrame); }
             Log("PASS: empty lines appear only after their reads succeed; no dashed New collection tile; personal and server cards load independently.");
@@ -319,7 +321,12 @@ internal static class CollectionsPresentationNativeFixture
                 var section = grid.Children.OfType<StackPanel>().Single(child => Auto.GetName(child) == "Weekend groups");
                 Check(Descendants<Button>(section).Any(button => Auto.GetName(button) == "Rename group")
                     && Descendants<Button>(section).Any(button => Auto.GetName(button) == "Delete group"), "A rebuilt group exposes its editing controls.");
-                Check(OpenButtons(grid).Count() == 1 + 1 + 3, "Group sections must not hide or duplicate own, shared or server posters.");
+                // A short wall now automatically reads Movies' remaining Studio Ghibli
+                // card. Assert the complete known wire set, rather than the capped five.
+                await Until(() => OpenButtons(grid).Any(button => Auto.GetName(button) == "Open Studio Ghibli"));
+                var actual = OpenButtons(grid).Select(Auto.GetName).Order(StringComparer.Ordinal).ToArray();
+                var expected = new[] { "Open Weekend picks 1", "Open Family movie night", "Open Criterion", "Open A24", "Open Studio Ghibli", "Open Anime" }.Order(StringComparer.Ordinal);
+                Check(actual.SequenceEqual(expected), "Group sections must preserve exactly the complete unique own/shared/server set: " + string.Join(", ", actual));
                 var own = Descendants<Border>(grid).First(border => border.Tag is SiloPlayer.Core.Models.Collections.Collection { Id: "own-1" });
                 Check(((MenuFlyout)own.ContextFlyout).Items.OfType<MenuFlyoutSubItem>().Any(menu => menu.Text == "Move to group" && menu.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "Weekend groups")),
                     "The owner card must offer the created group as a move target.");
@@ -335,13 +342,12 @@ internal static class CollectionsPresentationNativeFixture
         internal async Task ServerPaginationAsync()
         {
             wire.Reset(own: 1, shared: 0, libraries: 2, singleProfile: true);
-            var (frame, page) = await OpenWall(1280, 900);
+            wire.FailLibraryTab = true;
+            var (frame, page) = await OpenWall(1280, 900, new CollectionsNavigationArgs(Show: "mine"));
             try
             {
-                await Until(() => Pills(page).Length == 5 && OpenButtons(Board(page)).Count() == 1 + 3);
+                await Until(() => Pills(page).Length == 5 && OpenButtons(Board(page)).Count() == 1);
                 await Press(Pill(page, "Server"));
-                wire.FailLibraryTab = true;
-                await Press(ServerRows(page).Single(b => Auto.GetName(b) == "Load more server collections"));
                 await Until(() => ServerRows(page).Any(b => Auto.GetName(b) == "Retry Movies"));
                 Check(Names(page).SequenceEqual(["Criterion", "A24", "Anime"]), "A failed library list keeps the first cards.");
                 Check(Descendants<TextBlock>((StackPanel)page.FindName("ServerCollectionsRows")).Any(t => t.Text.Contains("Couldn't load all Movies collections")), "The failure is stated for that library.");
@@ -376,6 +382,7 @@ internal static class CollectionsPresentationNativeFixture
                     Check(!backdrop.ShowsArtwork && backdrop.BackdropThumbhash == SampleThumbhash, "The thumbhash shows before the real backdrop.");
                     wire.BackdropGate.SetResult(true);
                     await Until(() => backdrop.ShowsArtwork);
+                    await VerifyHeroEffectsAsync(page, backdrop);
                     Check(backdrop.BackdropUrl == $"https://collections-presentation.invalid/backdrop/{id}.png?sig=wide" && wire.BackdropRequests.Contains($"/backdrop/{id}.png?sig=wide"), "The backdrop is fetched from exactly the URL the Collections tab returned.");
                     await Until(() => description.Visibility == Visibility.Visible);
                     var text = Descendants<TextBlock>(description).First();
@@ -407,6 +414,7 @@ internal static class CollectionsPresentationNativeFixture
                 finally { parent.Children.Remove(frame); }
             }
             await HeroOwnerAndFallbacksAsync();
+            await HeroArtworkOwnershipAsync();
             Log("PASS: collection page hero at 1280/460: thumbhash then backdrop, description clamp, eyebrow, count in filter bar, actions and plain fallbacks.");
         }
 
@@ -959,6 +967,9 @@ internal static class CollectionsPresentationNativeFixture
         private readonly Dictionary<int, int> _tabReads = [];
         private readonly Dictionary<string, (int LibraryId, string Description, bool Backdrop)> _described = [];
         internal bool FailPersonal, FailServer, FailLibraryTab, SingleProfile, TabGateIgnoresCancellation;
+        internal bool BothLibrariesTruncated;
+        internal bool BackdropGateIgnoresCancellation;
+        internal readonly Dictionary<int, TaskCompletionSource<bool>> RestGates = [];
         internal bool Imports = true, FailLibraries, FailSync, FailDelete;
         internal string? FirstOwnType;
         internal string SyncStatus = "success", SyncMessage = "";
@@ -978,6 +989,8 @@ internal static class CollectionsPresentationNativeFixture
         internal void Reset(int own, int shared, int libraries, bool singleProfile = false)
         {
             _own = own; _shared = shared; _libraries = libraries; SingleProfile = singleProfile; FailedLibraryId = null;
+            BothLibrariesTruncated = false; RestGates.Clear();
+            BackdropGateIgnoresCancellation = false;
             FailPersonal = FailServer = FailLibraryTab = false; PersonalGate = ServerGate = TabGate = BackdropGate = null; PersonalReads = ServerReads = 0;
             lock (_tabReads) _tabReads.Clear();
             BackdropRequests.Clear(); _described.Clear(); _groups.Clear(); PersonalSnapshot = null; lock (Paths) Paths.Clear();
@@ -1003,7 +1016,7 @@ internal static class CollectionsPresentationNativeFixture
             0 => [],
             1 => [new { library_id = 1, library_name = "Movies", total_count = 3, collections = new[] { Card("srv-1", "Criterion"), Card("srv-2", "A24") } }],
             _ => [new { library_id = 1, library_name = "Movies", total_count = 3, collections = new[] { Card("srv-1", "Criterion"), Card("srv-2", "A24") } },
-                  new { library_id = 2, library_name = "Shows", total_count = 1, collections = new[] { Card("srv-3", "Anime") } }],
+                  new { library_id = 2, library_name = "Shows", total_count = BothLibrariesTruncated ? 2 : 1, collections = new[] { Card("srv-3", "Anime") } }],
         };
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -1015,7 +1028,7 @@ internal static class CollectionsPresentationNativeFixture
             if (path.StartsWith("/backdrop/"))
             {
                 BackdropRequests.Add(request.RequestUri.PathAndQuery);
-                if (BackdropGate != null) await BackdropGate.Task.WaitAsync(ct);
+                if (BackdropGate != null) { if (BackdropGateIgnoresCancellation) await BackdropGate.Task; else await BackdropGate.Task.WaitAsync(ct); }
                 return Image(backdropPng);
             }
             if (path == "/api/v2/collections" && request.Method == HttpMethod.Get)
@@ -1064,11 +1077,13 @@ internal static class CollectionsPresentationNativeFixture
             {
                 var libraryId = int.Parse(path["/api/v2/library/".Length..^"/collections".Length]);
                 lock (_tabReads) _tabReads[libraryId] = _tabReads.GetValueOrDefault(libraryId) + 1;
+                if (RestGates.TryGetValue(libraryId, out var gate)) await gate.Task;
                 if (TabGate != null) { if (TabGateIgnoresCancellation) await TabGate.Task; else await TabGate.Task.WaitAsync(ct); }
                 if (FailLibraryTab || FailedLibraryId == libraryId) return Reply(new { message = "tab unavailable" }, HttpStatusCode.ServiceUnavailable);
                 var cards = new List<object>();
                 if (libraryId == 1) cards.AddRange([TabCard("srv-1", "Criterion"), TabCard("srv-2", "A24"), TabCard("srv-4", "Studio Ghibli")]);
                 if (libraryId == 2) cards.Add(TabCard("srv-3", "Anime"));
+                if (libraryId == 2 && BothLibrariesTruncated) cards.Add(TabCard("srv-5", "Serial picks"));
                 foreach (var (id, described) in _described.Where(entry => entry.Value.LibraryId == libraryId))
                     cards.Add(new
                     {
@@ -1082,6 +1097,8 @@ internal static class CollectionsPresentationNativeFixture
             {
                 Interlocked.Increment(ref SnapshotReads);
                 var id = Uri.UnescapeDataString(path.Split('/').Last());
+                // A revision read must describe the same collection shown in the list.
+                // Returning an invented name correctly triggers the current ETag conflict guard.
                 var listed = Personal().FirstOrDefault(item => JsonSerializer.SerializeToElement(item).GetProperty("id").GetString() == id);
                 var snapshot = Reply(PersonalSnapshot ?? listed ?? new { id, creator_profile_id = "me", name = "Snapshot" });
                 snapshot.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"rev-1\"");

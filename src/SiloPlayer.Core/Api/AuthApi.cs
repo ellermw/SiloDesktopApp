@@ -222,26 +222,31 @@ public partial class AuthApi(SiloApiClient client)
     public Task DeviceCancelAsync(string baseUrl, string deviceCode, CancellationToken ct = default)
         => client.PostUnauthenticatedNoContentAsync(baseUrl, "/api/v2/auth/device/cancel", new { device_code = deviceCode }, ct);
 
-    // ===== Device Login (approver-side flow) =====
+    // ===== Device Login (originating device and manual approver) =====
     //
     // Used by the Activate Device page. Device A calls /device/start, displays a
     // short user_code (e.g. "ABCD-EFGH") to the user, then polls /device/poll until
     // an approver signs in on device B, calls /device (lookup) to review the pending
     // request, and confirms with /device/approve or /device/deny.
     //
-    // This client acts as the approver: lookup + approve/deny. DeviceStart/Poll are
-    // included for completeness so the same AuthApi covers the whole flow.
+    // Normal phone sign-in uses DeviceLoginSetup to keep a bound start and every
+    // poll together. These public overloads deliberately retain unbound behavior.
+
+    public Task<DeviceLoginCapability> GetDeviceLoginCapabilityAsync(string baseUrl, CancellationToken ct = default)
+        => DeviceBootstrapAsync(() => client.GetUnauthenticatedAsync<DeviceLoginCapability>(baseUrl, "/api/v2/auth/device/capability", ct), ct);
 
     public Task<DeviceLoginStartResponse> DeviceStartAsync(string? deviceName = null, string? devicePlatform = null, CancellationToken ct = default)
         => DeviceStartAsync(client.BaseUrl, deviceName, devicePlatform, ct);
 
     public Task<DeviceLoginStartResponse> DeviceStartAsync(string baseUrl, string? deviceName, string? devicePlatform, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<DeviceLoginStartResponse>(baseUrl, "/api/v2/auth/device/start",
-            new Dictionary<string, object?>
-            {
-                ["device_name"] = deviceName ?? "",
-                ["device_platform"] = devicePlatform ?? "",
-            }, ct);
+        => DeviceStartAsync(baseUrl, deviceName, devicePlatform, binding: null, ct);
+
+    internal Task<DeviceLoginStartResponse> DeviceStartAsync(string baseUrl, string? deviceName, string? devicePlatform, string? binding, CancellationToken ct)
+    {
+        var body = new Dictionary<string, object?> { ["device_name"] = deviceName ?? "", ["device_platform"] = devicePlatform ?? "" };
+        if (binding is not null) body["binding"] = binding;
+        return DeviceBootstrapAsync(() => client.PostDeviceBootstrapAsync<DeviceLoginStartResponse>(baseUrl, "/api/v2/auth/device/start", body, ct), ct);
+    }
 
     /// <summary>
     /// Look up a pending device login request. Exactly one of <paramref name="token"/>
@@ -261,8 +266,30 @@ public partial class AuthApi(SiloApiClient client)
         => DevicePollAsync(client.BaseUrl, deviceCode, ct);
 
     public Task<DeviceLoginPollResponse> DevicePollAsync(string baseUrl, string deviceCode, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<DeviceLoginPollResponse>(baseUrl, "/api/v2/auth/device/poll",
-            new Dictionary<string, object?> { ["device_code"] = deviceCode }, ct);
+        => DevicePollAsync(baseUrl, deviceCode, bindingSecret: null, ct);
+
+    internal Task<DeviceLoginPollResponse> DevicePollAsync(string baseUrl, string deviceCode, string? bindingSecret, CancellationToken ct)
+    {
+        var body = new Dictionary<string, object?> { ["device_code"] = deviceCode };
+        if (bindingSecret is not null) body["binding_secret"] = bindingSecret;
+        return DeviceBootstrapAsync(() => client.PostDeviceBootstrapAsync<DeviceLoginPollResponse>(baseUrl, "/api/v2/auth/device/poll", body, ct), ct);
+    }
+
+    // Problem details/validation fields (and even problem codes) can echo request
+    // values. Do not carry those values or an inner exception across this boundary.
+    private static async Task<T> DeviceBootstrapAsync<T>(Func<Task<T>> send, CancellationToken ct)
+    {
+        try { return await send(); }
+        catch (OperationCanceledException) { throw new OperationCanceledException("Device sign-in canceled.", ct); }
+        catch (ApiException ex)
+        {
+            var code = ex.ErrorCode is "device_binding_mismatch" or "validation_failed" or "not_found" or "rate_limited"
+                or "device_denied" or "device_expired" or "device_consumed" or "device_canceled" ? ex.ErrorCode : "device_login_failed";
+            throw new ApiException(code, "The server could not complete device sign-in.", ex.StatusCode, retryAfterSeconds: ex.RetryAfterSeconds);
+        }
+        catch (HttpRequestException) { throw new HttpRequestException("Could not reach the device sign-in server."); }
+        catch (Exception) { throw new InvalidOperationException("The server returned an invalid device sign-in response."); }
+    }
 
     public Task DeviceApproveAsync(string? token, string? code, CancellationToken ct = default)
         => client.PostNoContentAsync("/api/v2/auth/device/approve",

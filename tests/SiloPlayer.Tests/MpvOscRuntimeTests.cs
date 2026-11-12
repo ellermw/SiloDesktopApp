@@ -4,6 +4,114 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class MpvOscRuntimeTests
 {
+    [Fact]
+    public void NextEpisodeStaysAboveSeekTargetAndBothActionsRemainClickableAfterResize()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            osc_test_layout()
+            state.duration, state.time_pos, state.next_ep_available = 100, 90, true
+            osc_test_check_next()
+            assert(not state.next_ep_visible, 'Next Episode appeared before the end threshold')
+            local native = mp.get_property_native
+            local dimensions
+            mp.get_property_native = function(name, fallback)
+                if name == 'osd-dimensions' then return dimensions end
+                return native(name, fallback)
+            end
+            for _, size in ipairs({{1920,1080}, {960,550}, {640,360}, {3840,2160}, {1280,720}, {1920,1080}}) do
+                dimensions = {w=size[1], h=size[2]}
+                state.time_pos, state.next_ep_available = 96, true
+                osc_test_check_next()
+                osc_test_render_next()
+                local button, seek = state.next_ep_rect, state.layout.seek_bar
+                assert(button and state.next_ep_overlay.data:find('Next Episode', 1, true), 'Next Episode was not rendered')
+                assert(button.y + button.h + 8 <= seek.y, 'Next Episode overlaps the timeline seek target')
+                assert(button.x >= 0 and button.y >= 0 and button.x + button.w <= dimensions.w, 'Next Episode left the viewport')
+                state.mouse_x, state.mouse_y = button.x + button.w / 2, seek.y + 1
+                osc_test_mouse_down()
+                assert(state.dragging_seek and next_intents == 0, 'Timeline click advanced the episode instead of seeking')
+                state.dragging_seek = false
+                state.mouse_x, state.mouse_y = button.x + button.w / 2, button.y + button.h - 1
+                osc_test_mouse_down()
+                assert(next_intents == 1 and not state.dragging_seek, 'Next Episode bottom edge did not advance exactly once')
+                assert(not state.next_ep_available and not state.next_ep_visible, 'Next Episode did not retire after advancing')
+                next_intents = 0
+            end
+            mp.set_property('user-data/next-episode-placement', 'six layouts: seek and next clicks passed')
+            """, rawAss: true, resultProperty: "user-data/next-episode-placement", beforeScript: """
+            next_intents = 0
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-next-episode' then
+                    next_intents = next_intents + 1
+                    return
+                end
+                return command(...)
+            end
+            """);
+        Assert.Equal("six layouts: seek and next clicks passed", result);
+    }
+
+    [Fact]
+    public void NextEpisodeCountdownStaysAboveSeekTargetAndPlayNowRemainsClickableAfterResize()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled, state.current_alpha = false, 1
+            osc_test_layout()
+            state.duration, state.credits_start, state.credits_end = 100, 90, 99
+            state.next_ep_detail = {season_number=1, episode_number=2, title='Next'}
+            state.time_pos, state.next_ep_available = 80, true
+            osc_test_check_countdown()
+            assert(not state.next_ep_countdown_active, 'Countdown started before the credits region')
+            local native = mp.get_property_native
+            local dimensions
+            mp.get_property_native = function(name, fallback)
+                if name == 'osd-dimensions' then return dimensions end
+                return native(name, fallback)
+            end
+            for _, size in ipairs({{1920,1080}, {960,550}, {640,360}, {3840,2160}, {1280,720}, {1920,1080}}) do
+                dimensions = {w=size[1], h=size[2]}
+                state.time_pos, state.next_ep_available = 91, true
+                osc_test_check_countdown()
+                local play, cancel, seek = state.next_ep_countdown_actions[1], state.next_ep_countdown_actions[2], state.layout.seek_bar
+                assert(state.next_ep_countdown_active and play and cancel
+                    and state.next_ep_countdown_overlay.data:find('UP NEXT IN', 1, true), 'Countdown card was not rendered')
+                -- The card is 126 scaled pixels high, with 16 of padding under its buttons.
+                local sc = osc_test_scale()
+                local card_bottom = play.y + play.h + math.floor(16 * sc)
+                assert(card_bottom + 8 <= seek.y, 'Countdown card overlaps the timeline seek target')
+                assert(play.x >= 0 and card_bottom - math.floor(126 * sc) >= 0 and cancel.x + cancel.w <= dimensions.w, 'Countdown card left the viewport')
+                state.mouse_x, state.mouse_y = play.x + play.w / 2, seek.y + 1
+                osc_test_mouse_down()
+                assert(state.dragging_seek and next_intents == 0 and state.next_ep_countdown_active, 'Timeline click advanced or cancelled the episode instead of seeking')
+                state.dragging_seek = false
+                state.mouse_x, state.mouse_y = play.x + play.w / 2, play.y + play.h - 1
+                osc_test_mouse_down()
+                assert(next_intents == 1 and not state.dragging_seek, 'Play Now bottom edge did not advance exactly once')
+                assert(not state.next_ep_available and not state.next_ep_countdown_active
+                    and #state.next_ep_countdown_actions == 0, 'Countdown did not retire after advancing')
+                next_intents = 0
+            end
+            mp.set_property('user-data/next-episode-countdown-placement', 'six layouts: seek and play now clicks passed')
+            """, rawAss: true, resultProperty: "user-data/next-episode-countdown-placement", beforeScript: """
+            next_intents = 0
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-next-episode' then
+                    next_intents = next_intents + 1
+                    return
+                end
+                return command(...)
+            end
+            """);
+        Assert.Equal("six layouts: seek and play now clicks passed", result);
+    }
+
     // Match the application's P/Invoke library lifetime. Keep the module loaded
     // while still creating and destroying a fresh mpv context for every case.
     private static readonly Lazy<IntPtr> SharedLibrary = new(() =>
@@ -1412,6 +1520,139 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:0:1:1280:0:1:empty:0:1:nonempty", output);
     }
 
+    [Fact]
+    public void TransportReloadingShowsSpinnerWithoutBlackRectangleAndKeepsMenusAccessible()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            state.visible, state.current_alpha, state.target_alpha = true, 1, 1
+            state.duration, state.time_pos, state.volume = 120, 10, 50
+            mp.set_property_number('volume', 50)
+            state.pause = false
+            local results = {}
+
+            -- 1. Transport reloading: spinner but no black rect
+            handlers['osc-set-transport-reloading']('true')
+            assert(state.transport_reloading, 'transport_reloading not set')
+            assert(not state.playback_loading, 'playback_loading should be false during transport reload')
+            local wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            local has_spinner = wait_data:find('draw_circle', 1, true) ~= nil or #wait_data > 10
+            table.insert(results, 'spinner:' .. tostring(has_spinner))
+            -- Black rect uses draw_rect with full-screen 000000 fill; transport reloading should not have it
+            -- The rect is rendered as {\\p1\\bord0\\shad0\\1c&H000000& in ASS
+            local has_black_rect = wait_data:find('1c&H000000&', 1, true) ~= nil
+            table.insert(results, 'black_rect:' .. tostring(has_black_rect))
+
+            -- 2. Native menu should NOT be blocked during transport reload
+            state.native_audio_capable = true
+            state.native_audio_legacy = false
+            state.native_audio_scope = 'test_scope'
+            state.audio_tracks = {{}, {}}
+            state.native_menu_request = nil
+            state.native_menu_sequence = 0
+            state.post_roll_active = false
+            state.playback_failure_visible = false
+            osc_test_layout()
+            local menu_blocked_reload = state.playback_loading
+            table.insert(results, 'menu_blocked_reload:' .. tostring(menu_blocked_reload))
+
+            -- 3. Clear transport reloading
+            handlers['osc-set-transport-reloading']('false')
+            assert(not state.transport_reloading, 'transport_reloading not cleared')
+            wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            table.insert(results, 'cleared:' .. tostring(#wait_data == 0))
+
+            -- 4. Startup loading: HAS black rect and blocks menus
+            handlers['osc-set-loading']('true')
+            assert(state.playback_loading, 'playback_loading not set')
+            assert(not state.transport_reloading, 'transport_reloading should be cleared by loading')
+            wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            local loading_has_black = wait_data:find('1c&H000000&', 1, true) ~= nil
+            table.insert(results, 'loading_black:' .. tostring(loading_has_black))
+            local menu_blocked_loading = state.playback_loading
+            table.insert(results, 'menu_blocked_loading:' .. tostring(menu_blocked_loading))
+
+            -- 5. Mutual exclusion: transport reloading clears loading
+            handlers['osc-set-transport-reloading']('true')
+            assert(not state.playback_loading, 'loading should be cleared by transport reloading')
+            assert(state.transport_reloading, 'transport_reloading not set after mutual clear')
+            table.insert(results, 'mutual_excl:true')
+
+            handlers['osc-set-transport-reloading']('false')
+            handlers['osc-set-loading']('false')
+
+            mp.set_property('user-data/transport-reload-test', table.concat(results, ','))
+            """, beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """, resultProperty: "user-data/transport-reload-test");
+        Assert.Contains("spinner:true", output);
+        Assert.Contains("black_rect:false", output);
+        Assert.Contains("menu_blocked_reload:false", output);
+        Assert.Contains("cleared:true", output);
+        Assert.Contains("loading_black:true", output);
+        Assert.Contains("menu_blocked_loading:true", output);
+        Assert.Contains("mutual_excl:true", output);
+    }
+
+    [Fact]
+    public void TransportReloadingHidesThePauseBadgeAndTracksTheHostPauseIntent()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            local results = {}
+            local function badge()
+                return state.pause_indicator_overlay ~= nil and #state.pause_indicator_overlay.data > 0
+            end
+
+            -- 1. A pause outside a reload keeps its centre Play badge and mpv's own state
+            state.pause = true
+            handlers['osc-set-transport-reloading']('false')
+            table.insert(results, 'idle_badge:' .. tostring(badge()))
+            handlers['osc-set-transport-reload-pause']('false')
+            table.insert(results, 'idle_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 2. The load freeze pauses mpv: no badge under the spinner, host intent kept
+            handlers['osc-set-transport-reloading']('true')
+            table.insert(results, 'reload_badge:' .. tostring(badge()))
+            handlers['osc-set-transport-reload-pause']('false')
+            table.insert(results, 'reload_intent:' .. tostring(state.transport_reload_paused))
+            handlers['osc-set-transport-reload-pause']('true')
+            table.insert(results, 'reload_paused_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 3. First output retires the reload and its intent; the pause badge returns
+            handlers['osc-set-transport-reloading']('false')
+            table.insert(results, 'retired_badge:' .. tostring(badge()))
+            table.insert(results, 'retired_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 4. An opaque startup cover also retires the reload's intent
+            handlers['osc-set-transport-reloading']('true')
+            handlers['osc-set-transport-reload-pause']('true')
+            handlers['osc-set-loading']('true')
+            table.insert(results, 'cover_intent:' .. tostring(state.transport_reload_paused))
+
+            handlers['osc-set-loading']('false')
+            state.pause = false
+
+            mp.set_property('user-data/transport-reload-pause-test', table.concat(results, ','))
+            """, beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """, resultProperty: "user-data/transport-reload-pause-test");
+        Assert.Contains("idle_badge:true", output);
+        Assert.Contains("idle_intent:nil", output);
+        Assert.Contains("reload_badge:false", output);
+        Assert.Contains("reload_intent:false", output);
+        Assert.Contains("reload_paused_intent:true", output);
+        Assert.Contains("retired_badge:true", output);
+        Assert.Contains("retired_intent:nil", output);
+        Assert.Contains("cover_intent:nil", output);
+    }
+
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,
@@ -1455,7 +1696,7 @@ public sealed partial class MpvOscRuntimeTests
             {{beforeScript}}
             local source = assert(io.open([[{{script}}]], 'r'))
             local code = source:read('*a'); source:close()
-            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc'))()
+            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_check_next = check_next_episode_button; osc_test_render_next = render_next_episode_button; osc_test_check_countdown = check_next_episode_countdown; osc_test_scale = ui_scale; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc'))()
             mp.add_timeout(0.05, function()
                 local ok, err = pcall(function()
                     {{setup}}

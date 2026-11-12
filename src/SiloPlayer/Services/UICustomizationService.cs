@@ -61,6 +61,10 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
         => await RefreshAsync(settingsApi.CaptureContext(), Volatile.Read(ref _generation), cancellationToken).ConfigureAwait(false);
 
+    /// <summary>Refresh only while the importing profile's captured authority is still current.</summary>
+    public Task RefreshAsync(ApiRequestContext owner, CancellationToken cancellationToken = default)
+        => RefreshAsync(owner, Volatile.Read(ref _generation), cancellationToken);
+
     private async Task RefreshAsync(ApiRequestContext context, long generation, CancellationToken cancellationToken)
     {
         var identity = settingsApi.CaptureIdentityContext();

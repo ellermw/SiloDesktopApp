@@ -58,21 +58,36 @@ public partial class CollectionsViewModel : ObservableObject
     public bool IsServerLibraryLoading(int libraryId) => _loadingServerLibraries.Contains(libraryId);
     public string? ServerLibraryError(int libraryId) => _serverCollectionErrors.GetValueOrDefault(libraryId);
     public bool HasServerLibraryRest(int libraryId) => _serverRest.ContainsKey(libraryId);
+    public IReadOnlyDictionary<int, IReadOnlyCollection<string>> ServerLibraryRestIds
+        => _serverRest.ToDictionary(rest => rest.Key, rest => (IReadOnlyCollection<string>)rest.Value.Select(c => c.Id).ToArray());
+    public bool HasCurrentServerCollections => _requestClient == null || _displayContext == _requestClient.CaptureContext();
+    public bool IsLoadingServerLibraryRest => _loadingServerLibraries.Count > 0;
     public ServerCollectionsLibrary? NextServerLibrary => ServerLibraries.FirstOrDefault(l => l.TotalCount > l.Collections.Count && !_requestedServerLibraries.Contains(l.LibraryId));
     private void ServerCollectionsChanged() { ServerCollectionRevision++; OnPropertyChanged(nameof(ServerCollectionRevision)); }
-    public void CancelServerCollectionLoads()
+    // A refresh's re-reads of loaded rests are its own. The wall retiring one would leave that library's old cards
+    // with nothing left to read it again, so until the refresh ends only a newer load retires them.
+    public void CancelServerCollectionLoads() { if (!IsRefreshingServerCollections) RetireServerCollectionLoads(); }
+    private void RetireServerCollectionLoads()
     {
         _serverCollectionOwner.Cancel(); _serverCollectionOwner.Dispose(); _serverCollectionOwner = new();
+        foreach (var libraryId in _loadingServerLibraries)
+            if (!_serverRest.ContainsKey(libraryId)) _requestedServerLibraries.Remove(libraryId);
         _loadingServerLibraries.Clear();
     }
-    public async Task LoadServerLibraryAsync(int libraryId, CancellationToken ct = default)
+    public async Task LoadServerLibraryAsync(int libraryId, CancellationToken ct = default, Func<bool>? isCurrent = null)
     {
-        if (_requestClient != null && _displayContext != _requestClient.CaptureContext()) return;
-        if (_loadingServerLibraries.Contains(libraryId)) return;
+        // A refresh re-reads every loaded rest itself. A read admitted meanwhile would hold the gate below and drop one of them.
+        if (!IsRefreshingServerCollections) await ReadServerLibraryAsync(libraryId, ct, isCurrent);
+    }
+    private async Task ReadServerLibraryAsync(int libraryId, CancellationToken ct = default, Func<bool>? isCurrent = null)
+    {
+        if (!HasCurrentServerCollections || isCurrent?.Invoke() == false) return;
+        if (IsLoadingServerLibraryRest) return;
         var library = ServerLibraries.FirstOrDefault(l => l.LibraryId == libraryId);
         if (library == null || library.TotalCount <= library.Collections.Count) return;
         var owner = _serverCollectionOwner; var context = _requestClient?.CaptureContext(); var generation = _loadGeneration;
-        bool Current() => owner == _serverCollectionOwner && !owner.IsCancellationRequested && generation == _loadGeneration &&
+        var language = _catalogApi.LocalizedReadGeneration;
+        bool Current() => owner == _serverCollectionOwner && !owner.IsCancellationRequested && generation == _loadGeneration && isCurrent?.Invoke() != false &&
             (context == null || _requestClient!.IsCurrentContext(context.Value));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, ct);
         _requestedServerLibraries.Add(libraryId); _loadingServerLibraries.Add(libraryId); _serverCollectionErrors.Remove(libraryId); ServerCollectionsChanged();
@@ -88,7 +103,9 @@ public partial class CollectionsViewModel : ObservableObject
                         PosterThumbhash = c.PosterThumbhash, ItemCount = c.ItemCount, Featured = c.Featured }))
                 .Where(c => !first.Contains(c.Id)).DistinctBy(c => c.Id).ToList();
         }
-        catch (OperationCanceledException)
+        // Only this read's own cancellation or a metadata-language change leaves the library to be admitted again.
+        // Any other cancellation, such as a request timeout, is a failure: the library reports it below.
+        catch (OperationCanceledException) when (linked.IsCancellationRequested || language != _catalogApi.LocalizedReadGeneration)
         {
             if (Current() && !_serverRest.ContainsKey(libraryId)) _requestedServerLibraries.Remove(libraryId);
         }
@@ -98,7 +115,8 @@ public partial class CollectionsViewModel : ObservableObject
         }
         finally
         {
-            if (Current()) { _loadingServerLibraries.Remove(libraryId); ServerCollectionsChanged(); }
+            // A profile or access change retires the result, not the busy state; only a replaced owner has already cleared it.
+            if (owner == _serverCollectionOwner && _loadingServerLibraries.Remove(libraryId)) ServerCollectionsChanged();
         }
     }
 
@@ -113,6 +131,11 @@ public partial class CollectionsViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isLoadingServerCollections;
+
+    // Set for the whole server read and the re-reads of loaded rests that follow it. A refresh leaves
+    // IsLoadingServerCollections false, so this is what holds the wall's own library reads back.
+    [ObservableProperty]
+    private bool _isRefreshingServerCollections;
 
     [ObservableProperty]
     private bool _isEmpty;
@@ -161,7 +184,7 @@ public partial class CollectionsViewModel : ObservableObject
         var context = _requestClient?.CaptureContext();
         if (_loadInProgress && _loadContext == context) return;
         var generation = ++_loadGeneration;
-        CancelServerCollectionLoads();
+        RetireServerCollectionLoads();
         bool Current() => generation == _loadGeneration && (context == null || _requestClient!.IsCurrentContext(context.Value));
         if (_displayContext != context)
         {
@@ -179,6 +202,7 @@ public partial class CollectionsViewModel : ObservableObject
         // navigation makes the route look as though it was torn down.
         IsLoading = !PersonalLoaded;
         IsLoadingServerCollections = !ServerLoaded;
+        IsRefreshingServerCollections = true;
         ErrorMessage = null;
         ServerCollectionsErrorMessage = null;
         var referenceTask = LoadViewerReferencesAsync();
@@ -222,8 +246,10 @@ public partial class CollectionsViewModel : ObservableObject
                     ServerLoaded = true;
                     var requested = _requestedServerLibraries.ToArray();
                     foreach (var libraryId in _serverRest.Keys.Where(id => !ServerLibraries.Any(l => l.LibraryId == id)).ToArray()) _serverRest.Remove(libraryId);
-                    if (ServerLibraries.Count == 1) requested = requested.Append(ServerLibraries[0].LibraryId).Distinct().ToArray();
-                    foreach (var libraryId in requested) { if (!Current()) break; await LoadServerLibraryAsync(libraryId); }
+                    // A library whose total now fits its teaser has no rest: what an earlier read left for it is stale.
+                    foreach (var library in ServerLibraries.Where(l => l.TotalCount <= l.Collections.Count))
+                    { _serverRest.Remove(library.LibraryId); _requestedServerLibraries.Remove(library.LibraryId); _serverCollectionErrors.Remove(library.LibraryId); }
+                    foreach (var libraryId in requested) { if (!Current()) break; await ReadServerLibraryAsync(libraryId); }
                     if (Current()) ServerCollectionsChanged();
                 }
             }
@@ -236,6 +262,8 @@ public partial class CollectionsViewModel : ObservableObject
             finally
             {
                 if (Current()) IsLoadingServerCollections = false;
+                // The re-reads are over, or this read failed: the wall may admit a library's rest again.
+                if (generation == _loadGeneration) IsRefreshingServerCollections = false;
             }
         }
 

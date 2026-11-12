@@ -58,14 +58,50 @@ public sealed class CollectionEditorRecoveryBehaviorTests
         Assert.Equal("Local draft", vm.Name);
         Assert.Equal("7", vm.SourceItemCountText);
     }
+
+    [Fact]
+    public async Task SyncThatFinishesAsFailedShowsTheFailureAndKeepsTheRecordedTitles()
+    {
+        using var wire = new SyncWire { SyncBody = "{\"status\":\"failed\",\"message\":\"The MDBList list is private\",\"items_matched\":0,\"items_unmatched\":0,\"completed_at\":\"2026-10-09T21:00:00Z\"}" };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://collection-sync.invalid");
+        using var auth = new AuthService(client, new AuthApi(client));
+        auth.SelectProfile("mine", profile: new() { Id = "mine", IsPrimary = true });
+        var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth);
+        await vm.LoadExistingCommand.ExecuteAsync("fixture");
+        vm.Name = "Local draft";
+        // The server records the failed run and the members it kept; the editor reads them back.
+        wire.CollectionBody = "{\"id\":\"fixture\",\"name\":\"Saved\",\"creator_profile_id\":\"mine\",\"collection_type\":\"mdblist\",\"item_count\":5,\"last_sync_status\":\"failed\",\"last_sync_message\":\"The MDBList list is private\",\"last_sync_at\":\"2026-10-09T21:00:00Z\"}";
+        wire.HoldCollectionRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sync = vm.SyncNowCommand.ExecuteAsync(null);
+        await wire.CollectionReadHeld.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("Collection sync failed: The MDBList list is private", vm.ErrorMessage);
+        // The run matched nothing, but the collection's titles are still there.
+        Assert.Equal(2, vm.LoadedCollection!.ItemCount);
+        Assert.Equal("2", vm.SourceItemCountText);
+        wire.HoldCollectionRead.SetResult();
+        await sync;
+        Assert.Equal("Collection sync failed: The MDBList list is private", vm.ErrorMessage);
+        Assert.Equal(5, vm.LoadedCollection.ItemCount);
+        Assert.Equal("5", vm.SourceItemCountText);
+        Assert.Equal("failed", vm.LoadedCollection.LastSyncStatus);
+        Assert.Equal("failed · The MDBList list is private", vm.LastSyncSummary);
+        Assert.Equal("The MDBList list is private", vm.SourceLastNote);
+        Assert.Equal("Local draft", vm.Name);
+        Assert.False(vm.IsSyncing); Assert.False(vm.IsSaving);
+    }
     private sealed class SyncWire : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public string SyncBody = "{\"status\":\"success\",\"items_matched\":7,\"items_unmatched\":3,\"completed_at\":\"2026-10-09T20:00:00Z\"}";
+        public string CollectionBody = "{\"id\":\"fixture\",\"name\":\"Saved\",\"creator_profile_id\":\"mine\",\"collection_type\":\"mdblist\",\"item_count\":2}";
+        public TaskCompletionSource? HoldCollectionRead;
+        public TaskCompletionSource CollectionReadHeld { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
-            var json = path.EndsWith("/sync") ? "{\"status\":\"success\",\"items_matched\":7,\"items_unmatched\":3,\"completed_at\":\"2026-10-09T20:00:00Z\"}" :
-                path == "/api/v2/collections/fixture" ? "{\"id\":\"fixture\",\"name\":\"Saved\",\"creator_profile_id\":\"mine\",\"collection_type\":\"mdblist\",\"item_count\":2}" : "{\"items\":[]}";
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
+            if (path == "/api/v2/collections/fixture" && HoldCollectionRead is { } hold) { CollectionReadHeld.TrySetResult(); await hold.Task.WaitAsync(ct); }
+            var json = path.EndsWith("/sync") ? SyncBody : path == "/api/v2/collections/fixture" ? CollectionBody : "{\"items\":[]}";
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
         }
     }
     [Fact]

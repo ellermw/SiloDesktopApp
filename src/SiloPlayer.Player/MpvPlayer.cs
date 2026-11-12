@@ -673,6 +673,17 @@ public sealed partial class MpvPlayer : IDisposable
         return 0;
     }
 
+    /// <summary>Read a native string while holding the player lifetime lease.</summary>
+    public string? GetPropertyText(string name)
+    {
+        using var lease = EnterNative();
+        if (!lease.Active) return null;
+        var pointer = mpv_get_property_string(_mpvHandle, name);
+        if (pointer == IntPtr.Zero) return null;
+        try { return Marshal.PtrToStringUTF8(pointer); }
+        finally { mpv_free(pointer); }
+    }
+
     public bool GetPropertyFlag(string name) => TryGetPropertyFlag(name, out var value) && value;
 
     /// <summary>Distinguishes a false flag from an unavailable/retired native player.</summary>
