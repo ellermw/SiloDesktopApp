@@ -735,6 +735,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct24-hero")
             {
+                await HeroContentSizingNativeFixture.RunAsync(_window);
                 await Oct24UiNativeFixture.RunHeroAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }

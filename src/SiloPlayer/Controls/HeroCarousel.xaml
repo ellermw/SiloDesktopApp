@@ -12,10 +12,11 @@
     KeyDown="OnKeyDown"
     GotFocus="OnHeroGotFocus"
     LostFocus="OnHeroLostFocus"
+    SizeChanged="Hero_SizeChanged"
     Loaded="OnLoaded"
     Unloaded="OnUnloaded">
 
-    <!-- Home and library heights follow their separate WebUI viewport contracts. -->
+    <!-- Content measures naturally above the Home/Library viewport minimum. -->
     <Grid
         x:Name="RootGrid"
         PointerEntered="RootGrid_PointerEntered"
@@ -113,15 +114,6 @@
                  built-in shadow). Offset 1px down/right, pure black, 60%
                  opacity — enough to keep the title readable over bright
                  backdrops without looking like a drop shadow. -->
-            <!-- Eyebrow: "FEATURED — No. 01" -->
-            <TextBlock
-                x:Name="HeroEyebrow"
-                FontSize="11"
-                FontWeight="SemiBold"
-                CharacterSpacing="200"
-                Foreground="{StaticResource TertiaryTextBrush}"
-                Margin="0,0,0,16" />
-
             <Grid Margin="0,0,0,16">
                 <TextBlock
                     x:Name="HeroTitleShadow"
@@ -160,15 +152,16 @@
 
             <TextBlock x:Name="HeroTranslationLabel" Text="AI-translated overview" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" Visibility="Collapsed" Margin="0,0,0,8" />
             <Button x:Name="HeroTranslateButton" Content="Translate description" Style="{StaticResource SecondaryButtonStyle}" Click="HeroTranslateButton_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,12" />
-            <StackPanel Orientation="Horizontal" Spacing="12">
+            <controls:WrapPanel HorizontalSpacing="12" VerticalSpacing="12">
                 <!-- Primary CTA: Play (pill-primary) -->
                 <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="22.4,12.48" BorderThickness="0" UseLayoutRounding="False"
                         CornerRadius="22.56" FontSize="13.44" FontWeight="Bold"
                         Click="PlayButton_Click">
-                    <StackPanel Orientation="Horizontal" Spacing="8" UseLayoutRounding="False">
+                    <Grid ColumnSpacing="8" UseLayoutRounding="False">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <Grid x:Name="PlayButtonIcon" Width="16" Height="16" VerticalAlignment="Center" />
-                        <TextBlock x:Name="PlayButtonText" Text="Play" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center" UseLayoutRounding="False" />
-                    </StackPanel>
+                        <TextBlock Grid.Column="1" x:Name="PlayButtonText" Text="Play" TextWrapping="Wrap" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center" UseLayoutRounding="False" />
+                    </Grid>
                 </Button>
                 <!-- Secondary CTA: More Info (pill-glass) -->
                 <Button x:Name="MoreInfoButton" Padding="22.4,12.48" UseLayoutRounding="False"
@@ -176,12 +169,13 @@
                         Background="#1FFFFFFF" BorderThickness="1"
                         Click="MoreInfoButton_Click">
                     <Button.BorderBrush><SolidColorBrush Color="{StaticResource BorderColor}" Opacity="0.5" /></Button.BorderBrush>
-                    <StackPanel Orientation="Horizontal" Spacing="8" UseLayoutRounding="False">
+                    <Grid ColumnSpacing="8" UseLayoutRounding="False">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <Grid x:Name="MoreInfoIcon" Width="16" Height="16" VerticalAlignment="Center" />
-                        <TextBlock Text="More Info" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" Foreground="White" VerticalAlignment="Center" UseLayoutRounding="False" />
-                    </StackPanel>
+                        <TextBlock Grid.Column="1" Text="More Info" TextWrapping="Wrap" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" Foreground="White" VerticalAlignment="Center" UseLayoutRounding="False" />
+                    </Grid>
                 </Button>
-            </StackPanel>
+            </controls:WrapPanel>
         </StackPanel>
 
         <!-- Nav arrows — hover-reveal (web: lg:opacity-0 lg:group-hover:opacity-100).
@@ -245,6 +239,8 @@
                 x:Name="PauseCarouselButton"
                 Width="28"
                 Height="28"
+                MinWidth="28"
+                MinHeight="28"
                 Padding="0"
                 CornerRadius="14"
                 Background="Transparent"
