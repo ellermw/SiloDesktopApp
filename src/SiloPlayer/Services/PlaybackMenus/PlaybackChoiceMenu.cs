@@ -93,6 +93,15 @@ internal class PlaybackChoiceMenu
         }
         var styles = GetWindowLongPtrW(Hwnd, -20).ToInt64();
         SetWindowLongPtrW(Hwnd, -20, new IntPtr((styles | 0x80) & ~0x40000));
+        // The presenter can retain a classic frame even with its title bar and
+        // border disabled. Let the XAML outline be the popup's only border.
+        SetWindowLongPtrW(Hwnd, -16, new IntPtr(GetWindowLongPtrW(Hwnd, -16).ToInt64() & ~0x00C40000L));
+        SetWindowLongPtrW(Hwnd, -20, new IntPtr(GetWindowLongPtrW(Hwnd, -20).ToInt64() & ~0x00020301L));
+        SetWindowPos(Hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0237); // FRAMECHANGED, no move/resize/activation/z-order change.
+        var noBorder = unchecked((int)0xFFFFFFFE); // DWMWA_COLOR_NONE; XAML supplies the outline.
+        DwmSetWindowAttribute(Hwnd, 34, ref noBorder, sizeof(int));
+        var rounded = 2; // DWMWCP_ROUND
+        DwmSetWindowAttribute(Hwnd, 33, ref rounded, sizeof(int));
         try { _window.AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); } catch { /* Cosmetic only. */ }
         _root.Loaded += OnLoaded;
         _root.PreviewKeyDown += OnKeyDown;
@@ -238,6 +247,7 @@ internal class PlaybackChoiceMenu
     {
         if (_finished || !_isCurrent()) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
         _applyTypography?.Invoke(_root);
+        QueueLayout(placement: true);
         var selected = _choices.ToList().FindIndex(c => c.IsCurrent && (c.IsEnabled || _allowDisabledTraversal));
         if (selected < 0) selected = _choices.ToList().FindIndex(c => c.IsEnabled || _allowDisabledTraversal);
         selected = Math.Max(0, selected);
@@ -264,7 +274,7 @@ internal class PlaybackChoiceMenu
         else { Position(); QueueLayout(); }
     }
 
-    private void OnListSizeChanged(object sender, SizeChangedEventArgs args) => QueueLayout();
+    private void OnListSizeChanged(object sender, SizeChangedEventArgs args) => QueueLayout(placement: true);
     private void OnFooterSizeChanged(object sender, SizeChangedEventArgs args) => QueueLayout(placement: true);
     private void OnListPointerWheel(object sender, PointerRoutedEventArgs args) => _keepSelectionVisible = false;
 
@@ -278,6 +288,9 @@ internal class PlaybackChoiceMenu
         {
             _layoutQueued = false;
             if (_finished || !_isCurrent()) return;
+            // The owner can retire between queueing and this callback, before
+            // the owner watch ticks. Position() requires a live surface.
+            if (_owner.Hwnd == IntPtr.Zero || !IsWindowVisible(_owner.Hwnd)) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
             var reposition = _placementPending; _placementPending = false;
             if (reposition) Position();
             if (_keepSelectionVisible && _footerIndex < 0) ScrollSelectionIntoView();
@@ -307,13 +320,23 @@ internal class PlaybackChoiceMenu
         // A deliberately offscreen owner stays offscreen; never expose or
         // activate it merely because the nearest display has a work area.
         if (intersection.Right > intersection.Left && intersection.Bottom > intersection.Top) bounds = intersection;
-        var width = Math.Min(bounds.Right - bounds.Left, (int)Math.Ceiling(350 * scale));
-        var height = Math.Min(bounds.Bottom - bounds.Top, (int)Math.Ceiling(Math.Min(_footer == null ? 460d : 620d, 52d + _choices.Count * 102d + (_footer?.DesiredSize.Height ?? 0)) * scale));
+        var width = Math.Max(1, Math.Min(bounds.Right - bounds.Left, (int)Math.Ceiling(350 * scale)));
+        // Measure the real wrapped rows, typography and visible footer. A fixed
+        // allowance per choice made short menus mostly empty and let a collapsed
+        // error footer give Quality the taller Subtitle menu cap. Measure at the
+        // tallest size the popup may take, never unbounded: an infinite viewport
+        // on the live list can discard the scroll offset a refresh must keep.
+        var cap = Math.Min(_footer?.Visibility == Visibility.Visible ? 620d : 460d, Math.Max(1, bounds.Bottom - bounds.Top) / scale);
+        _root.Measure(new Windows.Foundation.Size(width / scale, cap));
+        var height = Math.Max(1, Math.Min(bounds.Bottom - bounds.Top,
+            (int)Math.Ceiling(Math.Min(cap, _root.DesiredSize.Height) * scale)));
         var right = video.Left + (int)(_anchor.Right * (video.Right - video.Left));
         var top = video.Top + (int)(_anchor.Top * (video.Bottom - video.Top)) - height - (int)(8 * scale);
         var left = Math.Clamp(right - width, bounds.Left, Math.Max(bounds.Left, bounds.Right - width));
         top = Math.Clamp(top, bounds.Top, Math.Max(bounds.Top, bounds.Bottom - height));
-        _window.AppWindow.MoveAndResize(new RectInt32(left, top, Math.Max(1, width), Math.Max(1, height)));
+        var position = _window.AppWindow.Position; var size = _window.AppWindow.Size;
+        if (position.X != left || position.Y != top || size.Width != width || size.Height != height)
+            _window.AppWindow.MoveAndResize(new RectInt32(left, top, width, height));
     }
 
     private void OnItemClick(object sender, ItemClickEventArgs args)
@@ -508,4 +531,6 @@ internal class PlaybackChoiceMenu
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
     [DllImport("user32.dll")] private static extern IntPtr GetWindowLongPtrW(IntPtr hwnd, int index);
     [DllImport("user32.dll")] private static extern IntPtr SetWindowLongPtrW(IntPtr hwnd, int index, IntPtr value);
+    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 }
