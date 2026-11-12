@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Services;
@@ -85,6 +86,7 @@ public static class AppLocalization
         private long _appliedGeneration = -1;
         private bool _subscribed;
         private bool _disposed;
+        private bool _dialogOpen;
 
         public Registration(FrameworkElement element, Action refresh, LocaleService locales)
         {
@@ -94,12 +96,36 @@ public static class AppLocalization
             _dispatcher = element.DispatcherQueue;
             element.Loaded += OnLoaded;
             element.Unloaded += OnUnloaded;
+            // ContentDialog renders its template in a popup; the dialog object itself
+            // need not raise Loaded. Its public open/close lifetime is authoritative.
+            if (element is ContentDialog dialog)
+            {
+                dialog.Opened += OnDialogOpened;
+                dialog.Closed += OnDialogClosed;
+            }
             if (element.IsLoaded) Attach();
         }
 
         private void OnLoaded(object sender, RoutedEventArgs args) => Attach();
+        private void OnDialogOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
+        {
+            _dialogOpen = true;
+            Attach();
+        }
+        private void OnDialogClosed(ContentDialog sender, ContentDialogClosedEventArgs args)
+        {
+            _dialogOpen = false;
+            Detach();
+        }
 
         private void OnUnloaded(object sender, RoutedEventArgs args)
+        {
+            // Dialog template relocation can raise Unloaded after Opened.
+            // Remain subscribed for the public open lifetime.
+            if (!_dialogOpen) Detach();
+        }
+
+        private void Detach()
         {
             if (!_subscribed) return;
             _locales.Changed -= OnChanged;
@@ -142,6 +168,11 @@ public static class AppLocalization
             {
                 element.Loaded -= OnLoaded;
                 element.Unloaded -= OnUnloaded;
+                if (element is ContentDialog dialog)
+                {
+                    dialog.Opened -= OnDialogOpened;
+                    dialog.Closed -= OnDialogClosed;
+                }
             }
         }
     }
