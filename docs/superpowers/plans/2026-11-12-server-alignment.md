@@ -54,9 +54,9 @@
 
 **Interfaces:** Preserve public hero properties/events/navigation; sizing becomes a content-dependent minimum with current viewport/library clearance semantics.
 
-- [ ] Extend actual-control fixture with long multiline titles and narrow/short/large-text cases that currently clip, including actions/counter bounds.
-- [ ] Run red, then change measurement and remove only obsolete eyebrow/margin.
-- [ ] Verify Home and Library minima, resizing/data changes, no layout loop, carousel/counter/input reachability, static Featured backdrop and unchanged collection hero. Publish/native checks, self-review and commit.
+- [x] Extend actual-control fixture with long multiline titles and narrow/short/large-text cases that currently clip, including actions/counter bounds.
+- [x] Run red, then change measurement and remove only obsolete eyebrow/margin.
+- [x] Verify Home and Library minima, resizing/data changes, no layout loop, carousel/counter/input reachability, static Featured backdrop and unchanged collection hero. Publish/native checks, self-review and commit. Independent review approved; integrated as `a72ca983` (worker `d7369cee`).
 
 ### Task 4: Localization foundation, server titles and problems
 
