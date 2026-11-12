@@ -151,6 +151,7 @@ public class ViewerActionsParityTests
 
     [Theory]
     [InlineData("in_progress", "continue_watching")]
+    [InlineData("continue_watching", "continue_watching")]
     [InlineData("next_up", "next_up")]
     [InlineData("recently_added", null)]
     [InlineData("", null)]
@@ -163,6 +164,8 @@ public class ViewerActionsParityTests
     {
         Assert.Equal("continue_watching", HomeDismissalPolicy.SectionCardItemSource("section", "in_progress"));
         Assert.Equal("next_up", HomeDismissalPolicy.SectionCardItemSource("section", "next_up"));
+        // The row-type spelling maps to itself, so a card normalized once keeps its surface.
+        Assert.Equal("continue_watching", HomeDismissalPolicy.SectionCardItemSource("section", "continue_watching"));
         Assert.Equal("section", HomeDismissalPolicy.SectionCardItemSource("section", null));
         Assert.Equal("section", HomeDismissalPolicy.SectionCardItemSource("section", "something_else"));
     }
@@ -359,6 +362,20 @@ public class ViewerActionsParityTests
         var catalog = Source("SiloPlayer", "Views", "CatalogPage.xaml.cs");
         Assert.Contains("HomeDismissalPolicy.SectionCardItemSource(_source, item.ItemSource)", catalog);
         Assert.Contains("MediaSurfaceChangeKind.HomeDismissed", catalog);
+        Assert.Contains("IRecipient<HomeDismissalApplied>", catalog);
+        Assert.Contains("UndoDismissalAsync", catalog);
+        Assert.Contains("AutoHideUndoBannerAsync", catalog);
+        Assert.Contains("ClearUndoState", catalog);
+        // An Undo accepted on the dedicated page tells Home, whose rows the dismissal emptied.
+        Assert.Contains("WeakReferenceMessenger.Default.Send(new HomeDismissalUndone(surface, itemId, owner))", catalog);
+        var home = Source("SiloPlayer", "ViewModels", "HomeViewModel.cs");
+        Assert.Contains("IRecipient<HomeDismissalUndone>", home);
+        Assert.Contains("WeakReferenceMessenger.Default.Register<HomeDismissalUndone>(this)", home);
+        Assert.Contains("_progressRemovals.Remove(message.ItemId)", home);
+        Assert.Contains("QueueRealtimeRefresh(\"home_dismissal_undo\", message.Context)", home);
+        var catalogXaml = Source("SiloPlayer", "Views", "CatalogPage.xaml");
+        Assert.Contains("x:Name=\"UndoBanner\"", catalogXaml);
+        Assert.Contains("x:Name=\"UndoButton\"", catalogXaml);
         Assert.Contains("LibraryTypeIcons.IconName(type)", Source("SiloPlayer", "MainWindow.xaml.cs"));
         Assert.Contains("UpcomingBadgePresentation.Label(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
         Assert.Contains("UpcomingBadgePresentation.FixedPalette(badge)", Source("SiloPlayer", "Views", "CalendarPage.xaml.cs"));
@@ -366,6 +383,7 @@ public class ViewerActionsParityTests
         // Both editors gate previews and creation, while allowing existing metadata edits.
         var editor = Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(RuleDefinition)", editor);
+        Assert.Contains("SyncSkippedTitles = null", editor);
         Assert.Contains("if (SmartNeedsRule) { ClearPreview(); return; }", Source("SiloPlayer", "ViewModels", "CollectionEditorViewModel.Preview.cs"));
         var wizard = Source("SiloPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
         Assert.Contains("QueryEditing.HasCompleteRule(_previewQuery)", wizard);
@@ -377,6 +395,19 @@ public class ViewerActionsParityTests
         var recipes = Source("SiloPlayer", "Views", "Dialogs", "RecipeGalleryDialog.cs");
         Assert.Contains("case \"trending_discover\":", recipes);
         Assert.Contains("SetOptional(config, \"filter_type\", value)", recipes);
+    }
+
+    // ----- G11: failed sync clears the skipped-title count -----
+
+    [Fact]
+    public void FailedSyncClearCodeMatchesWebUiErrorCallback()
+    {
+        var root = RepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs"));
+        var catchIndex = source.IndexOf("Sync failed: {ex.Message}", StringComparison.Ordinal);
+        Assert.True(catchIndex > 0, "the catch block with the error message exists");
+        var clearIndex = source.IndexOf("SyncSkippedTitles = null", catchIndex - 200, StringComparison.Ordinal);
+        Assert.True(clearIndex > 0 && clearIndex < catchIndex, "SyncSkippedTitles is cleared before the error message in the catch block");
     }
 
     private static string RepositoryRoot()
