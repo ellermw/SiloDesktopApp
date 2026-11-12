@@ -273,11 +273,14 @@ public sealed class SiloCastHandoffTests
             if (path == "/api/v2/auth/device/start")
             {
                 StartBody = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken))!.AsObject();
+                Assert.False(StartBody.ContainsKey("binding"));
                 DeviceId = request.Headers.GetValues("X-Silo-Device-Id").Single();
                 return Json(Start, StartStatus);
             }
             if (path == "/api/v2/auth/device/poll")
             {
+                var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken))!.AsObject();
+                Assert.False(body.ContainsKey("binding_secret"));
                 PollDeviceId = request.Headers.TryGetValues("X-Silo-Device-Id", out var values) ? values.Single() : null;
                 if (PollFailuresRemaining-- > 0) return Json("{}", HttpStatusCode.ServiceUnavailable);
                 OnPoll?.Invoke(); return Json(PollResponse);

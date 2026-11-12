@@ -13,9 +13,36 @@ public sealed partial class ItemDetailPage
 {
     private string? _mediaActionCapabilitiesId;
     private bool _offerSeekPreviews, _offerMarkerDetection, _honorMarkerSettings;
+    private TitleAllowanceSession? _titleAllowanceOwner;
+    private string? _titleAllowanceItem;
+    private List<SiloPlayer.Core.Models.Auth.TitleAllowanceProfile> _titleAllowanceProfiles = [];
+    private bool _titleAllowanceReadFailed;
+
+    private async Task LoadTitleAllowanceActionsAsync(MediaItemDetail item, CancellationToken ct)
+    {
+        if (item.Type is not ("movie" or "series")) return;
+        var navigation = _navigationCts; var library = ViewModel.LibraryId;
+        var owner = AllowanceDialogOwner.Capture(() => ReferenceEquals(_navigationCts, navigation)
+            && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == library, ct);
+        _titleAllowanceOwner = owner; _titleAllowanceItem = item.ContentId;
+        _titleAllowanceProfiles = []; _titleAllowanceReadFailed = false;
+        // Retire an already-built action immediately, including failed/unsupported successor probes.
+        BuildMoreFlyout();
+        try
+        {
+            if (!await owner.LoadAsync()) return;
+            var result = await owner.RunAsync((api, context, token) => api.GetTitleProfilesAsync(context, item.ContentId, token));
+            if (!owner.IsCurrent || !ReferenceEquals(owner, _titleAllowanceOwner)) return;
+            _titleAllowanceProfiles = result.Items;
+        }
+        catch (OperationCanceledException) { return; }
+        catch { if (owner.IsCurrent && ReferenceEquals(owner, _titleAllowanceOwner)) _titleAllowanceReadFailed = true; }
+        if (owner.IsCurrent && ReferenceEquals(owner, _titleAllowanceOwner)) BuildMoreFlyout();
+    }
 
     private async Task LoadMediaActionCapabilitiesAsync(MediaItemDetail item, CancellationToken ct)
     {
+        _ = LoadTitleAllowanceActionsAsync(item, ct);
         var auth = App.Services.GetRequiredService<AuthService>();
         if (item.Type is not ("movie" or "series" or "episode") || !AuthorizationPolicy.IsActingAdmin(auth)) return;
         var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
@@ -65,6 +92,21 @@ public sealed partial class ItemDetailPage
             };
             actions.Add(action);
         }
+        if (_titleAllowanceItem == item.ContentId && _titleAllowanceOwner is { IsCurrent: true } allowanceOwner
+            && item.Type is "movie" or "series")
+        {
+            if (_titleAllowanceReadFailed)
+                Add("Retry title allowances", "refresh-cw", () => LoadTitleAllowanceActionsAsync(item, _navigationCts?.Token ?? default), _ => allowanceOwner.IsCurrent && ReferenceEquals(_titleAllowanceOwner, allowanceOwner));
+            else if (allowanceOwner.Available && TitleAllowanceSession.HasAllowableProfile(_titleAllowanceProfiles))
+            {
+                var names = _titleAllowanceProfiles.Where(profile => profile.State is "allowed" or "allowed_by_collection").Select(profile => profile.Name).ToArray();
+                Add(names.Length == 0 ? "Allow for…" : "Allowed for " + string.Join(", ", names), "users", async () =>
+                {
+                    await new AllowTitleDialog(allowanceOwner, item.ContentId, item.Title) { XamlRoot = XamlRoot }.ShowAsync();
+                    if (allowanceOwner.IsCurrent) await LoadTitleAllowanceActionsAsync(item, _navigationCts?.Token ?? default);
+                }, _ => allowanceOwner.IsCurrent && ReferenceEquals(_titleAllowanceOwner, allowanceOwner));
+            }
+        }
         if (admin) Add("View Play History", "history", async () => await new PlayHistoryDialog(item.ContentId) { XamlRoot = XamlRoot }.ShowAsync(), AuthorizationPolicy.IsActingAdmin);
         if (item.Type is "movie" or "episode" && AuthorizationPolicy.CanEditMarkers(auth))
             Add("Edit Markers", "tags", () => ShowItemActionAsync(item, new MarkerEditorDialog(item.ContentId)), AuthorizationPolicy.CanEditMarkers);
@@ -92,11 +134,12 @@ public sealed partial class ItemDetailPage
             "Add to Watchlist" or "Remove from Watchlist" => 20,
             "Add to Collection" => 21, "Download" => 22, "Request Seasons" => 23,
             "Not Interested" or "Show in Recommendations" => 24,
+            "Allow for…" or "Retry title allowances" => 25,
             "Start a Watch Party" => 30, "Stage this in live room" or "Suggest this to live room" => 31, "Go to live room" => 32,
             "Edit Metadata" => 100, "Match Item" => 101, "Refresh Metadata" => 102,
             "Edit Markers" => 110, "Re-detect Markers" or "Re-detect Credits" or "Re-detect Intro Markers" => 111,
             "Seek Previews" => 112, "Split Versions" => 113,
-            "Media Info" => 120, "View Play History" => 121, _ => 0,
+            "Media Info" => 120, "View Play History" => 121, _ when (entry as MenuFlyoutItem)?.Text.StartsWith("Allowed for ") == true => 25, _ => 0,
         };
         var ordered = actions.OrderBy(Rank).ToList();
         var management = ordered.Where(entry => Rank(entry) >= 100).ToList();

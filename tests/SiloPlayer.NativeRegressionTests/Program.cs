@@ -510,6 +510,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ProfilesMetadataNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "title-allowances" or "title-allowances-header")
+            {
+                await TitleAllowancesNativeFixture.RunAsync(parent);
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "title-allowances")
+                {
+                    await ProfilesMetadataNativeFixture.RunAsync(parent);
+                    await MediaMoreActionsNativeFixture.RunAsync(parent);
+                }
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "current-caption-metadata")
             {
                 await CurrentCaptionMetadataNativeFixture.RunAsync(parent);
@@ -1048,6 +1058,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-latest")
             {
+                if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE") == "device-binding")
+                {
+                    await DeviceBindingNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE") == "network-login")
                 {
                     await NetworkAuthNativeFixture.RunAsync(parent);
