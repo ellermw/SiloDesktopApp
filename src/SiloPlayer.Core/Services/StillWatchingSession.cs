@@ -106,6 +106,29 @@ public sealed class StillWatchingSession
                 !string.Equals(_advancedSourceContentId, sourceContentId, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Withdraws a claim on <paramref name="sourceContentId"/> whose start never
+    /// happened (the pick failed, was cancelled or was superseded): the attempt
+    /// no longer counts, the title's other boundary may still advance, and no
+    /// announcement is left for a later viewer start. A claim already used up by
+    /// <see cref="ConsumeStart"/> is left alone.
+    /// </summary>
+    public void CancelAutomaticAdvance(string sourceContentId)
+    {
+        bool changed;
+        lock (_gate)
+        {
+            if (_advancedSourceContentId == null ||
+                !string.Equals(_advancedSourceContentId, sourceContentId, StringComparison.Ordinal)) return;
+            _advancedSourceContentId = null;
+            _expectedAutomaticContentId = null;
+            // A viewer interaction since the claim has already cleared the count.
+            changed = _automaticStarts != 0;
+            if (changed) _automaticStarts--;
+        }
+        if (changed) Changed?.Invoke();
+    }
+
     /// <summary>Announces that the next start of this title is not the viewer's.</summary>
     public void ExpectAutomaticStart(string contentId)
     {
@@ -153,7 +176,22 @@ public static class PlaybackEndTime
     {
         if (string.Equals(preference, "12h", StringComparison.OrdinalIgnoreCase)) return "12h";
         if (string.Equals(preference, "24h", StringComparison.OrdinalIgnoreCase)) return "24h";
-        var pattern = culture.DateTimeFormat.ShortTimePattern;
-        return pattern.Contains('h', StringComparison.Ordinal) ? "12h" : "24h";
+        return HasTwelveHourSpecifier(culture.DateTimeFormat.ShortTimePattern) ? "12h" : "24h";
+    }
+
+    // Only an unquoted, unescaped "h" is the 12-hour specifier: fr-CA's 24-hour
+    // "HH 'h' mm" carries a literal one.
+    private static bool HasTwelveHourSpecifier(string pattern)
+    {
+        var quote = '\0';
+        for (var i = 0; i < pattern.Length; i++)
+        {
+            var c = pattern[i];
+            if (quote != '\0') { if (c == quote) quote = '\0'; }
+            else if (c is '\'' or '"') quote = c;
+            else if (c == '\\') i++;
+            else if (c == 'h') return true;
+        }
+        return false;
     }
 }

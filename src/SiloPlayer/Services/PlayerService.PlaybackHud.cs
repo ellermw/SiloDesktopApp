@@ -35,6 +35,8 @@ public partial class PlayerService
     private readonly object _loadingCoverGate = new();
     private LoadingCoverOwner? _loadingCover;
     private long _loadingCoverGeneration;
+    // Each step rewrites a full-frame bitmap of up to 8MB while the stream is starting.
+    private const int LoadingCoverFadeSteps = 5;
 
     /// <summary>The client-local threshold; never read from or written to the server.</summary>
     public int StillWatchingThresholdSetting
@@ -222,20 +224,39 @@ public partial class PlayerService
                 if (!Current()) return;
                 if (owner.Files.Count == 0) for (var i = 0; i < 2; i++) owner.Files.Add(Path.Combine(directory, $"{Guid.NewGuid():N}-{i}.bgra"));
             }
-            // A single scratch buffer during the 500ms transition. Only two raw
-            // files are reused; neither frame arrays nor files accumulate per tick.
+            // The picture fades in once, from the frame already shown at this size
+            // (or from nothing). A resize, and any recompose after the fade, writes
+            // the one final frame instead of dropping the cover and fading again.
             var previous = owner.ComposedWidth == targetWidth && owner.ComposedHeight == targetHeight ? owner.Composed : null;
-            previous ??= new byte[composed.Length];
-            var scratch = fade ? new byte[composed.Length] : composed;
-            var started = System.Diagnostics.Stopwatch.GetTimestamp();
-            var progress = fade ? 0d : 1d;
-            do
+            if (previous == null && owner.PublishedFrames > 0) fade = false;
+            // A few full-frame writes over the 500ms transition, blended into a
+            // single scratch buffer. Only two raw files are reused; neither frame
+            // arrays nor files accumulate per step.
+            byte[]? scratch = null;
+            if (fade)
             {
+                previous ??= new byte[composed.Length];
+                scratch = new byte[composed.Length];
+            }
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (var step = fade ? 1 : LoadingCoverFadeSteps; step <= LoadingCoverFadeSteps; step++)
+            {
+                if (fade)
+                {
+                    // The frame on screen is step zero; each later step keeps its place in the 500ms.
+                    var wait = TimeSpan.FromMilliseconds(500d * step / LoadingCoverFadeSteps) - System.Diagnostics.Stopwatch.GetElapsedTime(started);
+                    if (wait > TimeSpan.Zero) await Task.Delay(wait, token).ConfigureAwait(false);
+                }
                 if (!Current()) return;
-                if (fade) LoadingCoverBitmap.BlendFrame(previous, composed, scratch, progress);
+                var frame = composed;
+                if (step < LoadingCoverFadeSteps)
+                {
+                    LoadingCoverBitmap.BlendFrame(previous!, composed, scratch!, step / (double)LoadingCoverFadeSteps);
+                    frame = scratch!;
+                }
                 var serial = ++owner.PublishedFrames;
                 var path = owner.Files[serial % 2];
-                await File.WriteAllBytesAsync(path, scratch, token).ConfigureAwait(false);
+                await File.WriteAllBytesAsync(path, frame, token).ConfigureAwait(false);
                 lock (_loadingCoverGate)
                 {
                     if (!Current() || _mpv == null) return;
@@ -243,13 +264,15 @@ public partial class PlayerService
                         targetWidth.ToString(CultureInfo.InvariantCulture), targetHeight.ToString(CultureInfo.InvariantCulture), (targetWidth * 4).ToString(CultureInfo.InvariantCulture),
                         frameWidth.ToString(CultureInfo.InvariantCulture), frameHeight.ToString(CultureInfo.InvariantCulture), serial.ToString(CultureInfo.InvariantCulture));
                 }
-                if (progress >= 1) break;
-                await Task.Delay(33, token).ConfigureAwait(false);
-                progress = Math.Min(1, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds / 500);
-            } while (true);
+            }
             lock (_loadingCoverGate)
             {
-                if (Current()) { owner.Composed = composed; owner.ComposedWidth = targetWidth; owner.ComposedHeight = targetHeight; }
+                if (Current())
+                {
+                    owner.Composed = composed; owner.ComposedWidth = targetWidth; owner.ComposedHeight = targetHeight;
+                    // This picture is in; only a newer one fades again.
+                    if (ReferenceEquals(owner.Pixels, source)) owner.FadeImage = false;
+                }
             }
         }
         finally { owner.ComposeGate.Release(); }

@@ -142,6 +142,56 @@ public sealed class StillWatchingSessionTests
     }
 
     [Fact]
+    public void AdvanceThatNeverStartsIsWithdrawnWithoutCountingOrBlockingTheTitle()
+    {
+        var session = new StillWatchingSession();
+        Advance(session, "a", "b", 3);
+        // Credits claim the advance, then the server pick fails.
+        Assert.True(session.TryBeginAutomaticAdvance("b", null, 3, watchParty: false));
+        Assert.Equal(2, session.AutomaticStarts);
+        session.CancelAutomaticAdvance("b");
+        Assert.Equal(1, session.AutomaticStarts);
+        // The ended countdown of the same title may still advance, once.
+        Assert.True(session.CanBeginAutomaticAdvance("b", 3, watchParty: false));
+        Assert.True(session.TryBeginAutomaticAdvance("b", "c", 3, watchParty: false));
+        Assert.True(session.ConsumeStart("c"));
+        Assert.Equal(2, session.AutomaticStarts);
+    }
+
+    [Fact]
+    public void WithdrawnAdvanceLeavesNoAnnouncementForALaterViewerStart()
+    {
+        var session = new StillWatchingSession();
+        Advance(session, "a", "b", 3);
+        Assert.True(session.TryBeginAutomaticAdvance("b", "c", 3, watchParty: false));
+        session.CancelAutomaticAdvance("b");
+        // The viewer opening that title later is the viewer's choice.
+        Assert.False(session.ConsumeStart("c"));
+        Assert.Equal(0, session.AutomaticStarts);
+    }
+
+    [Fact]
+    public void WithdrawingAStartedOrUnrelatedAdvanceChangesNothing()
+    {
+        var session = new StillWatchingSession();
+        var changes = 0;
+        Advance(session, "a", "b", 3);
+        session.Changed += () => changes++;
+        // The start already used the claim up.
+        session.CancelAutomaticAdvance("a");
+        Assert.True(session.TryBeginAutomaticAdvance("b", "c", 3, watchParty: false));
+        session.CancelAutomaticAdvance("other");
+        Assert.Equal(2, session.AutomaticStarts);
+        Assert.Equal(1, changes);
+        Assert.True(session.ConsumeStart("c"));
+        // A viewer interaction after the claim already cleared the count.
+        Assert.True(session.TryBeginAutomaticAdvance("c", null, 3, watchParty: false));
+        session.RecordViewerInteraction();
+        session.CancelAutomaticAdvance("c");
+        Assert.Equal(0, session.AutomaticStarts);
+    }
+
+    [Fact]
     public void ContinuationOfTheSameTitleKeepsTheStreak()
     {
         var session = new StillWatchingSession();
@@ -180,10 +230,26 @@ public sealed class PlaybackEndTimeClockTests
     [InlineData("24h", "en-US", "24h")]
     [InlineData("auto", "en-US", "12h")]
     [InlineData("auto", "de-DE", "24h")]
+    [InlineData("auto", "fr-CA", "24h")]
     [InlineData(null, "en-GB", "24h")]
     [InlineData("unknown", "ja-JP", "24h")]
     public void ClockFollowsProfilePreferenceThenDisplayCulture(string? preference, string culture, string expected)
         => Assert.Equal(expected, PlaybackEndTime.ResolveClock(preference, CultureInfo.GetCultureInfo(culture)));
+
+    // Culture data differs between platforms, so the literal forms are pinned here.
+    [Theory]
+    [InlineData("HH 'h' mm", "24h")]
+    [InlineData("HH \"h\" mm", "24h")]
+    [InlineData("H\\hmm", "24h")]
+    [InlineData("HH:mm", "24h")]
+    [InlineData("h:mm tt", "12h")]
+    [InlineData("tt h 'h' mm", "12h")]
+    public void QuotedOrEscapedHourLetterIsNotTheTwelveHourSpecifier(string pattern, string expected)
+    {
+        var culture = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        culture.DateTimeFormat.ShortTimePattern = pattern;
+        Assert.Equal(expected, PlaybackEndTime.ResolveClock("auto", culture));
+    }
 
     [Fact]
     public void EnglishFallbackTemplateNamesTheTimeArgument()
