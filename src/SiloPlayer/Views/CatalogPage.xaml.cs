@@ -66,6 +66,7 @@ public sealed partial class CatalogPage : Page,
     private string? _undoSurface;
     private string? _undoItemId;
     private ApiRequestContext? _undoContext;
+    private ApiIdentityContext? _undoIdentity;
     private List<(int Index, MediaItem Item)>? _undoRemovedItems;
     private int _undoRemovedCount;
     private int _undoGeneration;
@@ -335,6 +336,8 @@ public sealed partial class CatalogPage : Page,
     private void RemoveDismissedSectionCards(MediaSurfaceChanged message, HomeDismissalApplied? undo = null)
     {
         if (_source != "section" || _navigationCts?.IsCancellationRequested != false) return;
+        // Read before the context check, so it is the identity that current context belongs to.
+        var identity = _api.CaptureIdentityContext();
         if (message.Context is { } context && !_api.IsCurrentContext(context)) return;
         var removed = _items
             .Where(candidate => candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp
@@ -358,6 +361,7 @@ public sealed partial class CatalogPage : Page,
             _undoSurface = undo.Surface;
             _undoItemId = undo.Item.ContentId;
             _undoContext = undo.Context;
+            _undoIdentity = identity;
             _undoRemovedItems = positions;
             _undoRemovedCount = removed.Count;
             ShowUndoBanner();
@@ -423,11 +427,15 @@ public sealed partial class CatalogPage : Page,
 
     private async void UndoButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_undoBusy || _undoSurface == null || _undoItemId == null || !_undoContext.HasValue) return;
-        var owner = _undoContext.Value;
+        if (_undoBusy || _undoSurface == null || _undoItemId == null || !_undoContext.HasValue || !_undoIdentity.HasValue) return;
+        var dismissed = _undoContext.Value;
+        var identity = _undoIdentity.Value;
         var visit = _navigationCts;
-        bool Current() => visit != null && !visit.IsCancellationRequested && visit == _navigationCts && _api.IsCurrentContext(owner);
-        if (!Current()) { ClearUndoState(); return; }
+        bool Visiting() => visit != null && !visit.IsCancellationRequested && visit == _navigationCts;
+        bool Current() => Visiting() && LiveUndoOwner(dismissed, identity).HasValue;
+        // Bind the DELETE to the owner's live request context: the one captured before a
+        // reconnect would be refused although the dismissal's owner is unchanged.
+        if (!Visiting() || LiveUndoOwner(dismissed, identity) is not { } bound) { ClearUndoState(); return; }
         // Retire the banner's pending auto-hide: its expiry mid-request must not discard
         // this Undo's target or the retry feedback for a DELETE that fails late.
         var opportunity = ++_undoGeneration;
@@ -455,8 +463,8 @@ public sealed partial class CatalogPage : Page,
         {
             // The accepted mutation belongs to its captured owner, not to this visit: leaving
             // the page must not abort the DELETE. Only the follow-up read is visit-bound.
-            try { await _homeApi.UndoDismissalAsync(owner, surface, itemId, CancellationToken.None); }
-            catch (Exception ex) when (_api.IsCurrentContext(owner))
+            try { await _homeApi.UndoDismissalAsync(bound, surface, itemId, CancellationToken.None); }
+            catch (Exception ex) when (LiveUndoOwner(dismissed, identity).HasValue)
             {
                 failure = ex;
                 LocalLog.AppendException("errors.txt", ex, "CatalogPage.UndoDismissalAsync");
@@ -465,10 +473,23 @@ public sealed partial class CatalogPage : Page,
                     App.Services.GetRequiredService<ToastService>().Error("Could not undo. The title is still removed.");
             }
             // Home emptied its own rows for this dismissal and re-reads them only when told.
-            // Like the DELETE, this belongs to the captured owner, not to this visit.
-            if (failure == null && _api.IsCurrentContext(owner))
-                WeakReferenceMessenger.Default.Send(new HomeDismissalUndone(surface, itemId, owner));
-            if (!Current()) return;
+            // Like the DELETE, this belongs to the dismissal's owner, not to this visit; a
+            // reconnect during the DELETE has moved that owner to a newer request context.
+            if (failure == null)
+            {
+                var owner = _api.CaptureContext();
+                if (_api.IsCurrentIdentityContext(identity))
+                    WeakReferenceMessenger.Default.Send(new HomeDismissalUndone(surface, itemId, owner));
+            }
+            if (!Visiting()) return;
+            if (!LiveUndoOwner(dismissed, identity).HasValue)
+            {
+                // The server restored the title, but this page no longer reads the row on the
+                // retired authority: say so instead of leaving it silently removed.
+                if (failure == null && _api.IsCurrentIdentityContext(identity))
+                    App.Services.GetRequiredService<ToastService>().Success("Restored. Reload this page to see it.");
+                return;
+            }
             // Banner expiry/replacement is independent from accepting this mutation's
             // result. Requery the authoritative prefix, including offscreen show members,
             // instead of adding a stale snapshot/count to possibly newer paging data.
@@ -496,10 +517,19 @@ public sealed partial class CatalogPage : Page,
                 if (visit == _navigationCts && !visit!.IsCancellationRequested)
                 {
                     UndoButton.IsEnabled = true;
-                    if (_undoContext.HasValue && !_api.IsCurrentContext(_undoContext.Value)) ClearUndoState();
+                    if (_undoContext is { } pending && _undoIdentity is { } pendingIdentity
+                        && !LiveUndoOwner(pending, pendingIdentity).HasValue) ClearUndoState();
                 }
             }
         }
+    }
+
+    // A reconnect catch-up retires the request context, not its owner: the same identity and
+    // access authority continue under a newer one. Null once that owner really is retired.
+    private ApiRequestContext? LiveUndoOwner(ApiRequestContext dismissed, ApiIdentityContext identity)
+    {
+        var live = _api.CaptureContext();
+        return _api.IsCurrentIdentityContext(identity) && live.AccessGeneration == dismissed.AccessGeneration ? live : null;
     }
 
     private async Task ReconcileSectionAfterUndoAsync(int target, Func<bool> current, CancellationToken ct)
@@ -565,6 +595,7 @@ public sealed partial class CatalogPage : Page,
         _undoSurface = null;
         _undoItemId = null;
         _undoContext = null;
+        _undoIdentity = null;
         _undoRemovedItems = null;
         _undoRemovedCount = 0;
         UndoBanner.Visibility = Visibility.Collapsed;

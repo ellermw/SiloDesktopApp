@@ -565,6 +565,38 @@ internal static class ViewerActionsNativeFixture
         await Task.Delay(100); Check(wire.Undos.Count == 0, "retired authority sends no DELETE");
         Program.Log("PASS: authority changes before click and during request cannot mutate replacement UI or send a replacement-owner DELETE.");
 
+        // A reconnect catch-up retires the request context, not the dismissal's owner.
+        var reconnect = await OpenAsync("cw"); await DismissAsync(reconnect, "film");
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(reconnect);
+        await Until(() => wire.Undos.Count == 1, "reconnect Undo dispatched");
+        Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect catch-up during the DELETE");
+        wire.HoldUndo.TrySetResult(); await SettledAsync(reconnect);
+        Check(Items(reconnect).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "a reconnect during the DELETE still re-reads the restored row");
+        var reconnected = await OpenAsync("cw"); await DismissAsync(reconnected, "film");
+        Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect catch-up before the click");
+        StartUndo(reconnected); await SettledAsync(reconnected);
+        Check(wire.Undos.Count == 1 && Items(reconnected).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "a reconnect before the click keeps the Undo and sends its DELETE");
+        Program.Log("PASS: a reconnect before or during Undo keeps the same owner's Undo and re-reads the row.");
+
+        var menuPage = await OpenAsync("cw");
+        PosterCard? menuCard = null;
+        await Until(() => (menuCard = Descendants<PosterCard>(menuPage).FirstOrDefault(card => card.MediaItem?.ContentId == "film")) != null, "reconnect menu card");
+        Invoke((Button)menuCard!.FindName("MoreButton"));
+        await Until(() => OpenMenuItems(menuCard).Any(entry => entry.Text == "Remove from Continue Watching"), "reconnect removal menu");
+        wire.HoldDismissal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            Invoke(OpenMenuItems(menuCard).Single(entry => entry.Text == "Remove from Continue Watching"));
+            await Until(() => wire.Dismissals.Count == 1, "reconnect dismissal dispatched");
+            Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect catch-up during the PUT");
+        }
+        finally { var release = wire.HoldDismissal; wire.HoldDismissal = null; release.TrySetResult(); }
+        await Until(() => !Field<bool>(menuPage, "_loading") && Items(menuPage).All(entry => entry.ContentId != "film"), "a dismissal accepted across a reconnect removes its card");
+        Check(((Border)menuPage.FindName("UndoBanner")).Visibility == Visibility.Visible && Field<string?>(menuPage, "_undoItemId") == "film",
+            "a dismissal accepted across a reconnect still offers its Undo");
+        foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(menuPage.XamlRoot)) popup.IsOpen = false;
+        Program.Log("PASS: a dismissal accepted while a reconnect retires its request context still leaves the page and offers Undo.");
+
     }
 
     // ----- G4 -----
@@ -1020,6 +1052,7 @@ internal static class ViewerActionsNativeFixture
         internal string SyncState = "ok"; internal bool FailSync = true;
         internal int SyncUnmatched;
         internal TaskCompletionSource? HoldUndo; internal bool FailUndo, FailSectionReads; internal int UndosAnswered;
+        internal TaskCompletionSource? HoldDismissal;
         internal TaskCompletionSource? HoldCollectionRead; internal int CollectionReadsHeld;
         private readonly HashSet<string> _dismissed = [];
         internal void ClearDismissed() => _dismissed.Clear();
@@ -1056,6 +1089,7 @@ internal static class ViewerActionsNativeFixture
                 if (itemId.StartsWith("show-")) { _dismissed.Add("show-a"); _dismissed.Add("show-b"); }
                 if (itemId.StartsWith("off-prefix-") && itemId.EndsWith("-001"))
                     _dismissed.Add(itemId[..^3] + "090");
+                if (HoldDismissal is { } held) await held.Task;
                 return new(HttpStatusCode.NoContent);
             }
             if (path == "/api/v2/catalog")

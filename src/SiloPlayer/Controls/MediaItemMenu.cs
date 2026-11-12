@@ -309,17 +309,27 @@ public static class MediaItemMenu
                 try
                 {
                     var homeApi = App.Services.GetRequiredService<HomeApi>();
+                    // Read before the context: while this identity stays current, every request
+                    // context since, including the one the PUT is bound to, has belonged to it.
+                    var identity = homeApi.CaptureIdentityContext();
                     var context = homeApi.CaptureContext();
                     object body = surfaceKey == "continue_watching"
                         ? new { progress_updated_at = item.ProgressUpdatedAt }
                         : (object)new { series_id = dismissalSeriesId! };
-                    await homeApi.DismissItemAsync(surfaceKey, item.ContentId, body);
+                    await homeApi.DismissItemAsync(context, surfaceKey, item.ContentId, body);
                     serverAccepted = true;
                     stage = "context_check";
                     if (!homeApi.IsCurrentContext(context))
                     {
-                        LocalLog.AppendLine("home_actions.txt", $"dismissal action={actionId} surface={surfaceKey} stage=context_retired serverAccepted=true elapsedMs={elapsed.ElapsedMilliseconds}");
-                        return;
+                        var current = homeApi.CaptureContext();
+                        if (!homeApi.IsCurrentIdentityContext(identity))
+                        {
+                            LocalLog.AppendLine("home_actions.txt", $"dismissal action={actionId} surface={surfaceKey} stage=context_retired serverAccepted=true elapsedMs={elapsed.ElapsedMilliseconds}");
+                            return;
+                        }
+                        // A reconnect retired the request context, not the owner whose dismissal the
+                        // server accepted: publish it under that owner's current context.
+                        context = current;
                     }
                     stage = "undo_snapshot";
                     WeakReferenceMessenger.Default.Send(new HomeDismissalApplied(surfaceKey, item, context));

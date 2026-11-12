@@ -34,6 +34,44 @@ public sealed class HomeUndoAuthorityTests
         Assert.Null(wire.Method);
     }
 
+    [Fact]
+    public async Task DismissalUsesCapturedOwnerAndRefusesAReplacement()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://undo.invalid"); client.SetProfile("primary", "proof");
+        var home = new HomeApi(client);
+        var owner = client.CaptureContext();
+        await home.DismissItemAsync(owner, "next_up", "title/a b", new Dictionary<string, object?> { ["series_id"] = "show" });
+        Assert.Equal(HttpMethod.Put, wire.Method);
+        Assert.Equal("/api/v2/home/dismissals/next_up/title%2Fa%20b", wire.Path);
+        Assert.Equal("""{"series_id":"show"}""", wire.Body);
+        Assert.Equal("primary", wire.Profile);
+        wire.Method = null;
+        client.SetProfile("replacement");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            home.DismissItemAsync(owner, "next_up", "title/a b", new Dictionary<string, object?> { ["series_id"] = "show" }));
+        Assert.Null(wire.Method);
+    }
+
+    [Fact]
+    public void ReconnectCatchUpKeepsTheIdentityAndAccessAuthorityOfARetiredContext()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://undo.invalid"); client.SetProfile("primary", "proof");
+        var owner = client.CaptureContext();
+        var identity = client.CaptureIdentityContext();
+        Assert.True(client.TryInvalidateAccessContext(owner, out var reconnected, transportCatchUp: true));
+        // The dedicated page and the card menu follow a dismissal's owner across this change.
+        Assert.False(client.IsCurrentContext(owner));
+        Assert.True(client.IsCurrentIdentityContext(identity));
+        Assert.Equal(owner.AccessGeneration, reconnected.AccessGeneration);
+        // A permission change keeps the identity but not the access authority.
+        Assert.NotEqual(owner.AccessGeneration, client.InvalidateAccessContext().AccessGeneration);
+        Assert.True(client.IsCurrentIdentityContext(identity));
+        client.SetProfile("replacement");
+        Assert.False(client.IsCurrentIdentityContext(identity));
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         internal HttpMethod? Method;

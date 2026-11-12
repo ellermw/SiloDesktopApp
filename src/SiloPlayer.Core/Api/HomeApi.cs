@@ -163,6 +163,10 @@ public class HomeApi(SiloApiClient client)
 
     // ===== Dismissals =====
 
+    public Task DismissItemAsync(ApiRequestContext context, string surface, string itemId, object body, CancellationToken ct = default)
+        => client.SendNoContentRequestAsync(context, HttpMethod.Put,
+            $"/api/v2/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", body, ct: ct);
+
     public Task DismissItemAsync(string surface, string itemId, object body, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v2/home/dismissals/{Uri.EscapeDataString(surface)}/{Uri.EscapeDataString(itemId)}", body, ct);
 
