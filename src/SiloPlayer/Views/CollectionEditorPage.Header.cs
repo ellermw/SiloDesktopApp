@@ -9,6 +9,7 @@ namespace SiloPlayer.Views;
 public sealed partial class CollectionEditorPage
 {
     private string? _lastHeaderState;
+    private SiloPlayer.Core.Models.Collections.Collection? _lastHeaderCollection;
     private string? _lastLookState;
     private Border HeaderTag(string text, string? icon = null, bool shared = false)
     {
@@ -23,9 +24,10 @@ public sealed partial class CollectionEditorPage
     private void UpdateHeaderActions(bool phone)
     {
         var isDirty = _draftBaseline != null && CaptureDraft().Any(pair => _draftBaseline.GetValueOrDefault(pair.Key) != pair.Value);
-        var state = $"{phone}|{ViewModel.CollectionId}|{ViewModel.CollectionType}|{ViewModel.IsEditing}|{ViewModel.IsShared}|{ViewModel.IsSaving}|{ViewModel.IsReadOnly}|{isDirty}|{!string.IsNullOrWhiteSpace(ViewModel.CurrentPosterUrl)}|{ViewModel.Capabilities?.Imports}";
-        if (state == _lastHeaderState) return;
-        _lastHeaderState = state;
+        var state = $"{phone}|{ViewModel.CollectionId}|{ViewModel.CollectionType}|{ViewModel.IsEditing}|{ViewModel.IsShared}|{ViewModel.IsSaving}|{ViewModel.IsReadOnly}|{isDirty}|{!string.IsNullOrWhiteSpace(ViewModel.CurrentPosterUrl)}|{ViewModel.Capabilities?.Imports}|{_editorLoadGeneration}";
+        // The allowance menu is bound to one load of one collection instance; a reload must rebuild it.
+        if (state == _lastHeaderState && ReferenceEquals(ViewModel.LoadedCollection, _lastHeaderCollection)) return;
+        _lastHeaderState = state; _lastHeaderCollection = ViewModel.LoadedCollection;
         _headerTags.Children.Clear();
         _headerTags.Children.Add(HeaderTag(_kindTag.Text, ViewModel.CollectionType switch { "manual" => "list-ordered", "smart" => "wand-sparkles", _ => "refresh-cw" }));
         if (ViewModel.IsShared) _headerTags.Children.Add(HeaderTag("Shared", "users", true));
