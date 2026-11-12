@@ -40,17 +40,28 @@ public class DownloadRequest
     public string? EpisodeId { get; set; }
     [System.Text.Json.Serialization.JsonPropertyName("media_file_id")]
     public int? FileId { get; set; }
-    public int ExpectedRevision { get; set; }
+    public int? ExpectedRevision { get; set; }
     public string? ExpectedDownloadId { get; set; }
     public string? BatchId { get; set; }
     public string Quality { get; set; } = "original";
     public bool Series { get; set; }
     public int? SeasonNumber { get; set; }
+    public Dictionary<string, DownloadEntryExpectation>? ExpectedEntries { get; set; }
+}
+
+public class DownloadEntryExpectation
+{
+    public string? Id { get; set; }
+    public int Revision { get; set; }
 }
 
 public class DownloadCapability
 {
     public bool Enabled { get; set; }
+    public bool? Allowed { get; set; }
+    public bool? BoundedCreation { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool CanCreateBatch => Enabled && DownloadAllowed && SeasonDownload && Allowed != false && BoundedCreation != false;
     public bool DownloadAllowed { get; set; }
     public List<string> QualityPresets { get; set; } = [];
     public bool TranscodeEnabled { get; set; }
@@ -58,4 +69,6 @@ public class DownloadCapability
     public bool SeasonDownload { get; set; }
     public bool SeriesMonitoring { get; set; }
     public List<string> MonitoringModes { get; set; } = [];
+    public bool BulkQuality { get; set; }
+    public bool BatchVersion { get; set; }
 }

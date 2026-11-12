@@ -825,6 +825,8 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         _overlayBottomLeft.Margin = new Thickness(edge);
         _overlayBottomRight.Margin = new Thickness(edge);
         _overlayLeftEdge.Margin = _overlayRightEdge.Margin = new Thickness(edge);
+        // Shown rail badges keep the inset their hosts chose; quick actions reset geometry after the bind.
+        _badges?.UpdateRailInset();
         _watchStatus.Update(MediaItem?.UserState, _overlayGeometry, borderInset: 0);
         if (_watchStatus.Visibility == Visibility.Visible)
             _overlayTopLeft.MaxWidth = Math.Max(0, Width - 2 - 2 * edge - _watchStatus.ReservedWidth - _overlayGeometry.StackGap);

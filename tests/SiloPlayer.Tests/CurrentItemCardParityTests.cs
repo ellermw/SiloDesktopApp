@@ -90,8 +90,9 @@ public sealed class CurrentItemCardParityTests
         var code = File.ReadAllText(Path.Combine(
             root, "src", "SiloPlayer", "Controls", "PosterCard.xaml.cs"));
         var badges = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "CardBadges.cs"));
-        Assert.Contains("\"series_premiere\" => \"Premiere\"", badges);
-        Assert.Contains("\"season_premiere\" => \"New Season\"", badges);
+        Assert.Contains("UpcomingBadgePresentation.Label(badge)", badges);
+        Assert.Equal("Premiere", SiloPlayer.Core.Services.UpcomingBadgePresentation.Label("series_premiere"));
+        Assert.Equal("New Season", SiloPlayer.Core.Services.UpcomingBadgePresentation.Label("season_premiere"));
         Assert.Contains("upcoming: true", code);
         Assert.Contains("FormatUpcomingSchedule", code);
     }

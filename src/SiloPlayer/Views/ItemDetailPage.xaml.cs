@@ -10,6 +10,7 @@ using SiloPlayer.Controls;
 using SiloPlayer.Converters;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Downloads;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
@@ -3406,13 +3407,32 @@ public sealed partial class ItemDetailPage : Page
                 panel.Children.Add(targetChoice);
             }
             var mode = new ComboBox { Header = "How to pick", SelectedIndex = 0, Items = { "Host picks · Stage this for the room", "Everyone votes · Add this as a suggestion" }, HorizontalAlignment = HorizontalAlignment.Stretch };
-            var pause = new ToggleSwitch { Header = "Guests can pause", IsOn = false };
+            const string policyKey = "watch_party.guest_control_policy";
+            string? savedPolicy = null;
+            try
+            {
+                var settings = await App.Services.GetRequiredService<SettingsApi>()
+                    .GetContractEffectiveSettingsAsync(authority, [policyKey], ct: navigation?.Token ?? default);
+                var value = settings.Settings.FirstOrDefault(entry => entry.Key == policyKey)?.Value;
+                if (value is { ValueKind: System.Text.Json.JsonValueKind.String })
+                    savedPolicy = value.Value.GetString();
+                if (savedPolicy is not ("host_only" or "guest_play_pause")) savedPolicy = null;
+            }
+            catch { /* An unread fallback must never become a saved choice. */ }
+            if (!Current()) return;
+            bool? pauseChoice = null;
+            var reflectingPolicy = false;
+            var pause = new ToggleSwitch { Header = "Guests can pause", IsOn = savedPolicy == "guest_play_pause" };
+            pause.Toggled += (_, _) => { if (!reflectingPolicy) pauseChoice = pause.IsOn; };
+            var policyNotice = new TextBlock { Text = savedPolicy == null ? "Saved guest controls could not be read. The room will use its saved policy unless you change this switch." : "", TextWrapping = TextWrapping.Wrap };
             var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], Visibility = Visibility.Collapsed };
-            panel.Children.Add(mode); panel.Children.Add(pause); panel.Children.Add(error);
+            panel.Children.Add(mode); panel.Children.Add(pause); panel.Children.Add(policyNotice); panel.Children.Add(error);
             var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Start a party with this", Content = panel, PrimaryButtonText = "Create room", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
             dialog.PrimaryButtonClick += async (_, args) =>
             {
                 args.Cancel = true; var deferral = args.GetDeferral(); dialog.IsPrimaryButtonEnabled = false;
+                pause.IsEnabled = false;
+                mode.IsEnabled = targetChoice.IsEnabled = false;
                 try
                 {
                     if (!Current())
@@ -3424,8 +3444,32 @@ public sealed partial class ItemDetailPage : Page
                     target = targetChoice.SelectedItem is ComboBoxItem { Tag: string chosen } ? chosen : target;
                     var response = await api.CreateWatchTogetherRoomAsync(mode.SelectedIndex == 1 ? "vote" : "host_pick");
                     if (!client.IsCurrentContext(authority) || response.RoomAccessToken == null) return;
-                    try { if (pause.IsOn) await api.UpdateWatchTogetherRoomPolicyAsync(response.Room.RoomId, "guest_play_pause"); }
-                    catch { App.Services.GetRequiredService<ToastService>().Error("Room created. Guest pause could not be enabled; change it from the room."); }
+                    var policy = pause.IsOn ? "guest_play_pause" : "host_only";
+                    if (pauseChoice.HasValue &&
+                        (response.Room.GuestControlPolicy != policy || savedPolicy != policy))
+                    {
+                        try
+                        {
+                            var updated = await api.UpdateWatchTogetherRoomPolicyAsync(authority, response.Room.RoomId, policy);
+                            if (!client.IsCurrentContext(authority)) return;
+                            response.Room = updated.Room;
+                            if (response.Room.GuestControlPolicy != policy)
+                                App.Services.GetRequiredService<ToastService>().Error("Room created. Guest controls could not be changed; the room shows its actual policy.");
+                        }
+                        catch
+                        {
+                            if (!client.IsCurrentContext(authority)) return;
+                            App.Services.GetRequiredService<ToastService>().Error("Room created. Guest controls could not be changed; the room shows its actual policy.");
+                        }
+                    }
+                    if (!client.IsCurrentContext(authority)) return;
+                    // Reflect the server's actual result without turning this
+                    // programmatic update into another explicit preference.
+                    if (savedPolicy == null && !pauseChoice.HasValue)
+                        App.Services.GetRequiredService<ToastService>().Info(response.Room.GuestControlPolicy == "guest_play_pause" ? "Room created. Guests can pause." : "Room created. Only the host can pause.");
+                    reflectingPolicy = true;
+                    try { pause.IsOn = response.Room.GuestControlPolicy == "guest_play_pause"; }
+                    finally { reflectingPolicy = false; }
                     try
                     {
                         if (target != null)
@@ -3439,7 +3483,7 @@ public sealed partial class ItemDetailPage : Page
                     DispatcherQueue.TryEnqueue(() => App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs { RoomId = response.Room.RoomId, RoomAccessToken = response.RoomAccessToken }));
                 }
                 catch (Exception ex) { error.Text = ex.Message; error.Visibility = Visibility.Visible; }
-                finally { dialog.IsPrimaryButtonEnabled = true; deferral.Complete(); }
+                finally { dialog.IsPrimaryButtonEnabled = true; pause.IsEnabled = mode.IsEnabled = targetChoice.IsEnabled = true; deferral.Complete(); }
             };
             await dialog.ShowAsync();
         }
@@ -3658,6 +3702,34 @@ public sealed partial class ItemDetailPage : Page
                 MoreFlyout.Items.Add(download);
                 hasOverflowActions = true;
             }
+        }
+
+        if (CanCurrentUserDownload() && item.Type == "series")
+        {
+            var dlSeries = new MenuFlyoutItem { Text = "Download Series", Icon = new FontIcon { Glyph = "\uE896" } };
+            dlSeries.Click += async (_, _) =>
+            {
+                if (!IsCurrentDetail(item.ContentId)) return;
+                await ShowBatchDownloadDialogAsync(item.ContentId, null, item.Title);
+            };
+            MoreFlyout.Items.Add(dlSeries);
+            hasOverflowActions = true;
+        }
+
+        if (CanCurrentUserDownload() && item.Type == "season" && !string.IsNullOrEmpty(item.SeriesId) && item.SeasonNumber.HasValue)
+        {
+            var dlSeason = new MenuFlyoutItem
+            {
+                Text = item.IsSpecials == true ? "Download Specials" : $"Download Season {item.SeasonNumber}",
+                Icon = new FontIcon { Glyph = "\uE896" },
+            };
+            dlSeason.Click += async (_, _) =>
+            {
+                if (!IsCurrentDetail(item.ContentId)) return;
+                await ShowBatchDownloadDialogAsync(item.SeriesId!, item.SeasonNumber ?? 0, item.SeriesTitle ?? item.Title);
+            };
+            MoreFlyout.Items.Add(dlSeason);
+            hasOverflowActions = true;
         }
 
         if (_selectedVersion != null)
@@ -8454,7 +8526,8 @@ public sealed partial class ItemDetailPage : Page
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
                 .Prefetch(episode.ContentId);
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(episode.ContentId, ViewModel.LibraryId));
+                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(
+                    episode.ContentId, EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId)));
         };
         button.GotFocus += (_, _) => App.Services
             .GetRequiredService<ItemDetailPrefetchCache>()
@@ -8705,35 +8778,14 @@ public sealed partial class ItemDetailPage : Page
 
     private void AddEpisodeCardOverlays(Grid host, Episode episode)
     {
-        var topLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Top);
-        var topRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
-        var bottomLeft = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
-        var bottomRight = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
-        var leftEdge = MakeEpisodeOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Center);
-        var rightEdge = MakeEpisodeOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Center);
-        topLeft.Margin = new Thickness(8);
-        topRight.Margin = new Thickness(8);
-        bottomLeft.Margin = new Thickness(8, 8, 8, 24);
-        bottomRight.Margin = new Thickness(8, 8, 8, 56);
-        host.Children.Add(topLeft);
-        host.Children.Add(topRight);
-        host.Children.Add(bottomLeft);
-        host.Children.Add(bottomRight);
-        host.Children.Add(leftEdge);
-        host.Children.Add(rightEdge);
-
+        // 56 = the hover "More actions" button (12 margin + 36) plus an 8 gap.
+        var hosts = CardBadgeHosts.Create(host, CardOverlayGeometry.ForWideCard(), episode.UserData is { Played: false, PositionSeconds: > 0, DurationSeconds: > 0 } ? 8 : 0,
+            bottomRightClearance: 56);
         void Render()
         {
-            topLeft.Children.Clear();
-            topRight.Children.Clear();
-            bottomLeft.Children.Clear();
-            bottomRight.Children.Clear();
-            leftEdge.Children.Clear();
-            rightEdge.Children.Clear();
-
             var service = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();
             var prefs = service.GetPrefs();
-            if (prefs == null) return;
+            if (prefs == null) { hosts.Clear(); return; }
             var summary = episode.OverlaySummary;
             var data = new global::SiloPlayer.Services.OverlayData
             {
@@ -8750,30 +8802,7 @@ public sealed partial class ItemDetailPage : Page
                 MultiSub = summary?.MultiSub == true,
                 Runtime = episode.Runtime > 0 ? episode.Runtime : null,
             };
-            var cornerCounts = new Dictionary<global::SiloPlayer.Services.OverlayPosition, int>();
-            foreach (var definition in service.GetOrderedDefinitions())
-            {
-                if (!prefs.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-                if (service.SuppressesStandalone(definition.Id, prefs)) continue;
-                var value = definition.GetValue(data);
-                if (string.IsNullOrWhiteSpace(value)) continue;
-                var position = service.DisplayPosition(config.Position);
-                var limit = position is global::SiloPlayer.Services.OverlayPosition.LeftEdge or global::SiloPlayer.Services.OverlayPosition.RightEdge ? 4 : 3;
-                if (cornerCounts.GetValueOrDefault(position) >= limit) continue;
-                var badge = PosterCard.BuildBadge(value, definition.Id, config, service.Preset);
-                var corner = position switch
-                {
-                    global::SiloPlayer.Services.OverlayPosition.TopLeft => topLeft,
-                    global::SiloPlayer.Services.OverlayPosition.TopRight => topRight,
-                    global::SiloPlayer.Services.OverlayPosition.BottomLeft => bottomLeft,
-                    global::SiloPlayer.Services.OverlayPosition.BottomRight => bottomRight,
-                    global::SiloPlayer.Services.OverlayPosition.LeftEdge => leftEdge,
-                    global::SiloPlayer.Services.OverlayPosition.RightEdge => rightEdge,
-                    _ => topLeft,
-                };
-                corner.Children.Add(badge);
-                cornerCounts[position] = cornerCounts.GetValueOrDefault(position) + 1;
-            }
+            hosts.Show(CardBadgeHosts.ForData(data, service, 1));
         }
 
         Render();
