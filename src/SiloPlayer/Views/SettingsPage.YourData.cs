@@ -98,23 +98,51 @@ public sealed partial class SettingsPage
         }
     }
 
-    private async Task LoadYourDataAsync()
+    private const string YourDataSessionChanged = "Your session changed. Try again.";
+
+    // The request context retired under a section that is still showing; reload it instead of leaving dead controls.
+    private void ReloadStaleYourData(int generation, string? notice)
     {
+        if (generation == _yourDataGeneration) _ = LoadYourDataAsync(notice);
+    }
+
+    private async Task LoadYourDataAsync(string? notice = null, ProfileImportResult? summary = null)
+    {
+        DeactivateYourData();
         var generation = ++_yourDataGeneration;
-        _yourDataCapability = null;
-        _yourDataImportResult = null;
+        _yourDataImportResult = summary;
         _yourDataBusyOwner = 0;
         var api = new ProfileTransferApi(App.Services.GetRequiredService<SiloApiClient>());
         var context = api.CaptureContext();
+        var identity = api.Client.CaptureIdentityContext();
         bool Current() => generation == _yourDataGeneration && api.IsCurrentContext(context);
         YourDataContentHost.Children.Clear();
         YourDataLoadingRing.IsActive = true;
+        Action? handler = null;
+        handler = () =>
+        {
+            var dq = DispatcherQueue;
+            if (dq == null) return;
+            void Reload()
+            {
+                // A queued callback can outlive the subscription it was raised for.
+                if (!ReferenceEquals(_yourDataContextHandler, handler)) return;
+                // An access refresh keeps the same profile, so its finished import summary stays on screen.
+                var finished = api.Client.IsCurrentIdentityContext(identity) ? _yourDataImportResult : null;
+                _ = LoadYourDataAsync(_yourDataBusyOwner != 0 ? YourDataSessionChanged : null, finished);
+            }
+            if (dq.HasThreadAccess) Reload();
+            else dq.TryEnqueue(Reload);
+        };
+        _yourDataContextHandler = handler;
+        api.Client.ContextInvalidated += handler;
         try
         {
             var capability = await api.GetCapabilityAsync(context);
-            if (!Current()) return;
+            if (!Current()) { ReloadStaleYourData(generation, notice); return; }
             _yourDataCapability = capability;
             YourDataLoadingRing.IsActive = false;
+            if (notice != null) YourDataContentHost.Children.Add(SecondaryText(notice));
 
             if (capability.State != "available")
             {
@@ -123,19 +151,11 @@ public sealed partial class SettingsPage
             }
 
             BuildYourDataUI(api, context, generation);
-            _yourDataContextHandler = () =>
-            {
-                var dq = DispatcherQueue;
-                if (dq == null) return;
-                if (dq.HasThreadAccess) DeactivateYourData();
-                else dq.TryEnqueue(DeactivateYourData);
-            };
-            api.Client.ContextInvalidated += _yourDataContextHandler;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!Current()) { ReloadStaleYourData(generation, notice); }
         catch (Exception ex)
         {
-            if (!Current()) return;
+            if (!Current()) { ReloadStaleYourData(generation, notice); return; }
             YourDataLoadingRing.IsActive = false;
             YourDataContentHost.Children.Add(ErrorText($"Could not load: {ex.Message}"));
         }
@@ -161,7 +181,8 @@ public sealed partial class SettingsPage
 
         exportButton.Click += async (_, _) =>
         {
-            if (_yourDataBusyOwner != 0 || !Current()) return;
+            if (_yourDataBusyOwner != 0) return;
+            if (!Current()) { ReloadStaleYourData(generation, YourDataSessionChanged); return; }
             _yourDataBusyOwner = generation;
             exportButton.IsEnabled = false;
             exportStatus.Visibility = Visibility.Collapsed;
@@ -188,8 +209,17 @@ public sealed partial class SettingsPage
                         attempt == 0)
                     {
                         if (!Current()) return;
-                        var proof = await TryVerifyPinForYourDataAsync(api, context, generation);
-                        if (proof == null || !Current()) return;
+                        var (proof, failure) = await TryVerifyPinForYourDataAsync(api, context, generation, ex.Message);
+                        if (!Current()) return;
+                        if (proof == null)
+                        {
+                            if (failure != null)
+                            {
+                                exportStatus.Text = failure;
+                                exportStatus.Visibility = Visibility.Visible;
+                            }
+                            return;
+                        }
                         context = api.Client.AdoptProfileProof(context, proof);
                         generation = ++_yourDataGeneration;
                         _yourDataBusyOwner = generation;
@@ -207,6 +237,7 @@ public sealed partial class SettingsPage
             {
                 if (_yourDataBusyOwner == generation) _yourDataBusyOwner = 0;
                 if (Current()) exportButton.IsEnabled = true;
+                else ReloadStaleYourData(generation, YourDataSessionChanged);
             }
         };
 
@@ -233,10 +264,12 @@ public sealed partial class SettingsPage
         importStack.Children.Add(importHint);
         importStack.Children.Add(importStatus);
         importStack.Children.Add(importResultHost);
+        if (_yourDataImportResult != null) RenderImportResult(importResultHost, _yourDataImportResult);
 
         importButton.Click += async (_, _) =>
         {
-            if (_yourDataBusyOwner != 0 || !Current()) return;
+            if (_yourDataBusyOwner != 0) return;
+            if (!Current()) { ReloadStaleYourData(generation, YourDataSessionChanged); return; }
             _yourDataBusyOwner = generation;
             importButton.IsEnabled = false;
             importStatus.Visibility = Visibility.Collapsed;
@@ -274,8 +307,17 @@ public sealed partial class SettingsPage
                         attempt == 0)
                     {
                         if (!Current()) return;
-                        var proof = await TryVerifyPinForYourDataAsync(api, context, generation);
-                        if (proof == null || !Current()) return;
+                        var (proof, failure) = await TryVerifyPinForYourDataAsync(api, context, generation, ex.Message);
+                        if (!Current()) return;
+                        if (proof == null)
+                        {
+                            if (failure != null)
+                            {
+                                importStatus.Text = failure;
+                                importStatus.Visibility = Visibility.Visible;
+                            }
+                            return;
+                        }
                         context = api.Client.AdoptProfileProof(context, proof);
                         generation = ++_yourDataGeneration;
                         _yourDataBusyOwner = generation;
@@ -293,6 +335,7 @@ public sealed partial class SettingsPage
             {
                 if (_yourDataBusyOwner == generation) _yourDataBusyOwner = 0;
                 if (Current()) importButton.IsEnabled = true;
+                else ReloadStaleYourData(generation, YourDataSessionChanged);
             }
         };
 
@@ -364,24 +407,28 @@ public sealed partial class SettingsPage
         _ => type
     };
 
-    private async Task<string?> TryVerifyPinForYourDataAsync(ProfileTransferApi api, ApiRequestContext context, int generation)
+    /// <summary>Proof once verified; otherwise Failure says why verification could not start, and is null when the user cancelled or the owner retired.</summary>
+    private async Task<(string? Proof, string? Failure)> TryVerifyPinForYourDataAsync(ProfileTransferApi api, ApiRequestContext context, int generation, string requirement)
     {
+        const string unverifiable = "Could not verify your PIN. Try again.";
         bool Current() => generation == _yourDataGeneration && api.IsCurrentContext(context);
-        if (!Current()) return null;
+        if (!Current()) return default;
         var authApi = App.Services.GetRequiredService<AuthApi>();
         var authService = App.Services.GetRequiredService<AuthService>();
         var profileId = authService.SelectedProfileId;
-        if (string.IsNullOrWhiteSpace(profileId) || profileId != context.ProfileId) return null;
+        if (string.IsNullOrWhiteSpace(profileId) || profileId != context.ProfileId) return (null, unverifiable);
         Profile? profile = null;
         try
         {
             var response = await authApi.GetProfilesAsync();
-            if (!Current()) return null;
+            if (!Current()) return default;
             profile = response.Profiles.FirstOrDefault(p => p.Id == profileId);
         }
-        catch { }
-        if (profile is not { HasPin: true }) return null;
-        if (!Current()) return null;
+        catch { return (null, unverifiable); }
+        if (profile == null) return (null, unverifiable);
+        // The server demands verification for a profile with no PIN to enter; pass its reason on.
+        if (!profile.HasPin) return (null, requirement);
+        if (!Current()) return default;
 
         string? verifiedToken = null;
         var pin = new PasswordBox
@@ -451,8 +498,8 @@ public sealed partial class SettingsPage
         var dialogResult = await dialog.ShowAsync();
         dialogGuard.Stop();
         if (ReferenceEquals(_yourDataPinDialog, dialog)) _yourDataPinDialog = null;
-        if (dialogResult != ContentDialogResult.Primary || !Current()) return null;
-        return verifiedToken;
+        if (dialogResult != ContentDialogResult.Primary || !Current()) return default;
+        return (verifiedToken, null);
     }
 
     private static string FormatFileSize(long bytes)

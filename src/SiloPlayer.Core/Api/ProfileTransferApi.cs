@@ -27,10 +27,10 @@ public sealed class ProfileTransferApi(SiloApiClient client)
     {
         if (document.Length > maxImportBytes && maxImportBytes > 0)
             throw new ApiException("validation_failed", $"The file is too large ({FormatSize(document.Length)}). The limit is {FormatSize(maxImportBytes)}.", 422);
-        ValidateImportDocument(document);
-        var body = JsonSerializer.Deserialize<JsonElement>(document);
-        var result = await client.SendRequestAsync<ProfileImportResult>(context, HttpMethod.Post,
-            "/api/v2/profile/import", body, ct).ConfigureAwait(false);
+        // A document near the limit takes long enough to scan that a UI-thread caller would stall.
+        await Task.Run(() => ValidateImportDocument(document), ct).ConfigureAwait(false);
+        var result = await client.SendRawJsonRequestAsync<ProfileImportResult>(context, HttpMethod.Post,
+            "/api/v2/profile/import", document, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(context))
             throw new OperationCanceledException("The profile session changed.", ct);
@@ -48,18 +48,28 @@ public sealed class ProfileTransferApi(SiloApiClient client)
 
     private static void ValidateImportDocument(byte[] document)
     {
-        JsonElement root;
-        try { root = JsonSerializer.Deserialize<JsonElement>(document); }
-        catch (JsonException) { throw new ApiException("validation_failed", "Not a valid profile export: the file is not valid JSON.", 422); }
-        if (root.ValueKind != JsonValueKind.Object)
-            throw new ApiException("validation_failed", "Not a valid profile export.", 422);
-        foreach (var prop in root.EnumerateObject())
+        // Only top-level names matter, so scan the tokens in place instead of materializing the document.
+        bool isObject = false, hasAccessField = false, formatMismatch = false;
+        try
         {
-            if (AccessFields.Contains(prop.Name))
-                throw new ApiException("validation_failed", "A profile import cannot carry account or access fields.", 422);
+            var reader = new Utf8JsonReader(document);
+            reader.Read();
+            isObject = reader.TokenType == JsonTokenType.StartObject;
+            while (reader.Read())
+            {
+                if (!isObject || reader.CurrentDepth != 1 || reader.TokenType != JsonTokenType.PropertyName) continue;
+                if (AccessFields.Contains(reader.GetString()!)) hasAccessField = true;
+                if (!reader.ValueTextEquals("format")) continue;
+                reader.Read();
+                formatMismatch = reader.TokenType != JsonTokenType.String || !reader.ValueTextEquals("silo-profile-export");
+            }
         }
-        if (root.TryGetProperty("format", out var format) &&
-            format.GetString() != "silo-profile-export")
+        catch (JsonException) { throw new ApiException("validation_failed", "Not a valid profile export: the file is not valid JSON.", 422); }
+        if (!isObject)
+            throw new ApiException("validation_failed", "Not a valid profile export.", 422);
+        if (hasAccessField)
+            throw new ApiException("validation_failed", "A profile import cannot carry account or access fields.", 422);
+        if (formatMismatch)
             throw new ApiException("validation_failed", "Not a valid profile export: unrecognized format.", 422);
     }
 

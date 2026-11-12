@@ -662,6 +662,15 @@ public partial class SiloApiClient
         return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
     }
 
+    /// <summary>Sends an already-serialized JSON document unchanged instead of re-materializing it.</summary>
+    public async Task<T> SendRawJsonRequestAsync<T>(ApiRequestContext context, HttpMethod method, string path, byte[] json, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, null);
+        request.Content = new ByteArrayContent(json);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        return await SendAsync<T>(request, ct).ConfigureAwait(false);
+    }
+
     public async Task<ApiResponse<T>> GetWithETagAsync<T>(string path, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
