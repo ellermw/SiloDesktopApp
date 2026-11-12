@@ -119,10 +119,7 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("OverlayAccentOptions", page);
         Assert.Contains("BuildCardOverlayPresetCards", page);
         Assert.Contains("BuildCardOverlayAccentFlyout", page);
-        Assert.Contains("case \"minimal\"", poster);
-        Assert.Contains("case \"vibrant\"", poster);
-        Assert.Contains("case \"pill\"", poster);
-        Assert.Contains("case \"square\"", poster);
+        Assert.Contains("OverlayBadgeRenderer.Build", poster);
     }
 
     [Fact]

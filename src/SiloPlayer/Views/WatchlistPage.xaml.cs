@@ -75,19 +75,12 @@ public sealed partial class WatchlistPage : Page
         var poster = new Grid { Width = 160, Height = 240 };
         poster.Children.Add(new Border { CornerRadius = new CornerRadius(8), Child = image });
         var overlays = App.Services.GetRequiredService<CardOverlayService>();
-        var prefs = overlays.GetPrefs();
-        if (prefs?.TryGetValue("request_status", out var badgeConfig) == true && badgeConfig.Enabled)
-        {
-            var badge = SiloPlayer.Controls.PosterCard.BuildBadge(status.Badge, "request_status", badgeConfig, overlays.Preset);
-            badge.Margin = new Thickness(7);
-            var position = overlays.DisplayPosition(badgeConfig.Position);
-            badge.HorizontalAlignment = position is OverlayPosition.TopRight or OverlayPosition.BottomRight or OverlayPosition.RightEdge ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-            badge.VerticalAlignment = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? VerticalAlignment.Center
-                : position is OverlayPosition.BottomLeft or OverlayPosition.BottomRight ? VerticalAlignment.Bottom : VerticalAlignment.Top;
-            poster.Children.Add(badge);
-            if (RequestViewerPolicy.DownloadPercent(title.Request.Download) is int percent)
-                poster.Children.Add(new ProgressBar { Value = Math.Clamp(percent, 0, 100), Maximum = 100, Height = 3, VerticalAlignment = VerticalAlignment.Bottom });
-        }
+        var percent = overlays.GetPrefs()?.TryGetValue("request_status", out var badgeConfig) == true && badgeConfig.Enabled
+            ? RequestViewerPolicy.DownloadPercent(title.Request.Download) : null;
+        var hosts = SiloPlayer.Controls.CardBadgeHosts.Create(poster, SiloPlayer.Core.Services.CardOverlayGeometry.ForPoster(160), percent.HasValue ? 8 : 0);
+        hosts.Show(SiloPlayer.Controls.CardBadgeHosts.ForData(new OverlayData { RequestStatus = status.Badge, Year = title.Year, RatingTmdb = title.VoteAverage, ContentRating = title.ContentRating }, overlays, 160d / 185));
+        if (percent is int progress)
+            poster.Children.Add(new ProgressBar { Value = Math.Clamp(progress, 0, 100), Maximum = 100, Height = 3, VerticalAlignment = VerticalAlignment.Bottom });
         contents.Children.Add(poster);
         contents.Children.Add(new TextBlock { Text = title.Title, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis });
         contents.Children.Add(new TextBlock { Text = title.DisplayMeta, FontSize = 12, Opacity = 0.65 });

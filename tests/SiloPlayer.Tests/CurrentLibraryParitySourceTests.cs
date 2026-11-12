@@ -54,7 +54,7 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("MoreButton_Click", card);
         Assert.Contains("CardBadgeHosts.For(item, service", card);
         Assert.Contains("GetOrderedDefinitions()", badges);
-        Assert.Contains("PosterCard.BuildBadge", badges);
+        Assert.Contains("PosterCard.BuildAdvancedBadge", badges);
         Assert.Contains("case \"date_viewed\"", display);
         Assert.Contains("case \"narrator\"", display);
         Assert.Contains("\"series\" or \"tv\" when browseType == \"episode\" => \"episode\"", page);
