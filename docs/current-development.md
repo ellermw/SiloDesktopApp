@@ -1,3 +1,21 @@
+# November 11 — Next Episode above the timeline
+
+Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
+
+Source version: `1.2.981-beta.1`; numeric version: `1.2.980.1`.
+
+These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
+
+The end-of-episode floating Next Episode pill now anchors 12 scaled pixels above the entire timeline seek target. Rendering and pointer hit testing use the same freshly computed layout, including after a resize. Its right-side placement, late-episode visibility threshold and advance action are preserved.
+
+The credits countdown card uses the same anchor, so the card and its Play Now and Cancel buttons no longer cover the seek target. This follow-up and its runtime regression were added after the verification below and are not covered by it.
+
+Verification: **376 OSC tests passed**, zero failures/skips, including real bundled-libmpv execution of the production Lua, rendered ASS and pointer routing across 1920×1080, 960×550, 640×360, 3840×2160, 1280×720 and a return to 1920×1080. The new regression failed before the fix when a timeline gesture did not enter seek handling; final checks require a gap above the complete seek target and successful timeline/button-bottom-edge clicks. Receipts and the preserved failed run are in `D:/SiloPlayer/.codex-tmp/next-episode-nov11/`. All checks hold `SiloOct18Build` and verify the engine pin.
+
+This Lua-only layout fix does not claim a full unit/native suite, physical pointer/display certification, new app publish or installer run. The installed player and real settings/accounts remain untouched. The Beta pipeline owns integration, packaging and publication.
+
+---
+
 # Personal profile data transfer — November 11, 2026
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
