@@ -1803,12 +1803,32 @@ local function render_osc()
     local current_seek_h = math.max(2, math.floor(
         (is_seek_hover and config.seek_hover_height or config.seek_height) * sc))
 
+    state.seek_segments = {}
+    local cuts = {sb.x1}
+    for _, chapter in ipairs(state.chapters or {}) do
+        local t = tonumber(chapter.start_seconds) or 0
+        if t > 0 and t < state.duration then table.insert(cuts, sb.x1 + (sb.x2 - sb.x1) * t / state.duration) end
+    end
+    table.sort(cuts)
+    table.insert(cuts, sb.x2)
+    local gap = math.max(2, math.floor(3 * sc))
+    for i = 1, #cuts - 1 do
+        local x1 = cuts[i] + (i > 1 and gap / 2 or 0)
+        local x2 = cuts[i + 1] - (i < #cuts - 1 and gap / 2 or 0)
+        if x2 > x1 then table.insert(state.seek_segments, {x1=x1, x2=x2}) end
+    end
+    local function draw_seek_fill(x1, x2, height, color, alpha)
+        for _, segment in ipairs(state.seek_segments) do
+            local left, right = math.max(x1, segment.x1), math.min(x2, segment.x2)
+            if right > left then
+                draw_rounded_rect(ass, left, seek_draw_y-height/2, right, seek_draw_y+height/2,
+                    math.min(height/2,(right-left)/2),color,alpha,ma)
+            end
+        end
+    end
+
     -- Seek track background
-    draw_rounded_rect(ass,
-        sb.x1, seek_draw_y - current_seek_h / 2,
-        sb.x2, seek_draw_y + current_seek_h / 2,
-        current_seek_h / 2,
-        config.seek_bg_color, "D9", ma)
+    draw_seek_fill(sb.x1, sb.x2, current_seek_h, config.seek_bg_color, "D9")
 
     -- Buffered range
     local cache_state = state.demuxer_cache
@@ -1821,11 +1841,7 @@ local function render_osc()
                 local bx1 = sb.x1 + (sb.x2 - sb.x1) * rs
                 local bx2 = sb.x1 + (sb.x2 - sb.x1) * re
                 if bx2 > bx1 + 1 then
-                    draw_rounded_rect(ass,
-                        bx1, seek_draw_y - current_seek_h / 2,
-                        bx2, seek_draw_y + current_seek_h / 2,
-                        current_seek_h / 2,
-                        config.seek_buffered_color, "B3", ma)
+                    draw_seek_fill(bx1, bx2, current_seek_h, config.seek_buffered_color, "B3")
                 end
             end
         end
@@ -1848,13 +1864,9 @@ local function render_osc()
         if rx2 > rx1 + 1 then
             local region_h = is_hovered and math.max(current_seek_h, math.floor(8 * sc)) or current_seek_h
             if is_hovered then
-                draw_rounded_rect(ass, rx1 - 1, seek_draw_y - region_h / 2 - 1,
-                    rx2 + 1, seek_draw_y + region_h / 2 + 1, region_h / 2 + 1,
-                    config.text_color, "70", ma)
+                draw_seek_fill(rx1 - 1, rx2 + 1, region_h + 2, config.text_color, "70")
             end
-            draw_rounded_rect(ass, rx1, seek_draw_y - region_h / 2,
-                rx2, seek_draw_y + region_h / 2, region_h / 2,
-                color, is_hovered and "48" or alpha, ma)
+            draw_seek_fill(rx1, rx2, region_h, color, is_hovered and "48" or alpha)
         end
     end
     each_marker_range(function(marker, marker_start, marker_end)
@@ -1862,33 +1874,18 @@ local function render_osc()
             hover_marker and hover_marker.label == marker.label and hover_marker.start == marker_start)
     end)
 
-    -- Chapter boundaries are one-pixel, ten-pixel-high ticks in the WebUI.
-    if state.duration > 0 then
-        for _, chapter in ipairs(state.chapters or {}) do
-            local chapter_start = tonumber(chapter.start_seconds) or 0
-            if chapter_start > 0 and chapter_start < state.duration then
-                local chapter_x = sb.x1 + (sb.x2 - sb.x1) * (chapter_start / state.duration)
-                draw_rect(ass, chapter_x - 0.5, seek_draw_y - math.floor(5 * sc),
-                    chapter_x + 0.5, seek_draw_y + math.floor(5 * sc),
-                    config.text_color, "73", ma)
-            end
-        end
-    end
-
-    -- Seek progress fill
+    -- Lamp-lit played fill. Chapter gaps below cut every layer of the rail,
+    -- while sb remains one continuous seek/hover target (including the gaps).
     local progress_x = sb.x1 + (sb.x2 - sb.x1) * seek_ratio
     if progress_x > sb.x1 + 1 then
-        draw_rounded_rect(ass,
-            sb.x1, seek_draw_y - current_seek_h / 2,
-            progress_x, seek_draw_y + current_seek_h / 2,
-            current_seek_h / 2,
-            config.text_color, "00", ma)
+        draw_seek_fill(sb.x1, progress_x, current_seek_h * 2, config.accent_color, "DC")
+        draw_seek_fill(sb.x1, progress_x, current_seek_h, config.accent_color, "00")
     end
 
     -- The WebUI thumb stays hidden until hover/drag.
     if is_seek_hover or state.dragging_seek then
         draw_circle(ass, progress_x, seek_draw_y,
-            config.seek_thumb_radius * sc, config.text_color, "00", ma)
+            config.seek_thumb_radius * sc, config.accent_color, "00", ma)
     end
 
     -- Seek hover tooltip
@@ -4542,6 +4539,16 @@ end
 -- credits region starts a ten-second countdown that remains visible even when
 -- the transport chrome fades. Cancel suppresses it for this episode; Play Now
 -- and expiry both advance through the same host-owned navigation path.
+local function request_next_episode(trigger)
+    local content = tostring(state.marker_content_id or "")
+    if content ~= "" then
+        mp.commandv("script-message", "silo-next-episode", trigger, content,
+            tostring(state.marker_load_generation or 0), tostring(state.marker_play_generation or 0))
+    else
+        mp.commandv("script-message", "silo-next-episode", trigger)
+    end
+end
+
 check_next_episode_countdown = function()
     if not state.next_ep_available or not state.next_ep_detail or
        state.post_roll_active or state.next_ep_countdown_cancelled or
@@ -4576,13 +4583,19 @@ check_next_episode_countdown = function()
         state.next_ep_visible = false
         render_next_episode_countdown()
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode", "automatic")
+        request_next_episode("automatic")
         return
     end
 
     if started_now or remaining ~= previous_remaining then
         render_next_episode_countdown()
     end
+end
+
+local function remove_next_episode_still()
+    if state.next_ep_still_shown then pcall(mp.command_native, {name="overlay-remove", id=31}) end
+    state.next_ep_still_shown = nil
+    state.next_ep_still_rect = nil
 end
 
 render_next_episode_countdown = function()
@@ -4592,6 +4605,7 @@ render_next_episode_countdown = function()
             state.next_ep_countdown_overlay:update()
         end
         state.next_ep_countdown_actions = {}
+        remove_next_episode_still()
         return
     end
 
@@ -4626,21 +4640,42 @@ render_next_episode_countdown = function()
     draw_rounded_rect(ass, card_x, card_y, card_x + card_w, card_y + card_h,
         math.floor(12 * sc), "131010", "12", 1.0)
 
+    local detail = state.next_ep_detail
+    local text_x = card_x + pad
+    local text_w = card_w - 2 * pad
+    if detail.still_url and detail.still_key then
+        local image_w, image_h = math.floor(112 * sc), math.floor(63 * sc)
+        local image_x, image_y = card_x + pad, card_y + pad
+        text_x, text_w = image_x + image_w + pad, text_w - image_w - pad
+        draw_rounded_rect(ass, image_x, image_y, image_x + image_w, image_y + image_h, 8 * sc, "FFFFFF", "EF", 1.0)
+        if state.next_ep_still_requested ~= detail.still_key then
+            state.next_ep_still_requested = detail.still_key
+            mp.commandv("script-message", "silo-next-episode-still-request", detail.still_key)
+        end
+        local image = state.next_ep_still
+        if image and image.key == detail.still_key then
+            local signature = table.concat({image.file,image_x,image_y,image_w,image_h},"|")
+            if signature ~= state.next_ep_still_shown then
+                pcall(mp.command_native,{name="overlay-add",id=31,x=image_x,y=image_y,file=image.file,offset=0,fmt="bgra",w=image.w,h=image.h,stride=image.stride,dw=image_w,dh=image_h})
+                state.next_ep_still_shown = signature
+            end
+            state.next_ep_still_rect = {x=image_x,y=image_y,w=image_w,h=image_h}
+        end
+    else remove_next_episode_still() end
     local remaining = tostring(state.next_ep_countdown_remaining)
     local lead = "Up next in "
     local label_size = math.floor(12 * sc)
-    draw_text(ass, card_x + pad, card_y + pad + math.floor(8 * sc), lead,
+    draw_text(ass, text_x, card_y + pad + math.floor(8 * sc), lead,
         label_size, "B3BABD", "00", 1.0, 4, nil, true)
-    draw_text(ass, card_x + pad + math.floor(#lead * label_size * 0.44), card_y + pad + math.floor(8 * sc), remaining,
+    draw_text(ass, text_x + math.floor(#lead * label_size * 0.44), card_y + pad + math.floor(8 * sc), remaining,
         label_size, config.accent_color, "00", 1.0, 4, nil, true)
 
-    local detail = state.next_ep_detail
-    draw_text(ass, card_x + pad, card_y + pad + math.floor(26 * sc),
+    draw_text(ass, text_x, card_y + pad + math.floor(26 * sc),
         "S" .. tostring(detail.season_number or "?") .. " E" .. tostring(detail.episode_number or "?"),
         math.floor(12 * sc), "B3BABD", "00", 1.0, 4, nil, false)
-    local title = truncate_display_text(tostring(detail.title or ""), card_w - 2 * pad, math.floor(16 * sc))
+    local title = truncate_display_text(tostring(detail.title or ""), text_w, math.floor(16 * sc))
     if title ~= "" then
-        draw_text(ass, card_x + pad, card_y + pad + math.floor(48 * sc), ass_escape_text(title),
+        draw_text(ass, text_x, card_y + pad + math.floor(48 * sc), ass_escape_text(title),
             math.floor(16 * sc), "EFF3F5", "00", 1.0, 4, nil, true)
     end
 
@@ -4700,7 +4735,7 @@ local function update_loading_cover(W, H)
         remove_loading_cover()
         return false
     end
-    local signature = table.concat({ backdrop.file, tostring(W), tostring(H) }, "|")
+    local signature = table.concat({ backdrop.file, tostring(backdrop.frame or 0), tostring(W), tostring(H) }, "|")
     if state.loading_backdrop_shown ~= signature then
         local ok = pcall(mp.command_native, {
             name = "overlay-add", id = loading_cover_overlay_id, x = 0, y = 0,
@@ -4779,6 +4814,20 @@ render_playback_wait = function()
     draw_ring_arc(ass, W / 2, H / 2, radius, thickness, math.pi, math.pi, config.text_color, "CC")
     draw_ring_arc(ass, W / 2, H / 2, radius, thickness, -math.pi / 2 + frame * (math.pi * 2 / 18),
         math.pi / 2, config.text_color, "00")
+
+    -- Explicit message templates; Task5 resolves these keys at the host seam.
+    -- Ordinary cache waits deliberately carry no reconnect/catch-up wording.
+    local party = state.watch_party
+    local wait_label = nil
+    if party and party.visible and party.catching_up then wait_label = state.catching_up_label or "Catching up"
+    elseif state.connection_outage or (party and party.visible and party.connection_state == "reconnecting") then
+        wait_label = state.reconnecting_label or "Reconnecting"
+    end
+    if wait_label then
+        draw_rounded_rect(ass, W / 2 - 90 * sc, H / 2 + 32 * sc, W / 2 + 90 * sc, H / 2 + 65 * sc,
+            16 * sc, "131010", "12", 1.0)
+        draw_text(ass, W / 2, H / 2 + 48 * sc, ass_escape_text(wait_label), 13 * sc, config.text_color, "00", 1.0, 5, nil, false)
+    end
 
     if not state.playback_wait_overlay then
         state.playback_wait_overlay = mp.create_osd_overlay("ass-events")
@@ -5453,7 +5502,7 @@ local function activate_transport_control(name, keyboard)
         state.next_ep_visible = false
         state.next_ep_available = false
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode", "viewer")
+        request_next_episode("viewer")
     elseif name == "btn_cc" then
         open_transport_menu_from_controller("subtitles", keyboard)
     elseif name == "btn_quality" then
@@ -5597,7 +5646,7 @@ local function handle_mouse_down()
             state.next_ep_available = false
             state.next_ep_visible = false
             render_next_episode_button()
-            mp.commandv("script-message", "silo-next-episode", "viewer")
+            request_next_episode("viewer")
         end
         render_next_episode_countdown()
         return
@@ -5625,7 +5674,7 @@ local function handle_mouse_down()
         state.next_ep_visible = false
         state.next_ep_available = false
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode", "viewer")
+        request_next_episode("viewer")
         return
     end
 
@@ -5863,7 +5912,7 @@ local function handle_mouse_down()
         state.next_ep_visible = false
         state.next_ep_available = false
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode", "viewer")
+        request_next_episode("viewer")
         return
     end
 
@@ -6134,8 +6183,25 @@ local function observe_properties()
     mp.register_script_message("osc-set-theme", function(rgb)
         local value = tostring(rgb or ""):gsub("#", "")
         if value:match("^[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$") then
-            -- WinUI sends RRGGBB; ASS colors are BGR.
-            config.accent_color = value:sub(5, 6) .. value:sub(3, 4) .. value:sub(1, 2)
+            -- Exact accentColor.ts accentOnDark/labelOn algorithm at 0b579aa6.
+            local function luminance(r, g, b)
+                local function c(v) v=v/255; return v <= 0.04045 and v/12.92 or ((v+0.055)/1.055)^2.4 end
+                return 0.2126*c(r)+0.7152*c(g)+0.0722*c(b)
+            end
+            local function contrast(a,b) return (math.max(a,b)+0.05)/(math.min(a,b)+0.05) end
+            local r,g,b = tonumber(value:sub(1,2),16),tonumber(value:sub(3,4),16),tonumber(value:sub(5,6),16)
+            local panel,dark = luminance(16,16,19),luminance(20,20,23)
+            for step=0,20 do
+                local function mix(v) return math.floor(v+(255-v)*step/20+0.5) end
+                local rr,gg,bb=mix(r),mix(g),mix(b)
+                local light=luminance(rr,gg,bb)
+                local label=contrast(light,1)>contrast(light,dark) and 1 or dark
+                if contrast(light,panel)>=4.5 and contrast(light,label)>=4.5 then
+                    config.accent_color=string.format("%02X%02X%02X",bb,gg,rr)
+                    config.accent_foreground=label==1 and "FFFFFF" or "171414"
+                    break
+                end
+            end
             request_tick()
         end
     end)
@@ -6300,6 +6366,7 @@ local function observe_properties()
             state.marker_content_id = incoming_content_id
             state.marker_file_id = tonumber(data.file_id)
             state.marker_load_generation = tonumber(data.load_generation)
+            state.marker_play_generation = tonumber(data.play_generation)
             state.marker_segments = type(data.marker_segments) == "table" and data.marker_segments or nil
             state.intro_start = tonumber(data.intro_start) or 0
             state.intro_end = tonumber(data.intro_end) or 0
@@ -6481,12 +6548,12 @@ local function observe_properties()
 
     -- The host composes the title backdrop for the current frame size; a
     -- clear names the key it retires so a late clear cannot drop a newer cover.
-    mp.register_script_message("osc-set-loading-backdrop", function(key, file, width, height, stride, for_width, for_height)
+    mp.register_script_message("osc-set-loading-backdrop", function(key, file, width, height, stride, for_width, for_height, frame)
         local w, h, s = tonumber(width) or 0, tonumber(height) or 0, tonumber(stride) or 0
         if not key or key == "" or not file or file == "" or w <= 0 or h <= 0 or s < w * 4 then return end
         if not state.loading_backdrop or state.loading_backdrop.key ~= key then state.loading_backdrop_requested = nil end
         state.loading_backdrop = { key = key, file = file, w = w, h = h, stride = s,
-            for_w = tonumber(for_width) or 0, for_h = tonumber(for_height) or 0 }
+            for_w = tonumber(for_width) or 0, for_h = tonumber(for_height) or 0, frame = tonumber(frame) or 0 }
         if state.playback_loading then render_playback_wait() end
     end)
 
@@ -6495,6 +6562,16 @@ local function observe_properties()
         state.loading_backdrop = nil
         state.loading_backdrop_requested = nil
         render_playback_wait()
+    end)
+
+    mp.register_script_message("osc-set-connection-outage", function(value)
+        state.connection_outage = value == "true"
+        if state.playback_buffering or state.playback_loading then render_playback_wait() end
+    end)
+
+    mp.register_script_message("osc-set-hud-wait-labels", function(reconnecting, catching_up)
+        state.reconnecting_label, state.catching_up_label = reconnecting, catching_up
+        if state.playback_buffering or state.playback_loading then render_playback_wait() end
     end)
 
     mp.register_script_message("osc-set-buffering", function(value)
@@ -6524,6 +6601,8 @@ local function observe_properties()
     end)
 
     mp.register_script_message("osc-set-next-episode-detail", function(json_str)
+        remove_next_episode_still()
+        state.next_ep_still, state.next_ep_still_requested = nil, nil
         state.next_ep_countdown_active = false
         state.next_ep_countdown_cancelled = false
         state.next_ep_countdown_started_at = 0
@@ -6535,6 +6614,23 @@ local function observe_properties()
             local ok, data = pcall(require("mp.utils").parse_json, json_str)
             state.next_ep_detail = ok and data or nil
         end
+        render_next_episode_countdown()
+    end)
+
+    mp.register_script_message("osc-set-next-episode-still", function(key,file,width,height,stride)
+        if not state.next_ep_detail or state.next_ep_detail.still_key ~= key then return end
+        remove_next_episode_still()
+        state.next_ep_still = file and file ~= "" and {key=key,file=file,w=tonumber(width),h=tonumber(height),stride=tonumber(stride)} or nil
+        if not state.next_ep_still then state.next_ep_still_requested = nil end
+        render_next_episode_countdown()
+    end)
+
+    mp.register_script_message("osc-update-next-episode-still-source", function(json_str)
+        local ok, data = pcall(require('mp.utils').parse_json, json_str)
+        if not ok or not data or not state.next_ep_detail then return end
+        remove_next_episode_still()
+        state.next_ep_still, state.next_ep_still_requested = nil, nil
+        state.next_ep_detail.still_key, state.next_ep_detail.still_url = data.still_key, data.still_url
         render_next_episode_countdown()
     end)
 
@@ -7394,6 +7490,8 @@ local function init()
         state.next_ep_available = false
         state.next_ep_visible = false
         state.next_ep_detail = nil
+        state.next_ep_still, state.next_ep_still_requested = nil, nil
+        state.connection_outage = false
         state.next_ep_countdown_active = false
         state.next_ep_countdown_cancelled = false
         state.next_ep_countdown_started_at = 0

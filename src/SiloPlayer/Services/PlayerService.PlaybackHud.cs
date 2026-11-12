@@ -11,6 +11,26 @@ namespace SiloPlayer.Services;
 // production OSC (Silo Server #3917 and #3993 at 0b579aa6).
 public partial class PlayerService
 {
+    public void PositionPostRollPreview(double x, double y, double width, double height)
+    {
+        _videoWindow?.SetPostRollPreviewBounds(x, y, width, height);
+        if (_postRollActive && !_postRollVideoEnded) _videoWindow?.EnterPostRollPreview();
+    }
+
+    private int WatchBackdropWidth
+    {
+        get
+        {
+            try
+            {
+                var window = _videoWindow?.Hwnd ?? (App.MainWindowInstance is { } main ? WinRT.Interop.WindowNative.GetWindowHandle(main) : IntPtr.Zero);
+                if (window != IntPtr.Zero) return Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+                    Microsoft.UI.Win32Interop.GetWindowIdFromWindow(window), Microsoft.UI.Windowing.DisplayAreaFallback.Nearest).OuterBounds.Width;
+            }
+            catch { /* A prefetch can precede the first native window. */ }
+            return 1920;
+        }
+    }
     private readonly StillWatchingSession _stillWatching = new();
     private readonly object _loadingCoverGate = new();
     private LoadingCoverOwner? _loadingCover;
@@ -57,6 +77,9 @@ public partial class PlayerService
     // with argument "time" once the shared catalog lands; the OSC substitutes
     // "{time}" with its live clock text.
     internal static Func<string> EndTimeLabelTemplate { get; set; } = () => PlaybackEndTime.FallbackLabelTemplate;
+    // Explicit catalog seam while Task4 is absent from this base. The caller
+    // installs AppStrings at integration; raw server metadata never enters it.
+    internal static Func<string, string, string> HudText { get; set; } = (_, fallback) => fallback;
 
     private void PublishPlaybackHudPreferences(SiloPlayer.Player.MpvPlayer mpv)
     {
@@ -64,6 +87,8 @@ public partial class PlayerService
         try { clock = PlaybackEndTime.ResolveClock(_settingsService.Load().UiTimeFormat, CultureInfo.CurrentCulture); }
         catch { clock = PlaybackEndTime.ResolveClock(null, CultureInfo.CurrentCulture); }
         mpv.SendScriptMessage("osc-set-end-time-format", clock, EndTimeLabelTemplate());
+        mpv.SendScriptMessage("osc-set-hud-wait-labels",
+            HudText("web.player.connection.reconnecting", "Reconnecting"), HudText("web.player.room.catchingUp", "Catching up"));
         mpv.SendScriptMessage("osc-set-autoplay-gate", IsStillWatchingGated ? "true" : "false");
     }
 
@@ -79,6 +104,11 @@ public partial class PlayerService
         public int Width, Height, Stride;
         public int FrameWidth = LoadingCoverBitmap.MaximumWidth, FrameHeight = LoadingCoverBitmap.MaximumHeight;
         public readonly List<string> Files = [];
+        public readonly SemaphoreSlim ComposeGate = new(1, 1);
+        public int Revision, PublishedFrames;
+        public bool FadeImage;
+        public byte[]? Composed;
+        public int ComposedWidth, ComposedHeight;
     }
 
     // Called once the watch detail names the title's backdrop: the shell
@@ -131,7 +161,8 @@ public partial class PlayerService
             var file = await StorageFile.GetFileFromPathAsync(path);
             using var stream = await file.OpenReadAsync();
             var decoder = await BitmapDecoder.CreateAsync(stream);
-            var scale = Math.Min(1d, LoadingCoverBitmap.MaximumWidth / (double)Math.Max(1, decoder.OrientedPixelWidth));
+            var scale = Math.Min(1d, Math.Min(LoadingCoverBitmap.MaximumWidth / (double)Math.Max(1, decoder.OrientedPixelWidth),
+                LoadingCoverBitmap.MaximumHeight / (double)Math.Max(1, decoder.OrientedPixelHeight)));
             var transform = new BitmapTransform
             {
                 ScaledWidth = (uint)Math.Max(1, Math.Round(decoder.OrientedPixelWidth * scale)),
@@ -143,7 +174,7 @@ public partial class PlayerService
             token.ThrowIfCancellationRequested();
             var width = (int)transform.ScaledWidth;
             var height = (int)transform.ScaledHeight;
-            await PublishLoadingCoverAsync(owner, data.DetachPixelData(), width, height, width * 4, token).ConfigureAwait(false);
+            await PublishLoadingCoverAsync(owner, data.DetachPixelData(), width, height, width * 4, token, fade: true).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex)
@@ -153,12 +184,13 @@ public partial class PlayerService
     }
 
     private async Task PublishLoadingCoverAsync(LoadingCoverOwner owner, byte[] pixels, int width, int height, int stride,
-        CancellationToken token)
+        CancellationToken token, bool fade = false)
     {
         int frameWidth, frameHeight;
         lock (_loadingCoverGate)
         {
             if (!ReferenceEquals(_loadingCover, owner)) return;
+            owner.FadeImage = fade;
             owner.Pixels = pixels; owner.Width = width; owner.Height = height; owner.Stride = stride;
             frameWidth = owner.FrameWidth; frameHeight = owner.FrameHeight;
         }
@@ -167,37 +199,60 @@ public partial class PlayerService
 
     private async Task ComposeLoadingCoverAsync(LoadingCoverOwner owner, int frameWidth, int frameHeight, CancellationToken token)
     {
-        byte[]? source; int width, height, stride;
-        lock (_loadingCoverGate)
+        var revision = Interlocked.Increment(ref owner.Revision);
+        await owner.ComposeGate.WaitAsync(token).ConfigureAwait(false);
+        try
         {
-            if (!ReferenceEquals(_loadingCover, owner) || owner.Pixels == null) return;
-            source = owner.Pixels; width = owner.Width; height = owner.Height; stride = owner.Stride;
-        }
-        var (targetWidth, targetHeight) = LoadingCoverBitmap.TargetSize(frameWidth, frameHeight);
-        if (targetWidth <= 0) return;
-        // OSC ui_scale: 1 up to 1920 wide, then sqrt(width/1920); expressed in bitmap pixels.
-        var oscScale = frameWidth <= 1920 ? 1d : Math.Sqrt(frameWidth / 1920d);
-        var layoutScale = oscScale * targetWidth / (double)frameWidth;
-        var composed = await Task.Run(() => LoadingCoverBitmap.Compose(source, width, height, stride, targetWidth, targetHeight, layoutScale), token)
-            .ConfigureAwait(false);
-        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "LoadingCover");
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, $"{Guid.NewGuid():N}-{targetWidth}x{targetHeight}.bgra");
-        await File.WriteAllBytesAsync(path, composed, token).ConfigureAwait(false);
-        var mpv = _mpv;
-        lock (_loadingCoverGate)
-        {
-            if (!ReferenceEquals(_loadingCover, owner) || token.IsCancellationRequested || mpv == null)
+            byte[] source; int width, height, stride; bool fade;
+            bool Current() => !token.IsCancellationRequested && ReferenceEquals(_loadingCover, owner) && revision == Volatile.Read(ref owner.Revision);
+            lock (_loadingCoverGate)
             {
-                TryDelete(path);
-                return;
+                if (!Current() || owner.Pixels == null) return;
+                source = owner.Pixels; width = owner.Width; height = owner.Height; stride = owner.Stride; fade = owner.FadeImage;
             }
-            owner.Files.Add(path);
+            var (targetWidth, targetHeight) = LoadingCoverBitmap.TargetSize(frameWidth, frameHeight);
+            if (targetWidth <= 0) return;
+            var layoutScale = (frameWidth <= 1920 ? 1d : Math.Sqrt(frameWidth / 1920d)) * targetWidth / frameWidth;
+            var composed = await Task.Run(() => LoadingCoverBitmap.Compose(source, width, height, stride, targetWidth, targetHeight, layoutScale), token).ConfigureAwait(false);
+            if (!Current()) return;
+            var directory = PlaybackArtworkDirectory("LoadingCover");
+            Directory.CreateDirectory(directory);
+            lock (_loadingCoverGate)
+            {
+                if (!Current()) return;
+                if (owner.Files.Count == 0) for (var i = 0; i < 2; i++) owner.Files.Add(Path.Combine(directory, $"{Guid.NewGuid():N}-{i}.bgra"));
+            }
+            // A single scratch buffer during the 500ms transition. Only two raw
+            // files are reused; neither frame arrays nor files accumulate per tick.
+            var previous = owner.ComposedWidth == targetWidth && owner.ComposedHeight == targetHeight ? owner.Composed : null;
+            previous ??= new byte[composed.Length];
+            var scratch = fade ? new byte[composed.Length] : composed;
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var progress = fade ? 0d : 1d;
+            do
+            {
+                if (!Current()) return;
+                if (fade) LoadingCoverBitmap.BlendFrame(previous, composed, scratch, progress);
+                var serial = ++owner.PublishedFrames;
+                var path = owner.Files[serial % 2];
+                await File.WriteAllBytesAsync(path, scratch, token).ConfigureAwait(false);
+                lock (_loadingCoverGate)
+                {
+                    if (!Current() || _mpv == null) return;
+                    _mpv.SendScriptMessage("osc-set-loading-backdrop", owner.Key, path,
+                        targetWidth.ToString(CultureInfo.InvariantCulture), targetHeight.ToString(CultureInfo.InvariantCulture), (targetWidth * 4).ToString(CultureInfo.InvariantCulture),
+                        frameWidth.ToString(CultureInfo.InvariantCulture), frameHeight.ToString(CultureInfo.InvariantCulture), serial.ToString(CultureInfo.InvariantCulture));
+                }
+                if (progress >= 1) break;
+                await Task.Delay(33, token).ConfigureAwait(false);
+                progress = Math.Min(1, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds / 500);
+            } while (true);
+            lock (_loadingCoverGate)
+            {
+                if (Current()) { owner.Composed = composed; owner.ComposedWidth = targetWidth; owner.ComposedHeight = targetHeight; }
+            }
         }
-        mpv.SendScriptMessage("osc-set-loading-backdrop", owner.Key, path,
-            targetWidth.ToString(CultureInfo.InvariantCulture), targetHeight.ToString(CultureInfo.InvariantCulture),
-            (targetWidth * 4).ToString(CultureInfo.InvariantCulture),
-            frameWidth.ToString(CultureInfo.InvariantCulture), frameHeight.ToString(CultureInfo.InvariantCulture));
+        finally { owner.ComposeGate.Release(); }
     }
 
     // The OSC asks again when the frame it covers changes size.
@@ -231,7 +286,7 @@ public partial class PlayerService
         try { owner.Cts.Cancel(); } catch (ObjectDisposedException) { }
         _mpv?.SendScriptMessage("osc-clear-loading-backdrop", owner.Key);
         string[] files;
-        lock (_loadingCoverGate) files = owner.Files.ToArray();
+        lock (_loadingCoverGate) { files = owner.Files.ToArray(); owner.Pixels = null; owner.Composed = null; }
         // The OSC may still map the previous bitmap until its overlay-remove runs.
         _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ =>
         {
@@ -244,6 +299,10 @@ public partial class PlayerService
     {
         try { File.Delete(path); } catch { /* best effort cache cleanup */ }
     }
+
+    private static string PlaybackArtworkDirectory(string kind) => Path.Combine(
+        Environment.GetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable) is { Length: > 0 } fixture
+            ? fixture : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer"), kind);
 }
 
 /// <summary>The backdrop a playback request loads behind; <see cref="Owner"/> is its loading surface owner.</summary>
