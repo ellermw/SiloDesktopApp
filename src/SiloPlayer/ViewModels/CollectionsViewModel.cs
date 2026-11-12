@@ -64,7 +64,10 @@ public partial class CollectionsViewModel : ObservableObject
     public bool IsLoadingServerLibraryRest => _loadingServerLibraries.Count > 0;
     public ServerCollectionsLibrary? NextServerLibrary => ServerLibraries.FirstOrDefault(l => l.TotalCount > l.Collections.Count && !_requestedServerLibraries.Contains(l.LibraryId));
     private void ServerCollectionsChanged() { ServerCollectionRevision++; OnPropertyChanged(nameof(ServerCollectionRevision)); }
-    public void CancelServerCollectionLoads()
+    // A refresh's re-reads of loaded rests are its own. The wall retiring one would leave that library's old cards
+    // with nothing left to read it again, so until the refresh ends only a newer load retires them.
+    public void CancelServerCollectionLoads() { if (!IsRefreshingServerCollections) RetireServerCollectionLoads(); }
+    private void RetireServerCollectionLoads()
     {
         _serverCollectionOwner.Cancel(); _serverCollectionOwner.Dispose(); _serverCollectionOwner = new();
         foreach (var libraryId in _loadingServerLibraries)
@@ -181,7 +184,7 @@ public partial class CollectionsViewModel : ObservableObject
         var context = _requestClient?.CaptureContext();
         if (_loadInProgress && _loadContext == context) return;
         var generation = ++_loadGeneration;
-        CancelServerCollectionLoads();
+        RetireServerCollectionLoads();
         bool Current() => generation == _loadGeneration && (context == null || _requestClient!.IsCurrentContext(context.Value));
         if (_displayContext != context)
         {

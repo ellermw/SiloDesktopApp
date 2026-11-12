@@ -161,6 +161,35 @@ public sealed class CollectionsWallLoadingTests
     }
 
     [Fact]
+    public async Task RefreshReReadsALoadedRestWhenTheWallRetiresItsOwnLoadsMeanwhile()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(["s1", "t1", "s2", "s3"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+
+        // The refresh's re-read of Movies is on the wire when the viewer presses a Show pill or leaves the page.
+        wire.HoldLibraryTab = true;
+        var refresh = vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await Until(() => wire.LibraryTabReads == 2);
+        Assert.True(vm.IsRefreshingServerCollections); Assert.True(vm.IsServerLibraryLoading(1));
+        vm.CancelServerCollectionLoads();
+        Assert.True(vm.IsServerLibraryLoading(1));   // the re-read is the refresh's, not the wall's to retire
+
+        wire.LibraryTab.SetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"s1"},{"id":"s4"}]}"""));
+        await refresh;
+        Assert.False(vm.IsRefreshingServerCollections); Assert.False(vm.IsLoadingServerLibraryRest);
+        Assert.Equal(2, wire.LibraryTabReads);
+        Assert.Equal(["s1", "t1", "s4"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Null(vm.ServerLibraryError(1));
+    }
+
+    [Fact]
     public async Task FailedRefreshStopsHoldingLibraryReadsBack()
     {
         using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""" };
