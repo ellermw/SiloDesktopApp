@@ -108,6 +108,42 @@ internal static class PlaybackPopupLayoutNativeFixture
                 if (atEdge) owner.AppWindow.Move(new PointInt32(-20000, -20000));
             }
         }
+        // A same-ID status refresh is not navigation: its placement pass must
+        // leave a long list where the viewer scrolled it.
+        owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
+        using (var video = new MpvVideoWindow())
+        {
+            video.Create(WinRT.Interop.WindowNative.GetWindowHandle(owner)); video.Show();
+            Array Chapters(int current)
+            {
+                var chapters = Array.CreateInstance(choice, 72);
+                for (var i = 0; i < chapters.Length; i++) chapters.SetValue(Activator.CreateInstance(choice,
+                    [$"{i}", $"Chapter {i + 1}", "00:00:00", Array.Empty<string>(), i == current, true, "", false, false]), i);
+                return chapters;
+            }
+            var menu = ctor.Invoke([video, Activator.CreateInstance(anchor, [.8d, .92d, .95d, .98d]),
+                "Chapters", Chapters(0), (Func<bool>)(() => true), (Action<string>)(_ => { }), close, null, null, null, false]);
+            try
+            {
+                await (Task)type.GetMethod("ShowAsync", Private)!.Invoke(menu, null)!;
+                await Task.Delay(200);
+                var list = (ListView)type.GetField("_list", Private)!.GetValue(menu)!;
+                var scroller = Descendants<ScrollViewer>(list).First();
+                scroller.ChangeView(null, scroller.ScrollableHeight / 2, null, true);
+                await Task.Delay(200);
+                var before = scroller.VerticalOffset;
+                type.GetMethod("UpdateChoices", Private)!.Invoke(menu, [Chapters(1)]);
+                await Task.Delay(300);
+                var after = scroller.VerticalOffset;
+                if (before < 1) failures.Add($"chapters-refresh: 72-row list did not scroll (scrollable={scroller.ScrollableHeight:0.0})");
+                else if (Math.Abs(after - before) > 1) failures.Add($"chapters-refresh: live refresh moved the scrolled list from {before:0.0} to {after:0.0}");
+                Program.Log($"Popup chapters-refresh: offset before={before:0.0}, after={after:0.0}, scrollable={scroller.ScrollableHeight:0.0}.");
+            }
+            finally
+            {
+                type.GetMethod("Input", Private)!.Invoke(menu, ["cancel"]);
+            }
+        }
         foreach (var failure in failures) Program.Log("FAIL: " + failure);
         if (failures.Count != 0) throw new InvalidOperationException($"{failures.Count} shared popup layout/frame failures.");
         Program.Log("PASS: actual OSC shared Quality/Subtitle popup sizes to content, stays in playback bounds, has no native frame and keeps final rows/footer reachable at compact and enlarged text sizes.");

@@ -323,9 +323,11 @@ internal class PlaybackChoiceMenu
         var width = Math.Max(1, Math.Min(bounds.Right - bounds.Left, (int)Math.Ceiling(350 * scale)));
         // Measure the real wrapped rows, typography and visible footer. A fixed
         // allowance per choice made short menus mostly empty and let a collapsed
-        // error footer give Quality the taller Subtitle menu cap.
-        _root.Measure(new Windows.Foundation.Size(width / scale, double.PositiveInfinity));
-        var cap = _footer?.Visibility == Visibility.Visible ? 620d : 460d;
+        // error footer give Quality the taller Subtitle menu cap. Measure at the
+        // tallest size the popup may take, never unbounded: an infinite viewport
+        // on the live list can discard the scroll offset a refresh must keep.
+        var cap = Math.Min(_footer?.Visibility == Visibility.Visible ? 620d : 460d, Math.Max(1, bounds.Bottom - bounds.Top) / scale);
+        _root.Measure(new Windows.Foundation.Size(width / scale, cap));
         var height = Math.Max(1, Math.Min(bounds.Bottom - bounds.Top,
             (int)Math.Ceiling(Math.Min(cap, _root.DesiredSize.Height) * scale)));
         var right = video.Left + (int)(_anchor.Right * (video.Right - video.Left));
