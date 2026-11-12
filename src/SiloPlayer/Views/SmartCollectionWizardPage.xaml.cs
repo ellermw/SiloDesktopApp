@@ -36,7 +36,8 @@ public sealed partial class SmartCollectionWizardPage : Page
     private int _pageLifetime;
 
     public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading
-        && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title) && _rulesEditor?.IsValid != false;
+        && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title) && _rulesEditor?.IsValid != false
+        && !ViewModel.NeedsRuleForSave;
     public string PreviewCountText
         => ViewModel.PreviewTotal > 0
             ? $"{ViewModel.PreviewTotal:N0} matched"
@@ -60,6 +61,7 @@ public sealed partial class SmartCollectionWizardPage : Page
                 or nameof(ViewModel.IsLoading)
                 or nameof(ViewModel.IsPreviewing)
                 or nameof(ViewModel.PreviewTotal)
+                or nameof(ViewModel.PreviewScopeNote)
                 or nameof(ViewModel.IsReadOnly)
                 or nameof(ViewModel.Title))
             {
@@ -152,6 +154,9 @@ public sealed partial class SmartCollectionWizardPage : Page
         sortOptions.Add(("Progress", "progress"));
         sortOptions.Add(("Date Viewed", "date_viewed"));
         sortOptions.Add(("Plays", "plays"));
+        // Rendering a saved sort must not silently rewrite it, including future fields.
+        if (sortOptions.All(option => option.Value != ViewModel.SortField))
+            sortOptions.Add((QueryRulesEditor.Label(ViewModel.SortField), ViewModel.SortField));
         AddComboItems(SortFieldCombo, sortOptions, ViewModel.SortField);
         _wizardSortChoices = CatalogSortChoices.Capture(SortFieldCombo);
         RefreshSortChoices();
@@ -274,7 +279,7 @@ public sealed partial class SmartCollectionWizardPage : Page
         _rulesEditor = editor;
         WizardFiltersSheet.ConfigureFilterHeader(editor.DetachModeSelector(), "Refine your catalog results");
         editor.Load(ViewModel.RuleDefinition, ViewModel.MediaScope, ViewModel.SelectedLibraryIds.FirstOrDefault() is var libraryId && libraryId > 0 ? libraryId : null);
-        editor.Changed += () => { ViewModel.MatchMode = ViewModel.RuleDefinition.Match; Bindings.Update(); UpdateContinueState(); if (editor.IsValid) SchedulePreview(); };
+        editor.Changed += () => { ViewModel.MatchMode = ViewModel.RuleDefinition.Match; Bindings.Update(); UpdatePreviewState(); if (editor.IsValid) SchedulePreview(); };
         RulesPanel.Children.Add(editor);
         MatchModeCombo.Visibility = Visibility.Collapsed;
         _ = RefreshRuleScopeAsync();
@@ -320,6 +325,10 @@ public sealed partial class SmartCollectionWizardPage : Page
         PreviewCountTextBlock.Text = ViewModel.IsPreviewing && ViewModel.PreviewMediaItems.Count == 0
             ? "Loading items…"
             : $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")}";
+        // With no complete rule the preview sends nothing; say what it is waiting for.
+        var needsRule = ViewModel.NeedsRule;
+        PreviewEmptyTitle.Text = needsRule ? "Add a rule to see what it matches" : "No titles match these filters yet.";
+        PreviewEmptyHelp.Text = needsRule ? "Pick a field, an operator and a value." : "Loosen the filters above to see what your collection would include.";
         PreviewEmptyPanel.Visibility = !ViewModel.IsPreviewing && ViewModel.PreviewMediaItems.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -327,7 +336,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             ? Visibility.Visible
             : Visibility.Collapsed;
         NextSummaryText.Text = ViewModel.PreviewTotal > 0
-            ? $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")} match these filters"
+            ? $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")} {(ViewModel.PreviewScopeNote == null ? "match these filters" : "match in the previewed library")}"
             : "Choose filters to preview matching titles";
         UpdateContinueState();
     }
@@ -394,8 +403,17 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     private void UpdateContinueState()
     {
+        // CanSave depends on both view-model state and the mutable rules editor.
+        // Refresh the actual control at the same points as the wizard navigation.
+        if (SaveButton != null) SaveButton.IsEnabled = CanSave;
+        if (RuleNeededText != null)
+        {
+            RuleNeededText.Text = SmartCollectionWizardViewModel.RuleNeededMessage;
+            RuleNeededText.Visibility = ViewModel.NeedsRuleForSave && !ViewModel.IsReadOnly
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
         if (ContinueButton == null) return;
-        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && (ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0);
+        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && !ViewModel.NeedsRuleForSave;
     }
 
     private async void PreviewScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)

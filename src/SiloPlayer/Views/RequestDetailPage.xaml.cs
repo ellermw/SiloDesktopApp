@@ -31,6 +31,7 @@ public sealed partial class RequestDetailPage : Page
     private ApiRequestContext? _downloadRefreshContext;
     private bool _downloadRefreshBusy;
     private readonly HashSet<string> _pendingActions = [];
+    private bool _requestConfirmationOpen;
 
     public RequestDetailPage()
     {
@@ -308,17 +309,71 @@ public sealed partial class RequestDetailPage : Page
         {
             var request = await _api.GetAsync(item.Request.RequestId, _lifetime.Token);
             if (_item != item || _lifetime.IsCancellationRequested || !RequestViewerPolicy.CanCancel(request)) return;
+            var requestId = request.Id;
             var cancel = SecondaryAction("cancel", "Cancel request", "x");
             cancel.Click += async (_, _) =>
             {
+                if (_requestConfirmationOpen || _lifetime.IsCancellationRequested) return;
+                var owner = _api.CaptureIdentityContext();
                 var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "Cancel this request?", Content = $"Cancel your request for {item.Title}?", PrimaryButtonText = "Cancel request", CloseButtonText = "Keep request", DefaultButton = ContentDialogButton.Close };
-                if (await confirmation.ShowAsync() != ContentDialogResult.Primary || _item != item || _lifetime.IsCancellationRequested) return;
-                await MutateAsync(cancel, () => _api.CancelAsync(request.Id, _lifetime.Token));
+                ContentDialogResult choice;
+                _requestConfirmationOpen = true;
+                try { choice = await confirmation.ShowAsync(); }
+                finally { _requestConfirmationOpen = false; }
+                // A shell refresh remounting this route retires the page, not this identity's confirmation;
+                // only a changed account/profile or leaving the title abandons it.
+                bool Abandoned() => !_api.IsCurrentIdentityContext(owner) || _lifetime.IsCancellationRequested && Successor() == null;
+                if (choice != ContentDialogResult.Primary || Abandoned()) return;
+                var toast = App.Services.GetRequiredService<ToastService>();
+                async Task SubmitAsync()
+                {
+                    // Polling and read-context invalidation do not retire this identity's confirmation.
+                    // Recheck the current request's authority and eligibility before the identity-bound POST.
+                    var current = await _api.GetAsync(requestId);
+                    if (Abandoned()) return;
+                    var state = (Successor()?._item ?? _item)?.Request;
+                    if (state == null || state.RequestId != requestId || state.RequestedByViewer != true || !RequestViewerPolicy.CanCancel(current))
+                    {
+                        toast.Error("This request has changed and can no longer be cancelled.");
+                        return;
+                    }
+                    await _api.CancelAsync(requestId, owner);
+                    // A page replaced meanwhile cannot show the outcome: report it and reread the one mounted in its place.
+                    if (!_lifetime.IsCancellationRequested || Abandoned()) return;
+                    toast.Success("Request cancelled");
+                    _ = Successor()?.RefreshRequestAsync();
+                }
+                if (!_lifetime.IsCancellationRequested) { await MutateAsync(cancel, SubmitAsync); return; }
+                try { await SubmitAsync(); }
+                catch (Exception ex) { if (!Abandoned()) toast.Error(ex); }
             };
             ApplyPendingAction(cancel); ActionsPanel.Children.Add(cancel);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Request cancellation eligibility unavailable: {ex.GetType().Name}"); }
+    }
+
+    // An access refresh or reconnect catch-up remounts this route (NavigationService.RefreshCurrentEntry) while a
+    // cancellation confirmation can still be open or its POST in flight. The page mounted in this one's place for
+    // the same title stands in for it; any other destination means the viewer left.
+    private RequestDetailPage? Successor() => _lifetime.IsCancellationRequested &&
+        App.Services.GetRequiredService<NavigationService>().Frame?.Content is RequestDetailPage page &&
+        !ReferenceEquals(page, this) && page._navigation == _navigation ? page : null;
+
+    // A cancellation confirmed on the page this one replaced settled after this page may have read the request.
+    private async Task RefreshRequestAsync()
+    {
+        if (_item is not { } shown || _lifetime.IsCancellationRequested) return;
+        var context = _downloadRefreshClient.CaptureContext();
+        try
+        {
+            var fresh = await _api.GetDetailAsync(shown.MediaType, shown.TmdbId, _lifetime.Token);
+            if (_lifetime.IsCancellationRequested || !_downloadRefreshClient.IsCurrentContext(context)) return;
+            _item = fresh;
+            BuildActions(fresh); BuildSeasons(fresh);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Request detail refresh after cancellation unavailable: {ex.GetType().Name}"); }
     }
 
     private async Task MutateAsync(Button button, Func<Task> action)
@@ -469,7 +524,24 @@ public sealed partial class RequestDetailPage : Page
         RecommendationsSection.Visibility = RecommendationsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void OpenLibrary_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: string id }) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id); }
+    private bool _libraryChecking;
+    // The server's library match is global, not proof this profile can open it (official LibraryItemLink): read the
+    // item first, stay with a notice on an authoritative not-found, and drop the check once the page, profile or
+    // navigation that asked has moved on. Any other failure navigates, because the item page answers it itself.
+    private async void OpenLibrary_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id } || _libraryChecking || _lifetime.IsCancellationRequested) return;
+        _libraryChecking = true;
+        var viewer = _api.CaptureContext();
+        try
+        {
+            var access = await RequestLibraryLinks.CheckAsync(id, App.Services.GetRequiredService<ItemDetailPrefetchCache>(),
+                () => !_lifetime.IsCancellationRequested && IsLoaded && _api.IsCurrentContext(viewer), _lifetime.Token);
+            if (access == RequestLibraryAccess.Open) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id);
+            else if (access == RequestLibraryAccess.Unavailable) App.Services.GetService<ToastService>()?.Error(RequestLibraryLinks.UnavailableNotice);
+        }
+        finally { _libraryChecking = false; }
+    }
     private async void ExternalLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string url } && Uri.TryCreate(url, UriKind.Absolute, out var uri))

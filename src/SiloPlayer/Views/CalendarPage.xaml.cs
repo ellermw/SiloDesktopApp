@@ -710,20 +710,17 @@ public sealed partial class CalendarPage : Page
 
     private Border BuildBadgePill(string badge)
     {
-        var label = badge switch
-        {
-            "series_premiere" => "Premiere",
-            "season_premiere" => "New Season",
-            "finale" => "Finale",
-            _ => badge,
-        };
+        var label = UpcomingBadgePresentation.Label(badge);
 
         var isPremiere = badge is "series_premiere" or "season_premiere";
-        var isFinale = badge == "finale";
 
         Brush background;
         Brush foreground;
         Brush outline;
+
+        // Finale, Digital and Physical keep the WebUI's dark pill on every theme.
+        static SolidColorBrush Argb(uint value) => new(Windows.UI.Color.FromArgb(
+            (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value));
 
         if (isPremiere)
         {
@@ -731,11 +728,11 @@ public sealed partial class CalendarPage : Page
             background = new SolidColorBrush(((SolidColorBrush)foreground).Color) { Opacity = .2 };
             outline = new SolidColorBrush(((SolidColorBrush)foreground).Color) { Opacity = .4 };
         }
-        else if (isFinale)
+        else if (UpcomingBadgePresentation.FixedPalette(badge) is { } palette)
         {
-            background = new SolidColorBrush(Windows.UI.Color.FromArgb(230, 0x43, 0x14, 0x07));
-            foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xF7, 0xED));
-            outline = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 0x9A, 0x34, 0x12));
+            background = Argb(palette.Background);
+            foreground = Argb(palette.Foreground);
+            outline = Argb(palette.Outline);
         }
         else
         {
