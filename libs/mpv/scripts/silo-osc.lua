@@ -288,6 +288,9 @@ local state = {
     -- First-frame / rebuffer feedback. These render in the mpv popup itself;
     -- XAML overlays live behind the native video window and cannot be seen.
     playback_loading = false,
+    transport_reloading = false,
+    -- Host pause intent, shown while a reload's freeze holds mpv paused.
+    transport_reload_paused = nil,
     playback_buffering = false,
     playback_buffering_requested = false,
     playback_buffering_timer = nil,
@@ -1886,7 +1889,12 @@ local function render_osc()
     local play_scale = play_interaction == "pressed" and 0.96
         or (play_interaction == "hover" or play_interaction == "focused") and 1.04 or 1.0
     local play_radius = bp.w / 2 * play_scale
-    if state.pause then
+    -- A reload's freeze pauses mpv; show the pause state the host will restore.
+    local play_paused = state.pause
+    if state.transport_reloading and state.transport_reload_paused ~= nil then
+        play_paused = state.transport_reload_paused
+    end
+    if play_paused then
         -- player-breathe: a 2.6s halo expands 18px while fading from 22%.
         local breathe_phase = (mp.get_time() % 2.6) / 2.6
         if breathe_phase <= 0.60 then
@@ -1898,7 +1906,7 @@ local function render_osc()
         end
     end
     draw_circle(ass, bp.cx, bp.cy, play_radius, config.text_color, "00", ma)
-    if state.pause then
+    if play_paused then
         draw_play_icon(ass, bp.cx, bp.cy, bp.w * 0.48, "0B0B0A", "00", ma)
     else
         draw_pause_icon(ass, bp.cx, bp.cy, bp.w * 0.48, "0B0B0A", "00", ma)
@@ -2817,7 +2825,7 @@ local function tick()
     end
 
 
-    if state.playback_loading or state.playback_buffering then
+    if state.playback_loading or state.playback_buffering or state.transport_reloading then
         local frame = math.floor(now * 10) % 8
         if frame ~= state.playback_spinner_frame then
             state.playback_spinner_frame = frame
@@ -4445,7 +4453,7 @@ end
 -- Native equivalent of VideoPlayer.tsx's first-frame and buffering surfaces.
 -- Loading owns a solid black frame; rebuffering leaves the picture visible.
 render_playback_wait = function()
-    if state.osc_disabled or (not state.playback_loading and not state.playback_buffering) then
+    if state.osc_disabled or (not state.playback_loading and not state.playback_buffering and not state.transport_reloading) then
         if state.playback_wait_overlay then
             state.playback_wait_overlay.data = ""
             state.playback_wait_overlay:update()
@@ -4572,7 +4580,9 @@ end
 -- Pause center indicator: 64×64 circle bg-black/50 with a Play triangle.
 -- Matches the webui player chrome (64x64 circle bg-black/50 + Play icon).
 render_pause_indicator = function()
+    -- A continuing reload's spinner owns the centre; its freeze is not a viewer pause.
     local should_show = state.pause and not state.osc_disabled and not state.translation_buffering
+        and not state.transport_reloading
 
     if should_show == state.pause_indicator_shown then return end
     state.pause_indicator_shown = should_show
@@ -6111,6 +6121,8 @@ local function observe_properties()
     mp.register_script_message("osc-set-loading", function(value)
         state.playback_loading = (value == "true" or value == "1")
         if state.playback_loading then
+            state.transport_reloading = false
+            state.transport_reload_paused = nil
             state.playback_buffering = false
             state.playback_buffering_requested = false
             if state.playback_buffering_timer then
@@ -6120,6 +6132,34 @@ local function observe_properties()
         end
         state.playback_spinner_frame = -1
         render_playback_wait()
+        render_pause_indicator()
+    end)
+
+    mp.register_script_message("osc-set-transport-reloading", function(value)
+        state.transport_reloading = (value == "true" or value == "1")
+        if state.transport_reloading then
+            state.playback_loading = false
+            state.playback_buffering = false
+            state.playback_buffering_requested = false
+            if state.playback_buffering_timer then
+                state.playback_buffering_timer:kill()
+                state.playback_buffering_timer = nil
+            end
+        else
+            state.transport_reload_paused = nil
+        end
+        state.playback_spinner_frame = -1
+        render_playback_wait()
+        render_pause_indicator()
+        request_tick()
+    end)
+
+    -- The load freeze pauses mpv itself. The host supplies the pause state the
+    -- load restores, so the transport shows the viewer's choice meanwhile.
+    mp.register_script_message("osc-set-transport-reload-pause", function(value)
+        if not state.transport_reloading then return end
+        state.transport_reload_paused = (value == "true" or value == "1")
+        request_tick()
     end)
 
     mp.register_script_message("osc-set-buffering", function(value)
@@ -6443,7 +6483,7 @@ local function observe_properties()
             if state.next_ep_visible then render_next_episode_button() end
             if state.next_ep_countdown_active then render_next_episode_countdown() end
             if state.translation_buffering then render_translation_buffering() end
-            if state.playback_loading or state.playback_buffering then render_playback_wait() end
+            if state.playback_loading or state.playback_buffering or state.transport_reloading then render_playback_wait() end
             if state.playback_failure_visible then render_playback_failure() end
             request_tick()
         end

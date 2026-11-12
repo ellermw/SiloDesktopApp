@@ -405,6 +405,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", selectedAudioCase); }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "transport-reload-actual")
+            {
+                await ActualTransportReloadNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "transport-reload-controls")
+            {
+                await TransportReloadControlsNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")
             {
                 var reviewCase = Environment.GetEnvironmentVariable("SILO_HUD_REVIEW_CASE");

@@ -1,3 +1,19 @@
+# Continuing playback transport controls — November 11, 2026
+
+Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
+
+Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+
+These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
+
+Continuing same-session seeks/replans use the transparent OSC spinner and keep native menus reachable. Initial and replacement sessions retain an opaque cover until their own first output. Framing is bound to the accepted session/authority/playback lifetime; a submitted load must have its own FILE_LOADED before output can frame it. Latest explicit pause/resume intent is nullable and busy-owner scoped, and is retired on failure/replacement. A framed load that fails before FILE_LOADED hands the pause state it would have restored to recovery, which shows, toggles and restores that state instead of the load freeze (not built or run when written). Audio presentations retire when the accepted track changes; Audio/Quality/Chapters/Party presentations retire on the busy/idle transition so stale disabled choices cannot survive completion. Audio rows opened during a continuing reload are disabled with the same in-progress reason instead of dropping the selection. Action guards still require transport/room authority.
+
+Lead regression evidence at `D:/SiloPlayer/.codex-tmp/server-review-nov10/playback-lead-corrections/`: red-all-a reproduced ten expected failures against the previous AA2A7150 app; green-all-a passed all20 actual-path scenarios with exit0 and the literal completion sentinel. Final integrated source `bbc67a08` passed 5,360/5,360 full unit tests, the actual transport route and existing native Chapters/Party/Quality routes (each exit 0 with the completion sentinel). Fresh Release app SHA256 `F49DF938DC474271A725259AB1AFB35A7FCE5EE133AE38AE9069D1D15E954019`; final app/native/unit/Core/Player PDB identity and authored-source checks have zero mismatches. `beta-binding-c` selects dependencies alongside the executed test assembly; the earlier ambiguous-copy binding failure remains preserved. Independent review approved with no P0-P2 findings. Earlier worker claims/receipts retain their original source boundaries and are not relabeled final.
+
+Synthetic HTTP/media/native fixtures do not certify a live room/server or full visual parity. Installed player, real settings/accounts and installer remain untouched. Verified for submission through the existing Beta pipeline; pipeline owns review, packaging and version stamps.
+
+---
+
 # November 11 — Next Episode above the timeline
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
