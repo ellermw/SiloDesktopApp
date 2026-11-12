@@ -141,6 +141,7 @@ public sealed partial class SettingsPage : Page
         _cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        InitializeWebhookOwnership();
         InitializeSettingsPresentation();
         Loaded += (_, _) => InitializeAppUpdateSettings();
         Unloaded += (_, _) => ReleaseAppUpdateSettings();
@@ -567,6 +568,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         ViewModel.DeactivateInheritedPreferences();
         DeactivateAccountSignIn();
         DeactivateYourData();
+        RetireWebhookOwnership();
         ++_overlayLoadGeneration;
         _requestSettingGeneration++;
         _accountPassword.Deactivate();
@@ -990,6 +992,7 @@ _webhookPlexAuthCts?.Cancel();
         AutomationProperties.SetName(SettingsCurrentProfileButton, $"Current profile: {profileName}");
 
         _canManageProfiles = AuthorizationPolicy.IsActingAdmin(auth) || profile?.IsPrimary == true;
+        WebhookSyncTab.Visibility = WebhookAvailable ? Visibility.Visible : Visibility.Collapsed;
         ProfilesTab.Visibility = AccountPasswordTab.Visibility = _canManageProfiles ? Visibility.Visible : Visibility.Collapsed;
         RequestsTab.Visibility = _requestsAvailable ? Visibility.Visible : Visibility.Collapsed;
         var groups = new (string Label, (string Tag, string Label, string Description, string Glyph, string Search)[] Items)[]
@@ -1031,7 +1034,7 @@ _webhookPlexAuthCts?.Cancel();
         };
 
         SidebarEntries = groups.SelectMany(group => group.Items
-            .Where(entry => !((entry.Tag is "Profiles" or "Account" or "Sessions") && !_canManageProfiles) && !(entry.Tag == "Requests" && !_requestsAvailable))
+            .Where(entry => !((entry.Tag is "Profiles" or "Account" or "Sessions") && !_canManageProfiles) && !(entry.Tag == "Requests" && !_requestsAvailable) && !(entry.Tag == "WebhookSync" && !WebhookAvailable))
             .Select(entry => new SettingsNavigationEntry(group.Label, entry.Tag, entry.Label, $"{entry.Label} {entry.Description} {entry.Search}"))).ToArray();
         SidebarEntriesChanged?.Invoke();
         foreach (var group in groups)
@@ -1049,6 +1052,7 @@ _webhookPlexAuthCts?.Cancel();
             foreach (var entry in group.Items)
             {
                 if ((entry.Tag is "Profiles" or "Account" or "Sessions") && !_canManageProfiles || entry.Tag == "Requests" && !_requestsAvailable) continue;
+                if (entry.Tag == "WebhookSync" && !WebhookAvailable) continue;
                 var card = BuildSettingsOverviewCard(entry.Tag, entry.Label, entry.Description, entry.Glyph);
                 cards.Children.Add(card);
                 _settingsOverviewCards.Add(new SettingsOverviewCard(
@@ -1158,6 +1162,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void ShowSettingsOverview()
     {
+        RetireWebhookOwnership();
         DeactivateDevices();
         DeactivateLoginSessions();
         DeactivateYourData();
@@ -1179,6 +1184,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void ShowSettingsDetail(Button button)
     {
+        if (button.Tag is "WebhookSync" && !WebhookAvailable) { ShowSettingsOverview(); return; }
         if ((button.Tag is "Account" or "Profiles" or "Sessions") && !_canManageProfiles || button.Tag is "Requests" && !_requestsAvailable) { ShowSettingsOverview(); return; }
         _showingSettingsOverview = false;
         SettingsHeaderSubtitle.Text = "Manage your playback preferences, libraries, and display options.";
@@ -1257,6 +1263,7 @@ _webhookPlexAuthCts?.Cancel();
         var matches = 0;
         foreach (var entry in entries)
         {
+            if (ReferenceEquals(entry.Button, WebhookSyncTab) && !WebhookAvailable) { entry.Button.Visibility = Visibility.Collapsed; continue; }
             if ((ReferenceEquals(entry.Button, ProfilesTab) || ReferenceEquals(entry.Button, AccountPasswordTab) || ReferenceEquals(entry.Button, SessionsTab)) && !_canManageProfiles || ReferenceEquals(entry.Button, RequestsTab) && !_requestsAvailable)
             {
                 entry.Button.Visibility = Visibility.Collapsed;
@@ -1294,6 +1301,8 @@ _webhookPlexAuthCts?.Cancel();
     {
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
+
+        if (tag == "WebhookSync" && !WebhookAvailable) { ShowSettingsOverview(); return; }
 
         if (tag == "CardOverlays") { SelectSettingsSection("Interface"); return; }
         var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, YourDataTab, SessionsTab };
@@ -1333,7 +1342,7 @@ _webhookPlexAuthCts?.Cancel();
         if (tag != "YourData") DeactivateYourData();
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "Sessions") DeactivateLoginSessions();
-        if (tag != "WebhookSync") _webhookRefreshTimer?.Stop();
+        if (tag != "WebhookSync") RetireWebhookOwnership();
         if (tag != "Profiles") _householdSessionsTimer?.Stop();
 
         if (tag == "Interface")
@@ -5099,6 +5108,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task LoadWebhookConnectionsAsync()
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         WebhookConnectionsPanel.Children.Clear();
         _webhookConnectionCards.Clear();
         NoConnectionsText.Text = "Loading connections...";
@@ -5108,7 +5118,9 @@ _webhookPlexAuthCts?.Cancel();
         {
             if (_webhookProfiles.Count == 0)
             {
-                _webhookProfiles = (await App.Services.GetRequiredService<AuthApi>().GetProfilesAsync()).Profiles;
+                var profiles = await _webhookClient.SendRequestAsync<ProfilesResponse>(owner.Context, HttpMethod.Get, "/api/v2/profiles", null, owner.Token);
+                if (!CurrentWebhook(owner)) return;
+                _webhookProfiles = profiles.Profiles;
                 WebhookDefaultProfileCombo.Items.Clear();
                 foreach (var profile in _webhookProfiles)
                     WebhookDefaultProfileCombo.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = profile.Id });
@@ -5119,7 +5131,8 @@ _webhookPlexAuthCts?.Cancel();
                 UpdateWebhookCreateButtonState();
             }
             var api = App.Services.GetRequiredService<WebhookSyncApi>();
-            var connections = await api.GetConnectionsAsync();
+            var connections = await api.GetConnectionsAsync(owner.Context, owner.Token);
+            if (!CurrentWebhook(owner)) return;
             NoConnectionsText.Text = "No webhook connections yet. Create one above to generate a provider-specific endpoint.";
             NoConnectionsText.HorizontalAlignment = HorizontalAlignment.Left;
             NoConnectionsText.Visibility = connections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -5166,7 +5179,7 @@ _webhookPlexAuthCts?.Cancel();
                 var health = BuildWebhookHealthBadge(connection);
                 Grid.SetColumn(health, 1); row.Children.Add(health);
                 card.Content = row;
-                card.Click += async (_, _) => await SelectWebhookConnectionAsync(connection);
+                card.Click += async (_, _) => { if (CurrentWebhook(owner)) await SelectWebhookConnectionAsync(connection); };
                 _webhookConnectionCards[connection.Id] = card;
                 WebhookConnectionsPanel.Children.Add(card);
             }
@@ -5175,11 +5188,18 @@ _webhookPlexAuthCts?.Cancel();
                 var selected = connections.FirstOrDefault(connection => connection.Id == _selectedWebhookConnection?.Id) ?? connections[0];
                 await SelectWebhookConnectionAsync(selected);
             }
-            EnsureWebhookRefreshTimer();
+            if (CurrentWebhook(owner)) EnsureWebhookRefreshTimer();
         }
         catch (Exception ex)
         {
-            NoConnectionsText.Text = $"Could not load webhook connections: {ex.Message}";
+            // Transport catch-up retires a dispatched read, not its manager;
+            // read again instead of leaving the loading state behind.
+            var retiredRead = ex is OperationCanceledException && !_webhookClient.IsCurrentContext(owner.Context);
+            if (!CurrentWebhook(owner)) return;
+            if (retiredRead) { await LoadWebhookConnectionsAsync(); return; }
+            if (ex is OperationCanceledException) return;
+            WebhookFailure(owner, ex);
+            NoConnectionsText.Text = "Could not load webhook connections: " + AuthorizationPolicy.HouseholdManagementGuidance(ex);
             NoConnectionsText.Visibility = Visibility.Visible;
         }
     }
@@ -5200,19 +5220,19 @@ _webhookPlexAuthCts?.Cancel();
             _webhookRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
             _webhookRefreshTimer.Tick += async (_, _) =>
             {
-                if (_webhookRefreshBusy || _selectedWebhookConnection == null) return;
+                if (_webhookRefreshBusy || _selectedWebhookConnection == null || CaptureWebhookOwner() is not { } owner) return;
+                var connectionId = _selectedWebhookConnection.Id;
                 _webhookRefreshBusy = true;
                 try
                 {
-                    _webhookEvents = await App.Services.GetRequiredService<WebhookSyncApi>()
-                        .GetEventsAsync(_selectedWebhookConnection.Id);
+                    var events = await App.Services.GetRequiredService<WebhookSyncApi>()
+                        .GetEventsAsync(owner.Context, connectionId, ct: owner.Token);
+                    if (!CurrentWebhook(owner) || _selectedWebhookConnection?.Id != connectionId) return;
+                    _webhookEvents = events;
                     BuildWebhookEvents();
                 }
-                catch
-                {
-                    // Keep the last successful table visible; the next interval retries.
-                }
-                finally { _webhookRefreshBusy = false; }
+                catch (Exception ex) { WebhookFailure(owner, ex, silentTransient: true); }
+                finally { if (CurrentWebhook(owner)) _webhookRefreshBusy = false; }
             };
         }
         _webhookRefreshTimer.Stop();
@@ -5263,7 +5283,7 @@ _webhookPlexAuthCts?.Cancel();
         if (WebhookCreateConnectionButton == null) return;
         var provider = (WebhookProviderCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "plex";
         var profileId = (WebhookDefaultProfileCombo.SelectedItem as ComboBoxItem)?.Tag as string;
-        var canCreate = !string.IsNullOrWhiteSpace(profileId) &&
+        var canCreate = WebhookAvailable && !string.IsNullOrWhiteSpace(profileId) &&
             (provider == "plex"
                 ? WebhookPlexServerCombo.SelectedItem is ComboBoxItem { Tag: PlexBrowserResource }
                 : !string.IsNullOrWhiteSpace(WebhookManualServerName.Text));
@@ -5272,6 +5292,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void WebhookPlexSignIn_Click(object sender, RoutedEventArgs e)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         _webhookPlexAuthCts?.Cancel();
         _webhookPlexAuthCts?.Dispose();
         _webhookPlexAuthCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
@@ -5283,19 +5304,25 @@ _webhookPlexAuthCts?.Cancel();
         {
             var auth = App.Services.GetRequiredService<PlexBrowserAuthApi>();
             var pin = await auth.CreatePinAsync(ct);
+            if (!CurrentWebhook(owner)) return;
             if (!await Windows.System.Launcher.LaunchUriAsync(auth.BuildAuthenticationUri(pin)))
                 throw new InvalidOperationException("Windows could not open the Plex sign-in page.");
+            if (!CurrentWebhook(owner)) return;
             WebhookPlexAuthStatus.Text = "Complete sign-in in your browser. Waiting for Plex…";
 
             string? token = null;
             while (!ct.IsCancellationRequested && string.IsNullOrWhiteSpace(token))
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                if (!CurrentWebhook(owner)) return;
                 token = await auth.CheckPinAsync(pin, ct);
+                if (!CurrentWebhook(owner)) return;
             }
             if (string.IsNullOrWhiteSpace(token)) throw new TimeoutException("Plex sign-in expired.");
 
-            _webhookPlexServers = await auth.GetServersAsync(token, ct);
+            var servers = await auth.GetServersAsync(token, ct);
+            if (!CurrentWebhook(owner)) return;
+            _webhookPlexServers = servers;
             WebhookPlexServerCombo.Items.Clear();
             foreach (var server in _webhookPlexServers)
                 WebhookPlexServerCombo.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
@@ -5309,20 +5336,21 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (OperationCanceledException)
         {
-            WebhookPlexAuthStatus.Text = "Plex sign-in expired or was cancelled. Please try again.";
+            if (CurrentWebhook(owner)) WebhookPlexAuthStatus.Text = "Plex sign-in expired or was cancelled. Please try again.";
         }
         catch (Exception ex)
         {
-            WebhookPlexAuthStatus.Text = $"Plex sign-in failed: {ex.Message}";
+            if (CurrentWebhook(owner)) WebhookPlexAuthStatus.Text = $"Plex sign-in failed: {ex.Message}";
         }
         finally
         {
-            WebhookPlexSignInButton.IsEnabled = true;
+            if (CurrentWebhook(owner)) WebhookPlexSignInButton.IsEnabled = true;
         }
     }
 
     private async void WebhookCreateConnection_Click(object sender, RoutedEventArgs e)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         var provider = (WebhookProviderCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "plex";
         var profileId = (WebhookDefaultProfileCombo.SelectedItem as ComboBoxItem)?.Tag as string;
         var plexServer = (WebhookPlexServerCombo.SelectedItem as ComboBoxItem)?.Tag as PlexBrowserResource;
@@ -5354,27 +5382,31 @@ _webhookPlexAuthCts?.Cancel();
         WebhookCreateConnectionButton.Content = "Creating…";
         try
         {
-            var created = await App.Services.GetRequiredService<WebhookSyncApi>().CreateConnectionAsync(body);
+            var created = await App.Services.GetRequiredService<WebhookSyncApi>().CreateConnectionAsync(owner.Context, body, owner.Token);
+            if (!CurrentWebhook(owner)) return;
             _selectedWebhookConnection = created.Connection;
             await LoadWebhookConnectionsAsync();
+            if (!CurrentWebhook(owner)) return;
             await SelectWebhookConnectionAsync(created.Connection);
+            if (!CurrentWebhook(owner)) return;
             WebhookUrlBox.Text = created.WebhookUrl;
             WebhookManualServerName.Text = "";
             ViewModel.StatusMessage = "Webhook connection created";
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Failed to create webhook connection: {ex.Message}";
+            WebhookFailure(owner, ex);
         }
         finally
         {
-            WebhookCreateConnectionButton.Content = oldContent;
-            WebhookCreateConnectionButton.IsEnabled = true;
+            if (CurrentWebhook(owner)) { WebhookCreateConnectionButton.Content = oldContent; UpdateWebhookCreateButtonState(); }
         }
     }
 
     private async Task SelectWebhookConnectionAsync(WebhookSyncConnection connection)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
+        var detailGeneration = ++_webhookDetailGeneration;
         _selectedWebhookConnection = connection;
         foreach (var pair in _webhookConnectionCards)
             pair.Value.Background = (Brush)Application.Current.Resources[
@@ -5411,16 +5443,29 @@ _webhookPlexAuthCts?.Cancel();
         try
         {
             var api = App.Services.GetRequiredService<WebhookSyncApi>();
-            if (_webhookProfiles.Count == 0) _webhookProfiles = (await App.Services.GetRequiredService<AuthApi>().GetProfilesAsync()).Profiles;
-            var actorsTask = api.GetProfileMappingsAsync(connection.Id);
-            var eventsTask = api.GetEventsAsync(connection.Id);
+            if (_webhookProfiles.Count == 0)
+            {
+                var profiles = await _webhookClient.SendRequestAsync<ProfilesResponse>(owner.Context, HttpMethod.Get, "/api/v2/profiles", null, owner.Token);
+                if (!CurrentWebhook(owner) || detailGeneration != _webhookDetailGeneration) return;
+                _webhookProfiles = profiles.Profiles;
+            }
+            var actorsTask = api.GetProfileMappingsAsync(owner.Context, connection.Id, owner.Token);
+            var eventsTask = api.GetEventsAsync(owner.Context, connection.Id, ct: owner.Token);
             await Task.WhenAll(actorsTask, eventsTask);
+            if (!CurrentWebhook(owner) || detailGeneration != _webhookDetailGeneration) return;
             BuildWebhookActors(actorsTask.Result);
             _webhookEvents = eventsTask.Result;
             _webhookEventsPage = 0;
             BuildWebhookEvents();
         }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not load connection details: {ex.Message}"; }
+        catch (Exception ex)
+        {
+            if (detailGeneration != _webhookDetailGeneration) return;
+            // As above: reload details whose reads a transport catch-up retired.
+            var retiredRead = ex is OperationCanceledException && !_webhookClient.IsCurrentContext(owner.Context);
+            if (retiredRead && CurrentWebhook(owner)) await SelectWebhookConnectionAsync(connection);
+            else WebhookFailure(owner, ex);
+        }
     }
 
     private void BuildWebhookActors(WebhookSyncProfileMappingsResponse response)
@@ -5458,6 +5503,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void BuildWebhookEvents()
     {
+        if (CaptureWebhookOwner() is not { } eventOwner) return;
         WebhookEventsHost.Children.Clear();
         const int pageSize = 15;
         var outcome = (WebhookEventOutcomeFilter.SelectedItem as ComboBoxItem)?.Tag as string ?? "all";
@@ -5530,7 +5576,7 @@ _webhookPlexAuthCts?.Cancel();
                 CornerRadius = new CornerRadius(0),
                 Padding = new Thickness(10, 9, 10, 9),
             };
-            card.Click += async (_, _) => await ShowWebhookEventDetailAsync(item);
+            card.Click += async (_, _) => { if (CurrentWebhook(eventOwner)) await ShowWebhookEventDetailAsync(item); };
             WebhookEventsHost.Children.Add(card);
         }
     }
@@ -5713,6 +5759,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task ShowWebhookEventDetailAsync(WebhookSyncEventLog item)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         var secondaryBrush = (Brush)Application.Current.Resources["SecondaryTextBrush"];
         var content = new StackPanel { Width = 500, Spacing = 16 };
 
@@ -5837,7 +5884,10 @@ _webhookPlexAuthCts?.Cancel();
             CloseButtonText = "Close",
             XamlRoot = XamlRoot,
         };
-        await dialog.ShowAsync();
+        if (!CurrentWebhook(owner)) return;
+        _webhookEventDialog = dialog;
+        try { await dialog.ShowAsync(); }
+        finally { if (ReferenceEquals(_webhookEventDialog, dialog)) _webhookEventDialog = null; }
     }
 
     private void WebhookEventsPrevious_Click(object sender, RoutedEventArgs e) { _webhookEventsPage--; BuildWebhookEvents(); }
@@ -5859,35 +5909,38 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void WebhookSaveConnection_Click(object sender, RoutedEventArgs e)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         if (_selectedWebhookConnection == null || string.IsNullOrWhiteSpace(WebhookConnectionNameBox.Text)) return;
         var button = (Button)sender;
         button.IsEnabled = false;
         try
         {
             var updated = await App.Services.GetRequiredService<WebhookSyncApi>().UpdateConnectionAsync(
-                _selectedWebhookConnection.Id,
+                owner.Context, _selectedWebhookConnection.Id,
                 new Dictionary<string, object?>
                 {
                     ["server_name"] = WebhookConnectionNameBox.Text.Trim(),
                     ["default_profile_id"] = (WebhookConnectionProfileCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "",
-                });
+                }, owner.Token);
+            if (!CurrentWebhook(owner)) return;
             _selectedWebhookConnection = updated;
             WebhookDetailName.Text = updated.ServerName;
             await LoadWebhookConnectionsAsync();
-            ViewModel.StatusMessage = "Webhook connection updated";
+            if (CurrentWebhook(owner)) ViewModel.StatusMessage = "Webhook connection updated";
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Could not update connection: {ex.Message}";
+            WebhookFailure(owner, ex);
         }
         finally
         {
-            button.IsEnabled = true;
+            if (CurrentWebhook(owner)) button.IsEnabled = true;
         }
     }
 
     private void WebhookCopyUrl_Click(object sender, RoutedEventArgs e)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         var package = new DataPackage();
         package.SetText(WebhookUrlBox.Text ?? "");
         Clipboard.SetContent(package);
@@ -5896,19 +5949,23 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void WebhookRotate_Click(object sender, RoutedEventArgs e)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         if (_selectedWebhookConnection == null) return;
+        var connection = _selectedWebhookConnection;
         try
         {
-            var rotated = await App.Services.GetRequiredService<WebhookSyncApi>().RotateWebhookAsync(_selectedWebhookConnection.Id);
+            var rotated = await App.Services.GetRequiredService<WebhookSyncApi>().RotateWebhookAsync(owner.Context, connection.Id, owner.Token);
+            if (!CurrentWebhook(owner) || _selectedWebhookConnection?.Id != connection.Id) return;
             WebhookUrlBox.Text = rotated.WebhookUrl;
             _selectedWebhookConnection.WebhookUrl = rotated.WebhookUrl;
             ViewModel.StatusMessage = "Webhook URL rotated";
         }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not rotate URL: {ex.Message}"; }
+        catch (Exception ex) { WebhookFailure(owner, ex); }
     }
 
     private async void WebhookDelete_Click(object sender, RoutedEventArgs e)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         if (_selectedWebhookConnection == null) return;
         var connection = _selectedWebhookConnection;
         WebhookDeleteConnectionButton.IsEnabled = false;
@@ -5916,22 +5973,23 @@ _webhookPlexAuthCts?.Cancel();
         WebhookDeleteConnectionButton.Content = "Deleting…";
         try
         {
-            await App.Services.GetRequiredService<WebhookSyncApi>().DeleteConnectionAsync(connection.Id);
+            await App.Services.GetRequiredService<WebhookSyncApi>().DeleteConnectionAsync(owner.Context, connection.Id, owner.Token);
+            if (!CurrentWebhook(owner)) return;
             _selectedWebhookConnection = null;
             WebhookConnectionDetail.Visibility = Visibility.Collapsed;
             await LoadWebhookConnectionsAsync();
-            ViewModel.StatusMessage = "Webhook connection deleted";
+            if (CurrentWebhook(owner)) ViewModel.StatusMessage = "Webhook connection deleted";
         }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not delete connection: {ex.Message}"; }
+        catch (Exception ex) { WebhookFailure(owner, ex); }
         finally
         {
-            WebhookDeleteConnectionButton.Content = previousContent;
-            WebhookDeleteConnectionButton.IsEnabled = true;
+            if (CurrentWebhook(owner)) { WebhookDeleteConnectionButton.Content = previousContent; WebhookDeleteConnectionButton.IsEnabled = true; }
         }
     }
 
     private async void WebhookSaveActors_Click(object sender, RoutedEventArgs e)
     {
+        if (CaptureWebhookOwner() is not { } owner) return;
         if (_selectedWebhookConnection == null) return;
         var mappings = _webhookActorSelectors.Select(pair => new Dictionary<string, object?>
         {
@@ -5941,11 +5999,12 @@ _webhookPlexAuthCts?.Cancel();
         }).ToList();
         try
         {
-            await App.Services.GetRequiredService<WebhookSyncApi>().UpdateProfileMappingsAsync(_selectedWebhookConnection.Id,
-                new Dictionary<string, object?> { ["mappings"] = mappings });
+            await App.Services.GetRequiredService<WebhookSyncApi>().UpdateProfileMappingsAsync(owner.Context, _selectedWebhookConnection.Id,
+                new Dictionary<string, object?> { ["mappings"] = mappings }, owner.Token);
+            if (!CurrentWebhook(owner)) return;
             ViewModel.StatusMessage = "Profile mappings saved";
         }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not save actor routing: {ex.Message}"; }
+        catch (Exception ex) { WebhookFailure(owner, ex); }
     }
 
     // ===== Profiles Tab =====

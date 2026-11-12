@@ -7,6 +7,7 @@ using SiloPlayer.Helpers;
 using SiloPlayer.Converters;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.Messaging;
@@ -36,6 +37,11 @@ public sealed class EditMetadataDialog : ContentDialog
     private readonly Grid _header = new() { ColumnSpacing = 10 };
     private readonly TextBlock _lockedCount = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
     private readonly MediaMaintenanceApi _api;
+    private ApiRequestContext _owner;
+    private readonly ApiIdentityContext _identityOwner;
+    private readonly SiloApiClient _client;
+    private MetadataResetCapability? _resetCapability;
+    private readonly TextBlock _resetExplanation = new() { TextWrapping = TextWrapping.Wrap };
     private readonly CancellationTokenSource _lifetime = new();
     private bool _pending, _imagePending;
     private Action? _resizeImages;
@@ -49,6 +55,9 @@ public sealed class EditMetadataDialog : ContentDialog
     public EditMetadataDialog(MediaItemDetail item)
     {
         _item = item; _state = new(item); _api = App.Services.GetRequiredService<MediaMaintenanceApi>();
+        _client = App.Services.GetRequiredService<SiloApiClient>();
+        _identityOwner = _client.CaptureIdentityContext();
+        _owner = _api.CaptureContext();
         _header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         _header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         _header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -122,31 +131,95 @@ public sealed class EditMetadataDialog : ContentDialog
             Padding = new Thickness(12, 4, 12, 4), Foreground = Brush("SecondaryTextBrush"),
             Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left };
         _reset.Visibility = item.Type is "movie" or "series" or "season" or "episode" ? Visibility.Visible : Visibility.Collapsed;
+        _reset.IsEnabled = false;
         var reset = _reset;
         var confirmation = new StackPanel { Spacing = 12, MaxWidth = 340 };
         confirmation.Children.Add(new TextBlock { Text = "Reset to Provider Metadata?", FontWeight = FontWeights.SemiBold });
-        confirmation.Children.Add(new TextBlock { Text = item.Type switch
-        {
-            "series" => "This will unlock all fields on this series and refresh metadata from your providers. Any manual edits to the series will be overwritten. Locked seasons and episodes keep their edits.",
-            "season" => "This will unlock this season's title, overview and air date and refresh metadata from your providers. Any manual edits to them will be overwritten. Artwork you picked stays locked.",
-            "episode" => "This will unlock this episode's title, overview, runtime and air date and refresh metadata from your providers. Any manual edits to them will be overwritten.",
-            _ => "This will re-fetch metadata from the provider. Your manual edits may be replaced.",
-        }, TextWrapping = TextWrapping.Wrap });
+        confirmation.Children.Add(_resetExplanation);
         var confirm = new Button { Content = "Reset", Style = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
         var flyout = new Flyout { Content = confirmation }; reset.Flyout = flyout; confirmation.Children.Add(confirm);
-        confirm.Click += async (_, _) => { if (_pending || _imagePending) return; _pending = true; confirm.IsEnabled = false; reset.IsEnabled = false; IsPrimaryButtonEnabled = false;
+        confirm.Click += async (_, _) => { if (!CanSubmitReset || _resetCapability is not { } capability) return; _pending = true; confirm.IsEnabled = false; reset.IsEnabled = false; IsPrimaryButtonEnabled = false;
             try
             {
                 var locksToKeep = _item.Type is "season" or "episode"
                     ? _state.EffectiveLocks(_item.LockedFields).Except(_state.FieldLockMap.Values).Order().ToArray()
                     : Array.Empty<int>();
-                await _api.ResetToProviderAsync(_item.ContentId, locksToKeep, _lifetime.Token); HasSaved = true; Changed(); flyout.Hide(); Hide();
+                var receipt = await _api.ResetToProviderAsync(capability, _item.ContentId, locksToKeep, _lifetime.Token);
+                if (!CurrentOwner) return;
+                HasSaved = true; Changed();
+                Toast().Success(receipt.Status is "queued" or "running" ? "Metadata reset queued. Provider changes will appear when the job completes." : "Metadata reset request accepted.");
+                flyout.Hide(); Hide();
             }
-            catch (Exception ex) { Toast().Error(ex); } finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = !_imagePending; IsPrimaryButtonEnabled = !_imagePending; } };
+            catch (OperationCanceledException) { }
+            catch (ApiException ex) when (capability.AtomicReset && ex.StatusCode == 422)
+            { if (CurrentOwner) Toast().Error(ex, "This server does not support atomic metadata reset. Nothing was changed."); }
+            catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
+            // Only _reset opens this flyout and the click re-checks CanSubmitReset, so the confirmation
+            // must not stay disabled while a reconnect is still reloading the capability.
+            finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = CanSubmitReset; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;
-        Opened += async (_, _) => { Reflow(); await BuildTranslation(); };
-        SizeChanged += (_, _) => Reflow(); Closed += (_, _) => _lifetime.Cancel();
+        var auth = App.Services.GetRequiredService<AuthService>();
+        var client = _client;
+        void Retire()
+        {
+            if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(Retire); return; }
+            if (CurrentOwner)
+            {
+                // A reconnect retires reads, not this profile's unsaved draft.
+                var current = _api.CaptureContext();
+                if (current == _owner) return;
+                _owner = current;
+                _resetCapability = null; _reset.IsEnabled = false; flyout.Hide();
+                _ = LoadResetCapabilityAsync();
+                return;
+            }
+            _lifetime.Cancel(); _reset.IsEnabled = IsPrimaryButtonEnabled = false; flyout.Hide();
+        }
+        Opened += async (_, _) =>
+        {
+            auth.ProfileChanged += Retire; auth.UserChanged += Retire; auth.LoggedOut += Retire; client.ContextInvalidated += Retire;
+            Reflow();
+            await LoadResetCapabilityAsync();
+            if (CurrentOwner) await BuildTranslation();
+        };
+        SizeChanged += (_, _) => Reflow();
+        Closed += (_, _) =>
+        {
+            _lifetime.Cancel(); _reset.IsEnabled = false;
+            auth.ProfileChanged -= Retire; auth.UserChanged -= Retire; auth.LoggedOut -= Retire; client.ContextInvalidated -= Retire;
+        };
+    }
+    private bool CurrentOwner => !_lifetime.IsCancellationRequested && _client.IsCurrentIdentityContext(_identityOwner)
+        && AuthorizationPolicy.CanCurateMetadata(App.Services.GetRequiredService<AuthService>());
+    private bool CanSubmitReset => CurrentOwner && !_pending && !_imagePending && _resetCapability is { } capability
+        && _api.IsCurrentContext(capability.Owner);
+    private async Task LoadResetCapabilityAsync()
+    {
+        if (_reset.Visibility != Visibility.Visible) return;
+        var owner = _owner;
+        try
+        {
+            var capability = await _api.GetResetCapabilityAsync(owner, _lifetime.Token);
+            if (!CurrentOwner || owner != _owner) return;
+            _resetCapability = capability;
+            _resetExplanation.Text = capability.AtomicReset
+                ? (_item.Type switch
+                  {
+                      "season" => "This clears all locks on this season's title, overview and air date and resets those fields to its providers. Artwork you picked stays locked on the series; reset the series to replace it. ",
+                      "episode" => "This clears all locks on this episode's title, overview, runtime and air date and resets those fields to its providers. ",
+                      _ => $"This resets the {_item.Type} to its providers, clearing all locks on this item, including artwork locks. "
+                  }) + "Fields for which providers have no value are cleared. Manual edits may be overwritten. " +
+                  (_item.Type == "series" ? "Locked seasons and episodes keep their edits. " : "") +
+                  "A provider outage leaves existing values and locks unchanged. The server may preserve own-language text. Changes appear after the server job completes."
+                : "This server supports only legacy unlock and quick refresh. " +
+                  (_item.Type is "season" or "episode" ? "Editable metadata locks are removed before refreshing; other locks are preserved. " : "All locks on this item are removed before refreshing. ") +
+                  "Provider-empty fields may retain old values, and locks stay removed if refresh fails. This is not an atomic reset. " +
+                  (_item.Type == "series" ? "Locked seasons and episodes keep their edits. " : "") + "Changes appear after the server job completes.";
+            _reset.IsEnabled = CanSubmitReset;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (CurrentOwner && owner == _owner) ToolTipService.SetToolTip(_reset, "Reset availability could not be checked. Reopen the editor to retry. " + ex.Message); }
     }
     private ToastService Toast() => App.Services.GetRequiredService<ToastService>();
     private void Changed() => WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, _item.ContentId, _item.SeriesId));
@@ -287,7 +360,7 @@ public sealed class EditMetadataDialog : ContentDialog
     }
     private async void Save(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
-        args.Cancel = true; if (_pending || _imagePending || !AuthorizationPolicy.CanCurateMetadata(App.Services.GetRequiredService<AuthService>())) return;
+        args.Cancel = true; if (_pending || _imagePending || !CurrentOwner) return;
         // WinUI change notifications can still be queued when Save is invoked.
         // Snapshot the visible form so the submitted draft is the user's latest input.
         foreach (var (key, input) in _textInputs) CaptureVisibleValue(key, input.Text);
@@ -300,9 +373,9 @@ public sealed class EditMetadataDialog : ContentDialog
             if (key.EndsWith("_date") && value is string date && date.Length > 0 && !DateOnly.TryParseExact(date, "yyyy-MM-dd", out _)) { Toast().Error("Use YYYY-MM-DD for dates."); return; }
         if (changes.Count == 0) { Hide(); return; }
         _pending = true; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; PrimaryButtonText = "Saving...";
-        try { await _api.UpdateMetadataAsync(_item.ContentId, changes); HasSaved = true; Changed(); Toast().Success("Metadata saved"); Hide(); }
-        catch (Exception ex) { Toast().Error(ex); }
-        finally { _pending = false; IsPrimaryButtonEnabled = !_imagePending; _reset.IsEnabled = !_imagePending; PrimaryButtonText = "Save Changes"; }
+        try { await _api.UpdateMetadataAsync(_item.ContentId, changes, _lifetime.Token); if (!CurrentOwner) return; HasSaved = true; Changed(); Toast().Success("Metadata saved"); Hide(); }
+        catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
+        finally { _pending = false; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; _reset.IsEnabled = CanSubmitReset; PrimaryButtonText = "Save Changes"; }
     }
     private void CaptureVisibleValue(string key, object? value)
     {
@@ -478,13 +551,13 @@ public sealed class EditMetadataDialog : ContentDialog
         textless.Click += (_, _) => Render();
         apply.Click += async (_, _) =>
         {
-            if (_pending || _imagePending || selection.ValueKind != JsonValueKind.Object || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
+            if (_pending || _imagePending || !CurrentOwner || selection.ValueKind != JsonValueKind.Object || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
             var selected = selection; var selectedType = String(selected, "type"); _imagePending = true; apply.IsEnabled = false; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; apply.Content = "Applying...";
-            try { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id"));
+            try { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id")); if (!CurrentOwner) return;
                 applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true; Changed();
-                _item = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); RefreshLocks(); Render(); Toast().Success("Image applied successfully"); }
-            catch (Exception ex) { Toast().Error(ex); }
-            finally { _imagePending = false; IsPrimaryButtonEnabled = !_pending; _reset.IsEnabled = !_pending; SelectionPresentation(); }
+                var refreshed = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); if (!CurrentOwner) return; _item = refreshed; RefreshLocks(); Render(); Toast().Success("Image applied successfully"); }
+            catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
+            finally { _imagePending = false; IsPrimaryButtonEnabled = CurrentOwner && !_pending; _reset.IsEnabled = CanSubmitReset; SelectionPresentation(); }
         };
         Opened += async (_, _) =>
         {

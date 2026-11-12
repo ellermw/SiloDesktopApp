@@ -13,19 +13,63 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         => ResetToProviderAsync(itemId, Array.Empty<int>(), ct);
 
     public async Task<MetadataRefreshReceipt> ResetToProviderAsync(string itemId, IReadOnlyCollection<int> locksToKeep, CancellationToken ct = default)
+        => await ResetToProviderAsync(await GetResetCapabilityAsync(client.CaptureContext(), ct).ConfigureAwait(false), itemId, locksToKeep, ct).ConfigureAwait(false);
+
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+
+    public async Task<MetadataResetCapability> GetResetCapabilityAsync(ApiRequestContext owner, CancellationToken ct = default)
     {
         EnsureSecureBaseUrl();
-        ct.ThrowIfCancellationRequested();
-        var owner = client.CaptureContext();
+        RequireCurrent(owner, ct);
+        bool supported;
+        try
+        {
+            var capability = await client.SendRequestAsync<JsonElement>(owner, HttpMethod.Get,
+                "/api/v2/admin/catalog/capabilities", null, ct).ConfigureAwait(false);
+            supported = capability.TryGetProperty("item_metadata_reset", out var value) && value.ValueKind == JsonValueKind.True;
+        }
+        catch (ApiException ex) when (ex.StatusCode is 404 or 405) { supported = false; }
+        // The capability document is admin-only, while reset itself permits
+        // delegated curators. Offer only the atomic command in that case:
+        // an older server rejects its enum with 422 before changing anything.
+        catch (ApiException ex) when (ex.StatusCode == 403) { supported = true; }
+        RequireCurrent(owner, ct);
+        return new(owner, supported);
+    }
+
+    public async Task<MetadataRefreshReceipt> ResetToProviderAsync(MetadataResetCapability capability, string itemId,
+        IReadOnlyCollection<int> locksToKeep, CancellationToken ct = default)
+    {
+        EnsureSecureBaseUrl();
+        var owner = capability.Owner;
+        // Captured before the owner check: identity cannot change without retiring the owner.
+        var identity = client.CaptureIdentityContext();
+        RequireCurrent(owner, ct);
         var path = $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}";
-        // Refresh honors locks. A child Reset clears only its editable metadata
-        // locks; artwork and fields outside that scope must stay protected.
-        await client.SendRequestAsync<SiloPlayer.Core.Models.Catalog.MediaItemDetail>(owner,
-            HttpMethod.Patch, path + "/metadata", new { locked_fields = locksToKeep.ToArray() }, ct).ConfigureAwait(false);
+        if (!capability.AtomicReset)
+        {
+            // Explicit legacy behavior: no atomic failure/empty-field guarantees.
+            await client.SendRequestAsync<SiloPlayer.Core.Models.Catalog.MediaItemDetail>(owner,
+                HttpMethod.Patch, path + "/metadata", new { locked_fields = locksToKeep.ToArray() }, ct).ConfigureAwait(false);
+            // A reconnect must not strand the committed unlock without its refresh.
+            owner = RequireCommitted(identity, owner, ct);
+        }
+        var receipt = await client.SendRequestAsync<MetadataRefreshReceipt>(owner, HttpMethod.Post,
+            path + "/refresh-metadata", new { mode = capability.AtomicReset ? "reset" : "quick" }, ct).ConfigureAwait(false);
+        RequireCommitted(identity, owner, ct);
+        return receipt;
+    }
+
+    // Transport catch-up retires reads only. A write the server has already
+    // accepted stays publishable while its identity and access are unchanged.
+    private ApiRequestContext RequireCommitted(ApiIdentityContext identity, ApiRequestContext owner, CancellationToken ct)
+    {
         ct.ThrowIfCancellationRequested();
-        if (!client.IsCurrentContext(owner)) throw new OperationCanceledException("Metadata reset owner changed.", ct);
-        return await client.SendRequestAsync<MetadataRefreshReceipt>(owner, HttpMethod.Post,
-            path + "/refresh-metadata", new { mode = "quick" }, ct).ConfigureAwait(false);
+        var current = client.CaptureContext();
+        if (!client.IsCurrentIdentityContext(identity) || current.AccessGeneration != owner.AccessGeneration)
+            throw new OperationCanceledException("Metadata reset owner changed.", ct);
+        return current;
     }
 
     public Task<SiloPlayer.Core.Models.Catalog.MediaItemDetail> UpdateMetadataAsync(string itemId,
@@ -130,6 +174,7 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         string mode = "quick",
         CancellationToken ct = default)
     {
+        if (mode == "reset") return ResetToProviderAsync(itemId, ct);
         if (mode is not ("quick" or "complete"))
             throw new ArgumentOutOfRangeException(nameof(mode));
 

@@ -548,6 +548,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await SettingsVisualOct24NativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "household-contracts")
+            {
+                await HouseholdContractsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profiles-metadata")
             {
                 await ProfilesMetadataNativeFixture.RunAsync(parent);
