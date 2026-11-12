@@ -288,6 +288,9 @@ internal class PlaybackChoiceMenu
         {
             _layoutQueued = false;
             if (_finished || !_isCurrent()) return;
+            // The owner can retire between queueing and this callback, before
+            // the owner watch ticks. Position() requires a live surface.
+            if (_owner.Hwnd == IntPtr.Zero || !IsWindowVisible(_owner.Hwnd)) { Close(PlaybackMenuCloseReason.OwnerRetired); return; }
             var reposition = _placementPending; _placementPending = false;
             if (reposition) Position();
             if (_keepSelectionVisible && _footerIndex < 0) ScrollSelectionIntoView();
