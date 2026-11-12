@@ -39,6 +39,7 @@
 
         <!-- Main content -->
         <ScrollViewer
+            x:Name="CollectionsScrollViewer"
             IsScrollInertiaEnabled="True">
 
             <!-- Full width, like the WebUI wall: the poster-size setting decides the columns, not a fixed shell. -->
@@ -184,6 +185,9 @@
                 <StackPanel x:Name="CollectionsWallPanel" Spacing="16">
                     <StackPanel x:Name="CollectionsGrid" Spacing="0" />
                     <StackPanel x:Name="ServerCollectionsRows" Spacing="12" />
+                    <Button x:Name="CollectionsLoadMore" Content="Load more server collections" Visibility="Collapsed"
+                            HorizontalAlignment="Left" AutomationProperties.Name="Load more server collections"
+                            Click="CollectionsLoadMore_Click" />
                 </StackPanel>
                 <StackPanel x:Name="ServerCollectionsLoadingRows" Visibility="Collapsed" />
                 <TextBlock x:Name="CollectionsReorderHint" Visibility="Collapsed" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"

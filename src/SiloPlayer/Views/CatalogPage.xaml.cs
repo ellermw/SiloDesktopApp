@@ -28,10 +28,12 @@ public sealed record CatalogNavigation(
 
 public sealed partial class CatalogPage : Page,
     IRecipient<MediaSurfaceChanged>,
+    IRecipient<HomeDismissalApplied>,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _api = App.Services.GetRequiredService<CatalogApi>();
     private readonly CollectionsApi _collectionsApi = App.Services.GetRequiredService<CollectionsApi>();
+    private readonly HomeApi _homeApi = App.Services.GetRequiredService<HomeApi>();
     private readonly AuthService _authService = App.Services.GetRequiredService<AuthService>();
     private readonly UICustomizationService _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
     private readonly ObservableCollection<MediaItem> _items = [];
@@ -59,6 +61,21 @@ public sealed partial class CatalogPage : Page,
     private bool _advancedMode;
     private const int PageSize = 60;
     private bool _messengerRegistered;
+
+    // Dedicated section page undo state
+    private string? _undoSurface;
+    private string? _undoItemId;
+    private ApiRequestContext? _undoContext;
+    private ApiIdentityContext? _undoIdentity;
+    private List<(int Index, MediaItem Item)>? _undoRemovedItems;
+    private int _undoRemovedCount;
+    private int _undoGeneration;
+    private object? _undoOperation;
+    private bool _undoBusy => _undoOperation != null;
+    private bool _undoResetPending;
+    private bool _sectionPrefixStale;
+    private long _sectionMutationRevision;
+    private readonly Dictionary<string, HomeDismissalApplied> _pendingUndoDismissals = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sortPreferenceGate = new();
     private Task _sortPreferenceTail = Task.CompletedTask;
 
@@ -193,6 +210,10 @@ public sealed partial class CatalogPage : Page,
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        ClearUndoState();
+        _undoOperation = null;
+        _undoResetPending = false;
+        _pendingUndoDismissals.Clear();
         Interlocked.Exchange(ref _queryOptionsOwner, null)?.Cancel();
         StopWatchlistTitles();
         Interlocked.Increment(ref _loadGeneration);
@@ -217,6 +238,7 @@ public sealed partial class CatalogPage : Page,
     {
         if (_messengerRegistered) return;
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<HomeDismissalApplied>(this);
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, message) => DispatcherQueue.TryEnqueue(() =>
         {
             if (!App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(message.Context) || !message.Marked.HasValue) return;
@@ -231,6 +253,7 @@ public sealed partial class CatalogPage : Page,
     {
         if (!_messengerRegistered) return;
         WeakReferenceMessenger.Default.Unregister<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Unregister<HomeDismissalApplied>(this);
         WeakReferenceMessenger.Default.Unregister<NotInterestedChange>(this);
         WeakReferenceMessenger.Default.Unregister<PlaybackProgressUpdated>(this);
         _messengerRegistered = false;
@@ -238,11 +261,14 @@ public sealed partial class CatalogPage : Page,
 
     public void Receive(MediaSurfaceChanged message)
     {
+        var visit = _navigationCts;
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (visit == null || visit.IsCancellationRequested || visit != _navigationCts) return;
             if (message.Kind == MediaSurfaceChangeKind.HomeDismissed)
             {
-                RemoveDismissedSectionCards(message);
+                _pendingUndoDismissals.Remove(message.ContentId, out var applied);
+                RemoveDismissedSectionCards(message, applied != null && message.Context == applied.Context ? applied : null);
                 return;
             }
 
@@ -277,11 +303,41 @@ public sealed partial class CatalogPage : Page,
         });
     }
 
-    // A Continue Watching / Next Up dismissal drops the show from both rows. Keep the
-    // loaded cards mounted while reconciling the shortened live row and its count.
-    private void RemoveDismissedSectionCards(MediaSurfaceChanged message)
+    public void Receive(HomeDismissalApplied message)
     {
-        if (_source != "section") return;
+        // Capture the visit before enqueueing: an already queued notification must not
+        // acquire a later visit's authority after this page has left and returned.
+        var visit = _navigationCts;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (visit == null || visit.IsCancellationRequested || visit != _navigationCts
+                || _source != "section" || !_api.IsCurrentContext(message.Context)) return;
+            // MediaItemMenu emits this followed immediately by HomeDismissed. Stage the
+            // opportunity by ID so either completion ordering can pair its own endpoint
+            // with the actual removal, without processing the same dismissal twice.
+            _pendingUndoDismissals[message.Item.ContentId] = message;
+        });
+    }
+
+    private void RetireSectionPaging()
+    {
+        Interlocked.Increment(ref _loadGeneration);
+        _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+        _loading = false;
+        _snapshot = null;
+        // The server row is changing under the loaded cards: nothing may append to them
+        // until a read from the start of the row confirms or replaces them.
+        _sectionPrefixStale = true;
+    }
+
+    // The paired surface message removes cards once, then re-reads the live row from its
+    // start so the server decides the offset and total, including show members outside the
+    // loaded prefix. Only a matched removal assigns Undo state.
+    private void RemoveDismissedSectionCards(MediaSurfaceChanged message, HomeDismissalApplied? undo = null)
+    {
+        if (_source != "section" || _navigationCts?.IsCancellationRequested != false) return;
+        // Read before the context check, so it is the identity that current context belongs to.
+        var identity = _api.CaptureIdentityContext();
         if (message.Context is { } context && !_api.IsCurrentContext(context)) return;
         var removed = _items
             .Where(candidate => candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp
@@ -289,19 +345,260 @@ public sealed partial class CatalogPage : Page,
             .ToList();
         if (removed.Count == 0 && !_items.Any(candidate =>
             candidate.ItemSource is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp)) return;
-        var loadedWindowSize = _items.Count;
-        foreach (var item in removed)
-        {
-            _items.Remove(item);
-            _selectedIds.Remove(item.ContentId);
-        }
-        _offset = Math.Max(0, _offset - removed.Count);
-        UpdateSelectionUi();
-        // A completed continuation can already contain a gap when the notification
-        // arrives. Revalidate the loaded window, but do not clear it or its selection:
-        // unchanged cards retain their identity and the scroller retains its extent.
+        var positions = removed.Select(item => (_items.IndexOf(item), item)).OrderBy(pair => pair.Item1).ToList();
+        _sectionMutationRevision++;
+        RetireSectionPaging();
+        foreach (var card in removed) _items.Remove(card);
+        _selectedIds.ExceptWith(removed.Select(card => card.ContentId));
+        // Provisional and hidden until the live read: the server may drop more or fewer
+        // rows than the cards removed here.
+        _totalItems = Math.Max(0, _totalItems - removed.Count);
+        UpdateSectionCount();
         CountPanel.Visibility = Visibility.Collapsed;
-        _ = LoadCatalogAsync(true, loadedWindowSize);
+        if (undo != null && removed.Count > 0)
+        {
+            _undoGeneration++;
+            _undoSurface = undo.Surface;
+            _undoItemId = undo.Item.ContentId;
+            _undoContext = undo.Context;
+            _undoIdentity = identity;
+            _undoRemovedItems = positions;
+            _undoRemovedCount = removed.Count;
+            ShowUndoBanner();
+        }
+        if (!_undoBusy) _ = RefreshSectionAfterDismissalAsync();
+    }
+
+    private async Task RefreshSectionAfterDismissalAsync()
+    {
+        var generation = Volatile.Read(ref _loadGeneration);
+        bool Current() => generation == Volatile.Read(ref _loadGeneration);
+        _loadCts ??= new CancellationTokenSource();
+        _loading = true;
+        LoadingRing.IsActive = true;
+        LoadingRing.Visibility = Visibility.Visible;
+        ErrorText.Visibility = Visibility.Collapsed;
+        CatalogErrorPanel.Visibility = Visibility.Collapsed;
+        try { await ReconcileSectionAfterUndoAsync(Math.Max(PageSize, _items.Count), Current, _loadCts.Token); }
+        catch (Exception ex)
+        {
+            // A retired load was cancelled on purpose; a timeout while it is current failed.
+            if (Current()) ShowSectionRefreshFailure(ex, "CatalogPage.RefreshSectionAfterDismissalAsync");
+        }
+        finally { if (Current()) _loading = false; }
+    }
+
+    // The cards stay marked stale, so Retry reads the row again from its start.
+    private void ShowSectionRefreshFailure(Exception ex, string operation)
+    {
+        LocalLog.AppendException("errors.txt", ex, operation);
+        CatalogErrorTitle.Text = "Could not refresh catalog results.";
+        ErrorText.Text = "Please retry to refresh this row.";
+        ErrorText.Visibility = Visibility.Visible;
+        CatalogErrorPanel.Visibility = Visibility.Visible;
+        CatalogRetryButton.Visibility = Visibility.Visible;
+        EmptyText.Visibility = Visibility.Collapsed;
+        LoadingRing.IsActive = false; LoadingRing.Visibility = Visibility.Collapsed;
+        _hasMore = false;
+    }
+
+    private void UpdateSectionCount()
+    {
+        CountText.Text = _totalItems.ToString("N0");
+        ResultNounText.Text = _totalItems == 1 ? "RESULT" : "RESULTS";
+        EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSelectionUi();
+    }
+
+    private void ShowUndoBanner()
+    {
+        if (_undoSurface == null || _undoRemovedItems == null || _undoRemovedItems.Count == 0) return;
+        var first = _undoRemovedItems[0].Item;
+        var dropsShow = first.Type is "episode" or "series";
+        UndoBannerText.Text = dropsShow ? "Removed from Continue Watching and Next Up"
+            : _undoSurface == HomeDismissalPolicy.NextUp ? "Removed from Next Up"
+            : first.Type == "audiobook" ? "Removed from Continue Listening"
+            : first.Type == "ebook" ? "Removed from Continue Reading"
+            : "Removed from Continue Watching";
+        UndoButton.IsEnabled = !_undoBusy;
+        UndoBanner.Visibility = Visibility.Visible;
+        _ = AutoHideUndoBannerAsync();
+    }
+
+    private async void UndoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_undoBusy || _undoSurface == null || _undoItemId == null || !_undoContext.HasValue || !_undoIdentity.HasValue) return;
+        var dismissed = _undoContext.Value;
+        var identity = _undoIdentity.Value;
+        var visit = _navigationCts;
+        bool Visiting() => visit != null && !visit.IsCancellationRequested && visit == _navigationCts;
+        bool Current() => Visiting() && LiveUndoOwner(dismissed, identity).HasValue;
+        // Bind the DELETE to the owner's live request context: the one captured before a
+        // reconnect would be refused although the dismissal's owner is unchanged.
+        if (!Visiting() || LiveUndoOwner(dismissed, identity) is not { } bound) { ClearUndoState(); return; }
+        // Retire the banner's pending auto-hide: its expiry mid-request must not discard
+        // this Undo's target or the retry feedback for a DELETE that fails late.
+        var opportunity = ++_undoGeneration;
+        var surface = _undoSurface;
+        var itemId = _undoItemId;
+        var target = Math.Max(PageSize, _items.Count + _undoRemovedCount);
+        var operation = new object();
+        _undoOperation = operation;
+        UndoButton.IsEnabled = false;
+        UndoBanner.Visibility = Visibility.Collapsed;
+        // Retire before DELETE: server membership can change before its response arrives.
+        RetireSectionPaging();
+        Exception? failure = null;
+        // The DELETE's own result decides the banner, unless a newer dismissal or a reset
+        // has already replaced this opportunity.
+        void Conclude()
+        {
+            if (opportunity != _undoGeneration) return;
+            if (failure == null) { ClearUndoState(); return; }
+            UndoBannerText.Text = "Could not undo. Try again.";
+            UndoBanner.Visibility = Visibility.Visible;
+            _ = AutoHideUndoBannerAsync(); // a fresh five-second retry opportunity
+        }
+        try
+        {
+            // The accepted mutation belongs to its captured owner, not to this visit: leaving
+            // the page must not abort the DELETE. Only the follow-up read is visit-bound.
+            try { await _homeApi.UndoDismissalAsync(bound, surface, itemId, CancellationToken.None); }
+            catch (Exception ex) when (LiveUndoOwner(dismissed, identity).HasValue)
+            {
+                failure = ex;
+                LocalLog.AppendException("errors.txt", ex, "CatalogPage.UndoDismissalAsync");
+                // The banner left with the page, so the failure is reported where the user is now.
+                if (!Current())
+                    App.Services.GetRequiredService<ToastService>().Error("Could not undo. The title is still removed.");
+            }
+            // Home emptied its own rows for this dismissal and re-reads them only when told.
+            // Like the DELETE, this belongs to the dismissal's owner, not to this visit; a
+            // reconnect during the DELETE has moved that owner to a newer request context.
+            if (failure == null)
+            {
+                var owner = _api.CaptureContext();
+                if (_api.IsCurrentIdentityContext(identity))
+                    WeakReferenceMessenger.Default.Send(new HomeDismissalUndone(surface, itemId, owner));
+            }
+            if (!Visiting()) return;
+            if (!LiveUndoOwner(dismissed, identity).HasValue)
+            {
+                // The server restored the title, but this page no longer reads the row on the
+                // retired authority: say so instead of leaving it silently removed.
+                if (failure == null && _api.IsCurrentIdentityContext(identity))
+                    App.Services.GetRequiredService<ToastService>().Success("Restored. Reload this page to see it.");
+                return;
+            }
+            // Banner expiry/replacement is independent from accepting this mutation's
+            // result. Requery the authoritative prefix, including offscreen show members,
+            // instead of adding a stale snapshot/count to possibly newer paging data.
+            await ReconcileSectionAfterUndoAsync(target, Current, visit!.Token);
+            if (!Current()) return;
+            Conclude();
+        }
+        catch (Exception ex)
+        {
+            // A read that times out while this visit is current is cancelled like a retired
+            // one, but it failed: the row was not re-read, so it is never a finished Undo.
+            if (Current())
+            {
+                ShowSectionRefreshFailure(ex, "CatalogPage.ReconcileUndoAsync");
+                // A failed DELETE stays retryable even though the follow-up read failed too.
+                Conclude();
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_undoOperation, operation))
+            {
+                _undoOperation = null;
+                _undoResetPending = false;
+                if (visit == _navigationCts && !visit!.IsCancellationRequested)
+                {
+                    UndoButton.IsEnabled = true;
+                    if (_undoContext is { } pending && _undoIdentity is { } pendingIdentity
+                        && !LiveUndoOwner(pending, pendingIdentity).HasValue) ClearUndoState();
+                }
+            }
+        }
+    }
+
+    // A reconnect catch-up retires the request context, not its owner: the same identity and
+    // access authority continue under a newer one. Null once that owner really is retired.
+    private ApiRequestContext? LiveUndoOwner(ApiRequestContext dismissed, ApiIdentityContext identity)
+    {
+        var live = _api.CaptureContext();
+        return _api.IsCurrentIdentityContext(identity) && live.AccessGeneration == dismissed.AccessGeneration ? live : null;
+    }
+
+    private async Task ReconcileSectionAfterUndoAsync(int target, Func<bool> current, CancellationToken ct)
+    {
+        while (current())
+        {
+            var revision = _sectionMutationRevision;
+            var reset = _undoResetPending;
+            _undoResetPending = false;
+            if (reset) { target = PageSize; ClearUndoState(); }
+            var items = new List<MediaItem>();
+            string? snapshot = null;
+            var total = 0;
+            var hasMore = false;
+            var exact = false;
+            do
+            {
+                if (!current()) return;
+                var response = await _api.GetCatalogAsync(_fixedLibraryId, limit: PageSize,
+                    offset: items.Count, snapshot: snapshot, source: "section", scope: _scope,
+                    sectionId: _sectionId, ct: ct);
+                if (!current()) return;
+                if (revision != _sectionMutationRevision || _undoResetPending) break;
+                foreach (var item in response.Items)
+                    item.ItemSource = HomeDismissalPolicy.SectionCardItemSource("section", item.ItemSource);
+                items.AddRange(response.Items);
+                snapshot = response.Snapshot ?? snapshot;
+                total = response.Total; exact = response.TotalExact;
+                hasMore = response.Items.Count > 0 && (response.HasMore || items.Count < total);
+            } while (hasMore && items.Count < target);
+            if (revision != _sectionMutationRevision || _undoResetPending) continue;
+            // Cards already shown in the server's order stay realized and only the rows after
+            // them are added; any other difference replaces the window.
+            var shown = items.Count >= _items.Count && !_items.Where((item, index) =>
+                !string.Equals(item.ContentId, items[index].ContentId, StringComparison.OrdinalIgnoreCase)).Any();
+            if (!shown) _items.Clear();
+            foreach (var item in items.Skip(_items.Count)) _items.Add(item);
+            _offset = items.Count; _snapshot = snapshot; _totalItems = total; _hasMore = hasMore;
+            _sectionPrefixStale = false;
+            ErrorText.Visibility = Visibility.Collapsed;
+            CatalogErrorPanel.Visibility = Visibility.Collapsed;
+            _selectedIds.IntersectWith(items.Select(item => item.ContentId));
+            CountPanel.Visibility = exact ? Visibility.Visible : Visibility.Collapsed;
+            UpdateSectionCount();
+            LoadingRing.IsActive = false; LoadingRing.Visibility = Visibility.Collapsed;
+            CatalogLoadingRepeater.Visibility = Visibility.Collapsed;
+            ItemsRepeater.Visibility = Visibility.Visible;
+            return;
+        }
+    }
+
+    private async Task AutoHideUndoBannerAsync()
+    {
+        var generation = ++_undoGeneration;
+        var visit = _navigationCts;
+        await Task.Delay(5000);
+        if (visit == _navigationCts && generation == _undoGeneration) ClearUndoState();
+    }
+
+    private void ClearUndoState()
+    {
+        _undoGeneration++;
+        _undoSurface = null;
+        _undoItemId = null;
+        _undoContext = null;
+        _undoIdentity = null;
+        _undoRemovedItems = null;
+        _undoRemovedCount = 0;
+        UndoBanner.Visibility = Visibility.Collapsed;
     }
 
     public void Receive(PlaybackProgressUpdated message)
@@ -397,7 +694,15 @@ public sealed partial class CatalogPage : Page,
     private async Task LoadCatalogAsync(bool reset, int? retainedWindowSize = null)
     {
         if (_queryFilters?.IsValid == false) return;
+        if (_undoBusy)
+        {
+            if (reset) { _undoResetPending = true; ClearUndoState(); }
+            return;
+        }
         if (_loading && !reset) return;
+        // A dismissal or Undo whose follow-up read failed left cards that no longer match
+        // the server row: read it again from the start instead of appending to them.
+        if (_sectionPrefixStale) reset = true;
         // A failed in-place refresh must be retried before any continuation can append.
         if (!reset && _retainedSectionWindowSize != null)
         {
@@ -406,9 +711,11 @@ public sealed partial class CatalogPage : Page,
         }
         if (reset)
         {
+            ClearUndoState();
             Interlocked.Increment(ref _loadGeneration);
             _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new CancellationTokenSource();
             _snapshot = null;
+            _sectionPrefixStale = false;
             _retainedSectionWindowSize = retainedWindowSize;
             if (retainedWindowSize == null)
             {

@@ -63,6 +63,39 @@ public sealed class CollectionsWallTests
         Assert.Null(CollectionsWall.Pills(libraries, 1, 0)[0].Count);   // counts alone cannot establish a distinct total
     }
 
+    [Fact]
+    public void AllCountsTheLoadedRestOnceEveryLibrarysCardsArePresent()
+    {
+        var libraries = new[] { Library(1, "Movies", 3, "own", "one"), Library(2, "Shows", 1, "two") };
+        var rest = new Dictionary<int, IReadOnlyCollection<string>> { [1] = new[] { "shared", "three" } };
+        int? All(IReadOnlyList<ServerCollectionsLibrary> shown, IReadOnlyDictionary<int, IReadOnlyCollection<string>>? loaded)
+            => CollectionsWall.Pills(shown, 1, 1, ["own", "shared"], loaded).Single(pill => pill.Value == CollectionsWall.All).Count;
+        Assert.Null(All(libraries, null));
+        Assert.Equal(5, All(libraries, rest));   // own, shared, one, three and two, each once
+        Assert.Null(CollectionsWall.Pills(libraries, 1, 1, ["own", "shared"], rest).Single(pill => pill.Value == CollectionsWall.Server).Count);
+        // A library whose rest is still unread keeps the total unknown.
+        Assert.Null(All([.. libraries, Library(3, "Kids", 4, "kids")], rest));
+    }
+
+    [Fact]
+    public void AllHasNoCountUntilThePersonalAndServerReadsHaveBothLoaded()
+    {
+        var libraries = new[] { Library(1, "Movies", 2, "one", "two") };
+        IReadOnlyList<CollectionsWall.Pill> Pills(IReadOnlyList<ServerCollectionsLibrary> shown, int own, int shared, IReadOnlyCollection<string> personal, bool personalLoaded, bool serverLoaded)
+            => CollectionsWall.Pills(shown, own, shared, personal, null, personalLoaded, serverLoaded);
+        int? All(IReadOnlyList<ServerCollectionsLibrary> shown, int own, int shared, IReadOnlyCollection<string> personal, bool personalLoaded, bool serverLoaded)
+            => Pills(shown, own, shared, personal, personalLoaded, serverLoaded).Single(pill => pill.Value == CollectionsWall.All).Count;
+        // A slow or failed personal read is not "none": the server's cards alone are not the total.
+        Assert.Null(All(libraries, 0, 0, [], personalLoaded: false, serverLoaded: true));
+        // Nor is an unreadable server list: the personal collections alone are not the total.
+        Assert.Null(All([], 1, 1, ["own", "shared"], personalLoaded: true, serverLoaded: false));
+        Assert.Null(All([], 0, 0, [], personalLoaded: false, serverLoaded: false));
+        Assert.Equal(2, All(libraries, 0, 0, [], personalLoaded: true, serverLoaded: true));
+        Assert.Equal(2, All([], 1, 1, ["own", "shared"], personalLoaded: true, serverLoaded: true));
+        // The server's own count does not depend on the personal read.
+        Assert.Equal(2, Pills(libraries, 0, 0, [], personalLoaded: false, serverLoaded: true).Single(pill => pill.Value == CollectionsWall.Server).Count);
+    }
+
     [Theory]
     [InlineData("mine", "mine")]
     [InlineData("shared", "all")]      // nobody shares: falls back to All

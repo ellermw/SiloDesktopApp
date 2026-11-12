@@ -19,7 +19,11 @@ namespace SiloPlayer.Controls;
 /// </summary>
 public sealed class CollectionHeroBackdrop : Grid
 {
-    private readonly BackdropImage _image = new() { AnchorY = 0.2, IsHitTestVisible = false };
+    private readonly BackdropImage _image = new() { AnchorY = 0.2, IsHitTestVisible = false, UseCollectionPan = true };
+    private readonly BackdropImage _placeholder = new() { AnchorY = .2, IsHitTestVisible = false };
+    private readonly Border _artwork = new() { Opacity = 0 };
+    private Windows.UI.ViewManagement.UISettings? _motionSettings;
+    private string _imageKey = "";
     private readonly GradientStop _ambient = new() { Offset = 0 };
     private readonly Border _phoneScrim = new() { Visibility = Visibility.Collapsed };
     private CancellationTokenSource? _loadCts;
@@ -32,7 +36,9 @@ public sealed class CollectionHeroBackdrop : Grid
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAccessibilityView(this, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
         var background = ((SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"]).Color;
         Color Wash(double alpha) => Color.FromArgb((byte)Math.Round(alpha * 255), background.R, background.G, background.B);
-        Children.Add(_image);
+        Children.Add(_placeholder);
+        _artwork.Child = _image;
+        Children.Add(_artwork);
         // brightness(.9): the hero's dimming wash.
         Children.Add(new Border { Background = new SolidColorBrush(Colors.Black), Opacity = 0.10 });
         // Ambient glow, tinted from the thumbhash, under the bottom fade so its edge leaves no seam.
@@ -40,8 +46,8 @@ public sealed class CollectionHeroBackdrop : Grid
         Children.Add(new Border
         {
             Opacity = 0.12,
-            Background = new RadialGradientBrush { Center = new Windows.Foundation.Point(.5, .8), GradientOrigin = new Windows.Foundation.Point(.5, .8), RadiusX = .7, RadiusY = .7,
-                GradientStops = { _ambient, new GradientStop { Color = Colors.Transparent, Offset = 1 } } },
+            Background = new RadialGradientBrush { Center = new Windows.Foundation.Point(.5, .8), GradientOrigin = new Windows.Foundation.Point(.5, .8), RadiusX = .5 * Math.Sqrt(2), RadiusY = .8 * Math.Sqrt(2),
+                GradientStops = { _ambient, new GradientStop { Color = Colors.Transparent, Offset = .7 } } },
         });
         Children.Add(new Border
         {
@@ -73,13 +79,32 @@ public sealed class CollectionHeroBackdrop : Grid
             },
         });
         SizeChanged += (_, e) => _phoneScrim.Visibility = e.NewSize.Width < 640 ? Visibility.Visible : Visibility.Collapsed;
-        Unloaded += (_, _) => { if (!IsLoaded) Cancel(); };
+        Loaded += (_, _) =>
+        {
+            if (_motionSettings != null && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)) _motionSettings.AnimationsEnabledChanged -= MotionSettingsChanged;
+            _motionSettings = new Windows.UI.ViewManagement.UISettings();
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)) _motionSettings.AnimationsEnabledChanged += MotionSettingsChanged;
+            Cancel();
+            if (_url != null || _thumbhash != null) Show(_url, _thumbhash, _imageKey);
+            UpdateMotion();
+        };
+        Unloaded += (_, _) =>
+        {
+            if (IsLoaded) return;
+            if (_motionSettings != null && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)) _motionSettings.AnimationsEnabledChanged -= MotionSettingsChanged;
+            _motionSettings = null;
+            Cancel();
+            _image.EnableKenBurns = false;
+            _artwork.OpacityTransition = null;
+            _artwork.Opacity = 0;
+            _image.Source = _placeholder.Source = null!;
+        };
     }
 
     public string? BackdropUrl => _url;
     public string? BackdropThumbhash => _thumbhash;
     /// <summary>The thumbhash is on screen (the real artwork has not replaced it).</summary>
-    public bool ShowsPlaceholder => _image.Source is WriteableBitmap;
+    public bool ShowsPlaceholder => _placeholder.Source is WriteableBitmap && !ShowsArtwork;
     /// <summary>The real artwork is on screen.</summary>
     public bool ShowsArtwork => _image.Source is BitmapImage;
     public bool PansSlowly => _image.EnableKenBurns;
@@ -88,15 +113,19 @@ public sealed class CollectionHeroBackdrop : Grid
     public void Show(string? url, string? thumbhash, string imageKey)
     {
         url = Clean(url); thumbhash = Clean(thumbhash);
-        if (url == _url && thumbhash == _thumbhash && Visibility == Visibility.Visible) return;
+        if (url == _url && thumbhash == _thumbhash && Visibility == Visibility.Visible && _loadCts != null) return;
         Cancel();
-        _url = url; _thumbhash = thumbhash;
+        _url = url; _thumbhash = thumbhash; _imageKey = imageKey;
         if (url == null && thumbhash == null) { Clear(); return; }
         Visibility = Visibility.Visible;
         _image.Source = null!;
-        _image.EnableKenBurns = AreSystemAnimationsEnabled();
+        _placeholder.Source = null!;
+        _artwork.OpacityTransition = null;
+        _artwork.Opacity = 0;
+        UpdateMotion();
         var ambient = ThumbhashDecoder.GetAmbientColor(thumbhash);
-        _ambient.Color = ambient is { } color ? Color.FromArgb(255, color.R, color.G, color.B) : Colors.Transparent;
+        _ambient.Color = ambient is { } color ? Color.FromArgb(255, color.R, color.G, color.B) : ((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color;
+        if (!IsLoaded) return;
         var owner = _loadCts = new CancellationTokenSource();
         _ = LoadAsync(url, thumbhash, imageKey, owner);
     }
@@ -107,6 +136,9 @@ public sealed class CollectionHeroBackdrop : Grid
         _url = _thumbhash = null;
         _image.EnableKenBurns = false;
         _image.Source = null!;
+        _placeholder.Source = null!;
+        _artwork.OpacityTransition = null;
+        _artwork.Opacity = 0;
         Visibility = Visibility.Collapsed;
     }
 
@@ -118,7 +150,9 @@ public sealed class CollectionHeroBackdrop : Grid
 
     private async Task LoadAsync(string? url, string? thumbhash, string imageKey, CancellationTokenSource owner)
     {
-        bool Current() => ReferenceEquals(_loadCts, owner) && !owner.IsCancellationRequested;
+        var client = App.Services.GetService<SiloApiClient>();
+        var context = client?.CaptureContext();
+        bool Current() => IsLoaded && ReferenceEquals(_loadCts, owner) && !owner.IsCancellationRequested && (context == null || client!.IsCurrentContext(context.Value));
         try
         {
             // The blur shows first, so there is something to fade from while the artwork fetches.
@@ -126,20 +160,20 @@ public sealed class CollectionHeroBackdrop : Grid
             {
                 var placeholder = ThumbhashBitmaps.TryGet(thumbhash, false, out var cached) ? cached : await ThumbhashBitmaps.GetAsync(thumbhash, false);
                 if (!Current()) return;
-                if (placeholder != null && _image.Source == null) _image.Source = placeholder;
+                if (placeholder != null && _image.Source == null) _placeholder.Source = placeholder;
             }
             if (url == null) return;
             var images = App.Services.GetService<ImageService>(); var http = App.Services.GetService<HttpClient>();
             if (images == null || http == null) return;
             var decoded = DecodedArtworkCache.Capture(images, App.Services.GetService<SiloApiClient>(), url, 0, false);
-            if (DecodedArtworkCache.TryGet(decoded, out var ready) && ready != null) { _image.Source = ready; return; }
+            if (DecodedArtworkCache.TryGet(decoded, out var ready) && ready != null) { if (Current()) Reveal(ready); return; }
             var bytes = await images.GetImageAsync(imageKey, "backdrop", url, http, owner.Token);
             if (!Current() || bytes == null) return;
             var bitmap = new BitmapImage();
             using var stream = new MemoryStream(bytes);
             await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
             if (!Current()) return;
-            _image.Source = bitmap;
+            Reveal(bitmap);
             DecodedArtworkCache.Remember(decoded, bitmap, this);
         }
         catch (OperationCanceledException) { }
@@ -148,9 +182,26 @@ public sealed class CollectionHeroBackdrop : Grid
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static bool AreSystemAnimationsEnabled()
+    private void Reveal(BitmapImage bitmap)
     {
-        try { return new Windows.UI.ViewManagement.UISettings().AnimationsEnabled; }
-        catch { return true; }
+        _image.Source = bitmap;
+        _artwork.OpacityTransition = ArtworkReveal.AnimationsEnabled ? new ScalarTransition { Duration = TimeSpan.FromMilliseconds(300) } : null;
+        _artwork.Opacity = 1;
+    }
+
+    private void MotionSettingsChanged(Windows.UI.ViewManagement.UISettings sender, Windows.UI.ViewManagement.UISettingsAnimationsEnabledChangedEventArgs args)
+    {
+        DispatcherQueue.TryEnqueue(() => { if (IsLoaded && ReferenceEquals(_motionSettings, sender)) UpdateMotion(); });
+    }
+
+    private void UpdateMotion()
+    {
+        ApplyMotionPreference(ArtworkReveal.AnimationsEnabled);
+    }
+
+    private void ApplyMotionPreference(bool enabled)
+    {
+        _image.EnableKenBurns = Visibility == Visibility.Visible && enabled;
+        if (!enabled) _artwork.OpacityTransition = null;
     }
 }

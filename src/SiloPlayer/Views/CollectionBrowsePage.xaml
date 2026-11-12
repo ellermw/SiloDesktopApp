@@ -16,6 +16,24 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <controls:CollectionGlassBrush x:Key="CollectionGlassHoverBrush" TintOpacity="0.18" />
+        <ControlTemplate x:Key="CollectionGlassButtonTemplate" TargetType="Button">
+            <Border x:Name="CollectionGlassRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  Foreground="{TemplateBinding Foreground}" FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}"
+                                  FontWeight="{TemplateBinding FontWeight}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CommonStates">
+                        <VisualState x:Name="Normal" />
+                        <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="CollectionGlassRoot.Background" Value="{StaticResource CollectionGlassHoverBrush}" /></VisualState.Setters></VisualState>
+                        <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="CollectionGlassRoot.Background" Value="{StaticResource CollectionGlassHoverBrush}" /></VisualState.Setters></VisualState>
+                        <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="CollectionGlassRoot.Opacity" Value="0.5" /></VisualState.Setters></VisualState>
+                    </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+            </Border>
+        </ControlTemplate>
     </Page.Resources>
 
     <Grid>
@@ -64,6 +82,8 @@
                     Foreground="{StaticResource SecondaryTextBrush}"
                     Margin="0,0,0,14" />
                 <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <Grid>
+                    <Border x:Name="CollectionTitleShadow" IsHitTestVisible="False" />
                     <TextBlock
                         x:Name="TitleText"
                         FontSize="{StaticResource FontSizeDisplayLarge}"
@@ -72,6 +92,7 @@
                         TextWrapping="Wrap"
                         Foreground="{StaticResource PrimaryTextBrush}"
                         VerticalAlignment="Center" />
+                    </Grid>
 
                     <!-- Pin / Unpin to sidebar (webui parity with sidebar_pins user setting) -->
                     <Button

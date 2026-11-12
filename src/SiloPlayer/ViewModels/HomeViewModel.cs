@@ -13,6 +13,7 @@ public partial class HomeViewModel : ObservableObject,
     IRecipient<MediaSurfaceChanged>,
     IRecipient<HomePreferenceChanged>,
     IRecipient<HomeDismissalApplied>,
+    IRecipient<HomeDismissalUndone>,
     IRecipient<NotInterestedChange>,
     IRecipient<PlaybackProgressUpdated>
 {
@@ -41,6 +42,7 @@ public partial class HomeViewModel : ObservableObject,
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
         WeakReferenceMessenger.Default.Register<HomePreferenceChanged>(this);
         WeakReferenceMessenger.Default.Register<HomeDismissalApplied>(this);
+        WeakReferenceMessenger.Default.Register<HomeDismissalUndone>(this);
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this);
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
     }
@@ -118,6 +120,32 @@ public partial class HomeViewModel : ObservableObject,
                 : "Removed from Continue Watching";
             ShowUndoBanner = true;
             _ = AutoHideUndoBannerAsync();
+        });
+    }
+
+    public void Receive(HomeDismissalUndone message)
+    {
+        _ = RunOnUiThreadAsync(() =>
+        {
+            if (!_homeApi.IsCurrentContext(message.Context) || _loadedContext != message.Context) return;
+            if (_lastDismissedSurface == message.Surface && _lastDismissedItemId == message.ItemId
+                && _dismissContext == message.Context)
+            {
+                // This surface still offers the same Undo: finish it as its own Undo does.
+                RestoreDismissedItem();
+                ShowUndoBanner = false;
+                ClearDismissState();
+            }
+            else
+            {
+                // Responses read before the Undo describe the dismissed state.
+                _sectionLoadCts?.Cancel();
+                _sectionLoadCts?.Dispose();
+                _sectionLoadCts = new CancellationTokenSource();
+                ++_sectionLoadGeneration;
+                _progressRemovals.Remove(message.ItemId);
+            }
+            QueueRealtimeRefresh("home_dismissal_undo", message.Context);
         });
     }
 
@@ -1136,20 +1164,25 @@ public partial class HomeViewModel : ObservableObject,
     private async Task UndoDismissalAsync()
     {
         if (_lastDismissedSurface == null || _lastDismissedItemId == null) return;
-        if (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value)) { ClearDismissState(); ShowUndoBanner = false; return; }
+        // Bind the DELETE to the dismissal's owner: a profile, access or server change that
+        // lands after this check refuses the request instead of sending it under the replacement.
+        var owner = _dismissContext ?? _homeApi.CaptureContext();
+        if (!_homeApi.IsCurrentContext(owner)) { ClearDismissState(); ShowUndoBanner = false; return; }
         var generation = _undoGeneration;
 
         ShowUndoBanner = false;
 
         try
         {
-            await _homeApi.UndoDismissalAsync(_lastDismissedSurface, _lastDismissedItemId);
+            await _homeApi.UndoDismissalAsync(owner, _lastDismissedSurface, _lastDismissedItemId);
             if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
             RestoreDismissedItem();
             QueueRealtimeRefresh("home_dismissal_undo", _loadedContext);
         }
         catch (Exception ex)
         {
+            // A retired owner was refused, not failed: nothing here is left to retry.
+            if (!_homeApi.IsCurrentContext(owner)) { if (generation == _undoGeneration) ClearDismissState(); return; }
             LocalLog.AppendException("errors.txt", ex, "HomeViewModel.UndoDismissalAsync");
             if (generation == _undoGeneration) { ErrorMessage = "Could not undo the dismissal. Try again."; ShowUndoBanner = true; }
             return;

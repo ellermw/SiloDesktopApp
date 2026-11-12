@@ -297,8 +297,10 @@ public sealed partial class MpvOscRuntimeTests
             native_handlers['osc-toggle-stats']()
             local panel = assert(s.stats_panel_rect, 'Playback info did not render')
             local W, H = s.osd_width, s.osd_height
+            osc_test_layout()
+            local seek = assert(s.layout.seek_bar)
             -- render_next_episode_countdown geometry; ui_scale() is 1 at these sizes.
-            local card_x, card_y = W - 24 - 360, H - 96 - 126
+            local card_x, card_y = W - 24 - 360, seek.y - 12 - 126
             local buttons_y = card_y + 126 - 16 - 32
             local cancel_x = card_x + 360 - 16 - 78
             s.next_ep_available, s.next_ep_visible = true, true
@@ -316,7 +318,7 @@ public sealed partial class MpvOscRuntimeTests
             end
             local px, py = overlap(panel, s.next_ep_countdown_actions[1])
             if px then native_handlers['osc-mouse-down'](tostring(px), tostring(py)) end
-            local button = { x = W - 180 - 40, y = H - 96 - 44, w = 180, h = 44 }
+            local button = { x = W - 180 - 40, y = seek.y - 12 - 44, w = 180, h = 44 }
             local bx, by = overlap(panel, button)
             if bx then native_handlers['osc-mouse-down'](tostring(bx), tostring(by)) end
             mp.set_property('user-data/playback-info-next', tostring(px ~= nil) .. ':' .. tostring(advanced) .. ':'

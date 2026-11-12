@@ -20,7 +20,7 @@ public sealed class Oct24ServerCollectionTests
     private static async Task More(CollectionsViewModel vm, int id)
     {
         var method = typeof(CollectionsViewModel).GetMethod("LoadServerLibraryAsync"); Assert.NotNull(method);
-        await (Task)method.Invoke(vm, new object[] { id, CancellationToken.None })!;
+        await (Task)method.Invoke(vm, new object?[] { id, CancellationToken.None, null })!;
     }
     private static JsonElement Cards(CollectionsViewModel vm)
     {
@@ -69,7 +69,7 @@ public sealed class Oct24ServerCollectionTests
     }
 
     [Fact]
-    public async Task CanceledPageOwnerRetainsFirstPagesAndReloadCanRetryItsRest()
+    public async Task CanceledPageOwnerRetainsFirstPagesAndViewportCanRetryItsRestAfterReload()
     {
         using var wire = new Wire(); var client = wire.Client();
         var vm = new CollectionsViewModel(new CollectionsApi(client), new CatalogApi(client), requestClient: client);
@@ -78,6 +78,8 @@ public sealed class Oct24ServerCollectionTests
         vm.CancelServerCollectionLoads(); wire.Release.SetResult(); await pending;
         Assert.Equal(35, Cards(vm).GetArrayLength());
         wire.Hold = false; await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(35, Cards(vm).GetArrayLength());
+        await More(vm, 1);
         Assert.Equal(40, Cards(vm).GetArrayLength());
     }
 

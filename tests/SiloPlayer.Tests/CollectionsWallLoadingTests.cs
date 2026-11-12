@@ -11,7 +11,212 @@ namespace SiloPlayer.Tests;
 /// </summary>
 public sealed class CollectionsWallLoadingTests
 {
+    [Fact]
+    public async Task LoneLibraryRestWaitsForActualViewportOrExplicitAdmission()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1","title":"One"}]}]}""" };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(0, wire.LibraryTabReads);
+        Assert.Equal(1, vm.NextServerLibrary?.LibraryId);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(1, wire.LibraryTabReads);
+    }
+
     private const string OneLibrary = "{\"libraries\":[{\"library_id\":1,\"library_name\":\"Movies\",\"total_count\":1,\"collections\":[{\"id\":\"s1\",\"title\":\"Server one\"}]}]}";
+
+    [Fact]
+    public async Task HeldRestDeduplicatesAndSerializesLibraries()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""", HoldLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        var first = vm.LoadServerLibraryAsync(1);
+        await Until(() => wire.LibraryTabReads == 1);
+        await vm.LoadServerLibraryAsync(1);
+        await vm.LoadServerLibraryAsync(2);
+        Assert.Equal(1, wire.LibraryTabReads);
+        wire.LibraryTab.SetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s2"}]}"""));
+        await first;
+        Assert.Equal(["s1", "t1", "s2"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Equal(2, vm.NextServerLibrary?.LibraryId);
+    }
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData("profile")]
+    [InlineData("access")]
+    [InlineData("admission")]
+    public async Task RetiredHeldRestCannotAppendOrKeepCancelledLibraryAdmitted(string retirement)
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""", HoldLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        var admitted = true;
+        var first = vm.LoadServerLibraryAsync(1, isCurrent: () => admitted);
+        await Until(() => wire.LibraryTabReads == 1);
+        if (retirement == "profile") client.SetProfile("new-owner");
+        else if (retirement == "access") client.InvalidateAccessContext();
+        else if (retirement == "admission") admitted = false;
+        else vm.CancelServerCollectionLoads();
+        wire.LibraryTab.SetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"stale"}]}"""));
+        await first;
+        Assert.False(vm.HasServerLibraryRest(1));
+        Assert.False(vm.IsLoadingServerLibraryRest);   // a retired read does not leave the wall busy
+        if (retirement == "cancel") Assert.Equal(1, vm.NextServerLibrary?.LibraryId);
+        else if (retirement != "admission") Assert.False(vm.HasCurrentServerCollections);
+    }
+
+    [Fact]
+    public async Task TimedOutLibraryRestReportsThatLibraryInsteadOfLeavingItToBeAdmittedAgain()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""", TimeOutLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        // The wall's own owner and token are not cancelled: the request alone gave up.
+        await vm.LoadServerLibraryAsync(1, isCurrent: () => true);
+        Assert.Equal(1, wire.LibraryTabReads);
+        Assert.NotNull(vm.ServerLibraryError(1)); Assert.Null(vm.ServerLibraryError(2));
+        Assert.False(vm.HasServerLibraryRest(1)); Assert.False(vm.IsLoadingServerLibraryRest);
+        Assert.Equal(2, vm.NextServerLibrary?.LibraryId);   // the timed-out library is not the next automatic read
+        Assert.Equal(["s1", "t1"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+
+        wire.TimeOutLibraryTab = false;
+        await vm.LoadServerLibraryAsync(1);   // Retry
+        Assert.Equal(2, wire.LibraryTabReads);
+        Assert.Null(vm.ServerLibraryError(1)); Assert.True(vm.HasServerLibraryRest(1));
+    }
+
+    [Fact]
+    public async Task MetadataLanguageChangeRetiresAHeldRestWithoutAnErrorAndLeavesTheLibraryAdmissible()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""", HoldLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        var first = vm.LoadServerLibraryAsync(1);
+        await Until(() => wire.LibraryTabReads == 1);
+        client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.LibraryTab.TrySetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"stale"}]}"""));
+        await first;
+        Assert.False(vm.HasServerLibraryRest(1)); Assert.False(vm.IsLoadingServerLibraryRest);
+        Assert.Null(vm.ServerLibraryError(1));
+        Assert.Equal(1, vm.NextServerLibrary?.LibraryId);
+    }
+
+    [Fact]
+    public async Task RefreshDropsTheRestOfALibraryItsTeaserNowHoldsInFull()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(["s1", "s2", "s3"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        // The server now lists one collection, all of it in the teaser: the cards read past the old teaser are gone.
+        wire.ServerBody = OneLibrary;
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.False(vm.HasServerLibraryRest(1));
+        Assert.Equal(["s1"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Null(vm.NextServerLibrary); Assert.Null(vm.ServerLibraryError(1));
+        Assert.Equal(1, wire.LibraryTabReads);
+    }
+
+    [Fact]
+    public async Task RefreshReReadsALoadedRestWhenTheWallAsksForAnotherLibraryMeanwhile()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.False(vm.IsRefreshingServerCollections);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(["s1", "t1", "s2", "s3"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+
+        // The rest of Movies changed on the server; the refresh that would show it is still on the wire.
+        wire.LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s4"}]}""";
+        wire.HoldServer = true;
+        var refresh = vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await Until(() => wire.ServerReads == 2);
+        Assert.True(vm.IsRefreshingServerCollections); Assert.False(vm.IsLoadingServerCollections);
+        // The viewport reaches Load more now: Shows must not take the single read the refresh needs for Movies.
+        await vm.LoadServerLibraryAsync(2, isCurrent: () => true);
+        Assert.Equal(1, wire.LibraryTabReads); Assert.False(vm.IsLoadingServerLibraryRest);
+
+        wire.Server.SetResult(Wire.Ok(wire.ServerBody));
+        await refresh;
+        Assert.False(vm.IsRefreshingServerCollections);
+        Assert.Equal(2, wire.LibraryTabReads);
+        Assert.Equal(["s1", "t1", "s4"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Null(vm.ServerLibraryError(1));
+        // Shows was only held back: it is still the next library, and its read goes through once the refresh ends.
+        Assert.Equal(2, vm.NextServerLibrary?.LibraryId);
+        await vm.LoadServerLibraryAsync(2);
+        Assert.Equal(3, wire.LibraryTabReads); Assert.True(vm.HasServerLibraryRest(2));
+    }
+
+    [Fact]
+    public async Task RefreshReReadsALoadedRestWhenTheWallRetiresItsOwnLoadsMeanwhile()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"s2"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(["s1", "t1", "s2", "s3"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+
+        // The refresh's re-read of Movies is on the wire when the viewer presses a Show pill or leaves the page.
+        wire.HoldLibraryTab = true;
+        var refresh = vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await Until(() => wire.LibraryTabReads == 2);
+        Assert.True(vm.IsRefreshingServerCollections); Assert.True(vm.IsServerLibraryLoading(1));
+        vm.CancelServerCollectionLoads();
+        Assert.True(vm.IsServerLibraryLoading(1));   // the re-read is the refresh's, not the wall's to retire
+
+        wire.LibraryTab.SetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"s1"},{"id":"s4"}]}"""));
+        await refresh;
+        Assert.False(vm.IsRefreshingServerCollections); Assert.False(vm.IsLoadingServerLibraryRest);
+        Assert.Equal(2, wire.LibraryTabReads);
+        Assert.Equal(["s1", "t1", "s4"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+        Assert.Null(vm.ServerLibraryError(1));
+    }
+
+    [Fact]
+    public async Task FailedRefreshStopsHoldingLibraryReadsBack()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""" };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        wire.FailServer = true;
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.NotNull(vm.ServerCollectionsErrorMessage); Assert.False(vm.IsRefreshingServerCollections);
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(1, wire.LibraryTabReads);
+    }
+
+    [Fact]
+    public async Task AllPillCountsTheWallOnceALibrarysRestHasLoaded()
+    {
+        using var wire = new Wire
+        {
+            ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""",
+            LibraryTabBody = """{"library_id":1,"collections":[{"id":"s1"},{"id":"own"},{"id":"s3"}]}""",
+        };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        int? All() => CollectionsWall.Pills(vm.ServerLibraries.ToArray(), 1, 0, ["own"], vm.ServerLibraryRestIds).Single(pill => pill.Value == CollectionsWall.All).Count;
+        Assert.Null(All());   // two cards are still unread and could be the personal one
+        await vm.LoadServerLibraryAsync(1);
+        Assert.Equal(3, All());   // s1, s3 and the personal collection the library also lists
+    }
 
     [Fact]
     public async Task EveryReadSucceedingMarksTheViewLoadedEvenWhenEmpty()
@@ -95,6 +300,43 @@ public sealed class CollectionsWallLoadingTests
         wire.Personal.SetResult(Wire.Ok("{\"items\":[],\"groups\":[]}"));
         await load;
         Assert.True(vm.PersonalLoaded); Assert.False(vm.IsLoading);
+    }
+
+    private const string OneOwn = "{\"items\":[{\"id\":\"own\",\"name\":\"Mine\"}],\"groups\":[]}";
+
+    // The All pill as the page asks for it: what has been read so far, with the view model's loaded flags.
+    private static int? AllCount(CollectionsViewModel vm)
+        => CollectionsWall.Pills(vm.ServerLibraries.ToArray(), vm.Collections.Count, 0, vm.Collections.Select(collection => collection.Id).ToArray(),
+            vm.ServerLibraryRestIds, vm.PersonalLoaded, vm.ServerLoaded).Single(pill => pill.Value == CollectionsWall.All).Count;
+
+    [Fact]
+    public async Task AllPillHasNoCountWhileTheProfilesOwnCollectionsAreStillOnTheirWay()
+    {
+        using var wire = new Wire { ServerBody = OneLibrary, HoldPersonal = true }; var client = wire.Client();
+        var vm = Vm(client);
+        var load = vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await wire.PersonalStarted.Task;
+        await Until(() => vm.ServerLoaded);
+        Assert.False(vm.PersonalLoaded);
+        Assert.Null(AllCount(vm));   // the server's one card is not the whole wall while the profile's own are unread
+        wire.Personal.SetResult(Wire.Ok(OneOwn));
+        await load;
+        Assert.Equal(2, AllCount(vm));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AllPillHasNoCountWhenTheServerOrPersonalReadFailed(bool failServer)
+    {
+        using var wire = new Wire { ServerBody = OneLibrary, PersonalBody = OneOwn, FailServer = failServer, FailPersonal = !failServer }; var client = wire.Client();
+        var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(!failServer, vm.ServerLoaded); Assert.Equal(failServer, vm.PersonalLoaded);
+        Assert.Null(AllCount(vm));   // the half that was read is not the total, and stays unknown after the failure
+        wire.FailServer = wire.FailPersonal = false;
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        Assert.Equal(2, AllCount(vm));
     }
 
     [Fact]
@@ -277,6 +519,10 @@ public sealed class CollectionsWallLoadingTests
         public string LibraryTabBody = "{\"library_id\":1,\"collections\":[],\"groups\":[]}";
         public string PersonalSnapshotBody = "{}";
         public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles, FailDelete;
+        public bool HoldLibraryTab, TimeOutLibraryTab, HoldServer;
+        public TaskCompletionSource<HttpResponseMessage> Server { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ServerReads;
+        public TaskCompletionSource<HttpResponseMessage> LibraryTab { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int LibraryTabReads, DeleteRequests;
         public TaskCompletionSource PersonalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ProfilesStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -288,7 +534,12 @@ public sealed class CollectionsWallLoadingTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
-            if (path == "/api/v2/collections/server") return Task.FromResult(FailServer ? Fail() : Ok(ServerBody));
+            if (path == "/api/v2/collections/server")
+            {
+                Interlocked.Increment(ref ServerReads);
+                if (HoldServer) return Server.Task;
+                return Task.FromResult(FailServer ? Fail() : Ok(ServerBody));
+            }
             if (path == "/api/v2/collections/capabilities") return Task.FromResult(Ok("{\"item_reorder\":true,\"imports\":true}"));
             if (path == "/api/v2/profiles")
             {
@@ -299,6 +550,9 @@ public sealed class CollectionsWallLoadingTests
             if (path.EndsWith("/collections") && path.StartsWith("/api/v2/library/"))
             {
                 Interlocked.Increment(ref LibraryTabReads);
+                if (HoldLibraryTab) return LibraryTab.Task;
+                // What HttpClient throws once its own Timeout elapses: a cancellation no caller token asked for.
+                if (TimeOutLibraryTab) return Task.FromException<HttpResponseMessage>(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout elapsing.", new TimeoutException()));
                 return Task.FromResult(FailLibraryTab ? Fail() : Ok(LibraryTabBody));
             }
             if (path == "/api/v2/collections")

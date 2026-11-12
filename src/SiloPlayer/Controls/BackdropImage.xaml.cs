@@ -13,6 +13,7 @@ public sealed partial class BackdropImage : UserControl
     private Storyboard? _kenBurnsStoryboard;
     private BitmapImage? _trackedBitmap;
     private RoutedEventHandler? _trackedImageOpenedHandler;
+    public bool UseCollectionPan { get; set; }
 
     public static readonly DependencyProperty SourceProperty =
         DependencyProperty.Register(
@@ -159,13 +160,31 @@ public sealed partial class BackdropImage : UserControl
     private static void OnKenBurnsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not BackdropImage ctrl) return;
-        if ((bool)e.NewValue) ctrl.StartKenBurns();
+        if ((bool)e.NewValue && ctrl.IsLoaded) ctrl.StartKenBurns();
         else ctrl.StopKenBurns();
     }
 
     private void StartKenBurns()
     {
         StopKenBurns();
+        if (UseCollectionPan)
+        {
+            KenBurnsTransform.ScaleX = KenBurnsTransform.ScaleY = 1.06;
+            var pan = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
+            foreach (var (property, distance) in new[] { ("TranslateX", -.015 * ClipCanvas.ActualWidth), ("TranslateY", -.01 * ClipCanvas.ActualHeight) })
+            {
+                var animation = new DoubleAnimationUsingKeyFrames { Duration = new Duration(TimeSpan.FromSeconds(14)) };
+                animation.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.Zero), Value = 0 });
+                animation.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(7)), Value = distance });
+                animation.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(14)), Value = 0 });
+                Storyboard.SetTarget(animation, KenBurnsTransform);
+                Storyboard.SetTargetProperty(animation, property);
+                pan.Children.Add(animation);
+            }
+            _kenBurnsStoryboard = pan;
+            pan.Begin();
+            return;
+        }
         var sb = new Storyboard { RepeatBehavior = RepeatBehavior.Forever, AutoReverse = true };
 
         var scaleX = new DoubleAnimation
@@ -216,6 +235,7 @@ public sealed partial class BackdropImage : UserControl
         KenBurnsTransform.ScaleX = 1;
         KenBurnsTransform.ScaleY = 1;
         KenBurnsTransform.TranslateX = 0;
+        KenBurnsTransform.TranslateY = 0;
     }
 
     private void ClipCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -227,6 +247,7 @@ public sealed partial class BackdropImage : UserControl
             Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height)
         };
         Reposition();
+        if (UseCollectionPan && EnableKenBurns && IsLoaded) StartKenBurns();
     }
 
     private void Reposition()

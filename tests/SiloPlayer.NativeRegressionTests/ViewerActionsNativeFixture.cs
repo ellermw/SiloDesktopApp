@@ -71,6 +71,8 @@ internal static class ViewerActionsNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 800)); window.AppWindow.Show(false);
             await Task.Delay(200);
             if (Wants("dismissal")) await DedicatedPageRemovalAsync(frame, wire);
+            if (Wants("undo")) await DedicatedPageUndoAsync(frame, wire);
+            if (Wants("undo-races")) await UndoRacesAsync(frame, wire, home, catalog, client);
             if (Wants("paging")) await DismissalPagingAsync(frame, wire, home);
             if (Wants("smart-editor")) await SmartEditorAsync(frame, wire);
             if (Wants("smart-wizard")) await SmartWizardAsync(frame, wire);
@@ -79,14 +81,19 @@ internal static class ViewerActionsNativeFixture
             if (Wants("trending")) await TrendingShowAsync(parent);
             if (Wants("calendar")) await CalendarBadgesAsync(frame, calendarModel);
             if (Wants("sync")) await FailedSyncRefreshAsync(client, collections, catalog, settings, auth, wire);
+            if (Wants("sync-skipped")) await SyncSkippedCountAsync(client, collections, catalog, settings, auth, wire);
             if (Wants("episode-scope")) await EpisodeLinkScopeAsync(navigation, frame);
         }
         finally
         {
             foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(frame.XamlRoot)) popup.IsOpen = false;
-            frame.Content = null; await Task.Delay(100);
-            field.SetValue(null, previous);
+            frame.Content = null; frame.BackStack.Clear(); frame.ForwardStack.Clear();
+            window.Content = null;
             window.Close();
+            // Closing the owned Window raises deferred Unloaded callbacks. Drain them
+            // while fixture services are still installed, before the host disposes DI.
+            await Task.Delay(1500);
+            field.SetValue(null, previous);
         }
     }
 
@@ -181,6 +188,67 @@ internal static class ViewerActionsNativeFixture
                 type + " dismissal keeps the sibling with the same SeriesId");
             CloseMenus(page);
         }
+    }
+
+    private static async Task DedicatedPageUndoAsync(Frame frame, Wire wire)
+    {
+        static ObservableCollection<MediaItem> Items(CatalogPage page) => Field<ObservableCollection<MediaItem>>(page, "_items");
+        async Task<PosterCard> CardAsync(CatalogPage page, string id)
+        {
+            PosterCard? found = null;
+            await Until(() => (found = Descendants<PosterCard>(page).FirstOrDefault(card => card.MediaItem?.ContentId == id)) != null, "realized card " + id);
+            return found!;
+        }
+        void CloseMenus(UIElement root) { foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(root.XamlRoot)) popup.IsOpen = false; }
+        string Count(CatalogPage page) => ((TextBlock)page.FindName("CountText")).Text;
+
+        // Open Continue Watching, dismiss a movie, verify banner appears
+        wire.Undos.Clear(); wire.Dismissals.Clear(); wire.ClearDismissed();
+        frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Continue Watching", null, null, "cw"));
+        var page = (CatalogPage)frame.Content;
+        await Until(() => !Field<bool>(page, "_loading") && Items(page).Count > 0, "undo page cards");
+        await Task.Delay(300); page.UpdateLayout();
+        Check(Items(page).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "undo page lists its cards");
+
+        var card = await CardAsync(page, "film");
+        Invoke((Button)card.FindName("MoreButton"));
+        await Until(() => OpenMenuItems(card).Any(item => item.Text == "Remove from Continue Watching"), "undo removal menu");
+        Invoke(OpenMenuItems(card).Single(item => item.Text == "Remove from Continue Watching"));
+        await Until(() => wire.Dismissals.Count == 1 && Items(page).All(item => item.ContentId != "film"), "undo movie dismissed");
+        CloseMenus(page);
+
+        var banner = (Microsoft.UI.Xaml.Controls.Border)page.FindName("UndoBanner");
+        var bannerText = (TextBlock)page.FindName("UndoBannerText");
+        Check(banner.Visibility == Visibility.Visible, "undo banner is visible after dismissal");
+        Check(bannerText.Text == "Removed from Continue Watching", "undo banner text: " + bannerText.Text);
+        Check(Count(page) == "3", "count after dismissal: " + Count(page));
+
+        // Click Undo
+        var undoButton = (Button)page.FindName("UndoButton");
+        Invoke(undoButton);
+        await Until(() => wire.Undos.Count == 1, "undo API call");
+        Check(wire.Undos[0] == "/api/v2/home/dismissals/continue_watching/film", "undo DELETE path: " + wire.Undos[0]);
+        await Task.Delay(300);
+        Check(Items(page).Any(item => item.ContentId == "film"), "the dismissed movie is restored after undo");
+        Check(Count(page) == "4", "count after undo: " + Count(page));
+        Check(banner.Visibility == Visibility.Collapsed, "undo banner hides after successful undo");
+
+        // Second dismissal replaces the first undo
+        card = await CardAsync(page, "show-a");
+        Invoke((Button)card.FindName("MoreButton"));
+        await Until(() => OpenMenuItems(card).Any(item => item.Text == "Remove from Continue Watching"), "undo second removal menu");
+        Invoke(OpenMenuItems(card).Single(item => item.Text == "Remove from Continue Watching"));
+        await Until(() => wire.Dismissals.Count == 2 && Items(page).All(item => item.SeriesId != "show"), "undo second dismissal");
+        CloseMenus(page);
+        Check(banner.Visibility == Visibility.Visible, "banner shows for the second dismissal");
+        Check(bannerText.Text == "Removed from Continue Watching and Next Up", "second banner text for episode: " + bannerText.Text);
+        Check(Count(page) == "2", "count after second dismissal removes show: " + Count(page));
+
+        // Auto-hide: wait for the 5-second timeout
+        await Task.Delay(5500);
+        Check(banner.Visibility == Visibility.Collapsed, "undo banner auto-hides after timeout");
+
+        Program.Log("PASS: dedicated page undo restores the dismissed card, second dismissal replaces the first, and the banner auto-hides.");
     }
 
     private static async Task DismissalPagingAsync(Frame frame, Wire wire, HomeApi home)
@@ -312,12 +380,223 @@ internal static class ViewerActionsNativeFixture
             // No scroll or explicit continuation: the second episode was at position 90.
             await Until(() => Items().All(item => item.ContentId != section + "-001") && !Field<bool>(page, "_loading"), "show total refresh");
             Check(((TextBlock)page.FindName("CountText")).Text == "128", "server total includes the unloaded dismissed episode");
-            Check(Field<int>(page, "_offset") == Items().Count, "only loaded removals adjust the prefix offset");
+            Check(Field<int>(page, "_offset") == Items().Count, "the live row decides the prefix offset");
             for (var i = 0; i < 5 && Field<bool>(page, "_hasMore"); i++)
                 await (Task)Call(page, "LoadAsync", false)!;
             var expected = Enumerable.Range(1, 130).Where(index => index is not (1 or 90)).Select(index => $"{section}-{index:000}");
             Check(Items().Select(item => item.ContentId).SequenceEqual(expected), "show dismissal keeps every remaining title exactly once");
         }
+
+        {
+            // This server drops only the dismissed episode's row while the page removes both loaded
+            // cards of the show: the live row, not the number of removed cards, sets the window.
+            const string section = "one-row-cw";
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Progress", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            ObservableCollection<MediaItem> Items() => Field<ObservableCollection<MediaItem>>(page, "_items");
+            await Until(() => !Field<bool>(page, "_loading") && Items().Count == 60, "one-row first sixty");
+            PosterCard? first = null;
+            await Until(() => (first = Descendants<PosterCard>(page).FirstOrDefault(card => card.MediaItem?.ContentId == section + "-001")) != null, "one-row first card");
+            Invoke((Button)first!.FindName("MoreButton"));
+            await Until(() => OpenMenuItems(first).Any(item => item.Text.StartsWith("Remove from")), "one-row removal menu");
+            Invoke(OpenMenuItems(first).Single(item => item.Text.StartsWith("Remove from")));
+            await Until(() => Items().All(item => item.ContentId != section + "-001") && !Field<bool>(page, "_loading"), "one-row live row read");
+            Check(((TextBlock)page.FindName("CountText")).Text == "129", "the server total counts the one dropped row");
+            Check(Field<int>(page, "_offset") == Items().Count, "the live row decides the offset when the server drops fewer rows");
+            for (var i = 0; i < 5 && Field<bool>(page, "_hasMore"); i++)
+                await (Task)Call(page, "LoadAsync", false)!;
+            var expected = Enumerable.Range(2, 129).Select(index => $"{section}-{index:000}");
+            Check(Items().Select(item => item.ContentId).SequenceEqual(expected), "a one-row dismissal keeps every server title exactly once");
+            Program.Log("PASS: a dismissal that drops fewer server rows than removed cards still pages every title once.");
+        }
+    }
+
+
+    private static async Task UndoRacesAsync(Frame frame, Wire wire, HomeApi home, CatalogApi catalog, SiloApiClient client)
+    {
+        ObservableCollection<MediaItem> Items(CatalogPage page) => Field<ObservableCollection<MediaItem>>(page, "_items");
+        async Task<CatalogPage> OpenAsync(string section)
+        {
+            wire.ClearDismissed(); wire.Undos.Clear(); wire.Dismissals.Clear(); wire.HoldUndo = null; wire.FailUndo = false;
+            wire.ContinuationHeld = true;
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Continue Watching", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            await Until(() => !Field<bool>(page, "_loading") && Items(page).Count > 0, "race page loaded");
+            return page;
+        }
+        async Task DismissAsync(CatalogPage page, string id, string surface = "continue_watching")
+        {
+            var item = Items(page).Single(item => item.ContentId == id);
+            var context = catalog.CaptureContext();
+            await home.DismissItemAsync(surface, id, new { progress_updated_at = item.ProgressUpdatedAt });
+            page.Receive(new HomeDismissalApplied(surface, item, context));
+            page.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, id, item.SeriesId, context: context));
+            await Until(() => !Field<bool>(page, "_loading") && Items(page).All(item => item.ContentId != id), "race dismissal and live count applied");
+        }
+        void StartUndo(CatalogPage page) => Call(page, "UndoButton_Click", page.FindName("UndoButton"), new RoutedEventArgs());
+        async Task SettledAsync(CatalogPage page) => await Until(() => Field<string?>(page, "_undoSurface") == null && !Field<bool>(page, "_loading"), "race Undo settled");
+        var paging = await OpenAsync("race-undo");
+        await DismissAsync(paging, "race-undo-001");
+        var frozenCount = Items(paging).Count;
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        StartUndo(paging);
+        await Until(() => wire.Undos.Count == 1, "server undrop before DELETE response");
+        StartUndo(paging); // duplicate activation, including direct event invocation, must be inert
+        await (Task)Call(paging, "LoadAsync", false)!;
+        Check(Items(paging).Count == frozenCount, "paging stays frozen before Undo response");
+        wire.HoldUndo.TrySetResult();
+        await SettledAsync(paging);
+        for (var i = 0; i < 5 && Field<bool>(paging, "_hasMore"); i++) await (Task)Call(paging, "LoadAsync", false)!;
+        var expected = Enumerable.Range(1, 130).Select(index => $"race-undo-{index:000}").ToArray();
+        Check(Items(paging).Select(item => item.ContentId).SequenceEqual(expected), "Undo preserves complete server order without duplicates or missing rows");
+        Check(Field<int>(paging, "_totalItems") == 130 && wire.Undos.Count == 1, "Undo exact count and single DELETE");
+        Program.Log("PASS: Undo freezes paging before server restoration; exact ordered 130-title window and duplicate-click guard.");
+
+        var replacement = await OpenAsync("cw");
+        await DismissAsync(replacement, "film");
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        StartUndo(replacement); await Until(() => wire.Undos.Count == 1, "first Undo accepted");
+        await DismissAsync(replacement, "show-a");
+        var gate = wire.HoldUndo; wire.HoldUndo = null; gate.TrySetResult();
+        await Until(() => Items(replacement).Any(item => item.ContentId == "film") && Field<int>(replacement, "_totalItems") == 2, "previous Undo reconciles despite replacement");
+        Check(Items(replacement).Select(item => item.ContentId).SequenceEqual(["film", "no-stamp"]), "new dismissal and previous Undo both reflected");
+        Check(Field<string?>(replacement, "_undoItemId") == "show-a" && ((Border)replacement.FindName("UndoBanner")).Visibility == Visibility.Visible, "latest banner retained");
+        await Until(() => ((Button)replacement.FindName("UndoButton")).IsEnabled, "next Undo enabled");
+        StartUndo(replacement); await SettledAsync(replacement);
+        Check(Items(replacement).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "whole-show Undo restores exact noncontiguous server positions");
+        Program.Log("PASS: newer dismissal retains its banner while prior Undo restores; whole-show Undo exact order.");
+
+        var foreign = await OpenAsync("cw"); await DismissAsync(foreign, "film");
+        var foreignItem = new MediaItem { ContentId = "foreign-next-episode", Type = "episode", SeriesId = "foreign-series" };
+        var context = catalog.CaptureContext();
+        foreign.Receive(new HomeDismissalApplied("next_up", foreignItem, context));
+        foreign.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, foreignItem.ContentId, foreignItem.SeriesId, context: context));
+        await Task.Delay(100); StartUndo(foreign); await SettledAsync(foreign);
+        Check(wire.Undos.Single().EndsWith("/continue_watching/film") && Items(foreign).Any(item => item.ContentId == "film"), "unmatched event cannot mix endpoint and prior banner");
+        Program.Log("PASS: unmatched other-surface dismissal cannot replace the pending Undo target.");
+
+        var retry = await OpenAsync("cw"); await DismissAsync(retry, "film"); wire.FailUndo = true;
+        StartUndo(retry);
+        await Until(() => ((TextBlock)retry.FindName("UndoBannerText")).Text == "Could not undo. Try again.", "retry feedback");
+        Check(Items(retry).All(item => item.ContentId != "film") && Field<int>(retry, "_totalItems") == 3, "failed Undo leaves row authoritative");
+        wire.FailUndo = false; StartUndo(retry); await SettledAsync(retry);
+        Check(Items(retry).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "retry restores once");
+        Program.Log("PASS: DELETE failure remains retryable with coherent server count.");
+
+        var slow = await OpenAsync("cw"); await DismissAsync(slow, "film"); wire.FailUndo = true;
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(slow);
+        await Until(() => wire.Undos.Count == 1, "slow failing Undo dispatched");
+        await Task.Delay(5500); // the dismissal banner's own five seconds end while the DELETE is pending
+        wire.HoldUndo.TrySetResult();
+        await Until(() => ((Border)slow.FindName("UndoBanner")).Visibility == Visibility.Visible
+            && ((TextBlock)slow.FindName("UndoBannerText")).Text == "Could not undo. Try again.", "late failure feedback");
+        Check(Field<string?>(slow, "_undoItemId") == "film" && Items(slow).All(item => item.ContentId != "film"), "expired banner timer cannot discard a pending Undo");
+        await Until(() => ((Button)slow.FindName("UndoButton")).IsEnabled, "late retry enabled");
+        wire.HoldUndo = null; wire.FailUndo = false; StartUndo(slow); await SettledAsync(slow);
+        Check(Items(slow).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "late failure retry restores once");
+        Program.Log("PASS: DELETE failure after the banner's five seconds still reports and remains retryable.");
+
+        var departed = await OpenAsync("cw"); await DismissAsync(departed, "film");
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(departed);
+        await Until(() => wire.Undos.Count == 1, "departing Undo dispatched");
+        var answered = wire.UndosAnswered;
+        frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Other page", null, null, "plain"));
+        wire.HoldUndo.TrySetResult();
+        // The held DELETE honors cancellation: it is answered only if leaving the page did not abort it.
+        await Until(() => wire.UndosAnswered == answered + 1, "departing Undo is not cancelled with its page");
+        await Task.Delay(150);
+        Check(Items(departed).All(item => item.ContentId != "film") && ((Border)departed.FindName("UndoBanner")).Visibility == Visibility.Collapsed, "departed page rejects late success");
+        Program.Log("PASS: navigation retires the pending Undo's queued UI completion without cancelling its DELETE.");
+
+        var reset = await OpenAsync("race-reset"); await DismissAsync(reset, "race-reset-001");
+        var resetCount = Items(reset).Count;
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(reset);
+        await Until(() => wire.Undos.Count == 1, "reset Undo dispatched");
+        await (Task)Call(reset, "LoadAsync", true)!;
+        Check(Items(reset).Count == resetCount, "reset deferred until mutation settles");
+        wire.HoldUndo.TrySetResult();
+        await Until(() => Field<int>(reset, "_totalItems") == 130 && Items(reset).Count == 60, "reset authoritative window");
+        Check(Items(reset).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 60).Select(i => $"race-reset-{i:000}")), "reset cannot mix old prefix with restored rows");
+        Program.Log("PASS: same-page reset during Undo reconciles one exact prefix.");
+
+        foreach (var readBefore in new[] { true, false })
+        {
+            var section = readBefore ? "race-undo-before" : "race-undo-after";
+            var held = await OpenAsync(section);
+            await DismissAsync(held, section + "-001");
+            wire.ContinuationHeld = false; wire.ReadBeforeDismissal = readBefore;
+            // The dismissal's live read re-read the first sixty. Hold the next
+            // continuation, then begin Undo while it is still in flight.
+            wire.HoldAnyContinuation = true; wire.ContinuationHeld = false;
+            wire.ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var continuation = (Task)Call(held, "LoadAsync", false)!;
+            await Until(() => wire.ContinuationHeld, "continuation before Undo");
+            wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(held);
+            await Until(() => wire.Undos.Count == 1, "Undo with old continuation");
+            wire.ReleaseContinuation.TrySetResult(); await continuation;
+            wire.HoldAnyContinuation = false; wire.HoldUndo.TrySetResult(); await SettledAsync(held);
+            while (Field<bool>(held, "_hasMore")) await (Task)Call(held, "LoadAsync", false)!;
+            Check(Items(held).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 130).Select(i => $"{section}-{i:000}")), "cancellation-ignoring old continuation retired");
+        }
+        Program.Log("PASS: old continuations read before/after restoration cannot append after Undo starts.");
+
+        var next = await OpenAsync("nu"); await DismissAsync(next, "nu-ep", "next_up"); StartUndo(next); await SettledAsync(next);
+        Check(wire.Undos.Single().EndsWith("/next_up/nu-ep") && Items(next).Select(item => item.ContentId).SequenceEqual(["nu-ep", "nu-orphan"]), "Next Up endpoint, order and total restored");
+        Program.Log("PASS: Next Up episode Undo restores its original row.");
+
+        var stale = await OpenAsync("race-stale"); await DismissAsync(stale, "race-stale-002");
+        wire.FailSectionReads = true; StartUndo(stale);
+        var errorPanel = (FrameworkElement)stale.FindName("CatalogErrorPanel");
+        await Until(() => errorPanel.Visibility == Visibility.Visible && Field<string?>(stale, "_undoSurface") == null, "failed post-Undo read reported");
+        Check(wire.Undos.Count == 1 && !Field<bool>(stale, "_hasMore"), "an accepted Undo whose re-read failed stops paging the stale cards");
+        wire.FailSectionReads = false;
+        Call(stale, "CatalogRetry_Click", stale.FindName("CatalogRetryButton"), new RoutedEventArgs());
+        await Until(() => !Field<bool>(stale, "_loading") && Items(stale).Count == 60 && Items(stale)[1].ContentId == "race-stale-002", "Retry reloads the row from its start");
+        while (Field<bool>(stale, "_hasMore")) await (Task)Call(stale, "LoadAsync", false)!;
+        Check(Items(stale).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 130).Select(i => $"race-stale-{i:000}")), "Retry after a failed post-Undo read shows every title once");
+        Program.Log("PASS: Retry after an accepted Undo with a failed re-read reloads the row instead of appending to stale cards.");
+
+        var access = await OpenAsync("cw"); await DismissAsync(access, "film");
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(access);
+        await Until(() => wire.Undos.Count == 1, "authority Undo dispatched");
+        client.InvalidateAccessContext(); wire.HoldUndo.TrySetResult(); await Task.Delay(150);
+        Check(Items(access).All(item => item.ContentId != "film") && ((Border)access.FindName("UndoBanner")).Visibility == Visibility.Collapsed, "authority change rejects late successful response");
+        var beforeClick = await OpenAsync("cw"); await DismissAsync(beforeClick, "film"); client.InvalidateAccessContext(); StartUndo(beforeClick);
+        await Task.Delay(100); Check(wire.Undos.Count == 0, "retired authority sends no DELETE");
+        Program.Log("PASS: authority changes before click and during request cannot mutate replacement UI or send a replacement-owner DELETE.");
+
+        // A reconnect catch-up retires the request context, not the dismissal's owner.
+        var reconnect = await OpenAsync("cw"); await DismissAsync(reconnect, "film");
+        wire.HoldUndo = new(TaskCreationOptions.RunContinuationsAsynchronously); StartUndo(reconnect);
+        await Until(() => wire.Undos.Count == 1, "reconnect Undo dispatched");
+        Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect catch-up during the DELETE");
+        wire.HoldUndo.TrySetResult(); await SettledAsync(reconnect);
+        Check(Items(reconnect).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "a reconnect during the DELETE still re-reads the restored row");
+        var reconnected = await OpenAsync("cw"); await DismissAsync(reconnected, "film");
+        Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect catch-up before the click");
+        StartUndo(reconnected); await SettledAsync(reconnected);
+        Check(wire.Undos.Count == 1 && Items(reconnected).Select(item => item.ContentId).SequenceEqual(["film", "show-a", "show-b", "no-stamp"]), "a reconnect before the click keeps the Undo and sends its DELETE");
+        Program.Log("PASS: a reconnect before or during Undo keeps the same owner's Undo and re-reads the row.");
+
+        var menuPage = await OpenAsync("cw");
+        PosterCard? menuCard = null;
+        await Until(() => (menuCard = Descendants<PosterCard>(menuPage).FirstOrDefault(card => card.MediaItem?.ContentId == "film")) != null, "reconnect menu card");
+        Invoke((Button)menuCard!.FindName("MoreButton"));
+        await Until(() => OpenMenuItems(menuCard).Any(entry => entry.Text == "Remove from Continue Watching"), "reconnect removal menu");
+        wire.HoldDismissal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            Invoke(OpenMenuItems(menuCard).Single(entry => entry.Text == "Remove from Continue Watching"));
+            await Until(() => wire.Dismissals.Count == 1, "reconnect dismissal dispatched");
+            Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect catch-up during the PUT");
+        }
+        finally { var release = wire.HoldDismissal; wire.HoldDismissal = null; release.TrySetResult(); }
+        await Until(() => !Field<bool>(menuPage, "_loading") && Items(menuPage).All(entry => entry.ContentId != "film"), "a dismissal accepted across a reconnect removes its card");
+        Check(((Border)menuPage.FindName("UndoBanner")).Visibility == Visibility.Visible && Field<string?>(menuPage, "_undoItemId") == "film",
+            "a dismissal accepted across a reconnect still offers its Undo");
+        foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(menuPage.XamlRoot)) popup.IsOpen = false;
+        Program.Log("PASS: a dismissal accepted while a reconnect retires its request context still leaves the page and offers Undo.");
+
     }
 
     // ----- G4 -----
@@ -668,6 +947,27 @@ internal static class ViewerActionsNativeFixture
         Program.Log("PASS: a failed Sync now re-reads the recorded status without discarding unsaved edits, and stale re-reads are dropped.");
     }
 
+    private static async Task SyncSkippedCountAsync(SiloApiClient client, CollectionsApi collections, CatalogApi catalog, SettingsApi settings, AuthService auth, Wire wire)
+    {
+        wire.SyncState = "ok"; wire.FailSync = false; wire.SyncUnmatched = 5; wire.HoldCollectionRead = null;
+        var vm = new CollectionEditorViewModel(collections, catalog, settings, auth);
+        await vm.LoadExistingCommand.ExecuteAsync("synced");
+        Check(vm.LastSyncSummary == "ok · Matched 12 titles", "skipped: initial load: " + vm.LastSyncSummary);
+
+        // Successful sync with skipped titles
+        await vm.SyncNowCommand.ExecuteAsync(null);
+        Check(vm.SyncSkippedTitles == 5, "skipped: success sets the count: " + vm.SyncSkippedTitles);
+
+        // Failed sync clears the count
+        wire.FailSync = true; wire.SyncState = "failed";
+        await vm.SyncNowCommand.ExecuteAsync(null);
+        Check(vm.SyncSkippedTitles == null, "skipped: failure clears the count: " + vm.SyncSkippedTitles);
+        Check(vm.ErrorMessage?.StartsWith("Sync failed") == true, "skipped: failure shows error: " + vm.ErrorMessage);
+        Check(vm.LastSyncSummary == "failed · The MDBList list is private", "skipped: failure shows recorded status: " + vm.LastSyncSummary);
+
+        Program.Log("PASS: a successful sync with skipped titles followed by a failed sync clears the skipped count.");
+    }
+
     // ----- G12 -----
 
     private static async Task EpisodeLinkScopeAsync(NavigationService navigation, Frame frame)
@@ -742,15 +1042,20 @@ internal static class ViewerActionsNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
-        internal bool ContinuationHeld, ReadBeforeDismissal;
+        internal bool ContinuationHeld, ReadBeforeDismissal; internal bool HoldAnyContinuation;
         internal bool FailCatalogPreview;
         internal bool RejectRulelessUpdate;
         internal TaskCompletionSource ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<(string Path, string Body)> Dismissals = [];
+        internal readonly List<string> Undos = [];
         internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [], Updates = [];
         internal string SyncState = "ok"; internal bool FailSync = true;
+        internal int SyncUnmatched;
+        internal TaskCompletionSource? HoldUndo; internal bool FailUndo, FailSectionReads; internal int UndosAnswered;
+        internal TaskCompletionSource? HoldDismissal;
         internal TaskCompletionSource? HoldCollectionRead; internal int CollectionReadsHeld;
         private readonly HashSet<string> _dismissed = [];
+        internal void ClearDismissed() => _dismissed.Clear();
         private static readonly JsonSerializerOptions Snake = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
 
         private static object Card(string id, string type, string title, string? series = null, string? source = null, string? stamp = null)
@@ -765,11 +1070,26 @@ internal static class ViewerActionsNativeFixture
 
             if (path.StartsWith("/api/v2/home/dismissals/"))
             {
+                if (request.Method == HttpMethod.Delete)
+                {
+                    Undos.Add(path);
+                    if (FailUndo)
+                    {
+                        if (HoldUndo != null) await HoldUndo.Task;
+                        return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"Try again\"}") };
+                    }
+                    var undoId = path[(path.LastIndexOf('/') + 1)..]; _dismissed.Remove(undoId);
+                    if (undoId.StartsWith("show-")) { _dismissed.Remove("show-a"); _dismissed.Remove("show-b"); }
+                    if (HoldUndo != null) await HoldUndo.Task.WaitAsync(ct);
+                    UndosAnswered++;
+                    return new(HttpStatusCode.NoContent);
+                }
                 Dismissals.Add((path, text ?? ""));
                 var itemId = path[(path.LastIndexOf('/') + 1)..]; _dismissed.Add(itemId);
                 if (itemId.StartsWith("show-")) { _dismissed.Add("show-a"); _dismissed.Add("show-b"); }
                 if (itemId.StartsWith("off-prefix-") && itemId.EndsWith("-001"))
                     _dismissed.Add(itemId[..^3] + "090");
+                if (HoldDismissal is { } held) await held.Task;
                 return new(HttpStatusCode.NoContent);
             }
             if (path == "/api/v2/catalog")
@@ -782,22 +1102,24 @@ internal static class ViewerActionsNativeFixture
                         Content = new StringContent("{\"code\":\"dependency_unavailable\",\"message\":\"Preview unavailable\"}")
                     };
                 }
+                if (FailSectionReads) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"message\":\"Try again\"}") };
                 var section = Query(query, "section_id");
-                if (section.StartsWith("race-") || section.StartsWith("off-prefix-"))
+                if (section.StartsWith("race-") || section.StartsWith("off-prefix-") || section.StartsWith("one-row-"))
                 {
                     var seek = int.Parse(Query(query, "seek")); var limit = int.Parse(Query(query, "limit"));
                     string[] Row() => Enumerable.Range(1, 130).Select(index => $"{section}-{index:000}").Where(id => !_dismissed.Contains(id)).ToArray();
                     var row = Row();
-                    if (section.StartsWith("race-") && seek == 60 && !ContinuationHeld)
+                    if (section.StartsWith("race-") && (seek == 60 || (HoldAnyContinuation && seek > 0)) && !ContinuationHeld)
                     {
                         ContinuationHeld = true;
                         // Intentionally ignore cancellation so acceptance must retire the generation too.
                         await ReleaseContinuation.Task;
                         if (!ReadBeforeDismissal) row = Row();
                     }
-                    var show = section.StartsWith("off-prefix-");
-                    var window = row.Skip(seek).Take(limit).Select(id => Card(id, show ? "episode" : "movie", id,
-                        show ? (id.EndsWith("-001") || id.EndsWith("-090") ? section + "-show" : id + "-show") : null,
+                    var show = section.StartsWith("off-prefix-"); var pair = section.StartsWith("one-row-");
+                    var window = row.Skip(seek).Take(limit).Select(id => Card(id, show || pair ? "episode" : "movie", id,
+                        show ? (id.EndsWith("-001") || id.EndsWith("-090") ? section + "-show" : id + "-show")
+                            : pair ? (id.EndsWith("-001") || id.EndsWith("-002") ? section + "-show" : id + "-show") : null,
                         section.EndsWith("-nu") ? "next_up" : "in_progress", "2026-11-09T10:00:00Z")).ToArray();
                     return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items = window, total = row.Length, has_more = seek + window.Length < row.Length, total_exact = true, snapshot = "fixture" }, Snake)) };
                 }
@@ -851,7 +1173,7 @@ internal static class ViewerActionsNativeFixture
             else if (path == "/api/v2/collections/synced/sync")
             {
                 if (FailSync) { status = HttpStatusCode.ServiceUnavailable; body = new { code = "dependency_unavailable", message = "The MDBList list is private" }; }
-                else body = new { status = "ok", message = "Matched", items_matched = 12 };
+                else body = new { status = "ok", message = "Matched", items_matched = 12, items_unmatched = SyncUnmatched };
             }
             else if (path == "/api/v2/collections/synced")
             {
