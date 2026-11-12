@@ -115,6 +115,7 @@ public sealed class SettingsContractCapabilities
     [JsonPropertyName("supports_idempotent_writes")] public bool SupportsIdempotentWrites { get; set; }
     [JsonPropertyName("supports_atomic_shortcuts")] public bool SupportsAtomicShortcuts { get; set; }
     [JsonPropertyName("supports_device_rename")] public bool SupportsDeviceRename { get; set; }
+    [JsonPropertyName("supports_overlay_images")] public bool SupportsOverlayImages { get; set; }
 
     public bool SupportsRevision5Customization =>
         ApiVersion == 1 && Revision >= 5 &&
@@ -170,6 +171,7 @@ public sealed class CompatAccountConnectInfo
 
 public class OverlayConfigResponse
 {
+    public List<OverlayLibraryImage> Images { get; set; } = [];
     /// <summary>Server-wide kill switch. When false, no overlays render for any user.</summary>
     public bool Enabled { get; set; } = true;
     /// <summary>

@@ -315,10 +315,8 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("_document = BuildDefaultDocument();", service);
         Assert.Contains("\"card_overlay_settings\"", shell);
         Assert.All(new[] { poster, landscape, library }, source => Assert.Contains("CardBadgeHosts.For(item, service", source));
-        Assert.All(new[] { badges, detail }, source =>
-        {
-            Assert.Contains("GetOrderedDefinitions()", source);
-        });
+        Assert.Contains("GetOrderedDefinitions()", badges);
+        Assert.Contains("CardBadgeHosts.ForData(data, service", detail);
     }
 
     private static string ReadRepoFile(params string[] parts)
