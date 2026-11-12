@@ -38,6 +38,19 @@ public sealed class UpdateProgressWindow : Window
     /// <summary>The authenticated client has atomically exchanged the two windows; now follow the owner.</summary>
     public void StartTracking() { presentationEnabled=true; Track(); }
 
+    /// <summary>Keep the Check Update dialog until this view participates in a real rendering frame.</summary>
+    public async Task WaitForPresentationAsync(CancellationToken ct)
+    {
+        var presented=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Rendering(object? sender, object args)
+        {
+            if(root.IsLoaded && AppWindow.IsVisible && root.ActualWidth>0 && root.ActualHeight>0)presented.TrySetResult();
+        }
+        CompositionTarget.Rendering+=Rendering;
+        try { await presented.Task.WaitAsync(ct); }
+        finally { CompositionTarget.Rendering-=Rendering; }
+    }
+
     /// <summary>Swap visibility in one native transaction without activating either panel.</summary>
     public void TransferTo(long trustedWindow)
     {
@@ -83,7 +96,7 @@ public sealed class UpdateProgressWindow : Window
         Percent.Text=UpdatePanelModel.Percent(completed,totalBytes)??"";
     }
 
-    /// <summary>Everything is downloaded. Completes true for Restart now and false for Later.</summary>
+    /// <summary>Installation is complete. Completes true for Restart now and false for Later.</summary>
     public Task<bool> AskRestartAsync(CancellationToken ct)
     {
         Model.Ready();
@@ -99,12 +112,12 @@ public sealed class UpdateProgressWindow : Window
         if(restart)
         {
             Model.Restart();
-            Status.Text="Preparing your update…";SetProgress(0,0);
+            Status.Text="Restarting Silo…";SetProgress(0,0);Cancel.IsEnabled=false;
         }
         else
         {
             Model.Defer();
-            Status.Text="Update downloaded";explanation.Text=UpdatePanelModel.DeferredText;
+            Status.Text="Update installed";explanation.Text=UpdatePanelModel.DeferredText;
             Cancel.Content="Close";Cancel.IsEnabled=true;
         }
         Refresh();
@@ -227,14 +240,14 @@ public sealed class UpdateProgressWindow : Window
         if(AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
         {
             presenter.IsResizable=false;presenter.IsMaximizable=false;presenter.IsMinimizable=false;
-            // Track keeps this ordinary window above Silo without native ownership: Silo's
-            // HWND must be free to close while this panel finishes the staged update.
+            // A regular owned window stays above Silo while other applications can cover it.
             presenter.SetBorderAndTitleBar(false,false);
             presenter.IsAlwaysOnTop=false;
         }
         // Windows 11 draws the outline itself, following the rounded corners, like its own flyouts.
         // Older Windows rejects the requests, so the panel then draws its own 1px outline (see UpdateOutline).
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
+        SetNativeOwner(self,this.owner);
         // A frameless WinUI window still keeps a classic 3px frame, painted light grey inside the
         // outline. Drop the frame styles so the panel's own background meets the outline.
         frameless=DropFrameStyles(self);
@@ -272,6 +285,7 @@ public sealed class UpdateProgressWindow : Window
     private readonly WinEventProc winEvent;
     private uint ownerProcess;
     private bool layoutDirty=true;
+    private IntPtr nativeOwner;
     private bool outlineRounded,outlineColored,frameless;
     private bool? dwmOutline;
     private bool outlineTraced;
@@ -310,7 +324,7 @@ public sealed class UpdateProgressWindow : Window
             var monitor=new MonitorInfo{Size=Marshal.SizeOf<MonitorInfo>()};
             var hasMonitor=GetMonitorInfo(MonitorFromWindow(ownerAlive ? owner : self,2),ref monitor);
             var work=hasMonitor ? new PanelRect(monitor.Work.Left,monitor.Work.Top,monitor.Work.Right,monitor.Work.Bottom) : new PanelRect(0,0,outer.Width,outer.Height);
-            var playback=false;var minimized=false;
+            var playback=false;var minimized=false;var front=owner;
             if(ownerAlive && GetClientRect(owner,out var rect))
             {
                 var origin=new Point();
@@ -319,7 +333,9 @@ public sealed class UpdateProgressWindow : Window
                 {
                     var client=new PanelRect(origin.X,origin.Y,origin.X+rect.Right,origin.Y+rect.Bottom);
                     anchor=client;
-                    playback=hasMonitor && PlaybackCovers(client,new PanelRect(monitor.Monitor.Left,monitor.Monitor.Top,monitor.Monitor.Right,monitor.Monitor.Bottom));
+                    var video=hasMonitor ? PlaybackSurface(client,new PanelRect(monitor.Monitor.Left,monitor.Monitor.Top,monitor.Monitor.Right,monitor.Monitor.Bottom)) : IntPtr.Zero;
+                    playback=video!=IntPtr.Zero;
+                    if(playback)front=video;
                 }
             }
             // No Silo window yet, or it already closed to restart: keep the last corner (or the work
@@ -332,14 +348,16 @@ public sealed class UpdateProgressWindow : Window
             bool? silo=foreground==IntPtr.Zero ? null
                 : GetWindowThreadProcessId(foreground,out var pid)!=0 && (pid==ownerProcess || pid==(uint)Environment.ProcessId);
             if(!ManagesVisibility || !presentationEnabled)return;
+            // The independent helper can follow the active video owner too. In-process preparation
+            // keeps the main owner so closing a video surface cannot destroy preparation.
+            if(ownerAlive)SetNativeOwner(self,ownerProcess!=(uint)Environment.ProcessId ? front : owner);
             var show=UpdatePanelPlacement.ShouldShow(ownerAlive,minimized,playback,silo,AppWindow.IsVisible);
             if(show && !AppWindow.IsVisible)AppWindow.Show(false);
             else if(!show && AppWindow.IsVisible)AppWindow.Hide();
             if(show && ownerAlive && foreground!=self)
             {
-                // Insert immediately above Silo, leaving every other window above Silo
-                // above us too. Unlike GWL_HWNDPARENT this cannot tie our lifetime to Silo.
-                var above=GetWindow(owner,3); // GW_HWNDPREV
+                // Keep normal stacking above Silo's active surface, without joining the topmost band.
+                var above=GetWindow(front,3); // GW_HWNDPREV
                 if(above!=self)
                 {
                     // Inserting after a topmost HWND would make us topmost as well.
@@ -409,14 +427,22 @@ public sealed class UpdateProgressWindow : Window
     }
 
     // Silo plays video in its own "SiloMpvHost" window over the main window (or the whole monitor).
-    private bool PlaybackCovers(PanelRect client,PanelRect monitor)
+    private IntPtr PlaybackSurface(PanelRect client,PanelRect monitor)
     {
         for(var hwnd=FindWindowEx(IntPtr.Zero,IntPtr.Zero,"SiloMpvHost",null);hwnd!=IntPtr.Zero;hwnd=FindWindowEx(IntPtr.Zero,hwnd,"SiloMpvHost",null))
         {
             if(GetWindowThreadProcessId(hwnd,out var pid)==0 || pid!=ownerProcess || !IsWindowVisible(hwnd) || IsIconic(hwnd) || !GetWindowRect(hwnd,out var r))continue;
-            if(UpdatePanelPlacement.IsPlaybackSurface(new PanelRect(r.Left,r.Top,r.Right,r.Bottom),client,monitor))return true;
+            if(UpdatePanelPlacement.IsPlaybackSurface(new PanelRect(r.Left,r.Top,r.Right,r.Bottom),client,monitor))return hwnd;
         }
-        return false;
+        return IntPtr.Zero;
+    }
+
+    private void SetNativeOwner(IntPtr self,IntPtr value)
+    {
+        if(value==IntPtr.Zero || value==nativeOwner || !IsWindow(value))return;
+        if(SetWindowLongPtr(self,-8,value)==IntPtr.Zero && Marshal.GetLastWin32Error()!=0)
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        nativeOwner=value;
     }
 
     private const uint EventSystemForeground=0x0003,EventSystemMinimizeStart=0x0016,EventSystemMinimizeEnd=0x0017,

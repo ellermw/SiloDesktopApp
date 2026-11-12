@@ -1,8 +1,40 @@
+# November 12 — Beta 981 updater focus and completed-installation readiness
+
+Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
+
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+
+These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
+
+A real two-process native test reproduces Silo briefly covering its update helper on 12/12 focus returns, followed by the old event/timer repair. Native ownership in the pending fix keeps the helper above Silo immediately on 12/12 returns; ordinary other applications can cover it and it is not globally topmost. The previously passing settled-only focus test missed this transient gap. The probe checks HWND order, not sub-frame DWM compositing.
+
+Update now keeps the app open, presents the small panel before dismissing the large dialog, and downloads/stages/verifies/authorizes the installation before offering Restart now or Later. Restart only saves/closes/activates/relaunches, without copying installation files again. Later retains the completed staging and persisted next-start record, then closes the helper. Its successful save/read-back now also shows the next-start confirmation in Silo, where it remains after the helper closes; failure never shows that confirmation. The pipeline fixes releasing the install mutex while awaiting choice, revalidating under the activation lock, preserving abandonment as deferred, and handling staged journals are retained.
+
+Fresh verification: **5,816/5,816 full unit tests**, **38/38 side-by-side installation tests**, **52/52 update protocol tests**, self-contained Release app/helper, and **13/13 native cases** with exit 0 and the completion sentinel. Cases include immediate focus return, Later confirmation, focus/minimize/helper-owner lifetime, first-render-before-dialog-close, preparation Cancel/transfer, five save/drain outcomes, and explicit full-installer consent. App/helper/native/main-unit/side-by-side/protocol PE/PDB/source bindings have zero mismatches; all **1,856** recorded product/test inputs match current bytes. Independent Claude review found no actionable bugs. All builds/tests were serialized through `SiloOct18Build`.
+
+App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE`; native fixture SHA256 `D6736EFBCFDA5224EA6A4B81975D46BA5404A9BBD7BFC1D1D3531B07FFB431D1`. Evidence, preserved red cases and review: `D:/SiloPlayer/.codex-tmp/updater-focus-nov12/`. The existing isolated checkout was reused; no additional worktree. No real UAC, registered-installation update, installed-player closure/restart, live account/settings access or physical-input certification. Synthetic filesystem transactions and isolated native windows establish the stated coverage. Beta pipeline owns subsequent QA, integration and packaging.
+
+# Continuing playback transport controls — November 11, 2026
+
+Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
+
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+
+These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
+
+Continuing same-session seeks/replans use the transparent OSC spinner and keep native menus reachable. Initial and replacement sessions retain an opaque cover until their own first output. Framing is bound to the accepted session/authority/playback lifetime; a submitted load must have its own FILE_LOADED before output can frame it. Latest explicit pause/resume intent is nullable and busy-owner scoped, and is retired on failure/replacement. A framed load that fails before FILE_LOADED hands the pause state it would have restored to recovery, which shows, toggles and restores that state instead of the load freeze (not built or run when written). Audio presentations retire when the accepted track changes; Audio/Quality/Chapters/Party presentations retire on the busy/idle transition so stale disabled choices cannot survive completion. Audio rows opened during a continuing reload are disabled with the same in-progress reason instead of dropping the selection. Action guards still require transport/room authority.
+
+Lead regression evidence at `D:/SiloPlayer/.codex-tmp/server-review-nov10/playback-lead-corrections/`: red-all-a reproduced ten expected failures against the previous AA2A7150 app; green-all-a passed all20 actual-path scenarios with exit0 and the literal completion sentinel. Final integrated source `bbc67a08` passed 5,360/5,360 full unit tests, the actual transport route and existing native Chapters/Party/Quality routes (each exit 0 with the completion sentinel). Fresh Release app SHA256 `F49DF938DC474271A725259AB1AFB35A7FCE5EE133AE38AE9069D1D15E954019`; final app/native/unit/Core/Player PDB identity and authored-source checks have zero mismatches. `beta-binding-c` selects dependencies alongside the executed test assembly; the earlier ambiguous-copy binding failure remains preserved. Independent review approved with no P0-P2 findings. Earlier worker claims/receipts retain their original source boundaries and are not relabeled final.
+
+Synthetic HTTP/media/native fixtures do not certify a live room/server or full visual parity. Installed player, real settings/accounts and installer remain untouched. Verified for submission through the existing Beta pipeline; pipeline owns review, packaging and version stamps.
+
+---
+
 # November 11 — Next Episode above the timeline
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -20,7 +52,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -36,7 +68,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -54,7 +86,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -107,6 +139,21 @@ Source is Beta `3f098c88ca4770db6f71e84e0e2290df42f8ec2c`, version 1.2.970, comp
 Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-batch-fixes/`, `reopened-batch-corrections.md`, `reopened-batch-final-review.md`. The reviewer’s pending-full-suite note is superseded by `full-final-a`; its table incorrectly marks `native-green-a` as passing—the preserved run failed on a WinRT callback defect, corrected before publish-c/native-green-b. The native route checks real More-menu availability and invokes the picker method; it does not certify physical pointer/keyboard input or live-server interoperability. No installed player, account, settings, installer or version stamp was changed. Beta pipeline owns subsequent QA and delivery.
 
 ---
+---
+
+# November 11 — Finish update installation before offering Restart now or Later
+
+Based on fresh Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`; source remains **1.2.973-beta.1** (Windows file version **1.2.972.1**). These identify the same Beta build; the installed DLL confirmed both values. Version stamps remain pipeline-owned.
+
+The update panel uses ordinary native ownership to stay above Silo without becoming globally topmost, including while Silo is inactive. Normal applications can cover it, minimize/restore follows Silo, and a separate-process helper survives the original window closing. A real rendering-frame acknowledgement now precedes dismissal of the large update dialog, keeping one painted surface through preparation and authenticated helper transfer.
+
+Restart now / Later are offered only after the independently authenticated privileged worker has staged and verified the installation and authorized the new client. Restart enters finishing rather than returning to installation. Later explicitly preserves that completed transaction; resumption fetches fresh release authority, requires an identical manifest and re-verifies retained files/bootstrap before activation. It reuses the transaction without copying the installation again. Existing close/save, parent-exit, ownership, rollback, package and pipe-identity checks remain required. The staging deadline is suspended only while waiting for the user's answer.
+
+Verification: **418 focused update tests**, **5,472/5,472 full unit tests**, **52/52 update-protocol tests**, fresh app/helper self-contained Release publishes, and **11 native scenarios** passed with exit 0 and the completion sentinel. The native cases cover first-render-before-dialog-close, normal focus/cover/minimize behavior, separate-process owner destruction, authenticated handoff, cancellation, five playback-save drain outcomes and full-installer consent. Final app/helper/native/unit/protocol PE/PDB identities and authored-source checks have zero mismatches (751 app, 183 native, 6 helper, 365 Core, 5 protocol, 427 unit, 15 Player documents).
+
+App DLL SHA256: `6B60137E847DAA690813CEC7AE74BFDDBAB8070441AFED8D6D251B60626EC367`. Receipts, baseline failures, manifests and review: `D:/SiloPlayer/.codex-tmp/updater-ready-nov11/`. Baseline regressions fail for missing native ownership, the dialog closing before the first preparation frame, and discarded completed staging. The initial paint test observed Closed after its animation and therefore passed; the stronger test observes Closing before dismissal and reproduces the gap. Failed bring-up/unit expectation runs remain recorded.
+
+No real UAC prompt, registered-installation update, installed-player closure/restart, live account/settings access or physical-input certification occurred. Filesystem transaction tests use isolated synthetic installations; native tests use owned fixture windows and authenticated synthetic peers. Independent Claude review approved the final source with verification limits and two nonblocking observations; no corrections were required. The lead checked final full/native/binding receipts after review. Beta submission is recorded in the adjacent delivery report. The existing Beta pipeline owns combined QA, integration, versioning and packaging.
 
 # November 11, 2026 — device-login session binding
 
@@ -239,7 +286,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -247,7 +294,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -255,7 +302,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -285,7 +332,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.998-beta.1`; numeric version: `1.2.997.1`.
+Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

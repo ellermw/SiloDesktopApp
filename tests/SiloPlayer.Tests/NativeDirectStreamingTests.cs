@@ -83,6 +83,38 @@ public sealed class NativeDirectStreamingTests
     }
 
     [Fact]
+    public async Task SignedDirectLoadIsIdentifiedByItsSubmittedUrlAtFileLoadedAndFirstOutput()
+    {
+        await using var source = new RangeMediaSource("keepalive");
+        var previousLogDirectory = Environment.GetEnvironmentVariable("SILOPLAYER_LOG_DIRECTORY");
+        Environment.SetEnvironmentVariable("SILOPLAYER_LOG_DIRECTORY", Path.Combine(Path.GetTempPath(), "silo-direct-identity-" + Guid.NewGuid().ToString("N")));
+        try
+        {
+            using var player = new MpvPlayer();
+            player.DirectHttpHandlerFactory = source.CreateHandler;
+            var loaded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var restarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            // PlayerService accepts FILE_LOADED and PLAYBACK_RESTART only for the
+            // URL it submitted; mpv itself reports the native reader's stream key.
+            player.FileLoaded += () => loaded.TrySetResult(player.IsCurrentInput(source.Url));
+            player.PlaybackRestarted += () => restarted.TrySetResult(player.IsCurrentInput(source.Url));
+            player.Initialize(16, 16);
+            player.SetProperty("ao", "null");
+            player.SetProperty("ao-null-untimed", "yes");
+            player.SetProperty("video", "no");
+            Assert.False(player.IsCurrentInput(source.Url));
+            player.LoadFile(source.Url);
+            player.Play();
+            Assert.True(await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.True(await restarted.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.StartsWith("silo-direct://", player.GetPropertyText("path"));
+            Assert.False(player.IsCurrentInput(source.Url.Replace("/stream/direct/", "/legacy/")));
+            Assert.Empty(source.Errors);
+        }
+        finally { Environment.SetEnvironmentVariable("SILOPLAYER_LOG_DIRECTORY", previousLogDirectory); }
+    }
+
+    [Fact]
     public async Task ReusedPlayerReopensAfterRepeatedHttpsCacheStallsWithoutAppRestart()
     {
         var previousLogDirectory = Environment.GetEnvironmentVariable("SILOPLAYER_LOG_DIRECTORY");

@@ -38,8 +38,10 @@ public partial class PlayerService
         bool CanSeek() => !IsWatchTogetherPlayback ||
             App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom?.Room?.SelfCanManageRoom == true;
         bool Owned() => owner.IsCurrent() && ReferenceEquals(version, ActiveVersion) &&
-            ReferenceEquals(session, _playbackManager?.CurrentSession);
-        bool Current() => !closed && Owned() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request);
+            session?.SessionId == _playbackManager?.CurrentSession?.SessionId;
+        var openedIdle = !IsLoading && !_switchingContent;
+        bool Current() => !closed && Owned() && (openedIdle || _sessionHasFramed) &&
+            openedIdle == (!IsLoading && !_switchingContent) && _nativeMenuGate.IsCurrent(request);
         NativeChapterChoice[] Snapshot() => (version.Chapters ?? [])
             .Where(chapter => chapter.Index >= 0)
             .DistinctBy(chapter => chapter.Index)
@@ -50,13 +52,13 @@ public partial class PlayerService
             chapter => Position >= chapter.Start && Position < chapter.End);
         IReadOnlyList<PlaybackMenuChoice> Choices()
         {
-            var canSeek = CanSeek();
+            var canSeek = CanSeek() && !IsLoading && !_switchingContent;
             return chapters.Select((chapter, index) =>
             {
                 var valid = double.IsFinite(chapter.Start) && chapter.Start >= 0;
                 return new PlaybackMenuChoice(chapter.Id, chapter.Title, ChapterMenuTime(chapter.Start), [],
                     IsCurrent: index == active, IsEnabled: canSeek && valid,
-                    DisabledReason: !canSeek ? "Only the host can seek the room." : !valid ? "Chapter unavailable." : "");
+                    DisabledReason: IsLoading || _switchingContent ? "A playback change is already in progress." : !canSeek ? "Only the host can seek the room." : !valid ? "Chapter unavailable." : "");
             }).ToArray();
         }
         void Refresh()

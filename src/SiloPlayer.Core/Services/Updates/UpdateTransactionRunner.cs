@@ -19,6 +19,7 @@ public interface IUpdateTransactionEnvironment
     void AuthorizeNewClient(string executable);
     void Send(UpdateHostMessage message, CancellationToken ct);
     UpdateHostMessage Receive(CancellationToken ct);
+    void SetAwaitingRestartChoice(bool waiting) { }
     void WaitForParentExit(CancellationToken ct);
     bool HasParentExited { get; }
     void VerifyNoOtherClient();
@@ -79,7 +80,6 @@ public static class UpdateTransactionRunner
                 SideBySideInstallation.Confirm(request.InstallationRoot, pending);
                 TryCleanup(request.InstallationRoot, environment, retireAuthorization: true);
             }
-            SideBySideInstallation.RecoverInterruptedTransaction(request.InstallationRoot);
 
             // A real broker acknowledgement is required before files are staged.
             // Setting a local Boolean does not prove the handoff window exists.
@@ -91,14 +91,40 @@ public static class UpdateTransactionRunner
             if (cooldownUntil is not null)
                 throw new InvalidOperationException(UpdateCheckRateLimitedException.UserMessage);
             var package = environment.FetchAuthoritativePackage(request.Tag, ct);
-            staged = SideBySideInstallation.Stage(request.InstallationRoot, package,
-                progress => environment.Send(new("progress", Text: progress.Stage,
-                    Completed: progress.CompletedBytes, Total: progress.TotalBytes), ct), ct);
+            staged = SideBySideInstallation.TryResumeStaged(request.InstallationRoot, package, ct);
+            if (staged is null)
+            {
+                SideBySideInstallation.RecoverInterruptedTransaction(request.InstallationRoot);
+                staged = SideBySideInstallation.Stage(request.InstallationRoot, package,
+                    progress => environment.Send(new("progress", Text: progress.Stage,
+                        Completed: progress.CompletedBytes, Total: progress.TotalBytes), ct), ct);
+            }
             environment.AuthorizeNewClient(Path.Combine(staged.VersionDirectory, "SiloPlayer.exe"));
             environment.Send(new("staged", staged.TransactionId, staged.Version), ct);
 
             ct.ThrowIfCancellationRequested();
-            var close = environment.Receive(ct);
+            // Nothing is mutated until the broker answers, and Restart now / Later can wait for hours.
+            // Free the gate meanwhile so the launcher, activations and the full installer still work.
+            // Activate re-verifies the journal, state and installed files once the gate is held again.
+            installationLock.Dispose();
+            installationLock = null;
+            UpdateHostMessage close;
+            environment.SetAwaitingRestartChoice(true);
+            try { close = environment.Receive(ct); }
+            catch
+            {
+                // A lost broker is recovered below, and recovery needs the gate.
+                installationLock = environment.AcquireInstallationLock(CancellationToken.None);
+                throw;
+            }
+            finally { environment.SetAwaitingRestartChoice(false); }
+            if (close.Kind == "defer" && close.TransactionId == staged.TransactionId)
+            {
+                // Retain the verified files and journal; the active pointer and live client stay unchanged.
+                environment.Send(new("deferred", staged.TransactionId, staged.Version), ct);
+                return new(true, false, false, staged.TransactionId, staged.Version);
+            }
+            installationLock = environment.AcquireInstallationLock(ct);
             if (close.Kind != "close" || close.TransactionId != staged.TransactionId)
                 throw new OperationCanceledException("The update was deferred before restart.");
             environment.WaitForParentExit(ct);

@@ -487,10 +487,12 @@ public sealed class MpvOscScriptTests
 
         Assert.Contains("render_playback_wait", script);
         Assert.Contains("osc-set-loading", script);
+        Assert.Contains("osc-set-transport-reloading", script);
         Assert.Contains("osc-set-buffering", script);
         Assert.Contains("mp.add_timeout(0.5", script);
         Assert.Contains("loading_cover_overlay_id", script);
         Assert.Contains("state.playback_wait_overlay.z = 90", script);
+        Assert.Contains("state.transport_reloading", script);
     }
 
     [Fact]

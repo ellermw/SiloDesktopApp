@@ -79,6 +79,7 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
             }
             Task<UpdateHostMessage>? pending=null;
             Func<bool>? later=null;
+            string? preparedTransaction=null;
             if(download is not null)
             {
                 if(!visible)
@@ -95,21 +96,34 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                 await UpdateHostProtocol.WriteAsync(pipe,new("downloaded"),deadline.Token);
                 if(confirmRestart)
                 {
-                    // The window now asks Restart now or Later. The answer can take a whole movie,
-                    // so it has no deadline; installation keeps its usual 20 minutes afterwards.
-                    deadline.CancelAfter(Timeout.InfiniteTimeSpan);
-                    var answer=await pending!;pending=null;
-                    if(answer.Kind=="later")
+                    // Progress continues until the privileged worker has installed and verified every file.
+                    while(true)
                     {
-                        // The panel only promises the next start once Silo has recorded Later.
-                        if(later?.Invoke()==false)
-                            await UpdateHostProtocol.WriteAsync(pipe,new("failed",Text:"Silo could not save Later, so the update won't finish on the next start. Update again from Silo when ready."),deadline.Token);
-                        else LocalLog.AppendLine("updates.txt","windowed_update_deferred");
-                        return WindowedUpdateOutcome.Deferred;
+                        var answer=pending is not null ? await pending : await UpdateHostProtocol.ReadAsync(pipe,deadline.Token);
+                        pending=null;
+                        if(answer.Kind=="progress")continue;
+                        if(answer.Kind=="failed"){AuthorityCooldownUntil=answer.CooldownUntil;throw new IOException(answer.Text);}
+                        if(answer.Kind=="prepared")
+                        {
+                            if(preparedTransaction is not null || answer.Text!=package.Manifest.Version || !Guid.TryParseExact(answer.TransactionId,"N",out _))
+                                throw new InvalidDataException("Invalid prepared update handoff.");
+                            preparedTransaction=answer.TransactionId;
+                            deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+                            continue;
+                        }
+                        if(preparedTransaction is null || answer.TransactionId!=preparedTransaction)
+                            throw new InvalidDataException("Restart consent preceded installation.");
+                        if(answer.Kind=="later")
+                        {
+                            var saved=later?.Invoke()==true;
+                            await UpdateHostProtocol.WriteAsync(pipe,saved ? new("deferred",preparedTransaction) : new("failed",Text:"Silo could not save Later. Update again from Silo when ready."),deadline.Token);
+                            if(saved)LocalLog.AppendLine("updates.txt","windowed_update_deferred_staged");
+                            return WindowedUpdateOutcome.Deferred;
+                        }
+                        if(answer.Kind!="restart")throw new InvalidDataException("Invalid update handoff.");
+                        deadline.CancelAfter(TimeSpan.FromMinutes(20));
+                        break;
                     }
-                    if(answer.Kind=="failed"){AuthorityCooldownUntil=answer.CooldownUntil;throw new IOException(answer.Text);}
-                    if(answer.Kind!="restart")throw new InvalidDataException("Invalid update handoff.");
-                    deadline.CancelAfter(TimeSpan.FromMinutes(20));
                 }
             }
             while(true)
@@ -120,7 +134,7 @@ public sealed partial class WindowsAppUpdateInstaller : IWindowedAppUpdateInstal
                 else if(message.Kind=="failed"){AuthorityCooldownUntil=message.CooldownUntil;throw new IOException(message.Text);}
                 else if(message.Kind=="staged")
                 {
-                    if(!visible || message.Text!=package!.Manifest.Version || !Guid.TryParseExact(message.TransactionId,"N",out _))throw new InvalidDataException("Invalid update handoff.");
+                    if(!visible || message.Text!=package!.Manifest.Version || !Guid.TryParseExact(message.TransactionId,"N",out _) || (confirmRestart && message.TransactionId!=preparedTransaction))throw new InvalidDataException("Invalid update handoff.");
                     stagedPipe?.Dispose();stagedPipe=pipe;pipe=null;stagedTransaction=message.TransactionId;stagedCloseArmed=false;return WindowedUpdateOutcome.Staged;
                 }
             }

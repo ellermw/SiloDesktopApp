@@ -76,11 +76,24 @@ internal static partial class AppUpdateNativeFixture
         var release = new AppRelease(new Version(1, 2, 999), "v1.2.999", "", DateTimeOffset.UtcNow,
             new Uri("https://fixture.invalid/unused"), new string('a', 64), 1)
         {Incremental=new(new Uri("https://fixture.invalid/manifest"),new string('b',64),1,new Uri("https://fixture.invalid/pack"),new string('c',64),1)};
+        var dialog = new ContentDialog { Title="Check for updates", Content="Synthetic update transition", CloseButtonText="Later", XamlRoot=((FrameworkElement)owner.Content).XamlRoot };
+        var dialogShown = dialog.ShowAsync();
+        await Task.Delay(100);
+        var preparationPainted = false;
+        var closedBeforePaint = false;
+        void Presented(object? sender, object args)
+        {
+            if(typeof(MainWindow).GetField("_updatePreparationWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(owner) is Window { Content: FrameworkElement content } candidate
+                && candidate.AppWindow.IsVisible && content.IsLoaded && content.ActualWidth>0 && content.ActualHeight>0) preparationPainted=true;
+        }
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += Presented;
+        dialog.Closing += (_, _) => closedBeforePaint = !preparationPainted;
         var run = (Task)typeof(MainWindow).GetMethod("RunWindowedUpdateAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .Invoke(owner, [null, installer, release, true, stop.Token])!;
+            .Invoke(owner, [dialog, installer, release, true, stop.Token])!;
         try
         {
             await installer.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if(closedBeforePaint)throw new InvalidOperationException("Check Update closed before the preparation panel's first rendering frame.");
             // Preparation is deliberately blocked. The real MainWindow must already have shown its safe view.
             var panel = typeof(MainWindow).GetField("_updatePreparationWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(owner) as Window;
             if (panel is null || !IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(panel)))
@@ -113,7 +126,7 @@ internal static partial class AppUpdateNativeFixture
                 if(IsWindowVisible(early) || !IsWindowVisible((IntPtr)installer.HelperHwnd))throw new InvalidOperationException("A timer resurrected the old panel or hid its replacement.");
                 var helper=(IntPtr)installer.HelperHwnd;
                 owner.Activate(); await Task.Delay(400);
-                if(!IsWindowVisible(helper) || GetWindowLongPtrW(helper,-8)!=IntPtr.Zero)throw new InvalidOperationException("Staged failure panel must remain visible without native Silo ownership.");
+                if(!IsWindowVisible(helper) || GetWindowLongPtrW(helper,-8)!=WinRT.Interop.WindowNative.GetWindowHandle(owner))throw new InvalidOperationException("Staged failure panel must retain native Silo ownership.");
                 GetWindowRect(helper,out var stagedBounds);
                 var stagedPoint=new NativePoint {X=stagedBounds.Left+30,Y=stagedBounds.Top+30};
                 if(GetAncestor(WindowFromPoint(stagedPoint),2)!=helper)throw new InvalidOperationException("Reactivating Silo covered its staged failure panel.");
@@ -122,7 +135,7 @@ internal static partial class AppUpdateNativeFixture
                 if(IsWindowVisible(helper))throw new InvalidOperationException("Cross-process staged failure panel remained visible while Silo minimized.");
                 presenter.Restore(); owner.Activate(); await Task.Delay(450);
                 if(!IsWindowVisible(helper))throw new InvalidOperationException("Cross-process staged failure panel did not return with Silo.");
-                Program.Log("PASS: production HWND validation rejects a foreign PID; separate-process staged failure remains unowned, above reactivated Silo and follows minimize/restore.");
+                Program.Log("PASS: production HWND validation rejects a foreign PID; separate-process staged failure remains owned above Silo and follows minimize/restore.");
                 installer.Finish.TrySetResult(); await run;
                 Program.Log("PASS: authenticated separate-process shared helper view atomically replaces preparation without duplicate/ghost HWNDs, blank corner or focus stealing.");
             }
@@ -138,7 +151,7 @@ internal static partial class AppUpdateNativeFixture
                 Program.Log("PASS: failed/not-started preparation removes its early panel and returns to Silo.");
             }
         }
-        finally { stop.Cancel(); installer.Release.TrySetResult(); installer.Finish.TrySetResult(); await run; }
+        finally { Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= Presented; dialog.Hide(); stop.Cancel(); installer.Release.TrySetResult(); installer.Finish.TrySetResult(); await run; }
         if (typeof(MainWindow).GetField("_updatePreparationWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(owner) is not null)
             throw new InvalidOperationException("Canceled preparation left a ghost panel.");
     }
@@ -164,7 +177,7 @@ internal static partial class AppUpdateNativeFixture
             if (GetForegroundWindow() != otherHwnd) throw new InvalidOperationException($"Fixture did not establish another foreground HWND: expected={otherHwnd}, actual={GetForegroundWindow()}, visible={IsWindowVisible(otherHwnd)}.");
             if (!IsWindowVisible(panelHwnd)) throw new InvalidOperationException("Corner panel disappeared when a non-overlapping other window took focus.");
             if ((GetWindowLongPtrW(panelHwnd, -20).ToInt64() & 8) != 0) throw new InvalidOperationException("Corner panel is globally topmost.");
-            if(GetWindowLongPtrW(panelHwnd,-8)!=IntPtr.Zero)throw new InvalidOperationException("Panel lifetime is tied to Silo's native HWND.");
+            if(GetWindowLongPtrW(panelHwnd,-8)!=ownerHwnd)throw new InvalidOperationException("The updater has no native owner, so Windows cannot keep it above Silo independently of focus.");
             GetWindowRect(panelHwnd, out var rect);
             SetWindowPos(otherHwnd, IntPtr.Zero, rect.Left - 20, rect.Top - 20, rect.Right - rect.Left + 40, rect.Bottom - rect.Top + 40, 0x0040);
             FocusFixtureWindow(otherHwnd); await Task.Delay(650);
@@ -192,7 +205,7 @@ internal static partial class AppUpdateNativeFixture
             Click((Button)type.GetProperty("RestartNow")!.GetValue(panel)!);
             if(!await restart || !((ProgressBar)type.GetProperty("Progress")!.GetValue(panel)!).IsIndeterminate)
                 throw new InvalidOperationException("Restart now did not continue indeterminate preparation.");
-            Program.Log("PASS: ready Restart now remains until explicitly selected and resumes preparation without running installation or restart.");
+            Program.Log("PASS: ready Restart now remains until selected and enters finishing without returning to installation details.");
 
             // Closing Silo's HWND must not close/cancel the helper before it can forward
             // the staged close frame and paint its final status. Use a disposable owner
@@ -204,22 +217,36 @@ internal static partial class AppUpdateNativeFixture
             closingOwner.Activate();
             panel=(Window)Activator.CreateInstance(type,true,WinRT.Interop.WindowNative.GetWindowHandle(closingOwner).ToInt64())!;
             panelHwnd=WinRT.Interop.WindowNative.GetWindowHandle(panel);
-            var panelClosed=false;
-            panel.Closed+=(_,_)=>panelClosed=true;
+            var pipeName="silo-test-"+Guid.NewGuid().ToString("N");
+            using var pipe=UpdatePipeIdentity.CreateServer(pipeName);
+            using var limit=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var peerStart=new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) {UseShellExecute=false,CreateNoWindow=true};
+            peerStart.Environment["SILO_NATIVE_OTHER_WINDOW"]="panel";
+            peerStart.Environment["SILO_NATIVE_PRESENTATION_PIPE"]=pipeName;
+            peerStart.Environment["SILO_NATIVE_PRESENTATION_OWNER"]=WinRT.Interop.WindowNative.GetWindowHandle(closingOwner).ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var peerResults=Path.Combine(Program.ResultDirectory,"owner-close-peer");Directory.CreateDirectory(peerResults);
+            peerStart.Environment["SILO_NATIVE_TEST_RESULT_DIRECTORY"]=peerResults;
+            using var peer=System.Diagnostics.Process.Start(peerStart)!;
             try
             {
+                await pipe.WaitForConnectionAsync(limit.Token);
+                UpdatePipeIdentity.Authenticate(pipe,true,peer.Id,peer.StartTime.ToUniversalTime().Ticks,Environment.ProcessPath!);
+                var helper=IntPtr.Zero;
+                await PresentationAcceptAsync(pipe,handle=>{helper=(IntPtr)handle;type.GetMethod("TransferTo")!.Invoke(panel,[handle]);},limit.Token);
+                panel.Close();
                 await Task.Delay(350);
-                if(!IsWindowVisible(panelHwnd))throw new InvalidOperationException("The staged panel was not visible before its owner closed.");
+                if(GetWindowLongPtrW(helper,-8)!=WinRT.Interop.WindowNative.GetWindowHandle(closingOwner))throw new InvalidOperationException("Cross-process helper lost native ownership before restart.");
                 closingOwner.Close();
-                await Task.Delay(500);
-                if(panelClosed || !IsWindowVisible(panelHwnd))throw new InvalidOperationException("Closing Silo destroyed or hid its independent update panel.");
-                type.GetMethod("ShowFinishing")!.Invoke(panel,["Finishing and restarting Silo…"]);
                 await Task.Delay(350);
-                if(panelClosed || !IsWindowVisible(panelHwnd) || ((TextBlock)type.GetProperty("Status")!.GetValue(panel)!).Text!="Finishing and restarting Silo…")
-                    throw new InvalidOperationException("The surviving helper could not present its finishing status.");
-                Program.Log("PASS: closing the tracked Silo HWND leaves the actual helper panel alive and able to show finishing status.");
+                if(!IsWindowVisible(helper))throw new InvalidOperationException("Closing Silo destroyed or hid the cross-process update panel.");
+                await UpdateHostProtocol.WriteAsync(pipe,new("progress",Text:"check-after-owner-close"),limit.Token);
+                if((await UpdateHostProtocol.ReadAsync(pipe,limit.Token)).Kind!="visible")throw new InvalidOperationException("Surviving helper could not show its finishing status.");
+                await UpdateHostProtocol.WriteAsync(pipe,new("cancel"),limit.Token);
+                await peer.WaitForExitAsync(limit.Token);
+                if(peer.ExitCode!=0)throw new InvalidOperationException("Cross-process owner-close peer failed.");
+                Program.Log("PASS: actual separate-process owned helper survives Silo closing and continues finishing; normal apps can cover it without global topmost.");
             }
-            finally {if(!ownerClosed)closingOwner.Close();}
+            finally {if(!peer.HasExited)peer.Kill();if(!ownerClosed)closingOwner.Close();}
 
         }
         finally { if (!other.HasExited) other.Kill(); panel.Close(); }
@@ -268,7 +295,17 @@ internal static partial class AppUpdateNativeFixture
             Action start=()=>type.GetMethod("StartTracking")!.Invoke(panel,null);
             await (Task)typeof(App).Assembly.GetType("SiloPlayer.Core.Services.Updates.UpdatePresentationHandoff",true)!.GetMethod("OfferAsync")!
                 .Invoke(null,[pipe,WinRT.Interop.WindowNative.GetWindowHandle(panel).ToInt64(),start,timeout.Token])!;
-            if((await UpdateHostProtocol.ReadAsync(pipe,timeout.Token)).Kind!="staged")throw new InvalidOperationException("Unexpected synthetic stage command.");
+            var command=await UpdateHostProtocol.ReadAsync(pipe,timeout.Token);
+            if(command.Kind=="progress" && command.Text=="check-after-owner-close")
+            {
+                type.GetMethod("ShowFinishing")!.Invoke(panel,["Finishing and restarting Silo…"]);
+                await Task.Delay(200);
+                if(!IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(panel)))throw new InvalidOperationException("Cross-process owned panel vanished with its owner.");
+                await UpdateHostProtocol.WriteAsync(pipe,new("visible"),timeout.Token);
+                if((await UpdateHostProtocol.ReadAsync(pipe,timeout.Token)).Kind!="cancel")throw new InvalidOperationException("Unexpected owner-close completion.");
+                return;
+            }
+            if(command.Kind!="staged")throw new InvalidOperationException("Unexpected synthetic stage command.");
             var apply=type.GetMethod("Apply")!;
             // The published view resolves its own Core assembly; create its exact wire type.
             var staged=System.Text.Json.JsonSerializer.Deserialize("{\"Kind\":\"staged\"}",apply.GetParameters()[0].ParameterType);
