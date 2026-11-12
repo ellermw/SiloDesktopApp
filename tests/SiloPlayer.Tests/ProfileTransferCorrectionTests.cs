@@ -173,6 +173,25 @@ public sealed class ProfileTransferCorrectionTests
         await Assert.ThrowsAsync<OperationCanceledException>(() => api.ImportAsync(context, doc, 67108864));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task R3_ImportKeepsCommittedResultWhenOnlyRequestContextRetires(bool transportCatchUp)
+    {
+        var handler = new StatusHandler();
+        handler.Enqueue(200, ImportResult);
+        var client = CreateClient(handler);
+        handler.SetClientRef(client);
+        handler.OnBeforeResponse = c => c.TryInvalidateAccessContext(c.CaptureContext(), out _, transportCatchUp);
+        var api = new ProfileTransferApi(client);
+        var context = api.CaptureContext();
+        var doc = Encoding.UTF8.GetBytes(ExportDocument);
+        var result = await api.ImportAsync(context, doc, 67108864);
+        Assert.False(api.IsCurrentContext(context));
+        Assert.True(result.SameServer);
+        Assert.Equal(5, Assert.Single(result.Data).Added);
+    }
+
     [Fact]
     public void R3_GenerationOwnedBusyCleanup()
     {

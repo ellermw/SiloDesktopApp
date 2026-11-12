@@ -99,6 +99,7 @@ public sealed partial class SettingsPage
     }
 
     private const string YourDataSessionChanged = "Your session changed. Try again.";
+    private const string YourDataImportFinished = "Your import finished. Its summary is not available because this section reloaded.";
 
     // The request context retired under a section that is still showing; reload it instead of leaving dead controls.
     private void ReloadStaleYourData(int generation, string? notice)
@@ -150,7 +151,7 @@ public sealed partial class SettingsPage
                 return;
             }
 
-            BuildYourDataUI(api, context, generation);
+            BuildYourDataUI(api, context, identity, generation);
         }
         catch (OperationCanceledException) when (!Current()) { ReloadStaleYourData(generation, notice); }
         catch (Exception ex)
@@ -161,7 +162,7 @@ public sealed partial class SettingsPage
         }
     }
 
-    private void BuildYourDataUI(ProfileTransferApi api, ApiRequestContext context, int generation)
+    private void BuildYourDataUI(ProfileTransferApi api, ApiRequestContext context, ApiIdentityContext identity, int generation)
     {
         bool Current() => generation == _yourDataGeneration && api.IsCurrentContext(context);
 
@@ -186,6 +187,7 @@ public sealed partial class SettingsPage
             _yourDataBusyOwner = generation;
             exportButton.IsEnabled = false;
             exportStatus.Visibility = Visibility.Collapsed;
+            var saved = false;
             try
             {
                 for (var attempt = 0; attempt < 2; attempt++)
@@ -197,9 +199,10 @@ public sealed partial class SettingsPage
                         var target = await ProfileTransferPicker.PickSaveFileAsync(
                             WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!),
                             "silo-profile.json");
-                        if (target == null || !Current()) return;
+                        // The user has chosen where this profile's export goes, so only another account or profile drops it.
+                        if (target == null || !api.Client.IsCurrentIdentityContext(identity)) return;
                         await FileIO.WriteBytesAsync(target, data);
-                        if (!Current()) return;
+                        saved = true;
                         App.Services.GetRequiredService<ToastService>().Success("Profile data exported");
                         return;
                     }
@@ -237,7 +240,9 @@ public sealed partial class SettingsPage
             {
                 if (_yourDataBusyOwner == generation) _yourDataBusyOwner = 0;
                 if (Current()) exportButton.IsEnabled = true;
-                else ReloadStaleYourData(generation, YourDataSessionChanged);
+                else if (!saved) ReloadStaleYourData(generation, YourDataSessionChanged);
+                // The file was written, so a section reloaded underneath it must not keep asking for a retry.
+                else if (_yourDataContextHandler != null && _yourDataBusyOwner == 0) _ = LoadYourDataAsync();
             }
         };
 
@@ -275,6 +280,7 @@ public sealed partial class SettingsPage
             importStatus.Visibility = Visibility.Collapsed;
             importResultHost.Children.Clear();
             _yourDataImportResult = null;
+            var detached = false;
             try
             {
                 var maxBytes = _yourDataCapability?.MaxImportBytes ?? 0;
@@ -294,9 +300,13 @@ public sealed partial class SettingsPage
                     try
                     {
                         var result = await api.ImportAsync(context, bytes, maxBytes);
-                        if (!Current()) return;
-                        await RefreshImportedDataCachesAsync(context);
-                        if (!Current()) return;
+                        // The server has merged the file even if this section or its request context retired during the upload.
+                        var refreshed = await RefreshImportedDataCachesAsync(api.Client, identity);
+                        if (!Current())
+                        {
+                            detached = refreshed;
+                            return;
+                        }
                         _yourDataImportResult = result;
                         RenderImportResult(importResultHost, result);
                         return;
@@ -335,7 +345,10 @@ public sealed partial class SettingsPage
             {
                 if (_yourDataBusyOwner == generation) _yourDataBusyOwner = 0;
                 if (Current()) importButton.IsEnabled = true;
-                else ReloadStaleYourData(generation, YourDataSessionChanged);
+                else if (!detached) ReloadStaleYourData(generation, YourDataSessionChanged);
+                // The import landed with no section left to show its summary; a reload must not drop a successor's operation.
+                else if (_yourDataContextHandler != null && _yourDataBusyOwner == 0) _ = LoadYourDataAsync(YourDataImportFinished);
+                else App.Services.GetRequiredService<ToastService>().Success("Profile data imported");
             }
         };
 
@@ -343,14 +356,19 @@ public sealed partial class SettingsPage
         YourDataContentHost.Children.Add(importGroup);
     }
 
-    private async Task RefreshImportedDataCachesAsync(ApiRequestContext owner)
+    /// <summary>False once the importing account or profile is gone; its caches retired with it.</summary>
+    private async Task<bool> RefreshImportedDataCachesAsync(SiloApiClient client, ApiIdentityContext owner)
     {
+        // An access refresh or reconnect catch-up replaces the request context without changing whose data was imported.
+        var current = client.CaptureContext();
+        if (!client.IsCurrentIdentityContext(owner)) return false;
         var customization = App.Services.GetRequiredService<UICustomizationService>();
         customization.Invalidate();
         try { App.Services.GetRequiredService<SettingsApi>().LibraryPageState.Invalidate(); } catch { }
         try { App.Services.GetRequiredService<CatalogApi>().InvalidateLibraryCache(); } catch { }
         try { App.Services.GetRequiredService<CatalogApi>().InvalidateFilterCache(); } catch { }
-        await customization.RefreshAsync(owner);
+        await customization.RefreshAsync(current);
+        return true;
     }
 
     private static void RenderImportResult(StackPanel host, ProfileImportResult result)

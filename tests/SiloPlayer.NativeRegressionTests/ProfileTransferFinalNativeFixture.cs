@@ -49,7 +49,7 @@ internal static class ProfileTransferFinalNativeFixture
         ServicesField.SetValue(null, services);
         try
         {
-            foreach (var scenario in new[] { "export-import", "pin", "pin-import", "non-pin-403", "oversize", "growth", "navigation", "navigation-picker", "navigation-read", "authority-response", "authority-import", "authority-dialog", "authority-verification", "cache-refresh", "near-limit" })
+            foreach (var scenario in new[] { "export-import", "pin", "pin-import", "non-pin-403", "oversize", "growth", "navigation", "navigation-picker", "navigation-read", "authority-response", "authority-import", "authority-dialog", "authority-verification", "cache-refresh", "import-departure", "import-catch-up", "near-limit" })
             {
                 ResetOwner(); wire.Reset();
                 var picker = new Picker(); PickerProperty.SetValue(null, picker);
@@ -172,6 +172,18 @@ internal static class ProfileTransferFinalNativeFixture
                             Program.Log("CACHE: import refreshed customization before notifying existing consumers; no explicit fixture reload.");
                         }
                         finally { customization.Changed -= changed; }
+                    }
+                    else if (scenario == "import-departure" || scenario == "import-catch-up")
+                    {
+                        await customization.EnsureLoadedAsync(); Require(customization.CardPresentation.PosterSize == "compact", "Initial customization did not load");
+                        wire.ImportGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        Invoke(Button("Choose file")); await Until(() => wire.Imports == 1);
+                        if (scenario == "import-departure") Call(page, "ShowSettingsOverview");
+                        else Require(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "Catch-up did not retire the request context");
+                        wire.ImportGate.SetResult();
+                        if (scenario == "import-catch-up") await Until(() => Descendants<TextBlock>(host).Any(text => text.Text.Contains("import finished")));
+                        await Until(() => customization.CardPresentation.PosterSize == "standard" && Busy(page) == 0);
+                        Require(!Descendants<TextBlock>(host).Any(text => text.Text.Contains("Try again")), "Committed import asked for a retry");
                     }
                     else if (scenario == "near-limit")
                     {

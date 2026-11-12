@@ -27,12 +27,15 @@ public sealed class ProfileTransferApi(SiloApiClient client)
     {
         if (document.Length > maxImportBytes && maxImportBytes > 0)
             throw new ApiException("validation_failed", $"The file is too large ({FormatSize(document.Length)}). The limit is {FormatSize(maxImportBytes)}.", 422);
+        var identity = client.CaptureIdentityContext();
         // A document near the limit takes long enough to scan that a UI-thread caller would stall.
         await Task.Run(() => ValidateImportDocument(document), ct).ConfigureAwait(false);
         var result = await client.SendRawJsonRequestAsync<ProfileImportResult>(context, HttpMethod.Post,
             "/api/v2/profile/import", document, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
-        if (!client.IsCurrentContext(context))
+        // The server has merged the document by now. An access refresh or reconnect catch-up retires the request
+        // context without changing whose data it is, so only another account or profile drops the result.
+        if (!client.IsCurrentIdentityContext(identity))
             throw new OperationCanceledException("The profile session changed.", ct);
         return result;
     }
