@@ -187,6 +187,7 @@ public sealed partial class MainWindow : Window
         _eventChannel.ReadCatchUpRequested += OnReadCatchUpRequested;
         _apiClient.LocalizedReads.Invalidated += OnLocalizedReadsInvalidated;
         InitializeInheritedPreferenceRefresh();
+        InitializeAppLanguage();
         App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed += OnEpisodeSpoilerPreferencesChanged;
 
         // Playing Next cinematic overlay — enters during the final 30 seconds
@@ -505,6 +506,7 @@ public sealed partial class MainWindow : Window
         _eventChannel.ReadCatchUpRequested -= OnReadCatchUpRequested;
         _apiClient.LocalizedReads.Invalidated -= OnLocalizedReadsInvalidated;
         ReleaseInheritedPreferenceRefresh();
+        ReleaseAppLanguage();
         App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed -= OnEpisodeSpoilerPreferencesChanged;
         _localizedRefreshCts?.Cancel();
         _localizedRefreshCts?.Dispose();
@@ -1642,6 +1644,7 @@ public sealed partial class MainWindow : Window
     {
         void Refresh()
         {
+            RefreshAppLanguageForOwner();
             if (_hydratedShellKey != null &&
                 (!CanExposeAuthenticatedNavigation || !string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal)))
             {
@@ -1716,6 +1719,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // Restored sessions reach the shell without a later profile event; the same owner is a no-op.
+        RefreshAppLanguageForOwner();
         var shellKey = GetAuthenticatedShellKey();
         var shouldHydrateShell = !string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal);
         if (shouldHydrateShell)
@@ -1906,6 +1911,7 @@ public sealed partial class MainWindow : Window
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
             NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
             NotifyInheritedPreferenceFromRealtime(channel, eventName, data);
+            NotifyAppLanguageFromRealtime(channel, eventName, data);
             if (channel == "user_settings" && eventName == "user_settings.changed"
                 && data.ValueKind == System.Text.Json.JsonValueKind.Object
                 && (!data.TryGetProperty("profile_id", out var changedProfile) || changedProfile.ValueKind == System.Text.Json.JsonValueKind.String && changedProfile.GetString() == _authService.SelectedProfileId)
@@ -3876,6 +3882,7 @@ public sealed partial class MainWindow : Window
     {
         if (_savedRestoreInProgress) return; // Restore owns its retry/login route and preserves the selected server.
         _pendingAccessRefresh = false;
+        RetireAppLanguageOwner();
         DispatcherQueue.TryEnqueue(async () =>
         {
             TryShellAction("shared_appearance_logout", _themeService.ResetSharedAppearance);

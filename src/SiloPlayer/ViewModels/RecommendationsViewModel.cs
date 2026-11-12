@@ -164,6 +164,8 @@ public partial class RecommendationsViewModel : ObservableObject
                 var displayRow = new RecommendationRowDisplay
                 {
                     Label = row.Label,
+                    TitleKey = row.TitleKey,
+                    TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(row.TitleArgs),
                     Type = row.Type,
                     SectionKind = row.SectionKind,
                     SectionKey = row.SectionKey
@@ -201,6 +203,8 @@ public partial class RecommendationsViewModel : ObservableObject
             var displayRow = new RecommendationRowDisplay
             {
                 Label = row.Label,
+                TitleKey = row.TitleKey,
+                TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(row.TitleArgs),
                 Type = row.Type
             };
 
@@ -251,6 +255,8 @@ public partial class RecommendationsViewModel : ObservableObject
 public class RecommendationRowDisplay
 {
     public string Label { get; set; } = "";
+    public string? TitleKey { get; set; }
+    public Dictionary<string, string>? TitleArgs { get; set; }
     public string Type { get; set; } = "";
     public string? SectionKind { get; set; }
     public string? SectionKey { get; set; }

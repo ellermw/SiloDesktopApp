@@ -122,6 +122,7 @@ public sealed partial class SectionRow : UserControl
     {
         this.InitializeComponent();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
+        AppLocalization.Register(this, () => { if (Section is { } shown) UpdateTitle(shown); });
         UpdateThemeFadeColors();
         Loaded += (_, _) =>
         {
@@ -206,27 +207,35 @@ public sealed partial class SectionRow : UserControl
         if (Section is { } section) UpdateSection(section);
     }
 
+    // Display only: pins, edits and saves keep the server's stored Title. Runs again
+    // on interface-language changes (AppLocalization.Register in the constructor).
+    private void UpdateTitle(HomeSectionWithItems section)
+    {
+        var title = section.DisplayTitle;
+        SectionTitle.Text = title;
+        TitleLinkTitle.Text = title;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            TitleLinkBtn,
+            $"View {title}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ExploreAllBtn,
+            $"Explore all {title}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            CardsScrollViewer,
+            $"{title} carousel");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ScrollLeftBtn,
+            $"Previous items in {title}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ScrollRightBtn,
+            $"Next items in {title}");
+    }
+
     private void UpdateSection(HomeSectionWithItems section)
     {
         var previousOffset = CardsScrollViewer.HorizontalOffset;
         var isSameSection = string.Equals(_lastRenderedSectionId, section.Id, StringComparison.Ordinal);
-        SectionTitle.Text = section.Title;
-        TitleLinkTitle.Text = section.Title;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            TitleLinkBtn,
-            $"View {section.Title}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ExploreAllBtn,
-            $"Explore all {section.Title}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            CardsScrollViewer,
-            $"{section.Title} carousel");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ScrollLeftBtn,
-            $"Previous items in {section.Title}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ScrollRightBtn,
-            $"Next items in {section.Title}");
+        UpdateTitle(section);
 
         UpdateNavigationPresentation();
         UpdatePinAvailability();

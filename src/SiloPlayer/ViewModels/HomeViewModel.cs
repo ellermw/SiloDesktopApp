@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
@@ -841,6 +842,9 @@ public partial class HomeViewModel : ObservableObject,
         Id = source.Id,
         SectionType = source.SectionType,
         Title = source.Title,
+        TitleKey = source.TitleKey,
+        TitleArgs = SectionTitles.CopyArguments(source.TitleArgs),
+        KeyedTitle = source.KeyedTitle,
         Featured = source.Featured,
         ItemLimit = source.ItemLimit,
         TotalCount = source.TotalCount,
@@ -865,6 +869,9 @@ public partial class HomeViewModel : ObservableObject,
         Id = meta.Id,
         SectionType = meta.SectionType,
         Title = meta.Title,
+        TitleKey = meta.TitleKey,
+        TitleArgs = SectionTitles.CopyArguments(meta.TitleArgs),
+        KeyedTitle = meta.KeyedTitle,
         Featured = meta.Featured,
         ItemLimit = meta.ItemLimit,
         TotalCount = cached?.TotalCount ?? 0,

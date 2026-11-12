@@ -68,6 +68,9 @@ public static class HomeSectionReconciler
         var changed = current.Id != incoming.Id
             || current.SectionType != incoming.SectionType
             || current.Title != incoming.Title
+            || current.TitleKey != incoming.TitleKey
+            || current.KeyedTitle != incoming.KeyedTitle
+            || !Localization.SectionTitles.SameArguments(current.TitleArgs, incoming.TitleArgs)
             || current.Featured != incoming.Featured
             || current.ItemLimit != incoming.ItemLimit
             || current.TotalCount != incoming.TotalCount
@@ -84,6 +87,9 @@ public static class HomeSectionReconciler
         current.Id = incoming.Id;
         current.SectionType = incoming.SectionType;
         current.Title = incoming.Title;
+        current.TitleKey = incoming.TitleKey;
+        current.TitleArgs = Localization.SectionTitles.CopyArguments(incoming.TitleArgs);
+        current.KeyedTitle = incoming.KeyedTitle;
         current.Featured = incoming.Featured;
         current.ItemLimit = incoming.ItemLimit;
         current.TotalCount = incoming.TotalCount;

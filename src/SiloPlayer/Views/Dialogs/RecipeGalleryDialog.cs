@@ -442,14 +442,15 @@ public static partial class RecipeGalleryDialog
         content.Children.Add(new TextBlock { Text = choice.Preset.Icon, FontSize = 19 });
         content.Children.Add(new TextBlock
         {
-            Text = choice.Preset.DisplayName,
+            // Display only; the row name field and the save keep the English DisplayName.
+            Text = choice.Preset.DisplayNameText,
             FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             TextWrapping = TextWrapping.Wrap,
         });
         content.Children.Add(new TextBlock
         {
-            Text = choice.Preset.DescriptionShort,
+            Text = choice.Preset.DescriptionShortText,
             FontSize = 12,
             Foreground = ResourceBrush("SecondaryTextBrush"),
             TextWrapping = TextWrapping.Wrap,
@@ -474,7 +475,7 @@ public static partial class RecipeGalleryDialog
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
         };
-        AutomationProperties.SetName(button, choice.Preset.DisplayName);
+        AutomationProperties.SetName(button, choice.Preset.DisplayNameText);
         return button;
     }
 
@@ -512,7 +513,7 @@ public static partial class RecipeGalleryDialog
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.Children.Add(new TextBlock
         {
-            Text = $"{choice.Preset.Icon} {choice.Preset.DisplayName}",
+            Text = $"{choice.Preset.Icon} {choice.Preset.DisplayNameText}",
             FontSize = 16,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
@@ -542,7 +543,7 @@ public static partial class RecipeGalleryDialog
         root.Children.Add(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featured } } });
 
-        var result = await HomeRowDialog.ShowAsync(xamlRoot, choice.Preset.DisplayName, root, "Add row", () =>
+        var result = await HomeRowDialog.ShowAsync(xamlRoot, choice.Preset.DisplayNameText, root, "Add row", () =>
         {
             var error = Validate(choice.Definition, config);
             error ??= SeasonalEditorProblem(paramHost);

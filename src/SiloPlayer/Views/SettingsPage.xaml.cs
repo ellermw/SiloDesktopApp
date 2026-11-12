@@ -143,6 +143,7 @@ public sealed partial class SettingsPage : Page
         this.InitializeComponent();
         InitializeWebhookOwnership();
         InitializeSettingsPresentation();
+        InitializeAppLanguageSettings();
         Loaded += (_, _) => InitializeAppUpdateSettings();
         Unloaded += (_, _) => ReleaseAppUpdateSettings();
         InitializeAppUpdateSettings();
@@ -1338,6 +1339,7 @@ _webhookPlexAuthCts?.Cancel();
         if (tag != "Devices") DeactivateDevices();
         ConnectAppsPanel.Visibility = tag == "ConnectApps" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag == "Accessibility") ActivateAppLanguageSettings();
         YourDataPanel.Visibility = tag == "YourData" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "YourData") DeactivateYourData();
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
@@ -3246,7 +3248,7 @@ _webhookPlexAuthCts?.Cancel();
             Content = new FontIcon { Glyph = "\uE700", FontSize = 14 }, Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Padding = new Thickness(4), CanDrag = ViewModel.CanEditHomeSections, IsEnabled = ViewModel.CanEditHomeSections
         };
-        AutomationProperties.SetName(grip, $"Drag {section.Title}");
+        AutomationProperties.SetName(grip, $"Drag {section.DisplayTitle}");
         grip.DragStarting += (_, args) => { args.Data.SetText(section.Id); args.Data.RequestedOperation = DataPackageOperation.Move; };
         grid.Children.Add(grip);
         var art = new Grid { Width = 72, Height = 60, Visibility = section.Hidden ? Visibility.Collapsed : Visibility.Visible };
@@ -3255,7 +3257,7 @@ _webhookPlexAuthCts?.Cancel();
         if (!section.Hidden) AttachHomeRowPeek(art, section);
         var info = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
         var title = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 4 };
-        title.Children.Add(new TextBlock { Text = section.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        title.Children.Add(new TextBlock { Text = section.DisplayTitle, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         if (section.Featured) title.Children.Add(BuildHomeSectionBadge("Hero banner", true));
         if (section.IsCustom) title.Children.Add(BuildHomeSectionBadge("Yours", false));
         info.Children.Add(title);
@@ -3266,10 +3268,10 @@ _webhookPlexAuthCts?.Cancel();
         });
         var open = new Button { Content = info, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch,
             Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(0), IsEnabled = ViewModel.CanEditHomeSections };
-        AutomationProperties.SetName(open, $"Edit {section.Title}"); open.Click += async (_, _) => await EditHomeSectionAsync(section);
+        AutomationProperties.SetName(open, $"Edit {section.DisplayTitle}"); open.Click += async (_, _) => await EditHomeSectionAsync(section);
         Grid.SetColumn(open, 2); grid.Children.Add(open);
         var shown = new ToggleSwitch { IsOn = !section.Hidden, OnContent = "", OffContent = "", MinWidth = 0, IsEnabled = ViewModel.CanEditHomeSections, VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetName(shown, $"Show {section.Title} on this page");
+        AutomationProperties.SetName(shown, $"Show {section.DisplayTitle} on this page");
         shown.Toggled += async (_, _) =>
         {
             if (!ViewModel.CanEditHomeSections || shown.IsOn == !section.Hidden) return;
@@ -3284,7 +3286,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         Action("Edit row…", () => EditHomeSectionAsync(section));
         if (!section.IsCustom && !string.IsNullOrEmpty(section.DefaultTitle) && section.Title != section.DefaultTitle)
-            Action("Use the original name", async () => { section.Title = section.DefaultTitle; RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
+            Action("Use the original name", async () => { RestoreDefaultTitle(section); RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
         Action(section.Featured ? "Stop using as hero banner" : "Use as hero banner", async () =>
         { section.Featured = !section.Featured; RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
         Action("Move to top", async () => { ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(section), 0); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); }, ViewModel.HomeSections.FirstOrDefault() != section);
@@ -3292,7 +3294,7 @@ _webhookPlexAuthCts?.Cancel();
         menu.Items.Add(new MenuFlyoutSeparator());
         Action(section.IsCustom ? "Delete row…" : "Remove from my page…", () => RemoveHomeRowAsync(section));
         var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 16 }, Flyout = menu, Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(5) };
-        AutomationProperties.SetName(more, $"More actions for {section.Title}"); Grid.SetColumn(more, 4); grid.Children.Add(more);
+        AutomationProperties.SetName(more, $"More actions for {section.DisplayTitle}"); Grid.SetColumn(more, 4); grid.Children.Add(more);
         row.Child = grid;
         row.SizeChanged += (_, args) =>
         {
@@ -3302,7 +3304,7 @@ _webhookPlexAuthCts?.Cancel();
         row.DragOver += (_, args) =>
         {
             if (!ViewModel.CanEditHomeSections || !args.DataView.Contains(StandardDataFormats.Text)) return;
-            args.AcceptedOperation = DataPackageOperation.Move; args.DragUIOverride.Caption = $"Move before {section.Title}";
+            args.AcceptedOperation = DataPackageOperation.Move; args.DragUIOverride.Caption = $"Move before {section.DisplayTitle}";
         };
         row.Drop += async (_, args) =>
         {

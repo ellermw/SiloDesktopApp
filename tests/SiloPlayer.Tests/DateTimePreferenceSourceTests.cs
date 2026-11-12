@@ -35,11 +35,11 @@ public sealed class DateTimePreferenceSourceTests
             "DateTimeDisplay.cs"));
 
         Assert.Contains(
-            """_ => local.ToString("MMM d, yyyy", CultureInfo.CurrentCulture)""",
+            """_ => local.ToString("MMM d, yyyy", AppStrings.FormatCulture)""",
             source,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
-            """_ => local.ToString("D", CultureInfo.CurrentCulture)""",
+            """_ => local.ToString("D", AppStrings.FormatCulture)""",
             source,
             StringComparison.Ordinal);
     }

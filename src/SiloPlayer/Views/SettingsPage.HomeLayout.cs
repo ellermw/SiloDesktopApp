@@ -80,7 +80,7 @@ public sealed partial class SettingsPage
         var dialog = new ContentDialog
         {
             Title = row.IsCustom ? "Delete row?" : "Remove from my page?",
-            Content = row.IsCustom ? $"Delete “{row.Title}” from this profile?" : $"Remove “{row.Title}” from this profile's page? You can bring it back by resetting the page.",
+            Content = row.IsCustom ? $"Delete “{row.DisplayTitle}” from this profile?" : $"Remove “{row.DisplayTitle}” from this profile's page? You can bring it back by resetting the page.",
             PrimaryButtonText = row.IsCustom ? "Delete row" : "Remove row", CloseButtonText = "Cancel", XamlRoot = XamlRoot,
             DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"]
         };

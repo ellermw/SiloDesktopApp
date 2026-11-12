@@ -182,6 +182,9 @@ public sealed partial class RecommendationsPage : Page
             var section = new HomeSectionWithItems
             {
                 Title = row.Label,
+                TitleKey = SiloPlayer.Core.Localization.SectionTitles.Normalize(row.TitleKey),
+                TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(row.TitleArgs),
+                KeyedTitle = string.IsNullOrEmpty(row.TitleKey) ? null : row.Label,
                 SectionType = row.Type,
                 Items = row.Items
             };

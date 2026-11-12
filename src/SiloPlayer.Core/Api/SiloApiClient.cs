@@ -13,7 +13,17 @@ public class ApiException(string errorCode, string message, int statusCode, stri
     public int StatusCode { get; } = statusCode;
     public string? ErrorLocation { get; } = errorLocation;
     public double? RetryAfterSeconds { get; } = retryAfterSeconds;
+    /// <summary>The v2 problem identifier (final segment of <c>type</c>), when the body was a Problem Details document.</summary>
+    public string? ProblemType { get; init; }
+    /// <summary>The problem's English <c>title</c> and <c>detail</c> exactly as sent; <see cref="Exception.Message"/> is unchanged.</summary>
+    public string? ProblemTitle { get; init; }
+    public string? ProblemDetail { get; init; }
+    /// <summary>Every field-level error in order. Display through <c>ApiProblemText</c>; branch only on codes.</summary>
+    public IReadOnlyList<ApiFieldError> FieldErrors { get; init; } = [];
 }
+
+/// <summary>One RFC 9457 field error: where, a stable machine code, and the server's safe English detail.</summary>
+public sealed record ApiFieldError(string? Location, string Code, string? Detail);
 
 public readonly record struct ProfileVerificationContext(
     long AuthenticationGeneration,
@@ -1091,7 +1101,8 @@ public partial class SiloApiClient
         HttpRequestMessage request,
         CancellationToken ct)
     {
-        string? code = null, detail = null, location = null;
+        string? code = null, detail = null, location = null, problemType = null, problemTitle = null, problemDetail = null;
+        var fieldErrors = new List<ApiFieldError>();
         try
         {
             using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false), cancellationToken: ct).ConfigureAwait(false);
@@ -1103,6 +1114,22 @@ public partial class SiloApiClient
                 && errors[0].ValueKind == JsonValueKind.Object && errors[0].TryGetProperty("location", out var rejectedField)
                 && rejectedField.ValueKind == JsonValueKind.String)
                 location = rejectedField.GetString();
+            problemTitle = Text("title");
+            problemDetail = Text("detail");
+            if (Text("type") is { Length: > 0 } typeText)
+            {
+                var typePath = typeText.Split('?', '#')[0];
+                problemType = typePath[(typePath.LastIndexOf('/') + 1)..];
+                if (problemType.Length == 0) problemType = null;
+            }
+            if (root.TryGetProperty("errors", out var allErrors) && allErrors.ValueKind == JsonValueKind.Array)
+                foreach (var error in allErrors.EnumerateArray())
+                {
+                    if (error.ValueKind != JsonValueKind.Object || !error.TryGetProperty("code", out var errorCode)
+                        || errorCode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(errorCode.GetString())) continue;
+                    string? Field(string key) => error.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                    fieldErrors.Add(new ApiFieldError(Field("location"), errorCode.GetString()!, Field("detail")));
+                }
             if (code == null && Uri.TryCreate(Text("type"), UriKind.Absolute, out var type) &&
                 type.AbsolutePath.StartsWith("/docs/api/v2/problems/", StringComparison.Ordinal))
                 code = type.Segments.LastOrDefault()?.TrimEnd('/');
@@ -1122,7 +1149,13 @@ public partial class SiloApiClient
         if (retrySeconds == null && retryAfter?.Date is { } retryAt)
             retrySeconds = (retryAt - DateTimeOffset.UtcNow).TotalSeconds;
         throw new ApiException(code ?? "unknown", detail ?? $"HTTP {(int)response.StatusCode}", (int)response.StatusCode, location,
-            retrySeconds is { } seconds ? Math.Max(0, seconds) : null);
+            retrySeconds is { } seconds ? Math.Max(0, seconds) : null)
+        {
+            ProblemType = problemType,
+            ProblemTitle = problemTitle,
+            ProblemDetail = problemDetail,
+            FieldErrors = fieldErrors,
+        };
     }
 
     private static ProfileVerificationContext CreateProfileVerificationContext(HttpRequestMessage request)
