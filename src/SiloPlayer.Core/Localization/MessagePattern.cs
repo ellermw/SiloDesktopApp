@@ -87,8 +87,7 @@ public sealed class MessagePattern
                 case Plural plural:
                 {
                     if (!TryArgument(arguments, plural.Name, out var pluralValue) || !TryNumber(pluralValue, out var amount)) return false;
-                    var exact = "=" + amount.ToString(CultureInfo.InvariantCulture);
-                    if (!plural.Options.TryGetValue(exact, out var chosen)
+                    if (!TryExactPluralOption(plural.Options, amount, out var chosen)
                         && !plural.Options.TryGetValue(PluralRules.Category(context.PluralLanguage, amount), out chosen)
                         && !plural.Options.TryGetValue("other", out chosen))
                         return false;
@@ -115,6 +114,24 @@ public sealed class MessagePattern
         if (arguments == null || !arguments.TryGetValue(name, out var found) || found == null) return false;
         value = found;
         return true;
+    }
+
+    private static bool TryExactPluralOption(Dictionary<string, Node[]> options, decimal amount, out Node[] chosen)
+    {
+        // ICU exact selectors compare numbers. Decimal storage scale must not
+        // distinguish an argument of 1.500 from the selector =1.50.
+        foreach (var (selector, nodes) in options)
+        {
+            if (selector.StartsWith('=')
+                && decimal.TryParse(selector.AsSpan(1), NumberStyles.Float, CultureInfo.InvariantCulture, out var exact)
+                && exact == amount)
+            {
+                chosen = nodes;
+                return true;
+            }
+        }
+        chosen = null!;
+        return false;
     }
 
     private static string PrintArgument(object value, MessageFormatContext context)

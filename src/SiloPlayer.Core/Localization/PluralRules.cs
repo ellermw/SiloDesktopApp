@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace SiloPlayer.Core.Localization;
 
 /// <summary>
@@ -14,8 +12,10 @@ public static class PluralRules
     {
         var n = Math.Abs(value);
         var i = decimal.Truncate(n);
-        var v = VisibleFractionDigits(n);
-        var integer = v == 0;
+        // The WebUI supplies JavaScript numbers to Intl: insignificant decimal
+        // zeros are not visible plural operands. These languages only need to
+        // distinguish an integer from a meaningful fractional value.
+        var integer = n == i;
         var baseLanguage = language.Split('-')[0].ToLowerInvariant();
         switch (baseLanguage)
         {
@@ -51,11 +51,4 @@ public static class PluralRules
     // CLDR "many" for es/fr/pt: e = 0 and i != 0 and i % 1000000 = 0 and v = 0
     // (the compact-exponent branch never applies to plain numbers).
     private static bool IsMillionMany(decimal i, bool integer) => integer && i != 0 && i % 1_000_000 == 0;
-
-    private static int VisibleFractionDigits(decimal value)
-    {
-        var text = value.ToString(CultureInfo.InvariantCulture);
-        var point = text.IndexOf('.');
-        return point < 0 ? 0 : text.Length - point - 1;
-    }
 }
