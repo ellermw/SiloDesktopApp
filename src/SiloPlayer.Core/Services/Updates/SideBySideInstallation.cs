@@ -19,7 +19,14 @@ public static partial class SideBySideInstallation
         if (ReadJournal(root) is { } transaction)
         {
             if (transaction.Phase == "pending") Rollback(root, transaction.TransactionId);
-            else RecoverInterruptedTransaction(root);
+            else if (transaction.Phase == "confirmed") RecoverInterruptedTransaction(root);
+            else
+            {
+                // A deferred (Later) or interrupted update can own the directory the installer just
+                // filled. Recover it as usual, but its inventory must not delete this version's payload.
+                Rollback(root, transaction.TransactionId);
+                CleanupOwnedVersions(root, directory => Path.GetFileName(directory) == manifest.Version || IsVersionDirectoryInUse(directory));
+            }
             previous = ReadState(root);
         }
         var directory = VersionPath(root, manifest.Version);
@@ -164,6 +171,29 @@ public static partial class SideBySideInstallation
             WriteRecord(Metadata(root, "transaction.json"), journal with { Phase = "failed-stage" });
             throw;
         }
+    }
+
+    /// <summary>Reuse a deliberately deferred, protected installation only against fresh release authority.</summary>
+    public static StagedUpdate? TryResumeStaged(string root, PreparedUpdatePackage package, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        root = CanonicalRoot(root);
+        using var rootLease = LockDirectories(root);
+        var journal = ReadJournal(root);
+        if (journal is not { Phase: "staged" }) return null;
+        var manifest = ReadPreparedManifest(package);
+        ValidateManifest(manifest);
+        if (!JsonSerializer.Serialize(journal.Manifest).Equals(JsonSerializer.Serialize(manifest), StringComparison.Ordinal)) return null;
+        var state = ReadState(root) ?? throw new InvalidDataException("Missing installation state.");
+        if (state.ActiveVersion != journal.PriorVersion || state.PendingVersion is not null)
+            throw new InvalidDataException("The installation changed after preparation.");
+        VerifyBootstrapCompatible(root, manifest);
+        VerifyOwnedVersion(root, journal.Version);
+        var versionDirectory = VersionPath(root, journal.Version);
+        var bootstrapDirectory = Metadata(root, "staging/" + journal.TransactionId + "/bootstrap");
+        VerifyTree(versionDirectory, manifest.Files.Where(file => file.Area == "client"), ct);
+        VerifyTree(bootstrapDirectory, manifest.Files.Where(file => file.Area == "bootstrap"), ct);
+        return new(root, journal.TransactionId, journal.Version, versionDirectory, bootstrapDirectory, manifest);
     }
 
     public static void Activate(StagedUpdate update)

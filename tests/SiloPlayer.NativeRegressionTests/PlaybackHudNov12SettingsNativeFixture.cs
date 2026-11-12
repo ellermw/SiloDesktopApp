@@ -39,7 +39,13 @@ internal static class PlaybackHudNov12SettingsNativeFixture
         var vm = new SettingsViewModel(api, new CatalogApi(client), new AuthApi(client), new HistoryImportApi(client), new WatchProvidersApi(client), auth, theme, settings, new AccessibilityService(settings, theme));
         using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(api).AddSingleton(settings)
             .AddSingleton(new AuthApi(client)).AddSingleton(vm).AddSingleton(new NavigationService()).AddSingleton(new ToastService())
-            .AddSingleton(new CardOverlayService(api)).AddSingleton(new UICustomizationService(api)).BuildServiceProvider();
+            .AddSingleton(new CardOverlayService(api)).AddSingleton(new UICustomizationService(api))
+            .AddSingleton(new SiloPlayer.Core.Localization.AppLanguagePreference(api))
+            .AddSingleton(sp => new SiloPlayer.Core.Localization.AppLocaleCoordinator(
+                sp.GetRequiredService<SiloPlayer.Core.Localization.AppLanguagePreference>(),
+                SiloPlayer.Core.Localization.LocaleService.Shared, settings, () => ["en-US"], "en-US",
+                AppLocalization.PostTo(parent.DispatcherQueue)))
+            .BuildServiceProvider();
         field.SetValue(null, services);
         SettingsPage? page = null;
         try

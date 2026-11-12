@@ -14,6 +14,15 @@ public sealed partial class MainWindow
     // The release the update window has fully downloaded while it waits for an answer.
     private AppRelease? _windowedDownloadReady;
 
+    // The helper closes after Later is acknowledged. Keep its confirmation in
+    // Silo, and show it only after the next-start record has been saved/read back.
+    private bool DeferAppUpdateWithNotice(AppRelease release)
+    {
+        if (!DeferAppUpdate(release)) return false;
+        App.Services.GetRequiredService<ToastService>().Info(UpdatePanelModel.DeferredText);
+        return true;
+    }
+
     /// <summary>Records Later and reads it back; false when the next start would not find it.</summary>
     private bool DeferAppUpdate(AppRelease release)
     {

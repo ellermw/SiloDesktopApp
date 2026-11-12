@@ -24,7 +24,9 @@ public partial class PlayerService
         var roomId = room.Room.RoomId;
         bool RoomCurrent() => owner.IsCurrent() && _playbackTerminalState == null && ReferenceEquals(coordinator!.ActiveRoom, room)
             && room.Room?.RoomId == roomId && room.ClosedReason == null;
-        bool Current() => RoomCurrent() && !IsLoading && !_switchingContent && _nativeMenuGate.IsCurrent(request);
+        var openedIdle = !IsLoading && !_switchingContent;
+        bool Current() => RoomCurrent() && (openedIdle || _sessionHasFramed) &&
+            openedIdle == (!IsLoading && !_switchingContent) && _nativeMenuGate.IsCurrent(request);
         if (!RoomCurrent()) return null;
         var footer = new StackPanel { Spacing = 8, Margin = new Thickness(12, 6, 12, 12), MaxHeight = 270 };
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
@@ -51,8 +53,8 @@ public partial class PlayerService
         {
             var snapshot = room.Room!;
             var rows = new List<PlaybackMenuChoice>();
-            var available = !room.IsBusy && room.ClosedReason == null;
-            var reason = room.IsBusy ? "A room update is pending." : "";
+            var available = !room.IsBusy && room.ClosedReason == null && !IsLoading && !_switchingContent;
+            var reason = room.IsBusy ? "A room update is pending." : IsLoading || _switchingContent ? "A playback change is already in progress." : "";
             if (snapshot.SelfCanManageRoom)
             {
                 rows.Add(new("invite", "Invite", "Copy invite link", [], IsEnabled: available, DisabledReason: reason, CloseOnInvoke: false));

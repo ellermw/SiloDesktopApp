@@ -810,6 +810,29 @@ public sealed class SubtitleReviewRegressionTests
             release, StringComparison.Ordinal) > release);
     }
 
+    [Fact]
+    public void ManualSubtitleReadRetiredByTheLoadedFileInitializerIsRetainedInsteadOfRefused()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a waiting pick
+        // can resume while FILE_LOADED's initializer runs. LoadSubtitles cancels its
+        // read before advancing the sidecar generation, and the initializer's read
+        // of the grant it reapplies replaces that read without advancing it. Both
+        // the pre-acceptance and the draft read then wait for the initializer and
+        // read again, instead of refusing the viewer's latest choice.
+        var admission = Between(Read("PlayerService.cs"), "private async Task<bool> TrySetSubtitleTrackAndPersistAsync(",
+            "private bool MatchesSubtitlePreference(");
+        var preflight = admission.IndexOf("if (readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||", StringComparison.Ordinal);
+        var draft = admission.IndexOf("if (readGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||", StringComparison.Ordinal);
+        Assert.True(preflight >= 0 && draft > preflight);
+        foreach (var read in new[] { preflight, draft })
+        {
+            var retained = admission.IndexOf("readInitialization != null && readOutcome == SubtitlePrefetchOutcome.Retired ||", read, StringComparison.Ordinal);
+            var wait = admission.IndexOf("Volatile.Read(ref _loadedMediaInitCts) != null))", read, StringComparison.Ordinal);
+            var refused = admission.IndexOf("readOutcome == SubtitlePrefetchOutcome.Retired)", read, StringComparison.Ordinal);
+            Assert.True(retained > read && wait > retained && refused > wait);
+        }
+    }
+
     private static string Reload() => Between(Read("PlayerService.SubtitleSync.cs"),
         "private async Task ReloadCorrectedSubtitleAsync(", "private void SendSubtitleSyncState()");
 

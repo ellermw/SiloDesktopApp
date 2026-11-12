@@ -17,7 +17,7 @@ public sealed class NativeApiSourceGuardTests
         };
         var codeExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            ".cs", ".xaml", ".lua", ".js", ".html",
+            ".cs", ".xaml", ".lua", ".js", ".mjs", ".html",
         };
         var generatedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {

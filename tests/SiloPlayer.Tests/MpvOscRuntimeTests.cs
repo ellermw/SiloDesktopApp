@@ -1520,6 +1520,140 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("true:0:1:1280:0:1:empty:0:1:nonempty", output);
     }
 
+    [Fact]
+    public void TransportReloadingShowsSpinnerWithoutBlackRectangleAndKeepsMenusAccessible()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            state.visible, state.current_alpha, state.target_alpha = true, 1, 1
+            state.duration, state.time_pos, state.volume = 120, 10, 50
+            mp.set_property_number('volume', 50)
+            state.pause = false
+            local results = {}
+
+            -- 1. Transport reloading: spinner but no black rect
+            handlers['osc-set-transport-reloading']('true')
+            assert(state.transport_reloading, 'transport_reloading not set')
+            assert(not state.playback_loading, 'playback_loading should be false during transport reload')
+            local wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            local has_spinner = wait_data:find('draw_circle', 1, true) ~= nil or #wait_data > 10
+            table.insert(results, 'spinner:' .. tostring(has_spinner))
+            -- A dark spinner disc is allowed. Detect the fullscreen rectangle
+            -- by its geometry so a circle's black fill is not mistaken for it.
+            local full_frame = string.format('m 0 0 l %d 0 %d %d 0 %d', state.osd_width, state.osd_width, state.osd_height, state.osd_height)
+            local has_black_rect = wait_data:find(full_frame, 1, true) ~= nil
+            table.insert(results, 'black_rect:' .. tostring(has_black_rect))
+
+            -- 2. Native menu should NOT be blocked during transport reload
+            state.native_audio_capable = true
+            state.native_audio_legacy = false
+            state.native_audio_scope = 'test_scope'
+            state.audio_tracks = {{}, {}}
+            state.native_menu_request = nil
+            state.native_menu_sequence = 0
+            state.post_roll_active = false
+            state.playback_failure_visible = false
+            osc_test_layout()
+            local menu_blocked_reload = state.playback_loading
+            table.insert(results, 'menu_blocked_reload:' .. tostring(menu_blocked_reload))
+
+            -- 3. Clear transport reloading
+            handlers['osc-set-transport-reloading']('false')
+            assert(not state.transport_reloading, 'transport_reloading not cleared')
+            wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            table.insert(results, 'cleared:' .. tostring(#wait_data == 0))
+
+            -- 4. Startup loading: HAS black rect and blocks menus
+            handlers['osc-set-loading']('true')
+            assert(state.playback_loading, 'playback_loading not set')
+            assert(not state.transport_reloading, 'transport_reloading should be cleared by loading')
+            wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+            local loading_has_black = wait_data:find(full_frame, 1, true) ~= nil
+            table.insert(results, 'loading_black:' .. tostring(loading_has_black))
+            local menu_blocked_loading = state.playback_loading
+            table.insert(results, 'menu_blocked_loading:' .. tostring(menu_blocked_loading))
+
+            -- 5. Mutual exclusion: transport reloading clears loading
+            handlers['osc-set-transport-reloading']('true')
+            assert(not state.playback_loading, 'loading should be cleared by transport reloading')
+            assert(state.transport_reloading, 'transport_reloading not set after mutual clear')
+            table.insert(results, 'mutual_excl:true')
+
+            handlers['osc-set-transport-reloading']('false')
+            handlers['osc-set-loading']('false')
+
+            mp.set_property('user-data/transport-reload-test', table.concat(results, ','))
+            """, beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """, resultProperty: "user-data/transport-reload-test");
+        Assert.Contains("spinner:true", output);
+        Assert.Contains("black_rect:false", output);
+        Assert.Contains("menu_blocked_reload:false", output);
+        Assert.Contains("cleared:true", output);
+        Assert.Contains("loading_black:true", output);
+        Assert.Contains("menu_blocked_loading:true", output);
+        Assert.Contains("mutual_excl:true", output);
+    }
+
+    [Fact]
+    public void TransportReloadingHidesThePauseBadgeAndTracksTheHostPauseIntent()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            local results = {}
+            local function badge()
+                return state.pause_indicator_overlay ~= nil and #state.pause_indicator_overlay.data > 0
+            end
+
+            -- 1. A pause outside a reload keeps its centre Play badge and mpv's own state
+            state.pause = true
+            handlers['osc-set-transport-reloading']('false')
+            table.insert(results, 'idle_badge:' .. tostring(badge()))
+            handlers['osc-set-transport-reload-pause']('false')
+            table.insert(results, 'idle_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 2. The load freeze pauses mpv: no badge under the spinner, host intent kept
+            handlers['osc-set-transport-reloading']('true')
+            table.insert(results, 'reload_badge:' .. tostring(badge()))
+            handlers['osc-set-transport-reload-pause']('false')
+            table.insert(results, 'reload_intent:' .. tostring(state.transport_reload_paused))
+            handlers['osc-set-transport-reload-pause']('true')
+            table.insert(results, 'reload_paused_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 3. First output retires the reload and its intent; the pause badge returns
+            handlers['osc-set-transport-reloading']('false')
+            table.insert(results, 'retired_badge:' .. tostring(badge()))
+            table.insert(results, 'retired_intent:' .. tostring(state.transport_reload_paused))
+
+            -- 4. An opaque startup cover also retires the reload's intent
+            handlers['osc-set-transport-reloading']('true')
+            handlers['osc-set-transport-reload-pause']('true')
+            handlers['osc-set-loading']('true')
+            table.insert(results, 'cover_intent:' .. tostring(state.transport_reload_paused))
+
+            handlers['osc-set-loading']('false')
+            state.pause = false
+
+            mp.set_property('user-data/transport-reload-pause-test', table.concat(results, ','))
+            """, beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """, resultProperty: "user-data/transport-reload-pause-test");
+        Assert.Contains("idle_badge:true", output);
+        Assert.Contains("idle_intent:nil", output);
+        Assert.Contains("reload_badge:false", output);
+        Assert.Contains("reload_intent:false", output);
+        Assert.Contains("reload_paused_intent:true", output);
+        Assert.Contains("retired_badge:true", output);
+        Assert.Contains("retired_intent:nil", output);
+        Assert.Contains("cover_intent:nil", output);
+    }
+
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,

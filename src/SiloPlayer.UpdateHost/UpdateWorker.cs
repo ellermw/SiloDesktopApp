@@ -18,13 +18,16 @@ internal static class UpdateWorker
         UpdatePipeIdentity.Authenticate(pipe,false,options.BrokerPid,options.BrokerStart,Environment.ProcessPath!);
         var root=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!,machineOnly:true)??throw new InvalidOperationException("Use the registered machine installation.");
         var directory=Directory.GetParent(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))!.FullName;
-        using var environment=new WindowsTransactionEnvironment(options,root,directory,pipe);
+        using var environment=new WindowsTransactionEnvironment(options,root,directory,pipe,timeout);
         var result=UpdateTransactionRunner.Run(new(root,Path.GetFileName(directory),options.Tag,options.Restart),environment,timeout.Token);
         return result.Succeeded ? 0 : 1;
     }
-    private sealed class WindowsTransactionEnvironment(HostOptions options,string root,string directory,PipeStream pipe) : IUpdateTransactionEnvironment,IDisposable
+    private sealed class WindowsTransactionEnvironment(HostOptions options,string root,string directory,PipeStream pipe,CancellationTokenSource operationTimeout) : IUpdateTransactionEnvironment,IDisposable
     {
         private Process? parent;
+        // The runner frees the gate while it waits for the broker's answer. Keep the named object alive
+        // so recovery can take it again even after the broker, which created it, has gone.
+        private Mutex? gate;
         public void ValidateCallerAndParent()
         {
             using var identity=WindowsIdentity.GetCurrent();
@@ -41,6 +44,7 @@ internal static class UpdateWorker
         public IDisposable AcquireInstallationLock(CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
+            gate??=MutexAcl.OpenExisting(SideBySideInstallation.GetMutexName(root),MutexRights.Synchronize);
             var mutex=MutexAcl.OpenExisting(SideBySideInstallation.GetMutexName(root),MutexRights.Synchronize|MutexRights.Modify);
             var held=false;
             try
@@ -71,6 +75,7 @@ internal static class UpdateWorker
             UpdateHostProtocol.WriteAsync(pipe,message,deadline.Token).GetAwaiter().GetResult();
         }
         public UpdateHostMessage Receive(CancellationToken ct)=>UpdateHostProtocol.ReadAsync(pipe,ct).GetAwaiter().GetResult();
+        public void SetAwaitingRestartChoice(bool waiting)=>operationTimeout.CancelAfter(waiting ? Timeout.InfiniteTimeSpan : TimeSpan.FromMinutes(20));
         public void WaitForParentExit(CancellationToken ct)=>parent!.WaitForExitAsync(ct).GetAwaiter().GetResult();
         public bool HasParentExited=>parent?.HasExited==true;
         public void VerifyNoOtherClient()
@@ -103,7 +108,7 @@ internal static class UpdateWorker
             catch{return true;}
         }
         public void RetireUnusedAuthorization(string versionDirectory)=>UpdateFirewall.Retire(Path.Combine(versionDirectory,"SiloPlayer.exe"));
-        public void Dispose()=>parent?.Dispose();
+        public void Dispose(){parent?.Dispose();gate?.Dispose();}
     }
     private sealed class MutationLease(Mutex mutex) : IDisposable
     {

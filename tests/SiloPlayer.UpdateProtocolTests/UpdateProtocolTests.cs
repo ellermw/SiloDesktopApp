@@ -5,6 +5,22 @@ namespace SiloPlayer.UpdateProtocolTests;
 
 public sealed class UpdateProtocolTests
 {
+    [Theory]
+    [InlineData("prepared")]
+    [InlineData("defer")]
+    [InlineData("deferred")]
+    public async Task Prepared_restart_frames_preserve_the_exact_transaction(string kind)
+    {
+        using var stream = new MemoryStream();
+        var transaction = Guid.NewGuid().ToString("N");
+        await UpdateHostProtocol.WriteAsync(stream, new(kind, transaction, "1.2.974.0"), default);
+        stream.Position = 0;
+        var frame = await UpdateHostProtocol.ReadAsync(stream, default);
+        Assert.Equal(kind, frame.Kind);
+        Assert.Equal(transaction, frame.TransactionId);
+        Assert.Equal("1.2.974.0", frame.Text);
+    }
+
     [Fact]
     public void Elevated_helper_requires_privileged_ownership_and_no_unprivileged_write_grants()
     {
