@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Services;
 
@@ -26,7 +27,11 @@ public record OverlayItemConfig(
     bool Enabled,
     OverlayPosition Position,
     string? AccentColor = null,
-    bool? ShowIcon = null);
+    bool? ShowIcon = null)
+{
+    public string? Image { get; init; }
+    public IReadOnlyDictionary<string, string>? ValueImages { get; init; }
+}
 
 /// <summary>
 /// Flat data bag passed to the renderer, extracted from a MediaItem once and
@@ -109,6 +114,7 @@ public sealed record CardOverlayPrefs(
     Dictionary<string, OverlayItemConfig> Items)
 {
     public JsonElement? OriginalDocument { get; init; }
+    public OverlayStyle? Style { get; init; }
 }
 
 /// <summary>
@@ -146,6 +152,17 @@ public static class OverlayRegistry
         new("request_status",     "Request Status",   OverlayPosition.TopLeft,     true, d => d.RequestStatus),
         new("advisory_age", "Advisory Age", OverlayPosition.TopRight, false, d => d.AdvisoryAge > 0 ? $"{d.AdvisoryAge}+" : null),
     ];
+
+    public static string? ValueKey(string id, OverlayData data) => id switch
+    {
+        "resolution" => data.Resolution, "hdr" => data.Hdr, "audio" => data.Audio, "audio_channels" => data.AudioChannels,
+        "resolution_hdr" => string.IsNullOrEmpty(data.Resolution) ? null : string.Join(" ", new[] { data.Resolution, data.Hdr }.Where(value => !string.IsNullOrEmpty(value))),
+        "resolution_hdr_audio" => string.Join(" ", new[] { data.Resolution, data.Hdr, data.Audio }.Where(value => !string.IsNullOrEmpty(value))),
+        "video_codec" => data.VideoCodec, "container" => data.Container, "aspect_ratio" => data.AspectRatio, "release_type" => data.ReleaseType,
+        "edition" => data.Edition, "content_rating" => data.ContentRating, "original_language" => data.OriginalLanguage, "studio" => data.Studio, "network" => data.Network,
+        "show_status" => data.ShowStatus,
+        _ => null,
+    };
 
     public static Dictionary<string, OverlayItemConfig> DefaultPrefs =>
         All.ToDictionary(def => def.Id, def => new OverlayItemConfig(def.DefaultEnabled, def.DefaultPosition));
@@ -240,6 +257,76 @@ public class CardOverlayService
     public event Action? Changed;
     public bool IsLoaded => _initialized;
     public string Preset => _document.Preset;
+    public OverlayStyle? Style => _document.Style;
+    public bool AdvancedAvailable => !_manifestUnavailable && ManifestRevision >= 25;
+    public bool SupportsImages { get; private set; }
+    public IReadOnlyList<OverlayLibraryImage> Images { get; private set; } = [];
+    public event Action? ImagesInvalidated;
+    private readonly Dictionary<string, Task<byte[]?>> _images = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _imageReads = new(4, 4);
+    private CancellationTokenSource _imageOwner = new();
+
+    // Images and their editor belong to the account/profile, not to one request
+    // generation: reconnect catch-up retires requests without changing the owner.
+    public bool IsCurrentImageOwner(ApiIdentityContext owner) => _settingsApi.IsCurrentOverlayImageOwner(owner);
+    public ApiIdentityContext CaptureImageOwner() => _settingsApi.CaptureOverlayImageOwner();
+
+    public Task<byte[]?> GetImageAsync(string reference)
+    {
+        if (!SupportsImages || !SiloApiClient.IsOverlayImageRef(reference) || _imageIdentity is not { } owner
+            || !_settingsApi.IsCurrentOverlayImageOwner(owner)) return Task.FromResult<byte[]?>(null);
+        lock (_images)
+        {
+            if (_images.TryGetValue(reference, out var pending)) return pending;
+            if (_images.Count >= 64)
+            {
+                var retired = _images.FirstOrDefault(pair => pair.Value.IsCompleted).Key;
+                // Every slot is still reading. Wait for one to settle instead of
+                // answering null, which would leave this badge plain for good.
+                if (retired is null) return RetryImageAsync(Task.WhenAny(_images.Values), reference);
+                _images.Remove(retired);
+            }
+            return _images[reference] = ReadImageAsync(reference, owner, _imageOwner.Token);
+        }
+    }
+
+    private async Task<byte[]?> RetryImageAsync(Task settled, string reference)
+    {
+        await settled;
+        return await GetImageAsync(reference);
+    }
+
+    private async Task<byte[]?> ReadImageAsync(string reference, ApiIdentityContext owner, CancellationToken ct)
+    {
+        // Leave GetImageAsync's lock first, so a failed read finds its own cache entry.
+        await Task.Yield();
+        try
+        {
+            await _imageReads.WaitAsync(ct);
+            try
+            {
+                // Capture request authority when the read starts; only the owning
+                // identity has to have survived the wait.
+                var context = _settingsApi.CaptureContext();
+                if (!_settingsApi.IsCurrentOverlayImageOwner(owner)) throw new OperationCanceledException("The selected profile changed.", ct);
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                deadline.CancelAfter(TimeSpan.FromSeconds(10));
+                return await _settingsApi.GetOverlayImageAsync(reference, context, deadline.Token);
+            }
+            finally { _imageReads.Release(); }
+        }
+        // Content that fails validation is the server's answer; a missing image
+        // already returned null. Both stay cached.
+        catch (InvalidDataException) { return null; }
+        catch
+        {
+            // Timeouts, transport and server errors can recover, so a later mount
+            // must retry. A cancelled owner has already cleared the cache, and any
+            // entry under this reference then belongs to its successor.
+            lock (_images) if (!ct.IsCancellationRequested) _images.Remove(reference);
+            return null;
+        }
+    }
     public Dictionary<string, OverlayItemConfig>? GetPrefs() => _enabled && ProfileBadgesEnabled ? _document.Items : null;
 
     public CardOverlayPrefs GetDocument() => _document with
@@ -250,6 +337,7 @@ public class CardOverlayService
     public int ManifestRevision { get; private set; }
     private bool _manifestUnavailable;
     private ApiRequestContext? _manifestContext;
+    private ApiIdentityContext? _imageIdentity;
 
     public OverlayPosition DisplayPosition(OverlayPosition position) => _manifestUnavailable ? position : PositionForRevision(position, ManifestRevision);
 
@@ -296,6 +384,9 @@ public class CardOverlayService
     {
         if (_initialized) return;
         var context = _settingsApi.CaptureContext();
+        // Captured after the request context, so a context that is still current
+        // at publication proves this identity never changed either.
+        var owner = _settingsApi.CaptureOverlayImageOwner();
         var generation = Volatile.Read(ref _loadGeneration);
         await _initLock.WaitAsync(ct);
         try
@@ -305,7 +396,14 @@ public class CardOverlayService
             var enabled = true;
             var manifestRevision = 0;
             var manifestUnavailable = false;
-            try { manifestRevision = (await _settingsApi.GetContractCapabilitiesAsync(context, ct)).Revision; }
+            var supportsImages = false;
+            IReadOnlyList<OverlayLibraryImage> images = [];
+            try
+            {
+                var capabilities = await _settingsApi.GetContractCapabilitiesAsync(context, ct);
+                manifestRevision = capabilities.Revision;
+                supportsImages = manifestRevision >= 25 && capabilities.SupportsOverlayImages;
+            }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { manifestUnavailable = true; }
             var document = BuildDefaultDocument();
@@ -313,6 +411,8 @@ public class CardOverlayService
             {
                 var config = await _settingsApi.GetOverlayConfigAsync(ct);
                 enabled = config.Enabled;
+                if (supportsImages) images = (config.Images ?? []).Where(image => SiloApiClient.IsOverlayImageRef(image.Ref)
+                    && image.Width is > 0 and <= 600 && image.Height is > 0 and <= 300).Take(256).ToArray();
                 if (!string.IsNullOrWhiteSpace(config.Defaults))
                     document = ParsePrefs(config.Defaults!) ?? document;
             }
@@ -354,9 +454,12 @@ public class CardOverlayService
             catch { }
             ct.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _loadGeneration) || !_settingsApi.IsCurrentContext(context)) return;
+            SupportsImages = supportsImages;
+            Images = images;
             ManifestRevision = manifestRevision;
             _manifestUnavailable = manifestUnavailable;
             _manifestContext = manifestUnavailable ? null : context;
+            _imageIdentity = owner;
             _enabled = enabled;
             _document = document;
             ProfileBadgesEnabled = profileEnabled;
@@ -375,9 +478,17 @@ public class CardOverlayService
     public void Invalidate()
     {
         Interlocked.Increment(ref _loadGeneration);
+        _imageOwner.Cancel();
+        _imageOwner.Dispose();
+        _imageOwner = new();
+        lock (_images) _images.Clear();
+        SupportsImages = false;
+        Images = [];
+        ImagesInvalidated?.Invoke();
         _initialized = false;
         _manifestUnavailable = false;
         _manifestContext = null;
+        _imageIdentity = null;
         ManifestRevision = 0;
         _enabled = true;
         _document = BuildDefaultDocument();
@@ -390,6 +501,7 @@ public class CardOverlayService
     public async Task SaveAsync(CardOverlayPrefs prefs, CancellationToken ct = default)
     {
         var context = _settingsApi.CaptureContext();
+        var owner = _settingsApi.CaptureOverlayImageOwner();
         var generation = Volatile.Read(ref _loadGeneration);
         // Finish any preference reload before replacing its document, so its
         // general preferences and manifest are not left at invalidation defaults.
@@ -415,15 +527,31 @@ public class CardOverlayService
                 ManifestRevision = manifestRevision;
                 _manifestUnavailable = false;
                 _manifestContext = context;
+                _imageIdentity = owner;
+                SupportsImages = manifestRevision >= 25 && capabilities.SupportsOverlayImages;
             }
             var normalized = NormalizeDocument(prefs);
             foreach (var definition in OverlayRegistry.All)
             {
                 // An unavailable manifest can expose a badge the server cannot
-                // write. Do not report success after dropping its enablement.
+                // write. Do not report success after dropping any of its edits.
                 if (manifestRevision < IntroducedInRevision(definition.Id) &&
-                    normalized.Items[definition.Id].Enabled != _document.Items[definition.Id].Enabled)
+                    !SameItem(normalized.Items[definition.Id], _document.Items[definition.Id], manifestRevision))
                     throw new InvalidOperationException($"The server manifest does not support changing {definition.Label}. Reload card overlay settings before saving.");
+                // Images need revision 25. Below it the serializer keeps the stored
+                // ones, so an image edit is reported the same way.
+                if (manifestRevision < 25 && !SameImages(normalized.Items[definition.Id], _document.Items[definition.Id]))
+                    throw new InvalidOperationException($"The server manifest does not support changing {definition.Label} images. Reload card overlay settings before saving.");
+            }
+            if (manifestRevision < 25)
+            {
+                // Likewise the look and the plate/band presets: the stored values
+                // would be written back and the save would still claim success.
+                var unsupported = (normalized.Style ?? new()) != (_document.Style ?? new()) ? "the badge look"
+                    : normalized.Preset is "plate" or "band" && normalized.Preset != _document.Preset ? $"to the {normalized.Preset} preset"
+                    : null;
+                if (unsupported is not null)
+                    throw new InvalidOperationException($"The server manifest does not support changing {unsupported}. Reload card overlay settings before saving.");
             }
             var json = SerializeForRevision(normalized, manifestRevision);
             RequireCurrentLoad();
@@ -502,7 +630,16 @@ public class CardOverlayService
                     else if (icon.ValueKind == JsonValueKind.False) showIcon = false;
                 }
 
-                result[def.Id] = new OverlayItemConfig(enabled, position, accentColor, showIcon);
+                result[def.Id] = new OverlayItemConfig(enabled, position, accentColor, showIcon)
+                {
+                    Image = entry.TryGetProperty("image", out var image) && image.ValueKind == JsonValueKind.String ? image.GetString() : null,
+                    // A repeated name is enumerated once per occurrence. As with
+                    // TryGetProperty, the last one wins.
+                    ValueImages = entry.TryGetProperty("valueImages", out var values) && values.ValueKind == JsonValueKind.Object
+                        ? values.EnumerateObject().GroupBy(pair => pair.Name, StringComparer.Ordinal).Select(group => group.Last())
+                            .Where(pair => pair.Value.ValueKind == JsonValueKind.String).Take(256)
+                            .ToDictionary(pair => pair.Name, pair => pair.Value.GetString()!, StringComparer.Ordinal) : null,
+                };
             }
 
             var preset = root.TryGetProperty("preset", out var presetElement) && presetElement.ValueKind == JsonValueKind.String
@@ -518,7 +655,7 @@ public class CardOverlayService
                 }
             }
 
-            return NormalizeDocument(new CardOverlayPrefs(version, preset, order, result) { OriginalDocument = root.Clone() });
+            return NormalizeDocument(new CardOverlayPrefs(version, preset, order, result) { OriginalDocument = root.Clone(), Style = root.TryGetProperty("style", out var style) ? OverlayStyle.Parse(style) : null });
         }
         catch
         {
@@ -567,7 +704,7 @@ public class CardOverlayService
             };
         }
         var order = prefs.Order.Distinct(StringComparer.Ordinal).ToArray();
-        return new CardOverlayPrefs(Math.Max(2, prefs.Version), preset, order, items) { OriginalDocument = prefs.OriginalDocument };
+        return new CardOverlayPrefs(Math.Max(2, prefs.Version), preset, order, items) { OriginalDocument = prefs.OriginalDocument, Style = prefs.Style };
     }
 
     private static string SerializePrefs(CardOverlayPrefs prefs)
@@ -575,7 +712,7 @@ public class CardOverlayService
 
     private static string SerializeForRevision(CardOverlayPrefs prefs, int manifestRevision)
     {
-        var root = prefs.OriginalDocument is JsonElement original ? JsonNode.Parse(original.GetRawText()) as JsonObject ?? new() : new JsonObject();
+        var root = prefs.OriginalDocument is JsonElement original ? ToNode(original) as JsonObject ?? new() : new JsonObject();
         var items = root["items"] as JsonObject ?? new JsonObject();
         foreach (var def in OverlayRegistry.All)
         {
@@ -590,8 +727,23 @@ public class CardOverlayService
             else item["accentColor"] = config.AccentColor;
             if (config.ShowIcon is null) item.Remove("showIcon");
             else item["showIcon"] = config.ShowIcon;
+            if (manifestRevision >= 25)
+            {
+                if (config.Image is not null) item["image"] = config.Image;
+                else if (item["image"] is JsonValue imageValue && imageValue.TryGetValue<string>(out _)) item.Remove("image");
+                if (config.ValueImages is not null)
+                {
+                    var values = item["valueImages"] as JsonObject ?? new JsonObject();
+                    foreach (var key in values.Select(pair => pair.Key).Take(256).ToArray())
+                        if (values[key] is JsonValue value && value.TryGetValue<string>(out _) && !config.ValueImages.ContainsKey(key)) values.Remove(key);
+                    foreach (var pair in config.ValueImages) values[pair.Key] = pair.Value;
+                    item["valueImages"] = values;
+                }
+            }
             items[def.Id] = item;
         }
+        if (manifestRevision >= 25 && prefs.Style is not null)
+            prefs.Style.WriteTo(root);
         root["version"] = prefs.Version;
         // Preserve stored newer fields, but do not introduce rev-25 presets to
         // servers that cannot accept them.
@@ -601,6 +753,40 @@ public class CardOverlayService
             manifestRevision >= IntroducedInRevision(id) || items.ContainsKey(id)));
         if (root["items"] is not JsonObject) root["items"] = items;
         return root.ToJsonString();
+    }
+
+    // JsonObject rejects the repeated names a stored document may carry, which
+    // would fail every save. They collapse the way the parser read them: the
+    // last one wins.
+    private static JsonNode? ToNode(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+            return new JsonArray(element.EnumerateArray().Select(ToNode).ToArray());
+        if (element.ValueKind != JsonValueKind.Object) return JsonValue.Create(element);
+        var node = new JsonObject();
+        foreach (var property in element.EnumerateObject()) node[property.Name] = ToNode(property.Value);
+        return node;
+    }
+
+    // Positions are compared as the manifest would store them: drafts carry the
+    // display mapping, the loaded document the stored one.
+    private static bool SameItem(OverlayItemConfig draft, OverlayItemConfig stored, int manifestRevision)
+    {
+        if (draft.Enabled != stored.Enabled || draft.AccentColor != stored.AccentColor || draft.ShowIcon != stored.ShowIcon
+            || PositionForRevision(draft.Position, manifestRevision) != PositionForRevision(stored.Position, manifestRevision)) return false;
+        return SameImages(draft, stored);
+    }
+
+    private static bool SameImages(OverlayItemConfig draft, OverlayItemConfig stored)
+    {
+        if (draft.Image != stored.Image) return false;
+        var draftImages = draft.ValueImages;
+        var storedImages = stored.ValueImages;
+        if ((draftImages?.Count ?? 0) != (storedImages?.Count ?? 0)) return false;
+        if (draftImages is null || storedImages is null || ReferenceEquals(draftImages, storedImages)) return true;
+        foreach (var pair in draftImages)
+            if (!storedImages.TryGetValue(pair.Key, out var reference) || reference != pair.Value) return false;
+        return true;
     }
 
     private static bool IsHexColor(string? value) =>

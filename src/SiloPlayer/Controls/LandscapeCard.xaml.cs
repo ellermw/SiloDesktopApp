@@ -381,6 +381,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         // cover them; they do not reserve a permanent empty strip.
         var bottom = hasPartialProgress ? 16 : 8;
         OverlayBottomLeft.Margin = OverlayBottomRight.Margin = new Thickness(8, 8, 8, bottom);
+        _badges?.UpdateGeometry();
         if (!hasPartialProgress)
         {
             ProgressContainer.Visibility = Visibility.Collapsed;

@@ -16,9 +16,18 @@ public partial class CollectionEditorViewModel
         IsPreviewing = false;
     }
 
+    /// <summary>Drops the shown titles; with no complete rule a preview would list the whole catalog.</summary>
+    public void ClearPreview()
+    {
+        CancelPreview();
+        PreviewItems.Clear(); PreviewTotal = 0; HasPreview = false; PreviewError = null;
+    }
+
     public async Task RefreshPreviewAsync()
     {
         CancelPreview();
+        // Sends nothing: an empty rule set matches every title.
+        if (SmartNeedsRule) { ClearPreview(); return; }
         var generation = _previewGeneration;
         var editorGeneration = _editorLoadGeneration;
         var context = _catalogApi.CaptureContext();

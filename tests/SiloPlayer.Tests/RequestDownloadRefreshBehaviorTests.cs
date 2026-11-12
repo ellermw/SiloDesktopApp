@@ -91,13 +91,51 @@ public sealed class RequestDownloadRefreshBehaviorTests
         Assert.Same(row, Assert.Single(vm.MyRequests));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DownloadRefreshCannotRepublishRetiredRowsDuringAContextReload(bool changeProfile)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://requests-poll.invalid"); client.SetProfile("profile-a");
+        var vm = new RequestsViewModel(new RequestsApi(client));
+        await vm.LoadCommand.ExecuteAsync(null);
+        wire.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var polling = vm.RefreshDownloadsAsync(CancellationToken.None);
+        Assert.Equal(2, wire.MineReads);
+
+        if (changeProfile) client.SetProfile("profile-b");
+        else client.InvalidateAccessContext();
+        wire.StatusPending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        vm.InvalidateCache();
+        var reloading = vm.RefreshAsync();
+        try
+        {
+            Assert.Empty(vm.MyRequests);
+            var version = vm.DataVersion;
+            wire.Pending.SetResult(new(HttpStatusCode.OK) { Content = new StringContent("{\"items\":[{\"id\":\"retired-profile-row\",\"download\":{\"percent\":50}}]}") });
+            await polling;
+            Assert.Empty(vm.MyRequests);
+            Assert.Equal(version, vm.DataVersion);
+        }
+        finally
+        {
+            wire.Pending.TrySetResult(new(HttpStatusCode.OK) { Content = new StringContent("{\"items\":[]}") });
+            wire.StatusPending.TrySetResult(new(HttpStatusCode.ServiceUnavailable));
+            await Task.WhenAll(polling, reloading);
+        }
+        Assert.Empty(vm.MyRequests);
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         public int MineReads; public bool Fail, Finished;
-        public TaskCompletionSource<HttpResponseMessage>? Pending;
+        public TaskCompletionSource<HttpResponseMessage>? Pending, StatusPending;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/status") && StatusPending != null) return StatusPending.Task;
             var json = path.EndsWith("/status") ? "{\"requests_enabled\":true}" : "{\"items\":[]}";
             if (path.EndsWith("/mine"))
             {

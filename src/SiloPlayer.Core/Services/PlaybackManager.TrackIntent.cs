@@ -200,7 +200,10 @@ public partial class PlaybackManager
     private bool NeedsExplicitSubtitleOff()
     {
         lock (_trackIntentGate) return _hasViewerSubtitle && _viewerSubtitle == null &&
-            _subtitleRevision > _subtitleSentRevision && _currentPlanV3?.SelectedTracks.Subtitle != null;
+            _subtitleRevision > _subtitleSentRevision &&
+            (_currentPlanV3?.SelectedTracks.Subtitle != null ||
+             !string.IsNullOrWhiteSpace(CurrentSession?.SelectedSubtitleTrackId) ||
+             CurrentSession?.SelectedSubtitleTrackIndex is >= 0);
     }
     private long ApplyLocalSubtitleIntent(PlaybackSelectedTracksV3 selected, string operation)
     {

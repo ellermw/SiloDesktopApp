@@ -14,71 +14,8 @@ namespace SiloPlayer.Views;
 
 public sealed partial class CollectionsPage
 {
-    private int? _selectedServerLibrary;
-    private void BuildServerCollectionRows()
-    {
-        ServerCollectionsRows.Children.Clear();
-        ServerCollectionsHeaderActions.Children.Clear();
-        ServerCollectionsSection.Visibility = ViewModel.IsLoadingServerCollections || ViewModel.ServerLibraries.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (ViewModel.ServerLibraries.Count == 0) return;
-        var selected = ViewModel.ServerLibraries.Count == 1 ? ViewModel.ServerLibraries[0] : ViewModel.ServerLibraries.FirstOrDefault(library => library.LibraryId == _selectedServerLibrary);
-        if (selected == null) _selectedServerLibrary = null;
-        if (ViewModel.ServerLibraries.Count > 1)
-        {
-            var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            void Pill(int? id, string name)
-            {
-                var active = id == selected?.LibraryId;
-                var button = new Button { Content = name, Height = 32, MinHeight = 0, Padding = new Thickness(12, 0, 12, 0), FontSize = 13,
-                    Background = (Brush)Application.Current.Resources[active ? "PrimaryTextBrush" : "SurfaceBrush"], Foreground = (Brush)Application.Current.Resources[active ? "AppBackgroundBrush" : "SecondaryTextBrush"] };
-                RoundedBadge.SetRadius(button, 999);
-                AutomationProperties.SetName(button, name); button.Click += async (_, _) => { _selectedServerLibrary = id; BuildServerCollectionRows(); if (id.HasValue) await ViewModel.LoadServerLibraryAsync(id.Value); }; choices.Children.Add(button);
-            }
-            Pill(null, "All"); foreach (var library in ViewModel.ServerLibraries) Pill(library.LibraryId, library.LibraryName);
-            ServerCollectionsRows.Children.Add(new ScrollViewer { Content = choices, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        }
-        if (selected != null)
-        {
-            var seeAll = new Button { Content = $"See all {selected.TotalCount}", Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Right };
-            AutomationProperties.SetName(seeAll, $"See all {selected.TotalCount} {selected.LibraryName} collections"); seeAll.Click += (_, _) => NavigateToLibraryCollections(selected); ServerCollectionsHeaderActions.Children.Add(seeAll);
-        }
-        var cards = ViewModel.GetServerCollectionCards(selected?.LibraryId).Select(card => (FrameworkElement)BuildServerCollectionCard(card.Library, card.Collection)).ToList();
-        ServerCollectionsRows.Children.Add(BuildPosterBoard(cards));
-        foreach (var library in selected == null ? ViewModel.ServerLibraries.ToArray() : new[] { selected })
-        {
-            if (ViewModel.IsServerLibraryLoading(library.LibraryId))
-            {
-                var progress = new TextBlock { Text = $"Loading {library.LibraryName} collections…", Margin = new Thickness(0, 12, 0, 0) };
-                AutomationProperties.SetLiveSetting(progress, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
-                ServerCollectionsRows.Children.Add(progress);
-            }
-            if (ViewModel.ServerLibraryError(library.LibraryId) is { } error)
-            {
-                var message = new TextBlock { Text = error, TextWrapping = TextWrapping.Wrap };
-                AutomationProperties.SetLiveSetting(message, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
-                ServerCollectionsRows.Children.Add(message);
-                AddLoadButton(library, "Retry " + library.LibraryName);
-            }
-        }
-        if (selected == null && ViewModel.NextServerLibrary is { } next) AddLoadButton(next, "Load more server collections");
-        else if (selected != null && selected.TotalCount > selected.Collections.Count && !ViewModel.HasServerLibraryRest(selected.LibraryId) && ViewModel.ServerLibraryError(selected.LibraryId) == null)
-            AddLoadButton(selected, "Load all " + selected.LibraryName + " collections");
-        void AddLoadButton(ServerCollectionsLibrary library, string label)
-        {
-            var loading = ViewModel.IsServerLibraryLoading(library.LibraryId);
-            var more = new Button { Content = loading ? "Loading…" : label, IsEnabled = !loading, Margin = new Thickness(0, 12, 0, 0) };
-            AutomationProperties.SetName(more, label);
-            more.Click += async (_, _) =>
-            {
-                await ViewModel.LoadServerLibraryAsync(library.LibraryId);
-                // Rebuild replaces the clicked button. Keep keyboard focus in the
-                // expanded region so activating Load more does not lose its place.
-                var firstButton = DescendantButtons(ServerCollectionsRows).LastOrDefault();
-                firstButton?.Focus(FocusState.Programmatic);
-            };
-            ServerCollectionsRows.Children.Add(more);
-        }
-    }
+    /// <summary>The server's cards live in the one wall, so a change to them rebuilds the wall.</summary>
+    private void BuildServerCollectionRows() => BuildWall();
     private static IEnumerable<Button> DescendantButtons(DependencyObject root)
     {
         if (root is Button button) yield return button;

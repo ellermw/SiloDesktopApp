@@ -33,6 +33,27 @@ public sealed class UpdateProgressWindow : Window
     private readonly UpdateSpeedMeter meter=new(TimeSpan.FromSeconds(3));
     private readonly Stopwatch clock=Stopwatch.StartNew();
     private TaskCompletionSource<bool>? answer;
+    private bool presentationEnabled;
+
+    /// <summary>The authenticated client has atomically exchanged the two windows; now follow the owner.</summary>
+    public void StartTracking() { presentationEnabled=true; Track(); }
+
+    /// <summary>Swap visibility in one native transaction without activating either panel.</summary>
+    public void TransferTo(long trustedWindow)
+    {
+        var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var target=(IntPtr)trustedWindow;
+        if(!GetWindowRect(self,out var bounds))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var batch=BeginDeferWindowPos(2);
+        if(batch==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        // The helper is still hidden and not tracking. Give it the exact painted preparation bounds.
+        var visibility=AppWindow.IsVisible ? 0x0040u : 0x0080u;
+        batch=DeferWindowPos(batch,target,self,bounds.Left,bounds.Top,bounds.Right-bounds.Left,bounds.Bottom-bounds.Top,0x0210|visibility); // NOACTIVATE|NOOWNERZORDER
+        if(batch!=IntPtr.Zero)batch=DeferWindowPos(batch,self,IntPtr.Zero,0,0,0,0,0x0297); // HIDEWINDOW|NOMOVE|NOSIZE|NOZORDER|NOACTIVATE|NOOWNERZORDER
+        if(batch==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        presentationEnabled=false;
+        if(!EndDeferWindowPos(batch)){presentationEnabled=true;throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());}
+    }
 
     public void Apply(UpdateHostMessage message)
     {
@@ -46,7 +67,7 @@ public sealed class UpdateProgressWindow : Window
     // Counts and sizes cover only what is downloaded: changed files, or one complete package.
     private void ApplyDownload(UpdateHostMessage message)
     {
-        Status.Text=UpdateProgressPresentation.DownloadingText;
+        Status.Text=message.Total>0 || message.Completed>0 ? UpdateProgressPresentation.DownloadingText : "Preparing…";
         SetProgress(message.Completed,message.Total);
         files.Text=UpdateProgressPresentation.Files(message.Files,message.FileCount);
         currentFile.Text=message.FileTotal>0 ? UpdateProgressPresentation.Size(message.FileBytes,message.FileTotal) : "—";
@@ -119,8 +140,11 @@ public sealed class UpdateProgressWindow : Window
         layoutDirty=true;Track();
     }
 
-    public UpdateProgressWindow(bool restart,long owner)
+    public UpdateProgressWindow(bool restart,long owner) : this(restart,owner,false) { }
+
+    public UpdateProgressWindow(bool restart,long owner,bool initiallyHidden)
     {
+        presentationEnabled=!initiallyHidden;
         this.owner=(IntPtr)owner;
         if(this.owner!=IntPtr.Zero && GetWindowThreadProcessId(this.owner,out var ownerPid)!=0)ownerProcess=ownerPid;
         // Kept as the window title: tools and the startup smoke test identify the updater by it. The panel
@@ -130,8 +154,9 @@ public sealed class UpdateProgressWindow : Window
         {
             // The client owns Assets; this assembly lives in its Updater subfolder.
             // Resolve from the loaded helper, not its caller's working directory.
-            AppWindow.SetIcon(Path.GetFullPath(Path.Combine(
-                Path.GetDirectoryName(typeof(UpdateProgressWindow).Assembly.Location)!, "..", "Assets", "app.ico")));
+            var assemblyDirectory=Path.GetDirectoryName(typeof(UpdateProgressWindow).Assembly.Location)!;
+            var icon=Path.Combine(assemblyDirectory,"Assets","app.ico");
+            AppWindow.SetIcon(File.Exists(icon) ? icon : Path.GetFullPath(Path.Combine(assemblyDirectory,"..","Assets","app.ico")));
         }
         catch(Exception ex) { Console.Error.WriteLine($"Updater window icon unavailable: {ex.GetType().Name}"); }
         var background=ColorHelper.FromArgb(255,24,27,32);
@@ -159,7 +184,7 @@ public sealed class UpdateProgressWindow : Window
         Grid.SetRow(note,4);Grid.SetColumnSpan(note,2);details.Children.Add(note);
         panel.Children.Add(details);
 
-        Status=new TextBlock{Text="Preparing your update…",FontSize=14,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold,TextWrapping=TextWrapping.Wrap,Foreground=white};
+        Status=new TextBlock{Text="Preparing…",FontSize=14,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold,TextWrapping=TextWrapping.Wrap,Foreground=white};
         panel.Children.Add(Status);
         explanation=new TextBlock{FontSize=12,TextWrapping=TextWrapping.Wrap,Foreground=muted,Visibility=Visibility.Collapsed};
         panel.Children.Add(explanation);
@@ -202,10 +227,10 @@ public sealed class UpdateProgressWindow : Window
         if(AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
         {
             presenter.IsResizable=false;presenter.IsMaximizable=false;presenter.IsMinimizable=false;
-            // A frameless panel, so its window edge is its visible edge and it docks exactly. Topmost
-            // only while it is shown, which is only while Silo is in front, so it never covers other apps.
+            // Track keeps this ordinary window above Silo without native ownership: Silo's
+            // HWND must be free to close while this panel finishes the staged update.
             presenter.SetBorderAndTitleBar(false,false);
-            presenter.IsAlwaysOnTop=true;
+            presenter.IsAlwaysOnTop=false;
         }
         // Windows 11 draws the outline itself, following the rounded corners, like its own flyouts.
         // Older Windows rejects the requests, so the panel then draws its own 1px outline (see UpdateOutline).
@@ -306,10 +331,23 @@ public sealed class UpdateProgressWindow : Window
             var foreground=GetForegroundWindow();
             bool? silo=foreground==IntPtr.Zero ? null
                 : GetWindowThreadProcessId(foreground,out var pid)!=0 && (pid==ownerProcess || pid==(uint)Environment.ProcessId);
-            if(!ManagesVisibility)return;
+            if(!ManagesVisibility || !presentationEnabled)return;
             var show=UpdatePanelPlacement.ShouldShow(ownerAlive,minimized,playback,silo,AppWindow.IsVisible);
             if(show && !AppWindow.IsVisible)AppWindow.Show(false);
             else if(!show && AppWindow.IsVisible)AppWindow.Hide();
+            if(show && ownerAlive && foreground!=self)
+            {
+                // Insert immediately above Silo, leaving every other window above Silo
+                // above us too. Unlike GWL_HWNDPARENT this cannot tie our lifetime to Silo.
+                var above=GetWindow(owner,3); // GW_HWNDPREV
+                if(above!=self)
+                {
+                    // Inserting after a topmost HWND would make us topmost as well.
+                    if(above!=IntPtr.Zero && TryGetStyle(above,-20,out var exStyle) && (exStyle & 8)!=0)
+                        above=IntPtr.Zero; // HWND_TOP keeps this non-topmost window in its band.
+                    SetWindowPos(self,above,0,0,0,0,0x0213); // NOMOVE|NOSIZE|NOACTIVATE|NOOWNERZORDER
+                }
+            }
         }
         catch(Exception ex){Console.Error.WriteLine($"Update panel placement failed: {ex.GetType().Name}");}
     }
@@ -395,6 +433,10 @@ public sealed class UpdateProgressWindow : Window
     [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW",SetLastError=true)]private static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
     [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW",SetLastError=true)]private static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);
     [DllImport("user32.dll")]private static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
+    [DllImport("user32.dll")]private static extern IntPtr GetWindow(IntPtr hwnd,uint command);
+    [DllImport("user32.dll",SetLastError=true)]private static extern IntPtr BeginDeferWindowPos(int windows);
+    [DllImport("user32.dll",SetLastError=true)]private static extern IntPtr DeferWindowPos(IntPtr batch,IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
+    [DllImport("user32.dll",SetLastError=true)]private static extern bool EndDeferWindowPos(IntPtr batch);
     [DllImport("user32.dll")]private static extern bool GetClientRect(IntPtr hwnd,out Rect rect);
     [DllImport("user32.dll")]private static extern bool GetWindowRect(IntPtr hwnd,out Rect rect);
     [DllImport("user32.dll")]private static extern bool ClientToScreen(IntPtr hwnd,ref Point point);

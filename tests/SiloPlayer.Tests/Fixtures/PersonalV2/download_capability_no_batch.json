@@ -1,0 +1,20 @@
+{
+  "revision": "old-server-revision",
+  "state": "available",
+  "allowed": true,
+  "bounded_creation": true,
+  "enabled": true,
+  "download_allowed": true,
+  "proxy_delivery": false,
+  "ordered_status": true,
+  "quality_presets": [
+    "original"
+  ],
+  "transcode_enabled": false,
+  "transcode_user_allowed": false,
+  "season_download": true,
+  "series_monitoring": false,
+  "monitoring_modes": [],
+  "bulk_quality": false,
+  "batch_version": false
+}
