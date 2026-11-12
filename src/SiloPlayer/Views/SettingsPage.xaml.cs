@@ -5226,7 +5226,7 @@ _webhookPlexAuthCts?.Cancel();
                     _webhookEvents = events;
                     BuildWebhookEvents();
                 }
-                catch (Exception ex) { WebhookFailure(owner, ex); }
+                catch (Exception ex) { WebhookFailure(owner, ex, silentTransient: true); }
                 finally { if (CurrentWebhook(owner)) _webhookRefreshBusy = false; }
             };
         }

@@ -52,10 +52,94 @@ internal static class HouseholdContractsNativeFixture
             if (only is null or "mutations") await Mutations(parent, wire, auth);
             if (only is null or "refusal") await Refusal(parent, wire);
             if (only is null or "metadata") await Metadata(parent, wire, auth);
+            if (only is null or "reconnect-webhook") await ReconnectWebhook(parent, client);
+            if (only is null or "reconnect-editor") await ReconnectEditor(parent, client);
+            if (only is null or "curator-reset") await CuratorReset(parent, wire, auth);
+            if (only is null or "reset-copy") await ResetCopy(parent);
         }
         finally { wire.Gate?.TrySetResult(); slot.SetValue(null, previous); }
     }
     private static void Primary(AuthService auth) => auth.SelectProfile("primary", profile: new() { Id = "primary", Name = "Primary", IsPrimary = true });
+    private static async Task ReconnectWebhook(StackPanel parent, SiloApiClient client)
+    {
+        using var plexLifetime = new CancellationTokenSource();
+        var page = new SettingsPage(); parent.Children.Add(page); await Task.Delay(80);
+        try
+        {
+            page.SelectSettingsSection("WebhookSync");
+            await Until(() => ((TextBox)page.FindName("WebhookUrlBox")).Text.Contains("synthetic-secret"));
+            var draft = (TextBox)page.FindName("WebhookManualServerName"); draft.Text = "Unfinished receiver draft";
+            page.GetType().GetField("_webhookPlexAuthCts", Private)!.SetValue(page, plexLifetime);
+            Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "Reconnect did not advance read context.");
+            await Task.Delay(100);
+            Check(((FrameworkElement)page.FindName("WebhookSyncPanel")).Visibility == Visibility.Visible, "Reconnect ejected household manager.");
+            Check(draft.Text == "Unfinished receiver draft", "Reconnect discarded receiver draft.");
+            Check(!plexLifetime.IsCancellationRequested, "Reconnect canceled same-owner Plex setup.");
+            await Call(page, "LoadWebhookConnectionsAsync");
+            Check(draft.Text == "Unfinished receiver draft", "Same-owner refresh discarded receiver draft.");
+        }
+        finally { parent.Children.Remove(page); await Task.Delay(100); }
+        Program.Log("PASS reconnect preserves active Webhook Sync, draft, setup lifetime and fresh reads.");
+    }
+    private static async Task ReconnectEditor(StackPanel parent, SiloApiClient client)
+    {
+        var dialog = new EditMetadataDialog(new() { ContentId = "movie", Type = "movie", Title = "Original title" }) { XamlRoot = parent.XamlRoot };
+        var showing = dialog.ShowAsync();
+        try
+        {
+            var reset = Field<Button>(dialog, "_reset"); await Until(() => reset.IsEnabled);
+            var title = Field<Dictionary<string, TextBox>>(dialog, "_textInputs")["title"]; title.Text = "Unsaved title";
+            Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "Reconnect did not advance editor read context.");
+            await Until(() => dialog.IsPrimaryButtonEnabled && reset.IsEnabled);
+            Check(title.Text == "Unsaved title", "Reconnect replaced metadata draft.");
+            Check(!Field<CancellationTokenSource>(dialog, "_lifetime").IsCancellationRequested, "Reconnect permanently retired editor.");
+        }
+        finally { dialog.Hide(); await showing; await Task.Delay(80); }
+        Program.Log("PASS reconnect preserves metadata draft and revalidates Reset without disabling Save.");
+    }
+    private static async Task CuratorReset(StackPanel parent, Wire wire, AuthService auth)
+    {
+        auth.SetCurrentUser(new() { Id = "fixture", Role = "user", Permissions = ["metadata_curation"] });
+        wire.CapabilityForbidden = true;
+        try
+        {
+            foreach (var unsupported in new[] { false, true })
+            {
+                wire.ResetUnsupported = unsupported; wire.MetadataOrder.Clear();
+                var dialog = new EditMetadataDialog(new() { ContentId = "season", Type = "season" }) { XamlRoot = parent.XamlRoot };
+                var showing = dialog.ShowAsync();
+                try
+                {
+                    var reset = Field<Button>(dialog, "_reset"); await Until(() => reset.IsEnabled);
+                    Click(reset); var confirmation = (StackPanel)((Flyout)reset.Flyout).Content; await Until(() => confirmation.IsLoaded);
+                    Click(Descendants(confirmation).OfType<Button>().Single(button => Equals(button.Content, "Reset")));
+                    await Until(() => wire.MetadataOrder.Count > 0 && !Field<bool>(dialog, "_pending"));
+                    Check(wire.MetadataOrder.SequenceEqual(new[] { "POST:reset" }), "Curator reset used an unlock or legacy fallback.");
+                    Check(dialog.HasSaved == !unsupported, "Curator reset reported wrong acceptance state.");
+                }
+                finally { dialog.Hide(); await showing; await Task.Delay(80); }
+            }
+        }
+        finally { wire.CapabilityForbidden = wire.ResetUnsupported = false; auth.SetCurrentUser(new() { Id = "fixture", Role = "admin" }); }
+        Program.Log("PASS curator reset uses atomic-only admission and no mutation fallback on unsupported server.");
+    }
+    private static async Task ResetCopy(StackPanel parent)
+    {
+        foreach (var type in new[] { "season", "episode" })
+        {
+            var dialog = new EditMetadataDialog(new() { ContentId = "child", Type = type }) { XamlRoot = parent.XamlRoot };
+            var showing = dialog.ShowAsync();
+            try
+            {
+                await Until(() => Field<Button>(dialog, "_reset").IsEnabled);
+                var copy = Field<TextBlock>(dialog, "_resetExplanation").Text;
+                Check(!copy.Contains("including artwork locks", StringComparison.OrdinalIgnoreCase), "Child confirmation promises artwork reset.");
+                Check(type != "season" || copy.Contains("series", StringComparison.OrdinalIgnoreCase) && copy.Contains("stays locked", StringComparison.OrdinalIgnoreCase), "Season confirmation omits series-owned artwork protection.");
+            }
+            finally { dialog.Hide(); await showing; await Task.Delay(80); }
+        }
+        Program.Log("PASS season and episode reset confirmations match row locks and series-owned artwork.");
+    }
     private static async Task EarlyRoute(StackPanel parent)
     {
         var page = new SettingsPage(); page.SelectSettingsSection("WebhookSync");
@@ -238,7 +322,7 @@ internal static class HouseholdContractsNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int WebhookRequests;
-        internal bool SupportsReset = true, Held, HoldWrites, ProviderFails;
+        internal bool SupportsReset = true, Held, HoldWrites, ProviderFails, CapabilityForbidden, ResetUnsupported;
         internal string? Refusal, HoldPath;
         internal TaskCompletionSource? Gate;
         internal List<string> MetadataOrder = [];
@@ -246,6 +330,8 @@ internal static class HouseholdContractsNativeFixture
         {
             Check(request.RequestUri!.Host == "profiles-metadata.fixture.invalid", "External request blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (path == "/api/v2/admin/catalog/capabilities" && CapabilityForbidden)
+                return Json(new { detail = "Only acting admins can read capabilities" }, HttpStatusCode.Forbidden);
             if (HoldPath != null && path.EndsWith(HoldPath) && (!HoldWrites || request.Method != HttpMethod.Get)) { Held = true; await Gate!.Task; }
             if (path.Contains("/webhook-sync/"))
             {
@@ -261,6 +347,7 @@ internal static class HouseholdContractsNativeFixture
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 MetadataOrder.Add(request.Method == HttpMethod.Patch ? "PATCH:" + string.Join(",", body.RootElement.GetProperty("locked_fields").EnumerateArray().Select(v => v.GetInt32())) : "POST:" + body.RootElement.GetProperty("mode").GetString());
+                if (ResetUnsupported && path.EndsWith("/refresh-metadata")) return Json(new { detail = "Unsupported mode" }, HttpStatusCode.UnprocessableEntity);
                 if (ProviderFails) return Json(new { detail = "Synthetic provider unavailable" }, HttpStatusCode.BadGateway);
                 return Json(new { id = "job", state = "queued" });
             }

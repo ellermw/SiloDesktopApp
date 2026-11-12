@@ -11,9 +11,17 @@ public sealed partial class SettingsPage
     private int _webhookGeneration;
     private int _webhookDetailGeneration;
     private bool _webhookActive;
+    private ApiIdentityContext _webhookIdentity;
+    private long _webhookAccessGeneration;
     private CancellationTokenSource _webhookLifetime = new();
     private ContentDialog? _webhookEventDialog;
-    private sealed record WebhookOwner(ApiRequestContext Context, int Generation, CancellationToken Token);
+    private sealed class WebhookOwner(ApiRequestContext context, ApiIdentityContext identity, int generation, CancellationToken token)
+    {
+        public ApiRequestContext Context { get; set; } = context;
+        public ApiIdentityContext Identity { get; } = identity;
+        public int Generation { get; } = generation;
+        public CancellationToken Token { get; } = token;
+    }
     private bool WebhookAvailable => _webhookAuth != null && AuthorizationPolicy.CanManageHousehold(_webhookAuth);
 
     private void InitializeWebhookOwnership()
@@ -23,6 +31,8 @@ public sealed partial class SettingsPage
         Loaded += (_, _) =>
         {
             _webhookActive = true;
+            _webhookIdentity = _webhookClient.CaptureIdentityContext();
+            _webhookAccessGeneration = _webhookClient.CaptureContext().AccessGeneration;
             _webhookAuth.ProfileChanged += WebhookAuthorityChanged;
             _webhookAuth.UserChanged += WebhookAuthorityChanged;
             _webhookAuth.LoggedOut += WebhookAuthorityChanged;
@@ -44,9 +54,23 @@ public sealed partial class SettingsPage
     private void WebhookAuthorityChanged()
     {
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(WebhookAuthorityChanged); return; }
+        var identity = _webhookClient.CaptureIdentityContext();
+        var current = _webhookClient.CaptureContext();
+        var sameIdentity = identity == _webhookIdentity;
+        // Transport catch-up invalidates reads only. Keep an unchanged
+        // manager's draft and Plex setup instead of ejecting them.
+        if (_webhookActive && sameIdentity && WebhookAvailable && current.AccessGeneration == _webhookAccessGeneration) return;
+        var reloadSection = sameIdentity && WebhookAvailable && ActiveSettingsSection == "WebhookSync";
         RetireWebhookOwnership();
+        _webhookIdentity = identity;
+        _webhookAccessGeneration = current.AccessGeneration;
         BuildSettingsOverview();
-        if (ActiveSettingsSection == "WebhookSync") ShowSettingsOverview();
+        if (reloadSection)
+        {
+            WebhookSyncPanel.Visibility = Visibility.Visible;
+            _ = LoadWebhookConnectionsAsync();
+        }
+        else if (ActiveSettingsSection == "WebhookSync") ShowSettingsOverview();
     }
 
     private void RetireWebhookOwnership()
@@ -78,17 +102,36 @@ public sealed partial class SettingsPage
     }
 
     private WebhookOwner? CaptureWebhookOwner()
-        => _webhookActive && WebhookAvailable ? new(_webhookClient.CaptureContext(), _webhookGeneration, _webhookLifetime.Token) : null;
+    {
+        if (!_webhookActive || !WebhookAvailable) return null;
+        var identity = _webhookIdentity;
+        var context = _webhookClient.CaptureContext();
+        return _webhookClient.IsCurrentIdentityContext(identity) && context.AccessGeneration == _webhookAccessGeneration
+            ? new(context, identity, _webhookGeneration, _webhookLifetime.Token) : null;
+    }
 
     private bool CurrentWebhook(WebhookOwner owner)
-        => _webhookActive && WebhookAvailable && owner.Generation == _webhookGeneration &&
-           !owner.Token.IsCancellationRequested && _webhookClient.IsCurrentContext(owner.Context);
+    {
+        if (!_webhookActive || !WebhookAvailable || owner.Generation != _webhookGeneration || owner.Token.IsCancellationRequested) return false;
+        var current = _webhookClient.CaptureContext();
+        if (!_webhookClient.IsCurrentIdentityContext(owner.Identity) || current.AccessGeneration != owner.Context.AccessGeneration) return false;
+        // Future operations in a same-identity setup use fresh read authority;
+        // an already dispatched API request still checks its original context.
+        owner.Context = current;
+        return true;
+    }
 
-    private void WebhookFailure(WebhookOwner owner, Exception error)
+    private void WebhookFailure(WebhookOwner owner, Exception error, bool silentTransient = false)
     {
         if (!CurrentWebhook(owner) || error is OperationCanceledException) return;
         var guidance = AuthorizationPolicy.HouseholdManagementGuidance(error);
-        if (error is ApiException { StatusCode: 403 }) RetireWebhookOwnership();
+        if (error is ApiException { StatusCode: 403 })
+        {
+            RetireWebhookOwnership();
+            WebhookSyncPanel.Visibility = Visibility.Visible;
+            NoConnectionsText.Text = guidance; NoConnectionsText.Visibility = Visibility.Visible;
+        }
+        else if (silentTransient) return;
         ViewModel.ErrorMessage = guidance;
     }
 }
