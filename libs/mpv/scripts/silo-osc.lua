@@ -4382,14 +4382,15 @@ render_next_episode_countdown = function()
         return
     end
 
-    update_osd_dimensions()
+    compute_layout()
     local W = state.osd_width
     local H = state.osd_height
     local sc = ui_scale()
     local card_w = math.floor(360 * sc)
     local card_h = math.floor(126 * sc)
     local card_x = W - math.floor(24 * sc) - card_w
-    local card_y = H - math.floor(96 * sc) - card_h
+    -- Same anchor as the Next Episode pill: clear the whole seek pointer target.
+    local card_y = state.layout.seek_bar.y - math.floor(12 * sc) - card_h
     local pad = math.floor(16 * sc)
     local gap = math.floor(8 * sc)
     local button_h = math.floor(32 * sc)

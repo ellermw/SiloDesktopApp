@@ -8,6 +8,8 @@ These are the existing stamps after that merge; this change alters none. The ver
 
 The end-of-episode floating Next Episode pill now anchors 12 scaled pixels above the entire timeline seek target. Rendering and pointer hit testing use the same freshly computed layout, including after a resize. Its right-side placement, late-episode visibility threshold and advance action are preserved.
 
+The credits countdown card uses the same anchor, so the card and its Play Now and Cancel buttons no longer cover the seek target. This follow-up and its runtime regression were added after the verification below and are not covered by it.
+
 Verification: **376 OSC tests passed**, zero failures/skips, including real bundled-libmpv execution of the production Lua, rendered ASS and pointer routing across 1920×1080, 960×550, 640×360, 3840×2160, 1280×720 and a return to 1920×1080. The new regression failed before the fix when a timeline gesture did not enter seek handling; final checks require a gap above the complete seek target and successful timeline/button-bottom-edge clicks. Receipts and the preserved failed run are in `D:/SiloPlayer/.codex-tmp/next-episode-nov11/`. All checks hold `SiloOct18Build` and verify the engine pin.
 
 This Lua-only layout fix does not claim a full unit/native suite, physical pointer/display certification, new app publish or installer run. The installed player and real settings/accounts remain untouched. The Beta pipeline owns integration, packaging and publication.
