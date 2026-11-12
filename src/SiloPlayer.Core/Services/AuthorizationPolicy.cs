@@ -12,6 +12,21 @@ public static class AuthorizationPolicy
     public const string MetadataCuration = "metadata_curation";
     public const string MarkerEdit = "marker_edit";
 
+    // The server additionally checks a primary PIN grant and the narrower
+    // profile-less admin exception. Local availability never bypasses either.
+    public static bool CanManageHousehold(AuthService auth)
+        => CanManageHousehold(auth.CurrentUser, auth.SelectedProfile, !string.IsNullOrWhiteSpace(auth.SelectedProfileId));
+
+    public static bool CanManageHousehold(UserInfo? user, Profile? profile, bool hasSelectedProfile)
+        => user != null && (hasSelectedProfile ? profile?.IsPrimary == true : IsActingAdmin(user, profile, false));
+
+    public static string HouseholdManagementGuidance(Exception error)
+        => error is Api.ApiException { ErrorCode: "profile_verification_required" }
+            ? "Switch to the primary profile and verify its PIN, then reopen Webhook Sync."
+            : error is Api.ApiException { StatusCode: 403 }
+                ? "Webhook Sync requires the household's primary profile. Switch to it and verify its PIN if requested, then reopen Webhook Sync."
+                : error.Message;
+
     public static bool IsActingAdmin(AuthService auth)
         => IsActingAdmin(
             auth.CurrentUser,

@@ -162,8 +162,9 @@ internal static class ProfilesMetadataNativeFixture
             inputs["air_date"].Text = "2026-01-02";
             if (type == "episode") Field<Dictionary<string, NumberBox>>(dialog, "_numberInputs")["runtime"].Value = 42;
             var reset = Field<Button>(dialog, "_reset"); Check(reset.Visibility == Visibility.Visible, "Child Reset hidden.");
+            await Until(() => reset.IsEnabled);
             var resetText = Descendants((DependencyObject)((Flyout)reset.Flyout).Content).OfType<TextBlock>().Select(t => t.Text);
-            Check(resetText.Any(t => t.Contains(type == "season" ? "Artwork you picked stays locked." : "runtime and air date")), "Child reset explanation wrong.");
+            Check(resetText.Any(t => t.Contains("legacy unlock and quick refresh") && t.Contains("other locks are preserved")), "Child legacy reset explanation wrong.");
             await Until(() => Field<TextBlock>(dialog, "_lockedCount").Text == $"{(type == "episode" ? 3 : 2) + preservedLocks.Length} locked");
             await MediaParityNativeFixture.CaptureAsync(dialog, $"profiles-metadata-{type}.png");
             Click(Descendants(dialog).OfType<Button>().Single(b => b.Name == "PrimaryButton"));
@@ -177,7 +178,7 @@ internal static class ProfilesMetadataNativeFixture
         try
         {
             await Until(() => Descendants(resetting).OfType<Button>().Any(b => b.Name == "PrimaryButton"));
-            var reset = Field<Button>(resetting, "_reset"); Click(reset);
+            var reset = Field<Button>(resetting, "_reset"); await Until(() => reset.IsEnabled); Click(reset);
             var confirmation = (StackPanel)((Flyout)reset.Flyout).Content;
             await Until(() => confirmation.IsLoaded);
             Click(Descendants(confirmation).OfType<Button>().Single(b => Equals(b.Content, "Reset")));

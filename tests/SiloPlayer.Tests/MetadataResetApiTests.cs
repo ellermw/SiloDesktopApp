@@ -7,58 +7,92 @@ namespace SiloPlayer.Tests;
 public sealed class MetadataResetApiTests
 {
     [Fact]
-    public async Task UnlocksBeforeRefreshingWithoutReplacingOtherMetadata()
+    public async Task GenericRefreshResetUsesCapabilityGatedAtomicOperation()
     {
         using var wire = new Wire(); var client = Client(wire);
-        var receipt = await new MediaMaintenanceApi(client).ResetToProviderAsync("movie/1");
-        Assert.Equal("queued", receipt.Status);
-        Assert.Equal(new[] { "PATCH", "POST" }, wire.Methods);
-        Assert.Equal(new[] { "/api/v2/admin/items/movie%2F1/metadata", "/api/v2/admin/items/movie%2F1/refresh-metadata" }, wire.Paths);
-        using var unlock = JsonDocument.Parse(wire.Bodies[0]);
-        Assert.Single(unlock.RootElement.EnumerateObject());
-        Assert.Empty(unlock.RootElement.GetProperty("locked_fields").EnumerateArray());
-        using var refresh = JsonDocument.Parse(wire.Bodies[1]);
-        Assert.Equal("quick", refresh.RootElement.GetProperty("mode").GetString());
+        await new MediaMaintenanceApi(client).RefreshMetadataAsync("movie", "reset");
+        Assert.Equal("reset", Assert.Single(wire.Modes));
+        Assert.DoesNotContain(wire.Requests, r => r.StartsWith("PATCH"));
     }
 
     [Fact]
-    public async Task ScopedResetPreservesLocksOutsideItsScopeBeforeRefreshing()
+    public async Task MissingCapabilityEndpointUsesExplicitLegacySemantics()
     {
-        using var wire = new Wire(); var client = Client(wire);
-        var receipt = await new MediaMaintenanceApi(client).ResetToProviderAsync("child", new[] { 2, 10, 99 });
-        Assert.Equal("queued", receipt.Status);
-        Assert.Equal(new[] { "PATCH", "POST" }, wire.Methods);
-        using var unlock = JsonDocument.Parse(wire.Bodies[0]);
-        Assert.Single(unlock.RootElement.EnumerateObject());
-        Assert.Equal(new[] { 2, 10, 99 }, unlock.RootElement.GetProperty("locked_fields").EnumerateArray().Select(v => v.GetInt32()));
-        using var refresh = JsonDocument.Parse(wire.Bodies[1]);
-        Assert.Equal("quick", refresh.RootElement.GetProperty("mode").GetString());
+        using var wire = new Wire { CapabilityFailure = HttpStatusCode.NotFound }; var client = Client(wire);
+        await new MediaMaintenanceApi(client).ResetToProviderAsync("movie");
+        Assert.Equal("quick", Assert.Single(wire.Modes));
+        Assert.Contains(wire.Requests, r => r.StartsWith("PATCH"));
     }
 
     [Fact]
-    public async Task FailedUnlockCannotQueueARefresh()
+    public async Task SupportedResetIsOneAtomicWriteAndClearsTargetLocksAndProviderEmptyValues()
     {
-        using var wire = new Wire { RefuseUnlock = true }; var client = Client(wire);
+        using var wire = new Wire(); var client = Client(wire);
+        var receipt = await new MediaMaintenanceApi(client).ResetToProviderAsync("movie/1", new[] { 2, 10, 99 });
+        Assert.Equal("queued", receipt.Status);
+        Assert.Equal(new[] { "GET /api/v2/admin/catalog/capabilities", "POST /api/v2/admin/items/movie%2F1/refresh-metadata" }, wire.Requests);
+        Assert.Equal("reset", wire.Modes.Single());
+        Assert.Empty(wire.TargetLocks); Assert.Null(wire.ProviderEmptyValue);
+        Assert.Equal(new[] { 0, 10 }, wire.DescendantLocks);
+    }
+
+    [Fact]
+    public async Task UnsupportedServerUsesOnlyLegacyUnlockAndQuickRefresh()
+    {
+        using var wire = new Wire { SupportsReset = false }; var client = Client(wire);
+        await new MediaMaintenanceApi(client).ResetToProviderAsync("child", new[] { 2, 10, 99 });
+        Assert.Equal(new[] { "GET /api/v2/admin/catalog/capabilities", "PATCH /api/v2/admin/items/child/metadata", "POST /api/v2/admin/items/child/refresh-metadata" }, wire.Requests);
+        Assert.Equal("quick", wire.Modes.Single()); Assert.Equal(new[] { 2, 10, 99 }, wire.TargetLocks);
+        Assert.Equal("Stale value", wire.ProviderEmptyValue);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task CapabilityFailureNeverUnlocksOrRefreshes(HttpStatusCode status)
+    {
+        using var wire = new Wire { CapabilityFailure = status }; var client = Client(wire);
         await Assert.ThrowsAsync<ApiException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("movie"));
-        Assert.Equal(new[] { "PATCH" }, wire.Methods);
+        Assert.Equal(new[] { "GET /api/v2/admin/catalog/capabilities" }, wire.Requests);
+        Assert.Equal(new[] { 0, 10 }, wire.TargetLocks);
     }
 
     [Fact]
-    public async Task ReplacedProfileCannotFinishResetUnderANewIdentity()
+    public async Task ProviderFailureLeavesExistingLocksAndValuesUntouched()
     {
-        using var wire = new Wire(); var client = Client(wire);
-        wire.Unlocked = () => client.SetProfile("replacement", "fixture-new-proof");
+        using var wire = new Wire { ProviderFails = true }; var client = Client(wire);
+        await Assert.ThrowsAsync<ApiException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("movie"));
+        Assert.DoesNotContain(wire.Requests, r => r.StartsWith("PATCH"));
+        Assert.Equal(new[] { 0, 10 }, wire.TargetLocks); Assert.Equal("Stale value", wire.ProviderEmptyValue);
+    }
+
+    [Theory]
+    [InlineData("capability")]
+    [InlineData("unlock")]
+    [InlineData("refresh")]
+    public async Task RetiredAuthorityCannotContinueOrPublishReceipt(string boundary)
+    {
+        using var wire = new Wire { SupportsReset = boundary != "unlock" }; var client = Client(wire);
+        wire.Completed = stage => { if (stage == boundary) client.SetProfile("replacement", "fixture-new-proof"); };
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("movie"));
-        Assert.Equal(new[] { "PATCH" }, wire.Methods);
+        Assert.Equal(boundary == "capability" ? 1 : boundary == "unlock" ? 2 : 2, wire.Requests.Count);
     }
 
     [Fact]
-    public async Task CancellationBeforeResetSendsNoWrite()
+    public async Task CancellationAfterCapabilityReadCannotDispatchWrite()
     {
-        using var wire = new Wire(); var client = Client(wire);
-        using var stop = new CancellationTokenSource(); stop.Cancel();
+        using var wire = new Wire(); var client = Client(wire); using var stop = new CancellationTokenSource();
+        wire.Completed = stage => { if (stage == "capability") stop.Cancel(); };
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("movie", stop.Token));
-        Assert.Empty(wire.Methods);
+        Assert.Single(wire.Requests);
+    }
+
+    [Fact]
+    public async Task CancellationBeforeResetSendsNothing()
+    {
+        using var wire = new Wire(); var client = Client(wire); using var stop = new CancellationTokenSource(); stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("movie", stop.Token));
+        Assert.Empty(wire.Requests);
     }
 
     private static SiloApiClient Client(Wire wire)
@@ -68,16 +102,32 @@ public sealed class MetadataResetApiTests
     }
     private sealed class Wire : HttpMessageHandler
     {
-        internal bool RefuseUnlock;
-        internal Action? Unlocked;
-        internal List<string> Methods = [], Paths = [], Bodies = [];
+        internal bool SupportsReset = true, ProviderFails;
+        internal HttpStatusCode? CapabilityFailure;
+        internal Action<string>? Completed;
+        internal List<string> Requests = [], Modes = [];
+        internal int[] TargetLocks = [0, 10], DescendantLocks = [0, 10];
+        internal string? ProviderEmptyValue = "Stale value";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            Methods.Add(request.Method.Method); Paths.Add(request.RequestUri!.AbsolutePath); Bodies.Add(await request.Content!.ReadAsStringAsync(ct));
-            var unlock = request.Method == HttpMethod.Patch;
-            if (unlock && RefuseUnlock) return new(HttpStatusCode.Forbidden) { Content = new StringContent("""{"type":"https://fixture.invalid/forbidden","detail":"Fixture refused"}""") };
-            if (unlock) Unlocked?.Invoke();
-            return new(unlock ? HttpStatusCode.OK : HttpStatusCode.Accepted) { Content = new StringContent(unlock ? "{}" : """{"id":"fixture-job","state":"queued"}""") };
+            Requests.Add(request.Method + " " + request.RequestUri!.AbsolutePath);
+            if (request.Method == HttpMethod.Get)
+            {
+                Completed?.Invoke("capability");
+                return Json(CapabilityFailure ?? HttpStatusCode.OK, CapabilityFailure.HasValue ? """{"detail":"Capability refused"}""" : JsonSerializer.Serialize(new { item_metadata_reset = SupportsReset }));
+            }
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            if (request.Method == HttpMethod.Patch)
+            {
+                TargetLocks = body.RootElement.GetProperty("locked_fields").EnumerateArray().Select(v => v.GetInt32()).ToArray();
+                Completed?.Invoke("unlock"); return Json(HttpStatusCode.OK, "{}");
+            }
+            var mode = body.RootElement.GetProperty("mode").GetString()!; Modes.Add(mode);
+            if (ProviderFails) return Json(HttpStatusCode.BadGateway, """{"detail":"Provider unavailable"}""");
+            if (mode == "reset") { TargetLocks = []; ProviderEmptyValue = null; }
+            Completed?.Invoke("refresh");
+            return Json(HttpStatusCode.Accepted, """{"id":"fixture-job","state":"queued"}""");
         }
+        private static HttpResponseMessage Json(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body) };
     }
 }
