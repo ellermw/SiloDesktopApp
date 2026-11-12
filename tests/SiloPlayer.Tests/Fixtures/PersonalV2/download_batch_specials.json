@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "id": "dl-special-1",
+      "content_id": "series-1",
+      "episode_id": "special-1",
+      "batch_id": "specials-batch",
+      "media_file_id": "201",
+      "file_size": 2000000000,
+      "bytes_sent": 0,
+      "kind": "episode",
+      "status": "preparing",
+      "quality": "original",
+      "effective_quality": "original",
+      "delivery_format": "original",
+      "target_bitrate_kbps": 0,
+      "revision": 1,
+      "created_at": "2026-11-10T12:00:00Z"
+    }
+  ],
+  "batch_id": "specials-batch",
+  "skipped": [],
+  "page": {
+    "has_more": false
+  }
+}

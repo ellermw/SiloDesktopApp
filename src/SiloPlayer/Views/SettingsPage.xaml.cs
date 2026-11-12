@@ -551,6 +551,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         "Profiles" => ProfilesTab,
         "Account" or "Password" => AccountPasswordTab,
         "Sessions" or "SignedInSessions" => SessionsTab,
+        "YourData" => YourDataTab,
         _ => null,
     };
 
@@ -565,6 +566,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         ViewModel.DeactivateTitleArt();
         ViewModel.DeactivateInheritedPreferences();
         DeactivateAccountSignIn();
+        DeactivateYourData();
         ++_overlayLoadGeneration;
         _requestSettingGeneration++;
         _accountPassword.Deactivate();
@@ -1023,6 +1025,7 @@ _webhookPlexAuthCts?.Cancel();
                 ("NotificationsSettings", "Notifications", "New-episode alerts by email, Discord, push, or webhook.", "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
                 ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
                 ("Account", "Account", "Manage the shared account password.", "\uE72E", "account password credential sign in security"),
+                ("YourData", "Your Data", "Export and import this profile's data.", "\uEBC3", "export import profile data backup transfer history ratings favorites"),
                 ("Sessions", "Signed-in sessions", "See active sign-ins and sign out a browser or app.", "\uE7F4", "sessions active client device last seen sign out revoke security"),
             ]),
         };
@@ -1157,6 +1160,7 @@ _webhookPlexAuthCts?.Cancel();
     {
         DeactivateDevices();
         DeactivateLoginSessions();
+        DeactivateYourData();
         ViewModel.DeactivateTitleArt();
         DeactivateAccountSignIn();
         ++_overlayLoadGeneration;
@@ -1246,6 +1250,7 @@ _webhookPlexAuthCts?.Cancel();
             (ConnectAppsTab, "connect apps silo jellyfin compatible infuse swiftfin jellycon findroid sign in login server address username password pin"),
             (ProfilesTab, "profiles profile names pin access rules primary household library create delete"),
             (AccountPasswordTab, "account password credential sign in security"),
+            (YourDataTab, "your data export import profile backup transfer history ratings favorites collections preferences"),
             (SessionsTab, "signed-in sessions active client device last seen sign out revoke security"),
         };
 
@@ -1273,7 +1278,7 @@ _webhookPlexAuthCts?.Cancel();
         ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
-        AccountNavGroup.Visibility = new[] { SessionsTab, AccountPasswordTab, ProfilesTab, NotificationsSettingsTab }
+        AccountNavGroup.Visibility = new[] { SessionsTab, AccountPasswordTab, ProfilesTab, NotificationsSettingsTab, YourDataTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1291,7 +1296,7 @@ _webhookPlexAuthCts?.Cancel();
             return;
 
         if (tag == "CardOverlays") { SelectSettingsSection("Interface"); return; }
-        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, SessionsTab };
+        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, YourDataTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -1324,6 +1329,8 @@ _webhookPlexAuthCts?.Cancel();
         if (tag != "Devices") DeactivateDevices();
         ConnectAppsPanel.Visibility = tag == "ConnectApps" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
+        YourDataPanel.Visibility = tag == "YourData" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag != "YourData") DeactivateYourData();
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "Sessions") DeactivateLoginSessions();
         if (tag != "WebhookSync") _webhookRefreshTimer?.Stop();
@@ -1342,7 +1349,11 @@ _webhookPlexAuthCts?.Cancel();
             StartHouseholdSessionsPolling();
         }
 
-        if (tag == "Sessions")
+        if (tag == "YourData")
+        {
+            _ = LoadYourDataAsync();
+        }
+        else if (tag == "Sessions")
         {
             _ = LoadSessionsAsync();
         }
@@ -1885,6 +1896,8 @@ _webhookPlexAuthCts?.Cancel();
     {
         var generation = ++_overlayLoadGeneration;
         var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
+        // The draft belongs to the profile; reconnect catch-up retires only the request context.
+        var draftOwner = client.CaptureIdentityContext();
         try
         {
             await _cardOverlayService.EnsureLoadedAsync();
@@ -1895,6 +1908,7 @@ _webhookPlexAuthCts?.Cancel();
             if (generation != _overlayLoadGeneration || !client.IsCurrentContext(context)) return;
             _overlayShownRatings = shown;
             _cardOverlayDraft = _cardOverlayService.GetDocument();
+            _cardOverlayDraftOwner = draftOwner;
             CardOverlaysDisabledBanner.Visibility = _cardOverlayService.Enabled
                 ? Visibility.Collapsed
                 : Visibility.Visible;
@@ -2066,7 +2080,7 @@ _webhookPlexAuthCts?.Cancel();
         grid.Children.Add(label);
 
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        var iconVisible = initial.ShowIcon ?? (_cardOverlayDraft?.Preset is "vibrant" or "pill");
+        var iconVisible = initial.ShowIcon ?? (_cardOverlayDraft?.Preset is "vibrant" or "pill" or "plate");
         var iconButton = new Button
         {
             Width = 30,
@@ -2115,7 +2129,8 @@ _webhookPlexAuthCts?.Cancel();
             var selectedPosition = (position.SelectedItem as ComboBoxItem)?.Tag is OverlayPosition pos ? pos : initial.Position;
             iconButton.IsEnabled = enabled.IsOn;
             accentButton.IsEnabled = enabled.IsOn;
-            UpdateCardOverlayItem(definition.Id, new OverlayItemConfig(enabled.IsOn, selectedPosition, selectedAccent, iconVisible));
+            var current = _cardOverlayDraft?.Items.GetValueOrDefault(definition.Id) ?? initial;
+            UpdateCardOverlayItem(definition.Id, current with { Enabled = enabled.IsOn, Position = selectedPosition, AccentColor = selectedAccent, ShowIcon = iconVisible });
         }
         iconButton.Click += (_, _) =>
         {
@@ -2138,6 +2153,8 @@ _webhookPlexAuthCts?.Cancel();
         enabled.Toggled += (_, _) => Apply();
         controls.Children.Add(iconButton);
         controls.Children.Add(accentButton);
+        if (_cardOverlayService.AdvancedAvailable && _cardOverlayService.SupportsImages)
+            controls.Children.Add(BuildOverlayImagesButton(definition.Id));
         controls.Children.Add(position);
         controls.Children.Add(enabled);
         Grid.SetColumn(controls, 1);
@@ -2147,7 +2164,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void UpdateCardOverlayItem(string id, OverlayItemConfig config)
     {
-        if (_cardOverlayDraft is null) return;
+        if (_cardOverlayDraft is null || !IsCurrentCardOverlayDraft()) return;
         var items = _cardOverlayDraft.Items.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         items[id] = config;
         _cardOverlayDraft = _cardOverlayDraft with { Items = items };
@@ -2266,13 +2283,16 @@ _webhookPlexAuthCts?.Cancel();
         ("vibrant", "Vibrant", "Opaque, accent-colored badges. High contrast."),
         ("pill", "Pill", "Larger pill with more padding. Works well with icons."),
         ("square", "Square", "Blocky, high-density. Plex-inspired."),
+        ("plate", "Plate", "Large plates with rating source chips."),
+        ("band", "Edge band", "Whole marks on a shared edge scrim."),
     ];
 
     private void BuildCardOverlayPresetCards()
     {
         CardOverlayPresetHost.Children.Clear();
         if (_cardOverlayDraft is null) return;
-        foreach (var preset in CardOverlayPresets)
+        BuildAdvancedOverlayLook();
+        foreach (var preset in CardOverlayPresets.Where(preset => _cardOverlayService.AdvancedAvailable || preset.Id is not "plate" and not "band"))
         {
             var active = string.Equals(_cardOverlayDraft.Preset, preset.Id, StringComparison.Ordinal);
             var sampleConfig = new OverlayItemConfig(true, OverlayPosition.TopLeft,
@@ -2292,7 +2312,7 @@ _webhookPlexAuthCts?.Cancel();
                         new GradientStop { Color = ColorHelper.FromArgb(255, 15, 23, 42), Offset = 1 },
                     },
                 },
-                Child = global::SiloPlayer.Controls.PosterCard.BuildBadge("Sample", "resolution", sampleConfig, preset.Id),
+                Child = global::SiloPlayer.Controls.PosterCard.BuildBadge("4K", "resolution", sampleConfig, preset.Id),
             };
             content.Children.Add(preview);
             content.Children.Add(new TextBlock { Text = preset.Label, FontSize = 14, FontWeight = FontWeights.SemiBold });
@@ -2326,7 +2346,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SetCardOverlayPreset(string preset)
     {
-        if (_cardOverlayDraft is null || _cardOverlayDraft.Preset == preset) return;
+        if (_cardOverlayDraft is null || !IsCurrentCardOverlayDraft() || _cardOverlayDraft.Preset == preset) return;
         _cardOverlayDraft = _cardOverlayDraft with { Preset = preset };
         BuildCardOverlayControls();
         BuildCardOverlayPresetCards();
@@ -2337,19 +2357,22 @@ _webhookPlexAuthCts?.Cancel();
     private void ScheduleCardOverlaySave()
     {
         if (_cardOverlayDraft is null) return;
+        var owner = _cardOverlayDraftOwner ?? _cardOverlayService.CaptureImageOwner();
+        if (!_cardOverlayService.IsCurrentImageOwner(owner)) return;
         var snapshot = _cardOverlayDraft;
         var cts = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _overlaySaveCts, cts);
         previous?.Cancel();
         previous?.Dispose();
-        _ = SaveCardOverlayAfterDelayAsync(snapshot, cts);
+        _ = SaveCardOverlayAfterDelayAsync(snapshot, cts, owner);
     }
 
-    private async Task SaveCardOverlayAfterDelayAsync(CardOverlayPrefs snapshot, CancellationTokenSource ownerCts)
+    private async Task SaveCardOverlayAfterDelayAsync(CardOverlayPrefs snapshot, CancellationTokenSource ownerCts, ApiIdentityContext owner)
     {
         try
         {
             await Task.Delay(250, ownerCts.Token);
+            if (!_cardOverlayService.IsCurrentImageOwner(owner)) return;
             await _cardOverlayService.SaveAsync(snapshot, ownerCts.Token);
             if (ReferenceEquals(_overlaySaveCts, ownerCts)) ViewModel.StatusMessage = "Setting saved";
         }
@@ -2365,60 +2388,32 @@ _webhookPlexAuthCts?.Cancel();
         }
     }
 
+    private global::SiloPlayer.Controls.CardBadgeHosts? _cardPreviewHosts;
+    private ApiIdentityContext? _cardOverlayDraftOwner;
+    private bool IsCurrentCardOverlayDraft() => _cardOverlayDraftOwner is not { } owner || _cardOverlayService.IsCurrentImageOwner(owner);
     private void UpdateCardOverlayPreview()
     {
-        OverlayPreviewTopLeft.Children.Clear();
-        OverlayPreviewTopRight.Children.Clear();
-        OverlayPreviewBottomLeft.Children.Clear();
-        OverlayPreviewBottomRight.Children.Clear();
-        OverlayPreviewLeftEdge.Children.Clear();
-        OverlayPreviewRightEdge.Children.Clear();
-        if (_cardOverlayDraft is null) return;
-        var sampleValues = new Dictionary<string, string>(StringComparer.Ordinal)
+        if (_cardOverlayDraft is null || !IsCurrentCardOverlayDraft()) return;
+        _cardPreviewHosts ??= new(OverlayPreviewTopLeft, OverlayPreviewTopRight, OverlayPreviewBottomLeft, OverlayPreviewBottomRight, OverlayPreviewLeftEdge, OverlayPreviewRightEdge);
+        var data = new OverlayData
         {
-            ["resolution"] = "4K", ["hdr"] = "HDR10", ["resolution_hdr"] = "4K HDR", ["resolution_hdr_audio"] = "4K HDR Atmos",
-            ["audio"] = "Atmos", ["audio_channels"] = "7.1", ["video_codec"] = "HEVC",
-            ["container"] = "MKV", ["aspect_ratio"] = "2.39:1", ["release_type"] = "Remux",
-            ["edition"] = "Director's Cut", ["multi_audio"] = "Multi-Audio", ["multi_sub"] = "CC",
-            ["rating_imdb"] = "8.7", ["rating_tmdb"] = "8.4", ["rating_rt"] = "96%",
-            ["rating_rt_audience"] = "92%", ["content_rating"] = "TV-MA", ["year"] = "2026",
-            ["runtime"] = "1h 58m", ["original_language"] = "EN", ["studio"] = "Studio",
-            ["network"] = "Network", ["show_status"] = "Returning", ["imdb_top_250"] = "Top 250",
-            ["rt_certified_fresh"] = "Certified Fresh",
+            Resolution = "2160p", Hdr = "DV HDR10", Audio = "Atmos", AudioChannels = "7.1", VideoCodec = "H.265", Container = "MKV", AspectRatio = "2.39:1",
+            ReleaseType = "REMUX", Edition = "Director's Cut", MultiAudio = true, MultiSub = true,
+            RatingImdb = 8.7, RatingTmdb = 8.4, RatingRtCritic = 96, RatingRtAudience = 92,
+            ContentRating = _cardOverlayPreviewVariant == "movie" ? "PG-13" : "TV-MA", Year = _cardOverlayPreviewVariant == "show" ? 2024 : 2026,
+            Runtime = _cardOverlayPreviewVariant == "show" ? 47 * 60 : 118 * 60, OriginalLanguage = "en", Studio = "Studio",
+            Network = _cardOverlayPreviewVariant == "show" ? "Network" : null, ShowStatus = _cardOverlayPreviewVariant == "show" ? "Returning" : null,
         };
-        if (_cardOverlayPreviewVariant == "show")
+        if (_cardOverlayPreviewVariant == "requested") data = new OverlayData { RequestStatus = "Requested", Year = 2026 };
+        var geometry = SiloPlayer.Core.Services.CardOverlayGeometry.ForPoster(NavigationPreviewPoster.Width - 2);
+        foreach (var host in new[] { OverlayPreviewTopLeft, OverlayPreviewTopRight, OverlayPreviewBottomLeft, OverlayPreviewBottomRight, OverlayPreviewLeftEdge, OverlayPreviewRightEdge })
         {
-            sampleValues["runtime"] = "47m";
-            sampleValues["year"] = "2024";
-            sampleValues["show_status"] = "Returning";
+            host.Margin = new Thickness(geometry.EdgeInset);
+            host.MaxWidth = Math.Max(0, NavigationPreviewPoster.Width - 2 - 2 * geometry.EdgeInset);
         }
-        if (_cardOverlayPreviewVariant == "movie") { sampleValues.Remove("show_status"); sampleValues.Remove("network"); sampleValues["content_rating"] = "PG-13"; }
-        if (_cardOverlayPreviewVariant == "requested") { sampleValues.Clear(); sampleValues["request_status"] = "Requested"; sampleValues["year"] = "2026"; }
-        var counts = new Dictionary<OverlayPosition, int>();
-        var definitions = _cardOverlayDraft.Order.Concat(OverlayRegistry.All.Select(definition => definition.Id)).Distinct().Select(id => OverlayRegistry.All.FirstOrDefault(definition => definition.Id == id)).OfType<OverlayDef>();
-        foreach (var definition in definitions)
-        {
-            if (!OverlayOffered(definition.Id) || !_cardOverlayDraft.Items.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
-            if (_cardOverlayService.SuppressesStandalone(definition.Id, _cardOverlayDraft.Items)) continue;
-            if (!sampleValues.TryGetValue(definition.Id, out var value) || string.IsNullOrEmpty(value)) continue;
-            var displayPosition = _cardOverlayService.DisplayPosition(config.Position);
-            var limit = displayPosition is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3;
-            if (counts.GetValueOrDefault(displayPosition) >= limit) continue;
-            counts[displayPosition] = counts.GetValueOrDefault(displayPosition) + 1;
-            var badge = global::SiloPlayer.Controls.PosterCard.BuildBadge(value, definition.Id, config, _cardOverlayDraft.Preset);
-            var host = displayPosition switch
-            {
-                OverlayPosition.TopLeft => OverlayPreviewTopLeft,
-                OverlayPosition.TopRight => OverlayPreviewTopRight,
-                OverlayPosition.BottomLeft => OverlayPreviewBottomLeft,
-                OverlayPosition.BottomRight => OverlayPreviewBottomRight,
-                OverlayPosition.LeftEdge => OverlayPreviewLeftEdge,
-                OverlayPosition.RightEdge => OverlayPreviewRightEdge,
-                _ => OverlayPreviewTopLeft,
-            };
-            badge.MaxWidth = 76;
-            host.Children.Add(badge);
-        }
+        var scale = geometry.Scale;
+        _cardPreviewHosts.Show(global::SiloPlayer.Controls.CardBadgeHosts.ForData(data, _cardOverlayService, scale, _cardOverlayDraft)
+            .Where(badge => OverlayOffered(badge.OverlayId)).ToArray());
     }
 
     private static string OverlayDescription(string id) => id switch

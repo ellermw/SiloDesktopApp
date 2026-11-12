@@ -340,6 +340,13 @@
                                     <TextBlock Text="Plugins" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+                            <Button x:Name="YourDataTab" Click="Tab_Click" Tag="YourData"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xEBC3;" FontSize="16" />
+                                    <TextBlock Text="Your Data" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                             <Button x:Name="SessionsTab" Click="Tab_Click" Tag="Sessions"
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
@@ -475,7 +482,7 @@
                             <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold" />
 
                             <Border x:Name="NavigationPreviewPoster" Width="178" Height="267" HorizontalAlignment="Center" CornerRadius="12" Background="#30394A" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                                <Grid Margin="8">
+                                <Grid Margin="1">
                                     <StackPanel x:Name="OverlayPreviewTopLeft" HorizontalAlignment="Left" VerticalAlignment="Top" Spacing="4" />
                                     <StackPanel x:Name="OverlayPreviewTopRight" HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="4" />
                                     <StackPanel x:Name="OverlayPreviewLeftEdge" HorizontalAlignment="Left" VerticalAlignment="Center" Spacing="4" />
@@ -529,6 +536,7 @@
                                 <TextBlock Text="Preset" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock Text="A preset controls the base appearance of every badge. You can override the accent color of individual badges in the Overlays tab." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                 <controls:WrapPanel x:Name="CardOverlayPresetHost" HorizontalSpacing="8" VerticalSpacing="8" />
+                                <StackPanel x:Name="AdvancedOverlayLookHost" Spacing="12" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource SettingsGroupStyle}">
@@ -2318,6 +2326,18 @@
                     </StackPanel>
                 </Border>
 
+            </StackPanel>
+
+            <StackPanel x:Name="YourDataPanel" Spacing="24" Margin="0" Visibility="Collapsed">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Your Data" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Export this profile's own data, or import a previous export to merge it back."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+                <ProgressRing x:Name="YourDataLoadingRing" IsActive="False" HorizontalAlignment="Left" Width="24" Height="24" />
+                <StackPanel x:Name="YourDataContentHost" Spacing="16" />
             </StackPanel>
 
             <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0" Visibility="Collapsed">

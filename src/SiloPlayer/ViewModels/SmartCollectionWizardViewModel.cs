@@ -24,6 +24,9 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     private readonly AuthApi _authApi;
     private readonly AuthService _authService;
     private string? _collectionId;
+    private QueryDefinition? _storedQueryDefinition;
+    private string? _initialQueryDefinition;
+    public bool IsEditing => !string.IsNullOrWhiteSpace(_collectionId);
 
     public SmartCollectionWizardViewModel(
         CatalogApi catalogApi,
@@ -75,6 +78,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     [ObservableProperty] private string? _currentPosterUrl;
     [ObservableProperty] private bool _isReadOnly;
     [ObservableProperty] private int _previewTotal;
+    [ObservableProperty] private string? _previewScopeNote;
 
     public byte[]? PosterFileBytes { get; private set; }
     public string? PosterFileName { get; private set; }
@@ -87,6 +91,8 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         ErrorMessage = null;
         StatusMessage = null;
         _collectionId = args?.CollectionId;
+        _storedQueryDefinition = null;
+        _initialQueryDefinition = null;
 
         try
         {
@@ -135,6 +141,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
                 Title = collection.Name;
                 Description = collection.Description;
+                _storedQueryDefinition = collection.QueryDefinition;
                 RuleDefinition = QueryEditing.Clone(collection.QueryDefinition);
                 MediaScope = collection.QueryDefinition?.MediaScope ?? "";
                 MatchMode = collection.QueryDefinition?.Match ?? "all";
@@ -158,6 +165,9 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
             if (Rules.Count == 0)
                 AddRule();
+            // Capture the editor's normalized defaults separately from the stored
+            // definition so metadata-only saves can resend that definition unchanged.
+            _initialQueryDefinition = JsonSerializer.Serialize(BuildQueryDefinition());
         }
         catch (Exception ex)
         {
@@ -219,6 +229,16 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         foreach (var group in RuleDefinition.Groups) group.Rules.Remove(rule);
     }
 
+    public const string RuleNeededMessage = "Add at least one rule with a field, an operator and a value.";
+
+    /// <summary>
+    /// The rules hold no rule complete enough to filter, so previewing would match
+    /// every title. Creation requires a rule; existing metadata edits remain available.
+    /// </summary>
+    public bool NeedsRule => !QueryEditing.HasCompleteRule(RuleDefinition);
+
+    public bool NeedsRuleForSave => !IsEditing && NeedsRule;
+
     public async Task PreviewAsync(CancellationToken ct = default)
     {
         var generation = ++_previewGeneration;
@@ -226,7 +246,26 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         _previewSnapshot = null;
         PreviewHasMore = false;
         PreviewItems.Clear(); PreviewMediaItems.Clear();
+        if (!QueryEditing.HasCompleteRule(_previewQuery))
+        {
+            // Sends nothing; an empty rule set would list the whole catalog.
+            PreviewTotal = 0; IsPreviewing = false; ErrorMessage = null; _failedPreviewContinuation = false;
+            PreviewScopeNote = null;
+            return;
+        }
+        PreviewScopeNote = DescribePreviewScope(_previewQuery);
         await LoadPreviewWindowAsync(_previewQuery, reset: true, generation, ct);
+    }
+
+    // The catalog preview reads one library, while the saved collection covers every selected
+    // library. With several selected, say which one the cards and the count describe.
+    private string? DescribePreviewScope(QueryDefinition query)
+    {
+        if (query.LibraryIds.Count < 2 || query.LibraryIds[0] <= 0) return null;
+        var name = Libraries.FirstOrDefault(library => library.Id == query.LibraryIds[0])?.Name;
+        var others = query.LibraryIds.Count - 1;
+        return $"Preview and count cover {(string.IsNullOrWhiteSpace(name) ? "the first selected library" : name)} only. "
+            + $"The saved collection also includes matches from the other {(others == 1 ? "selected library" : $"{others} selected libraries")}.";
     }
 
     public Task RetryPreviewAsync(CancellationToken ct = default)
@@ -289,6 +328,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
             return;
         }
 
+        if (NeedsRuleForSave)
+        {
+            ErrorMessage = RuleNeededMessage;
+            return;
+        }
+
         IsSaving = true;
         ErrorMessage = null;
         StatusMessage = null;
@@ -324,7 +369,8 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
                     AllowedProfileIds = IsShared ? [.. AllowedProfileIds] : [],
                     IncludeInServerCollections = IncludeInServerCollections,
                     PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim(),
-                    QueryDefinition = query
+                    QueryDefinition = JsonSerializer.Serialize(query) == _initialQueryDefinition
+                        ? _storedQueryDefinition : query
                 };
                 if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
                     await _collectionsApi.UpdateCollectionAsync(_collectionId, update, PosterFileName, poster, PosterContentType, ct);
@@ -353,7 +399,9 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         query.LibraryIds = [.. SelectedLibraryIds];
         query.MediaScope = string.IsNullOrWhiteSpace(MediaScope) ? null : MediaScope;
         query.Match = MatchMode;
-        query.Groups = QueryEditing.PopulatedGroups(query);
+        // Populated from the draft, then detached: the clone's values are all JsonElements,
+        // so its blank drafts could no longer be told from stored values.
+        query.Groups = QueryEditing.Clone(new QueryDefinition { Groups = QueryEditing.PopulatedGroups(RuleDefinition) }).Groups;
         query.Sort = new QuerySort { Field = SortField, Order = SortOrder };
         query.Limit = int.TryParse(LimitText, out var limit) ? Math.Clamp(limit, 1, 500) : null;
         return query;

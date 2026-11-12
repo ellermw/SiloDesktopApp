@@ -336,6 +336,13 @@ public partial class CollectionEditorViewModel : ObservableObject
             ErrorMessage = "Collection name is required.";
             return;
         }
+        // New Smart collections need a rule. Existing collections must still allow
+        // metadata edits; any server-side update validation is reported below.
+        if (SmartNeedsRuleForSave)
+        {
+            ErrorMessage = SmartRuleNeededMessage;
+            return;
+        }
 
         IsSaving = true;
         ErrorMessage = null;
@@ -357,7 +364,11 @@ public partial class CollectionEditorViewModel : ObservableObject
 
                 if (CollectionType == "smart")
                 {
-                    request.QueryDefinition = BuildQueryDefinition();
+                    // Metadata-only edits must not sanitize the stored query, including
+                    // legacy definitions with no complete rule.
+                    request.QueryDefinition = LoadedCollection is { } loaded
+                        && JsonSerializer.Serialize(RuleDefinition) == JsonSerializer.Serialize(QueryEditing.Clone(loaded.QueryDefinition))
+                            ? loaded.QueryDefinition : BuildQueryDefinition();
                     if (_clearSmartDefaultSort && Capabilities?.CollectionDefaultSort == true &&
                         (_storedSortConfig.ContainsKey("field") || _storedSortConfig.ContainsKey("order")))
                         request.SortConfig = _storedSortConfig.Where(pair => pair.Key is not ("field" or "order")).ToDictionary(pair => pair.Key, pair => pair.Value);
@@ -572,8 +583,43 @@ public partial class CollectionEditorViewModel : ObservableObject
                 ? $"Sync {result.Status}"
                 : result.Message;
         }
-        catch (Exception ex) { if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context)) ErrorMessage = $"Sync failed: {ex.Message}"; }
+        catch (Exception ex)
+        {
+            if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context))
+            {
+                ErrorMessage = $"Sync failed: {ex.Message}";
+                // The server records a failed run (status, reason, kept members) on the collection,
+                // so read it back for the saved status instead of leaving the previous one showing.
+                await RefreshRecordedSyncStateAsync(id, generation, context);
+            }
+        }
         finally { IsSyncing = false; IsSaving = false; }
+    }
+
+    // Updates only the recorded sync state of the collection on screen. Unsaved edits stay, and a
+    // read that returns after the editor moved to another collection, load or account is dropped.
+    private async Task RefreshRecordedSyncStateAsync(string id, int generation, ApiRequestContext context)
+    {
+        try
+        {
+            var latest = await _collectionsApi.GetCollectionAsync(id);
+            if (latest == null || generation != _editorLoadGeneration || CollectionId != id
+                || !_catalogApi.IsCurrentContext(context)
+                || LoadedCollection is not { } collection || collection.Id != latest.Id) return;
+            collection.ItemCount = latest.ItemCount;
+            collection.LastSyncStatus = latest.LastSyncStatus;
+            collection.LastSyncMessage = latest.LastSyncMessage;
+            collection.LastSyncAt = latest.LastSyncAt;
+            collection.NextSyncAt = latest.NextSyncAt;
+            SourceItemCountText = latest.ItemCount.ToString("N0");
+            SourceLastNote = latest.LastSyncMessage;
+            LastSyncSummary = BuildLastSyncSummary(latest);
+            OnPropertyChanged(nameof(LoadedCollection));
+        }
+        catch
+        {
+            // The failure above is already shown; the recorded state refreshes on the next load.
+        }
     }
 
     [RelayCommand]
@@ -744,9 +790,20 @@ public partial class CollectionEditorViewModel : ObservableObject
     [RelayCommand] private Task MoveItemUpAsync(CollectionItem item) => MoveManualItemAsync(ManualItems.IndexOf(item), ManualItems.IndexOf(item) - 1);
     [RelayCommand] private Task MoveItemDownAsync(CollectionItem item) => MoveManualItemAsync(ManualItems.IndexOf(item), ManualItems.IndexOf(item) + 1);
 
+    public const string SmartRuleNeededMessage = "Add at least one rule.";
+
+    /// <summary>A Smart collection waits for a rule with a field, an operator and a value.</summary>
+    public bool SmartNeedsRule => CollectionType == "smart"
+        && !SiloPlayer.Core.Services.QueryEditing.HasCompleteRule(RuleDefinition);
+
+    public bool SmartNeedsRuleForSave => !IsEditing && SmartNeedsRule;
+
     private QueryDefinition BuildQueryDefinition()
     {
         var query = SiloPlayer.Core.Services.QueryEditing.Clone(RuleDefinition);
+        // Populated from the draft, then detached: the clone's values are all JsonElements,
+        // so its blank drafts could no longer be told from stored values.
+        query.Groups = SiloPlayer.Core.Services.QueryEditing.Clone(new QueryDefinition { Groups = SiloPlayer.Core.Services.QueryEditing.PopulatedGroups(RuleDefinition) }).Groups;
         if (query.MediaScope == "all") query.MediaScope = null;
         return query;
     }

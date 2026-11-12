@@ -587,6 +587,14 @@ public static partial class RecipeGalleryDialog
             case "seasonal_themed":
                 if (!await AddSeasonalFieldsAsync(config, host)) return;
                 break;
+            case "trending_discover":
+                // Both leaves filter_type unset; a stored value this version does not offer
+                // stays untouched until the viewer picks another.
+                AddCombo(host, "Show", [
+                    new Option("", "Both"), new Option("movie", "Movies"), new Option("series", "TV shows")],
+                    StringValue(config, "filter_type"),
+                    value => SetOptional(config, "filter_type", value));
+                break;
             case "returning_shows":
                 AddPositiveInteger(host, config, "lookback_days", "Lookback window (days)", "30",
                     "How far back a new season counts as “just arrived”.");

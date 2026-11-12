@@ -1,0 +1,44 @@
+{
+  "items": [
+    {
+      "id": "dl-ep1",
+      "content_id": "series-1",
+      "episode_id": "ep-1",
+      "batch_id": "test-batch",
+      "media_file_id": "101",
+      "file_size": 5000000000,
+      "bytes_sent": 0,
+      "kind": "episode",
+      "status": "preparing",
+      "quality": "original",
+      "effective_quality": "original",
+      "delivery_format": "original",
+      "target_bitrate_kbps": 0,
+      "revision": 1,
+      "created_at": "2026-11-10T12:00:00Z"
+    },
+    {
+      "id": "dl-ep2",
+      "content_id": "series-1",
+      "episode_id": "ep-2",
+      "batch_id": "test-batch",
+      "media_file_id": "102",
+      "file_size": 4500000000,
+      "bytes_sent": 0,
+      "kind": "episode",
+      "status": "preparing",
+      "quality": "original",
+      "effective_quality": "original",
+      "delivery_format": "original",
+      "target_bitrate_kbps": 0,
+      "revision": 1,
+      "created_at": "2026-11-10T12:00:01Z"
+    }
+  ],
+  "batch_id": "test-batch",
+  "skipped": [],
+  "page": {
+    "has_more": true,
+    "next_cursor": "cursor-page2"
+  }
+}
