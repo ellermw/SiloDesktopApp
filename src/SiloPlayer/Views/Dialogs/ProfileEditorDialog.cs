@@ -21,7 +21,7 @@ namespace SiloPlayer.Views.Dialogs;
 /// keeps profile identity, access restrictions, playback limits, and avatar
 /// operations in one save surface so desktop changes produce the same request.
 /// </summary>
-public sealed class ProfileEditorDialog
+public sealed partial class ProfileEditorDialog
 {
     private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private static readonly (string Value, string Label)[] RatingOptions =
@@ -196,11 +196,14 @@ public sealed class ProfileEditorDialog
 
     public static async Task<ProfileEditorResult> ShowWithContextAsync(XamlRoot xamlRoot, Profile? profile)
     {
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var owner = client.CaptureContext();
         var authApi = App.Services.GetRequiredService<AuthApi>();
         var catalogApi = App.Services.GetRequiredService<CatalogApi>();
         var profileTask = authApi.GetProfilesAsync();
         var libraryTask = catalogApi.GetLibrariesAsync();
         await Task.WhenAll(profileTask, libraryTask);
+        if (!client.IsCurrentContext(owner)) return new(null, "");
 
         var profileResponse = await profileTask;
         if (profile == null && !ProfileLimits.CanAdd(profileResponse.Profiles.Count, profileResponse.MaxProfiles))
@@ -447,6 +450,7 @@ public sealed class ProfileEditorDialog
         libraryToggle.BorderThickness = new Thickness(0); libraryToggle.Padding = new Thickness(0);
         libraryGroup.Children.Add(libraryToggle); libraryGroup.Children.Add(_libraryRows);
         body.Children.Add(new Border { BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12), Child = libraryGroup });
+        body.Children.Add(BuildAllowanceManagement());
         return section;
     }
 

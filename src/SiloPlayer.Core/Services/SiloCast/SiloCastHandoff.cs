@@ -97,6 +97,9 @@ public sealed class SiloCastHandoff
                 capability["protocol_versions"] is not JsonArray versions || !versions.Any(v => v?.GetValue<int>() == 2))
                 throw Failure("unsupported_server", "Update the Silo server to use profile handoff.");
             supportsCancel = capability["cancel"]?.GetValue<bool>() == true;
+            // This is one independently confirmed temporary playback handoff,
+            // not a compare-once multi-request login setup. Keep its start and
+            // every poll unbound; never reuse the desktop login setup's secret.
             var startResponse = await BootstrapAsync(http, serverUrl, "/api/v2/auth/device/start", new JsonObject
             {
                 ["device_name"] = deviceName, ["device_platform"] = "windows",

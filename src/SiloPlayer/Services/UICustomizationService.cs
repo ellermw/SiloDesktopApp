@@ -61,6 +61,10 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
         => await RefreshAsync(settingsApi.CaptureContext(), Volatile.Read(ref _generation), cancellationToken).ConfigureAwait(false);
 
+    /// <summary>Refresh only while the importing profile's captured authority is still current.</summary>
+    public Task RefreshAsync(ApiRequestContext owner, CancellationToken cancellationToken = default)
+        => RefreshAsync(owner, Volatile.Read(ref _generation), cancellationToken);
+
     private async Task RefreshAsync(ApiRequestContext context, long generation, CancellationToken cancellationToken)
     {
         var identity = settingsApi.CaptureIdentityContext();
@@ -289,7 +293,10 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         PrimaryMenuItem.Builtin("calendar"),
     ];
 
-    public int GetPosterColumnCount(double contentWidth) => CardPresentation.PosterSize switch
+    public int GetPosterColumnCount(double contentWidth) => PosterColumnCount(CardPresentation.PosterSize, contentWidth);
+
+    /// <summary>Column count of a poster grid for a poster size ("compact", "standard", "large") and width.</summary>
+    public static int PosterColumnCount(string? posterSize, double contentWidth) => posterSize switch
     {
         "compact" => contentWidth >= 1280 ? 10 : contentWidth >= 1024 ? 8 : contentWidth >= 768 ? 6 : contentWidth >= 640 ? 5 : 3,
         "large" => contentWidth >= 1280 ? 6 : contentWidth >= 1024 ? 5 : contentWidth >= 768 ? 4 : contentWidth >= 640 ? 3 : 2,

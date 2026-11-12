@@ -34,5 +34,6 @@ public interface IWindowedAppUpdateInstaller
 {
     /// <param name="confirmRestart">After the download the window asks Restart now or Later before administrator approval.</param>
     Task<WindowedUpdateOutcome> PrepareWithDownloadAsync(AppRelease release, string packageDirectory, bool restart, bool confirmRestart, long ownerWindow,
-        Func<Action<IncrementalUpdateProgress>, CancellationToken, Task<WindowedUpdateDownload>> download, CancellationToken ct);
+        Func<Action<IncrementalUpdateProgress>, CancellationToken, Task<WindowedUpdateDownload>> download, CancellationToken ct,
+        Action<long>? presentTrustedHelper = null);
 }

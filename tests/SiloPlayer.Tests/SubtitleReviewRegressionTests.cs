@@ -463,6 +463,353 @@ public sealed class SubtitleReviewRegressionTests
         Assert.Contains("_activeSubtitleServerIndex = track.Index;", legacy);
     }
 
+    [Fact]
+    public void PublishedSubtitleInventoryIsRetriedWithBackoffAndNeverReportedAsAPlaybackFailure()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the failure route here: a
+        // published plan that mpv never applied is retried after a delay, and
+        // a spent budget leaves the transport mpv is playing alone.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        Assert.Contains("private const int SubtitleInventoryApplicationRetries = 2;", ready);
+        var recover = Between(ready, "void RecoverUnappliedSubtitleInventory()", "// Serialize even in-place merges against inventory publication.");
+        Assert.Contains("!entered || token.IsCancellationRequested || _pendingSubtitleInventoryApplication is not { } unapplied", recover);
+        var budget = recover.IndexOf("if (++unapplied.Failures > SubtitleInventoryApplicationRetries) return;", StringComparison.Ordinal);
+        var delay = recover.IndexOf("Task.Delay(SubtitleInventoryApplicationRetryDelay * unapplied.Failures, token)", StringComparison.Ordinal);
+        var defer = recover.IndexOf("DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);", StringComparison.Ordinal);
+        Assert.True(budget >= 0 && delay > budget && defer > delay);
+        // The retry must never replay immediately from the failing attempt.
+        Assert.DoesNotContain("DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);", recover);
+        // An announcement cannot tear down, report or terminate healthy playback.
+        foreach (var escalation in new[] { "RecoverInterruptedStreamAsync", "RunStreamRecoveryAsync", "RecoverPlaybackFailureAsync", "EnterPlaybackTerminalState" })
+            Assert.DoesNotContain(escalation, ready);
+        var failure = ready[ready.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
+        Assert.Contains("RecoverUnappliedSubtitleInventory();", failure);
+    }
+
+    [Fact]
+    public void UnpublishedSubtitleInventoryRefreshIsRetriedWithBackoffInsteadOfDroppingItsAnnouncement()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the failure route here: a
+        // replan that fails or times out before publication re-defers its
+        // announcement after a delay, within the same bounded budget.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var retry = Between(ready, "void RetryUnpublishedSubtitleInventory()", "void RecoverUnappliedSubtitleInventory()");
+        Assert.Contains("!entered || refreshed || token.IsCancellationRequested || _pendingSubtitleInventoryApplication != null", retry);
+        var budget = retry.IndexOf("if (++unpublished.Failures > SubtitleInventoryApplicationRetries) return;", StringComparison.Ordinal);
+        var delay = retry.IndexOf("Task.Delay(SubtitleInventoryApplicationRetryDelay * unpublished.Failures, token)", StringComparison.Ordinal);
+        var defer = retry.IndexOf("DeferSubtitleReadyRefresh(announcement, owner, eventSessionId, fileId);", StringComparison.Ordinal);
+        Assert.True(budget >= 0 && delay > budget && defer > delay);
+        // The retry must never replay immediately from the failing attempt.
+        Assert.DoesNotContain("DeferSubtitleReadyRefresh(payload, owner, eventSessionId, fileId);", retry);
+        // Published inventory renews the budget and retires the pending retries.
+        var publish = ready.IndexOf("_pendingSubtitleInventoryApplication ??= new(owner, appliedSession, nativeFile, file);", StringComparison.Ordinal);
+        Assert.True(publish >= 0 && ready.IndexOf("_unpublishedSubtitleInventoryRefresh = null;", publish, StringComparison.Ordinal) > publish);
+        // A request timeout is a cancellation that superseded nothing.
+        Assert.Contains("catch (OperationCanceledException) { if (!RetryIfSuperseded()) RetryUnpublishedSubtitleInventory(); }", ready);
+        var failure = ready[ready.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
+        Assert.Contains("RetryUnpublishedSubtitleInventory();", failure);
+    }
+
+    [Fact]
+    public void LoadedSidecarCachesRemainASelectionRouteForARowWhoseUrlARefreshBlanked()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a row kept
+        // playable for its loaded SID/bytes stays selectable in the published
+        // menus and the picker, and service caches are read before the
+        // manager's inventory gate.
+        var service = Read("PlayerService.cs");
+        var cached = Between(service, "private HashSet<int> CachedSubtitleSidecarIndices()", "private static bool HasSubtitleSelectionRoute(");
+        Assert.Contains("_loadedExternalSubtitleSids.Keys.Where(index => !_staleExternalSubtitleIndices.Contains(index))", cached);
+        Assert.Contains(".Concat(_prefetchedSubtitleFiles.Keys)", cached);
+        Assert.Contains("pair.Value.FileGeneration == fileLoadGeneration", cached);
+        var menu = Between(service, "internal SubtitleMenuSnapshot? CaptureSubtitleMenuSnapshot()", "private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track)");
+        var state = menu.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var inventory = menu.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        var union = menu.IndexOf("routes.SidecarIndices.UnionWith(CachedSubtitleSidecarIndices());", StringComparison.Ordinal);
+        Assert.True(state >= 0 && inventory > state && union > inventory);
+        var route = Between(service, "private bool HasSubtitleSelectionRoute(SubtitleTrackInfo track)", "private HashSet<int> CachedSubtitleSidecarIndices()");
+        state = route.IndexOf("lock (_subtitleTrackStateLock)", StringComparison.Ordinal);
+        var loaded = route.IndexOf("if (!track.Unplayable && CachedSubtitleSidecarIndices().Contains(track.Index)) return true;", StringComparison.Ordinal);
+        inventory = route.IndexOf("lock (manager.SubtitleInventorySyncRoot)", StringComparison.Ordinal);
+        Assert.True(state >= 0 && loaded > state && inventory > loaded);
+        Assert.Contains("lock (_subtitleTrackStateLock) sidecarIndices.UnionWith(CachedSubtitleSidecarIndices());",
+            Read("PlayerService.NativeSubtitles.cs"));
+    }
+
+    [Fact]
+    public void BothStoredListRefreshesRetainDownloadsWithoutStoredIdentityByOneRule()
+    {
+        // The public and owner-scoped refreshes read the same stored list. A
+        // download without stored keys must survive both the same way.
+        var refresh = Read("PlayerService.SubtitleRefresh.cs");
+        const string rule = "private void RetainDownloadsWithoutStoredIdentity(";
+        const string retain = "RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);";
+        const string rebind = "SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)";
+        var publicRefresh = Between(refresh, "public async Task RefreshSubtitlesAfterAiAsync(", rule);
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var entry in new[] { publicRefresh, ownedRefresh })
+        {
+            // Retention precedes the rebind of the active selection and its caches.
+            var kept = entry.IndexOf(retain, StringComparison.Ordinal);
+            Assert.True(kept >= 0 && kept < entry.IndexOf(rebind, StringComparison.Ordinal));
+            Assert.Contains("downloaded.Contains(track)) return track.Unplayable ? null : track;", entry);
+        }
+        var shared = refresh[refresh.IndexOf(rule, StringComparison.Ordinal)..];
+        Assert.Contains("IsDownloadWithoutStoredIdentity(track) && !downloaded.Contains(track)", shared);
+        // A re-indexed row never keeps the URL that addressed its old ordinal.
+        var loadedBytes = shared.IndexOf("_loadedExternalSubtitleSids.GetValueOrDefault(legacy.Index) > 0", StringComparison.Ordinal);
+        var url = shared.IndexOf("legacy.Url = \"\";", StringComparison.Ordinal);
+        var index = shared.IndexOf("legacy.Index = free;", StringComparison.Ordinal);
+        Assert.True(loadedBytes >= 0 && url > loadedBytes && index > url);
+    }
+
+    [Fact]
+    public void InPlaceInventoryAdoptionKeepsTheAppliedSidStaleAndNeverRemovesTheSidOnScreen()
+    {
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var adopt = Between(ready, "private void AdoptSubtitleInventoryInPlace(", "private async Task ApplySubtitleReadyAsync(");
+        var retained = adopt.IndexOf("_loadedExternalSubtitleSids[retainedIndex] = activeSid;", StringComparison.Ordinal);
+        Assert.True(retained >= 0 && adopt.IndexOf("_staleExternalSubtitleIndices.Add(retainedIndex);", StringComparison.Ordinal) > retained);
+        Assert.Contains("(int)Math.Round(_mpv.GetPropertyDouble(\"sid\")) != sid) _mpv.RemoveSubtitle(sid);", adopt);
+    }
+
+    [Fact]
+    public void InPlaceAnnouncementMergeRetiresTheCachesOfARowWhoseUrlOrDeliveryItRewrites()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the merge route here: the
+        // row's delivery facts are captured before the merge mutates it, and a
+        // rewrite retires the bytes read under them before the menu republishes.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var apply = Between(ready, "private async Task ApplySubtitleReadyAsync(", "private void InvalidateRewrittenSubtitleCache(");
+        var capture = apply.IndexOf("var (readUrl, readDelivery) = (rewritten?.Url, rewritten?.Delivery);", StringComparison.Ordinal);
+        var merge = apply.IndexOf("if (manager.TryApplySubtitleTrack(session, track))", StringComparison.Ordinal);
+        var changed = apply.IndexOf("(readUrl ?? \"\") != rewritten.Url || readDelivery != rewritten.Delivery", StringComparison.Ordinal);
+        var retire = apply.IndexOf("InvalidateRewrittenSubtitleCache(rewritten.Index);", StringComparison.Ordinal);
+        Assert.True(capture >= 0 && merge > capture && changed > merge && retire > changed);
+        Assert.True(apply.IndexOf("SendSubtitleListToOsc();", retire, StringComparison.Ordinal) > retire);
+
+        var cache = ready[ready.IndexOf("private void InvalidateRewrittenSubtitleCache(", StringComparison.Ordinal)..];
+        Assert.Contains("_prefetchedSubtitleFiles.Remove(index, out var path)", cache);
+        Assert.Contains("try { File.Delete(path); } catch { }", cache);
+        Assert.Contains("_prefetchedSubtitleSids.Remove(index, out var ready)", cache);
+        // The applied SID stays mapped and visible, but stale. Any other is
+        // retired, unless it is the SID mpv still shows.
+        var active = cache.IndexOf("if (index == _activeSubtitleServerIndex)", StringComparison.Ordinal);
+        var stale = cache.IndexOf("if (_loadedExternalSubtitleSids.ContainsKey(index)) _staleExternalSubtitleIndices.Add(index);", StringComparison.Ordinal);
+        var inactive = cache.IndexOf("else if (_loadedExternalSubtitleSids.Remove(index, out var sid))", StringComparison.Ordinal);
+        Assert.True(active >= 0 && stale > active && inactive > stale);
+        Assert.Contains("(int)Math.Round(_mpv.GetPropertyDouble(\"sid\")) != sid) _mpv.RemoveSubtitle(sid);", cache[inactive..]);
+    }
+
+    [Fact]
+    public void OwnerScopedAiRefreshSkipsAnUnplayableCompletionRowAndClearsARefusedCompletion()
+    {
+        // The owner-scoped refresh marks displaced/uncertain rows unplayable,
+        // as the public refresh does. Neither may activate such a row, nor
+        // leave its completion installed after a refused attempt.
+        var refresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        Assert.Contains("downloaded.FirstOrDefault(track => !track.Unplayable && track.Id == preferredSubtitleId)", refresh);
+        Assert.Contains("downloaded.SingleOrDefault(track => !track.Unplayable && track.Id == preferredSubtitleId)",
+            Read("PlayerService.SubtitleRefresh.cs"));
+        var install = refresh.IndexOf("completion = _storedSubtitleCompletion;", StringComparison.Ordinal);
+        var attempt = refresh.IndexOf("var selected = await TrySetSubtitleTrackAndPersistAsync(", StringComparison.Ordinal);
+        var refused = refresh.IndexOf("if (!selected && completion != null && ReferenceEquals(_storedSubtitleCompletion, completion))", StringComparison.Ordinal);
+        var leave = refresh.IndexOf("if (!selected || !Current()) return;", StringComparison.Ordinal);
+        Assert.True(install >= 0 && attempt > install && refused > attempt && leave > refused);
+        Assert.Contains("_storedSubtitleCompletion = null;", refresh[refused..leave]);
+    }
+
+    [Fact]
+    public void BothStoredListRefreshesCarryARequestedStoredIdOntoThePlanOnlyRowItLandsOn()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a plan-only
+        // download holds no stored id, so a pick by stored id that the list
+        // places on that row must still find it, through both entry points.
+        var publicRefresh = Between(Read("PlayerService.SubtitleRefresh.cs"), "public async Task RefreshSubtitlesAfterAiAsync(",
+            "private static void RetainDownloadsAnnouncedDuringRead(");
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var refresh in new[] { publicRefresh, ownedRefresh })
+        {
+            var landed = refresh.IndexOf("if (previous == null && StoredEntryMayBeCanonicalDownload(unknownCanonical[0], entry.Language))", StringComparison.Ordinal);
+            Assert.True(landed >= 0);
+            var requested = refresh.IndexOf("if (unique && matches.Length == 0 && entry.Id == preferredSubtitleId &&", landed, StringComparison.Ordinal);
+            var kept = refresh.IndexOf("return unknownCanonical[0];", landed, StringComparison.Ordinal);
+            // Only an unambiguous pick on a trusted layout names the row; any
+            // other refresh still leaves it without a stored identity.
+            Assert.True(requested > landed && kept > requested);
+            Assert.Contains("canonicalOrdinalsAgree && !unknownCanonical[0].Unplayable)", refresh[requested..kept]);
+            var carried = refresh.IndexOf("if (pickedCanonical != null && displacedCanonical.Count == 0) pickedCanonical.Id = preferredSubtitleId;", kept, StringComparison.Ordinal);
+            var pick = refresh.IndexOf("track => !track.Unplayable && track.Id == preferredSubtitleId)", StringComparison.Ordinal);
+            Assert.True(carried > kept && pick > carried);
+        }
+    }
+
+    [Fact]
+    public void BothStoredListRefreshesReplanOnceWhenAnUncertainLayoutWithholdsTheRequestedSubtitle()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a pick whose
+        // entry the list's layout left without a route asks for one authoritative
+        // inventory, is started over on it, and otherwise tells the viewer. That
+        // covers another language on a plan-only row's ordinal, through both
+        // entry points.
+        var publicRefresh = Between(Read("PlayerService.SubtitleRefresh.cs"), "public async Task RefreshSubtitlesAfterAiAsync(",
+            "private static void RetainDownloadsAnnouncedDuringRead(");
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var refresh in new[] { publicRefresh, ownedRefresh })
+        {
+            // The inventory a pick is started over on is its final answer.
+            var answered = refresh.IndexOf("if (preferredSubtitleId is long stored) MarkStoredSubtitlePickReplanned(applied, stored);", StringComparison.Ordinal);
+            var restarted = refresh.IndexOf("DeferUntilSubtitleReadyIdle(() =>", StringComparison.Ordinal);
+            Assert.True(answered >= 0 && restarted > answered);
+            var uncertain = refresh.IndexOf("uncertainPick = (displacedCanonical.Count > 0 || !canonicalOrdinalsAgree) &&", StringComparison.Ordinal);
+            Assert.True(uncertain > restarted);
+            Assert.Contains("response.Subtitles.Any(entry => entry.Id == preferredSubtitleId);", refresh[uncertain..]);
+            var pick = refresh.IndexOf("track => !track.Unplayable && track.Id == preferredSubtitleId)", uncertain, StringComparison.Ordinal);
+            var fallback = refresh.IndexOf("else if (preferred == null && uncertainPick && preferredSubtitleId is long requested && Current())", StringComparison.Ordinal);
+            var replan = refresh.IndexOf("await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false)", StringComparison.Ordinal);
+            Assert.True(pick > uncertain && fallback > pick && replan > fallback);
+            // Nothing applied, or the pick unmatched there too: never a silent drop.
+            Assert.True(refresh.IndexOf("ShowSubtitleSelectionUnavailable();", replan, StringComparison.Ordinal) > replan);
+        }
+        // An owner holds no registration to start it over: it follows the plan itself.
+        var followed = ownedRefresh.IndexOf("MarkStoredSubtitlePickReplanned(published, requested);", StringComparison.Ordinal);
+        Assert.True(followed >= 0 && ownedRefresh.IndexOf(
+            "await RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent)",
+            followed, StringComparison.Ordinal) > followed);
+
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var request = Between(ready, "private async Task<PlaybackStartResponse?> ReplanForStoredSubtitlePickAsync(",
+            "private static bool SubtitleInventoryRequiresTransportReload(");
+        // One replan per pick and inventory, and only where v3 can supply one.
+        var bound = request.IndexOf("if (session.ProtocolVersion < 3 || _replannedStoredSubtitlePicks is { } picks &&", StringComparison.Ordinal);
+        var replanned = request.IndexOf("await ApplySubtitleReadyAsync(", StringComparison.Ordinal);
+        Assert.True(bound >= 0 && replanned > bound);
+        Assert.Contains("ReferenceEquals(picks.Session, session) && picks.SubtitleIds.Contains(subtitleId)) return null;", request);
+        // Only an inventory applied in place of the read response counts.
+        Assert.Contains("_pendingSubtitleInventoryApplication == null ? applied : null;", request);
+    }
+
+    [Fact]
+    public void BothStoredListRefreshesTreatEveryWithheldRouteForTheRequestedSubtitleAsUncertain()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: the requested
+        // entry's own row can withhold its route too (an ordinal a canonical row
+        // absent from the list still holds, a repeated id, an unplayable row), and
+        // a plan-only row is bound only to an entry with its forced and
+        // hearing-impaired facts. Each takes the same replan or notice, through
+        // both entry points.
+        var publicRefresh = Between(Read("PlayerService.SubtitleRefresh.cs"), "public async Task RefreshSubtitlesAfterAiAsync(",
+            "private static void RetainDownloadsAnnouncedDuringRead(");
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var refresh in new[] { publicRefresh, ownedRefresh })
+        {
+            var requested = refresh.IndexOf("if (unique && matches.Length == 0 && entry.Id == preferredSubtitleId &&", StringComparison.Ordinal);
+            Assert.True(requested >= 0);
+            var bound = refresh.IndexOf("pickedCanonical = unknownCanonical[0];", requested, StringComparison.Ordinal);
+            Assert.True(bound > requested);
+            Assert.Contains("entry.Forced == unknownCanonical[0].Forced && entry.HearingImpaired == unknownCanonical[0].HearingImpaired &&",
+                refresh[requested..bound]);
+            // Judged on the rows the refresh publishes, after retention.
+            var retained = refresh.IndexOf("RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);", StringComparison.Ordinal);
+            var withheld = refresh.IndexOf("uncertainPick |= response.Subtitles.Any(entry => entry.Id == preferredSubtitleId) &&", StringComparison.Ordinal);
+            var fallback = refresh.IndexOf("else if (preferred == null && uncertainPick && preferredSubtitleId is long requested && Current())", StringComparison.Ordinal);
+            Assert.True(retained >= 0 && withheld > retained && fallback > withheld);
+            Assert.Contains("!downloaded.Any(track => !track.Unplayable && track.Id == preferredSubtitleId);", refresh[withheld..fallback]);
+        }
+    }
+
+    [Fact]
+    public void StoredPickFallbackWaitsForItsDeferredAnnouncementAndNeverAdoptsAnUnrelatedReplan()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: a fallback
+        // announcement that deferred itself behind a seek restart, or scheduled a
+        // retry, applied nothing yet but still owes the pick its inventory. The
+        // refresh stays registered for it without a notice, and a response a seek
+        // published meanwhile is never taken for that inventory.
+        var ready = Read("PlayerService.SubtitleReady.cs");
+        var defer = Between(ready, "private void DeferSubtitleReadyRefresh(", "private DeferredSubtitleReadyAnnouncement BeginSubtitleReadyDeferral(");
+        var owed = defer.IndexOf("var deferral = BeginSubtitleReadyDeferral(sessionId, fileId);", StringComparison.Ordinal);
+        Assert.True(owed >= 0 && defer.IndexOf("DeferUntilSubtitleReadyIdle(() =>", StringComparison.Ordinal) > owed);
+        // The deferral ends only once its replay has applied, deferred again or been dropped.
+        Assert.Contains(".ContinueWith(_ => EndSubtitleReadyDeferral(deferral), TaskScheduler.Default);", defer);
+        Assert.Contains("else EndSubtitleReadyDeferral(deferral);", defer);
+        foreach (var retry in new[]
+        {
+            Between(ready, "void RetryUnpublishedSubtitleInventory()", "void RecoverUnappliedSubtitleInventory()"),
+            Between(ready, "void RecoverUnappliedSubtitleInventory()", "// Serialize even in-place merges against inventory publication."),
+        })
+        {
+            var scheduled = retry.IndexOf("var deferral = BeginSubtitleReadyDeferral(eventSessionId, fileId);", StringComparison.Ordinal);
+            var delay = retry.IndexOf("Task.Delay(SubtitleInventoryApplicationRetryDelay", StringComparison.Ordinal);
+            Assert.True(scheduled >= 0 && delay > scheduled &&
+                retry.IndexOf("EndSubtitleReadyDeferral(deferral);", delay, StringComparison.Ordinal) > delay);
+        }
+        // An applied inventory answers every announcement deferred for it, under
+        // the lock and before the registered refreshes are read.
+        var restart = Between(ready, "private void RestartSupersededSubtitleListRefreshes(", "foreach (var superseded in reading) superseded(applied);");
+        var applied = restart.IndexOf("_appliedSubtitleInventory = applied;", StringComparison.Ordinal);
+        var settled = restart.IndexOf("_deferredSubtitleReadyAnnouncements.RemoveWhere(deferral =>", StringComparison.Ordinal);
+        var read = restart.IndexOf("reading = _storedSubtitleListRefreshes.ToArray();", StringComparison.Ordinal);
+        Assert.True(applied >= 0 && settled > applied && read > settled);
+        // Only an inventory an announcement applied during the request answers the pick.
+        var request = Between(ready, "private async Task<PlaybackStartResponse?> ReplanForStoredSubtitlePickAsync(",
+            "private static bool SubtitleInventoryRequiresTransportReload(");
+        var before = request.IndexOf("var answered = _appliedSubtitleInventory;", StringComparison.Ordinal);
+        var asked = request.IndexOf("await ApplySubtitleReadyAsync(", StringComparison.Ordinal);
+        Assert.True(before >= 0 && asked > before &&
+            request.IndexOf("return !ReferenceEquals(_appliedSubtitleInventory, answered) &&", asked, StringComparison.Ordinal) > asked);
+        // An owner's refresh is registered under the lock that settles the deferral.
+        var waits = Between(ready, "private bool AwaitsDeferredSubtitleReadyAnnouncement(", "private void DeferUntilSubtitleReadyIdle(");
+        var locked = waits.IndexOf("lock (_subtitleReadyRefreshLock)", StringComparison.Ordinal);
+        Assert.True(locked >= 0 &&
+            waits.IndexOf("if (unregistered != null) _storedSubtitleListRefreshes.Add(unregistered);", locked, StringComparison.Ordinal) > locked);
+
+        var publicRefresh = Between(Read("PlayerService.SubtitleRefresh.cs"), "public async Task RefreshSubtitlesAfterAiAsync(",
+            "private static void RetainDownloadsAnnouncedDuringRead(");
+        var ownedRefresh = Between(Read("PlayerService.cs"), "internal async Task RefreshSubtitlesAfterAiForOwnerAsync(",
+            "public Func<bool> BeginSubtitleActivationIntent()");
+        foreach (var refresh in new[] { publicRefresh, ownedRefresh })
+        {
+            var replan = refresh.IndexOf("await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false)", StringComparison.Ordinal);
+            var waiting = refresh.IndexOf("deferred = AwaitsDeferredSubtitleReadyAnnouncement(session", replan, StringComparison.Ordinal);
+            var notice = refresh.IndexOf("if (!deferred && Current()) ShowSubtitleSelectionUnavailable();", replan, StringComparison.Ordinal);
+            Assert.True(replan >= 0 && waiting > replan && notice > waiting);
+            // The refresh that ends on a deferral keeps its registration.
+            Assert.True(refresh.IndexOf("var awaiting = !handedOver && (deferred || AwaitsSubtitleInventoryApplication(manager, session));",
+                notice, StringComparison.Ordinal) > notice);
+        }
+        Assert.Contains("deferred = AwaitsDeferredSubtitleReadyAnnouncement(session, currentOwner != null ? superseded : null);", ownedRefresh);
+        // Started over, an owner's refresh keeps its owner.
+        Assert.Contains("_ = RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent);", ownedRefresh);
+    }
+
+    [Fact]
+    public void SubtitleInventoryTransportReloadChecksOwnershipUnderTheRestartGateBeforeStoppingTheOutgoingProxies()
+    {
+        // PlayerService requires WinUI/libmpv. Guard the route here: preparing a
+        // transport stops the proxies the playing file reads from, so the last
+        // ownership check precedes it under the gate a seek restart holds, and
+        // nothing between preparation and the load can leave without loading.
+        var apply = Between(Read("PlayerService.SubtitleReady.cs"), "private async Task ApplySubtitleReadyAsync(",
+            "private void InvalidateRewrittenSubtitleCache(");
+        var gate = apply.IndexOf("await _transportRestartGate.WaitAsync(token).ConfigureAwait(false);", StringComparison.Ordinal);
+        Assert.True(gate >= 0);
+        var owned = apply.IndexOf("if (!Current() || !SameTransport())", gate, StringComparison.Ordinal);
+        var prepare = apply.IndexOf("await PreparePlaybackTransportAsync(replacement, version, streamUrl, position, token)", StringComparison.Ordinal);
+        var load = apply.IndexOf("BeginMpvLoad(prepared, CaptureUserPausedState());", StringComparison.Ordinal);
+        var release = apply.IndexOf("finally { _transportRestartGate.Release(); }", StringComparison.Ordinal);
+        Assert.True(owned > gate && prepare > owned && load > prepare && release > load);
+        Assert.DoesNotContain("return;", apply[prepare..load]);
+        // Reconciling a deferred selection can re-enter the restart gate.
+        Assert.True(apply.IndexOf("await ReconcileDeferredSubtitleSelectionAsync(manager, replacement).ConfigureAwait(false);",
+            release, StringComparison.Ordinal) > release);
+    }
+
     private static string Reload() => Between(Read("PlayerService.SubtitleSync.cs"),
         "private async Task ReloadCorrectedSubtitleAsync(", "private void SendSubtitleSyncState()");
 

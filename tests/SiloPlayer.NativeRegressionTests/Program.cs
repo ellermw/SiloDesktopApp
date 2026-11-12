@@ -100,6 +100,20 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_OTHER_WINDOW") == "panel")
+        {
+            try { await AppUpdateNativeFixture.RunPresentationPeerAsync(); }
+            catch (Exception ex) { Program.Log(ex.ToString()); Environment.ExitCode=1; }
+            Exit(); return;
+        }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_OTHER_WINDOW") == "1")
+        {
+            _window = new Window { Title = "Synthetic updater focus peer", Content = new Grid() };
+            _window.AppWindow.Move(new(100, 100)); _window.AppWindow.Resize(new(240, 200));
+            _window.Closed += (_, _) => Exit();
+            _window.Activate();
+            return;
+        }
         try
         {
             Resources.MergedDictionaries.Add(new XamlControlsResources());
@@ -148,6 +162,22 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-transfer-final")
+            {
+                await ProfileTransferFinalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-transfer-blocker")
+            {
+                Environment.SetEnvironmentVariable("SILO_NATIVE_PERSONAL_CASE", "notification-construction");
+                await PersonalListsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-popup-layout")
+            {
+                await PlaybackPopupLayoutNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "video-speed")
             {
                 await VideoPlaybackRateNativeFixture.RunAsync();
@@ -393,6 +423,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await OscHudStatesNativeFixture.RunAsync(_window, reviewCase ?? "all");
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "watch-party-policy")
+            {
+                await MediaInteractionsNativeFixture.RunAsync(parent, policyOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "intro-reoffer")
+            {
+                await OscHudStatesNativeFixture.RunAsync(_window, introOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
             {
                 await HomeRowReviewNativeFixture.RunAsync(parent);
@@ -489,6 +529,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profiles-metadata")
             {
                 await ProfilesMetadataNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "title-allowances" or "title-allowances-header")
+            {
+                await TitleAllowancesNativeFixture.RunAsync(parent);
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "title-allowances")
+                {
+                    await ProfilesMetadataNativeFixture.RunAsync(parent);
+                    await MediaMoreActionsNativeFixture.RunAsync(parent);
+                }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "current-caption-metadata")
@@ -919,6 +969,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await Task.Delay(100);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "viewer-actions")
+            {
+                await ViewerActionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-pill")
             {
                 await OverlayPillNativeFixture.RunAsync(parent);
@@ -927,6 +982,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-revisions")
             {
                 await CardOverlayRevisionNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "advanced-overlays")
+            {
+                await AdvancedOverlayNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")
@@ -939,12 +999,33 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PersonalListsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-removal")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await RequestRemovalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-interactions")
             {
                 _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
                 _window.AppWindow.Show(false);
                 await RequestsLifecycleNativeFixture.RunAsync(parent);
                 await RequestInteractionNativeFixture.RunAsync(parent);
+                await RequestRemovalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "collections-presentation")
+            {
+                await CollectionsPresentationNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "batch-downloads")
+            {
+                await BatchDownloadsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
@@ -998,6 +1079,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-latest")
             {
+                if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE") == "device-binding")
+                {
+                    await DeviceBindingNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE") == "network-login")
                 {
                     await NetworkAuthNativeFixture.RunAsync(parent);
@@ -1080,6 +1167,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             await RequestViewerNativeFixture.RunAsync(parent);
             await RequestsLifecycleNativeFixture.RunAsync(parent);
             await RequestInteractionNativeFixture.RunAsync(parent);
+            await RequestRemovalNativeFixture.RunAsync(parent);
             await PersonalListsNativeFixture.RunAsync(parent);
             await DetailPresentationNativeFixture.RunAsync(parent);
             await MediaParityNativeFixture.RunAsync(parent);

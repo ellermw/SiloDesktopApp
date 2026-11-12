@@ -3071,13 +3071,7 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private static string LibraryNavigationIconName(string type) => type switch
-    {
-        "movies" => "film",
-        "series" => "tv",
-        "audiobook" or "audiobooks" => "book-headphones",
-        _ => "library",
-    };
+    private static string LibraryNavigationIconName(string type) => SiloPlayer.Core.Services.LibraryTypeIcons.IconName(type);
 
     public void UpdateLibraryNavItems() => QueueSidebarPublication();
 

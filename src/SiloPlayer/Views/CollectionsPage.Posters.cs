@@ -12,14 +12,13 @@ namespace SiloPlayer.Views;
 
 public sealed partial class CollectionsPage
 {
-    private int PosterColumnCount => ActualWidth >= 1024 ? 7 : ActualWidth >= 640 ? 5 : 3;
-    private double PosterWidth => Math.Max(60, (Math.Min(ActualWidth > 0 ? ActualWidth : Width, CollectionsPageShell.MaxWidth) - CollectionsPageShell.Padding.Left - CollectionsPageShell.Padding.Right - 14 * (PosterColumnCount - 1)) / PosterColumnCount);
     private void BuildCollectionSkeletons()
     {
         Grid Skeleton()
         {
             var cards = new List<FrameworkElement>();
-            for (var index = 0; index < 7; index++)
+            // The WebUI's skeleton is eight posters; they wrap at the viewer's column count.
+            for (var index = 0; index < 8; index++)
             {
                 var picture = new Border { Height = PosterWidth * 1.5, CornerRadius = new(16), Background = (Brush)Application.Current.Resources["SurfaceBrush"] };
                 var title = new Border { Height = 16, Width = PosterWidth * .75, CornerRadius = new(6), Background = (Brush)Application.Current.Resources["SurfaceBrush"], HorizontalAlignment = HorizontalAlignment.Left };
@@ -33,23 +32,18 @@ public sealed partial class CollectionsPage
     }
     private Grid BuildPosterBoard(IReadOnlyList<FrameworkElement> cards)
     {
-        var board = new Grid { ColumnSpacing = 14, RowSpacing = 20 };
-        for (var column = 0; column < PosterColumnCount; column++) board.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        for (var row = 0; row < Math.Max(1, (cards.Count + PosterColumnCount - 1) / PosterColumnCount); row++) board.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        for (var index = 0; index < cards.Count; index++) { Grid.SetColumn(cards[index], index % PosterColumnCount); Grid.SetRow(cards[index], index / PosterColumnCount); board.Children.Add(cards[index]); }
+        // The wall follows the viewer's poster size: its column count and gap, not a fixed seven.
+        var columns = PosterColumnCount;
+        var board = new Grid { ColumnSpacing = PosterGap, RowSpacing = 20 };
+        for (var column = 0; column < columns; column++) board.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        for (var row = 0; row < Math.Max(1, (cards.Count + columns - 1) / columns); row++) board.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        for (var index = 0; index < cards.Count; index++) { cards[index].VerticalAlignment = VerticalAlignment.Top; Grid.SetColumn(cards[index], index % columns); Grid.SetRow(cards[index], index / columns); board.Children.Add(cards[index]); }
         return board;
     }
-    private FrameworkElement NewCollectionCard()
-    {
-        var body = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
-        body.Children.Add(WebUiIcon.Create("plus", 20, (Brush)Application.Current.Resources["SecondaryTextBrush"])); body.Children.Add(new TextBlock { Text = "New collection", FontSize = 13, FontWeight = FontWeights.Medium, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextAlignment = TextAlignment.Center });
-        var content = new Grid(); content.Children.Add(body);
-        var outline = new Microsoft.UI.Xaml.Shapes.Rectangle { RadiusX = 16, RadiusY = 16, Stroke = (Brush)Application.Current.Resources["BorderBrush"], StrokeThickness = 1, StrokeDashArray = new DoubleCollection { 4, 3 }, IsHitTestVisible = false }; content.Children.Add(outline);
-        var card = new Button { Content = content, Height = PosterWidth * 1.5, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch, Padding = new(0), BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(16), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-        card.Click += CreateCollection_Click; return card;
-    }
-    private Border BuildCollectionCard(Collection collection)
+    private Border BuildCollectionCard(Collection collection) => BuildCollectionPosterCard(collection, null);
+    /// <summary>Another profile's shared collection: read-only, with its owner named under the title.</summary>
+    private Border BuildSharedCollectionCard(Collection collection, string owner) => BuildCollectionPosterCard(collection, owner);
+    private Border BuildCollectionPosterCard(Collection collection, string? ownerName)
     {
         Brush Brush(string key) => (Brush)Application.Current.Resources[key];
         var width = PosterWidth;
@@ -70,6 +64,8 @@ public sealed partial class CollectionsPage
         var posterLayer = new Grid(); posterLayer.Children.Add(poster);
         var stack = new StackPanel(); stack.Children.Add(posterLayer);
         stack.Children.Add(new TextBlock { Text = collection.Name, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(2, 10, 2, 0) });
+        if (ownerName != null)
+            stack.Children.Add(new TextBlock { Text = "by " + ownerName, FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(2, 0, 2, 0) });
         var type = collection.CollectionType switch { "manual" => "Manual", "smart" => "Smart", _ => "Synced list" };
         var status = collection.LastSyncStatus switch { "running" => " · Syncing now", "failed" => " · Sync failed", _ => "" };
         var metadata = new TextBlock { FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 0, 2, 0) };
@@ -98,12 +94,24 @@ public sealed partial class CollectionsPage
         var profile = App.Services.GetRequiredService<AuthService>().SelectedProfileId;
         if (!PersonalCollectionOwnership.IsOwn(collection, profile)) { card.ContextFlyout = new MenuFlyout(); return card; }
         var menu = new MenuFlyout();
+        var allowanceVisit = _collectionsPageGeneration;
+        CollectionAllowanceMenu.Attach(menu, card, collection, () => IsLoaded && allowanceVisit == _collectionsPageGeneration);
         var edit = new MenuFlyoutItem { Text = "Edit collection" }; edit.Click += (_, _) => NavigateToCollectionEditor(collection); menu.Items.Add(edit);
         if (ViewModel.Capabilities?.Imports == true && CanSyncCollection(collection))
         { var sync = new MenuFlyoutItem { Text = "Sync now" }; sync.Click += async (_, _) => await ViewModel.SyncCollectionCommand.ExecuteAsync(collection.Id); menu.Items.Add(sync); menu.Opened += (_, _) => { sync.IsEnabled = !ViewModel.IsCollectionMutationPending; sync.Text = ViewModel.SyncCollectionCommand.IsRunning ? "Syncing…" : "Sync now"; }; }
         var home = new MenuFlyoutItem { Text = "Add to my Home…" };
         AutomationProperties.SetHelpText(home, "A row on your Home"); ToolTipService.SetToolTip(home, "A row on your Home");
         home.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<CustomizeHomePage>(new CustomizeHomeNavigationArgs(collection.Id, collection.Name)); menu.Items.Add(home);
+        var move = new MenuFlyoutSubItem { Text = "Move to group", Icon = WebUiIcon.Navigation("folder", 16, Brush("SecondaryTextBrush")) };
+        foreach (var group in ViewModel.Groups.Cast<CollectionGroup?>().Prepend(null))
+        {
+            var targetGroupId = group?.Id;
+            var entry = new MenuFlyoutItem { Text = group?.Name ?? "Ungrouped" };
+            CollectionActionMenuPresentation.Configure(entry);
+            entry.Click += async (_, _) => await ViewModel.MoveCollectionToGroupAsync(collection, targetGroupId);
+            move.Items.Add(entry);
+        }
+        menu.Items.Add(move);
         if (ViewModel.Profiles.Any(profile => profile.Id != collection.CreatorProfileId))
         {
             menu.Items.Add(new MenuFlyoutSeparator());

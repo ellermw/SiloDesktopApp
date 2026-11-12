@@ -1302,10 +1302,17 @@ public partial class PlayerService : IDisposable
             while (true)
             {
                 var readLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
+                var readInitialization = Volatile.Read(ref _loadedMediaInitCts);
+                var readSidecarGeneration = CurrentSubtitleSidecarGeneration();
                 var readSession = manager?.CurrentSession;
                 var readOutcome = await PrefetchSubtitleSidecarForSelectionAsync(track, CurrentPreflightChoice);
                 if (!CurrentPreflightChoice()) return false;
+                // FILE_LOADED releases the busy flags before it publishes its
+                // initializer, so a waiting pick can resume inside that
+                // generation and have this read retired by LoadSubtitles. That
+                // cleanup is not a failed viewer choice here either.
                 if (readLoadGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||
+                    readInitialization != null && readSidecarGeneration != CurrentSubtitleSidecarGeneration() ||
                     !ReferenceEquals(readSession, manager?.CurrentSession))
                 {
                     // Cancel the old file/grant read, retaining the latest
@@ -6887,11 +6894,14 @@ public partial class PlayerService : IDisposable
     {
         var manager = _playbackManager;
         if (manager == null) return null;
+        // Observe the service caches before taking the manager's inventory gate.
+        lock (_subtitleTrackStateLock)
         lock (manager.SubtitleInventorySyncRoot)
         {
             if (!ReferenceEquals(manager, _playbackManager) || manager.CurrentSession is not { } session) return null;
             var tracks = session.SubtitleUrls.ToArray();
             var routes = CaptureSubtitleSelectionRoutes(tracks);
+            routes.SidecarIndices.UnionWith(CachedSubtitleSidecarIndices());
             return new(session, tracks.Select(track => (track, HasSubtitleSelectionRoute(track, routes))).ToArray(),
                 manager.GetSubtitleUrls(tracks).Select(pair => pair.Track).ToArray());
         }
@@ -6901,8 +6911,23 @@ public partial class PlayerService : IDisposable
     {
         var manager = _playbackManager;
         if (manager == null) return false;
+        // Observe the service caches before taking the manager's inventory gate.
+        lock (_subtitleTrackStateLock)
+            if (!track.Unplayable && CachedSubtitleSidecarIndices().Contains(track.Index)) return true;
         lock (manager.SubtitleInventorySyncRoot)
             return HasSubtitleSelectionRoute(track, CaptureSubtitleSelectionRoutes());
+    }
+
+    // Called under the subtitle state lock. A stored-list refresh can blank an
+    // uncertain positional URL while keeping the row for the SID or bytes it
+    // already loaded. Those caches remain its route, without another download.
+    private HashSet<int> CachedSubtitleSidecarIndices()
+    {
+        var fileLoadGeneration = Volatile.Read(ref _fileLoadGeneration);
+        return _loadedExternalSubtitleSids.Keys.Where(index => !_staleExternalSubtitleIndices.Contains(index))
+            .Concat(_prefetchedSubtitleFiles.Keys)
+            .Concat(_prefetchedSubtitleSids.Where(pair => pair.Value.FileGeneration == fileLoadGeneration).Select(pair => pair.Key))
+            .ToHashSet();
     }
 
     private static bool HasSubtitleSelectionRoute(SubtitleTrackInfo track, SubtitleRouteSnapshot routes)
@@ -8905,6 +8930,7 @@ public partial class PlayerService : IDisposable
 
     public void Dispose()
     {
+        RetirePendingSubtitleReadyRefresh();
         RetireNativeMenus();
         ResetVideoPlaybackRateSession();
         _volumePersistenceDisposed = true;
@@ -9066,8 +9092,7 @@ public partial class PlayerService : IDisposable
                 ApplySubtitleTranslationFailed(ev.Payload);
                 break;
             case "subtitle_ready":
-                if (TryGetPayloadInt(ev.Payload, "file_id", out var readyFileId))
-                    _ = RefreshSubtitlesAfterAiForOwnerAsync(readyFileId, null, null);
+                _ = ApplySubtitleReadyAsync(ev.Payload, ev.SessionId);
                 break;
         }
     }
@@ -9415,12 +9440,59 @@ public partial class PlayerService : IDisposable
         if (!Current()) return;
         long liveJobId;
         lock (_liveSubtitleLock) liveJobId = _liveSubtitleFileId == mediaFileId ? _liveSubtitleJobId : 0;
+        // The inventory the stored list is read against. Any list published by
+        // now predates that read: rows it lacks at the commit were announced since.
+        var readInventory = session.SubtitleUrls;
+        // Without an owner this refresh cannot follow an accepted plan. When an
+        // announcement's inventory replaces its response, start over on that
+        // inventory once it is applied instead of dropping the selection. An
+        // owner cannot follow an inventory its deferred announcement still owes
+        // either, and is registered for that application alone.
+        Action<PlaybackStartResponse> superseded = null!;
+        // Set under the refresh lock when this refresh ends while the inventory
+        // that replaced its response is still to be applied; see finally.
+        var ended = false;
+        // The pick was executed or queued. Nothing is left to start over.
+        var handedOver = false;
+        // The pick's fallback announcement deferred itself: its inventory is still owed.
+        var deferred = false;
+        superseded = applied =>
+        {
+            if (ReferenceEquals(applied, session)) return;
+            var replaces = applied.SessionId == session.SessionId && applied.MediaFileId == mediaFileId;
+            lock (_subtitleReadyRefreshLock)
+            {
+                // A refresh that ended is owed the next applied inventory only.
+                // One for another session or file retires its registration.
+                if (!replaces && !ended || !_storedSubtitleListRefreshes.Remove(superseded)) return;
+            }
+            if (!replaces) return;
+            // That inventory is authoritative. Started over on it, this pick is
+            // answered there and never asks for another.
+            if (preferredSubtitleId is long stored) MarkStoredSubtitlePickReplanned(applied, stored);
+            DeferUntilSubtitleReadyIdle(() =>
+            {
+                // Every fence above except the response the inventory replaced.
+                if (!_closing && isCurrent?.Invoke() != false && mayActivate?.Invoke() != false &&
+                    ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(mpv, _mpv) &&
+                    playGeneration == Volatile.Read(ref _playRequestGeneration) &&
+                    authority.ApiClient.IsCurrentIdentityContext(identity) && ReferenceEquals(manager, _playbackManager) &&
+                    liveJobId == (_liveSubtitleFileId == mediaFileId ? Volatile.Read(ref _liveSubtitleJobId) : 0) &&
+                    manager.CurrentSession is { } current &&
+                    current.SessionId == applied.SessionId && current.MediaFileId == mediaFileId)
+                    _ = RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent);
+            });
+        };
+        if (currentOwner == null && preferredSubtitleId.HasValue)
+            lock (_subtitleReadyRefreshLock) _storedSubtitleListRefreshes.Add(superseded);
         try
         {
             var response = await authority.PlaybackApi.GetSubtitlesAsync(mediaFileId).ConfigureAwait(false);
             if (!Current()) return;
 
             List<SubtitleTrackInfo> downloaded;
+            // The list holds the requested subtitle, but its layout withheld that entry's route.
+            var uncertainPick = false;
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             lock (manager.SubtitleInventorySyncRoot)
@@ -9435,20 +9507,65 @@ public partial class PlayerService : IDisposable
                 var previousDownloads = previousInventory
                     .Where(track => string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase)).ToArray();
                 var existing = previousInventory.Except(previousDownloads).ToList();
+                var reserved = previousDownloads.Where(track => !string.IsNullOrWhiteSpace(track.TrackId) &&
+                    !string.IsNullOrWhiteSpace(track.Delivery)).Concat(existing).ToArray();
                 var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
+                var canonicalOrdinalsAgree = response.Subtitles.Select((entry, offset) =>
+                    !reserved.Any(track => (track.Id == entry.Id || track.SyncKey == "stored-" + entry.Id) &&
+                        track.Index != baseIndex + offset)).All(agrees => agrees);
+                var displacedCanonical = new HashSet<SubtitleTrackInfo>();
+                // The plan-only row the list places the caller's requested subtitle on.
+                SubtitleTrackInfo? pickedCanonical = null;
                 downloaded = response.Subtitles.Select((entry, offset) =>
                 {
                     var syncKey = "stored-" + entry.Id;
-                    var matches = previousDownloads.Where(track => track.Id == entry.Id || track.SyncKey == syncKey).Take(2).ToArray();
+                    var unique = entry.Id > 0 && response.Subtitles.Count(item => item.Id == entry.Id) == 1;
+                    var matches = previousDownloads.Where(track => unique && (track.Id == entry.Id || track.SyncKey == syncKey)).Take(2).ToArray();
                     var previous = matches.Length == 1 ? matches[0] : null;
+                    // The stored-list response cannot downgrade canonical
+                    // identity, ordinal, URL or delivery facts from a plan/event.
+                    if (previous != null && !string.IsNullOrWhiteSpace(previous.TrackId) &&
+                        !string.IsNullOrWhiteSpace(previous.Delivery))
+                    {
+                        previous.Id ??= entry.Id;
+                        return previous;
+                    }
+                    var ordinal = baseIndex + offset;
+                    // A stored-ID list cannot replace an older plan-only row
+                    // or prove a stored identity for it from its position alone.
+                    var unknownCanonical = previousDownloads.Where(track => track.Index == ordinal &&
+                        IsCanonicalDownloadWithoutStoredIdentity(track)).Take(2).ToArray();
+                    if (unknownCanonical.Length == 1)
+                    {
+                        // An entry that owns another row, or names another language,
+                        // is not this row: it now holds the row's stored ordinal.
+                        if (previous == null && StoredEntryMayBeCanonicalDownload(unknownCanonical[0], entry.Language))
+                        {
+                            // A pick names its entry by stored id, and this row is that
+                            // entry's only executable route. Carry the id for the pick
+                            // alone; any other refresh still proves no identity here.
+                            // Ordinal and language cannot tell a same-language pair apart:
+                            // an entry with other forced or hearing-impaired facts is not
+                            // proven to be this row, and its pick is left to a replan.
+                            if (unique && matches.Length == 0 && entry.Id == preferredSubtitleId &&
+                                entry.Forced == unknownCanonical[0].Forced && entry.HearingImpaired == unknownCanonical[0].HearingImpaired &&
+                                canonicalOrdinalsAgree && !unknownCanonical[0].Unplayable)
+                                pickedCanonical = unknownCanonical[0];
+                            return unknownCanonical[0];
+                        }
+                        displacedCanonical.Add(unknownCanonical[0]);
+                    }
+                    var collision = reserved.Any(track => track.Index == ordinal);
+                    var executable = unique && canonicalOrdinalsAgree && !collision;
+                    if (collision) ordinal = Math.Max(reserved.Max(track => track.Index) + 1, baseIndex + response.Subtitles.Count) + offset;
                     return new SubtitleTrackInfo
                     {
                         TrackId = previous?.TrackId,
                         SyncKey = previous?.SyncKey ?? syncKey,
                         Id = entry.Id,
-                        Unplayable = previous?.Unplayable ?? false,
+                        Unplayable = !executable || (previous?.Unplayable ?? false),
                         Delivery = previous?.Delivery,
-                        Index = baseIndex + offset,
+                        Index = ordinal,
                         MediaFileId = mediaFileId,
                         Language = entry.Language,
                         Codec = previous?.Codec ?? (string.IsNullOrWhiteSpace(entry.Format) ? entry.Codec : entry.Format),
@@ -9461,9 +9578,30 @@ public partial class PlayerService : IDisposable
                         Source = "downloaded",
                         HearingImpaired = entry.HearingImpaired,
                         Forced = entry.Forced,
-                        Url = $"/stream/{session.SessionId}/subtitles/{baseIndex + offset}",
+                        Url = executable ? $"/stream/{session.SessionId}/subtitles/{ordinal}" : "",
                     };
                 }).ToList();
+                // Carry the pick's id unless a displaced row left this list's ordinals uncertain.
+                if (pickedCanonical != null && displacedCanonical.Count == 0) pickedCanonical.Id = preferredSubtitleId;
+                // A displaced plan-only row keeps its identity and any bytes it
+                // already loaded, never a URL that may now address another subtitle.
+                // That evidence leaves every new positional URL from this list
+                // uncertain too. Only a replan can make those rows executable.
+                foreach (var displaced in displacedCanonical)
+                {
+                    displaced.Unplayable |= !(_executedSubtitleFileId == mediaFileId && ReferenceEquals(_executedSubtitleTrack, displaced) ||
+                        _loadedExternalSubtitleSids.GetValueOrDefault(displaced.Index) > 0 ||
+                        _prefetchedSubtitleFiles.ContainsKey(displaced.Index));
+                    displaced.Url = "";
+                }
+                if (displacedCanonical.Count > 0)
+                    foreach (var fresh in downloaded.Where(track => !previousDownloads.Contains(track)))
+                    {
+                        fresh.Unplayable = true;
+                        fresh.Url = "";
+                    }
+                uncertainPick = (displacedCanonical.Count > 0 || !canonicalOrdinalsAgree) &&
+                    response.Subtitles.Any(entry => entry.Id == preferredSubtitleId);
 
                 // MatchCurrentSubtitle, SubtitleSelectionForLoad and presentation
                 // readers share the inventory gate, so retained identities and
@@ -9476,15 +9614,24 @@ public partial class PlayerService : IDisposable
                     (Track: track, Path: _prefetchedSubtitleFiles.GetValueOrDefault(track.Index))).ToArray();
                 downloaded = downloaded.Select(refreshed =>
                 {
+                    if (previousDownloads.Contains(refreshed)) return refreshed;
                     var matches = previousDownloads.Where(track => track.Id == refreshed.Id ||
                         track.SyncKey == refreshed.SyncKey).Take(2).ToArray();
                     if (matches.Length != 1 || downloaded.Count(track => track.Id == refreshed.Id ||
                         track.SyncKey == refreshed.SyncKey) != 1) return refreshed;
                     var retained = matches[0];
+                    // An uncertain positional URL cannot retire bytes already
+                    // loaded for this identity. Inspect caches before re-indexing.
+                    var keepPlayable = !retained.Unplayable &&
+                        (_executedSubtitleFileId == mediaFileId && ReferenceEquals(_executedSubtitleTrack, retained) ||
+                         _loadedExternalSubtitleSids.GetValueOrDefault(retained.Index) > 0 ||
+                         _prefetchedSubtitleFiles.ContainsKey(retained.Index));
+                    var unplayable = refreshed.Unplayable && !keepPlayable;
                     retained.Index = refreshed.Index;
                     retained.MediaFileId = refreshed.MediaFileId;
                     retained.SyncKey = refreshed.SyncKey;
                     retained.Id = refreshed.Id;
+                    retained.Unplayable = unplayable;
                     retained.Language = refreshed.Language;
                     retained.Codec = refreshed.Codec;
                     retained.NativeTitle = refreshed.NativeTitle;
@@ -9494,6 +9641,8 @@ public partial class PlayerService : IDisposable
                     retained.Url = refreshed.Url;
                     return retained;
                 }).ToList();
+                // A list read before an announcement landed cannot prove its row gone.
+                RetainDownloadsAnnouncedDuringRead(readInventory, previousDownloads, downloaded);
 
                 // Older plan downloads without stored keys cannot be proven gone
                 // by this inventory. Keep their exact rows at separate indices,
@@ -9501,11 +9650,12 @@ public partial class PlayerService : IDisposable
                 bool UnknownDownload(SubtitleTrackInfo? track) => track != null &&
                     string.Equals(track.Source, "downloaded", StringComparison.OrdinalIgnoreCase) &&
                     track.Id is not > 0 && string.IsNullOrWhiteSpace(track.SyncKey);
-                foreach (var retained in previousDownloads.Where(track => UnknownDownload(track)))
-                {
-                    retained.Index = baseIndex + downloaded.Count;
-                    downloaded.Add(retained);
-                }
+                RetainDownloadsWithoutStoredIdentity(mediaFileId, previousDownloads, reserved, downloaded, baseIndex);
+                // The entry's own row can withhold the route as well: an ordinal a
+                // canonical row absent from the list still holds, a repeated id, a
+                // plan-only row it was not proven to be, or a row already unplayable.
+                uncertainPick |= response.Subtitles.Any(entry => entry.Id == preferredSubtitleId) &&
+                    !downloaded.Any(track => !track.Unplayable && track.Id == preferredSubtitleId);
 
                 SubtitleTrackInfo? Rebind(SubtitleTrackInfo? track)
                 {
@@ -9602,24 +9752,33 @@ public partial class PlayerService : IDisposable
                 return;
             }
 
+            // A row this refresh could not make executable is never activated.
             var preferred = preferredSubtitleId.HasValue
-                ? downloaded.FirstOrDefault(track => track.Id == preferredSubtitleId)
+                ? downloaded.FirstOrDefault(track => !track.Unplayable && track.Id == preferredSubtitleId)
                 : null;
             if (preferred != null && _mpv != null)
             {
+                StoredSubtitleCompletion? completion = null;
                 lock (_liveSubtitleLock)
                 {
                     if (!Current() || mayActivate?.Invoke() == false) return;
                     if (liveJobId > 0 && _liveSubtitleJobId == liveJobId)
+                    {
                         _storedSubtitleCompletion = new(authority, authority.ApiClient.CaptureContext(), manager,
                             _mpv, mediaFileId, Volatile.Read(ref _playRequestGeneration),
                             _liveSubtitleFileLoadGeneration, ContentId, liveJobId, preferred.Id!.Value);
+                        completion = _storedSubtitleCompletion;
+                    }
                 }
                 var selected = await TrySetSubtitleTrackAndPersistAsync(
                     preferred.Index + 1, preferred.Language, preferred, claimActivation: false,
                     acceptActivation: () => Current() && mayActivate?.Invoke() != false &&
                         currentOwner?.HasCurrentSubtitleChoice != false,
                     currentOwner: currentOwner).ConfigureAwait(false);
+                handedOver = selected;
+                // A refused attempt leaves no completion for a later selection to consume.
+                if (!selected && completion != null && ReferenceEquals(_storedSubtitleCompletion, completion))
+                    _storedSubtitleCompletion = null;
                 if (!selected || !Current()) return;
                 // AI owners may follow accepted same-file plans; ordinary
                 // callers still retain their original response object.
@@ -9646,10 +9805,42 @@ public partial class PlayerService : IDisposable
                     }
                 }
             }
+            else if (preferred == null && uncertainPick && preferredSubtitleId is long requested && Current())
+            {
+                // Only an authoritative inventory can route that entry. Without an
+                // owner its application starts this refresh over; an owner follows
+                // the plan itself. An announcement that deferred itself still owes
+                // that inventory: its application starts either refresh over. When
+                // none is applied or owed, or the list cannot place the entry there
+                // either, tell the viewer.
+                var published = await ReplanForStoredSubtitlePickAsync(manager, session, requested).ConfigureAwait(false);
+                if (published == null)
+                {
+                    deferred = AwaitsDeferredSubtitleReadyAnnouncement(session, currentOwner != null ? superseded : null);
+                    if (!deferred && Current()) ShowSubtitleSelectionUnavailable();
+                }
+                else if (currentOwner != null && Current())
+                {
+                    MarkStoredSubtitlePickReplanned(published, requested);
+                    await RefreshSubtitlesAfterAiForOwnerAsync(mediaFileId, preferredSubtitleId, currentOwner, mayActivate, isCurrent).ConfigureAwait(false);
+                }
+            }
         }
         catch (Exception ex)
         {
             LogToFile("state_trace.txt", $"Subtitle refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            // A replan can publish its inventory, retiring this response, before
+            // that inventory is applied. Ending on it is not ending the pick: stay
+            // registered so the application still starts this refresh over.
+            var awaiting = !handedOver && (deferred || AwaitsSubtitleInventoryApplication(manager, session));
+            lock (_subtitleReadyRefreshLock)
+            {
+                ended = awaiting;
+                if (!awaiting) _storedSubtitleListRefreshes.Remove(superseded);
+            }
         }
     }
 
@@ -10042,6 +10233,9 @@ public partial class PlayerService : IDisposable
         finally
         {
             Interlocked.Decrement(ref _pendingPlanInvalidations);
+            // Also release announcements after a no-op invalidation (no
+            // FILE_LOADED), or one whose load completed before this finally.
+            ResumePendingSubtitleReadyRefreshes();
         }
     }
 

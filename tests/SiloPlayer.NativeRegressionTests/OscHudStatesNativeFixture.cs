@@ -18,7 +18,7 @@ using Windows.Storage;
 
 internal static class OscHudStatesNativeFixture
 {
-    internal static async Task RunAsync(Window owner, string? reviewCase = null)
+    internal static async Task RunAsync(Window owner, string? reviewCase = null, bool introOnly = false)
     {
         if (reviewCase is not (null or "all" or "fit" or "exit" or "minimize"))
             throw new ArgumentException("Unknown HUD review case.", nameof(reviewCase));
@@ -53,16 +53,49 @@ internal static class OscHudStatesNativeFixture
             -- Fixture-only observation in the same Lua scope as the real OSC.
             mp.register_script_message('osc-hud-fixture-query', function(request, name)
                 compute_layout()
-                local r = state.layout[name] or {}
+                local r = name == 'intro' and (state.skip_rect or {}) or state.layout[name] or {}
                 mp.commandv('script-message', 'silo-hud-fixture', request, require('mp.utils').format_json({
                     x=r.x or 0,y=r.y or 0,w=r.w or 0,h=r.h or 0,alpha=state.current_alpha,
                     pressed=state.pressed_control or '',focus=state.controller_focus_name or '',target=state.target_alpha,
+                    skip=state.skip_visible,remaining=state.intro_prompt_remaining or -1,
                     outputWidth=state.osd_width,outputHeight=state.osd_height}))
             end)
             mp.commandv('script-message', 'silo-hud-fixture-ready')
             """);
         Command(player, "load-script", diagnostic);
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(8));
+        if (introOnly)
+        {
+            var clip = Path.Combine(Program.ResultDirectory, "intro.y4m"); GenerateClip(clip, 48, 900);
+            video.SynchronizePosition();
+            await LoadClip(clip);
+            player.SendScriptMessage("osc-set-intro-mode", "ask");
+            player.SendScriptMessage("osc-set-markers", "{\"content_id\":\"intro-fixture\",\"intro_start\":0,\"intro_end\":30}");
+            player.Play(); await Until(() => !player.IsPaused);
+            await Task.Delay(5800);
+            player.SendScriptMessage("osc-hide"); await Task.Delay(400);
+            var expired = await Query("intro");
+            await File.WriteAllTextAsync(Path.Combine(Program.ResultDirectory, "intro-expired.json"), JsonSerializer.Serialize(expired));
+            Require(expired.Remaining == 0 && !expired.Skip, "Ask prompt did not expire while controls were hidden.");
+            player.SendScriptMessage("osc-show"); await Task.Delay(350);
+            var offered = await Query("intro");
+            Require(offered.Skip && offered.Remaining == 0 && offered.W > 0 && offered.H > 0 && offered.Focus == expired.Focus,
+                "Revealing actual controls did not return an untimed offer without stealing focus.");
+            Require(offered.Y + offered.H < (await Query("seek_bar")).Y, "Untimed intro offer overlapped the native seek hit area.");
+            await Capture("intro-untimed-offer.png");
+            var pauses = intents.Count(value => value == "silo-pause-toggle");
+            Command(player, "keypress", "SPACE"); await Task.Delay(100);
+            Require(intents.Count(value => value == "silo-pause-toggle") == pauses + 1, "Untimed intro offer captured normal Space.");
+            player.SendScriptMessage("osc-hide"); await Task.Delay(350);
+            Require(!(await Query("intro")).Skip, "Untimed offer outlived hidden controls.");
+            player.SendScriptMessage("osc-show"); await Task.Delay(350);
+            Require((await Query("intro")).Remaining == 0, "Revealing controls renewed the countdown.");
+            player.SendScriptMessage("osc-set-markers", "{\"content_id\":\"replacement\",\"intro_start\":10,\"intro_end\":20}");
+            await Task.Delay(150);
+            Require(!(await Query("intro")).Skip, "Expired offer survived content/marker replacement.");
+            Program.Log("PASS: actual offscreen OSC timed expiry, untimed control reveal/hide, unchanged focus and Space, marker/content retirement.");
+            return;
+        }
         var observations = new List<object>();
         foreach (var size in new[] { (960, 540), (1920, 1080) })
         foreach (var shade in new[] { (byte)16, (byte)235 })
@@ -226,7 +259,7 @@ internal static class OscHudStatesNativeFixture
     }
 
     private sealed record Frame(int Width, int Height, byte[] Pixels);
-    private sealed record Probe(double X, double Y, double W, double H, double Alpha, string Pressed, int OutputWidth, int OutputHeight, string Focus, double Target);
+    private sealed record Probe(double X, double Y, double W, double H, double Alpha, string Pressed, int OutputWidth, int OutputHeight, string Focus, double Target, bool Skip, double Remaining);
     private static void Set(object target, string name, object? value) => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
     private sealed class FixtureWire : HttpMessageHandler
     {
@@ -335,12 +368,12 @@ internal static class OscHudStatesNativeFixture
         }
         return count;
     }
-    private static void GenerateClip(string path, byte shade)
+    private static void GenerateClip(string path, byte shade, int frames = 60)
     {
         using var stream = File.Create(path);
         stream.Write(Encoding.ASCII.GetBytes("YUV4MPEG2 W160 H90 F30:1 Ip A1:1 C420jpeg\n"));
         var pixels = new byte[160 * 90 * 3 / 2]; Array.Fill(pixels, (byte)128); Array.Fill(pixels, shade, 0, 160 * 90);
-        for (var i = 0; i < 60; i++) { stream.Write(Encoding.ASCII.GetBytes("FRAME\n")); stream.Write(pixels); }
+        for (var i = 0; i < frames; i++) { stream.Write(Encoding.ASCII.GetBytes("FRAME\n")); stream.Write(pixels); }
     }
     private static void Command(MpvPlayer player, params string[] args) => Require(
         typeof(MpvPlayer).GetMethod("Command", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(player, [args]) is true,

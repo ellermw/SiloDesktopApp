@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -26,6 +27,8 @@ public sealed partial class CollectionsPage : Page
     private long _collectionsPageGeneration;
     private bool _libraryRefreshQueued;
     private bool _libraryRefreshPending;
+    private SiloPlayer.Core.Api.CatalogApi? _libraryEvents;
+    private SiloPlayer.Services.UICustomizationService? _presentationEvents;
 
     public CollectionsPage()
     {
@@ -41,16 +44,24 @@ public sealed partial class CollectionsPage : Page
         {
             if (args.PropertyName == nameof(ViewModel.IsEmpty))
                 DispatcherQueue.TryEnqueue(UpdateEmptyState);
-            else if (args.PropertyName == nameof(ViewModel.IsLoadingServerCollections))
+            else if (args.PropertyName is nameof(ViewModel.IsLoadingServerCollections) or nameof(ViewModel.IsLoading) or nameof(ViewModel.IsLoadingProfiles)
+                or nameof(ViewModel.PersonalLoaded) or nameof(ViewModel.ProfilesLoaded) or nameof(ViewModel.ServerLoaded) or nameof(ViewModel.ServerCollectionsErrorMessage))
                 DispatcherQueue.TryEnqueue(BuildServerCollectionRows);
             else if (args.PropertyName == nameof(ViewModel.Capabilities)) QueueCollectionBuild();
             else if (args.PropertyName == nameof(ViewModel.ServerCollectionRevision)) BuildServerCollectionRows();
         };
         SizeChanged += CollectionsPage_SizeChanged;
-        Loaded += (_, _) => App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().LibraryCacheInvalidated += CollectionsLibraryInvalidated;
+        Loaded += (_, _) =>
+        {
+            // Subscribe through captured instances so Unloaded can always unsubscribe, even after the app's container is gone.
+            _libraryEvents = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>(); _libraryEvents.LibraryCacheInvalidated += CollectionsLibraryInvalidated;
+            if (_presentationEvents != null) _presentationEvents.Changed -= PosterSizeChanged;
+            _presentationEvents = App.Services.GetService<SiloPlayer.Services.UICustomizationService>(); if (_presentationEvents != null) _presentationEvents.Changed += PosterSizeChanged;
+        };
         Unloaded += (_, _) =>
         {
-            App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().LibraryCacheInvalidated -= CollectionsLibraryInvalidated;
+            if (_libraryEvents != null) _libraryEvents.LibraryCacheInvalidated -= CollectionsLibraryInvalidated; _libraryEvents = null;
+            if (_presentationEvents != null) _presentationEvents.Changed -= PosterSizeChanged; _presentationEvents = null;
             ++_collectionsPageGeneration; _libraryRefreshPending = _libraryRefreshQueued = false;
             ViewModel.CancelServerCollectionLoads();
         };
@@ -109,10 +120,18 @@ public sealed partial class CollectionsPage : Page
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        // A fresh visit starts at All (the WebUI link carries no filter); returning keeps the viewer's choice.
+        if (e.NavigationMode == Microsoft.UI.Xaml.Navigation.NavigationMode.New) _requestedShow = null;
         if (e.Parameter is CollectionsNavigationArgs args)
         {
             _openTemplatesOnLoad = args.OpenTemplates;
             _returnAfterTemplates = args.ReturnAfterTemplates;
+            // The wall's Show filter travels with the navigation (the WebUI keeps it in the URL).
+            if (args.Show != null || args.LibraryId != null)
+            {
+                _requestedShow = args.LibraryId is { } library ? SiloPlayer.Core.Services.CollectionsWall.Library(library) : args.Show;
+                if (IsLoaded) QueueCollectionBuild();
+            }
         }
     }
 
@@ -157,13 +176,12 @@ public sealed partial class CollectionsPage : Page
         var compact = e.NewSize.Width < 1024;
         CollectionsHeaderActions.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         CreateCollectionDock.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
-        PersonalCollectionsHeading.FontSize = e.NewSize.Width < 640 ? 20 : 24;
         var gutter = e.NewSize.Width < 640 ? 16 : e.NewSize.Width < 1024 ? 24 : 40;
         var top = e.NewSize.Width < 640 ? 32 : e.NewSize.Width < 1024 ? 40 : 56;
+        // Full width: the wall's own column count, not a capped shell, decides the poster size.
         CollectionsPageShell.Padding = new Thickness(gutter, top, gutter, compact ? 110 : 40);
-        CollectionsPageShell.MaxWidth = 1000 + gutter * 2; CollectionsPageShell.Width = Math.Min(e.NewSize.Width, CollectionsPageShell.MaxWidth);
         CollectionsTitle.FontSize = Math.Clamp(e.NewSize.Width * .04, 32, 48); CollectionsTitle.LineHeight = CollectionsTitle.FontSize * .95; CollectionsTitle.CharacterSpacing = -50;
-        CollectionsSubtitle.FontSize = e.NewSize.Width < 640 ? 14 : 16; CollectionsSubtitle.LineHeight = e.NewSize.Width < 640 ? 20 : 24; ServerCollectionsHeading.FontSize = e.NewSize.Width < 640 ? 20 : 24;
+        CollectionsSubtitle.FontSize = e.NewSize.Width < 640 ? 14 : 16; CollectionsSubtitle.LineHeight = e.NewSize.Width < 640 ? 20 : 24;
         BuildCollectionSkeletons();
         CollectionsHeaderGrid.ColumnDefinitions[1].Width = compact
             ? new GridLength(0)
@@ -175,7 +193,7 @@ public sealed partial class CollectionsPage : Page
             ? HorizontalAlignment.Left
             : HorizontalAlignment.Right;
 
-        var columnCount = e.NewSize.Width >= 1024 ? 7 : e.NewSize.Width >= 640 ? 5 : 3;
+        var columnCount = PosterColumnCount;
         var serverCardSizeClass = e.NewSize.Width >= 1024 ? 2 : e.NewSize.Width >= 640 ? 1 : 0;
         if (_collectionColumnCount != columnCount || _serverCardSizeClass != serverCardSizeClass)
         {
@@ -185,50 +203,14 @@ public sealed partial class CollectionsPage : Page
         }
     }
 
-    private void BuildCollectionCards()
+    private void PosterSizeChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
     {
-        CollectionsGrid.Children.Clear();
-        EmptyState.Visibility = AddGroupButton.Visibility = AddGroupEditor.Visibility = Visibility.Collapsed;
-        var profileId = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().SelectedProfileId;
-        var partition = SiloPlayer.Core.Services.PersonalCollectionOwnership.Split(ViewModel.Collections, profileId, ViewModel.Profiles.ToArray());
-        PersonalCollectionsCount.Text = partition.Own.Count.ToString();
-        PersonalCollectionsNote.Visibility = partition.Own.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        var own = BuildPosterBoard(partition.Own.Select(BuildCollectionCard).Cast<FrameworkElement>().ToArray());
-        if (partition.Own.Count == 0) own.Children.Add(NewCollectionCard());
-        CollectionsGrid.Children.Add(own);
-        SharedCollectionsPanel.Children.Clear();
-        var multiple = ViewModel.Profiles.Count > 1;
-        CollectionsSubtitle.Text = multiple ? "Yours, the ones other profiles share with you, and the server's." : "Yours and the server's.";
-        SharedCollectionsPanel.Visibility = multiple && partition.Shared.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (multiple && partition.Shared.Count > 0)
-        {
-            var sharedHeader = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 16, VerticalSpacing = 4 };
-            var sharedTitle = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            sharedTitle.Children.Add(new TextBlock { Text = "Shared with me", FontSize = ActualWidth < 640 ? 20 : 24, FontWeight = FontWeights.SemiBold });
-            sharedTitle.Children.Add(new TextBlock { Text = partition.Shared.Sum(group => group.Collections.Count).ToString(), FontSize = 14, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], VerticalAlignment = VerticalAlignment.Bottom, Margin = new(0, 0, 0, 3) });
-            sharedHeader.Children.Add(sharedTitle);
-            sharedHeader.Children.Add(new TextBlock { Text = "Read-only. Other profiles on this account made these.", FontSize = 13, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], VerticalAlignment = VerticalAlignment.Bottom, Margin = new(0, 0, 0, 3) });
-            SharedCollectionsPanel.Children.Add(sharedHeader);
-            var owners = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 14, VerticalSpacing = 20 };
-            foreach (var group in partition.Shared)
-            {
-                var count = Math.Min(PosterColumnCount, group.Collections.Count);
-                var body = new StackPanel { Spacing = 12, Width = count * PosterWidth + (count - 1) * 14 };
-                var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                heading.Children.Add(RoundedBadge.Apply(new Border { Width = 20, Height = 20, Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .2 }, Child = new TextBlock { Text = string.IsNullOrEmpty(group.Name) ? "?" : group.Name[..1].ToUpperInvariant(), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["AccentBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } }, 999));
-                var by = new TextBlock { FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
-                by.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "by " }); by.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = group.Name, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"] }); heading.Children.Add(by);
-                body.Children.Add(heading);
-                var cards = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 14, VerticalSpacing = 20 };
-                foreach (var collection in group.Collections) { var card = BuildCollectionCard(collection); card.Width = PosterWidth; cards.Children.Add(card); }
-                body.Children.Add(cards); owners.Children.Add(body);
-            }
-            SharedCollectionsPanel.Children.Add(owners);
-        }
-        if (ViewModel.Capabilities?.ItemReorder == true && partition.Own.Count > 1)
-            CollectionsGrid.Children.Add(new TextBlock { Text = "Drag a poster to change the order, or focus its handle and press Space, then the arrow keys.", FontSize = 13, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap, Margin = new(0, 12, 0, 0) });
-        BuildServerCollectionRows();
-    }
+        BuildCollectionSkeletons();
+        QueueCollectionBuild();
+    });
+
+    /// <summary>Rebuilds the one poster wall: Show pills, the empty line, then your, shared and server cards.</summary>
+    private void BuildCollectionCards() => BuildWall();
 
     private Border BuildLegacyCollectionCard(Collection collection)
     {
@@ -366,6 +348,8 @@ public sealed partial class CollectionsPage : Page
         // Right-click context menu
         var menuFlyout = new MenuFlyout();
         if (!canManage) { card.ContextFlyout = menuFlyout; return card; }
+        var allowanceVisit = _collectionsPageGeneration;
+        SiloPlayer.Controls.CollectionAllowanceMenu.Attach(menuFlyout, card, collection, () => IsLoaded && allowanceVisit == _collectionsPageGeneration);
 
         if (canManage && CanSyncCollection(collection))
         {
@@ -459,7 +443,8 @@ public sealed partial class CollectionsPage : Page
 
     private UIElement BuildCollectionGroupSection(CollectionGroup? group, string title, IReadOnlyList<Collection> items)
     {
-        var section = new StackPanel { Spacing = 14, Margin = new Thickness(0, 0, 0, 28) };
+        var section = new StackPanel { Spacing = 14, Margin = new Thickness(0, 0, 0, 28), Tag = group };
+        AutomationProperties.SetName(section, title);
         section.AllowDrop = true;
         section.DragOver += (_, args) => args.AcceptedOperation = DataPackageOperation.Move;
         section.Drop += async (_, args) =>
@@ -469,7 +454,10 @@ public sealed partial class CollectionsPage : Page
             var payload = await args.DataView.GetTextAsync();
             if (payload.StartsWith(CollectionDragPrefix, StringComparison.Ordinal))
             {
-                await ViewModel.DropCollectionAsync(payload[CollectionDragPrefix.Length..], null, group?.Id);
+                var source = ViewModel.Collections.FirstOrDefault(collection => collection.Id == payload[CollectionDragPrefix.Length..]);
+                if (source != null && PersonalCollectionOwnership.IsOwn(source, App.Services.GetRequiredService<AuthService>().SelectedProfileId)
+                    && source.GroupId != group?.Id)
+                    await ViewModel.MoveCollectionToGroupAsync(source, group?.Id);
             }
             else if (group != null && payload.StartsWith(GroupDragPrefix, StringComparison.Ordinal))
             {
@@ -619,19 +607,7 @@ public sealed partial class CollectionsPage : Page
             return section;
         }
 
-        var repeater = new ItemsRepeater
-        {
-            ItemsSource = items.Select(BuildCollectionCard).ToList(),
-            Layout = new UniformGridLayout
-            {
-                MaximumRowsOrColumns = Math.Max(1, _collectionColumnCount),
-                MinItemWidth = 280,
-                MinColumnSpacing = 16,
-                MinRowSpacing = 16,
-                ItemsStretch = UniformGridLayoutItemsStretch.Fill
-            }
-        };
-        section.Children.Add(repeater);
+        section.Children.Add(BuildPosterBoard(items.Select(BuildCollectionCard).Cast<FrameworkElement>().ToArray()));
         return section;
     }
 
@@ -662,6 +638,7 @@ public sealed partial class CollectionsPage : Page
             Content = new FontIcon { Glyph = glyph, FontSize = 13 }
         };
         ToolTipService.SetToolTip(button, tooltip);
+        AutomationProperties.SetName(button, tooltip);
         button.Click += async (_, _) =>
         {
             button.IsEnabled = false;
@@ -669,66 +646,6 @@ public sealed partial class CollectionsPage : Page
             finally { button.IsEnabled = true; }
         };
         return button;
-    }
-
-    private void BuildLegacyServerCollectionRows()
-    {
-        ServerCollectionsRows.Children.Clear();
-        ServerCollectionsSection.Visibility = ViewModel.IsLoadingServerCollections || ViewModel.ServerLibraries.Count > 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
-        foreach (var library in ViewModel.ServerLibraries)
-        {
-            var row = new StackPanel { Spacing = 14 };
-            var rowHeader = new Grid();
-            rowHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            rowHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var title = new Button
-            {
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(0),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Content = new TextBlock
-                {
-                    Text = library.LibraryName,
-                    FontSize = 20,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
-                }
-            };
-            title.Click += (_, _) => NavigateToLibraryCollections(library);
-            rowHeader.Children.Add(title);
-
-            if (library.TotalCount > library.Collections.Count)
-            {
-                var exploreAll = new Button
-                {
-                    Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-                    Content = "Explore all"
-                };
-                exploreAll.Click += (_, _) => NavigateToLibraryCollections(library);
-                Grid.SetColumn(exploreAll, 1);
-                rowHeader.Children.Add(exploreAll);
-            }
-            row.Children.Add(rowHeader);
-
-            var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
-            foreach (var collection in library.Collections)
-                cards.Children.Add(BuildServerCollectionCard(library, collection));
-
-            row.Children.Add(new ScrollViewer
-            {
-                Content = cards,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
-                HorizontalScrollMode = ScrollMode.Enabled,
-                VerticalScrollMode = ScrollMode.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
-            });
-            ServerCollectionsRows.Children.Add(row);
-        }
     }
 
     private static void NavigateToLibraryCollections(ServerCollectionsLibrary library)
@@ -949,9 +866,7 @@ public sealed partial class CollectionsPage : Page
     {
         AddGroupNameBox.Text = "";
         AddGroupEditor.Visibility = Visibility.Collapsed;
-        AddGroupButton.Visibility = ViewModel.Collections.Count > 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        BuildWall();
     }
 
     private async Task RenameGroupAsync(CollectionGroup group)
@@ -1073,8 +988,7 @@ public sealed partial class CollectionsPage : Page
         await dialog.ShowAsync();
     }
 
-    private static bool CanSyncCollection(Collection collection)
-        => collection.CollectionType is "mdblist" or "tmdb" or "tmdb_list";
+    private static bool CanSyncCollection(Collection collection) => CollectionHeroActions.CanSync(collection);
 
     private static string FormatCollectionType(string type) => type switch
     {
@@ -1097,58 +1011,14 @@ public sealed partial class CollectionsPage : Page
     }
 
     private async Task ShowDeleteConfirmationAsync(Collection collection)
-    {
-        var content = new StackPanel { Spacing = 10 };
-        content.Children.Add(new TextBlock
+        => await CollectionDeleteDialog.ShowAsync(XamlRoot, collection.Name, collection.IsShared, async () =>
         {
-            Text = collection.IsShared ? "It's removed for you and every profile you share it with. This can't be undone." : "This can't be undone.",
-            TextWrapping = TextWrapping.Wrap
+            await ViewModel.DeleteCollectionCommand.ExecuteAsync(collection.Id);
+            return ViewModel.Collections.All(candidate => candidate.Id != collection.Id)
+                && ViewModel.GetServerCollectionCards().All(card => card.Collection.Id != collection.Id)
+                ? null : ViewModel.ErrorMessage ?? "The collection could not be deleted.";
         });
-        var error = new TextBlock
-        {
-            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
-            TextWrapping = TextWrapping.Wrap,
-            Visibility = Visibility.Collapsed
-        };
-        content.Children.Add(error);
-        var dialog = new ContentDialog
-        {
-            Title = $"Delete \"{collection.Name}\"?",
-            Content = content,
-            PrimaryButtonText = "Delete",
-            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-            CloseButtonText = "Cancel",
-            XamlRoot = this.XamlRoot,
-            DefaultButton = ContentDialogButton.Close
-        };
-        dialog.PrimaryButtonClick += async (_, args) =>
-        {
-            args.Cancel = true;
-            var deferral = args.GetDeferral();
-            try
-            {
-                dialog.IsPrimaryButtonEnabled = false;
-                dialog.PrimaryButtonText = "Deleting...";
-                error.Visibility = Visibility.Collapsed;
-                await ViewModel.DeleteCollectionCommand.ExecuteAsync(collection.Id);
-                if (ViewModel.Collections.All(candidate => candidate.Id != collection.Id))
-                {
-                    args.Cancel = false;
-                    return;
-                }
-
-                error.Text = ViewModel.ErrorMessage ?? "The collection could not be deleted.";
-                error.Visibility = Visibility.Visible;
-            }
-            finally
-            {
-                dialog.PrimaryButtonText = "Delete";
-                dialog.IsPrimaryButtonEnabled = true;
-                deferral.Complete();
-            }
-        };
-        await dialog.ShowAsync();
-    }
 }
 
-public sealed record CollectionsNavigationArgs(bool OpenTemplates = false, bool ReturnAfterTemplates = false);
+/// <summary>Show is the wall's filter ("all", "mine", "shared", "server"); LibraryId picks one library's collections, as the WebUI's ?show= and ?library= do.</summary>
+public sealed record CollectionsNavigationArgs(bool OpenTemplates = false, bool ReturnAfterTemplates = false, string? Show = null, int? LibraryId = null);
