@@ -24,7 +24,7 @@ public class ApiTransportVersionTests
             api.SetAccessToken("fixture-refreshed-token");
             return Task.FromResult(true);
         });
-        await api.GetAsync<Dictionary<string, object>>("/api/v1/catalog");
+        await api.GetAsync<Dictionary<string, object>>("/api/v2/catalog");
 
         Assert.Equal(retry ? 2 : 1, handler.Versions.Count);
         Assert.All(handler.Versions, version => Assert.Equal(HttpVersion.Version20, version));

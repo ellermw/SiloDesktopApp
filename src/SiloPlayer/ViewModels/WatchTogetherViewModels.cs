@@ -124,7 +124,7 @@ public partial class WatchTogetherJoinViewModel : ObservableObject
 /// <summary>
 /// Backs <c>WatchTogetherRoomPage</c>. Owns the room REST refresh cycle, suggestion
 /// list, and a dedicated WebSocket client connected to
-/// <c>/api/v1/watch-together/rooms/{roomId}/ws</c> that streams room state updates.
+/// <c>/api/v2/watch-together/rooms/{roomId}/ws</c> that streams room state updates.
 /// </summary>
 ///
 /// <remarks>
