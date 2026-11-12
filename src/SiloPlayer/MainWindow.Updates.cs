@@ -349,8 +349,8 @@ public sealed partial class MainWindow
     }
 
     // From Update now on, the small update panel owns the update: this dialog closes, the panel
-    // shows the download (only the files actually fetched), asks Restart now or Later, then
-    // installs and restarts. A resumed deferral passes confirmRestart false and has no dialog.
+    // shows download and installation, then asks Restart now or Later only after staging.
+    // A resumed deferral reuses its verified installation and has no dialog.
     private async Task RunWindowedUpdateAsync(ContentDialog? dialog, IWindowedAppUpdateInstaller windowed, AppRelease release, bool confirmRestart, CancellationToken ct)
     {
         _updateWindowOwnsUpdate = true;
@@ -367,11 +367,9 @@ public sealed partial class MainWindow
             _updatePreparationWindow = preparation;
             preparation.Cancel.Click += (_, _) => preparationLifetime.Cancel();
             preparation.AppWindow.Closing += (_, args) => { if (!closingPreparation) { args.Cancel = true; preparationLifetime.Cancel(); } };
-            // Give XAML a rendering turn before any expensive protected-root or executable hashing work.
-            var painted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            preparation.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => painted.TrySetResult());
+            // Keep the existing dialog until the small panel has reached its first rendering frame.
+            await preparation.WaitForPresentationAsync(preparationLifetime.Token);
             dialog?.Hide();
-            await painted.Task.WaitAsync(preparationLifetime.Token);
             var outcome = await windowed.PrepareWithDownloadAsync(release, packageDirectory, true, confirmRestart, _updateHwnd.ToInt64(), async (report, token) =>
             {
                 // Pin the release the user accepted before downloading it: a check must not replace it under the window.
@@ -390,7 +388,7 @@ public sealed partial class MainWindow
                 if (updates.State.PreparedPackage is null || !await updates.ReverifyReadyAsync(token))
                     return new(null, updates.State.Error ?? "The update could not be downloaded. You can keep using Silo and try again.");
                 if (confirmRestart) _windowedDownloadReady = release;
-                return new(updates.State.PreparedPackage, null) { Later = confirmRestart ? () => DeferAppUpdate(release) : null };
+                return new(updates.State.PreparedPackage, null) { Later = confirmRestart ? () => DeferAppUpdateWithNotice(release) : null };
             }, preparationLifetime.Token, trustedWindow =>
             {
                 preparationLifetime.Token.ThrowIfCancellationRequested();

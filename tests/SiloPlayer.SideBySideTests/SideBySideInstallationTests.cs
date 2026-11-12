@@ -109,6 +109,40 @@ public sealed class SideBySideInstallationTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(Root, "versions", "1.0.0.1")));
     }
 
+    [Fact]
+    public void FullInstallerOverADeferredStagedUpdateOfTheSameVersionKeepsItsOwnPayload()
+    {
+        Initialize();
+        var package = Package("1.0.0.2");
+        // Later leaves the staged journal and the version's inventory in place across sessions.
+        var staged = SideBySideInstallation.Stage(Root, package, _ => { }, default);
+        // The full installer of that same release then writes identical bytes into the same directory.
+        foreach (var file in package.Manifest.Files)
+            File.Copy(Path.Combine(package.Directory, "client", file.Path), Path.Combine(staged.VersionDirectory, file.Path), overwrite: true);
+        SideBySideInstallation.InitializeFromInstaller(Root, package.Manifest);
+        Assert.False(File.Exists(Path.Combine(Root, ".silo-update", "transaction.json")));
+        var state = SideBySideInstallation.ReadState(Root)!;
+        Assert.Equal("1.0.0.2", state.ActiveVersion); Assert.Equal("1.0.0.1", state.PreviousVersion);
+        Assert.Null(state.PendingVersion);
+        Assert.Equal(Path.Combine(staged.VersionDirectory, "SiloPlayer.exe"), SideBySideInstallation.ResolveClientExecutable(Root));
+    }
+
+    [Fact]
+    public void FullInstallerStillRemovesADeferredStagedUpdateOfAnotherVersion()
+    {
+        Initialize();
+        var staged = SideBySideInstallation.Stage(Root, Package("1.0.0.3"), _ => { }, default);
+        var package = Package("1.0.0.2");
+        var target = Path.Combine(Root, "versions", "1.0.0.2");
+        Directory.CreateDirectory(target);
+        foreach (var file in package.Manifest.Files)
+            File.Copy(Path.Combine(package.Directory, "client", file.Path), Path.Combine(target, file.Path));
+        SideBySideInstallation.InitializeFromInstaller(Root, package.Manifest);
+        Assert.Equal("1.0.0.2", SideBySideInstallation.ReadState(Root)!.ActiveVersion);
+        Assert.False(File.Exists(Path.Combine(Root, ".silo-update", "transaction.json")));
+        Assert.False(Directory.Exists(staged.VersionDirectory));
+    }
+
     private (string Launcher, string Target) CreateLauncherFixture(bool initialize = true)
     {
         foreach (var path in Directory.EnumerateFiles(Path.Combine(AppContext.BaseDirectory, "launcher-fixture"), "*", SearchOption.AllDirectories))

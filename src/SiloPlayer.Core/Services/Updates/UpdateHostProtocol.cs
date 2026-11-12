@@ -23,9 +23,10 @@ public static class UpdateHostProtocol
     private const int MaximumFrame = 65536;
     // "download" and "downloaded" travel from the client to its own update window while the
     // client downloads the package that the window then installs. "restart" and "later" travel
-    // back: the user's answer once everything is downloaded. Client and window are one build.
+    // back only after "prepared" confirms installed files. "defer"/"deferred" preserve a staged
+    // transaction for Later. Client and window are one build.
     private static readonly HashSet<string> Kinds = ["visible", "progress", "staged", "close", "cancel", "activated", "ready", "confirmed", "failed",
-        "download", "downloaded", "restart", "later", "presentation-ready", "present"];
+        "download", "downloaded", "prepared", "restart", "later", "defer", "deferred", "presentation-ready", "present"];
     public static async Task WriteAsync(Stream stream, UpdateHostMessage message, CancellationToken ct)
     {
         Validate(message);
