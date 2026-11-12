@@ -147,11 +147,16 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
             if (!double.IsFinite(maximum)) continue;
             foreach (var child in host.Children.OfType<FrameworkElement>()) OverlayBadgeMeasure.Limit(child, maximum);
         }
-        if (_shown.Length > 0)
-        {
-            var inset = _preset is "minimal" or "band" ? topLeft.Margin.Left : 0;
-            leftEdge.Margin = rightEdge.Margin = new Thickness(inset);
-        }
+        UpdateRailInset();
+    }
+
+    // Rails sit flush with the card edge unless the preset insets every badge. A host that
+    // resets its panel margins calls this again, without the measurement pass of Layout.
+    public void UpdateRailInset()
+    {
+        if (_shown.Length == 0) return;
+        var inset = _preset is "minimal" or "band" ? topLeft.Margin.Left : 0;
+        leftEdge.Margin = rightEdge.Margin = new Thickness(inset);
     }
 
     public void Hide() => SetVisible(false);

@@ -61,6 +61,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         OverlayBottomLeft.Margin = new Thickness(edge);
         OverlayBottomRight.Margin = new Thickness(edge);
         OverlayLeftEdge.Margin = OverlayRightEdge.Margin = new Thickness(edge);
+        // Shown rail badges keep the inset their hosts chose; quick actions reset geometry without a rebind.
+        _badges?.UpdateRailInset();
         WatchStatus.Update(MediaItem?.UserState, _overlayGeometry);
         if (WatchStatus.Visibility == Visibility.Visible)
             OverlayTopLeft.MaxWidth = Math.Max(0, Width - 2 * edge - WatchStatus.ReservedWidth - _overlayGeometry.StackGap);
