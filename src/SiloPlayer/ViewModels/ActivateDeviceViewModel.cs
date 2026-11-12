@@ -241,6 +241,8 @@ public partial class ActivateDeviceViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
+            // Manual activation compares/approves one request at a time. A
+            // returned binding never grants trust to another request here.
             var details = await _authApi.DeviceLookupAsync(token, code, cts.Token);
             if (ReferenceEquals(_loadCts, cts))
                 Details = details;

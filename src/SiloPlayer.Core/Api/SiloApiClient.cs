@@ -41,6 +41,8 @@ public partial class SiloApiClient
         new("SiloPlayer.AuthenticationGeneration");
     private static readonly HttpRequestOptionsKey<long> RequestContextGenerationOption =
         new("SiloPlayer.RequestContextGeneration");
+    private static readonly HttpRequestOptionsKey<bool> DeviceBootstrapOption =
+        new("SiloPlayer.DeviceBootstrap");
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -459,8 +461,11 @@ public partial class SiloApiClient
     }
 
     public async Task<T> GetUnauthenticatedAsync<T>(string path, CancellationToken ct = default)
+        => await GetUnauthenticatedAsync<T>(BaseUrl, path, ct);
+
+    public async Task<T> GetUnauthenticatedAsync<T>(string baseUrl, string path, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
+        using var request = new HttpRequestMessage(HttpMethod.Get, baseUrl.TrimEnd('/') + path);
         AddDeviceHeaders(request);
         return await SendAsync<T>(request, ct, allowTokenRefresh: false);
     }
@@ -505,6 +510,15 @@ public partial class SiloApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl.TrimEnd('/') + path);
         AddDeviceHeaders(request);
+        request.Content = CreateJsonContent(body);
+        return await SendAsync<T>(request, ct, allowTokenRefresh: false);
+    }
+
+    internal async Task<T> PostDeviceBootstrapAsync<T>(string baseUrl, string path, object body, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl.TrimEnd('/') + path);
+        AddDeviceHeaders(request);
+        request.Options.Set(DeviceBootstrapOption, true);
         request.Content = CreateJsonContent(body);
         return await SendAsync<T>(request, ct, allowTokenRefresh: false);
     }
@@ -973,8 +987,15 @@ public partial class SiloApiClient
         catch (Exception ex)
         {
             if (ex is not OperationCanceledException || !ct.IsCancellationRequested || isDismissal)
-                Services.LocalLog.AppendException("api_diagnostics.txt", ex,
-                    summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds}", actionId);
+            {
+                // A bootstrap transport can echo request values in its exception.
+                // Keep the diagnostic boundary, but never record a binding secret.
+                if (request.Options.TryGetValue(DeviceBootstrapOption, out var bootstrap) && bootstrap)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=device_bootstrap_transport_failed");
+                else
+                    Services.LocalLog.AppendException("api_diagnostics.txt", ex,
+                        summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds}", actionId);
+            }
             throw;
         }
     }
