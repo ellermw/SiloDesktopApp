@@ -633,8 +633,11 @@ public class CardOverlayService
                 result[def.Id] = new OverlayItemConfig(enabled, position, accentColor, showIcon)
                 {
                     Image = entry.TryGetProperty("image", out var image) && image.ValueKind == JsonValueKind.String ? image.GetString() : null,
+                    // A repeated name is enumerated once per occurrence. As with
+                    // TryGetProperty, the last one wins.
                     ValueImages = entry.TryGetProperty("valueImages", out var values) && values.ValueKind == JsonValueKind.Object
-                        ? values.EnumerateObject().Where(pair => pair.Value.ValueKind == JsonValueKind.String).Take(256)
+                        ? values.EnumerateObject().GroupBy(pair => pair.Name, StringComparer.Ordinal).Select(group => group.Last())
+                            .Where(pair => pair.Value.ValueKind == JsonValueKind.String).Take(256)
                             .ToDictionary(pair => pair.Name, pair => pair.Value.GetString()!, StringComparer.Ordinal) : null,
                 };
             }
@@ -709,7 +712,7 @@ public class CardOverlayService
 
     private static string SerializeForRevision(CardOverlayPrefs prefs, int manifestRevision)
     {
-        var root = prefs.OriginalDocument is JsonElement original ? JsonNode.Parse(original.GetRawText()) as JsonObject ?? new() : new JsonObject();
+        var root = prefs.OriginalDocument is JsonElement original ? ToNode(original) as JsonObject ?? new() : new JsonObject();
         var items = root["items"] as JsonObject ?? new JsonObject();
         foreach (var def in OverlayRegistry.All)
         {
@@ -750,6 +753,19 @@ public class CardOverlayService
             manifestRevision >= IntroducedInRevision(id) || items.ContainsKey(id)));
         if (root["items"] is not JsonObject) root["items"] = items;
         return root.ToJsonString();
+    }
+
+    // JsonObject rejects the repeated names a stored document may carry, which
+    // would fail every save. They collapse the way the parser read them: the
+    // last one wins.
+    private static JsonNode? ToNode(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+            return new JsonArray(element.EnumerateArray().Select(ToNode).ToArray());
+        if (element.ValueKind != JsonValueKind.Object) return JsonValue.Create(element);
+        var node = new JsonObject();
+        foreach (var property in element.EnumerateObject()) node[property.Name] = ToNode(property.Value);
+        return node;
     }
 
     // Positions are compared as the manifest would store them: drafts carry the
