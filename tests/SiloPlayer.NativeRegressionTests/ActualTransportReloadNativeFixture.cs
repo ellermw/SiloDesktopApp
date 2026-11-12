@@ -27,7 +27,8 @@ internal static class ActualTransportReloadNativeFixture
         string[] scenarios = ["cover-reload", "menus-response", "menus-output", "pause-response", "pause-output",
             "superseding-seek", "owner-retirement", "navigation", "replan-error",
             "quality-response", "quality-output", "chapters-response", "chapters-output", "party-response", "party-output",
-            "resume-response", "resume-output", "failed-pause-next-load", "audio-selection", "replacement-session", "room-toggle"];
+            "resume-response", "resume-output", "failed-pause-next-load", "audio-selection", "replacement-session", "room-toggle",
+            "failed-load-recovery", "failed-load-toggle"];
         var selected = Environment.GetEnvironmentVariable("SILO_NATIVE_RELOAD_CASE");
         if (!string.IsNullOrEmpty(selected)) { Require(scenarios.Contains(selected), "Unknown scenario."); scenarios = [selected]; }
         var results = new List<object>(); var failures = new List<string>();
@@ -201,6 +202,26 @@ internal static class ActualTransportReloadNativeFixture
                 service.RequestUserPauseToggle();
                 Require(roomRequest == "pause", "Room pause toggle during a framed reload followed the load freeze instead of the room's playing state.");
             }
+            if (scenario.StartsWith("failed-load-", StringComparison.Ordinal))
+            {
+                // The held load fails before FILE_LOADED. Its freeze keeps mpv paused while recovery replans,
+                // yet the transport shows, toggles and restores the playing state that load would have restored.
+                await Until(() => mpv.IsPaused, "Load freeze did not pause the native player.");
+                Call(service, "HandleMpvPlaybackError", "loading failed");
+                await wire.RecoveryStarted.Task.WaitAsync(TimeSpan.FromSeconds(8));
+                var recovering = await Query("held-recovery");
+                Require(recovering.GetProperty("reloading").GetBoolean() && !recovering.GetProperty("black").GetBoolean() && recovering.GetProperty("intent").GetString() == "false",
+                    "Recovery of a failed framed load presented the load freeze instead of its playing state.");
+                if (scenario == "failed-load-toggle")
+                {
+                    service.RequestUserPauseToggle();
+                    Require((await Query("recovery-toggle")).GetProperty("intent").GetString() == "true", "Pause toggle during recovery of a failed framed load followed the load freeze.");
+                }
+                wire.ReleaseRecovery.TrySetResult(); outputId = 2;
+                await media.Started(outputId).WaitAsync(TimeSpan.FromSeconds(8));
+                Require(Get(service, "_restorePausedAfterLoad") is bool recovers && recovers == (scenario == "failed-load-toggle"),
+                    "Recovery load does not restore the pause state its replan presented.");
+            }
             if (scenario == "menus-output") await OpenAudio("held-output");
             if (scenario.EndsWith("-output", StringComparison.Ordinal) && scenario is not "menus-output" and not "pause-output" and not "resume-output") await OpenControl(scenario.Split('-')[0], "held-output");
             if (scenario == "resume-output") { service.SetPaused(false); await Until(() => !mpv.IsPaused, "Resume awaiting output did not apply."); }
@@ -211,6 +232,8 @@ internal static class ActualTransportReloadNativeFixture
             Require(!cleared.GetProperty("loading").GetBoolean() && !cleared.GetProperty("reloading").GetBoolean() && !cleared.GetProperty("overlay").GetBoolean(), "Next actual frame did not clear the spinner.");
             if (scenario.StartsWith("pause-", StringComparison.Ordinal)) Require(mpv.IsPaused && service.IsPaused, "Latest viewer pause was overwritten by continuing reload initialization.");
             if (scenario.StartsWith("resume-", StringComparison.Ordinal) || scenario == "failed-pause-next-load") Require(!mpv.IsPaused && !service.IsPaused, "Latest explicit resume was overwritten by a prior pause.");
+            if (scenario == "failed-load-toggle") Require(mpv.IsPaused && service.IsPaused, "Pause chosen during recovery of a failed framed load was not restored.");
+            if (scenario == "failed-load-recovery") Require(!mpv.IsPaused && !service.IsPaused, "Recovery of a failed framed load restored the load freeze instead of playback.");
             if (scenario == "audio-selection")
             {
                 await audioSwitch!;
@@ -220,11 +243,12 @@ internal static class ActualTransportReloadNativeFixture
                 var current = choices.Cast<object>().Single(row => (bool)row.GetType().GetProperty("IsCurrent")!.GetValue(row)!);
                 Require((string)current.GetType().GetProperty("Id")!.GetValue(current)! == "1", "Reopened Audio menu did not reflect the accepted selection.");
             }
-            Require((long)Get(service, "_playbackFileGeneration")! == firstFile + 1, "Seek loaded more than the latest owned transport.");
+            // A failed load is followed by exactly one recovery load.
+            Require((long)Get(service, "_playbackFileGeneration")! == firstFile + (scenario.StartsWith("failed-load-", StringComparison.Ordinal) ? 2 : 1), "Seek loaded more than the latest owned transport.");
         }
         finally
         {
-            wire.ReleaseFirst.TrySetResult(); media.ReleaseAll(); Call(service, "CancelPendingTransportRestarts");
+            wire.ReleaseFirst.TrySetResult(); wire.ReleaseRecovery.TrySetResult(); media.ReleaseAll(); Call(service, "CancelPendingTransportRestarts");
             Call(service, "CancelPendingFileLoadTimeout"); Call(service, "CancelPendingLoadedMediaInitialization");
             Call(service, "StopPlaybackStallWatchdog"); Call(service, "RetireNativeMenus"); Call(service, "UnwireMpvEvents");
             Set(service, "_mpv", null); Set(service, "_videoWindow", null); Set(service, "_playbackManager", null);
@@ -298,6 +322,7 @@ internal static class ActualTransportReloadNativeFixture
     private sealed class Wire(string origin, string scenario) : HttpMessageHandler
     {
         internal readonly TaskCompletionSource FirstStarted = Signal(); internal readonly TaskCompletionSource ReleaseFirst = Signal();
+        internal readonly TaskCompletionSource RecoveryStarted = Signal(); internal readonly TaskCompletionSource ReleaseRecovery = Signal();
         internal readonly ConcurrentQueue<double> Positions = new(); internal bool FailFirst; private int _replans; private int _starts;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -311,6 +336,8 @@ internal static class ActualTransportReloadNativeFixture
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); position = body.RootElement.GetProperty("position_seconds").GetDouble(); Positions.Enqueue(position);
                 attempt = Interlocked.Increment(ref _replans);
                 if (attempt == 1) { FirstStarted.TrySetResult(); await ReleaseFirst.Task; if (FailFirst) return new(HttpStatusCode.InternalServerError) { Content = new StringContent("{}") }; }
+                // Recovery of the failed load is the second replan; hold it so the fixture can act during its round trip.
+                if (attempt == 2 && scenario.StartsWith("failed-load-", StringComparison.Ordinal)) { RecoveryStarted.TrySetResult(); await ReleaseRecovery.Task; }
             }
             var sessionId = "reload-session"; var fileId = 42; var audio = scenario == "audio-selection" && attempt > 0 ? 1 : 0;
             if (path.EndsWith("/start") && Interlocked.Increment(ref _starts) > 1)

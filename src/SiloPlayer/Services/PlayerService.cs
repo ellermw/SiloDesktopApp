@@ -661,8 +661,11 @@ public partial class PlayerService : IDisposable
     }
     // A submitted load freezes mpv until FILE_LOADED. In a framed session the
     // state it will restore, not that freeze, is what the viewer sees and toggles.
-    private bool? TransportReloadPauseIntent =>
-        _sessionHasFramed && (_switchingContent || IsLoading) ? _restorePausedAfterLoad : null;
+    private bool? TransportReloadPauseIntent => !_switchingContent && !IsLoading ? null
+        : _failedLoadPauseIntent ?? (_sessionHasFramed ? _restorePausedAfterLoad : null);
+    // A framed load that fails before FILE_LOADED leaves its freeze on mpv.
+    // Recovery keeps showing, toggling and restoring what that load would have.
+    private bool? _failedLoadPauseIntent;
     private double? _transportStartPosition;
     private double PlaybackRecoveryPosition => !_transportHasFirstOutput && _transportStartPosition is { } start
         ? start : CurrentMediaPosition;
@@ -785,6 +788,7 @@ public partial class PlayerService : IDisposable
             // exists the busy-scoped intent carries the choice into the load,
             // so a busy state that ends without one leaves nothing behind.
             if (_restorePausedAfterLoad.HasValue) _restorePausedAfterLoad = paused;
+            if (_failedLoadPauseIntent.HasValue) _failedLoadPauseIntent = paused;
         }
         else ClearTransportPauseIntent();
         if (paused) _mpv.Pause();
@@ -3571,6 +3575,7 @@ public partial class PlayerService : IDisposable
         try { cts?.Cancel(); } catch (ObjectDisposedException) { }
         cts?.Dispose();
         _restorePausedAfterLoad = null;
+        _failedLoadPauseIntent = null;
     }
 
     private void StartLoadedMediaInitialization()
@@ -3930,6 +3935,10 @@ public partial class PlayerService : IDisposable
             : _requestedMediaFileId ?? session.MediaFileId;
         int? audioTrackIndex = session.AudioTrackIndex >= 0 ? session.AudioTrackIndex : null;
         var previousPlan = _activeTransportPlan;
+        // A framed load still pending here never reached FILE_LOADED: its freeze,
+        // not the viewer, holds mpv paused. Recovery restores what it would have.
+        _failedLoadPauseIntent = _sessionHasFramed ? _failedLoadPauseIntent ?? _restorePausedAfterLoad : null;
+        if (!IsWatchTogetherPlayback) _recoveryPauseIntentOverride ??= _failedLoadPauseIntent;
         // A keepalive failure can happen while the user has intentionally
         // paused. Preserve that intent across the replacement session, but do
         // not mistake mpv's network-cache pause for a user pause: buffering
@@ -3937,6 +3946,9 @@ public partial class PlayerService : IDisposable
         var restorePaused = _recoveryPauseIntentOverride
             ?? (_mpv.IsPaused && !_mpv.IsBufferingForCache);
         _recoveryPauseIntentOverride = null;
+        // The spinner, the toggle and the recovered load then share one value.
+        if (_failedLoadPauseIntent.HasValue)
+            _failedLoadPauseIntent = IsWatchTogetherPlayback ? _roomPlaybackPaused : restorePaused;
         var roomStartupPosition = IsWatchTogetherPlayback && !_transportHasFirstOutput
             ? RoomPlaybackStartPosition?.Invoke() : null;
         var resumePosition = roomStartupPosition ?? Math.Max(0, currentPosition - (_transportHasFirstOutput ? 2 : 0));
@@ -3953,6 +3965,9 @@ public partial class PlayerService : IDisposable
         // A framed session keeps its picture while recovery replans; any load
         // submitted from here inherits the spinner this claims.
         var reloadingPlayer = ShowTransportReloading(_mpv) ? _mpv : null;
+        // A failed load's freeze still holds mpv paused; show what recovery restores.
+        if (_failedLoadPauseIntent is bool presented)
+            reloadingPlayer?.SendScriptMessage("osc-set-transport-reload-pause", presented ? "true" : "false");
         var reloadingFile = Volatile.Read(ref _playbackFileGeneration);
         if (reloadingPlayer == null && loadingOwner != null)
             App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
@@ -4093,7 +4108,10 @@ public partial class PlayerService : IDisposable
         {
             // An exit that submitted no load retires the spinner it claimed.
             if (reloadingFile == Volatile.Read(ref _playbackFileGeneration))
+            {
                 reloadingPlayer?.SendScriptMessage("osc-set-transport-reloading", "false");
+                _failedLoadPauseIntent = null;
+            }
         }
     }
 
@@ -5730,6 +5748,8 @@ public partial class PlayerService : IDisposable
 
         if (_switchingContent)
         {
+            // Recovery keeps the pause state a framed load would have restored.
+            var failedLoadPaused = _sessionHasFramed ? _restorePausedAfterLoad : null;
             CancelPendingFileLoadTimeout();
             var attempt = Interlocked.Increment(ref _consecutiveFileLoadTimeouts);
             LogToFile(
@@ -5742,6 +5762,7 @@ public partial class PlayerService : IDisposable
                 _prematureEofRecoveryActive = true;
                 _prematureEofRecoveryPosition = mediaPosition;
                 IsLoading = true;
+                _failedLoadPauseIntent = failedLoadPaused;
                 ShowNotice(
                     "Reconnecting playback",
                     "The media stream was interrupted. Resuming from your current position…",
