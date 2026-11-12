@@ -2,11 +2,27 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Reflection;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using SiloPlayer;
+using SiloPlayer.Core.Models.Updates;
 using SiloPlayer.Core.Services.Updates;
 
 internal static partial class AppUpdateNativeFixture
 {
+    private static async Task CheckLaterNoticeAsync(MainWindow owner, AppUpdateService updates)
+    {
+        var release=new AppRelease(new Version(1,2,999),"v1.2.999","",DateTimeOffset.UtcNow,
+            new Uri("https://fixture.invalid/unused"),new string('a',64),1);
+        var callback=typeof(MainWindow).GetMethod("DeferAppUpdateWithNotice",BindingFlags.Instance|BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Later closes the helper without leaving its next-start confirmation in Silo.");
+        var closed=false;owner.Closed+=(_,_)=>closed=true;
+        if(callback.Invoke(owner,[release]) is not true)throw new InvalidOperationException("Later could not save the synthetic update.");
+        if(DeferredAppUpdate.Read(updates.CacheDirectory)?.Tag!=release.Tag)throw new InvalidOperationException("Later's next-start record is absent.");
+        await Until(()=>Descendants<TextBlock>((FrameworkElement)owner.Content).Any(text=>text.Text==UpdatePanelModel.DeferredText));
+        if(closed)throw new InvalidOperationException("Later closed Silo instead of only the update panel.");
+        Program.Log("PASS: the production Later callback persists its next-start record, leaves Silo open and shows the next-start confirmation in Silo after the helper can close.");
+    }
+
     // A settled-after-500ms check misses the owner covering the panel during
     // activation. Probe immediately, before the helper's polling/event repair.
     private static async Task CheckFocusReturnAsync(MainWindow owner)

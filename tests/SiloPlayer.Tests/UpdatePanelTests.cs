@@ -30,10 +30,10 @@ public sealed class UpdatePanelTests
         Assert.False(panel.ShowsDetailsToggle);
         Assert.False(panel.ShowsProgress);
         Assert.False(panel.ToggleDetails());
-        // ...and come back as they were once Restart now continues the installation.
+        // Restart only finishes activation; installation details do not come back.
         panel.Restart();
-        Assert.Equal(UpdatePanelPhase.Working, panel.Phase);
-        Assert.True(panel.ShowsDetails);
+        Assert.Equal(UpdatePanelPhase.Finishing, panel.Phase);
+        Assert.False(panel.ShowsDetails);
         Assert.False(panel.ShowsChoice);
     }
 
@@ -90,7 +90,7 @@ public sealed class UpdatePanelTests
         Assert.True(UpdatePanelPlacement.ShouldShow(ownerAlive: true, ownerMinimized: false, playback: false, foregroundIsSilo: true, visibleNow: false));
         Assert.True(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: false, visibleNow: true));
         Assert.False(UpdatePanelPlacement.ShouldShow(true, ownerMinimized: true, false, true, true));
-        Assert.False(UpdatePanelPlacement.ShouldShow(true, false, playback: true, true, true)); // Fullscreen or windowed video.
+        Assert.True(UpdatePanelPlacement.ShouldShow(true, false, playback: true, true, true)); // Updating remains visible during playback too.
         // Secure desktop during administrator approval: keep whatever is showing.
         Assert.True(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: null, visibleNow: true));
         Assert.True(UpdatePanelPlacement.ShouldShow(true, false, false, foregroundIsSilo: null, visibleNow: false));

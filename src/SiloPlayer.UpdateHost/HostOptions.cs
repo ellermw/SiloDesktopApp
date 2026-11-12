@@ -18,7 +18,7 @@ internal sealed record HostOptions(bool Worker,string AppPipe,string WorkerPipe,
         // The window waits for the client's download frames before requesting elevation. Only the broker accepts it.
         var awaitDownload=YesNo(values.GetValueOrDefault("--await-download","no"));
         if(awaitDownload && values.GetValueOrDefault("--worker")=="yes")throw new InvalidDataException();
-        // After the download the window asks Restart now or Later. Only a downloading broker can ask.
+        // After download and privileged staging, ask Restart now or Later. Only a downloading broker can ask.
         var confirmRestart=YesNo(values.GetValueOrDefault("--confirm-restart","no"));
         if(confirmRestart && !awaitDownload)throw new InvalidDataException();
         var awaitPresentation=YesNo(values.GetValueOrDefault("--await-presentation","no"));

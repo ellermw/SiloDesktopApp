@@ -55,6 +55,7 @@ internal static partial class AppUpdateNativeFixture
         if (scenario.StartsWith("preparation", StringComparison.Ordinal)) { await CheckPreparationAsync(window, updates, scenario); return; }
         if (scenario == "panel-focus") { await CheckPanelFocusAsync(window); return; }
         if (scenario == "panel-focus-return") { await CheckFocusReturnAsync(window); return; }
+        if (scenario == "later-notice") { await CheckLaterNoticeAsync(window, updates); return; }
         if (scenario == "full-success")
         {
             Directory.CreateDirectory(updates.CacheDirectory);

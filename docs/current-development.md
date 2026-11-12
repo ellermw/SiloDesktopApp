@@ -1,3 +1,15 @@
+# November 12 — Beta 981 updater focus and completed-installation readiness
+
+Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes. Source remains **1.2.981-beta.1** (Windows file version **1.2.980.1**); no stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
+
+A real two-process native test reproduces Silo briefly covering its update helper on 12/12 focus returns, followed by the old event/timer repair. Native ownership in the pending fix keeps the helper above Silo immediately on 12/12 returns; ordinary other applications can cover it and it is not globally topmost. The previously passing settled-only focus test missed this transient gap. The probe checks HWND order, not sub-frame DWM compositing.
+
+Update now keeps the app open, presents the small panel before dismissing the large dialog, and downloads/stages/verifies/authorizes the installation before offering Restart now or Later. Restart only saves/closes/activates/relaunches, without copying installation files again. Later retains the completed staging and persisted next-start record, then closes the helper. Its successful save/read-back now also shows the next-start confirmation in Silo, where it remains after the helper closes; failure never shows that confirmation. The pipeline fixes releasing the install mutex while awaiting choice, revalidating under the activation lock, preserving abandonment as deferred, and handling staged journals are retained.
+
+Fresh verification: **5,816/5,816 full unit tests**, **38/38 side-by-side installation tests**, **52/52 update protocol tests**, self-contained Release app/helper, and **13/13 native cases** with exit 0 and the completion sentinel. Cases include immediate focus return, Later confirmation, focus/minimize/helper-owner lifetime, first-render-before-dialog-close, preparation Cancel/transfer, five save/drain outcomes, and explicit full-installer consent. App/helper/native/main-unit/side-by-side/protocol PE/PDB/source bindings have zero mismatches; all **1,856** recorded product/test inputs match current bytes. Independent Claude review found no actionable bugs. All builds/tests were serialized through `SiloOct18Build`.
+
+App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE`; native fixture SHA256 `D6736EFBCFDA5224EA6A4B81975D46BA5404A9BBD7BFC1D1D3531B07FFB431D1`. Evidence, preserved red cases and review: `D:/SiloPlayer/.codex-tmp/updater-focus-nov12/`. The existing isolated checkout was reused; no additional worktree. No real UAC, registered-installation update, installed-player closure/restart, live account/settings access or physical-input certification. Synthetic filesystem transactions and isolated native windows establish the stated coverage. Beta pipeline owns subsequent QA, integration and packaging.
+
 # November 11 — Fit OSC popups to content and remove native frames
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
@@ -63,6 +75,21 @@ Source is Beta `3f098c88ca4770db6f71e84e0e2290df42f8ec2c`, version 1.2.970, comp
 Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-batch-fixes/`, `reopened-batch-corrections.md`, `reopened-batch-final-review.md`. The reviewer’s pending-full-suite note is superseded by `full-final-a`; its table incorrectly marks `native-green-a` as passing—the preserved run failed on a WinRT callback defect, corrected before publish-c/native-green-b. The native route checks real More-menu availability and invokes the picker method; it does not certify physical pointer/keyboard input or live-server interoperability. No installed player, account, settings, installer or version stamp was changed. Beta pipeline owns subsequent QA and delivery.
 
 ---
+---
+
+# November 11 — Finish update installation before offering Restart now or Later
+
+Based on fresh Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`; source remains **1.2.973-beta.1** (Windows file version **1.2.972.1**). These identify the same Beta build; the installed DLL confirmed both values. Version stamps remain pipeline-owned.
+
+The update panel uses ordinary native ownership to stay above Silo without becoming globally topmost, including while Silo is inactive. Normal applications can cover it, minimize/restore follows Silo, and a separate-process helper survives the original window closing. A real rendering-frame acknowledgement now precedes dismissal of the large update dialog, keeping one painted surface through preparation and authenticated helper transfer.
+
+Restart now / Later are offered only after the independently authenticated privileged worker has staged and verified the installation and authorized the new client. Restart enters finishing rather than returning to installation. Later explicitly preserves that completed transaction; resumption fetches fresh release authority, requires an identical manifest and re-verifies retained files/bootstrap before activation. It reuses the transaction without copying the installation again. Existing close/save, parent-exit, ownership, rollback, package and pipe-identity checks remain required. The staging deadline is suspended only while waiting for the user's answer.
+
+Verification: **418 focused update tests**, **5,472/5,472 full unit tests**, **52/52 update-protocol tests**, fresh app/helper self-contained Release publishes, and **11 native scenarios** passed with exit 0 and the completion sentinel. The native cases cover first-render-before-dialog-close, normal focus/cover/minimize behavior, separate-process owner destruction, authenticated handoff, cancellation, five playback-save drain outcomes and full-installer consent. Final app/helper/native/unit/protocol PE/PDB identities and authored-source checks have zero mismatches (751 app, 183 native, 6 helper, 365 Core, 5 protocol, 427 unit, 15 Player documents).
+
+App DLL SHA256: `6B60137E847DAA690813CEC7AE74BFDDBAB8070441AFED8D6D251B60626EC367`. Receipts, baseline failures, manifests and review: `D:/SiloPlayer/.codex-tmp/updater-ready-nov11/`. Baseline regressions fail for missing native ownership, the dialog closing before the first preparation frame, and discarded completed staging. The initial paint test observed Closed after its animation and therefore passed; the stronger test observes Closing before dismissal and reproduces the gap. Failed bring-up/unit expectation runs remain recorded.
+
+No real UAC prompt, registered-installation update, installed-player closure/restart, live account/settings access or physical-input certification occurred. Filesystem transaction tests use isolated synthetic installations; native tests use owned fixture windows and authenticated synthetic peers. Independent Claude review approved the final source with verification limits and two nonblocking observations; no corrections were required. The lead checked final full/native/binding receipts after review. Beta submission is recorded in the adjacent delivery report. The existing Beta pipeline owns combined QA, integration, versioning and packaging.
 
 # November 11 ? collection wall, hero and actions for Beta
 
