@@ -2,24 +2,29 @@ using SiloPlayer.Core.Models.Collections;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
+using System.Globalization;
 
 namespace SiloPlayer.Core.Api;
 
 public class CollectionsApi(SiloApiClient client)
 {
     private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string ETag)> _revisions = new();
-    private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string Fingerprint)> _baselines = new();
+    private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string Fingerprint, DateTimeOffset? UpdatedAt)> _baselines = new();
+    private readonly object _baselineLock = new();
+    private readonly Dictionary<string, long> _pathWrites = new(StringComparer.Ordinal);
+    private long _writeGeneration;
 
     public async Task<CollectionsResponse> GetCollectionsAsync(CancellationToken ct = default)
     {
         var context = client.CaptureContext();
+        var readGeneration = CaptureReadGeneration();
         var result = await client.GetAsync<CollectionList>("/api/v2/collections", ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-        foreach (var collection in result.Items) RememberBaseline("/api/v2/collections/" + Uri.EscapeDataString(collection.Id), collection, context);
-        foreach (var group in result.Groups) RememberBaseline("/api/v2/collections/groups/" + Uri.EscapeDataString(group.Id), group, context);
-        RememberBaseline("/api/v2/collections/groups/order", new { ordered_ids = result.Groups.OrderBy(g => g.SortOrder).Select(g => g.Id).ToArray() }, context);
+        foreach (var collection in result.Items) RememberBaseline("/api/v2/collections/" + Uri.EscapeDataString(collection.Id), collection, context, readGeneration: readGeneration);
+        foreach (var group in result.Groups) RememberBaseline("/api/v2/collections/groups/" + Uri.EscapeDataString(group.Id), group, context, readGeneration: readGeneration);
+        RememberBaseline("/api/v2/collections/groups/order", new { ordered_ids = result.Groups.OrderBy(g => g.SortOrder).Select(g => g.Id).ToArray() }, context, readGeneration: readGeneration);
         foreach (var group in result.Groups.Select(g => g.Id).Prepend(null))
-            RememberBaseline(OrderPath(group), new { ordered_ids = result.Items.Where(c => c.GroupId == group).OrderBy(c => c.SortOrder).Select(c => c.Id).ToArray() }, context);
+            RememberBaseline(OrderPath(group), new { ordered_ids = result.Items.Where(c => c.GroupId == group).OrderBy(c => c.SortOrder).Select(c => c.Id).ToArray() }, context, readGeneration: readGeneration);
         return new() { Collections = result.Items, Groups = result.Groups };
     }
 
@@ -27,10 +32,10 @@ public class CollectionsApi(SiloApiClient client)
     {
         var path = "/api/v2/collections/" + Uri.EscapeDataString(id);
         var context = client.CaptureContext();
+        var readGeneration = CaptureReadGeneration();
         var result = await client.GetWithETagAsync<Collection>(path, ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-        RememberBaseline(path, result.Body, context);
-        if (result.ETag != null) _revisions[path] = (context, result.ETag);
+        RememberBaseline(path, result.Body, context, result.ETag, readGeneration);
         return result.Body;
     }
 
@@ -154,13 +159,9 @@ public class CollectionsApi(SiloApiClient client)
     public Task DeleteCollectionGroupAsync(string id, CancellationToken ct = default)
         => DeleteAsync($"/api/v2/collections/groups/{Uri.EscapeDataString(id)}", ct);
 
-    public async Task ReorderCollectionsAsync(IReadOnlyList<string> orderedIds, string? groupId, CancellationToken ct = default)
-    {
-        const string path = "/api/v2/collections/order";
-        var readPath = OrderPath(groupId);
-        var tag = await RevisionAsync(readPath, ct);
-        await client.PutWithETagAsync<JsonElement>(path, V2Json.Body(new ReorderCollectionsRequest { OrderedIds = [.. orderedIds], GroupId = groupId }), tag, ct);
-    }
+    public Task ReorderCollectionsAsync(IReadOnlyList<string> orderedIds, string? groupId, CancellationToken ct = default)
+        => PutAsync("/api/v2/collections/order",
+            new ReorderCollectionsRequest { OrderedIds = [.. orderedIds], GroupId = groupId }, ct, OrderPath(groupId));
 
     public sealed record PersonalOrderSnapshot(ApiRequestContext Context, string ETag, IReadOnlyList<string> OrderedIds);
     private sealed class OrderResponse { public List<string> OrderedIds { get; set; } = []; }
@@ -178,8 +179,10 @@ public class CollectionsApi(SiloApiClient client)
         if (!client.IsCurrentContext(snapshot.Context)) throw new OperationCanceledException("Collection context changed.", ct);
         if (orderedIds.Count != snapshot.OrderedIds.Count || orderedIds.Distinct(StringComparer.Ordinal).Count() != orderedIds.Count || !orderedIds.ToHashSet(StringComparer.Ordinal).SetEquals(snapshot.OrderedIds))
             throw new InvalidOperationException("Only the complete own-collection order can be moved.");
-        await client.PutWithETagAsync<JsonElement>("/api/v2/collections/order", new { ordered_ids = orderedIds }, snapshot.ETag, ct);
+        var body = new { ordered_ids = orderedIds };
+        await client.PutWithETagAsync<JsonElement>("/api/v2/collections/order", body, snapshot.ETag, ct);
         if (!client.IsCurrentContext(snapshot.Context)) throw new OperationCanceledException("Collection context changed.", ct);
+        RememberBaseline("/api/v2/collections/order", body, snapshot.Context);
     }
 
     public Task ReorderCollectionGroupsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)
@@ -200,9 +203,10 @@ public class CollectionsApi(SiloApiClient client)
     public async Task<CollectionItemsResponse> GetCollectionItemsAsync(string id, CancellationToken ct = default)
     {
         var context = client.CaptureContext();
+        var readGeneration = CaptureReadGeneration();
         var items = await client.GetAllItemsAsync<CollectionItem>($"/api/v2/collections/{Uri.EscapeDataString(id)}/items", ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-        RememberBaseline($"/api/v2/collections/{Uri.EscapeDataString(id)}/items/order", new { ordered_ids = items.OrderBy(i => i.Position).Select(i => i.MediaItemId).ToArray() }, context);
+        RememberBaseline($"/api/v2/collections/{Uri.EscapeDataString(id)}/items/order", new { ordered_ids = items.OrderBy(i => i.Position).Select(i => i.MediaItemId).ToArray() }, context, readGeneration: readGeneration);
         return new() { Items = items, Total = items.Count };
     }
 
@@ -252,12 +256,35 @@ public class CollectionsApi(SiloApiClient client)
     }
 
     private static string OrderPath(string? groupId) => "/api/v2/collections/order" + (groupId == null ? "" : "?group_id=" + Uri.EscapeDataString(groupId));
-    private void RememberBaseline(string path, object body, ApiRequestContext context)
+    private long CaptureReadGeneration()
     {
-        // A refreshed body must not inherit a revision from an earlier header or write.
-        // Reads/writes that also return an ETag install it after remembering their baseline.
-        _revisions.TryRemove(path, out _);
-        _baselines[path] = (context, Fingerprint(path, JsonSerializer.SerializeToElement(body, V2Json.Options)));
+        lock (_baselineLock) return _writeGeneration;
+    }
+
+    // Reads carry their request-start generation; omitting it records a successful write.
+    private void RememberBaseline(string path, object body, ApiRequestContext context, string? etag = null, long? readGeneration = null)
+    {
+        DateTimeOffset? updatedAt = body is Collection collection && DateTimeOffset.TryParse(collection.UpdatedAt,
+            CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) ? timestamp : null;
+        var fingerprint = Fingerprint(path, JsonSerializer.SerializeToElement(body, V2Json.Options));
+        lock (_baselineLock)
+        {
+            // Groups and orders have no updated_at. A read begun before a write must not
+            // replace that path's post-write baseline or retire its revision either.
+            if (readGeneration is { } started && _pathWrites.TryGetValue(path, out var written) && written > started)
+                return;
+            // An older list/header response must not roll back a newer snapshot or its ETag.
+            if (readGeneration != null && _baselines.TryGetValue(path, out var baseline) && baseline.Context == context
+                && baseline.UpdatedAt is { } remembered && updatedAt is { } incoming && incoming < remembered)
+                return;
+            if (readGeneration == null) _pathWrites[path] = ++_writeGeneration;
+
+            // Install the baseline and its revision together, so a concurrent stale read cannot
+            // replace either half. A current body without an ETag still retires the old revision.
+            _revisions.TryRemove(path, out _);
+            _baselines[path] = (context, fingerprint, updatedAt);
+            if (etag != null) _revisions[path] = (context, etag);
+        }
     }
     private static string Fingerprint(string path, JsonElement body)
     {
@@ -273,13 +300,14 @@ public class CollectionsApi(SiloApiClient client)
     {
         var context = client.CaptureContext();
         var path = $"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/order";
+        var readGeneration = CaptureReadGeneration();
         var result = await client.GetWithETagAsync<JsonElement>(path, ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
         if (result.Body.TryGetProperty("has_more", out var more) && more.ValueKind == JsonValueKind.True) return false;
         var ids = result.Body.GetProperty("ordered_ids").EnumerateArray().Select(value => value.GetString() ?? "").ToArray();
         if (!ids.SequenceEqual(displayedIds, StringComparer.Ordinal)) return false;
         if (string.IsNullOrWhiteSpace(result.ETag)) return false;
-        _revisions[path] = (context, result.ETag);
+        RememberBaseline(path, result.Body, context, result.ETag, readGeneration);
         return true;
     }
 
@@ -314,8 +342,7 @@ public class CollectionsApi(SiloApiClient client)
         {
             var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
-            RememberBaseline(path, result.Body!, context);
-            if (result.ETag != null) _revisions[path] = (context, result.ETag);
+            RememberBaseline(path, result.Body!, context, result.ETag);
             return result.Body;
         }
         catch (ApiException ex) when (ex.StatusCode == 412)
@@ -326,22 +353,26 @@ public class CollectionsApi(SiloApiClient client)
             throw new ApiException("precondition_failed", "Collections changed elsewhere. Reload before saving.", 412);
         }
     }
-    private async Task PutAsync(string path, object body, CancellationToken ct)
+    private async Task PutAsync(string path, object body, CancellationToken ct, string? revisionPath = null)
     {
-        var tag = await RevisionAsync(path, ct);
+        var context = client.CaptureContext();
+        var readPath = revisionPath ?? path;
+        var tag = await RevisionAsync(readPath, ct);
         try
         {
             await client.PutWithETagAsync<JsonElement>(path, V2Json.Body(body), tag, ct);
         }
         catch (ApiException ex) when (ex.StatusCode == 412)
         {
-            _revisions.TryRemove(path, out _);
+            _revisions.TryRemove(readPath, out _);
             throw new ApiException("precondition_failed", "Collections changed elsewhere. Reload before saving.", 412);
         }
-        _revisions.TryRemove(path, out _);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+        RememberBaseline(readPath, body, context);
     }
     private async Task DeleteAsync(string path, CancellationToken ct)
     {
+        var context = client.CaptureContext();
         var tag = await RevisionAsync(path, ct);
         try
         {
@@ -352,7 +383,13 @@ public class CollectionsApi(SiloApiClient client)
             _revisions.TryRemove(path, out _);
             throw new ApiException("precondition_failed", "Collections changed elsewhere. Reload before saving.", 412);
         }
-        _revisions.TryRemove(path, out _);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+        lock (_baselineLock)
+        {
+            _pathWrites[path] = ++_writeGeneration;
+            _revisions.TryRemove(path, out _);
+            _baselines.TryRemove(path, out _);
+        }
     }
     private async Task<MDBListDiscoveryResponse> ReadDiscoveryAsync(string path, CancellationToken ct)
     {

@@ -458,11 +458,22 @@ public partial class CollectionsViewModel : ObservableObject
         try
         {
             await _collectionsApi.DeleteCollectionAsync(id);
-            // Remove from local list
+            // An included personal collection can also be cached in several server libraries,
+            // in either the teaser or a loaded remainder. Remove those copies before the wall rebuilds.
+            var affectedLibraries = new HashSet<int>();
+            foreach (var (libraryId, rest) in _serverRest)
+                if (rest.RemoveAll(collection => collection.Id == id) > 0) affectedLibraries.Add(libraryId);
+            foreach (var library in ServerLibraries)
+            {
+                if (library.Collections.RemoveAll(collection => collection.Id == id) > 0) affectedLibraries.Add(library.LibraryId);
+                if (affectedLibraries.Contains(library.LibraryId)) library.TotalCount = Math.Max(0, library.TotalCount - 1);
+            }
             var item = Collections.FirstOrDefault(c => c.Id == id);
             if (item != null)
                 Collections.Remove(item);
             IsEmpty = Collections.Count == 0;
+            ErrorMessage = null;
+            ServerCollectionsChanged();
         }
         catch (Exception ex)
         {

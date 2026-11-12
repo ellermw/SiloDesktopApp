@@ -336,6 +336,59 @@ public sealed class CollectionsWallLoadingTests
         Assert.Equal(1, wire.LibraryTabReads);
     }
 
+    [Fact]
+    public async Task DeletingIncludedCollectionRemovesEveryCachedServerCopyOnlyAfterSuccess()
+    {
+        const string snapshot = """{"id":"c1","name":"Mine","creator_profile_id":"me","include_in_server_collections":true}""";
+        using var wire = new Wire
+        {
+            PersonalBody = "{\"items\":[" + snapshot + "],\"groups\":[]}",
+            PersonalSnapshotBody = snapshot,
+            ServerBody = """
+                {"libraries":[
+                    {"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"c1","title":"Included"},{"id":"s1","title":"One"}]},
+                    {"library_id":2,"library_name":"Shows","total_count":3,"collections":[{"id":"t1","title":"Two"}]}]}
+                """,
+            LibraryTabBody = """{"collections":[{"id":"c1","title":"Included"},{"id":"s2","title":"Rest"}]}""",
+            FailDelete = true,
+        };
+        var client = wire.Client(); client.SetProfile("me");
+        var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        await vm.LoadServerLibraryAsync(1);
+        await vm.LoadServerLibraryAsync(2);
+        Assert.Contains(vm.GetServerCollectionCards(1), card => card.Collection.Id == "c1");
+        Assert.Contains(vm.GetServerCollectionCards(2), card => card.Collection.Id == "c1");
+        var revision = vm.ServerCollectionRevision;
+
+        await vm.DeleteCollectionCommand.ExecuteAsync("c1");
+        Assert.NotNull(vm.ErrorMessage);
+        Assert.Single(vm.Collections);
+        Assert.All(vm.ServerLibraries, library => Assert.Equal(3, library.TotalCount));
+        Assert.Equal(revision, vm.ServerCollectionRevision);
+        Assert.Contains(vm.GetServerCollectionCards(1), card => card.Collection.Id == "c1");
+        Assert.Contains(vm.GetServerCollectionCards(2), card => card.Collection.Id == "c1");
+
+        wire.FailDelete = false;
+        await vm.DeleteCollectionCommand.ExecuteAsync("c1");
+        Assert.Equal(2, wire.DeleteRequests); // the matching wall baseline permits both conditional DELETEs
+        Assert.Null(vm.ErrorMessage);
+        Assert.Empty(vm.Collections); Assert.True(vm.IsEmpty);
+        Assert.True(vm.ServerCollectionRevision > revision);
+        Assert.All(vm.ServerLibraries, library =>
+        {
+            Assert.Equal(2, library.TotalCount);
+            Assert.DoesNotContain(library.Collections, collection => collection.Id == "c1");
+            Assert.DoesNotContain(vm.GetServerCollectionCards(library.LibraryId), card => card.Collection.Id == "c1");
+            Assert.True(vm.HasServerLibraryRest(library.LibraryId));
+            Assert.False(vm.IsServerLibraryLoading(library.LibraryId));
+            Assert.Null(vm.ServerLibraryError(library.LibraryId));
+        });
+        Assert.Equal(["s1", "s2"], vm.GetServerCollectionCards(1).Select(card => card.Collection.Id));
+        Assert.Equal(["t1", "s2"], vm.GetServerCollectionCards(2).Select(card => card.Collection.Id));
+        Assert.Null(vm.NextServerLibrary);
+    }
+
     private static CollectionsViewModel Vm(SiloApiClient client)
         => new(new CollectionsApi(client), new CatalogApi(client), new AuthApi(client), client);
 
@@ -350,10 +403,11 @@ public sealed class CollectionsWallLoadingTests
         public string ServerBody = "{\"libraries\":[]}";
         public string PersonalBody = "{\"items\":[],\"groups\":[]}";
         public string LibraryTabBody = "{\"library_id\":1,\"collections\":[],\"groups\":[]}";
-        public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles;
+        public string PersonalSnapshotBody = "{}";
+        public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles, FailDelete;
         public bool HoldLibraryTab;
         public TaskCompletionSource<HttpResponseMessage> LibraryTab { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public int LibraryTabReads;
+        public int LibraryTabReads, DeleteRequests;
         public TaskCompletionSource PersonalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ProfilesStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<HttpResponseMessage> Personal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -383,6 +437,19 @@ public sealed class CollectionsWallLoadingTests
                 PersonalStarted.TrySetResult();
                 if (HoldPersonal) return Personal.Task;
                 return Task.FromResult(FailPersonal ? Fail() : Ok(PersonalBody));
+            }
+            if (path == "/api/v2/collections/c1")
+            {
+                if (request.Method == HttpMethod.Delete)
+                {
+                    Assert.Equal("\"revision\"", request.Headers.IfMatch.Single().Tag);
+                    DeleteRequests++;
+                    return Task.FromResult(FailDelete ? Fail() : new HttpResponseMessage(HttpStatusCode.NoContent));
+                }
+                Assert.Equal(HttpMethod.Get, request.Method);
+                var response = Ok(PersonalSnapshotBody);
+                response.Headers.ETag = new("\"revision\"");
+                return Task.FromResult(response);
             }
             return Task.FromResult(Ok("{}"));
         }

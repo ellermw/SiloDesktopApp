@@ -14,6 +14,7 @@ using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Messaging;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -70,9 +71,11 @@ internal static class ViewerActionsNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 800)); window.AppWindow.Show(false);
             await Task.Delay(200);
             if (Wants("dismissal")) await DedicatedPageRemovalAsync(frame, wire);
-            if (Wants("paging")) await DismissalPagingAsync(frame, wire);
+            if (Wants("paging")) await DismissalPagingAsync(frame, wire, home);
             if (Wants("smart-editor")) await SmartEditorAsync(frame, wire);
             if (Wants("smart-wizard")) await SmartWizardAsync(frame, wire);
+            if (Wants("smart-metadata")) await RulelessSmartMetadataAsync(frame, wire);
+            if (Wants("smart-metadata")) await WizardStoredSortAsync(frame, wire);
             if (Wants("trending")) await TrendingShowAsync(parent);
             if (Wants("calendar")) await CalendarBadgesAsync(frame, calendarModel);
             if (Wants("sync")) await FailedSyncRefreshAsync(client, collections, catalog, settings, auth, wire);
@@ -180,8 +183,53 @@ internal static class ViewerActionsNativeFixture
         }
     }
 
-    private static async Task DismissalPagingAsync(Frame frame, Wire wire)
+    private static async Task DismissalPagingAsync(Frame frame, Wire wire, HomeApi home)
     {
+        // Dismissal must not replace a multi-window collection with only its first page.
+        foreach (var surface in new[] { "cw", "nu" })
+        {
+            var section = "off-prefix-retained-" + surface;
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Progress", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            var items = Field<ObservableCollection<MediaItem>>(page, "_items");
+            await Until(() => !Field<bool>(page, "_loading") && items.Count == 60, "retained first sixty");
+            await (Task)Call(page, "LoadAsync", false)!;
+            await Until(() => !Field<bool>(page, "_loading") && items.Count == 120, "retained loaded suffix");
+            var retained = items.Where(item => !item.ContentId.EndsWith("-001") && !item.ContentId.EndsWith("-090")).ToArray();
+            var selectedId = section + "-100";
+            Field<HashSet<string>>(page, "_selectedIds").Add(selectedId);
+            var scroll = (ScrollViewer)page.FindName("CatalogScrollViewer");
+            page.UpdateLayout();
+            scroll.ChangeView(null, 1200, null, disableAnimation: true);
+            await Until(() => scroll.VerticalOffset > 720, "retained scrolled position");
+            var reset = false;
+            var minimumCount = items.Count;
+            System.Collections.Specialized.NotifyCollectionChangedEventHandler changed = (_, args) =>
+            {
+                reset |= args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset;
+                minimumCount = Math.Min(minimumCount, items.Count);
+            };
+            items.CollectionChanged += changed;
+            try
+            {
+                var surfaceKey = surface == "cw" ? "continue_watching" : "next_up";
+                await home.DismissItemAsync(surfaceKey, section + "-001", surface == "cw"
+                    ? (object)new { progress_updated_at = "2026-11-09T10:00:00Z" }
+                    : new { series_id = section + "-show" });
+                page.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, section + "-001",
+                    section + "-show", context: home.CaptureContext()));
+                await Until(() => !Field<bool>(page, "_loading") && items.All(item => item.ContentId != section + "-001"), "retained dismissal settled");
+                await Task.Delay(200); page.UpdateLayout();
+                Check(!reset && minimumCount >= 118, "dismissal never resets or discards the loaded window");
+                Check(retained.All(item => items.Contains(item)), "every remaining loaded card retains its identity, including the suffix");
+                Check(Field<HashSet<string>>(page, "_selectedIds").Contains(selectedId), "dismissal retains unrelated selection");
+                Check(scroll.VerticalOffset > 720, "dismissal does not return the scroller to the top");
+                Check(Field<int>(page, "_offset") == items.Count && ((TextBlock)page.FindName("CountText")).Text == "128",
+                    "retained window has the corrected paging offset and server count");
+            }
+            finally { items.CollectionChanged -= changed; }
+        }
+
         foreach (var before in new[] { true, false })
         {
             var section = before ? "race-before" : "race-after";
@@ -216,6 +264,36 @@ internal static class ViewerActionsNativeFixture
                 $"{section} complete unique window: rows={actual.Length}, unique={actual.Distinct().Count()}, missing={string.Join(',', expected.Except(actual))}");
             Check(((TextBlock)page.FindName("CountText")).Text == "129", "paging total after dismissal");
             Program.Log($"PASS: {section} all 129 remaining titles appear exactly once.");
+        }
+
+        // The server applies the dismissal, then a continuation reads the shortened
+        // row and completes before the page receives the dismissal notification.
+        {
+            const string section = "race-completed";
+            wire.ContinuationHeld = false; wire.ReadBeforeDismissal = false;
+            wire.ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            frame.Navigate(typeof(CatalogPage), new CatalogNavigation("section", "Continue Watching", null, null, section));
+            var page = (CatalogPage)frame.Content;
+            ObservableCollection<MediaItem> Items() => Field<ObservableCollection<MediaItem>>(page, "_items");
+            await Until(() => !Field<bool>(page, "_loading") && Items().Count == 60, "completed-race first sixty");
+            var continuation = (Task)Call(page, "LoadAsync", false)!;
+            try
+            {
+                await Until(() => wire.ContinuationHeld, "completed-race held continuation");
+                // HomeApi does not publish a surface message; deliver it explicitly below.
+                await home.DismissItemAsync("continue_watching", section + "-001", new { progress_updated_at = "2026-11-09T10:00:00Z" });
+            }
+            finally { wire.ReleaseContinuation.TrySetResult(); }
+            await continuation;
+            Check(!Field<bool>(page, "_loading") && Items().Count == 120
+                && Items().All(item => item.ContentId != section + "-061"), "shortened continuation completed before notification, leaving the expected gap");
+            page.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, section + "-001", context: home.CaptureContext()));
+            await Until(() => !Field<bool>(page, "_loading") && Items().All(item => item.ContentId != section + "-001"), "completed-race dismissal refresh");
+            for (var i = 0; i < 5 && Field<bool>(page, "_hasMore"); i++)
+                await (Task)Call(page, "LoadAsync", false)!;
+            var expected = Enumerable.Range(2, 129).Select(index => $"{section}-{index:000}");
+            Check(Items().Select(item => item.ContentId).SequenceEqual(expected), "completed-before-message dismissal keeps all 129 titles exactly once and in order");
+            Check(((TextBlock)page.FindName("CountText")).Text == "129", "completed-before-message total after dismissal");
         }
 
         foreach (var surface in new[] { "cw", "nu" })
@@ -290,9 +368,17 @@ internal static class ViewerActionsNativeFixture
         await vm.SaveCommand.ExecuteAsync(null);
         Check(wire.Creates.Count == posts && vm.ErrorMessage == "Add at least one rule.", "an incomplete smart collection is not posted: " + vm.ErrorMessage);
         await Fill("genre", "is", "Drama", "restored");
+        vm.RuleDefinition.Groups[0].Rules.Add(new() { Field = "year", Op = "gte", Value = "" });
+        vm.RuleDefinition.Groups[0].Rules.Add(new() { Field = "year", Op = "between", Value = new object[] { 1990, "" } });
+        await vm.RefreshPreviewAsync();
+        using (var preview = JsonDocument.Parse(wire.Previews[^1]))
+            CheckOnlyRule(preview.RootElement.GetProperty("query_definition").GetProperty("groups"), "genre", "is", "Drama");
+        Check(vm.RuleDefinition.Groups[0].Rules.Count == 3, "preview sanitization keeps the editor draft intact");
         await vm.SaveCommand.ExecuteAsync(null);
         Check(wire.Creates.Count == posts + 1 && wire.Creates[^1].Contains("\"collection_type\":\"smart\"") && wire.Creates[^1].Contains("Drama"),
             "a complete smart collection is created with its rule: " + (wire.Creates.Count > posts ? wire.Creates[^1] : "(none)"));
+        using (var created = JsonDocument.Parse(wire.Creates[^1]))
+            CheckOnlyRule(created.RootElement.GetProperty("query_definition").GetProperty("groups"), "genre", "is", "Drama");
         Program.Log("PASS: smart editor sends no preview or save until a rule is complete; zero, false and closed ranges count, blank and open ranges do not.");
     }
 
@@ -307,10 +393,12 @@ internal static class ViewerActionsNativeFixture
         await Task.Delay(900);
         var vm = page.ViewModel; var queries = () => wire.CatalogQueries.Count;
         var save = (Button)page.FindName("SaveButton");
+        var next = (Button)page.FindName("ContinueButton");
         var ruleNeeded = (TextBlock)page.FindName("RuleNeededText");
         vm.Title = "Wizard fixture"; await Task.Delay(100);
         Check(queries() == 0, "an untouched wizard sends no catalog preview: " + queries());
         Check(!page.CanSave, "Create Collection is not available without a rule");
+        Check(!next.IsEnabled, "Next: Details is unavailable without a rule");
         Check(!save.IsEnabled && ruleNeeded.Visibility == Visibility.Visible
             && ruleNeeded.Text == SmartCollectionWizardViewModel.RuleNeededMessage,
             "the disabled Save control explains the missing rule");
@@ -326,9 +414,21 @@ internal static class ViewerActionsNativeFixture
             await (Task)Call(page, "RunPreviewAsync", false)!; await Task.Delay(200);
             Check(save.IsEnabled == page.CanSave, "the actual Save control follows rule validity");
         }
+        async Task ReachDetails(string scenario)
+        {
+            Check(next.Visibility == Visibility.Visible && next.IsEnabled, scenario + " permits Next: Details");
+            Invoke(next);
+            await Until(() => save.Visibility == Visibility.Visible && ((FrameworkElement)page.FindName("DetailsStepPanel")).Visibility == Visibility.Visible,
+                scenario + " reaches Details");
+            Check(save.IsEnabled, scenario + " exposes an enabled Save control");
+        }
         await Preview("genre", "contains", "Drama");
         Check(queries() == 1 && page.CanSave, "a complete rule previews once and enables Create: queries " + queries());
         Check(save.IsEnabled && ruleNeeded.Visibility == Visibility.Collapsed, "a complete rule enables the Save control and clears its guidance");
+        Check(vm.PreviewTotal == 0 && !vm.IsPreviewing && vm.ErrorMessage == null, "the successful preview has zero matches");
+        await ReachDetails("a zero-match preview");
+        Invoke((Button)page.FindName("BackToFiltersButton"));
+        await Until(() => next.Visibility == Visibility.Visible, "back to Filters");
         vm.Title = "";
         Check(!save.IsEnabled, "clearing the title disables the Save control");
         vm.Title = "Wizard fixture";
@@ -342,16 +442,122 @@ internal static class ViewerActionsNativeFixture
         Check(queries() == 3 && page.CanSave, "false is a value in the wizard: queries " + queries());
         await Preview("year", "between", new object[] { 1990, "" });
         Check(queries() == 3 && !page.CanSave, "an open range sends nothing and blocks Create: queries " + queries());
+        Check(!next.IsEnabled, "an incomplete range blocks Next: Details");
         await Preview("genre", "contains", "");
         Check(queries() == 3 && !page.CanSave, "a blank rule sends nothing: queries " + queries());
+        Check(!next.IsEnabled, "a blank rule blocks Next: Details");
 
         var posts = wire.Creates.Count;
         await vm.SaveAsync();
         Check(wire.Creates.Count == posts && !string.IsNullOrEmpty(vm.ErrorMessage), "saving without a rule posts nothing: " + vm.ErrorMessage);
-        await Preview("genre", "contains", "Drama");
-        await vm.SaveAsync();
+        // Guided filters for a different field leave the wizard's initial empty genre row behind.
+        vm.RuleDefinition.Groups[0].Rules.Add(new() { Field = "genre", Op = "contains", Value = "" });
+        await Preview("year", "gte", 2000);
+        var groupsJson = Uri.UnescapeDataString(wire.CatalogQueries[^1].Split("&groups=", 2)[1].Split('&')[0]);
+        using (var preview = JsonDocument.Parse(groupsJson))
+            CheckOnlyRule(preview.RootElement, "year", "gte", "2000");
+        Check(vm.RuleDefinition.Groups[0].Rules.Count == 2, "preview sanitization keeps the wizard draft intact");
+
+        wire.FailCatalogPreview = true;
+        try { await Preview("genre", "contains", "Drama"); }
+        finally { wire.FailCatalogPreview = false; }
+        Check(vm.PreviewTotal == 0 && !vm.IsPreviewing && vm.ErrorMessage?.StartsWith("Preview failed:") == true,
+            "the preview failure leaves zero matches and an error");
+        await ReachDetails("a failed preview");
+        Invoke(save);
+        await Until(() => wire.Creates.Count == posts + 1 && !vm.IsSaving, "wizard collection created from Details");
         Check(wire.Creates.Count == posts + 1 && wire.Creates[^1].Contains("Drama"), "a complete wizard rule is posted: " + (wire.Creates.Count > posts ? wire.Creates[^1] : "(none)"));
+        using (var created = JsonDocument.Parse(wire.Creates[^1]))
+            CheckOnlyRule(created.RootElement.GetProperty("query_definition").GetProperty("groups"), "genre", "contains", "Drama");
         Program.Log("PASS: smart wizard previews and saves only with a complete rule (zero/false valid, blank and open ranges invalid).");
+    }
+
+    private static async Task RulelessSmartMetadataAsync(Frame frame, Wire wire)
+    {
+        foreach (var wizard in new[] { false, true })
+        {
+            await Task.Delay(600); // Let any prior save finish its queued navigation.
+            frame.BackStack.Clear();
+            var previews = wire.Previews.Count + wire.CatalogQueries.Count;
+            var updates = wire.Updates.Count;
+            Button save;
+            Func<bool> isSaving;
+            if (wizard)
+            {
+                frame.Navigate(typeof(SmartCollectionWizardPage), new SmartCollectionWizardNavigationArgs(CollectionId: "ruleless"));
+                var page = (SmartCollectionWizardPage)frame.Content;
+                isSaving = () => page.ViewModel.IsSaving;
+                await Until(() => Field<bool>(page, "_loaded") && !page.ViewModel.IsLoading
+                    && page.ViewModel.Title == "Legacy smart" && Field<QueryFilterEditor?>(page, "_rulesEditor") != null, "ruleless wizard load");
+                page.ViewModel.Title = "Renamed legacy"; page.ViewModel.IsShared = true;
+                var next = (Button)page.FindName("ContinueButton");
+                Check(next.IsEnabled, "an existing ruleless collection can reach Details");
+                Invoke(next);
+                save = (Button)page.FindName("SaveButton");
+                await Until(() => save.Visibility == Visibility.Visible
+                    && ((FrameworkElement)page.FindName("DetailsStepPanel")).Visibility == Visibility.Visible, "ruleless wizard reaches Details");
+                Check(save.Visibility == Visibility.Visible && save.IsEnabled, "ruleless Details permits a metadata save");
+                Check(((TextBlock)page.FindName("RuleNeededText")).Visibility == Visibility.Collapsed, "ruleless metadata edits have no create-time rule warning");
+                wire.RejectRulelessUpdate = true;
+                try
+                {
+                    Invoke(save);
+                    await Until(() => wire.Updates.Count == updates + 1 && !page.ViewModel.IsSaving, "ruleless update rejection");
+                    Check(page.ViewModel.ErrorMessage?.StartsWith("Failed to save smart collection:") == true
+                        && save.IsEnabled, "server validation is reported and metadata save remains retryable");
+                }
+                finally { wire.RejectRulelessUpdate = false; }
+                updates++;
+            }
+            else
+            {
+                frame.Navigate(typeof(CollectionEditorPage), "ruleless");
+                var page = (CollectionEditorPage)frame.Content;
+                isSaving = () => page.ViewModel.IsSaving;
+                await Until(() => page.ViewModel.CollectionId == "ruleless" && !page.ViewModel.IsLoading
+                    && Field<QueryRulesEditor?>(page, "_rulesEditor") != null, "ruleless editor load");
+                page.ViewModel.Name = "Renamed legacy"; page.ViewModel.IsShared = true;
+                save = (Button)page.FindName("SaveButton");
+                await Until(() => save.IsEnabled, "ruleless editor metadata save enabled");
+                Check(!Field<TextBlock>(page, "_editorFooterStatus").Text.Contains("Add a rule"), "existing metadata edits do not show the create-time footer warning");
+            }
+            await Task.Delay(900);
+            Check(wire.Previews.Count + wire.CatalogQueries.Count == previews, "ruleless existing collections still send no preview");
+            Invoke(save);
+            await Until(() => wire.Updates.Count == updates + 1 && !isSaving(), "ruleless metadata update");
+            using var patch = JsonDocument.Parse(wire.Updates[^1]);
+            Check(patch.RootElement.GetProperty("name").GetString() == "Renamed legacy"
+                && patch.RootElement.GetProperty("is_shared").GetBoolean(), "ruleless metadata changes are sent");
+            var query = patch.RootElement.GetProperty("query_definition");
+            Check(query.GetProperty("groups").GetArrayLength() == 0 && query.GetProperty("match").GetString() == "any"
+                && query.GetProperty("future_option").GetBoolean() && !query.TryGetProperty("sort", out _)
+                && !query.TryGetProperty("limit", out _), "metadata update resends the stored ruleless query without editor defaults");
+        }
+    }
+
+    // A stored sort field the wizard does not list stays selected, so a rename resends it unchanged.
+    private static async Task WizardStoredSortAsync(Frame frame, Wire wire)
+    {
+        await Task.Delay(600); // Let any prior save finish its queued navigation.
+        frame.BackStack.Clear();
+        var updates = wire.Updates.Count;
+        frame.Navigate(typeof(SmartCollectionWizardPage), new SmartCollectionWizardNavigationArgs(CollectionId: "future-sort"));
+        var page = (SmartCollectionWizardPage)frame.Content;
+        var sort = (ComboBox)page.FindName("SortFieldCombo");
+        await Until(() => Field<bool>(page, "_loaded") && !page.ViewModel.IsLoading
+            && page.ViewModel.Title == "Future sort" && sort.Items.Count > 0, "future-sort wizard load");
+        await Task.Delay(900);
+        Check(page.ViewModel.SortField == "future_score" && (sort.SelectedItem as ComboBoxItem)?.Tag as string == "future_score",
+            "the wizard keeps a stored sort field it does not list: " + page.ViewModel.SortField);
+        page.ViewModel.Title = "Renamed future sort";
+        await page.ViewModel.SaveAsync();
+        Check(wire.Updates.Count == updates + 1, "the renamed collection is saved: " + page.ViewModel.ErrorMessage);
+        using var patch = JsonDocument.Parse(wire.Updates[^1]);
+        var stored = patch.RootElement.GetProperty("query_definition").GetProperty("sort");
+        Check(patch.RootElement.GetProperty("name").GetString() == "Renamed future sort"
+            && stored.GetProperty("field").GetString() == "future_score" && stored.GetProperty("order").GetString() == "asc",
+            "a rename resends the stored sort: " + stored);
+        Program.Log("PASS: the wizard keeps a stored sort field it does not list and a rename resends it unchanged.");
     }
 
     // ----- G5 -----
@@ -496,6 +702,15 @@ internal static class ViewerActionsNativeFixture
 
     // ----- helpers -----
 
+    private static void CheckOnlyRule(JsonElement groups, string field, string op, string value)
+    {
+        Check(groups.GetArrayLength() == 1, "only the populated group is sent");
+        var rules = groups[0].GetProperty("rules");
+        Check(rules.GetArrayLength() == 1, "blank and incomplete rows are not sent alongside a complete rule");
+        Check(rules[0].GetProperty("field").GetString() == field && rules[0].GetProperty("op").GetString() == op
+            && rules[0].GetProperty("value").ToString() == value, "the filled rule survives sanitization");
+    }
+
     private static string Describe(object? value) => value switch { null => "null", string text => "'" + text + "'", _ => value.ToString() ?? "?" };
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException("Viewer actions: " + message); }
     private static async Task Until(Func<bool> ready, string what)
@@ -528,9 +743,11 @@ internal static class ViewerActionsNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal bool ContinuationHeld, ReadBeforeDismissal;
+        internal bool FailCatalogPreview;
+        internal bool RejectRulelessUpdate;
         internal TaskCompletionSource ReleaseContinuation = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<(string Path, string Body)> Dismissals = [];
-        internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [];
+        internal readonly List<string> Previews = [], Creates = [], CatalogQueries = [], Updates = [];
         internal string SyncState = "ok"; internal bool FailSync = true;
         internal TaskCompletionSource? HoldCollectionRead; internal int CollectionReadsHeld;
         private readonly HashSet<string> _dismissed = [];
@@ -557,7 +774,14 @@ internal static class ViewerActionsNativeFixture
             }
             if (path == "/api/v2/catalog")
             {
-                if (query.Contains("source=query")) CatalogQueries.Add(query);
+                if (query.Contains("source=query"))
+                {
+                    CatalogQueries.Add(query);
+                    if (FailCatalogPreview) return new(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new StringContent("{\"code\":\"dependency_unavailable\",\"message\":\"Preview unavailable\"}")
+                    };
+                }
                 var section = Query(query, "section_id");
                 if (section.StartsWith("race-") || section.StartsWith("off-prefix-"))
                 {
@@ -602,6 +826,26 @@ internal static class ViewerActionsNativeFixture
             {
                 Creates.Add(text ?? "");
                 body = new { id = "created", name = "Created", collection_type = "smart", creator_profile_id = "fixture" };
+            }
+            else if (path == "/api/v2/collections/ruleless")
+            {
+                if (request.Method == HttpMethod.Patch)
+                {
+                    Updates.Add(text ?? "");
+                    if (RejectRulelessUpdate) return new(HttpStatusCode.UnprocessableEntity)
+                    {
+                        Content = new StringContent("{\"code\":\"validation_error\",\"message\":\"Add at least one rule.\"}")
+                    };
+                }
+                body = new { id = "ruleless", name = "Legacy smart", collection_type = "smart", creator_profile_id = "fixture",
+                    query_definition = new { match = "any", groups = Array.Empty<object>(), future_option = true } };
+            }
+            else if (path == "/api/v2/collections/future-sort")
+            {
+                if (request.Method == HttpMethod.Patch) Updates.Add(text ?? "");
+                body = new { id = "future-sort", name = "Future sort", collection_type = "smart", creator_profile_id = "fixture",
+                    query_definition = new { match = "all", groups = new[] { new { match = "all", rules = new[] { new { field = "genre", op = "contains", value = "Drama" } } } },
+                        sort = new { field = "future_score", order = "asc" } } };
             }
             else if (path == "/api/v2/collections/capabilities") body = new { imports = true, import_sources = new[] { "mdblist" }, item_reorder = true };
             else if (path == "/api/v2/collections/synced/sync")

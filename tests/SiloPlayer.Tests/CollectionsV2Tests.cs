@@ -173,6 +173,181 @@ public sealed class CollectionsV2Tests
     }
 
     [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public async Task LateOlderReadPreservesTheNewerBaselineAndRevision(bool staleHeader, bool updatedViaPatch, bool withETag)
+    {
+        const string older = """{"id":"c1","name":"Synced collection","updated_at":"2026-11-11T11:37:00Z"}""";
+        // Compare instants, not timestamp text: this later revision has a different UTC offset.
+        const string newer = """{"id":"c1","name":"Synced collection","updated_at":"2026-11-11T06:38:00-05:00"}""";
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var changed = false;
+        var headerReads = 0;
+        var deletes = 0;
+        var client = new SiloApiClient(new HttpClient(new AsyncHandler(async request =>
+        {
+            var isList = request.RequestUri!.AbsolutePath == "/api/v2/collections";
+            if (request.Method == HttpMethod.Get)
+            {
+                if (!isList) headerReads++;
+                if (isList || staleHeader && headerReads == 1)
+                {
+                    started.TrySetResult();
+                    return await release.Task;
+                }
+                var response = Json(changed ? newer : older);
+                if (!changed || withETag) response.Headers.ETag = new(changed ? "\"B\"" : "\"A\"");
+                return response;
+            }
+            if (request.Method == HttpMethod.Patch)
+            {
+                Assert.Equal("\"A\"", request.Headers.IfMatch.Single().Tag);
+                changed = true;
+                var response = Json(newer);
+                if (withETag) response.Headers.ETag = new("\"B\"");
+                return response;
+            }
+            Assert.Equal(HttpMethod.Delete, request.Method);
+            Assert.Equal("\"B\"", request.Headers.IfMatch.Single().Tag);
+            deletes++;
+            return new(HttpStatusCode.NoContent);
+        })));
+        client.SetBaseUrl("https://fixture.invalid");
+        var api = new CollectionsApi(client);
+        var lateRead = staleHeader ? (Task)api.GetCollectionAsync("c1") : api.GetCollectionsAsync();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (updatedViaPatch)
+            {
+                await api.GetCollectionAsync("c1");
+                await api.UpdateCollectionAsync("c1", new() { IsShared = true });
+            }
+            else
+            {
+                changed = true;
+                await api.GetCollectionAsync("c1");
+            }
+            var stale = Json(staleHeader ? older : "{\"items\":[" + older + "],\"groups\":[]}");
+            if (staleHeader) stale.Headers.ETag = new("\"A\"");
+            release.SetResult(stale);
+            await lateRead;
+            var readsBeforeDelete = headerReads;
+            var expectedExtraReads = withETag ? 0 : 1;
+            // A missing ETag must revalidate against B, never the late response's old baseline A.
+            // Revision lookup still requires an ETag even when the displayed header omitted it.
+            withETag = true;
+            await api.DeleteCollectionAsync("c1");
+            Assert.Equal(1, deletes);
+            Assert.Equal(expectedExtraReads, headerReads - readsBeforeDelete);
+        }
+        finally
+        {
+            release.TrySetResult(Json(staleHeader ? older : "{\"items\":[],\"groups\":[]}"));
+            await lateRead;
+        }
+    }
+
+    [Theory]
+    [InlineData("group", false)]
+    [InlineData("group", true)]
+    [InlineData("group-order", false)]
+    [InlineData("collection-order", false)]
+    [InlineData("grouped-order", false)]
+    [InlineData("personal-order", false)]
+    public async Task LateOlderListPreservesGroupAndOrderWriteBaselines(string operation, bool withETag)
+    {
+        var grouped = operation == "grouped-order";
+        var originalIds = operation == "group-order" ? new[] { "g1", "g2" } : new[] { "a", "b" };
+        var reorderedIds = originalIds.Reverse().ToArray();
+        object Group(string id, string name, int sort) => new { id, name, slug = id, default_sort_mode = "manual", sort_order = sort };
+        string ListBody(bool changed) => JsonSerializer.Serialize(new
+        {
+            items = (changed && operation != "group" && operation != "group-order" ? reorderedIds : new[] { "a", "b" })
+                .Select((id, sort) => new { id, group_id = grouped ? "g1" : null, sort_order = sort }).ToArray(),
+            groups = new[]
+            {
+                Group("g1", changed && operation == "group" ? "Renamed" : "Original", changed && operation == "group-order" ? 1 : 0),
+                Group("g2", "Other", changed && operation == "group-order" ? 0 : 1),
+            },
+        });
+        var olderList = ListBody(false);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var listReads = 0;
+        var revisionReads = 0;
+        var writes = 0;
+        var client = new SiloApiClient(new HttpClient(new AsyncHandler(async request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/v2/collections")
+            {
+                if (++listReads == 2)
+                {
+                    started.TrySetResult();
+                    return await release.Task;
+                }
+                return Json(ListBody(writes > 0));
+            }
+            var isGroup = operation == "group";
+            var expectedPath = isGroup ? "/api/v2/collections/groups/g1"
+                : operation == "group-order" ? "/api/v2/collections/groups/order" : "/api/v2/collections/order";
+            Assert.Equal(expectedPath, request.RequestUri.AbsolutePath);
+            if (request.Method == HttpMethod.Get)
+            {
+                revisionReads++;
+                Assert.Equal(grouped ? "?group_id=g1" : "", request.RequestUri.Query);
+                var response = Json(isGroup
+                    ? JsonSerializer.Serialize(Group("g1", writes > 0 ? "Renamed" : "Original", 0))
+                    : JsonSerializer.Serialize(new { ordered_ids = writes > 0 ? reorderedIds : originalIds }));
+                response.Headers.ETag = new(writes > 0 ? "\"B\"" : "\"A\"");
+                return response;
+            }
+            Assert.Equal(isGroup ? HttpMethod.Patch : HttpMethod.Put, request.Method);
+            Assert.Equal("", request.RequestUri.Query);
+            Assert.Equal(writes > 0 ? "\"B\"" : "\"A\"", request.Headers.IfMatch.Single().Tag);
+            writes++;
+            var result = Json(isGroup ? JsonSerializer.Serialize(Group("g1", "Renamed", 0)) : "{}");
+            if (isGroup && withETag) result.Headers.ETag = new("\"B\"");
+            return result;
+        })));
+        client.SetBaseUrl("https://fixture.invalid");
+        var api = new CollectionsApi(client);
+        Task Write() => operation switch
+        {
+            "group" => api.UpdateCollectionGroupAsync("g1", "Renamed"),
+            "group-order" => api.ReorderCollectionGroupsAsync(reorderedIds),
+            _ => api.ReorderCollectionsAsync(reorderedIds, grouped ? "g1" : null),
+        };
+        await api.GetCollectionsAsync();
+        var lateRead = api.GetCollectionsAsync();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            if (operation == "personal-order")
+                await api.ReorderPersonalCollectionsAsync(await api.PreparePersonalOrderAsync(originalIds), reorderedIds);
+            else
+                await Write();
+            release.SetResult(Json(olderList));
+            await lateRead;
+            await Write();
+            Assert.Equal(2, writes);
+            Assert.Equal(withETag ? 1 : 2, revisionReads);
+        }
+        finally
+        {
+            release.TrySetResult(Json(olderList));
+            await lateRead;
+        }
+    }
+
+    [Theory]
     [InlineData("patch")]
     [InlineData("put")]
     [InlineData("delete")]

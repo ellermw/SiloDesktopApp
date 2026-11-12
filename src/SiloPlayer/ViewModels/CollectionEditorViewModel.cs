@@ -336,9 +336,9 @@ public partial class CollectionEditorViewModel : ObservableObject
             ErrorMessage = "Collection name is required.";
             return;
         }
-        // The server answers 422 for a Smart collection with no complete rule, and the
-        // editor never offers a save it would refuse.
-        if (SmartNeedsRule)
+        // New Smart collections need a rule. Existing collections must still allow
+        // metadata edits; any server-side update validation is reported below.
+        if (SmartNeedsRuleForSave)
         {
             ErrorMessage = SmartRuleNeededMessage;
             return;
@@ -364,7 +364,11 @@ public partial class CollectionEditorViewModel : ObservableObject
 
                 if (CollectionType == "smart")
                 {
-                    request.QueryDefinition = BuildQueryDefinition();
+                    // Metadata-only edits must not sanitize the stored query, including
+                    // legacy definitions with no complete rule.
+                    request.QueryDefinition = LoadedCollection is { } loaded
+                        && JsonSerializer.Serialize(RuleDefinition) == JsonSerializer.Serialize(QueryEditing.Clone(loaded.QueryDefinition))
+                            ? loaded.QueryDefinition : BuildQueryDefinition();
                     if (_clearSmartDefaultSort && Capabilities?.CollectionDefaultSort == true &&
                         (_storedSortConfig.ContainsKey("field") || _storedSortConfig.ContainsKey("order")))
                         request.SortConfig = _storedSortConfig.Where(pair => pair.Key is not ("field" or "order")).ToDictionary(pair => pair.Key, pair => pair.Value);
@@ -800,9 +804,14 @@ public partial class CollectionEditorViewModel : ObservableObject
     public bool SmartNeedsRule => CollectionType == "smart"
         && !SiloPlayer.Core.Services.QueryEditing.HasCompleteRule(RuleDefinition);
 
+    public bool SmartNeedsRuleForSave => !IsEditing && SmartNeedsRule;
+
     private QueryDefinition BuildQueryDefinition()
     {
         var query = SiloPlayer.Core.Services.QueryEditing.Clone(RuleDefinition);
+        // Populated from the draft, then detached: the clone's values are all JsonElements,
+        // so its blank drafts could no longer be told from stored values.
+        query.Groups = SiloPlayer.Core.Services.QueryEditing.Clone(new QueryDefinition { Groups = SiloPlayer.Core.Services.QueryEditing.PopulatedGroups(RuleDefinition) }).Groups;
         if (query.MediaScope == "all") query.MediaScope = null;
         return query;
     }
