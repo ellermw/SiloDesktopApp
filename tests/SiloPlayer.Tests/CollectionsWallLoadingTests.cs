@@ -68,6 +68,42 @@ public sealed class CollectionsWallLoadingTests
     }
 
     [Fact]
+    public async Task TimedOutLibraryRestReportsThatLibraryInsteadOfLeavingItToBeAdmittedAgain()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]},{"library_id":2,"library_name":"Shows","total_count":2,"collections":[{"id":"t1"}]}]}""", TimeOutLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        // The wall's own owner and token are not cancelled: the request alone gave up.
+        await vm.LoadServerLibraryAsync(1, isCurrent: () => true);
+        Assert.Equal(1, wire.LibraryTabReads);
+        Assert.NotNull(vm.ServerLibraryError(1)); Assert.Null(vm.ServerLibraryError(2));
+        Assert.False(vm.HasServerLibraryRest(1)); Assert.False(vm.IsLoadingServerLibraryRest);
+        Assert.Equal(2, vm.NextServerLibrary?.LibraryId);   // the timed-out library is not the next automatic read
+        Assert.Equal(["s1", "t1"], vm.GetServerCollectionCards().Select(card => card.Collection.Id));
+
+        wire.TimeOutLibraryTab = false;
+        await vm.LoadServerLibraryAsync(1);   // Retry
+        Assert.Equal(2, wire.LibraryTabReads);
+        Assert.Null(vm.ServerLibraryError(1)); Assert.True(vm.HasServerLibraryRest(1));
+    }
+
+    [Fact]
+    public async Task MetadataLanguageChangeRetiresAHeldRestWithoutAnErrorAndLeavesTheLibraryAdmissible()
+    {
+        using var wire = new Wire { ServerBody = """{"libraries":[{"library_id":1,"library_name":"Movies","total_count":3,"collections":[{"id":"s1"}]}]}""", HoldLibraryTab = true };
+        var client = wire.Client(); var vm = Vm(client);
+        await vm.LoadCollectionsCommand.ExecuteAsync(null);
+        var first = vm.LoadServerLibraryAsync(1);
+        await Until(() => wire.LibraryTabReads == 1);
+        client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+        wire.LibraryTab.TrySetResult(Wire.Ok("""{"library_id":1,"collections":[{"id":"stale"}]}"""));
+        await first;
+        Assert.False(vm.HasServerLibraryRest(1)); Assert.False(vm.IsLoadingServerLibraryRest);
+        Assert.Null(vm.ServerLibraryError(1));
+        Assert.Equal(1, vm.NextServerLibrary?.LibraryId);
+    }
+
+    [Fact]
     public async Task RefreshDropsTheRestOfALibraryItsTeaserNowHoldsInFull()
     {
         using var wire = new Wire
@@ -405,7 +441,7 @@ public sealed class CollectionsWallLoadingTests
         public string LibraryTabBody = "{\"library_id\":1,\"collections\":[],\"groups\":[]}";
         public string PersonalSnapshotBody = "{}";
         public bool FailPersonal, FailProfiles, FailServer, FailLibraryTab, HoldPersonal, HoldProfiles, FailDelete;
-        public bool HoldLibraryTab;
+        public bool HoldLibraryTab, TimeOutLibraryTab;
         public TaskCompletionSource<HttpResponseMessage> LibraryTab { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int LibraryTabReads, DeleteRequests;
         public TaskCompletionSource PersonalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -430,6 +466,8 @@ public sealed class CollectionsWallLoadingTests
             {
                 Interlocked.Increment(ref LibraryTabReads);
                 if (HoldLibraryTab) return LibraryTab.Task;
+                // What HttpClient throws once its own Timeout elapses: a cancellation no caller token asked for.
+                if (TimeOutLibraryTab) return Task.FromException<HttpResponseMessage>(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout elapsing.", new TimeoutException()));
                 return Task.FromResult(FailLibraryTab ? Fail() : Ok(LibraryTabBody));
             }
             if (path == "/api/v2/collections")

@@ -78,6 +78,7 @@ public partial class CollectionsViewModel : ObservableObject
         var library = ServerLibraries.FirstOrDefault(l => l.LibraryId == libraryId);
         if (library == null || library.TotalCount <= library.Collections.Count) return;
         var owner = _serverCollectionOwner; var context = _requestClient?.CaptureContext(); var generation = _loadGeneration;
+        var language = _catalogApi.LocalizedReadGeneration;
         bool Current() => owner == _serverCollectionOwner && !owner.IsCancellationRequested && generation == _loadGeneration && isCurrent?.Invoke() != false &&
             (context == null || _requestClient!.IsCurrentContext(context.Value));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, ct);
@@ -94,7 +95,9 @@ public partial class CollectionsViewModel : ObservableObject
                         PosterThumbhash = c.PosterThumbhash, ItemCount = c.ItemCount, Featured = c.Featured }))
                 .Where(c => !first.Contains(c.Id)).DistinctBy(c => c.Id).ToList();
         }
-        catch (OperationCanceledException)
+        // Only this read's own cancellation or a metadata-language change leaves the library to be admitted again.
+        // Any other cancellation, such as a request timeout, is a failure: the library reports it below.
+        catch (OperationCanceledException) when (linked.IsCancellationRequested || language != _catalogApi.LocalizedReadGeneration)
         {
             if (Current() && !_serverRest.ContainsKey(libraryId)) _requestedServerLibraries.Remove(libraryId);
         }
