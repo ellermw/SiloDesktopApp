@@ -48,13 +48,34 @@ public sealed class MetadataResetApiTests
 
     [Theory]
     [InlineData(HttpStatusCode.ServiceUnavailable)]
-    [InlineData(HttpStatusCode.Forbidden)]
     public async Task CapabilityFailureNeverUnlocksOrRefreshes(HttpStatusCode status)
     {
         using var wire = new Wire { CapabilityFailure = status }; var client = Client(wire);
         await Assert.ThrowsAsync<ApiException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("movie"));
         Assert.Equal(new[] { "GET /api/v2/admin/catalog/capabilities" }, wire.Requests);
         Assert.Equal(new[] { 0, 10 }, wire.TargetLocks);
+    }
+
+    [Fact]
+    public async Task CuratorWithoutAdminCapabilityAccessCanRequestOnlyAtomicReset()
+    {
+        using var wire = new Wire { CapabilityFailure = HttpStatusCode.Forbidden }; var client = Client(wire);
+        await new MediaMaintenanceApi(client).ResetToProviderAsync("season");
+        Assert.Equal(new[] { "GET /api/v2/admin/catalog/capabilities", "POST /api/v2/admin/items/season/refresh-metadata" }, wire.Requests);
+        Assert.Equal("reset", Assert.Single(wire.Modes));
+        Assert.DoesNotContain(wire.Requests, request => request.StartsWith("PATCH"));
+    }
+
+    [Fact]
+    public async Task CuratorOnOldServerCannotFallBackToUnlockAfterRejectedAtomicReset()
+    {
+        using var wire = new Wire { CapabilityFailure = HttpStatusCode.Forbidden, ResetUnsupported = true }; var client = Client(wire);
+        var error = await Assert.ThrowsAsync<ApiException>(() => new MediaMaintenanceApi(client).ResetToProviderAsync("season"));
+        Assert.Equal(422, error.StatusCode);
+        Assert.Equal("reset", Assert.Single(wire.Modes));
+        Assert.DoesNotContain(wire.Requests, request => request.StartsWith("PATCH"));
+        Assert.Equal(new[] { 0, 10 }, wire.TargetLocks);
+        Assert.Equal("Stale value", wire.ProviderEmptyValue);
     }
 
     [Fact]
@@ -102,7 +123,7 @@ public sealed class MetadataResetApiTests
     }
     private sealed class Wire : HttpMessageHandler
     {
-        internal bool SupportsReset = true, ProviderFails;
+        internal bool SupportsReset = true, ProviderFails, ResetUnsupported;
         internal HttpStatusCode? CapabilityFailure;
         internal Action<string>? Completed;
         internal List<string> Requests = [], Modes = [];
@@ -123,6 +144,7 @@ public sealed class MetadataResetApiTests
                 Completed?.Invoke("unlock"); return Json(HttpStatusCode.OK, "{}");
             }
             var mode = body.RootElement.GetProperty("mode").GetString()!; Modes.Add(mode);
+            if (ResetUnsupported) return Json(HttpStatusCode.UnprocessableEntity, """{"detail":"Unsupported refresh mode"}""");
             if (ProviderFails) return Json(HttpStatusCode.BadGateway, """{"detail":"Provider unavailable"}""");
             if (mode == "reset") { TargetLocks = []; ProviderEmptyValue = null; }
             Completed?.Invoke("refresh");

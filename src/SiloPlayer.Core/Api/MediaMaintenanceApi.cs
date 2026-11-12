@@ -30,6 +30,10 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
             supported = capability.TryGetProperty("item_metadata_reset", out var value) && value.ValueKind == JsonValueKind.True;
         }
         catch (ApiException ex) when (ex.StatusCode is 404 or 405) { supported = false; }
+        // The capability document is admin-only, while reset itself permits
+        // delegated curators. Offer only the atomic command in that case:
+        // an older server rejects its enum with 422 before changing anything.
+        catch (ApiException ex) when (ex.StatusCode == 403) { supported = true; }
         RequireCurrent(owner, ct);
         return new(owner, supported);
     }
