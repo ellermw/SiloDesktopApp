@@ -471,7 +471,7 @@ public partial class PlayerService : IDisposable
         PlaybackAuthorityScope authority, string contentId, int? libraryId, int? fileId, CancellationToken ct,
         ApiRequestContext? expectedContext = null)
         => _watchDetailFreshness.ReadAsync(contentId,
-            token => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, token, expectedContext), ct);
+            token => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, token, expectedContext, WatchBackdropWidth), ct);
 
     /// <summary>True when no progress/watched mutation happened since this response's server read.</summary>
     private bool IsCurrentWatchDetail(WatchDetailResponse detail) => _watchDetailFreshness.IsCurrent(detail);
@@ -3823,6 +3823,9 @@ public partial class PlayerService : IDisposable
             return;
         }
 
+        var outagePlayer = _mpv;
+        var outageContent = ContentId;
+        var outageGeneration = Volatile.Read(ref _playRequestGeneration);
         try
         {
             if (restartSession != null && (_closing || waitToken.IsCancellationRequested || State == PlayerState.Idle ||
@@ -3836,6 +3839,7 @@ public partial class PlayerService : IDisposable
                 _recoveryPauseIntentOverride = pauseIntent;
                 currentPosition = CurrentMediaPosition;
             }
+            if (diagnosticReason != "other-playback-recovery") SetPlaybackOutage(true);
             await RecoverInterruptedStreamCoreAsync(currentPosition, reason, restartSession).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ownerToken.IsCancellationRequested || _closing || _playbackCts?.IsCancellationRequested == true)
@@ -3854,6 +3858,8 @@ public partial class PlayerService : IDisposable
         }
         finally
         {
+            if (ReferenceEquals(outagePlayer, _mpv) && outageContent == ContentId && outageGeneration == Volatile.Read(ref _playRequestGeneration))
+                SetPlaybackOutage(false);
             _streamRecoveryGate.Release();
         }
     }
@@ -4236,6 +4242,7 @@ public partial class PlayerService : IDisposable
         _postRollActive = false;
         _postRollVideoEnded = false;
         _restoreFullscreenAfterPostRollContinue = false;
+        RetireCreditsStill();
         _episodeNavigation.Clear();
         // Also tell the OSC to drop episode navigation and its credits action.
         _mpv?.SendScriptMessage("osc-set-post-roll", "false");
@@ -4250,6 +4257,7 @@ public partial class PlayerService : IDisposable
         _postRollActive = false;
         _postRollVideoEnded = false;
         _restoreFullscreenAfterPostRollContinue = false;
+        RetireCreditsStill();
         _episodeNavigation.PrepareFor(contentId);
 
         // The mpv instance and Lua OSC are reused between files. Clear the
@@ -4385,12 +4393,7 @@ public partial class PlayerService : IDisposable
 
             LogToFile("state_trace.txt", $"AutoDetectNextEpisode: next={next.ContentId} ({NextEpisodeTitle})");
 
-            _mpv?.SendScriptMessage("osc-set-next-episode-detail", JsonSerializer.Serialize(new
-            {
-                season_number = next.SeasonNumber,
-                episode_number = next.EpisodeNumber,
-                title = next.Title ?? string.Empty,
-            }));
+            PublishCreditsEpisodeDetailCore(artworkOnly: false, rawEpisodeTitle: next.Title ?? "");
             _mpv?.SendScriptMessage("osc-set-next-episode", "true");
         }
         catch (OperationCanceledException) { }
@@ -5581,6 +5584,8 @@ public partial class PlayerService : IDisposable
         {
             var loadingOwner = Volatile.Read(ref _mpvLoadingOverlayOwner);
             _transportHasFirstOutput = true;
+            SetPlaybackOutage(false);
+            RetireLoadingCover();
             // MPV_EVENT_PLAYBACK_RESTART is the first-frame-ready boundary for
             // an initial load and fires again after seeks/cache recovery. Keep
             // the opaque startup surface visible through FILE_LOADED so the
@@ -7779,6 +7784,7 @@ public partial class PlayerService : IDisposable
             content_id = ContentId ?? wd.ContentId,
             file_id = _playbackManager.CurrentSession?.MediaFileId ?? 0,
             load_generation = Volatile.Read(ref _fileLoadGeneration),
+            play_generation = Volatile.Read(ref _playRequestGeneration),
             reset_auto_skip = _autoSkipMarkerIdentity.ShouldResetFor(ContentId),
             marker_segments = CurrentMarkerVersion?.MarkerSegments?.Where(segment => segment is not null).ToArray(),
             intro_start = MarkerTimingFor("intro")?.Start ?? 0,
@@ -8154,11 +8160,31 @@ public partial class PlayerService : IDisposable
                 // The in-player Next Episode controls (viewer) or the credits
                 // countdown running out (automatic). ContinuePlayingNextAsync
                 // applies the still-watching gate to the automatic start.
+                if (_closing) break;
                 var nextTrigger = args.Length > 1 && args[1] == "automatic"
                     ? PlaybackStartTrigger.Automatic
                     : PlaybackStartTrigger.Viewer;
+                var continuingReload = (_switchingContent || IsLoading) && nextTrigger == PlaybackStartTrigger.Viewer;
+                // A current viewer can leave a continuing transport reload.
+                // Playback-request ownership rejects an outgoing episode's
+                // intent once a newer manual preparation has begun, without
+                // treating every busy flag as a control blackout (#138).
+                if (args.Length <= 2 && (_switchingContent || IsLoading)) break;
+                if (args.Length > 2 && (args[2] != ContentId || args.Length < 5 ||
+                    !long.TryParse(args[3], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var intentLoad) ||
+                    !long.TryParse(args[4], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var intentPlay) ||
+                    intentPlay != Volatile.Read(ref _playRequestGeneration) ||
+                    (intentLoad != Volatile.Read(ref _fileLoadGeneration) && !continuingReload))) break;
+                var nextOwnerContent = ContentId;
+                var nextOwnerGeneration = Volatile.Read(ref _playRequestGeneration);
+                var nextOwnerLoad = Volatile.Read(ref _fileLoadGeneration);
                 LogToFile("state_trace.txt", $"Next Episode requested ({nextTrigger})");
-                dispatch.TryEnqueue(() => _ = ContinuePlayingNextAsync(nextTrigger));
+                dispatch.TryEnqueue(() =>
+                {
+                    if (nextOwnerContent == ContentId && nextOwnerGeneration == Volatile.Read(ref _playRequestGeneration) &&
+                        nextOwnerLoad == Volatile.Read(ref _fileLoadGeneration) && !_closing)
+                        _ = ContinuePlayingNextAsync(nextTrigger);
+                });
                 break;
             case "silo-loading-backdrop-request":
                 if (args.Length > 3 &&
@@ -8172,6 +8198,9 @@ public partial class PlayerService : IDisposable
             case "silo-prev-episode":
                 LogToFile("state_trace.txt", "Previous Episode button clicked");
                 dispatch.TryEnqueue(() => _ = PlayPreviousEpisodeAsync());
+                break;
+            case "silo-next-episode-still-request":
+                if (args.Length > 1) _ = LoadCreditsStillAsync(args[1]);
                 break;
             case "silo-chapter-thumbnail-request":
                 if (args.Length > 1 && int.TryParse(args[1], out var chapterIndex))

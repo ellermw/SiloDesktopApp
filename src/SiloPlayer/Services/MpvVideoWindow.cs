@@ -515,10 +515,17 @@ public sealed class MpvVideoWindow : IDisposable
         ClientToScreen(_parentHwnd, ref topLeft);
 
         var scale = Math.Max(1d, GetDpiForWindow(_parentHwnd) / 96d);
-        var margin = (int)Math.Round(24 * scale);
-        var width = (int)Math.Round(320 * scale);
-        var height = (int)Math.Round(180 * scale);
-        PositionAt(topLeft.X + margin, topLeft.Y + margin, width, height);
+        var bounds = _postRollPreviewBounds ?? (24d, 24d, 320d, 180d);
+        PositionAt(topLeft.X + (int)Math.Round(bounds.X * scale), topLeft.Y + (int)Math.Round(bounds.Y * scale),
+            (int)Math.Round(bounds.Width * scale), (int)Math.Round(bounds.Height * scale));
+    }
+
+    private (double X, double Y, double Width, double Height)? _postRollPreviewBounds;
+
+    /// <summary>Measured shell slot, in owner-client logical pixels; keeps the live owned HWND.</summary>
+    public void SetPostRollPreviewBounds(double x, double y, double width, double height)
+    {
+        if (width > 0 && height > 0) _postRollPreviewBounds = (x, y, width, height);
     }
 
     public void EnterPictureInPicture()

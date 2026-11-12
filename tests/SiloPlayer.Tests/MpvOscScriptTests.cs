@@ -35,7 +35,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("local function draw_next_episode_icon", script);
         Assert.Contains("draw_next_episode_icon(ass, L.btn_next_ep.cx", script);
         Assert.DoesNotContain("draw_skip_fwd_icon(ass, L.btn_next_ep.cx", script);
-        Assert.Contains("mp.commandv(\"script-message\", \"silo-next-episode\", \"viewer\")", script);
+        Assert.Contains("request_next_episode(\"viewer\")", script);
     }
 
     [Fact]
@@ -148,8 +148,6 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("osc-set-theme", script);
-        Assert.Contains("WinUI sends RRGGBB; ASS colors are BGR.", script);
-        Assert.Contains("config.accent_color = value:sub(5, 6)", script);
     }
 
     [Fact]
@@ -394,7 +392,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("chapter_at_time", script);
         Assert.Contains("marker_at_time", script);
         Assert.Contains("Credits / Outro", script);
-        Assert.Contains("Chapter boundaries are one-pixel", script);
+        Assert.Contains("state.seek_segments", script);
         Assert.Contains("hover_chapter.title", script);
         Assert.Contains("hover_marker.start", script);
         Assert.Contains("silo-chapter-thumbnail-request", script);

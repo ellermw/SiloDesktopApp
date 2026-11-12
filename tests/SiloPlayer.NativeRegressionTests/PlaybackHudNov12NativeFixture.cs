@@ -65,6 +65,7 @@ internal static class PlaybackHudNov12NativeFixture
                     rects=rects, text=text, compact=state.layout.compact == true,
                     dividers=state.layout.rail_dividers or {}, volume=state.layout.volume_bar ~= nil,
                     countdown=state.next_ep_countdown_active == true, cover=state.loading_backdrop_shown ~= nil,
+                    still=state.next_ep_still_shown ~= nil, still_rect=state.next_ep_still_rect or {}, segments=state.seek_segments or {},
                     alpha=state.current_alpha, width=state.osd_width, height=state.osd_height}))
             end)
             mp.commandv('script-message', 'silo-hud-nov12-ready')
@@ -170,6 +171,11 @@ internal static class PlaybackHudNov12NativeFixture
         var picture = bufferShot.At(0.1, 0.5);
         Require(picture.R > 130, $"Rebuffering covered the picture: {picture}.");
         Require(disc.R < picture.R - 40, $"Rebuffer spinner lacks its dark disc: {disc} over {picture}.");
+        player.SendScriptMessage("osc-set-connection-outage","true"); await Task.Delay(150);
+        await Capture("reconnecting-1920.png");
+        player.SendScriptMessage("osc-set-watch-party","{\"visible\":true,\"catching_up\":true,\"connection_state\":\"connected\"}"); await Task.Delay(150);
+        await Capture("party-catchup-1920.png");
+        player.SendScriptMessage("osc-set-watch-party","null"); player.SendScriptMessage("osc-set-connection-outage","false");
         player.SendScriptMessage("osc-set-buffering", "false");
         player.SendScriptMessage("osc-clear-loading-backdrop", "fixture-1");
 
@@ -188,11 +194,23 @@ internal static class PlaybackHudNov12NativeFixture
         player.SendScriptMessage("osc-set-autoplay-gate", "false");
         await Task.Delay(400);
         Require((await Query()).GetProperty("countdown").GetBoolean(), "An ungated credits region did not start the countdown.");
+        var stillPath=Path.Combine(Program.ResultDirectory,"credits-synthetic-still.bgra");
+        var stillPixels=new byte[224*126*4];
+        for(var i=0;i<224*126;i++){stillPixels[i*4+(i%224<112?2:0)]=220;stillPixels[i*4+3]=255;}
+        await File.WriteAllBytesAsync(stillPath,stillPixels);
+        player.SendScriptMessage("osc-update-next-episode-still-source","{\"still_key\":\"native-owned-still\",\"still_url\":\"synthetic\"}");
+        player.SendScriptMessage("osc-set-next-episode-still","native-owned-still",stillPath,"224","126","896");
+        await Task.Delay(200);
+        var stillProbe=await Query();
+        Require(stillProbe.GetProperty("still").GetBoolean(),"Actual credits card never displayed its still beside the title.");
         var countdownShot = await Capture("credits-countdown-1920.png");
+        var stillRect=stillProbe.GetProperty("still_rect");
+        var redStill=countdownShot.At((X(stillRect)+W(stillRect)*.25)/countdownShot.Width,(stillRect.GetProperty("y").GetDouble()+stillRect.GetProperty("h").GetDouble()*.5)/countdownShot.Height);
+        Require(redStill.R>180 && redStill.B<40,"Credits still is absent or layered under ASS.");
         player.SendScriptMessage("osc-set-autoplay-gate", "true");
         await Task.Delay(200);
         Require(!(await Query()).GetProperty("countdown").GetBoolean(), "Becoming gated left the countdown up.");
-        Require(!intents.Any(value => value.StartsWith("silo-next-episode", StringComparison.Ordinal)), "Gate changes advanced the episode.");
+        Require(!intents.Any(value => value.StartsWith("silo-next-episode|", StringComparison.Ordinal)), "Gate changes advanced the episode.");
 
         await File.WriteAllTextAsync(Path.Combine(Program.ResultDirectory, "hud-nov12-observations.json"), JsonSerializer.Serialize(new
         {

@@ -6,19 +6,23 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Player;
 using SiloPlayer.Services;
 using Windows.Graphics;
+using Windows.Storage.Streams;
 
 internal static class PlaybackSpeedMenuNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
-    internal static async Task RunAsync(Window window)
+    internal static async Task RunAsync(Window window, bool presentationOnly = false)
     {
+        var hadAccent=Application.Current.Resources.TryGetValue("AccentBrush",out var savedAccent);
+        if(presentationOnly) Application.Current.Resources["AccentBrush"]=new SolidColorBrush(Windows.UI.Color.FromArgb(255,0,0,0));
         using var foreground = new PlaybackAudioMenuNativeFixture.ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(window));
         window.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
         using var media = new PlaybackAudioMenuNativeFixture.MediaServer(); using var wire = new Wire(media.Origin);
@@ -90,6 +94,7 @@ internal static class PlaybackSpeedMenuNativeFixture
                 "Valid stored custom speed is not represented by the actual native controls.");
             Require(AutomationProperties.GetName(Row("rate:1.35")).Contains("Current") && player.NativePlaybackRate == 1.35,
                 "Native custom speed checkmark differs from accepted viewer desire.");
+            Require(list.ItemsPanelRoot is ItemsWrapGrid { Orientation: Orientation.Horizontal }, "Speed picker is still a tall list instead of compact segments.");
             await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-custom");
             foreach (var size in new[] { (460, 700), (900, 540), (1280, 720) })
             {
@@ -144,6 +149,20 @@ internal static class PlaybackSpeedMenuNativeFixture
             player.SetPaused(false); await Until(() => !mpv.IsPaused, "Playing Speed precondition failed.");
             Select("rate:1.25"); await Until(() => !player.VideoPlaybackRatePending, "Playing Speed save did not settle.");
             Require(!mpv.IsPaused && player.NativePlaybackRate == 1.25, "Native Speed forced a playing viewer to pause.");
+            if(presentationOnly)
+            {
+                await PlaybackAudioMenuNativeFixture.Capture(menu,"speed-black-accent");
+                await RequireRenderedCurrent(menu, Row("rate:1.25"), Row("rate:0.75"));
+                Call(menu,"Input","cancel"); await Until(()=>Menu(player)==null && Gate(player).CurrentCount==1,"Speed dismissal leaked its owner/focus lease.");
+                Application.Current.Resources["AccentBrush"]=new SolidColorBrush(Windows.UI.Color.FromArgb(255,85,85,85));
+                await ReopenSpeed();
+                await RequireRenderedCurrent(menu, Row("rate:1.25"), Row("rate:0.75"));
+                await PlaybackAudioMenuNativeFixture.Capture(menu,"speed-midgrey-accent");
+                client.SetProfile("presentation-retired"); Call(menu,"Input","activate");
+                await Until(()=>Menu(player)==null && Gate(player).CurrentCount==1,"Presentation owner retirement leaked its lease.");
+                Program.Log("PASS: compact native Speed segments, custom value, pending/error/retry, room disable/departure, keyboard traversal, ownership, black/mid-grey contrast and unchanged foreground.");
+                return;
+            }
             // A source-version replacement keeps the playback owner, even when
             // its accepted preference write is still pending. A new optional
             // read would be slow (and, on the second switch, fail).
@@ -212,6 +231,7 @@ internal static class PlaybackSpeedMenuNativeFixture
         }
         finally
         {
+            if(presentationOnly) { if(hadAccent) Application.Current.Resources["AccentBrush"]=savedAccent; else Application.Current.Resources.Remove("AccentBrush"); }
             wire.ReadRelease.TrySetResult(); wire.WriteRelease.TrySetResult(); wire.VersionWriteRelease.TrySetResult();
             if (Menu(player) is { } current) Call(current, "Input", "cancel");
             Call(player, "StopPlaybackStallWatchdog"); Call(player, "DisconnectWebSocket"); mpv.ScriptMessageReceived -= Message;
@@ -285,6 +305,29 @@ internal static class PlaybackSpeedMenuNativeFixture
         }
         private static HttpResponseMessage Json(string body, HttpStatusCode code = HttpStatusCode.OK) => new(code) { Content = new StringContent(body) };
     }
+    private static async Task RequireRenderedCurrent(object menu, ListViewItem current, ListViewItem previous)
+    {
+        var root = (Grid)Get(menu, "_root")!;
+        await Task.Delay(100);
+        var target = new RenderTargetBitmap();
+        await target.RenderAsync(root);
+        var buffer = await target.GetPixelsAsync();
+        using var reader = DataReader.FromBuffer(buffer);
+        var pixels = new byte[buffer.Length]; reader.ReadBytes(pixels);
+        double Fill(ListViewItem row)
+        {
+            // Sample the tile above its label, clear of the native focus marker.
+            var point = row.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point(row.ActualWidth / 2, 8));
+            var x = (int)(point.X * target.PixelWidth / root.ActualWidth);
+            var y = (int)(point.Y * target.PixelHeight / root.ActualHeight);
+            var offset = (y * target.PixelWidth + x) * 4;
+            return (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3d;
+        }
+        var currentFill = Fill(current); var previousFill = Fill(previous);
+        Require(currentFill >= 120 && previousFill < 70,
+            $"Rendered Speed selection retained a stale fill: current={currentFill:F0}, previous={previousFill:F0}.");
+    }
+
     private static object? Menu(PlayerService player) => Get(player, "_nativeMenu");
     private static SemaphoreSlim Gate(PlayerService player) => (SemaphoreSlim)Get(player, "_playbackDialogGate")!;
     private static object? Get(object target, string name) { for (var type = target.GetType(); type != null; type = type.BaseType) if (type.GetField(name, Private) is { } field) return field.GetValue(target); return null; }

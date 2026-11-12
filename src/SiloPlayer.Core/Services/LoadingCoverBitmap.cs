@@ -9,6 +9,16 @@ namespace SiloPlayer.Core.Services;
 /// </summary>
 public static class LoadingCoverBitmap
 {
+    /// <summary>Blends premultiplied cover pixels into the caller's reusable scratch buffer.</summary>
+    public static void BlendFrame(byte[] previous, byte[] target, byte[] destination, double progress)
+    {
+        if (previous.Length != target.Length || destination.Length != target.Length)
+            throw new ArgumentException("Cover frame dimensions must match.");
+        var amount = Math.Clamp((int)Math.Round(progress * 256), 0, 256);
+        for (var i = 0; i < destination.Length; i++)
+            destination[i] = (byte)((previous[i] * (256 - amount) + target[i] * amount + 128) >> 8);
+    }
+
     /// <summary>Upstream <c>.hud-loading-backdrop { opacity: 0.22 }</c> over black.</summary>
     public const double Brightness = 0.22;
     /// <summary>Fully clear radius around the spinner, in OSC layout pixels.</summary>
