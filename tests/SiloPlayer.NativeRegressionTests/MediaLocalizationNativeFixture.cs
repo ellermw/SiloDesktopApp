@@ -41,6 +41,7 @@ internal static partial class MediaLocalizationNativeFixture
             parent.Children.Remove(row);
             await VerifyOwnedPagesAsync(parent, raw, model);
             await VerifyDismissalMenusAsync(parent);
+            await VerifyQuickActionLabelsAsync(parent);
             await VerifyCatalogHeadingAsync(raw);
         }
         finally
@@ -48,6 +49,61 @@ internal static partial class MediaLocalizationNativeFixture
             parent.Children.Remove(row);
             LocaleService.Shared.Apply(LocaleService.Shared.Create(before.Resolution));
         }
+    }
+
+    private static async Task VerifyQuickActionLabelsAsync(StackPanel parent)
+    {
+        static void Check(Button button, string key)
+        {
+            var expected = AppStrings.Get(key);
+            Require(Equals(ToolTipService.GetToolTip(button), expected), "Quick-action tooltip lost its state: " + key);
+            Require(Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == expected,
+                "Quick-action accessible name disagrees with its tooltip: " + key);
+        }
+
+        foreach (var type in new[] { "movie", "series" })
+        {
+            Apply("en");
+            var poster = new PosterCard { SuppressImageLoading = true, DeferOverlayLoading = true };
+            var landscape = new LandscapeCard();
+            var library = new LibraryGridCard();
+            var cards = new StackPanel();
+            cards.Children.Add(poster); cards.Children.Add(landscape); cards.Children.Add(library);
+            Button LibraryButton(string field) => (Button)typeof(LibraryGridCard)
+                .GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(library)!;
+            void Bind(bool active)
+            {
+                var item = new MediaItem { ContentId = "quick-action-localization", Title = "Raw فيلم · 東京", Type = type,
+                    UserState = new() { Played = active, IsFavorite = active } };
+                poster.MediaItem = item; landscape.MediaItem = item; library.Bind(item, null);
+            }
+            Bind(true);
+            parent.Children.Add(cards);
+            try
+            {
+                // Active on first Loaded, then recycle the same cards for the opposite state.
+                foreach (var active in new[] { true, false })
+                {
+                    if (!active) Bind(false);
+                    foreach (var language in new[] { "en", "de", "ar", "ja" })
+                    {
+                        Apply(language); await Task.Delay(150); cards.UpdateLayout();
+                        Require(poster.IsLoaded && landscape.IsLoaded && library.IsLoaded, "Quick-action cards were not mounted");
+                        var watchedKey = type == "series"
+                            ? active ? "web.detail.actions.markSeriesUnwatched" : "web.detail.actions.markSeriesWatched"
+                            : active ? "web.detail.actions.markUnwatched" : "web.detail.actions.markWatched";
+                        var favoriteKey = active ? "web.detail.actions.removeFromFavorites" : "web.detail.actions.addToFavorites";
+                        Check((Button)poster.FindName("QuickWatchedButton"), watchedKey);
+                        Check((Button)poster.FindName("QuickFavoriteButton"), favoriteKey);
+                        Check((Button)landscape.FindName("QuickWatchedButton"), watchedKey);
+                        Check(LibraryButton("_quickWatchedButton"), watchedKey);
+                        Check(LibraryButton("_quickFavoriteButton"), favoriteKey);
+                    }
+                }
+            }
+            finally { parent.Children.Remove(cards); await Task.Delay(40); }
+        }
+        Program.Log("PASS retained/recycled Poster, Landscape and Library quick-action tooltips and accessible names follow watched/favorite state through en/de/ar/ja.");
     }
 
     private static async Task VerifyDismissalMenusAsync(StackPanel parent)

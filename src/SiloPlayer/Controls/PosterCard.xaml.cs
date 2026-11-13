@@ -177,6 +177,10 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         ApplyOverlayGeometry();
         ApplyActionGeometry();
+        AppLocalization.Register(this, () =>
+        {
+            if (MediaItem is { } item) UpdateQuickActionState(item, refreshArtwork: false);
+        });
         SizeChanged += (_, _) => ApplyActionGeometry();
         this.Loaded += (_, _) =>
         {
@@ -899,7 +903,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
 
         var watchedLabel = MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched);
-        var favoriteLabel = isFavorite ? "Remove from favorites" : "Add to favorites";
+        var favoriteLabel = SiloPlayer.Core.Localization.AppStrings.Get(isFavorite
+            ? "web.detail.actions.removeFromFavorites" : "web.detail.actions.addToFavorites");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickWatchedButton, watchedLabel);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickFavoriteButton, favoriteLabel);
         ToolTipService.SetToolTip(QuickWatchedButton, watchedLabel);

@@ -58,6 +58,10 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     public LandscapeCard()
     {
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () =>
+        {
+            if (MediaItem is { } item) UpdateQuickWatchedState(item);
+        });
         _reveal = new ArtworkReveal(BackdropReveal, BackdropImage, ArtworkFallback);
         BackdropImage.ImageOpened += (_, _) =>
         {

@@ -261,6 +261,10 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         GotFocus += OnGotFocus;
         LostFocus += OnLostFocus;
         ContextRequested += OnContextRequested;
+        AppLocalization.Register(this, () =>
+        {
+            if (MediaItem is { } item) UpdateQuickActionState(item);
+        });
         Loaded += (_, _) => { RestartArtwork(); App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; };
         Unloaded += (_, _) =>
         {
@@ -757,7 +761,8 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             : new SolidColorBrush(Microsoft.UI.Colors.White);
 
         var watchedLabel = MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched);
-        var favoriteLabel = isFavorite ? "Remove from favorites" : "Add to favorites";
+        var favoriteLabel = SiloPlayer.Core.Localization.AppStrings.Get(isFavorite
+            ? "web.detail.actions.removeFromFavorites" : "web.detail.actions.addToFavorites");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_quickWatchedButton, watchedLabel);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_quickFavoriteButton, favoriteLabel);
         ToolTipService.SetToolTip(_quickWatchedButton, watchedLabel);

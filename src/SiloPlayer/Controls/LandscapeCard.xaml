@@ -184,7 +184,7 @@
                 Visibility="Collapsed"
                 ToolTipService.ToolTip="Mark Watched"
                 Click="QuickWatchedButton_Click"
-                Tapped="QuickWatchedButton_Tapped" loc:Localized.ToolTip="web.detail.actions.markWatched">
+                Tapped="QuickWatchedButton_Tapped">
                 <FontIcon x:Name="QuickWatchedIcon" Glyph="&#xED1A;" FontSize="18" Foreground="White" />
             </Button>
 

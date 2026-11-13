@@ -182,7 +182,7 @@
                     Visibility="Collapsed"
                     ToolTipService.ToolTip="Mark Watched"
                     Click="QuickWatchedButton_Click"
-                    Tapped="QuickAction_Tapped" loc:Localized.ToolTip="web.detail.actions.markWatched">
+                    Tapped="QuickAction_Tapped">
                     <FontIcon x:Name="QuickWatchedIcon" Glyph="&#xED1A;" FontSize="15" Foreground="White" />
                 </Button>
                 <Button
@@ -197,7 +197,7 @@
                     Visibility="Collapsed"
                     ToolTipService.ToolTip="Add to favorites"
                     Click="QuickFavoriteButton_Click"
-                    Tapped="QuickAction_Tapped" loc:Localized.ToolTip="web.detail.actions.addToFavorites">
+                    Tapped="QuickAction_Tapped">
                     <FontIcon x:Name="QuickFavoriteIcon" Glyph="&#xEB51;" FontSize="15" Foreground="White" />
                 </Button>
             </StackPanel>
