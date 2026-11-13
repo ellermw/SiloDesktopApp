@@ -1,5 +1,6 @@
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -91,14 +92,18 @@ public sealed partial class SettingsPage
         foreach (var toggle in parent.Children.OfType<ToggleSwitch>().Where(toggle => toggle.Header is string).ToArray())
         {
             var label = (string)toggle.Header!;
+            var labelKey = Localized.GetHeader(toggle);
             var index = parent.Children.IndexOf(toggle);
             parent.Children.RemoveAt(index);
+            // Transfer localization ownership before Loaded can restore the header.
+            Localized.SetHeader(toggle, null);
             toggle.Header = null;
             toggle.OnContent = toggle.OffContent = "";
             toggle.MinWidth = 0;
             toggle.HorizontalAlignment = HorizontalAlignment.Right;
             toggle.VerticalAlignment = VerticalAlignment.Center;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, label);
+            if (!string.IsNullOrWhiteSpace(labelKey)) Localized.SetName(toggle, labelKey);
             var ruled = parent.Children.Take(index).OfType<Grid>().Any(previous => Equals(previous.Tag, "settings-value-row"));
             parent.Spacing = 16;
             var row = new Grid { ColumnSpacing = 12, RowSpacing = 12, Tag = "settings-value-row",
@@ -109,9 +114,11 @@ public sealed partial class SettingsPage
             row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             row.RowDefinitions.Add(new() { Height = GridLength.Auto });
             row.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            row.Children.Add(new TextBlock { Text = label, FontSize = 14, FontWeight = FontWeights.Medium,
+            var rowLabel = new TextBlock { Text = label, FontSize = 14, FontWeight = FontWeights.Medium,
                 LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-                TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+                TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+            if (!string.IsNullOrWhiteSpace(labelKey)) Localized.SetText(rowLabel, labelKey);
+            row.Children.Add(rowLabel);
             Grid.SetColumn(toggle, 1);
             row.Children.Add(toggle);
             row.SetBinding(VisibilityProperty, new Microsoft.UI.Xaml.Data.Binding { Source = toggle,
