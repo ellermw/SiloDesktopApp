@@ -87,3 +87,20 @@ Native fixtures use synthetic accounts, settings, transport and media. They do
 not certify live server/account persistence, phone or room interoperability,
 every WebUI page/pixel, physical DPI/text scaling, or the full default native
 suite's historical platform limitations. The installed player remains open.
+
+## PR #145 review correction
+
+The completed review reported one P1: localizing the subtitle appearance
+Slider header threw during XAML construction. Added the missing
+`Slider.HeaderProperty` mapping. A native Slider regression reproduced the
+exception before the fix and passed after it, including retained-locale refresh
+and preserving its numeric value. The subtitle-preferences native fixture also
+registers current Settings language services and PlaybackApi; its initial setup
+failures are retained separately from the subsequent passing run.
+
+Follow-up verification is separate from the baseline above: all 6,219 unit tests
+passed, plus localized-properties, subtitle-preferences (actual dialog, revision
+18 and 19), and playback-localization native groups on the corrected publish.
+See `D:/SiloPlayer-build/slider-review-receipt.json` for final source/payload
+binding and logs. The earlier 23-group result is not a new run on this correction.
+PR #145 still requires pipeline review, merge and Beta delivery.

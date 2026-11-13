@@ -169,6 +169,7 @@ public static class Localized
             ComboBox => ComboBox.HeaderProperty,
             Expander => Expander.HeaderProperty,
             ToggleSwitch => ToggleSwitch.HeaderProperty,
+            Slider => Slider.HeaderProperty,
             ListViewBase => ListViewBase.HeaderProperty,
             _ => Unsupported(element, "Header")
         };

@@ -14,6 +14,7 @@ internal static class LocalizedPropertiesNativeFixture
         var title = new TextBlock { Text = "Save" };
         var save = new Button { Content = "Save" };
         var input = new TextBox { Header = "Name", PlaceholderText = "Search" };
+        var slider = new Slider { Header = "Name", Minimum = 0, Maximum = 100, Value = 65 };
         var raw = new TextBlock { Text = "My Movie: Save" };
         var fallback = new TextBlock { Text = "Native fallback" };
         Localized.SetText(title, "common.save");
@@ -23,10 +24,11 @@ internal static class LocalizedPropertiesNativeFixture
         Localized.SetToolTip(save, "common.cancel");
         Localized.SetHeader(input, "web.profiles.editor.name");
         Localized.SetPlaceholder(input, "web.search.label");
+        Localized.SetHeader(slider, "web.profiles.editor.name");
         Localized.SetText(fallback, "desktop.missing.catalog.key");
         Localized.SetDirection(root, true);
         root.Children.Add(title); root.Children.Add(save); root.Children.Add(input);
-        root.Children.Add(raw); root.Children.Add(fallback);
+        root.Children.Add(raw); root.Children.Add(fallback); root.Children.Add(slider);
         parent.Children.Add(root);
         try
         {
@@ -37,6 +39,7 @@ internal static class LocalizedPropertiesNativeFixture
             Require(AutomationProperties.GetHelpText(save) == AppStrings.Get("common.cancel"), "accessible help did not translate");
             Require((string)ToolTipService.GetToolTip(save) == AppStrings.Get("common.cancel"), "tooltip did not translate");
             Require((string)input.Header == AppStrings.Get("web.profiles.editor.name") && input.PlaceholderText == AppStrings.Get("web.search.label"), "input text did not translate");
+            Require((string)slider.Header == AppStrings.Get("web.profiles.editor.name") && slider.Value == 65, "slider header did not translate or its value changed");
             Require(raw.Text == "My Movie: Save" && fallback.Text == "Native fallback", "raw data or missing-key fallback changed");
             Program.Log("PASS: explicit keyed native controls, automation and fallback after live language switch.");
 
@@ -52,6 +55,7 @@ internal static class LocalizedPropertiesNativeFixture
             parent.Children.Add(root); await Settle(root);
             Require(root.FlowDirection == FlowDirection.LeftToRight && root.Language == "ja", "reloaded direction retained a detached locale");
             Require((string)save.Content == AppStrings.Get("common.save"), "reloaded keyed control retained a detached locale");
+            Require((string)slider.Header == AppStrings.Get("web.profiles.editor.name") && slider.Value == 65, "reloaded slider retained a detached locale or changed value");
             Program.Log("PASS: key replacement/removal, Arabic direction and detached/reloaded locale refresh.");
 
             parent.Children.Remove(root); await Task.Delay(30);

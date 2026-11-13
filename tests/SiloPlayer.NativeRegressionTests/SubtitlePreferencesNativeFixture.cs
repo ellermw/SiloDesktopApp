@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -38,8 +39,11 @@ internal static class SubtitlePreferencesNativeFixture
                     new WatchProvidersApi(client), auth, theme, settings, new AccessibilityService(settings, theme));
                 using var player = new PlayerService(new PlaybackApi(client), new CatalogApi(client), auth, client, settings, api);
                 using var services = new ServiceCollection().AddSingleton(client).AddSingleton(api).AddSingleton(settings)
-                    .AddSingleton(auth).AddSingleton(vm).AddSingleton(theme).AddSingleton(player)
+                    .AddSingleton(auth).AddSingleton(vm).AddSingleton(theme).AddSingleton(player).AddSingleton(new PlaybackApi(client))
                     .AddSingleton(new CardOverlayService(api)).AddSingleton(new UICustomizationService(api))
+                    .AddSingleton(new AppLanguagePreference(api))
+                    .AddSingleton(sp => new AppLocaleCoordinator(sp.GetRequiredService<AppLanguagePreference>(), LocaleService.Shared,
+                        settings, () => ["en-US"], "en-US", AppLocalization.PostTo(parent.DispatcherQueue)))
                     .AddSingleton(new ToastService()).BuildServiceProvider();
                 field.SetValue(null, services);
                 if (Environment.GetEnvironmentVariable("SILO_NATIVE_SUBTITLE_FINAL_CASE") is { Length: > 0 } finalCase)

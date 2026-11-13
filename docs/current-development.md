@@ -1,3 +1,32 @@
+# November 12 — PR #145 subtitle appearance review correction
+
+PR #145 remains the localization delivery candidate. Its review found that
+`Localized.Header` did not support Slider, which prevented the subtitle
+appearance dialog from opening during XAML construction. The attached property
+now maps Slider to `Slider.HeaderProperty`. The native regression reproduced
+`Localized.Header is not supported on Slider` before the fix, then passed with
+German and detached/reloaded Japanese headers while preserving the slider value.
+The subtitle-preferences fixture now registers the language and PlaybackApi
+services required by the current Settings page.
+
+The earlier 23-group verification below belongs to the pre-review candidate.
+The correction has a new successful 6,219/6,219 unit run, with no failed/skipped
+tests. Targeted native checks cover localized properties, subtitle preferences
+(including the real dialog and contract revisions 18/19), and playback
+localization. Final payload hashes and source binding are recorded separately
+in `D:/SiloPlayer-build/slider-review-receipt.json`; earlier receipts are retained.
+
+Beta **1.2.1015-beta.1** was published at **2026-11-13 01:18:24 UTC** from
+`a82fc9e50ce0e17b4b81caa1c552497c74620ed9`. It includes #144, while #145
+still requires pipeline review, merge and its own Beta release. Version stamps
+remain pipeline owned. This record does not certify release delivery for #145.
+
+Cleanup remains blocked by the previously reported automatic approval rejection;
+no deletion was retried in this review correction. Recovered space remains
+**0 GiB on C: and 0 GiB on D:**. One reusable build/publish payload is retained.
+The installed player remains running. Existing live-interoperability and visual
+verification limits below still apply.
+
 # November 12 — Interface localization candidate on Beta 1015
 
 The server-alignment branch integrates Beta `a82fc9e5` with the reviewed shell,
