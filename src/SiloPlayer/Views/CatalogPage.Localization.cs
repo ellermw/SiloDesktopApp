@@ -45,6 +45,19 @@ public sealed partial class CatalogPage
             SiloPlayer.Services.Localized.RefreshItems(WatchStatusCombo);
             SiloPlayer.Services.Localized.RefreshItems(AddedInLastCombo);
             SiloPlayer.Services.Localized.RefreshItems(ReleasedInLastCombo);
+            foreach (var combo in new[] { AddedInLastCombo, ReleasedInLastCombo })
+            {
+                var selected = combo.SelectedItem;
+                var index = combo.SelectedIndex;
+                foreach (var item in combo.Items.OfType<Microsoft.UI.Xaml.Controls.ComboBoxItem>())
+                {
+                    if (item.Tag is not string span || span is not ("90d" or "1y" or "5y")) continue;
+                    var unit = AppStrings.Get(span.EndsWith("d") ? "web.catalog.rules.unitDays" : "web.catalog.rules.unitYears");
+                    // Unit-first labels avoid imposing English plural/word-order rules on catalog unit names.
+                    item.Content = $"{unit}: {int.Parse(span[..^1], System.Globalization.CultureInfo.InvariantCulture).ToString(AppStrings.FormatCulture)}";
+                }
+                if (selected != null) { combo.SelectedIndex = -1; combo.SelectedIndex = index; }
+            }
             foreach (var row in AdvancedRulesPanel.Children.OfType<Microsoft.UI.Xaml.Controls.Grid>())
                 foreach (var combo in row.Children.OfType<Microsoft.UI.Xaml.Controls.ComboBox>())
                     SiloPlayer.Services.Localized.RefreshItems(combo);

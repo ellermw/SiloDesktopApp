@@ -17,6 +17,9 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
         <converters:IntroSkipModeLabelConverter x:Key="IntroSkipModeLabel" />
+        <DataTemplate x:Key="SeekIntervalTemplate">
+            <TextBlock Loaded="SeekIntervalLabel_Loaded" DataContextChanged="SeekIntervalLabel_DataContextChanged" />
+        </DataTemplate>
 
         <!-- Active tab style (pill on surface) -->
         <Style x:Key="ActiveTabStyle" TargetType="Button">
@@ -874,12 +877,12 @@
                     <TextBlock Text="Choose how far playback moves when you rewind or fast-forward." FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                     <TextBlock Text="{x:Bind ViewModel.SeekSettingsStatus, Mode=OneWay}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                     <StackPanel Spacing="8"><TextBlock Text="Video" loc:Localized.Text="web.settings.playback.seek.videoTitle" FontSize="14" FontWeight="Medium" />
-                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Video rewind (seconds)" loc:Localized.Header="web.settings.playback.seek.rewindInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.VideoSkipBackSeconds, Mode=TwoWay}" />
-                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Video fast-forward (seconds)" loc:Localized.Header="web.settings.playback.seek.forwardInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.VideoSkipForwardSeconds, Mode=TwoWay}" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Video rewind (seconds)" loc:Localized.Header="web.settings.playback.seek.rewindInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" ItemTemplate="{StaticResource SeekIntervalTemplate}" SelectedItem="{x:Bind ViewModel.VideoSkipBackSeconds, Mode=TwoWay}" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Video fast-forward (seconds)" loc:Localized.Header="web.settings.playback.seek.forwardInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" ItemTemplate="{StaticResource SeekIntervalTemplate}" SelectedItem="{x:Bind ViewModel.VideoSkipForwardSeconds, Mode=TwoWay}" />
                     </StackPanel>
                     <StackPanel Spacing="8"><TextBlock Text="Audiobooks" loc:Localized.Text="web.settings.playback.seek.audiobookTitle" FontSize="14" FontWeight="Medium" />
-                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Audiobook rewind (seconds)" loc:Localized.Header="web.settings.playback.seek.rewindInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.AudiobookSkipBackSeconds, Mode=TwoWay}" />
-                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Audiobook fast-forward (seconds)" loc:Localized.Header="web.settings.playback.seek.forwardInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.AudiobookSkipForwardSeconds, Mode=TwoWay}" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Audiobook rewind (seconds)" loc:Localized.Header="web.settings.playback.seek.rewindInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" ItemTemplate="{StaticResource SeekIntervalTemplate}" SelectedItem="{x:Bind ViewModel.AudiobookSkipBackSeconds, Mode=TwoWay}" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Audiobook fast-forward (seconds)" loc:Localized.Header="web.settings.playback.seek.forwardInterval" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" ItemTemplate="{StaticResource SeekIntervalTemplate}" SelectedItem="{x:Bind ViewModel.AudiobookSkipForwardSeconds, Mode=TwoWay}" />
                         <Button IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Content="Import this PC's old audiobook intervals" Command="{x:Bind ViewModel.ImportLegacySeekIntervalsCommand}" />
 
                     </StackPanel>

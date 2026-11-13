@@ -155,6 +155,19 @@ public sealed partial class SettingsPage
         }
     }
 
+    private void SeekIntervalLabel_Loaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (sender is Microsoft.UI.Xaml.Controls.TextBlock text)
+            SiloPlayer.Controls.MediaItemCardActions.BindText(text, "Text", label =>
+            {
+                if (label.DataContext is not int seconds) return;
+                label.Text = AppStrings.Get("web.settings.playback.seek.seconds", Args(("count", seconds), ("count_text", seconds.ToString(AppStrings.FormatCulture))));
+            });
+    }
+
+    private void SeekIntervalLabel_DataContextChanged(Microsoft.UI.Xaml.FrameworkElement sender, Microsoft.UI.Xaml.DataContextChangedEventArgs e)
+        => SeekIntervalLabel_Loaded(sender, null!);
+
     private bool _refreshingInlineChoices;
     private void RefreshInlineChoices()
     {

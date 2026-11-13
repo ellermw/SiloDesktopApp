@@ -1,3 +1,46 @@
+# November 13 - PR #145 recency, Favorites, seek units and language badges
+
+The four findings on 64c7edba are addressed. Added/Released recency selectors
+refresh the remaining 90d/1y/5y options and their closed selection using shipped
+day/year unit labels with culture-formatted counts. Unit-first labels avoid
+assuming English singular/plural grammar; API tags and selections stay unchanged.
+Favorites formats its full failure prefix with the translated Favorites title;
+structured problem text still translates and English preserves raw server detail.
+Original-language badges resolve language.<code>, preserving unknown raw codes.
+All four seek selectors render translated seconds while retaining integer values.
+Their template also refreshes on DataContextChanged, so recycled selection text
+cannot keep the previous interval.
+
+Release publish and native host build passed. All 6,227 unit tests passed,
+zero failures/skips (2.4150 minutes). Full settings-localization,
+media-localization, shell-localization and subtitle-sidecar-ownership groups
+passed against the same published product DLL. Native checks cover en/de/ar/ja,
+unopened recency choices/retained selection, real rejected Favorites requests,
+known/unknown language badges, all seven seek options and unchanged wire values.
+All 1,994 frozen source/test inputs match. Product DLL SHA-256:
+C45E83BCDFBB08D200A0D2D7F2EECDBBD0761E7515EF58A313DBAB90DBF325E7.
+Receipt: D:/SiloPlayer-build/review-twelfth-receipt.json. Source manifest:
+D:/SiloPlayer-build/review-twelfth-source-inputs.json (95C08174FBE58516E9482BA0B7BC072D72A17D2BB73870FF3B20850CB2C9E9F8).
+
+VM QA on 64c7edba again timed out in subtitle ownership after 76 checks; the
+fixer made no changes. Test-only scenario-start and applied-preference phase
+traces now identify session setup, native initialization, selection/save and
+cleanup boundaries without changing assertions, deadlines or playback behavior.
+The local ownership pass does not establish the VM cause or certify that run.
+
+Initial native verification exposed recycled seek-template text and now covers
+that correction. Fixture-only followups preserve English raw API detail, drain
+Settings unload before service disposal and apply closed recency templates before
+inspecting presentation. Original native failure result text remains archived.
+The unit-tested product and unit-test sources did not change during those
+native-fixture-only corrections.
+
+Task output is 1.233 GiB; free C: 190.39 GiB, D: 481.27 GiB. The installed
+player (PID 38020) stays open and the owner's AGENTS.md edit stays uncommitted.
+Earlier automatic approval rejection still blocks delivery cleanup; no deletion
+was retried and recovered space is 0 GiB on C: and D:. Pipeline QA, merge and
+Beta publication remain pending, with earlier evidence limits preserved below.
+
 # November 13 - PR #145 collection allowances and cache failure resilience
 
 The four findings on 6f584a4a are addressed. Collection allowance headings use

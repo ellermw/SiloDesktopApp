@@ -72,6 +72,7 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
             if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
+            if (only is null or "review-twelfth") await ReviewTwelfth(parent);
             if (only is null or "review-eleventh") await ReviewEleventh(parent, wire, client);
             if (only is null or "review-tenth") await ReviewTenth(parent, wire, client);
             if (only is null or "review-ninth") await ReviewNinth(parent, wire, client);

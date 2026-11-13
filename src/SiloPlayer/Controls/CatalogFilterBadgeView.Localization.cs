@@ -12,6 +12,8 @@ public static partial class CatalogFilterBadgeView
     {
         var rule = badge.Rules[0];
         var value = QueryRuleValues.Format(rule.Value);
+        if (rule.Field == "original_language" && rule.Op == "is")
+            value = AppStrings.Get("language." + value, fallback: value);
         if (rule.Field == "year" && badge.Rules.Count == 2)
             return AppStrings.Get("web.catalog.filters.badgeYearRange", new Dictionary<string, object?>
             { ["from"] = QueryRuleValues.Format(badge.Rules.First(bound => bound.Op == "gte").Value),

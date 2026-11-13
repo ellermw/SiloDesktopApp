@@ -67,7 +67,7 @@ internal static partial class MediaLocalizationNativeFixture
                 var route = new CatalogNavigation(Source: source);
                 frame.Navigate(typeof(CatalogPage), route); await Task.Delay(250);
                 var page = (CatalogPage)frame.Content; page.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
-                if (source == "favorites") await VerifyAdvancedChoicesAsync(page);
+                if (source == "favorites") { await VerifyRecencyChoicesAsync(page); await VerifyAdvancedChoicesAsync(page); }
                 await CheckHeadingAsync(page, window, source, null, null);
                 Apply("ar"); await Task.Delay(120);
                 await CheckHeadingAsync(page, window, source, null, null);
@@ -159,6 +159,36 @@ internal static partial class MediaLocalizationNativeFixture
                 AppStrings.Get(source == "history" ? "catalog.sort.added" : "web.catalog.sort.listOrder")), source + ": personal default sort option or raw order tag changed");
         }
         finally { sort.IsDropDownOpen = false; }
+    }
+
+    private static async Task VerifyRecencyChoicesAsync(CatalogPage page)
+    {
+        var combos = new[] { (ComboBox)page.FindName("AddedInLastCombo"), (ComboBox)page.FindName("ReleasedInLastCombo") };
+        var initializing = typeof(CatalogPage).GetField("_initializing", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        initializing.SetValue(page, true);
+        try
+        {
+            foreach (var combo in combos) { combo.ApplyTemplate(); combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "1y")); }
+            foreach (var language in new[] { "de", "ar", "ja", "en" })
+            {
+                Apply(language); await Task.Delay(180); page.UpdateLayout();
+                foreach (var combo in combos)
+                {
+                    foreach (var item in combo.Items.OfType<ComboBoxItem>().Where(item => item.Tag is "90d" or "1y" or "5y"))
+                    {
+                        var span = (string)item.Tag;
+                        var key = span.EndsWith("d") ? "web.catalog.rules.unitDays" : "web.catalog.rules.unitYears";
+                        var expected = AppStrings.Get(key) + ": " + int.Parse(span[..^1], System.Globalization.CultureInfo.InvariantCulture).ToString(AppStrings.FormatCulture);
+                        Require(Equals(item.Content, expected), "Unopened recency option did not refresh: " + span + "/" + language);
+                    }
+                    Require(Equals(((ComboBoxItem)combo.SelectedItem).Tag, "1y"), "Recency wire selection changed.");
+                    Require(Equals(combo.SelectionBoxItem, ((ComboBoxItem)combo.SelectedItem).Content), "Closed recency selection retained old text: " + combo.Name + "/" + language + "; shown=" + combo.SelectionBoxItem + "; expected=" + ((ComboBoxItem)combo.SelectedItem).Content + "; loaded=" + combo.IsLoaded);
+                }
+            }
+            foreach (var combo in combos) combo.SelectedIndex = 0;
+        }
+        finally { initializing.SetValue(page, false); }
+        Program.Log("PASS all recency durations and closed selections refresh en/de/ar/ja with unchanged wire tags.");
     }
 
     private static async Task VerifyAdvancedChoicesAsync(CatalogPage page)

@@ -116,7 +116,7 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
         }
         catch (Exception ex)
         {
-            SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load favorites: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"{SiloPlayer.Core.Localization.AppStrings.Get("web.common.ui.carousel.loadFailed", new Dictionary<string, object?> { ["title_lower"] = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.favorites") })} {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {
