@@ -1,6 +1,6 @@
-# November 12 - PR #145 remaining dialog and reader review fixes
+# November 13 - PR #145 remaining dialog and reader review fixes
 
-Candidate based on `ada8bf030f0e7b2a236790de6fefc14114049d1f`.
+Candidate integrates local review commit `a7bd6f2c` with pipeline attempt 5, `5f8abf06`, through merge `76380c46`. The pipeline fix transfers localized toggle headers into retained Settings row labels and accessible names; its new full Settings native cases pass on the integrated payload.
 The Add to Collection primary action is keyed. Split Versions fields carry
 placeholder/accessibility keys. A native test reproduced placeholders and
 accessible names remaining German after switching to Arabic despite the fields
@@ -21,15 +21,15 @@ de/ar/ja, raw split-title drafts, Settings detail subtitles, an actual forced
 reader-config failure with a local cache, an obstructed local-save directory,
 and audiobook interval accessibility text. Reader fixtures write only beneath
 the task result directory. The installed player remains open.
-App DLL SHA-256: `97A86F4B22A2D6FFBE6875C88ECF0D855C2DA7EFA64A8C7DC476E2243CB10938`.
+App DLL SHA-256: `818A0300A957877D565947F1379F3B1A2B5E9A48F078F7A6A4C391B28DB16349`.
 The first full unit run had 6,220 passes and one failure in unchanged
 RealtimeReadOwnershipTests.CurrentViewerWritePublishesItsCapturedItemAndContext
 (watchlist removal). All six cases passed in isolation without changing any
-assertion. The full retry passed 6,221/6,221 with zero failures/skips (2m25s); this is retry-passing, and the initial failure
+assertion. The full pre-integration retry passed 6,221/6,221 (2m25s), and the final integrated suite also passed 6,221/6,221 (2m24s), both with zero failures/skips; the initial failure
 log is retained and its cause is not established.
 
 Evidence: `D:/SiloPlayer-build/review-fourth-receipt.json`,
-`review-fourth-source-inputs.json`, `review-fourth-final-{publish,native-build}.log`,
+`review-fourth-integrated-source-inputs.json`, `review-fourth-integrated-{publish,native-build,units}.log`,
 `review-fourth-units{,-isolated,-retry}.log` and native result text, including
 archived Split-dialog red results. Earlier receipts retain their original
 source/payload scope and limits. Pipeline review, QA, merge and Beta publication
