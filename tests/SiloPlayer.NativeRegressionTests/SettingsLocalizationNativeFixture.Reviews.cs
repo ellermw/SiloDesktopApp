@@ -100,6 +100,62 @@ internal static partial class SettingsLocalizationNativeFixture
         Program.Log("PASS review followups: region-only Settings refresh, allowed titles, retained person/refresh dialogs, capability search hints and real empty subtitle search; drafts preserved.");
     }
 
+    private static async Task ToggleRows(StackPanel parent)
+    {
+        Apply("en");
+        var page = new SettingsPage(); parent.Children.Add(page);
+        try
+        {
+            foreach (var (section, keys) in new (string, string[])[]
+            {
+                ("TitlePages", ["settingsManifest.ui.theme_music_enabled.label", "settingsManifest.ui.theme_music_loop.label",
+                    "settingsManifest.catalog.hide_unwatched_episode_images.label", "settingsManifest.catalog.hide_unwatched_episode_overviews.label"]),
+                ("Playback", ["settingsManifest.playback.show_marker_confidence.label", "settingsManifest.playback.show_marker_source.label"]),
+            })
+            {
+                page.SelectSettingsSection(section); await Settle(page);
+                var rows = LogicalToggleDescendants((DependencyObject)page.FindName(section + "Panel"))
+                    .OfType<Grid>().Where(row => Equals(row.Tag, "settings-value-row")).ToArray();
+                foreach (var language in new[] { "en", "de", "ar", "ja" })
+                {
+                    Apply(language); await Settle(page);
+                    foreach (var toggle in rows.SelectMany(row => row.Children.OfType<ToggleSwitch>()))
+                        Check(toggle.IsLoaded && toggle.Header is null && Localized.GetHeader(toggle) is null,
+                            "Converted Settings toggle restored its header after Loaded or locale refresh.");
+                    foreach (var key in keys)
+                    {
+                        var row = rows.Single(candidate => candidate.Children.OfType<TextBlock>()
+                            .Any(label => Localized.GetText(label) == key));
+                        var label = row.Children.OfType<TextBlock>().Single();
+                        var toggle = row.Children.OfType<ToggleSwitch>().Single();
+                        var expected = AppStrings.Get(key);
+                        Check(expected != key && label.Text == expected, "Converted Settings row label did not follow " + language + ": " + key);
+                        Check(Localized.GetName(toggle) == key && Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(toggle) == expected,
+                            "Converted Settings toggle accessible name did not follow " + language + ": " + key);
+                    }
+                }
+            }
+        }
+        finally { parent.Children.Remove(page); Apply("en"); await Task.Delay(80); }
+        Program.Log("PASS converted Settings toggles keep null headers and localize their row labels and accessible names after Loaded and locale changes.");
+    }
+
+    private static IEnumerable<DependencyObject> LogicalToggleDescendants(DependencyObject owner)
+    {
+        IEnumerable<DependencyObject> children = owner switch
+        {
+            Panel panel => panel.Children,
+            Border { Child: { } child } => [child],
+            ContentControl { Content: DependencyObject child } => [child],
+            _ => [],
+        };
+        foreach (var child in children)
+        {
+            yield return child;
+            foreach (var descendant in LogicalToggleDescendants(child)) yield return descendant;
+        }
+    }
+
     private static async Task OpenReviewDialog(ContentDialog dialog, Func<Task> verify)
     {
         var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

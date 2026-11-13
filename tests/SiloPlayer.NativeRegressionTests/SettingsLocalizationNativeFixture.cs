@@ -66,6 +66,7 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "review-followups") await ReviewFollowups(parent, client);
             if (only is null or "directory") await DirectoryCase(parent);
             if (only is null or "tabs") await Tabs(parent);
+            if (only is null or "toggle-rows") await ToggleRows(parent);
             if (only is null or "profile-editor") await ProfileEditor(parent, client);
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
