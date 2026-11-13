@@ -134,6 +134,7 @@ public partial class PlayerService : IDisposable
     private string _activeQualityTier = "original";
     private HlsProxy? _hlsProxy;
     private DirectStreamProxy? _directStreamProxy;
+    private readonly ConcurrentQueue<DirectStreamProxy> _retiredDirectStreamProxies = new();
     private PlaybackTransportPlan? _activeTransportPlan;
     private double _timelineOffsetSeconds;
     private double? _transportDurationSeconds;
@@ -5131,7 +5132,7 @@ public partial class PlayerService : IDisposable
         if (string.IsNullOrWhiteSpace(remoteStreamUrl))
             throw new InvalidOperationException("No direct stream URL available.");
 
-        StopDirectStreamProxy();
+        RetireDirectStreamProxy();
         StopHlsProxy();
 
         if (supportsRanges && string.Equals(playMethod, "direct", StringComparison.OrdinalIgnoreCase) &&
@@ -5156,7 +5157,7 @@ public partial class PlayerService : IDisposable
         if (string.IsNullOrWhiteSpace(remoteManifestUrl))
             throw new InvalidOperationException("No HLS manifest URL available.");
 
-        StopDirectStreamProxy();
+        RetireDirectStreamProxy();
         StopHlsProxy();
         var streamingApi = _apiClient;
         _hlsProxy = new HlsProxy(remoteManifestUrl, () => streamingApi.AccessToken);
@@ -5181,20 +5182,31 @@ public partial class PlayerService : IDisposable
         }
     }
 
+    private void RetireDirectStreamProxy()
+    {
+        // Preparing a successor does not replace mpv's input yet. Closing the
+        // outgoing relay here can emit END_FILE(error) against the new plan.
+        // Keep it alive until FILE_LOADED proves mpv has left the old input.
+        if (Interlocked.Exchange(ref _directStreamProxy, null) is { } proxy)
+            _retiredDirectStreamProxies.Enqueue(proxy);
+    }
+
+    private void StopRetiredDirectStreamProxies()
+    {
+        while (_retiredDirectStreamProxies.TryDequeue(out var proxy))
+        {
+            try { proxy.Dispose(); }
+            catch (Exception ex)
+            {
+                LogToFile("state_trace.txt", $"Direct stream proxy stop error: {ex.Message}");
+            }
+        }
+    }
+
     private void StopDirectStreamProxy()
     {
-        try
-        {
-            _directStreamProxy?.Dispose();
-        }
-        catch (Exception ex)
-        {
-            LogToFile("state_trace.txt", $"Direct stream proxy stop error: {ex.Message}");
-        }
-        finally
-        {
-            _directStreamProxy = null;
-        }
+        RetireDirectStreamProxy();
+        StopRetiredDirectStreamProxies();
     }
 
     private void EnsureMpvInitialized()
@@ -5616,6 +5628,7 @@ public partial class PlayerService : IDisposable
                 if (!OwnsNativeOutput(output) || _mpv?.IsCurrentInput(output.Url) != true) return;
                 output.FileLoaded = true;
             }
+            StopRetiredDirectStreamProxies();
             var loadBusyRevision = Volatile.Read(ref _mpvLoadBusyRevision);
             var wasPrematureEofRecovery = _prematureEofRecoveryActive;
             var restorePaused = IsWatchTogetherPlayback ? _roomPlaybackPaused : _restorePausedAfterLoad == true;
