@@ -256,6 +256,18 @@ public sealed class AppStringsFormattingTests
             Assert.True(AppStrings.IsRightToLeft);
         }
     }
+
+    [Fact]
+    public void AFailingSubscriberDoesNotStopLaterSubscribersOrTheApply()
+    {
+        var service = new LocaleService();
+        var reached = new List<string>();
+        service.Changed += (_, _) => throw new InvalidOperationException("view refresh failed");
+        service.Changed += (_, change) => reached.Add(change.Current.Language);
+        Assert.True(service.Apply(service.Create(AppLocaleResolution.Resolve("de", [], "en-US"))));
+        Assert.Equal("de", Assert.Single(reached));
+        Assert.Equal("de", service.Current.Language);
+    }
 }
 
 public sealed class ServerTitleLocalizationTests

@@ -27,8 +27,18 @@ internal static class LocalizedPropertiesNativeFixture
         Localized.SetHeader(slider, "web.profiles.editor.name");
         Localized.SetText(fallback, "desktop.missing.catalog.key");
         Localized.SetDirection(root, true);
+        // Inline items stay in the closed dropdown: the owner refreshes them.
+        var choice = new ComboBox();
+        var saveChoice = new ComboBoxItem { Content = "Save" };
+        var cancelChoice = new ComboBoxItem { Content = "Cancel" };
+        Localized.SetContent(saveChoice, "common.save");
+        Localized.SetContent(cancelChoice, "common.cancel");
+        choice.Items.Add(saveChoice); choice.Items.Add(cancelChoice);
+        choice.SelectedIndex = 1;
+        AppLocalization.Register(choice, () => Localized.RefreshItems(choice));
         root.Children.Add(title); root.Children.Add(save); root.Children.Add(input);
         root.Children.Add(raw); root.Children.Add(fallback); root.Children.Add(slider);
+        root.Children.Add(choice);
         parent.Children.Add(root);
         try
         {
@@ -41,7 +51,11 @@ internal static class LocalizedPropertiesNativeFixture
             Require((string)input.Header == AppStrings.Get("web.profiles.editor.name") && input.PlaceholderText == AppStrings.Get("web.search.label"), "input text did not translate");
             Require((string)slider.Header == AppStrings.Get("web.profiles.editor.name") && slider.Value == 65, "slider header did not translate or its value changed");
             Require(raw.Text == "My Movie: Save" && fallback.Text == "Native fallback", "raw data or missing-key fallback changed");
-            Program.Log("PASS: explicit keyed native controls, automation and fallback after live language switch.");
+            Require(Equals(saveChoice.Content, AppStrings.Get("common.save")) && Equals(cancelChoice.Content, AppStrings.Get("common.cancel")),
+                "never-opened ComboBox items did not translate");
+            Require(choice.SelectedIndex == 1 && Equals(choice.SelectionBoxItem, AppStrings.Get("common.cancel")),
+                "closed ComboBox selection did not translate: " + choice.SelectionBoxItem);
+            Program.Log("PASS: explicit keyed native controls, closed ComboBox selection, automation and fallback after live language switch.");
 
             Localized.SetText(title, "common.cancel");
             Require(title.Text == AppStrings.Get("common.cancel"), "key change waited for another locale");
@@ -56,6 +70,8 @@ internal static class LocalizedPropertiesNativeFixture
             Require(root.FlowDirection == FlowDirection.LeftToRight && root.Language == "ja", "reloaded direction retained a detached locale");
             Require((string)save.Content == AppStrings.Get("common.save"), "reloaded keyed control retained a detached locale");
             Require((string)slider.Header == AppStrings.Get("web.profiles.editor.name") && slider.Value == 65, "reloaded slider retained a detached locale or changed value");
+            Require(choice.SelectedIndex == 1 && Equals(choice.SelectionBoxItem, AppStrings.Get("common.cancel")),
+                "reloaded closed ComboBox selection retained a detached locale: " + choice.SelectionBoxItem);
             Program.Log("PASS: key replacement/removal, Arabic direction and detached/reloaded locale refresh.");
 
             parent.Children.Remove(root); await Task.Delay(30);

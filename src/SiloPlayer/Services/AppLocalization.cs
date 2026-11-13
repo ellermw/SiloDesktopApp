@@ -161,7 +161,13 @@ public static class AppLocalization
             var generation = _locales.Current.Generation;
             if (generation == _appliedGeneration) return;
             _appliedGeneration = generation;
-            _refresh();
+            try { _refresh(); }
+            catch
+            {
+                // A failed refresh is not applied: retry on the next Loaded or change.
+                _appliedGeneration = -1;
+                throw;
+            }
         }
 
         public void Dispose()

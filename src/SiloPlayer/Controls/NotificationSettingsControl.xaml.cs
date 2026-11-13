@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
@@ -24,6 +25,21 @@ public sealed partial class NotificationSettingsControl : UserControl
         InitializeComponent();
         DataContext = ViewModel;
         Loaded += NotificationSettingsControl_Loaded;
+        AppLocalization.Register(this, RefreshModeLabels);
+    }
+
+    // The frequency items stay in their closed dropdowns, so they refresh from here.
+    // Restoring the selection is not a choice the person made: nothing is saved.
+    private void RefreshModeLabels()
+    {
+        var ready = _isReady;
+        _isReady = false;
+        try
+        {
+            Localized.RefreshItems(EmailModeCombo);
+            Localized.RefreshItems(DiscordModeCombo);
+        }
+        finally { _isReady = ready; }
     }
 
     private async void NotificationSettingsControl_Loaded(object sender, RoutedEventArgs e)

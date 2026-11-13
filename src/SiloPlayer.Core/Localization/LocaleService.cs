@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Services;
+
 namespace SiloPlayer.Core.Localization;
 
 public sealed class AppLocaleChangedEventArgs(AppLocale previous, AppLocale current) : EventArgs
@@ -13,6 +15,7 @@ public sealed class AppLocaleChangedEventArgs(AppLocale previous, AppLocale curr
 /// it off the UI thread); <see cref="Apply"/> swaps the immutable snapshot and
 /// raises <see cref="Changed"/> on the calling thread, so the native shell
 /// applies on its UI thread and every retained view refreshes from there.
+/// A subscriber that fails is logged and does not stop the others.
 /// </summary>
 public sealed class LocaleService
 {
@@ -70,7 +73,13 @@ public sealed class LocaleService
             }
             Volatile.Write(ref _current, next);
         }
-        Changed?.Invoke(this, new AppLocaleChangedEventArgs(previous, next));
+        if (Changed is { } listeners)
+        {
+            var change = new AppLocaleChangedEventArgs(previous, next);
+            foreach (EventHandler<AppLocaleChangedEventArgs> listener in listeners.GetInvocationList())
+                try { listener(this, change); }
+                catch (Exception ex) { LocalLog.AppendException("settings_refresh.txt", ex, "app_locale_changed"); }
+        }
         return true;
     }
 

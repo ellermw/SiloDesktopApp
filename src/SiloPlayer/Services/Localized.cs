@@ -77,6 +77,26 @@ public static class Localized
 
     private static readonly ConditionalWeakTable<FrameworkElement, State> States = new();
 
+    /// <summary>
+    /// Applies the keys on a ComboBox's inline items. Items stay in the closed
+    /// dropdown and do not load, so their own registration cannot refresh them,
+    /// and the closed selection box keeps the text it was given. Call this from
+    /// the owner's registered refresh; when the selected item's text changed the
+    /// selection is cleared and restored (raising SelectionChanged for both) so
+    /// the closed box shows it.
+    /// </summary>
+    public static void RefreshItems(ComboBox combo)
+    {
+        var selected = combo.SelectedItem as ComboBoxItem;
+        var shown = selected?.Content;
+        foreach (var item in combo.Items.OfType<ComboBoxItem>())
+            if (States.TryGetValue(item, out var state)) state.Refresh();
+        if (selected == null || Equals(selected.Content, shown)) return;
+        var index = combo.SelectedIndex;
+        combo.SelectedIndex = -1;
+        combo.SelectedIndex = index;
+    }
+
     private static void OnKeyChanged(DependencyObject target, DependencyPropertyChangedEventArgs args)
     {
         if (target is not FrameworkElement element)
@@ -116,7 +136,7 @@ public static class Localized
             if (element.IsLoaded) Refresh();
         }
 
-        private void Refresh()
+        public void Refresh()
         {
             foreach (var (key, binding) in _bindings)
             {
