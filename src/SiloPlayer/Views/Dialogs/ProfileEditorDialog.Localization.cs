@@ -13,6 +13,13 @@ public sealed partial class ProfileEditorDialog
 {
     private readonly List<Action> _localeRefreshers = [];
 
+    private TextBlock RetainedLabel(TextBlock label, string key)
+    {
+        void Refresh() => label.Text = AppStrings.Get(key);
+        Refresh(); _localeRefreshers.Add(Refresh);
+        return label;
+    }
+
     private void RefreshPinText()
     {
         var hasPin = _profile?.HasPin == true;

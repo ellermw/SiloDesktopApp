@@ -26,6 +26,7 @@ public sealed class EditPersonDialog : ContentDialog
         var close = EditorDialogPresentation.CornerClose(this); close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Margin = new Thickness(0, -8, -8, 0); header.Children.Add(close); Title = header;
         PrimaryButtonText = AppStrings.Get("common.save", fallback: "Save"); CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel");
+        this.KeyedDialog(primary: "common.save", close: "common.cancel");
         DefaultButton = ContentDialogButton.Primary;
         Background = (Brush)Application.Current.Resources["AppBackgroundBrush"];
         EditorDialogPresentation.Configure(this, 672, new Thickness(24));
@@ -88,9 +89,9 @@ public sealed class EditPersonDialog : ContentDialog
             changes[key] = key.EndsWith("_date") && input.Text.Length == 0 ? null : input.Text;
         }
         if (changes.Count == 0) { Hide(); return; }
-        _pending = true; IsPrimaryButtonEnabled = false; PrimaryButtonText = AppStrings.Get("web.item.dialog.saving", fallback: "Saving...");
+        _pending = true; IsPrimaryButtonEnabled = false; this.KeyedDialog(primary: "web.item.dialog.saving");
         try { await App.Services.GetRequiredService<PeopleApi>().UpdatePersonAsync(_person.Id, changes); HasSaved = true; Hide(); }
         catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
-        finally { _pending = false; IsPrimaryButtonEnabled = true; PrimaryButtonText = AppStrings.Get("common.save", fallback: "Save"); }
+        finally { _pending = false; IsPrimaryButtonEnabled = true; this.KeyedDialog(primary: "common.save"); }
     }
 }

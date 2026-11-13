@@ -72,6 +72,7 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
             if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
+            if (only is null or "review-tenth") await ReviewTenth(parent, wire, client);
             if (only is null or "review-ninth") await ReviewNinth(parent, wire, client);
             if (only is null or "review-eighth") { await LanguageInitialLoadRecovery(parent); await ReviewEighthDialogs(parent, wire, client); }
             if (only is null or "language-refresh") await LanguageRefreshRecovery(parent, reload: false);
@@ -486,10 +487,17 @@ internal static partial class SettingsLocalizationNativeFixture
         public bool RequirePin { get; set; }
         public bool AllowedListsFail { get; set; }
         public int RequestCount { get; set; }
+        public TaskCompletionSource<HttpResponseMessage>? PersonWrite { get; set; }
+        public bool TranslationAvailable { get; set; }
+        public bool TranslationComplete { get; set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Check(request.RequestUri!.Host == Host, "External request blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (path == "/api/v2/admin/people/fixture-person" && request.Method == HttpMethod.Patch && PersonWrite != null) return PersonWrite.Task.WaitAsync(ct);
+            if (path == "/api/v2/capabilities/metadata-ai") return Json(new { state = TranslationAvailable ? "available" : "unavailable" });
+            if (path.EndsWith("/metadata-translation/jobs")) return Json(new { jobs = new[] { new { id = "job", status = TranslationComplete ? "completed" : "running", fields_total = 1, fields_done = TranslationComplete ? 1 : 0 } } });
+            if (path.EndsWith("/metadata-translation")) return Json(new { id = "job" });
             if (AllowedListsFail && (path.EndsWith("/allowed-titles") || path.EndsWith("/allowed-collections"))) return Json(new { }, HttpStatusCode.ServiceUnavailable);
             if (path.Contains("/webhook-sync/"))
             {

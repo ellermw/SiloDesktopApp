@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Controls;
 
@@ -19,7 +20,12 @@ public sealed class AllowTitleDialog : ContentDialog
     public AllowTitleDialog(TitleAllowanceSession owner, string itemId, string title)
     {
         _owner = owner; _itemId = itemId;
-        Title = AppStrings.Get("web.detail.actions.allowFor", fallback: "Allow for…") + " " + title; CloseButtonText = AppStrings.Get("common.done", fallback: "Done");
+        void RefreshTitle()
+        {
+            Title = AppStrings.Get("web.profiles.allow.title", new Dictionary<string, object?> { ["name"] = title });
+            CloseButtonText = AppStrings.Get("common.done", fallback: "Done");
+        }
+        RefreshTitle(); AppLocalization.Register(this, RefreshTitle);
         var content = new StackPanel { Spacing = 12, MinWidth = 280, MaxWidth = 440 };
         content.Children.Add(new TextBlock { Text = "Allow these profiles to watch this title above their content limits. Changes save immediately. Library access still applies.", TextWrapping = TextWrapping.Wrap });
         content.Children.Add(_rows); content.Children.Add(_error); content.Children.Add(_retry);

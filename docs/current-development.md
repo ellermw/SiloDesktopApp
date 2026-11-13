@@ -1,3 +1,36 @@
+# November 13 - PR #145 retained dialog metadata and command labels
+
+The five findings on 45f26756 are addressed. Match Item keeps dialog-owned
+refresh callbacks for generated native/original/alias and score labels, clearing
+callbacks when results retire. Candidate rows and selection stay in place.
+Edit Person commands retain Save/Cancel keys and change the primary key for
+pending save and failure recovery. Title allowances format the full
+heading through web.profiles.allow.title with the raw name argument. Generated
+profile hints, More options (including its accessible name), and upload-disabled
+copy refresh through the dialog owner. Metadata AI controls refresh their
+language header/placeholder, force label/accessibility and state-aware Translate
+command without changing selected language, force choice or a running job.
+
+Release publish and native host build passed. Targeted tenth-review checks and
+full settings-localization, media-localization and shell-localization native
+groups passed on the same payload. All 6,221 unit tests passed, zero failures or
+skips (2m23s). Native tests keep generated candidate rows/selection, profile and
+person drafts, mixed-script allowance arguments and AI language/force selections
+through en/de/ar/ja. Actual pending/failed person writes and running/completed
+translation jobs verify localized busy and recovery states. All 1,992 frozen
+source/test inputs match. Product DLL SHA-256:
+0DAC795F51D07D9A8444D54709BF976E420EC378949C2FFD0A0B003D4A0035C8.
+Receipt: D:/SiloPlayer-build/review-tenth-receipt.json; source manifest:
+D:/SiloPlayer-build/review-tenth-source-inputs.json (CA63BB1A10AD83E86E0395DEF0F00F6B34AEDE4C3977368446E7DACC74587B81).
+Task output: 1.197 GiB; measured free C: 190.80 GiB, D: 481.32 GiB.
+
+The installed player remained open. One reusable payload is retained under
+D:/SiloPlayer-build. Earlier cleanup was rejected by automatic approval review;
+no filesystem deletion was retried and recovered space remains 0 GiB on C: and
+0 GiB on D:. Pipeline QA, merge and Beta installer/release delivery remain pending.
+Earlier VM timeout and interoperability/visual-parity limits remain scoped to
+the records below; these dialog checks do not establish their cause or outcome.
+
 # November 13 - PR #145 episode context, status counts and metadata labels
 
 The five findings on f1902cff are addressed. Continue Watching/Next Up uses the

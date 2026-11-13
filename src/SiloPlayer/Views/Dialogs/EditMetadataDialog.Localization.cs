@@ -14,6 +14,7 @@ namespace SiloPlayer.Views.Dialogs;
 /// </summary>
 public sealed partial class EditMetadataDialog
 {
+    private readonly List<Action> _translationLocaleRefreshers = [];
     private TextBlock? _ratingsHeading;
     private string _resetLanguage = AppStrings.Language;
 
@@ -87,6 +88,7 @@ public sealed partial class EditMetadataDialog
             _reset.Content = AppStrings.Get("web.item.editMetadata.resetToProvider");
         }
         if (_ratingsHeading != null) _ratingsHeading.Text = AppStrings.Uppercase(AppStrings.Get("web.item.editMetadata.ratings"));
+        foreach (var refresh in _translationLocaleRefreshers) refresh();
         RefreshLocks();
     }
 }

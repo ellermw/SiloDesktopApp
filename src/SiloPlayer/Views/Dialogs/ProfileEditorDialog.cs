@@ -369,14 +369,14 @@ public sealed partial class ProfileEditorDialog
         var presetsSection = new StackPanel { Spacing = 12 };
         var presetsHeading = new StackPanel { Spacing = 4 };
         presetsHeading.Children.Add(Label("Preset avatars", "web.profiles.editor.presets"));
-        presetsHeading.Children.Add(new TextBlock
+        presetsHeading.Children.Add(RetainedLabel(new TextBlock
         {
             Text = AppStrings.Get("web.profiles.editor.presetsHint"),
             FontSize = 12,
             LineHeight = 16,
             Foreground = Brush("SecondaryTextBrush"),
             TextWrapping = TextWrapping.Wrap,
-        });
+        }, "web.profiles.editor.presetsHint"));
 
         presetsSection.Children.Add(presetsHeading);
         presetsSection.Children.Add(_avatarStyleGrid);
@@ -386,9 +386,10 @@ public sealed partial class ProfileEditorDialog
         _avatarStyleStatus.Foreground = Brush("SecondaryTextBrush");
         _avatarStyleStatus.VerticalAlignment = VerticalAlignment.Center;
         presetHeader.Children.Add(_avatarStyleStatus);
-        var moreContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new FontIcon { Glyph = "\uE72C", FontSize = 16 }, new TextBlock { Text = AppStrings.Get("web.profiles.editor.moreOptions"), FontSize = 14, FontWeight = FontWeights.Medium } } };
+        var moreContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new FontIcon { Glyph = "\uE72C", FontSize = 16 }, RetainedLabel(new TextBlock { FontSize = 14, FontWeight = FontWeights.Medium }, "web.profiles.editor.moreOptions") } };
         var moreButton = new Button { Content = moreContent, Height = 32, MinHeight = 0, CornerRadius = new CornerRadius(10), Padding = new Thickness(10, 4, 10, 4), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(moreButton, "More options");
+        void RefreshMoreName() => Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(moreButton, AppStrings.Get("web.profiles.editor.moreOptions"));
+        RefreshMoreName(); _localeRefreshers.Add(RefreshMoreName);
         moreButton.Click += (_, _) => { _avatarBatch++; BuildAvatarPresets(); };
         Grid.SetColumn(moreButton, 1);
         presetHeader.Children.Add(moreButton);
@@ -466,14 +467,14 @@ public sealed partial class ProfileEditorDialog
         if (!_avatarUploadEnabled)
         {
             var unavailable = new StackPanel { Spacing = 4 };
-            unavailable.Children.Add(new TextBlock { Text = AppStrings.Get("web.profiles.editor.uploadsUnavailable"), FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium });
-            unavailable.Children.Add(new TextBlock
+            unavailable.Children.Add(RetainedLabel(new TextBlock { FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium }, "web.profiles.editor.uploadsUnavailable"));
+            unavailable.Children.Add(RetainedLabel(new TextBlock
             {
                 Text = AppStrings.Get("web.profiles.editor.uploadsUnavailableHint"),
                 FontSize = 12,
                 Foreground = Brush("SecondaryTextBrush"),
                 TextWrapping = TextWrapping.Wrap,
-            });
+            }, "web.profiles.editor.uploadsUnavailableHint"));
             panel.Children.Add(new Border
             {
                 BorderBrush = Brush("BorderBrush"),

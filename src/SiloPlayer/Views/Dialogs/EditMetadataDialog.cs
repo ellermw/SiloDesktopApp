@@ -407,9 +407,19 @@ public sealed partial class EditMetadataDialog : ContentDialog
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(force, AppStrings.Get("web.item.translate.force"));
             var forceGroup = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Height = 36, VerticalAlignment = VerticalAlignment.Bottom };
             forceGroup.Children.Add(force);
-            forceGroup.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.translate.force"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+            var forceLabel = new TextBlock { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            forceGroup.Children.Add(forceLabel);
             var button = new Button { Content = AppStrings.Get("web.item.translate.translate"), Height = 32, MinHeight = 32, Padding = new Thickness(12, 0, 12, 0),
                 Style = (Style)Application.Current.Resources["AccentButtonStyle"], VerticalAlignment = VerticalAlignment.Bottom };
+            void RefreshTranslationControls()
+            {
+                languages.Header = AppStrings.Get("web.item.translate.language");
+                languages.PlaceholderText = AppStrings.Get("web.item.translate.selectLanguage");
+                forceLabel.Text = AppStrings.Get("web.item.translate.force");
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(force, forceLabel.Text);
+                button.Content = AppStrings.Get(button.IsEnabled ? "web.item.translate.translate" : "web.item.translate.translating");
+            }
+            RefreshTranslationControls(); _translationLocaleRefreshers.Add(RefreshTranslationControls);
             var controls = new WrapPanel { HorizontalSpacing = 12, VerticalSpacing = 12 };
             controls.Children.Add(languages); controls.Children.Add(forceGroup); controls.Children.Add(button);
             var status = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Foreground = Brush("SecondaryTextBrush") };

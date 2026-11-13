@@ -36,6 +36,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private int _searchRevision;
     private volatile bool _authorityRetired;
     private readonly List<ProviderIdInput> _providerIdInputs = [];
+    private readonly List<Action> _candidateLocaleRefreshers = [];
     private MatchCandidate? _selectedCandidate;
     private bool _searching;
     private bool _applying;
@@ -81,6 +82,10 @@ public sealed partial class MatchItemDialog : ContentDialog
         LibraryScopeHost.Content = _scope; LibraryScopeHost.Visibility = _inventory ? Visibility.Visible : Visibility.Collapsed; _scope.Changed += RetireCandidates;
         SearchButton.IsEnabled = false;
         EditorDialogPresentation.Configure(this, 512, new Thickness(24));
+        SiloPlayer.Services.AppLocalization.Register(this, () =>
+        {
+            foreach (var refresh in _candidateLocaleRefreshers) refresh();
+        });
         var heading = new Grid();
         heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -150,7 +155,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     }
     private void RetireCandidates()
     {
-        _searchRevision++; _selectedCandidate = null; ResultsPanel.Children.Clear(); ResultsSection.Visibility = Visibility.Collapsed;
+        _searchRevision++; _selectedCandidate = null; _candidateLocaleRefreshers.Clear(); ResultsPanel.Children.Clear(); ResultsSection.Visibility = Visibility.Collapsed;
         ApplyMatchButton.Visibility = ApplyMatchFooter.Visibility = Visibility.Collapsed; ApplyStatusText.Visibility = Visibility.Collapsed; StartHints(); UpdateCommands(); UpdateViewport();
     }
     private void UpdateCommands()
@@ -751,7 +756,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         LoadingRing.Visibility = Visibility.Visible;
         SearchButton.IsEnabled = false;
         SearchButtonText.Text = AppStrings.Get("web.collections.manual.searching", fallback: "Searching...");
-        ResultsPanel.Children.Clear();
+        _candidateLocaleRefreshers.Clear(); ResultsPanel.Children.Clear();
         ResultsSection.Visibility = Visibility.Collapsed;
         EmptyText.Visibility = Visibility.Collapsed;
         _selectedCandidate = null;
@@ -905,24 +910,22 @@ public sealed partial class MatchItemDialog : ContentDialog
 
         if (matchedFallbackTitle != null)
         {
-            info.Children.Add(new TextBlock
+            info.Children.Add(CandidateLabel(new TextBlock
             {
-                Text = AppStrings.Get("web.item.match.nativeTitle", new Dictionary<string, object?> { ["title"] = candidate.Title }, $"Native title: {candidate.Title}"),
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
-            });
+            }, "web.item.match.nativeTitle", () => candidate.Title, "title"));
         }
         else if (!string.IsNullOrWhiteSpace(candidate.OriginalTitle) &&
                  !string.Equals(candidate.OriginalTitle, candidate.Title, StringComparison.Ordinal))
         {
-            info.Children.Add(new TextBlock
+            info.Children.Add(CandidateLabel(new TextBlock
             {
-                Text = AppStrings.Get("web.item.match.originalTitle", new Dictionary<string, object?> { ["title"] = candidate.OriginalTitle }, $"Original: {candidate.OriginalTitle}"),
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
-            });
+            }, "web.item.match.originalTitle", () => candidate.OriginalTitle, "title"));
         }
 
         if (matchedFallbackTitle == null &&
@@ -930,13 +933,12 @@ public sealed partial class MatchItemDialog : ContentDialog
             !string.Equals(candidate.MatchedTitle, candidate.Title, StringComparison.Ordinal) &&
             !string.Equals(candidate.MatchedTitle, candidate.OriginalTitle, StringComparison.Ordinal))
         {
-            info.Children.Add(new TextBlock
+            info.Children.Add(CandidateLabel(new TextBlock
             {
-                Text = AppStrings.Get("web.item.match.matchedAlias", new Dictionary<string, object?> { ["title"] = candidate.MatchedTitle }, $"Matched alias: {candidate.MatchedTitle}"),
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
-            });
+            }, "web.item.match.matchedAlias", () => candidate.MatchedTitle, "title"));
         }
 
         info.Children.Add(new TextBlock
@@ -952,7 +954,12 @@ public sealed partial class MatchItemDialog : ContentDialog
             VerticalSpacing = 4,
         };
         if (candidate.MatchScore.HasValue)
-            badges.Children.Add(BuildCandidateBadge(AppStrings.Get("web.item.match.score", new Dictionary<string, object?> { ["score"] = candidate.MatchScore.Value.ToString("F1", AppStrings.FormatCulture) }, $"Score {candidate.MatchScore.Value:F1}"), filled: true));
+        {
+            var scoreBadge = BuildCandidateBadge("", filled: true);
+            CandidateLabel((TextBlock)scoreBadge.Child, "web.item.match.score",
+                () => candidate.MatchScore.Value.ToString("F1", AppStrings.FormatCulture), "score");
+            badges.Children.Add(scoreBadge);
+        }
         foreach (var source in candidate.Sources)
             badges.Children.Add(BuildCandidateBadge(source, filled: false));
         if (candidate.Sources.Count > 1)
@@ -1016,6 +1023,13 @@ public sealed partial class MatchItemDialog : ContentDialog
         };
 
         return rowBtn;
+    }
+
+    private TextBlock CandidateLabel(TextBlock label, string key, Func<string?> value, string argument)
+    {
+        void Refresh() => label.Text = AppStrings.Get(key, new Dictionary<string, object?> { [argument] = value() });
+        Refresh(); _candidateLocaleRefreshers.Add(Refresh);
+        return label;
     }
 
     private static Border BuildCandidateBadge(string text, bool filled)
