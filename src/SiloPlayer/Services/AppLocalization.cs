@@ -77,6 +77,11 @@ public static class AppLocalization
     public static IDisposable Register(FrameworkElement element, Action refresh)
         => new Registration(element, refresh, LocaleService.Shared);
 
+    internal static void Invalidate(IDisposable? registration)
+    {
+        if (registration is Registration active) active.Invalidate();
+    }
+
     internal sealed class Registration : IDisposable
     {
         private readonly WeakReference<FrameworkElement> _element;
@@ -103,14 +108,15 @@ public static class AppLocalization
                 dialog.Opened += OnDialogOpened;
                 dialog.Closed += OnDialogClosed;
             }
-            if (element.IsLoaded) Attach();
+            // Registering on a loaded element refreshes at once; the registering caller sees a failure.
+            if (element.IsLoaded) Attach(RefreshIfStale);
         }
 
-        private void OnLoaded(object sender, RoutedEventArgs args) => Attach();
+        private void OnLoaded(object sender, RoutedEventArgs args) => Attach(RefreshOrLog);
         private void OnDialogOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
         {
             _dialogOpen = true;
-            Attach();
+            Attach(RefreshOrLog);
         }
         private void OnDialogClosed(ContentDialog sender, ContentDialogClosedEventArgs args)
         {
@@ -125,11 +131,11 @@ public static class AppLocalization
             if (!_dialogOpen)
             {
                 Detach();
-                // Keys and other presentation state can change while detached,
-                // even when the interface language stays the same.
-                _appliedGeneration = -1;
+                // Retained owners remain current until the locale or their keyed bindings change.
             }
         }
+
+        public void Invalidate() => _appliedGeneration = -1;
 
         private void Detach()
         {
@@ -138,7 +144,7 @@ public static class AppLocalization
             _subscribed = false;
         }
 
-        private void Attach()
+        private void Attach(Action refresh)
         {
             if (_disposed) return;
             if (!_subscribed)
@@ -146,13 +152,22 @@ public static class AppLocalization
                 _locales.Changed += OnChanged;
                 _subscribed = true;
             }
-            RefreshIfStale();
+            refresh();
         }
 
         private void OnChanged(object? sender, AppLocaleChangedEventArgs args)
         {
+            // On the applying thread LocaleService logs a failed subscriber; a queued refresh has no caller.
             if (_dispatcher.HasThreadAccess) RefreshIfStale();
-            else _dispatcher.TryEnqueue(RefreshIfStale);
+            else _dispatcher.TryEnqueue(RefreshOrLog);
+        }
+
+        // Loaded, Opened and dispatcher callbacks have nothing above them to handle a
+        // failed refresh: log it as LocaleService does. The retry marker is already reset.
+        private void RefreshOrLog()
+        {
+            try { RefreshIfStale(); }
+            catch (Exception ex) { SiloPlayer.Core.Services.LocalLog.AppendException("settings_refresh.txt", ex, "app_locale_refresh"); }
         }
 
         private void RefreshIfStale()

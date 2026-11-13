@@ -1525,6 +1525,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void InterfaceCardOption_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressInterfaceEvents ||
             InterfacePosterSizeCombo.SelectedItem is not ComboBoxItem { Tag: string posterSize })
             return;
@@ -2530,6 +2531,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void HomeScopeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (HomeScopeComboBox.SelectedItem is not ComboBoxItem { Tag: string scope } || scope == ViewModel.SelectedScope) return;
         if (ViewModel.IsSavingHomeSections)
         {
@@ -2906,6 +2908,7 @@ _webhookPlexAuthCts?.Cancel();
     // ===== ComboBox change handlers =====
     private void QualityComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (QualityComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -2916,6 +2919,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void MaxBitrateComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (MaxBitrateComboBox.SelectedItem is ComboBoxItem item && item.Tag is string value)
         {
@@ -2956,6 +2960,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleModeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -2966,6 +2971,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void NextUpModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (NextUpModeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3049,6 +3055,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleFontSize_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleFontSizeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3059,6 +3066,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleFontFamily_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleFontFamilyComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3069,6 +3077,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleBgStyle_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleBgStyleComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3104,6 +3113,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitlePosition_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitlePositionComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -5604,6 +5614,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void WebhookEventFilter_Changed(object sender, RoutedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (WebhookEventsHost == null) return;
         _webhookEventsPage = 0;
         BuildWebhookEvents();

@@ -39,6 +39,8 @@ internal static class LocalizedPropertiesNativeFixture
         root.Children.Add(title); root.Children.Add(save); root.Children.Add(input);
         root.Children.Add(raw); root.Children.Add(fallback); root.Children.Add(slider);
         root.Children.Add(choice);
+        var ownerRefreshes = 0;
+        using var ownerRegistration = AppLocalization.Register(root, () => ownerRefreshes++);
         parent.Children.Add(root);
         try
         {
@@ -57,6 +59,11 @@ internal static class LocalizedPropertiesNativeFixture
                 "closed ComboBox selection did not translate: " + choice.SelectionBoxItem);
             Program.Log("PASS: explicit keyed native controls, closed ComboBox selection, automation and fallback after live language switch.");
 
+            var beforeReload = ownerRefreshes;
+            parent.Children.Remove(root); await Task.Delay(30);
+            parent.Children.Add(root); await Settle(root);
+            Require(ownerRefreshes == beforeReload, "unchanged cached owner reran its localization refresh on reload");
+            Program.Log("PASS: unchanged cached owner reload does not rebuild its localized presentation.");
             Localized.SetText(title, "common.cancel");
             Require(title.Text == AppStrings.Get("common.cancel"), "key change waited for another locale");
             Localized.SetText(title, null);

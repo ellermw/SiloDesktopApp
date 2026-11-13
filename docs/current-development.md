@@ -1,3 +1,47 @@
+# November 12 — PR #145 integrated review corrections
+
+The candidate integrates pipeline `c8f5fb28b9652c220be521eba6031ccaa855c5e6`
+with the local section-navigation and legacy-series corrections. All **35**
+XAML-defined ComboBoxes with localized inline items now have explicit owner
+refreshes under selection-event guards, including notification-series filters,
+Catalog, Search, Settings, library, personal lists and Requests browse. No locale
+refresh treats relabeling as a user option change.
+
+Ordinary unloads retain localization generations, preserving cached pages.
+Only changed keys on detached controls invalidate their registration. The new
+unchanged-reload regression failed before this correction and passes after it;
+the existing detached-key and open-dialog regressions still pass.
+
+Current verification: successful Release publish; **6,220/6,220 units**, no
+failures/skips; **seven passing native groups**: localized-properties,
+media-localization, media-catalog-localization, oct20-home-rows,
+settings-localization, calendar-culture and notification-series. App SHA-256:
+`5D94A9FF697A2C178269C0AFF3570F325189C1576F573DD30EBB3F373B79633E`.
+All 2,008 frozen implementation/verification inputs match. Receipts and logs:
+`D:/SiloPlayer-build/combined-review-receipt.json`,
+`combined-review-source-inputs.json`, `inline-choice-owner-audit.json`,
+`combined-review-{units,publish,native-build}.log` and `results/`.
+
+The broader personal-lists fixture did not pass: its standalone overlay setup
+omits the capability revision required to offer request-status badges. A
+separate diagnostic supplied revision 26, then exposed an inner-badge alignment
+expectation; that experiment was restored without changing product geometry or
+relaxing assertions. Original/diagnostic failures remain in results. Direct
+Favorites/Watchlist dropdown checks pass within media-localization. This is not
+a passing full personal-lists or default-native-suite claim. Earlier 23-group
+results below remain historical baselines. Live interoperability and full visual
+or physical DPI parity remain unverified.
+
+Version stamps remain inherited **1.2.1015-beta.1 / 1.2.1014.1**; pipeline owns
+the candidate's next release. The already published 1015 is the earlier source,
+not this localization candidate. PR #145 still requires review, QA, merge and
+Beta publication. The installed player (PID 38020) remains open.
+
+Cleanup remains blocked by the prior automatic approval rejection. No deletion
+was retried; recovered space remains **0 GiB C: / 0 GiB D:**. Reused generated
+output is about **1.08 GiB**, with approximately **192 GiB free C:** and
+**481 GiB free D:**. Source, receipts and owner AGENTS.md edits are preserved.
+
 # November 12 — PR #145 subtitle appearance review correction
 
 PR #145 remains the localization delivery candidate. Its review found that

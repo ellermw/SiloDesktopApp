@@ -13,6 +13,7 @@ public sealed partial class CatalogPage
 
     private void RefreshCatalogHeading()
     {
+        RefreshInlineChoices();
         PageTitleText.Text = _titleOverride != null
             ? SectionTitles.Display(_titleOverride, _titleKey, _titleArgs, _keyedTitle)
             : AppStrings.Get(_source switch
@@ -30,5 +31,21 @@ public sealed partial class CatalogPage
             _ => "web.catalog.page.catalogSubtitle"
         });
         if (_headingActive) App.MainWindowInstance?.SetDynamicTitle(PageTitleText.Text);
+    }
+
+    private void RefreshInlineChoices()
+    {
+        var previous = _initializing;
+        _initializing = true;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(TypeCombo);
+            SiloPlayer.Services.Localized.RefreshItems(SortCombo);
+            SiloPlayer.Services.Localized.RefreshItems(OrderCombo);
+            SiloPlayer.Services.Localized.RefreshItems(WatchStatusCombo);
+            SiloPlayer.Services.Localized.RefreshItems(AddedInLastCombo);
+            SiloPlayer.Services.Localized.RefreshItems(ReleasedInLastCombo);
+        }
+        finally { _initializing = previous; }
     }
 }

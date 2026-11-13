@@ -29,6 +29,8 @@ internal static class CatalogSortChoices
             combo.Items.Clear();
             foreach (var choice in available)
                 combo.Items.Add(MediaItemCardActions.Localize(new ComboBoxItem { Content = choice.Label, Tag = choice.Value }, content: choice.TitleKey));
+            // New items do not load while the dropdown is closed: apply their keys before one is selected.
+            SiloPlayer.Services.Localized.RefreshItems(combo);
         }
         combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, selected))
             ?? combo.Items.OfType<ComboBoxItem>().FirstOrDefault();

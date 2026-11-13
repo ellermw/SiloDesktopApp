@@ -54,4 +54,17 @@ internal static partial class MediaLocalizationNativeFixture
     {
         if (!condition) throw new InvalidOperationException(message);
     }
+    internal static void CheckInlineChoiceLabels(FrameworkElement owner, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var combo = (ComboBox)owner.FindName(name);
+            combo.ApplyTemplate();
+            foreach (var item in combo.Items.OfType<ComboBoxItem>())
+                if (SiloPlayer.Services.Localized.GetContent(item) is { } key)
+                    Require(Equals(item.Content, AppStrings.Get(key)), owner.GetType().Name + "." + name + ": unopened item did not translate: " + key);
+            if (combo.SelectedItem is ComboBoxItem selected && SiloPlayer.Services.Localized.GetContent(selected) is { } selectedKey)
+                Require(Equals(combo.SelectionBoxItem, AppStrings.Get(selectedKey)), owner.GetType().Name + "." + name + ": closed selection did not translate; actual=" + combo.SelectionBoxItem + "; expected=" + AppStrings.Get(selectedKey) + "; loaded=" + combo.IsLoaded + "; visibility=" + combo.Visibility + "; width=" + combo.ActualWidth);
+        }
+    }
 }

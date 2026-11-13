@@ -16,7 +16,7 @@ public sealed partial class FavoritesPage : Page
     {
         ViewModel = App.Services.GetRequiredService<FavoritesViewModel>();
         this.InitializeComponent();
-        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
+        SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshInlineChoices(); ViewModel.RefreshLocalization(); });
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         PosterRepeater.ItemsSource = ViewModel.Items;
@@ -73,6 +73,7 @@ public sealed partial class FavoritesPage : Page
 
     private void SortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (SortComboBox.SelectedItem is ComboBoxItem item && item.Tag is string field)
         {
             _sortField = field;
@@ -126,5 +127,17 @@ public sealed partial class FavoritesPage : Page
     {
         var index = _serverOrder.IndexOf(item.ContentId);
         return index >= 0 ? index : int.MaxValue;
+    }
+
+    private bool _refreshingInlineChoices;
+    private void RefreshInlineChoices()
+    {
+        var previous = _refreshingInlineChoices;
+        _refreshingInlineChoices = true;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(SortComboBox);
+        }
+        finally { _refreshingInlineChoices = previous; }
     }
 }

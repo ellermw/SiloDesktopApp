@@ -134,6 +134,7 @@ public static class Localized
             if (IsEmpty) return;
             _registration ??= AppLocalization.Register(element, Refresh);
             if (element.IsLoaded) Refresh();
+            else AppLocalization.Invalidate(_registration);
         }
 
         public void Refresh()

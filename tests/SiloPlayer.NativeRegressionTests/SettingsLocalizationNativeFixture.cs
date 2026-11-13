@@ -84,6 +84,7 @@ internal static class SettingsLocalizationNativeFixture
         {
             Invoke(page, "ShowSettingsOverview"); await Settle(page);
             Apply("de"); await Settle(page);
+            MediaLocalizationNativeFixture.CheckInlineChoiceLabels(page, "InterfacePosterSizeCombo", "QualityComboBox", "MaxBitrateComboBox", "SubtitleModeComboBox", "NextUpModeComboBox");
             var playbackTitle = AppStrings.Get("web.settings.playback.title");
             var yourDataTitle = AppStrings.Get("web.settings.yourData.title");
             Check(playbackTitle != "Playback" && yourDataTitle != "Your Data", "German catalog lacks the asserted settings titles.");
@@ -128,6 +129,7 @@ internal static class SettingsLocalizationNativeFixture
         try
         {
             Apply("de"); await Settle(page);
+            MediaLocalizationNativeFixture.CheckInlineChoiceLabels(page, "InterfacePosterSizeCombo", "QualityComboBox", "MaxBitrateComboBox", "SubtitleModeComboBox", "NextUpModeComboBox");
             page.SelectSettingsSection("Playback"); await Settle(page);
             var playbackNav = Descendants((Button)page.FindName("PlaybackTab")).OfType<TextBlock>().Last(text => text.Parent is StackPanel);
             Check(playbackNav.Text == AppStrings.Get("web.settings.playback.title"), "Sidebar tab text stayed English: " + playbackNav.Text);

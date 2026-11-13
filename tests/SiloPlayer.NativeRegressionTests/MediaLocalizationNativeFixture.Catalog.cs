@@ -149,6 +149,7 @@ internal static partial class MediaLocalizationNativeFixture
         Require(Text(page, "PageSubtitleText") == subtitle, source + ": retained catalog subtitle did not refresh");
         Require(window.AppWindow.Title == DocumentTitle.FromLabel(title), source + ": actual window title did not refresh");
         if (source is not ("favorites" or "watchlist" or "history")) return;
+        CheckInlineChoiceLabels(page, "TypeCombo", "OrderCombo", "WatchStatusCombo", "AddedInLastCombo", "ReleasedInLastCombo");
         var sort = (ComboBox)page.FindName("SortCombo");
         sort.IsDropDownOpen = true; await Task.Delay(100);
         try

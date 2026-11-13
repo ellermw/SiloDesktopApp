@@ -38,7 +38,7 @@ public sealed partial class SearchPage : Page
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
-        SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); UpdateResultsState(); UpdateRequestResults(); UpdateActiveResultFilters(); });
+        SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshInlineChoices(); ViewModel.RefreshLocalization(); UpdateResultsState(); UpdateRequestResults(); UpdateActiveResultFilters(); });
         CatalogToolbarChoices.Apply(ResultTypeCombo, ResultSortCombo, ResultOrderCombo);
         _catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
         _localizedReads = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().LocalizedReads;
@@ -932,4 +932,17 @@ public sealed partial class SearchPage : Page
     }
 
     private sealed record SearchFilterOption(string Label, string Value);
+
+    private void RefreshInlineChoices()
+    {
+        var previous = _filterInitializing;
+        _filterInitializing = true;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(ResultTypeCombo);
+            SiloPlayer.Services.Localized.RefreshItems(ResultSortCombo);
+            SiloPlayer.Services.Localized.RefreshItems(ResultOrderCombo);
+        }
+        finally { _filterInitializing = previous; }
+    }
 }

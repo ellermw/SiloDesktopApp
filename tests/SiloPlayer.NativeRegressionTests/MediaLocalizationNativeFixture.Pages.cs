@@ -39,11 +39,14 @@ internal static partial class MediaLocalizationNativeFixture
             var calendar = new CalendarPage { Width = 1100, Height = 760 };
             var requests = new RequestsPage { Width = 1100, Height = 760 };
             var recommendations = new RecommendationsPage { Width = 1100, Height = 760 };
+            var seriesFilters = new NotificationSeriesControl();
+            var favorites = new FavoritesPage { Width = 1100, Height = 760 };
+            var watchlist = new WatchlistPage { Width = 1100, Height = 760 };
             var browse = new RequestBrowsePage { Width = 1100, Height = 760 };
             var subtitleCard = new PosterCard { Width = 185, MediaItem = new MediaItem { ContentId = "subtitle-raw", Title = raw, Type = "series" } };
             var hero = new HeroCarousel { Width = 760, Height = 430, ItemsSource = new List<MediaItem>
             { new() { ContentId = "raw-title", Title = raw, Type = "audiobook", UserState = new() { Played = true } } } };
-            controls.AddRange([home, library, detail, bookDetail, requestDetail, search, calendar, requests, recommendations, browse, hero, subtitleCard]);
+            controls.AddRange([home, library, detail, bookDetail, requestDetail, search, calendar, requests, recommendations, browse, hero, subtitleCard, seriesFilters, favorites, watchlist]);
             foreach (var control in controls) stage.Children.Add(control);
             library.ViewModel.Library = new Library { Id = 7001, Name = raw, Type = "movie" };
             Invoke(library, "UpdateShuffleHeader");
@@ -75,6 +78,12 @@ internal static partial class MediaLocalizationNativeFixture
                 PosterCard.CurrentSortKey = "content_rating";
                 Apply(language); await Task.Delay(200);
                 foreach (var control in controls) { control.Measure(new Windows.Foundation.Size(1100, 760)); control.Arrange(new Windows.Foundation.Rect(0, 0, 1100, 760)); control.UpdateLayout(); }
+                CheckInlineChoiceLabels(seriesFilters, "ReasonCombo", "SortCombo");
+                CheckInlineChoiceLabels(favorites, "SortComboBox");
+                CheckInlineChoiceLabels(watchlist, "WatchlistScope", "SortComboBox");
+                CheckInlineChoiceLabels(search, "ResultTypeCombo", "ResultSortCombo", "ResultOrderCombo");
+                CheckInlineChoiceLabels(library, "OrderComboBox", "MediaTypeComboBox", "MatchStatusComboBox", "WatchStatusComboBox");
+                CheckInlineChoiceLabels(browse, "SortCombo");
                 Require(Text(home, "TasteSeedTitle") == AppStrings.Get("web.home.tasteSeed.bannerTitle"), "Home retained title did not refresh");
                 var shuffle = (Button)library.FindName("LibraryShuffleButton");
                 Require(shuffle.Content is StackPanel && Descendants(shuffle).OfType<TextBlock>().Any(text => text.Text == AppStrings.Get("web.library.header.shuffle")), "Library retained templated shuffle action did not refresh");
@@ -168,6 +177,9 @@ internal static partial class MediaLocalizationNativeFixture
             _services[typeof(SearchViewModel)] = Search; _services[typeof(RequestsViewModel)] = requestsModel;
             _services[typeof(CalendarViewModel)] = calendar; _services[typeof(EventChannelClient)] = _events;
             _services[typeof(SettingsApi)] = settings; _services[typeof(RequestsApi)] = requests;
+            _services[typeof(NotificationsApi)] = new NotificationsApi(api);
+            _services[typeof(FavoritesViewModel)] = new FavoritesViewModel(catalog);
+            _services[typeof(WatchlistViewModel)] = new WatchlistViewModel(catalog, requests);
             _services[typeof(NavigationService)] = new NavigationService();
         }
         public object? GetService(Type type) => _services.GetValueOrDefault(type) ?? _original.GetService(type);

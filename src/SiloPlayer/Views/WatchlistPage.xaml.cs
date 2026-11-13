@@ -22,7 +22,7 @@ public sealed partial class WatchlistPage : Page
     {
         ViewModel = App.Services.GetRequiredService<WatchlistViewModel>();
         this.InitializeComponent();
-        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
+        SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshInlineChoices(); ViewModel.RefreshLocalization(); });
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         PosterRepeater.ItemsSource = ViewModel.Items;
@@ -46,6 +46,7 @@ public sealed partial class WatchlistPage : Page
 
     private async void WatchlistScope_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (ExternalRepeater == null || PosterRepeater == null) return;
         var external = WatchlistScope.SelectedIndex == 1;
         PosterRepeater.Visibility = external ? Visibility.Collapsed : Visibility.Visible;
@@ -142,6 +143,7 @@ public sealed partial class WatchlistPage : Page
 
     private void SortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (SortComboBox.SelectedItem is ComboBoxItem item && item.Tag is string field)
         {
             _sortField = field;
@@ -193,4 +195,17 @@ public sealed partial class WatchlistPage : Page
 
     private static DateTimeOffset ParseAddedAt(string? value)
         => DateTimeOffset.TryParse(value, out var parsed) ? parsed : DateTimeOffset.MinValue;
+
+    private bool _refreshingInlineChoices;
+    private void RefreshInlineChoices()
+    {
+        var previous = _refreshingInlineChoices;
+        _refreshingInlineChoices = true;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(WatchlistScope);
+            SiloPlayer.Services.Localized.RefreshItems(SortComboBox);
+        }
+        finally { _refreshingInlineChoices = previous; }
+    }
 }

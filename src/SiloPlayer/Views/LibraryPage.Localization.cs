@@ -4,6 +4,7 @@ public sealed partial class LibraryPage
 {
     private void RefreshLibraryLocalization()
     {
+        RefreshInlineChoices();
         ViewModel.RefreshLocalization();
         UpdateMultiSelectLabels();
         UpdateCountDisplay();
@@ -18,5 +19,21 @@ public sealed partial class LibraryPage
             ConfigureFilterSections(library.Type);
         }
         finally { _suppressFilterEvents = suppressed; }
+    }
+
+    private void RefreshInlineChoices()
+    {
+        var previous = _suppressFilterEvents;
+        _suppressFilterEvents = true;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(OrderComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(AudiobookGroupSortComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(MediaTypeComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(DecadeComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(MatchStatusComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(WatchStatusComboBox);
+        }
+        finally { _suppressFilterEvents = previous; }
     }
 }

@@ -53,6 +53,7 @@ public sealed partial class SettingsPage
 
     private void RefreshSettingsLocale()
     {
+        RefreshInlineChoices();
         foreach (var (group, key, english) in new (Panel Group, string Key, string English)[]
         {
             (PlaybackNavGroup, "web.settings.nav.group.playback", "Playback"),
@@ -154,5 +155,27 @@ public sealed partial class SettingsPage
         {
             System.Diagnostics.Debug.WriteLine("Settings locale refresh skipped a section: " + ex.Message);
         }
+    }
+
+    private bool _refreshingInlineChoices;
+    private void RefreshInlineChoices()
+    {
+        var previous = _refreshingInlineChoices;
+        _refreshingInlineChoices = true;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(InterfacePosterSizeCombo);
+            SiloPlayer.Services.Localized.RefreshItems(QualityComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(MaxBitrateComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(SubtitleModeComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(SubtitleFontSizeComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(SubtitleFontFamilyComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(SubtitleBgStyleComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(SubtitlePositionComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(NextUpModeComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(HomeScopeComboBox);
+            SiloPlayer.Services.Localized.RefreshItems(WebhookEventOutcomeFilter);
+        }
+        finally { _refreshingInlineChoices = previous; }
     }
 }

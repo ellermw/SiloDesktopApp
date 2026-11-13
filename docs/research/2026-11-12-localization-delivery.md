@@ -105,26 +105,34 @@ See `D:/SiloPlayer-build/slider-review-receipt.json` for final source/payload
 binding and logs. The earlier 23-group result is not a new run on this correction.
 PR #145 still requires pipeline review, merge and Beta delivery.
 
-## Second review follow-up candidate
+## Integrated review follow-up candidate
 
-Prepared locally on pipeline head `a7c4393409d46d819e2d9768c050bcab44df7205`
-while the pipeline owns its next fix round. The duplicate progressed-series
-comments identify one issue: the fallback now uses the catalog's translated
-Play Next action without changing the playback target resolver. Home and library
-View All routes carry the original title key, arguments and keyed-title snapshot.
-The catalog resolves these again on each locale refresh; user-renamed titles
-retain their raw text. Navigation takes independent argument copies.
+Integrated pipeline c8f5fb28 and the local navigation/series fixes. Home and
+library View All preserve title key, copied arguments and keyed-title snapshot;
+Catalog resolves these on each locale change and keeps user-renamed titles raw.
+The progressed legacy series label uses translated Play Next without changing
+its playback target resolver. All 35 XAML inline localized ComboBoxes have owner
+refresh calls and selection-event guards. Ordinary cached-owner reloads retain
+the applied generation; detached key changes invalidate only their binding.
+The cached-owner regression was observed red before the fix, then green while
+the prior detached-key regression remained passing.
 
-Candidate checks: successful Release publish, 9 focused unit tests, and passing
-`media-catalog-localization` and `oct20-home-rows` native groups. The new catalog
-case verifies title/window refresh in German, Arabic and Japanese, Back, raw
-renamed titles, and the progressed-series label. Actual Home/library buttons
-verify complete title metadata and independent arguments. Initial fixture-only
-failures came from applying personal-list subtitle/sort expectations to section
-catalogs; those assertions remain in place for personal-list routes.
+Current checks: Release publish, **6,220/6,220 units** (zero failed/skipped), and
+seven native groups on the final product DLL: localized-properties,
+media-localization, media-catalog-localization, oct20-home-rows,
+settings-localization, calendar-culture, notification-series. All 2,008 frozen
+implementation/verification inputs match. Evidence is bound separately in
+`D:/SiloPlayer-build/combined-review-receipt.json`; earlier 23-group evidence
+belongs to its original source. Initial expanded-fixture failures were resolved
+by registering NotificationsApi and applying native templates before checking
+closed selection displays on controls under collapsed panels.
 
-This candidate is not yet pushed: wait for the pipeline's active fix round, then
-integrate its commit and verify the combined source. The remaining dropdown
-finding must be checked across owners after that integration. Existing broad
-verification receipts do not certify this newer source. Receipt:
-`D:/SiloPlayer-build/review-followup-receipt.json`.
+The broader personal-lists overlay fixture remains failing: its initial setup
+omits the request-status capability revision; a diagnostic revision-26 run
+then hit an inner-badge alignment expectation. Diagnostic changes were restored
+without changing product geometry or assertions. Failures are retained. Actual
+Favorites/Watchlist inline choice localization passes within media-localization.
+No full personal-lists/default-suite, live-interoperability or exhaustive visual
+parity claim is made. Cleanup is still blocked by automatic approval, with
+0 GiB reclaimed on either drive and about 1.08 GiB reused generated output.
+The installed player remains open; PR #145 delivery is still pending.

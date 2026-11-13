@@ -30,6 +30,7 @@ public sealed partial class NotificationSeriesControl : UserControl
         InitializeComponent(); _ready = true;
         State.PropertyChanged += (_, _) => Update();
         Unloaded += (_, _) => Close();
+        AppLocalization.Register(this, RefreshInlineChoices);
     }
     public async Task OpenAsync()
     {
@@ -167,5 +168,17 @@ public sealed partial class NotificationSeriesControl : UserControl
         public WrapPanel Reasons = new() { HorizontalSpacing = 4, VerticalSpacing = 4, Margin = new(0, 4, 0, 0) };
         public Button Action = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new(0, 0, 8, 0), Padding = new(8), MinWidth = 32 };
         public Border Icon = new(); public TextBlock Label = new() { FontSize = 14 };
+    }
+
+    private void RefreshInlineChoices()
+    {
+        var previous = _ready;
+        _ready = false;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(ReasonCombo);
+            SiloPlayer.Services.Localized.RefreshItems(SortCombo);
+        }
+        finally { _ready = previous; }
     }
 }

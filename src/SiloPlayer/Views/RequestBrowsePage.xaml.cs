@@ -34,6 +34,7 @@ public sealed partial class RequestBrowsePage : Page
     {
         InitializeComponent(); ResultsGrid.ItemsSource = _browse.Results; UpdateMediaTabs();
         _browse.Changed += UpdateState;
+        SiloPlayer.Services.AppLocalization.Register(this, RefreshInlineChoices);
         Unloaded += (_, _) => DetachScroll();
     }
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -192,5 +193,16 @@ public sealed partial class RequestBrowsePage : Page
     private void Back_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().GoBack();
     private void Fail(string text) { EmptyState.Visibility = Visibility.Collapsed; BrowseSkeleton.Visibility = Visibility.Collapsed; FooterPanel.Visibility = Visibility.Collapsed; LoadingText.Text = text; LoadingText.Visibility = Visibility.Visible; }
     private static string HumanizeSlug(string slug) => string.Join(" ", slug.Split('-', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+
+    private void RefreshInlineChoices()
+    {
+        var previous = _initialized;
+        _initialized = false;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(SortCombo);
+        }
+        finally { _initialized = previous; }
+    }
 }
 public sealed record RequestBrowseNavigation(string Kind, string Slug);
