@@ -1,3 +1,52 @@
+# November 13 - PR #145 retained rows, filters and password outcomes
+
+Integrated review fix 1e7ccbc3 with pipeline attempt 6, a4d67a8d, through
+merge 9fefb061. The pipeline playback correction retains outgoing direct-stream
+relays until the replacement input reports FILE_LOADED, preventing obsolete
+relay errors from affecting the accepted replacement plan. It is preserved.
+
+All four new GitHub findings are addressed. Continue Watching/Listening/Reading
+and Next Up dismissal menus and success notifications resolve their specific
+catalog keys. Subtitle results refresh labels, localized language, download
+counts/actions, score metadata and accessible names in place. Expanded release
+variants, raw release names and disabled download controls remain intact.
+Generated advanced-filter fields/operators resolve catalog text at creation
+and refresh under event guards; raw field/operator values and text/boolean
+drafts survive without rebuilding rule controls. Required-password failures
+resolve validation or change/settlement messages from transition state, retain
+their catalog key for later refresh, and offer a translated retry after a saved
+password fails to finish sign-in. Raw exception messages are not shown for
+non-API transition failures.
+
+Verification on the integrated source: Release publish and native host build
+passed; all 6,221 unit tests passed with zero failures/skips (2m23s). Four native
+groups passed: relay-load-ownership, settings-localization, media-localization
+and shell-localization. Actual checks cover retained subtitle results and
+variant expansion, disabled download state, all advanced field/operator choices
+before opening dropdowns, text/boolean filter drafts, retained dismissal menus,
+invalid password inputs and a real successful password write followed by failed
+sign-in refresh. Locale checks exercise de/ar/ja; raw names and identifiers stay
+unchanged. The relay fixture retained plan B and pause intent with zero playback
+errors or recovery attempts. All 1,989 frozen source/test inputs match.
+App DLL SHA-256: 5FEA2E2C242AE1DF048EC8087EAF40CA2C0CE1D28CC1117B3853E8B801982620.
+
+The initial media run exposed unopened generated choices starting in English,
+including Year instead of Jahr; visible-sheet reproduction confirmed it.
+Construction-time catalog resolution corrected that gap before the final pass.
+Original failing result text is retained. Pre-integration verification passed
+three localization groups and five targeted required-password transition tests;
+its receipt keeps its own payload/source scope.
+
+Evidence: D:/SiloPlayer-build/review-seventh-receipt.json,
+review-seventh-integrated-source-inputs.json,
+review-seventh-integrated-{publish,native-build,units}.log,
+review-seventh-preintegration-receipt.json and native result text.
+QA, merge and Beta publication remain pending; version stamps remain pipeline-owned.
+The installed player remains open. Generated output is 1.138 GiB; free space is
+C: 189.77 GiB and D: 481.37 GiB. Prior automatic approval review denied cleanup;
+no deletion was retried and 0 GiB reclaimed on either drive. Earlier live-server,
+visual and broad personal-lists/default-suite limitations remain.
+
 # November 13 - PR #145 language recovery and subtitle review fixes
 
 Follow-up to ae3a28c6 addresses all five new review findings. Player-mode
