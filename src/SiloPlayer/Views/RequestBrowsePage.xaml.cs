@@ -40,7 +40,7 @@ public sealed partial class RequestBrowsePage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        if (e.Parameter is not RequestBrowseNavigation nav) { Fail("Browse category not found."); return; }
+        if (e.Parameter is not RequestBrowseNavigation nav) { Fail("web.requests.discoverSection.notFound"); return; }
         _navigation = nav;
         var title = HumanizeSlug(nav.Slug); TitleText.Text = title; HeaderTileText.Text = title;
         MediaTypeTabs.Visibility = nav.Kind == "genre" ? Visibility.Visible : Visibility.Collapsed;
@@ -98,7 +98,7 @@ public sealed partial class RequestBrowsePage : Page
         BrowseSkeleton.Visibility = _browse.IsLoading ? Visibility.Visible : Visibility.Collapsed;
         LoadingText.Visibility = _browse.Error != null ? Visibility.Visible : Visibility.Collapsed;
         var missing = _browse.Error is ApiException { StatusCode: 404 };
-        SiloPlayer.Controls.MediaItemCardActions.BindText(LoadingText, "Text", element => element.Text = missing ? $"{PageText.Text} not found." : SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.loadFailed", fallback: "Could not load this browse page. Try a different sort or media type."));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(LoadingText, "Text", element => element.Text = missing ? SiloPlayer.Core.Localization.AppStrings.Get("web.requests.discoverSection.notFound") : SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.loadFailed", fallback: "Could not load this browse page. Try a different sort or media type."));
         RetryBrowseButton.Visibility = _browse.Error != null && !missing ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = !_browse.IsLoading && _browse.Error == null && !_browse.HasMore && _browse.Results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         FooterPanel.Visibility = _browse.HasMore && _browse.Error == null ? Visibility.Visible : Visibility.Collapsed;
@@ -191,7 +191,7 @@ public sealed partial class RequestBrowsePage : Page
         RebuildRealizedCards();
     }
     private void Back_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().GoBack();
-    private void Fail(string text) { EmptyState.Visibility = Visibility.Collapsed; BrowseSkeleton.Visibility = Visibility.Collapsed; FooterPanel.Visibility = Visibility.Collapsed; LoadingText.Text = text; LoadingText.Visibility = Visibility.Visible; }
+    private void Fail(string text) { EmptyState.Visibility = Visibility.Collapsed; BrowseSkeleton.Visibility = Visibility.Collapsed; FooterPanel.Visibility = Visibility.Collapsed; SiloPlayer.Controls.MediaItemCardActions.BindText(LoadingText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get(text)); LoadingText.Visibility = Visibility.Visible; }
     private static string HumanizeSlug(string slug) => string.Join(" ", slug.Split('-', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
 
     private void RefreshInlineChoices()

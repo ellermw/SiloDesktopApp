@@ -62,7 +62,7 @@ public sealed partial class WatchlistPage : Page
         await ViewModel.LoadExternalTitlesAsync();
         await App.Services.GetRequiredService<CardOverlayService>().EnsureLoadedAsync();
         if (WatchlistScope.SelectedIndex != 1) return;
-        MediaItemCardActions.BindText(ExternalStatusText, "Text", element => element.Text = ViewModel.ExternalTitlesError ?? (!ViewModel.ExternalTitlesSupported ? "This server doesn't currently support watchlist titles outside your library." : ViewModel.ExternalTitles.Count == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.emptyBody") : ""));
+        MediaItemCardActions.BindText(ExternalStatusText, "Text", element => element.Text = ViewModel.ExternalTitlesError ?? (!ViewModel.ExternalTitlesSupported ? SiloPlayer.Core.Localization.AppStrings.Get("error.capability_unsupported") : ViewModel.ExternalTitles.Count == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.emptyBody") : ""));
         ExternalStatusText.Visibility = string.IsNullOrEmpty(ExternalStatusText.Text) ? Visibility.Collapsed : Visibility.Visible;
         ApplySort(); UpdateCounts();
     }

@@ -27,6 +27,8 @@ internal static partial class SettingsLocalizationNativeFixture
         }
         finally { parent.Children.Remove(page); }
 
+        await ReviewHistoryAndMissingStates(parent);
+
         var session = new TitleAllowanceSession(client, new() { Id = "primary", IsPrimary = true }, () => true);
         var allowance = new AllowedTitlesSection(session, "secondary"); parent.Children.Add(allowance);
         try
@@ -186,6 +188,54 @@ internal static partial class SettingsLocalizationNativeFixture
             yield return child;
             foreach (var descendant in LogicalToggleDescendants(child)) yield return descendant;
         }
+    }
+
+    private static async Task ReviewHistoryAndMissingStates(StackPanel parent)
+    {
+        var history = new HistoryPage();
+        var browse = new RequestBrowsePage();
+        var watchlist = new WatchlistPage();
+        parent.Children.Add(browse); parent.Children.Add(watchlist);
+        try
+        {
+            await Settle(watchlist);
+            ((ComboBox)watchlist.FindName("WatchlistScope")).SelectedIndex = 1;
+            await (Task)typeof(WatchlistPage).GetMethod("LoadExternalAsync", Private)!.Invoke(watchlist, null)!;
+            Check(!watchlist.ViewModel.ExternalTitlesSupported && watchlist.ViewModel.ExternalTitlesError == null,
+                "Fixture did not exercise unsupported external watchlist capabilities.");
+            var browseState = Field<RequestBrowseSession>(browse, "_browse");
+            await browseState.ResetAsync((_, _) => throw new ApiException("not_found", "Raw missing category", 404));
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Settle(browse); await Settle(watchlist);
+                Check(((TextBlock)browse.FindName("LoadingText")).Text == AppStrings.Get("web.requests.discoverSection.notFound"), "Missing browse category did not refresh.");
+                Check(((TextBlock)watchlist.FindName("ExternalStatusText")).Text == AppStrings.Get("error.capability_unsupported"), "Unsupported watchlist message did not refresh.");
+                foreach (var completed in new[] { true, false })
+                {
+                    var card = (Border)typeof(HistoryPage).GetMethod("CreateHistoryCard", Private)!.Invoke(history,
+                        [new SiloPlayer.ViewModels.HistoryDisplayItem { ContentId = "fixture-history", Title = "Raw history title", Type = "movie", Completed = completed }])!;
+                    parent.Children.Add(card);
+                    try
+                    {
+                        await Settle(card);
+                        Check(Descendants(card).OfType<TextBlock>().Any(text => text.Text == AppStrings.Get(completed ? "web.detail.actions.play" : "web.detail.actions.resume")), "History primary action did not translate.");
+                        Check(Descendants(card).OfType<TextBlock>().Any(text => text.Text == "Raw history title"), "History title data changed.");
+                    }
+                    finally { parent.Children.Remove(card); }
+                }
+            }
+        }
+        finally { parent.Children.Remove(browse); parent.Children.Remove(watchlist); }
+        var dialog = new PlayHistoryDialog("fixture-history") { XamlRoot = parent.XamlRoot };
+        await OpenReviewDialog(dialog, async () =>
+        {
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Settle(dialog);
+                Check(Equals(dialog.Title, AppStrings.Get("web.item.menu.viewPlayHistory")), "Open play-history title did not refresh.");
+            }
+        });
+        Program.Log("PASS review states: actual history actions, 404 browse, unsupported watchlist and open play-history dialog in de/ar/ja.");
     }
 
     private static async Task OpenReviewDialog(ContentDialog dialog, Func<Task> verify)

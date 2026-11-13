@@ -1,3 +1,34 @@
+# November 13 - PR #145 history, invitation and missing-state review fixes
+
+Follow-up to reviewed head d2047c1c. Webhook deletion uses the catalog title
+with the raw name argument and refreshes title, body and command text while
+open. Invitation pages have a localized document-title mapping. Completed
+History cards use the catalog Play action; incomplete cards retain Resume.
+The Play History dialog uses the translated View Play History heading and
+refreshes while open. Request browse 404 and invalid navigation states use
+the catalog Not found message. Unsupported external watchlists use the
+translated server-capability message. Existing generated catalogs remain intact.
+
+Verification: Release publish and native host build passed. Full Settings and
+shell localization native groups passed, including actual completed/incomplete
+history cards, a 404 browse session, unsupported external watchlist, open
+play-history and webhook delete dialogs, and the invitation title map. Follow-up
+cases switch through German, Arabic and Japanese where applicable, preserve raw
+titles/names, and cancel the deletion. All 1,989 frozen source/test inputs match.
+App DLL SHA-256: 1B0A4175848946A453BB9748D1BEE06433540F7E70A149E4DA39E6C673B00B2A.
+The unit suite was not rerun for these UI text bindings; earlier unit results
+below retain their source scope and initial failure qualification.
+
+Evidence: D:/SiloPlayer-build/review-fifth-receipt.json,
+review-fifth-source-inputs.json, review-fifth-publish-final.log,
+review-fifth-native-build.log and native results (older result text retained).
+The initial publish caught a missing helper import, corrected before the passing
+publish. QA, merge and Beta publication remain pending. Version stamps remain
+pipeline-owned. The installed player remains open. Generated output is 1.126 GiB;
+C: has 189.69 GiB free and D: 481.39 GiB. The earlier automatic approval review
+rejected cleanup; no deletion was retried and 0 GiB reclaimed on either drive.
+Earlier default-suite, personal-lists, live-server and visual limitations remain.
+
 # November 13 - PR #145 remaining dialog and reader review fixes
 
 Candidate integrates local review commit `a7bd6f2c` with pipeline attempt 5, `5f8abf06`, through merge `76380c46`. The pipeline fix transfers localized toggle headers into retained Settings row labels and accessible names; its new full Settings native cases pass on the integrated payload.

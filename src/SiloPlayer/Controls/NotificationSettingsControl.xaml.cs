@@ -9,6 +9,7 @@ using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Controls;
 
@@ -300,13 +301,17 @@ public sealed partial class NotificationSettingsControl : UserControl
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = $"Delete \"{webhook.Name}\"?",
+            Title = AppStrings.Get("web.settings.notifications.webhooks.deleteTitle", new Dictionary<string, object?> { ["name"] = webhook.Name }),
             Content = AppStrings.Get("web.settings.notifications.webhooks.deleteDescription", fallback: "Notifications will stop posting to this destination. This cannot be undone."),
             PrimaryButtonText = AppStrings.Get("web.settings.notifications.webhooks.delete", fallback: "Delete"),
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel"),
             DefaultButton = ContentDialogButton.Close,
         };
+        MediaItemCardActions.BindText(dialog, "Title", element => element.Title = AppStrings.Get(
+            "web.settings.notifications.webhooks.deleteTitle", new Dictionary<string, object?> { ["name"] = webhook.Name }));
+        dialog.KeyedDialog(primary: "web.settings.notifications.webhooks.delete", close: "common.cancel");
+        MediaItemCardActions.BindText(dialog, "Content", element => element.Content = AppStrings.Get("web.settings.notifications.webhooks.deleteDescription"));
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             await ViewModel.DeleteWebhookAsync(webhook.Id);
     }

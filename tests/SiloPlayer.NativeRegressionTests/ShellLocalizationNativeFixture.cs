@@ -66,6 +66,7 @@ internal static class ShellLocalizationNativeFixture
             Check(read(page) == AppStrings.Get(key), page.GetType().Name + " German retained text: " + read(page));
             Apply("ar"); await Settle(page);
             Check(read(page) == AppStrings.Get(key), page.GetType().Name + " Arabic retained text: " + read(page));
+            if (page is InviteClaimPage) Check(DocumentTitle.FromPageType(typeof(InviteClaimPage)) == DocumentTitle.FromLabel(AppStrings.Get("web.watchTogether.invite.documentTitle")), "Invitation window title is not translated");
             if (page is ActivateDevicePage) Check(DocumentTitle.FromPageType(typeof(ActivateDevicePage)) == DocumentTitle.FromLabel(AppStrings.Get("web.auth.activate.documentTitle")), "Activation window title is not translated");
             Check(page.FlowDirection == FlowDirection.RightToLeft, page.GetType().Name + " RTL root missing");
             Program.Log("TRACE: switched actual " + page.GetType().Name + " controls through de/ar.");
@@ -212,7 +213,29 @@ internal static class ShellLocalizationNativeFixture
                 }
             }
             finally { webhookDialog.Hide(); await webhookPending; }
-            Program.Log("PASS: webhook edit title follows de/ar/ja while raw name and unsaved draft remain intact.");
+            var deleteHandler = (RoutedEventHandler)typeof(SiloPlayer.Controls.NotificationSettingsControl)
+                .GetMethod("DeleteWebhook_Click", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .CreateDelegate(typeof(RoutedEventHandler), webhookControl);
+            deleteHandler(new Button { Tag = rawWebhook }, new RoutedEventArgs());
+            webhookDialog = null;
+            for (var attempt = 0; attempt < 200 && webhookDialog == null; attempt++)
+            {
+                webhookDialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(parent.XamlRoot).Select(popup => popup.Child).OfType<ContentDialog>().FirstOrDefault();
+                if (webhookDialog == null) await Task.Delay(15);
+            }
+            if (webhookDialog == null) throw new InvalidOperationException("Webhook delete confirmation did not open");
+            try
+            {
+                foreach (var language in new[] { "de", "ar", "ja" })
+                {
+                    Apply(language); await Settle(webhookDialog);
+                    Check(Equals(webhookDialog.Title, AppStrings.Get("web.settings.notifications.webhooks.deleteTitle", new Dictionary<string, object?> { ["name"] = rawWebhook.Name })), "Open webhook delete title did not translate");
+                    Check(Equals(webhookDialog.Content, AppStrings.Get("web.settings.notifications.webhooks.deleteDescription")), "Open webhook delete description did not translate");
+                    Check(webhookDialog.PrimaryButtonText == AppStrings.Get("web.settings.notifications.webhooks.delete"), "Open webhook delete action did not translate");
+                }
+            }
+            finally { webhookDialog.Hide(); await Task.Delay(100); }
+            Program.Log("PASS: webhook edit/delete titles follow de/ar/ja; raw name and unsaved edit draft remain intact; deletion cancelled.");
             window = new MainWindow(); main.SetValue(null, window);
             var root = (FrameworkElement)window.Content;
             var nav = (NavigationView)root.FindName("NavView");

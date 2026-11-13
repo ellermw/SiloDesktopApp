@@ -87,6 +87,7 @@ public static class DocumentTitle
         [typeof(WatchTogetherRoomPage)] = "web.shell.sidebar.watchParty",
         [typeof(LoginPage)] = "web.auth.login.documentTitle",
         [typeof(ActivateDevicePage)] = "web.auth.activate.documentTitle",
+        [typeof(InviteClaimPage)] = "web.watchTogether.invite.documentTitle",
         [typeof(ProfileSelectPage)] = "web.profiles.picker.documentTitle",
         [typeof(PasswordRecoveryPage)] = "web.auth.passwordReset.documentTitle",
         [typeof(ChoosePasswordPage)] = "web.auth.choosePassword.documentTitle",

@@ -322,7 +322,7 @@ public sealed partial class HistoryPage : Page
         });
         actionContent.Children.Add(new TextBlock
         {
-            Text = item.Completed ? "Watch Again" : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume"),
+            Text = item.Completed ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.play") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume"),
             FontSize = 13,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentForegroundBrush"]

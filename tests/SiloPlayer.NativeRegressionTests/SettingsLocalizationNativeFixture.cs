@@ -48,6 +48,7 @@ internal static partial class SettingsLocalizationNativeFixture
             .AddSingleton<HistoryImportApi>().AddSingleton<WatchProvidersApi>().AddSingleton<RecommendationsApi>().AddSingleton<CollectionsApi>()
             .AddSingleton<EventChannelClient>().AddSingleton<ThemeService>().AddSingleton<AccessibilityService>()
             .AddSingleton<NavigationService>().AddSingleton<MainViewModel>().AddSingleton<SettingsViewModel>().AddSingleton<ProfileSelectViewModel>()
+            .AddSingleton<HistoryViewModel>().AddSingleton<WatchlistViewModel>()
             .AddSingleton<CardOverlayService>().AddSingleton<UICustomizationService>().AddSingleton<ToastService>().AddSingleton<NotificationSettingsViewModel>()
             .AddSingleton<EpisodeSpoilerPreferences>().AddSingleton<PlayerService>()
             .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()

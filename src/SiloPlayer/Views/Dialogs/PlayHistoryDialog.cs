@@ -24,7 +24,7 @@ public sealed class PlayHistoryDialog : ContentDialog
     public PlayHistoryDialog(string contentId)
     {
         _id = contentId; _client = App.Services.GetRequiredService<SiloApiClient>(); _context = _client.CaptureContext();
-        Title = "Play History"; CloseButtonText = AppStrings.Get("web.ui.close"); this.KeyedDialog(close: "web.ui.close");
+        Title = AppStrings.Get("web.item.menu.viewPlayHistory"); CloseButtonText = AppStrings.Get("web.ui.close"); this.KeyedDialog(title: "web.item.menu.viewPlayHistory", close: "web.ui.close");
         var body = new StackPanel { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch }; body.Children.Add(_status); body.Children.Add(_rows); body.Children.Add(_more);
         var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
